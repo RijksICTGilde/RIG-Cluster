@@ -87,6 +87,33 @@ def component_registry_name(component: dict[str, Any] | None) -> str | None:
     return None
 
 
+def set_deployment_component_registry(component: dict[str, Any], registry_name: str) -> None:
+    """Zet de registrykeuze op een DEPLOYMENT-component, als dienstvermelding.
+
+    De tegenhanger van ``component_registry_name`` op de dict-vorm, en de ene plek die
+    weet hoe die vermelding eruitziet. Sinds schemaversie 2.9 bestaat de losse sleutel
+    ``registry:`` naast ``image:`` niet meer -- ``$defs/deployment-component`` staat geen
+    onbekende sleutels toe, dus wie hem nog schrijft krijgt zijn eigen wijziging afgekeurd
+    bij het opslaan. Dit schrijft dezelfde vorm die de migratie op die sleutel zet.
+
+    Overschrijft een bestaande keuze (de aanroeper wijst hem expliciet aan) en laat de
+    rest van de dienstvermelding staan.
+    """
+    services = component.get("services")
+    if not isinstance(services, dict):
+        services = {}
+        component["services"] = services
+    record = services.get(ServiceType.IMAGE_REGISTRIES.value)
+    if not isinstance(record, dict):
+        record = {}
+        services[ServiceType.IMAGE_REGISTRIES.value] = record
+    config = record.get("config")
+    if not isinstance(config, dict):
+        config = {}
+        record["config"] = config
+    config["registry"] = registry_name
+
+
 def registry_rule(registry: dict[str, Any], project_name: str, cluster: str) -> RegistryRule | None:
     """De regel die bij één private registry hoort, of None als er niets te regelen valt.
 

@@ -99,7 +99,11 @@ from opi.services.catalog.base import (
     SecretFileSpec,
 )
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_directory
-from opi.services.catalog.image_registries.resolution import build_rules, resolve_deployment_component_image
+from opi.services.catalog.image_registries.resolution import (
+    build_rules,
+    resolve_deployment_component_image,
+    set_deployment_component_registry,
+)
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     clear_domain_settings,
@@ -9034,7 +9038,7 @@ class ProjectManager:
                 old_image = comp.get("image")
                 comp["image"] = new_image_url
                 if registry:
-                    comp["registry"] = registry
+                    set_deployment_component_registry(comp, registry)
                     logger.info(f"Set registry '{registry}' on component '{component_name}'")
                 break
 
