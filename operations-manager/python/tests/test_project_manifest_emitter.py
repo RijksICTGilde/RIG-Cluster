@@ -15,7 +15,6 @@ eerder is opgeruimd.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from opi.manager.project_manager import _select_obsolete_service_manifests
@@ -92,9 +91,7 @@ class TestDeMapNaam:
         data = {
             "name": "demo",
             "components": [{"name": "web"}],
-            "deployments": [
-                {"name": "project", "cluster": "odcn-production", "namespace": "demo", "components": []}
-            ],
+            "deployments": [{"name": "project", "cluster": "odcn-production", "namespace": "demo", "components": []}],
         }
         try:
             asyncio.run(validate_project_structure(data))
@@ -121,7 +118,6 @@ class TestDeArgoApplicatie:
         """Ordening, geen gereedheid: wat namespace-breed is staat er voor de pods die het
         nodig hebben."""
         import yaml
-
         from opi.generation.manifests import render_template
 
         base = {

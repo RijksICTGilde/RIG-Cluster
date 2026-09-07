@@ -9,7 +9,10 @@
    De TOESTAND komt uit het cluster en wordt daarom apart opgehaald (status-fragment). #}
 <c-card outline padding="lg">
     <c-stack gap="md">
-        <c-section-head title="Eigen container registries" icon="server" />
+        {# De NLDD-naam staat hier letterlijk: een icoon in een SJABLOON gaat niet langs de
+           ROOS->NLDD-tabel (die geldt voor namen uit gegevens en uit Python), dus een ROOS-naam
+           zou hier stil leeg renderen. #}
+        <c-section-head title="Eigen container registries" icon="globe-rack-server" />
         <c-paragraph size="sm">De private registries waaruit dit project images haalt.</c-paragraph>
 
         {% for registry in section.context.registries %}
