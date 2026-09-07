@@ -3289,6 +3289,29 @@ class ProjectManager:
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
                     )
 
+                # En dan WACHTEN tot het projectniveau er echt staat, niet alleen tot zijn
+                # Application-CR bestaat. Het verschil is precies wat er misging: de
+                # ServiceAccount komt pas als die applicatie gesynct is, en de deployments
+                # hieronder zetten hun podspec erop. De sync-wave ordent de twee
+                # applicaties binnen de UMBRELLA-sync, maar OPI ververst de
+                # deployment-applicatie daarnaast ook rechtstreeks, en die weg kent de wave
+                # niet. Dit is de poort die hem wel kent.
+                #
+                # Een mislukking hier is geen reden om de uitrol af te breken: het
+                # projectniveau kan leeg zijn, en een deployment die te vroeg is herstelt
+                # vanzelf (gemeten: 2m39s ReplicaSet-backoff, met de oude pod die
+                # doordraait). Wel melden, want die 2m39s hoort niemand te hoeven raden.
+                try:
+                    await self._argo_manager.wait_for_application_synced(
+                        app_name=project_app_name, timeout=180, poll_interval=2
+                    )
+                    logger.info(f"Project-level application '{project_app_name}' is synced")
+                except (TimeoutError, RuntimeError) as e:
+                    logger.warning(
+                        f"Project-level application '{project_app_name}' not synced yet ({e}); "
+                        f"deployments may briefly wait for its ServiceAccount"
+                    )
+
                 # Refresh each application that was created, then wait for sync+healthy.
                 # Refresh + wait run concurrently per application (read-only polls);
                 # remediation below stays serial because it mutates the project file.
