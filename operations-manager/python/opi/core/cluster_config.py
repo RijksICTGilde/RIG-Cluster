@@ -285,6 +285,12 @@ CLUSTER_CONFIG = {
             "backend": "quay-proxy-organization",
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
+            # De apiVersion van de Organization-CRD van de Quay-operator. Hij staat HIER
+            # en niet in het sjabloon omdat hij een platformfeit is: de proef op productie
+            # is met de hand gedaan en de groep/versie is niet in dit repo vastgelegd, dus
+            # als hij afwijkt is dit de ene regel die bijgesteld moet worden in plaats van
+            # een sjabloon dat opnieuw langs review moet.
+            "organization_api_version": "quay.redhat.com/v1",
             # rotation.enabled: false doet niet wat de documentatie belooft -- het token
             # krijgt alsnog retentionDays: 90 en verloopt, zonder dat iemand het ververst
             # (gemeten 2026-09-07). Dus altijd true.

@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 #: symmetrische prune ze weer weghaalt zodra de dienst uitgaat.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
+#: De groep en versie van de Organization-CRD als de clusterconfig hem niet noemt. Een
+#: cluster dat deze backend kiest hoort hem zelf te zetten (``organization_api_version``);
+#: dit is de waarde waarmee de proef op productie is gedaan.
+DEFAULT_ORGANIZATION_API_VERSION = "quay.redhat.com/v1"
+
 
 class RegistryBackend(Protocol):
     """Wat er moet worden aangemaakt voor een registry die een afnemer opgeeft."""
@@ -129,6 +134,7 @@ class QuayProxyOrganizationBackend:
                 filename=f"{FILENAME_PREFIX}{organization}",
                 template_path="quay-proxy-organization.yaml.jinja",
                 values={
+                    "api_version": cluster_config.get("organization_api_version", DEFAULT_ORGANIZATION_API_VERSION),
                     "name": organization,
                     "namespace": ctx.namespace,
                     "friendly_name": friendly_name(str(upstream)),
