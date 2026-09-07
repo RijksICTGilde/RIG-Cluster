@@ -830,8 +830,12 @@ def test_summarize_gives_no_verdict_when_a_digest_faces_a_tag():
 
 
 def test_summarize_shows_the_source_registry_not_the_proxy():
-    """De gebruiker kent zijn eigen registry; de rcr-proxyvorm is een platformdetail."""
-    mappings = [{"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"}]
+    """De gebruiker kent zijn eigen registry; de rcr-proxyvorm is een platformdetail.
+
+    De regels komen sinds RC-177 van de dienst image-registries en niet meer uit een eigen
+    extensietabel, dus hier wordt de CLUSTER gezet in plaats van een mapping gemockt: dat
+    meet ook dat de tabel op odcn-production werkelijk een ghcr-regel draagt.
+    """
     deployment = _deployment("ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344")
     pods = [
         _pod(
@@ -843,7 +847,7 @@ def test_summarize_shows_the_source_registry_not_the_proxy():
         )
     ]
 
-    with patch("opi.services.deployment_diagnostics.get_registry_rewrite_mappings", return_value=mappings):
+    with patch("opi.services.deployment_diagnostics.settings.CLUSTER_MANAGER", "odcn-production"):
         (summary,) = summarize_component_pods(pods, deployment=deployment)
 
     assert summary.image == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344"

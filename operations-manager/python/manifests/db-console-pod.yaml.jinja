@@ -22,6 +22,11 @@ metadata:
 {% endfor %}
 {% endif %}
 spec:
+{% if service_account_name %}
+  # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt zelf
+  # wat hij nodig heeft (de registrypas hangt het eronder).
+  serviceAccountName: {{ service_account_name }}
+{% endif %}
   restartPolicy: Never
   # Hard self-terminate backstop: even if the reaper is down, the pod stops
   # serving after the TTL. The reaper still removes the rest of the bundle.

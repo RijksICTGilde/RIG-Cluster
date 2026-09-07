@@ -57,7 +57,6 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
-from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
     CONFIG_HASH_IGNORE_LABEL_KEY,
@@ -99,7 +98,8 @@ from opi.services.catalog.base import (
     ProvisionContext,
     SecretFileSpec,
 )
-from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
+from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_directory
+from opi.services.catalog.image_registries.resolution import build_rules, resolve_deployment_component_image
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     clear_domain_settings,
@@ -159,6 +159,7 @@ from opi.utils.naming import (
     generate_network_policy_name,
     generate_nice_url_root_hostname,
     generate_project_realm_name,
+    generate_project_service_account_name,
     generate_public_url,
     generate_pvc_name,
     generate_storage_name,
@@ -4075,11 +4076,12 @@ class ProjectManager:
         # files carry no component prefix).
         self._prune_obsolete_service_manifests(deployment, target_path, created_files)
 
-        # Run manifest extensions (e.g. registry rewrite for ODCN)
-        extension_pipeline = load_extensions(cluster_name)
-        if extension_pipeline.has_extensions:
-            logger.info(f"Running manifest extensions for deployment: {deployment_name}")
-            extension_pipeline.process_directory(target_path)
+        # De registrypas over de weggeschreven manifesten. De componentlus heeft de images
+        # van de componenten zelf al opgelost, maar niet elke image loopt daar langs: een
+        # sidecar staat als vaste waarde in zijn sjabloon. Deze pas pakt die op met dezelfde
+        # regels en dezelfde functie, dus er is geen tweede tabel die kan gaan afwijken.
+        # Idempotent op wat de componentlus al deed: die images staan al op hun bestemming.
+        apply_rules_to_directory(target_path, build_rules(project_data, cluster_name))
 
         # Create a kustomization file BEFORE encrypting .to-sops.yaml files
         # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
@@ -6059,6 +6061,10 @@ class ProjectManager:
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
                 # Registry authentication
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
+                # De eigen serviceaccount van het project (projectniveau, bijgedragen door
+                # de platform-dienst). Elke gegenereerde podspec draagt daarnaast zijn eigen
+                # pull-secret, dus de erfenis van de default serviceaccount is niet nodig.
+                "service_account_name": generate_project_service_account_name(project_name),
                 # Timestamp to force pod restart when secrets are regenerated
                 "generated_at": generated_at,
                 # CA certificate configuration for SSL/TLS

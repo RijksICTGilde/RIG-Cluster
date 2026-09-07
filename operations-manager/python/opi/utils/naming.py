@@ -889,6 +889,19 @@ PROJECT_LEVEL_DIR = "_project"
 RESERVED_DEPLOYMENT_NAMES: frozenset[str] = frozenset({"project"})
 
 
+def generate_project_service_account_name(project_name: str) -> str:
+    """De eigen serviceaccount van een project, waar zijn pods op draaien.
+
+    De ``default`` serviceaccount is geen vangnet dat we willen houden. Hij draagt elk
+    pull-secret dat het platform in de namespace repliceert, dus ook dat van de
+    proxy-organisatie van een ander project: zolang onze pods daarop draaien is een private
+    registry alleen op papier prive. En technisch is het ook geen goed idee -- alle secrets
+    wijzen naar dezelfde host en kubelet moet daar de juiste uit halen, wat bij negen
+    kandidaten al onzeker is.
+    """
+    return sanitize_kubernetes_name(f"{project_name}-sa")
+
+
 def generate_argocd_project_application_name(project_name: str) -> str:
     """De naam van de ArgoCD-applicatie voor het PROJECTniveau.
 

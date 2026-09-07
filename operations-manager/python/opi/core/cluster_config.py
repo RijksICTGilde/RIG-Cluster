@@ -275,7 +275,6 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
-        "extensions": ["odcn-registry-rewrite"],
         # De dienst image-registries op dit cluster: achter een Quay-operator, dus een
         # private registry wordt een proxy-organisatie in RCR en de image wordt
         # herschreven. De regels hieronder zijn de GEDEELDE proxy-caches die het platform
@@ -1390,15 +1389,6 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("supports_dots", False)
     return False
-
-
-def get_extensions(cluster_name: str) -> list[str]:
-    """Get the list of manifest extension names configured for a cluster.
-
-    Returns an empty list if no extensions are configured.
-    """
-    config = get_cluster_config(cluster_name)
-    return config.get("extensions", [])
 
 
 def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
