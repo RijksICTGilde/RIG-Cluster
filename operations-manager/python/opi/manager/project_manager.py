@@ -147,6 +147,7 @@ from opi.utils.naming import (
     PROJECT_LEVEL_DIR,
     ROOT_COMPONENT_FORMAT_IDS,
     generate_argocd_application_name,
+    generate_argocd_project_application_name,
     generate_bare_domain_hostname,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -3224,6 +3225,26 @@ class ProjectManager:
                     )
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
+
+                # De applicatie van het PROJECTNIVEAU hoort in deze zelfde vraag. Hij is
+                # geen deployment, dus hij staat niet in app_deployments -- en zonder deze
+                # regel werd de umbrella niet ververst zolang de deployment-applicaties al
+                # bestonden. Gemeten op de sandbox: de Deployment kreeg zijn
+                # serviceAccountName voordat de ServiceAccount er was, en de ReplicaSet gaf
+                # "error looking up service account ... not found". Geen storing (de oude
+                # pod bleef draaien en de ReplicaSet probeert het opnieuw), maar de uitrol
+                # stond minuten stil op iets wat wij zelf net hadden weggeschreven.
+                #
+                # De sync-wave doet dit niet: die ordent RESOURCES binnen een applicatie,
+                # en dit zijn twee applicaties. Wat de wave wel doet is de umbrella zijn
+                # wave-0-applicatie eerst laten aanmaken; dit zorgt dat de umbrella
+                # uberhaupt kijkt.
+                project_app_name = generate_argocd_project_application_name(project_name)
+                project_app_exists = await self._kubectl_connector.argocd_application_exists(
+                    project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
+                )
+                if project_app_exists is not True:
+                    apps_to_create.append(project_app_name)
 
                 # Wait for not-yet-present applications to be created (ArgoCD needs to
                 # sync user-applications first). All waits run concurrently: read-only polls.
