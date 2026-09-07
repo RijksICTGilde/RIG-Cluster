@@ -162,3 +162,78 @@ class TestDeClustertabelIsDeBron:
 
     def test_een_cluster_zonder_tabel_doet_niets(self) -> None:
         assert cluster_rules(SANDBOX) == []
+
+
+class TestGelijkAanWatDeExtensieDeed:
+    """De meting die het plan vraagt: is het resultaat voor en na hetzelfde?
+
+    De extensie is weg, dus "vergelijken met de extensie" kan niet meer als code. Wat wel
+    kan is zijn UITKOMSTEN vastpinnen: dit zijn de gevallen die ``tests/test_extensions.py``
+    mat, met de tabel die ``extensions/odcn-registry-rewrite.yaml`` droeg. Zolang deze
+    gelijkheden staan is er aan de gegenereerde manifesten niets veranderd behalve wat er
+    bewust bij is gekomen (de normalisatie van korte namen, en het secret bij een image die
+    al op zijn bestemming staat).
+    """
+
+    @staticmethod
+    def _pod(image: str, pull_secrets: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        spec: dict[str, Any] = {"containers": [{"name": "app", "image": image}]}
+        if pull_secrets is not None:
+            spec["imagePullSecrets"] = pull_secrets
+        return {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "t"}, "spec": spec}
+
+    @pytest.mark.parametrize(
+        ("image", "verwacht", "secret"),
+        [
+            ("ghcr.io/org/app:latest", "rcr.rijksapps.nl/ghcr-rig/org/app:latest", "ghcr-rig-robot-pull-secret"),
+            (
+                "ghcr.io/minbzk/base-images/rig-backup:latest",
+                "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-backup:latest",
+                "ghcr-rig-robot-pull-secret",
+            ),
+            (
+                "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1",
+                "rcr.rijksapps.nl/quay-rig/oauth2-proxy/oauth2-proxy:v7.7.1",
+                "quay-rig-robot-pull-secret",
+            ),
+            (
+                "registry.k8s.io/pause:3.9",
+                "rcr.rijksapps.nl/k8s-rig/pause:3.9",
+                "k8s-rig-robot-pull-secret",
+            ),
+            (
+                "code.overheid.nl/team/app:1",
+                "rcr.rijksapps.nl/code-overheid-rig/team/app:1",
+                "code-overheid-rig-robot-pull-secret",
+            ),
+        ],
+    )
+    def test_dezelfde_uitkomst_als_de_oude_tabel(self, image: str, verwacht: str, secret: str) -> None:
+        spec = apply_rules(self._pod(image), cluster_rules(ODCN))["spec"]
+        assert spec["containers"][0]["image"] == verwacht
+        assert spec["imagePullSecrets"] == [{"name": secret}]
+
+    def test_een_image_buiten_de_tabel_blijft_onaangeroerd(self) -> None:
+        manifest = apply_rules(self._pod("registry.intern.nl/org/app:v1"), cluster_rules(ODCN))
+        assert manifest["spec"]["containers"][0]["image"] == "registry.intern.nl/org/app:v1"
+        assert "imagePullSecrets" not in manifest["spec"]
+
+    def test_een_bestaand_secret_wordt_niet_verdubbeld(self) -> None:
+        spec = apply_rules(
+            self._pod("ghcr.io/org/app:1", [{"name": "ghcr-rig-robot-pull-secret"}]), cluster_rules(ODCN)
+        )["spec"]
+        assert spec["imagePullSecrets"] == [{"name": "ghcr-rig-robot-pull-secret"}]
+
+    def test_wat_er_WEL_bij_is_gekomen(self) -> None:
+        """De twee bewuste verschillen, zodat ze niet als regressie kunnen worden gelezen.
+
+        De oude tabel matchte op ``docker.io`` en liet ``nginx:alpine`` dus lopen, terwijl
+        de admission-webhook van ODCN hem wel zo behandelt. En een image die al op zijn
+        bestemming staat kreeg geen secret, wat de dp-bn7-storing was.
+        """
+        korte_naam = apply_rules(self._pod("nginx:alpine"), cluster_rules(ODCN))["spec"]
+        assert korte_naam["containers"][0]["image"] == "rcr.rijksapps.nl/dockerhub-rig/library/nginx:alpine"
+
+        al_op_bestemming = apply_rules(self._pod("rcr.rijksapps.nl/ghcr-rig/org/app:1"), cluster_rules(ODCN))["spec"]
+        assert al_op_bestemming["containers"][0]["image"] == "rcr.rijksapps.nl/ghcr-rig/org/app:1"
+        assert al_op_bestemming["imagePullSecrets"] == [{"name": "ghcr-rig-robot-pull-secret"}]
