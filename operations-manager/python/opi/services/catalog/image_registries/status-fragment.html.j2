@@ -17,7 +17,7 @@
         {% for status in statuses %}
             <c-stack gap="xs">
                 <c-cluster gap="sm" align="center">
-                    <c-icon :icon="'check-circle' if status.state == 'ready' else 'klok'" size="md" />
+                    <c-icon :icon="('check-mark-circle' if status.state == 'ready' else 'timer') | nldd_icon" size="md" />
                     <c-span><strong>{{ status.registry }}</strong> - {{ status.message }}</c-span>
                 </c-cluster>
                 {% if status.expires_at %}

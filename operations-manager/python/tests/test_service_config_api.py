@@ -1065,6 +1065,8 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     # RC-142: er valt niets te kiezen -- een endpoint, een variabele, een regel. Geen
     # configblok betekent geen configroute.
     "vlam": [],
+    # RC-177: de registries op het project, de verwijzing bij naam op (deployment-)component.
+    "image-registries": ["project", "component", "deployment-component"],
 }
 
 

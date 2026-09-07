@@ -2858,8 +2858,8 @@ class ProjectFileHandler:
             component_name: Name of the component
 
         Returns:
-            Registry config dict with keys: name, url, username, password
-            or None if component has no registry configured
+            Registry config dict with keys: name, upstream, username, password
+            or None if the component points at no registry
         """
         # De verwijzing bij naam staat sinds schemaversie 2.9 in de dienstvermelding van
         # het component, niet meer als losse sleutel ernaast.

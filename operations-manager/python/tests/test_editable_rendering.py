@@ -258,9 +258,11 @@ class TestNestedSequenceRendering:
         first_comp = nested_seq.children[0]
         assert first_comp.widget_type == "sequence_item"
         # reference, image, pullPolicy, user-env-vars, the publish-on-web TLS override
-        # (RC-78) and the per-deployment attachments sequence. The certificate picker next
-        # to the TLS override is not here: its show_when only admits it for 'provided'.
-        assert len(first_comp.children) == 6
+        # (RC-78), the per-deployment attachments sequence, and the image-registries
+        # override (RC-177: een andere registry alleen voor deze deployment). The
+        # certificate picker next to the TLS override is not here: its show_when only
+        # admits it for 'provided'.
+        assert len(first_comp.children) == 7
 
 
 class TestDisplayCardRendering:

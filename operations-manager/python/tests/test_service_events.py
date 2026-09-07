@@ -126,6 +126,10 @@ class TestParticipationIsDerived:
             ServiceType.KEYCLOAK,
             ServiceType.ATTACHMENTS,
             ServiceType.INVITE,
+            # RC-177: image-registries toont wat de afnemer heeft ingevuld; de TOESTAND van
+            # de proxy komt uit het cluster en wordt door het blok zelf lazy opgehaald,
+            # want deze haak is synchroon en mag geen connector aanroepen.
+            ServiceType.IMAGE_REGISTRIES,
         }
         # LEEG, en dat is geen vergissing. Twee bewoners zijn hier vertrokken, allebei naar
         # een eigen tabblad en allebei om dezelfde reden: het blok stond op twee plekken en
