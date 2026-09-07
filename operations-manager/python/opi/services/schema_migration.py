@@ -1279,7 +1279,12 @@ def _normalize_upstream(url: Any) -> Any:
     """
     if not isinstance(url, str):
         return url
-    return re.sub(r"^(?:https?|ssh|git)://", "", url).lower().rstrip("/")
+    # ``.lower()`` EERST: het oude patroon was hoofdletterongevoelig, dus ``HTTPS://GHCR.IO``
+    # was een geldige 2.8-waarde en zou een protocol-strip op de originele tekst overleven.
+    # Wat hier bewust NIET wordt weggeknipt is userinfo (``ssh://git@code.overheid.nl/x``):
+    # die waarde omzetten zou een upstream opleveren die er geldig uitziet maar naar iets
+    # anders wijst; hij valt nu op de eerste save op, met de melding van het patroon erbij.
+    return re.sub(r"^(?:https?|ssh|git)://", "", url.lower()).rstrip("/")
 
 
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:

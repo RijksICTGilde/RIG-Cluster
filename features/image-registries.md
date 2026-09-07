@@ -239,6 +239,28 @@ als iemand de tweede helft eruit haalt. Ook hier is de detectie AFGELEID van het
 schema (een `pattern` met de AGE-markering) en niet van een handgeschreven veldenlijst, dus
 een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zegt.
 
+### Drie opslagvormen, een lezer
+
+Datzelfde patroon laat het token in drie vormen toe: het armored AGE-blok, de eenregelige
+`base64+age:`-vorm en een expliciet als platte tekst gemarkeerde `plain:`-waarde. Dat is
+geen randgeval maar de huisvorm van een projectbestand -- de repository-password, de
+api-key en de projectsleutel dragen allemaal de eenregelige vorm.
+
+Wie de waarde uitleest moet ze dus alle drie kennen. Toetsen op alleen de armored markering
+zet de andere twee LETTERLIJK in de `.dockerconfigjson` (of in het
+`-upstream-credentials`-secret van Quay): geen fout, geen waarschuwing, wel een credential
+dat niet klopt en een pod die op `invalid username/password` of `name unknown: repository
+not found` blijft hangen. Beide lezers -- `_plain_password` in `backends.py` en
+`ProjectAgeSecretConverter` in `converters.py` -- gaan daarom langs `carries_encrypted_value`
+en `decrypt_password_smart_sync` (`opi/utils/age.py`), net als de CNPG-route dat met
+`decrypt_password_smart` doet. In de formulierlaag is het verschil het scherpst: `read()`
+zou anders de cijfertekst tonen en `write()` die als NIEUW token versleutelen, waarna het
+echte token weg is na een opslag waarin niemand het veld aanraakte.
+
+Is er wel een versleutelde waarde maar geen projectsleutel, dan stopt het schrijven met een
+fout (`get_decoded_project_private_key_sync`). Stil geen secret schrijven levert een
+deployment op die aan de pull blijft hangen zonder dat er iets in de weg stond.
+
 ## Een regel, een pad: formulier en API
 
 De regel voor `upstream` staat in `config_model.py` en niet in het formulier. Dat model is
@@ -321,3 +343,6 @@ projectbestand maar in het cluster, en een blok dat rendert mag geen connector a
 
 Een organisatie die er nog niet is, is geen fout: de proef mat 20 tot 25 seconden. Het blok
 is er zodat een wachtende afnemer ziet wáárom hij wacht.
+
+Het statusendpoint is een eigen route en draagt dus zijn eigen eigendomscontrole: wie geen
+lid van het project is krijgt 403, dezelfde vorm als bij de backups.

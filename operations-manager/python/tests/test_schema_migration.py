@@ -1608,6 +1608,9 @@ class TestRelocateRegistriesToService:
             ("GHCR.IO", "ghcr.io"),
             ("git://code.overheid.nl/Robbert", "code.overheid.nl/robbert"),
             ("https://ghcr.io/", "ghcr.io"),  # de afsluitende schuine streep hoort er ook niet
+            # Een hoofdletterprotocol: het oude patroon was hoofdletterongevoelig, dus dit
+            # was een geldige 2.8-waarde. Strippen VOOR het lowercasen laat hem staan.
+            ("HTTPS://GHCR.IO", "ghcr.io"),
         ):
             data = self._algor_odc_shaped()
             data["registries"][0]["url"] = url

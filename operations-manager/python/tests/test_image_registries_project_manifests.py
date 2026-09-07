@@ -7,7 +7,11 @@ cluster, en dat is het enige dat per platform verschilt.
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+import shutil
+import subprocess
 from typing import Any, ClassVar
 
 import pytest
@@ -18,6 +22,22 @@ from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.backends import FILENAME_PREFIX
 from opi.services.registry import project_manifest_services
 from opi.services.services_enums import ServiceType
+from opi.utils.age import encrypt_age_content_sync
+
+
+def _keypair() -> tuple[str, str]:
+    """Een echt AGE-sleutelpaar; de tests die het gebruiken slaan over zonder de binary."""
+    result = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True)
+    lines = result.stdout.splitlines() + result.stderr.splitlines()
+    private_key = next(line for line in lines if line.startswith("AGE-SECRET-KEY"))
+    public_key = next(line.split(": ", 1)[1].strip() for line in lines if "public key:" in line.lower())
+    return public_key, private_key
+
+
+requires_age = pytest.mark.skipif(
+    shutil.which("age") is None or shutil.which("age-keygen") is None,
+    reason="age/age-keygen binary not available",
+)
 
 ODCN = "odcn-production"
 SANDBOX = "sandboxed-local"
@@ -261,3 +281,80 @@ class TestElkBestandIsWeerOpTeRuimen:
         for cluster in (SANDBOX, ODCN):
             for spec in service.contribute_project_manifests(_ctx(cluster, [REGISTRY])):
                 assert spec.filename.startswith(f"{ServiceType.IMAGE_REGISTRIES.value}-")
+
+
+@requires_age
+class TestDeDrieOpslagvormenVanHetToken:
+    """Wat er in het secret komt te staan, per opslagvorm van ``password``.
+
+    Het veld draagt er drie (``AGE_ENCRYPTED_OR_PLAIN_PATTERN``): het armored blok, de
+    eenregelige ``base64+age:``-vorm en ``plain:``. Alle drie komen langs de poort die een
+    save valideert, dus alle drie kunnen in een projectbestand staan -- en de eenregelige
+    vorm is de HUISVORM voor eenregelige geheimen (de repository-password, de api-key en de
+    projectsleutel dragen hem allemaal). Code die alleen op de armored markering toetst zet
+    de andere twee LETTERLIJK in de ``.dockerconfigjson``: geen fout, wel een credential dat
+    niet klopt.
+
+    Alles hier draait tegen de echte ``age``-binary; een mock zou "wel ontsleuteld" en "de
+    cijfertekst doorgegeven" niet uit elkaar kunnen houden, en dat is precies het verschil
+    dat deze tests meten.
+    """
+
+    TOKEN = "ghp_HET_ECHTE_TOKEN"
+
+    @pytest.fixture
+    def project(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+        system_public, system_private = _keypair()
+        project_public, project_private = _keypair()
+        monkeypatch.setattr("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", system_private)
+        return {
+            "age-public-key": project_public,
+            "age-private-key": encrypt_age_content_sync(project_private, system_public),
+        }
+
+    def _ctx_met_config(self, cluster: str, registry: dict[str, Any], config: dict[str, Any]) -> ProjectManifestContext:
+        ctx = _ctx(cluster, [registry])
+        ctx.project_data["config"] = config
+        return ctx
+
+    def _vormen(self, project: dict[str, Any]) -> dict[str, str]:
+        armored = encrypt_age_content_sync(self.TOKEN, project["age-public-key"])
+        return {
+            "armored": armored,
+            "base64+age": "base64+age:" + base64.b64encode(armored.encode()).decode(),
+            "plain": f"plain:{self.TOKEN}",
+        }
+
+    @pytest.mark.parametrize("vorm", ["armored", "base64+age", "plain"])
+    def test_het_pull_secret_draagt_het_echte_token(
+        self, service: ImageRegistriesService, project: dict[str, Any], vorm: str
+    ) -> None:
+        registry = {**REGISTRY, "password": self._vormen(project)[vorm]}
+        specs = service.contribute_project_manifests(self._ctx_met_config(SANDBOX, registry, project))
+
+        (spec,) = specs
+        docker_config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = docker_config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]
+        gebruiker, _, wachtwoord = base64.b64decode(auth).decode().partition(":")
+        assert gebruiker == "robbert.uittenbroek"
+        assert wachtwoord == self.TOKEN
+
+    @pytest.mark.parametrize("vorm", ["armored", "base64+age", "plain"])
+    def test_het_upstream_credentials_secret_draagt_het_echte_token(
+        self, service: ImageRegistriesService, project: dict[str, Any], vorm: str
+    ) -> None:
+        """Dezelfde waarde op de andere backend: daar gaat hij naar Quay, dat er upstream
+        401 mee krijgt en dat vertaalt naar ``name unknown: repository not found``."""
+        registry = {**REGISTRY, "password": self._vormen(project)[vorm]}
+        specs = service.contribute_project_manifests(self._ctx_met_config(ODCN, registry, project))
+
+        credentials = next(spec for spec in specs if spec.encrypt)
+        assert credentials.values["secret_pairs"]["password"] == self.TOKEN
+
+    def test_zonder_projectsleutel_stopt_het_schrijven(self, service: ImageRegistriesService) -> None:
+        """Stil geen secret schrijven levert een deployment op die aan de pull blijft
+        hangen zonder dat er iets in de weg stond; dit hoort een fout te zijn."""
+        registry = {**REGISTRY, "password": "-----BEGIN AGE ENCRYPTED FILE-----\nx\n-----END AGE ENCRYPTED FILE-----"}
+
+        with pytest.raises(ValueError, match="age-private-key"):
+            service.contribute_project_manifests(self._ctx_met_config(SANDBOX, registry, {}))
