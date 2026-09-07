@@ -184,6 +184,13 @@ bestaanscontrole die de umbrella-refresh aanzet, en er wordt op gewacht tot hij 
 
 - De root-`registries:` verhuist naar `services/image-registries/config/registries`, met
   `url` hernoemd naar `upstream`.
+- **De waarde wordt daarbij omgezet, niet letterlijk gekopieerd.** Het oude
+  `$defs/registry.url` liet een protocol expliciet toe en had geen hoofdletterregel;
+  `UPSTREAM_PATTERN` verbiedt allebei, en ook de afsluitende schuine streep. De migratie
+  haalt daarom `https://`, `http://`, `ssh://` of `git://` eraf, zet de waarde in kleine
+  letters en knipt een afsluitende `/` weg. Zonder die omzetting
+  migreert zo'n bestand wel (lezen valideert niet) maar sneuvelt het bij de eerste save, op
+  een veld dat de gebruiker nooit heeft aangeraakt.
 - De sleutel `registry:` op een deployment-component wordt een dienstvermelding op datzelfde
   component.
 - Beide oude vormen blijven valideren onder hun eigen schemaversie via
@@ -226,7 +233,9 @@ Die controle keek alleen naar `project_v2.json`, en een dienstconfig staat daar 
 in. De helft die een dienst zelf beschrijft wordt daarom gemeten door
 `find_plaintext_service_config_violations` (`opi/manager/project_validation.py`), die
 dezelfde detectie op de configmodellen van de diensten draait. Beide helften worden in
-`ProjectStore._validate` naast elkaar aangeroepen. Ook hier is de detectie AFGELEID van het
+`ProjectStore._validate` naast elkaar aangeroepen, en die AANHAKING heeft een eigen test die
+via de store gaat (`test_de_store_weigert_het_token_ook_zonder_enforce`), zodat het opvalt
+als iemand de tweede helft eruit haalt. Ook hier is de detectie AFGELEID van het
 schema (een `pattern` met de AGE-markering) en niet van een handgeschreven veldenlijst, dus
 een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zegt.
 

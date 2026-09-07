@@ -40,6 +40,14 @@ from pydantic import BaseModel, ConfigDict, Field
 #: bindt aan het EINDE van de tekst (anders dan die van Python, die een afsluitende
 #: newline doorlaat). Zo draaien het model en de ``ModelFieldValidator`` van het formulier
 #: op dezelfde engine met dezelfde uitkomst.
+#:
+#: Let op wie dit patroon nog meer draagt: het gecommitte fragment
+#: ``image-registries.v1.0.json`` krijgt dezelfde tekst mee, en wie dat fragment met de
+#: PYTHON-engine valideert krijgt een andere uitkomst -- daar laat ``$`` een afsluitende
+#: newline wel door (``ghcr.io\n`` matcht). Vandaag is dat inert, want het fragment is een
+#: drift-lock en documentatie (``test_service_config_schema.py``) en geen validatiepoort;
+#: de poort die draait is dit model. Gaat iemand het fragment wel als poort gebruiken, dan
+#: hoort daar ``\Z``/``fullmatch`` bij.
 _HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 _PORT = r"[0-9]{1,5}"
 UPSTREAM_PATTERN = (

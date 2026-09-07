@@ -57,7 +57,12 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
     if cluster_config.get("backend") != BACKEND_QUAY_PROXY:
         return render(request, template=STATUS_TEMPLATE, context={"applicable": False, "statuses": []})
 
-    project_data = await get_project_store().get_decrypted(project_name)
+    # ``get()``, niet ``get_decrypted()``: dit fragment leest alleen ``name`` en
+    # ``upstream``. Ontsleutelen zou ``decrypt_tree()`` over de hele boom draaien -- de
+    # AGE-privesleutel, de api-key, de user-env-vars en het registry-token -- voor een
+    # statusfragment dat daar niets van gebruikt.
+    project = get_project_store().get(project_name)
+    project_data = project.data if project else None
     registries = project_registries(project_data or {})
     if not registries:
         return render(request, template=STATUS_TEMPLATE, context={"applicable": True, "statuses": []})

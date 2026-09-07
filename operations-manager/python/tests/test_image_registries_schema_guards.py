@@ -212,6 +212,24 @@ class TestHetTokenValtNietUitDeFailClosedControle:
             "services/image-registries/config/registries/0/password"
         ]
 
+    async def test_de_store_weigert_het_token_ook_zonder_enforce(self) -> None:
+        """De AANHAKING, niet de functie: ``ProjectStore._validate`` roept beide helften aan.
+
+        Zonder deze test blijft de volledige suite groen als iemand
+        ``find_plaintext_service_config_violations`` uit die ene regel haalt, terwijl dat
+        precies de weigering is die op de elf ``enforce_validation=False``-routes nog
+        overeind staat. De helft ernaast heeft die test wel
+        (``test_store_refuses_plaintext_secret_even_without_enforcement``); deze is zijn
+        spiegelbeeld voor de dienstconfig.
+        """
+        from opi.services.project_store import GitProjectStore
+
+        store = GitProjectStore(working_dir="/tmp/unused-by-this-test")
+        leaked = _project({"name": "eigen", "upstream": "ghcr.io", "username": "u", "password": "ghp_KLARTEKST"})
+
+        with pytest.raises(ProjectSchemaError, match="AGE-versleuteld"):
+            await store._validate(leaked, enforce=False)
+
     def test_een_age_blok_is_geen_overtreding(self) -> None:
         project = _project({"name": "eigen", "upstream": "ghcr.io", "username": "u", "password": AGE_BLOCK})
         assert find_plaintext_service_config_violations(project) == []

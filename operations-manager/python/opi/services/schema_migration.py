@@ -8,6 +8,7 @@ number directly.
 """
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from opi.services.postgres_scope import database_generation_service_type
@@ -1228,7 +1229,7 @@ def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
                 continue
             moved = {k: v for k, v in entry.items() if k != "url"}
             if "url" in entry:
-                moved["upstream"] = entry["url"]
+                moved["upstream"] = _normalize_upstream(entry["url"])
             relocated.append(moved)
         _set_service_config(project_data, ServiceType.IMAGE_REGISTRIES.value, {"registries": relocated})
         del project_data["registries"]
@@ -1264,6 +1265,21 @@ def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
             f"'{ServiceType.IMAGE_REGISTRIES.value}'"
         )
     return changed
+
+
+def _normalize_upstream(url: Any) -> Any:
+    """Zet een 2.8-``url`` om in de vorm die ``UPSTREAM_PATTERN`` op 2.9 nog toelaat.
+
+    Het oude ``$defs/registry.url`` liet een protocol expliciet toe
+    (``^(?:(?:https?|ssh|git)://)?...``) en had geen hoofdletterregel; het nieuwe patroon
+    op ``RegistryEntry.upstream`` verbiedt allebei, en ook de afsluitende schuine streep die
+    het oude tekenklasse-patroon toeliet. Zonder deze omzetting migreert zo'n projectbestand
+    wel (lezen valideert niet) maar sneuvelt het bij de eerste save, op een veld dat de
+    gebruiker niet heeft aangeraakt.
+    """
+    if not isinstance(url, str):
+        return url
+    return re.sub(r"^(?:https?|ssh|git)://", "", url).lower().rstrip("/")
 
 
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
