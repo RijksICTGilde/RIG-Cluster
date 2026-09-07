@@ -75,6 +75,28 @@ def normalize_image(image: str) -> str:
     return image
 
 
+def normalize_prefix(prefix: str) -> str:
+    """Hetzelfde voor een upstream-PREFIX, met het verschil dat een prefix geen naam is.
+
+    ``normalize_image`` vult voor een verwijzing zonder host ``docker.io/library/`` aan,
+    want ``nginx`` is daar de NAAM van een repository. Een prefix is een PAD: ``ghcr.io``
+    is al compleet, en er ``docker.io/library/`` voor zetten maakt er een repository van
+    die nergens bij past -- gemeten: ``normalize_image('ghcr.io')`` geeft
+    ``docker.io/library/ghcr.io``, dus een upstream zonder pad matchte nooit een image.
+
+    Een eerste segment dat er als host uitziet is dus klaar. Staat er geen host, dan is het
+    een pad op Docker Hub en gaat alleen de registry ervoor -- geen ``library``, want een
+    prefix noemt een namespace en geen image.
+    """
+    if not prefix:
+        return prefix
+
+    first, _, _ = prefix.partition("/")
+    if _looks_like_host(first):
+        return prefix
+    return f"{DEFAULT_REGISTRY}/{prefix}"
+
+
 def _looks_like_host(segment: str) -> bool:
     """Of een eerste padsegment een registry-host is in plaats van een pad-segment."""
     return "." in segment or ":" in segment or segment == "localhost"

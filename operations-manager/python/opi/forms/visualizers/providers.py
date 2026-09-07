@@ -1201,7 +1201,7 @@ class ImageRegistryOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         from opi.forms.editables.service_path import smart_get_value
         from opi.services.catalog.base import ConfigLayer, config_path
-        from opi.services.catalog.image_registries.rules import normalize_image
+        from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
         from opi.services.services_enums import ServiceType
 
         registries = (
@@ -1222,7 +1222,7 @@ class ImageRegistryOptionsProvider:
             passend = [
                 entry
                 for entry in entries
-                if (prefix := normalize_image(str(entry.get("upstream", ""))))
+                if (prefix := normalize_prefix(str(entry.get("upstream", ""))))
                 and (normalized == prefix or normalized.startswith(prefix + "/"))
             ]
             if len(passend) == 1:
