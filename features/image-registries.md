@@ -154,6 +154,25 @@ Ordening en gereedheid zijn twee verschillende dingen. De sync-wave regelt allee
 volgorde van aanmaken, niet of de proxy al klaar is. Dat hoeft ook niet strikt: een pod die
 te vroeg is belandt in ImagePullBackOff en herstelt vanzelf zodra de proxy werkt.
 
+### De serviceaccount is wél een harde volgorde
+
+Voor de proxy geldt "te vroeg is niet erg", voor de SERVICEACCOUNT niet. Een Deployment die
+naar een serviceaccount wijst die er nog niet is krijgt helemaal geen pod:
+
+    Error creating: pods "productie-web-..." is forbidden: error looking up
+    service account rig-waard-vqs/waard-vqs-sa: serviceaccount "waard-vqs-sa" not found
+
+Gemeten op de sandbox op 2026-09-07. Het herstelt vanzelf -- de ReplicaSet probeert het
+opnieuw en de OUDE pod blijft ondertussen draaien, dus er is geen storing -- maar het kostte
+2 minuten en 39 seconden nadat de serviceaccount er stond, want de ReplicaSet zit dan in zijn
+FailedCreate-backoff.
+
+De sync-wave lost dit niet op: die ordent RESOURCES binnen één applicatie, en het
+projectniveau en een deployment zijn twee applicaties. Wat hem wel oplost staat in
+`ProjectManager._process_application_manifests`: de projectapplicatie telt mee in de
+bestaanscontrole die de umbrella-refresh aanzet, en er wordt op gewacht tot hij GESYNCT is
+(niet alleen tot zijn CR bestaat) voordat de deployments uitrollen.
+
 ## Migratie (schemaversie 2.9)
 
 - De root-`registries:` verhuist naar `services/image-registries/config/registries`, met
