@@ -33,7 +33,7 @@ from opi.services.services import (
     service_entry_schema_version,
 )
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
+from opi.utils.naming import RESERVED_DEPLOYMENT_NAMES, generate_extra_database_schema, registry_tag_owner
 from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
@@ -724,6 +724,11 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
             raise ProjectIntegrityError(f"Project '{project_name}': een deployment zonder naam")
         if dep_name in seen_deployments:
             raise ProjectIntegrityError(f"Project '{project_name}': deployment '{dep_name}' is meervoudig gedefinieerd")
+        if dep_name in RESERVED_DEPLOYMENT_NAMES:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': '{dep_name}' is een gereserveerde deploymentnaam en kan niet "
+                f"gebruikt worden. Het platform gebruikt hem zelf; kies een andere naam."
+            )
         seen_deployments.add(dep_name)
 
         refs = dep.get("components", []) or []

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8)
+SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
@@ -1199,6 +1199,80 @@ def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
 #: against the schemas on disk, so a migration without a schema cannot slip through.
+def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
+    """Verhuis de registries naar de dienst ``image-registries`` (v2.8 -> v2.9, RC-177).
+
+    Twee bewegingen die bij elkaar horen, want de een is zonder de ander onbruikbaar:
+
+    * de TOP-LEVEL lijst ``registries:`` gaat naar ``services/image-registries/config/
+      registries``, met ``url`` hernoemd naar ``upstream`` (dat is wat het veld altijd al
+      was: de registry inclusief pad, zonder protocol);
+    * de sleutel ``registry:`` op een deployment-component wordt een dienstvermelding op
+      datzelfde component, in dezelfde vorm die publish-on-web en temp-storage daar al
+      gebruiken.
+
+    Een verwijzing van BINNEN een andere dienstconfig (``namespace-postgresql-database``
+    heeft er een) blijft staan: dat is een verwijzing bij naam, en die blijft werken --
+    hij wijst straks naar een entry in de config van image-registries.
+
+    Idempotent: zonder ``registries`` en zonder ``registry``-sleutel is dit een no-op.
+    Retourneert True als er iets veranderd is.
+    """
+    registries = project_data.get("registries")
+    changed = False
+
+    if isinstance(registries, list) and registries:
+        relocated: list[dict[str, Any]] = []
+        for entry in registries:
+            if not isinstance(entry, dict):
+                continue
+            moved = {k: v for k, v in entry.items() if k != "url"}
+            if "url" in entry:
+                moved["upstream"] = entry["url"]
+            relocated.append(moved)
+        _set_service_config(project_data, ServiceType.IMAGE_REGISTRIES.value, {"registries": relocated})
+        del project_data["registries"]
+        changed = True
+    elif "registries" in project_data:
+        # Een lege lijst is geen dienst waard, alleen een sleutel die weg kan.
+        del project_data["registries"]
+        changed = True
+
+    svc = ServiceType.IMAGE_REGISTRIES.value
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict) or "registry" not in component:
+                continue
+            registry_name = component.pop("registry")
+            changed = True
+            if not registry_name:
+                continue
+            # Op een DEPLOYMENT-component is ``services`` een dict keyed op dienstnaam
+            # ($defs/deployment-component in project_v2.json), niet de lijst die een gewoon
+            # component draagt. Een lijst hier zou het schema meteen afkeuren.
+            services = component.get("services")
+            if not isinstance(services, dict):
+                services = {}
+                component["services"] = services
+            services.setdefault(svc, {"config": {"registry": registry_name}})
+
+    if changed:
+        logger.info(
+            f"Registries van project '{project_data.get('name', 'unknown')}' verhuisd naar de dienst "
+            f"'{ServiceType.IMAGE_REGISTRIES.value}'"
+        )
+    return changed
+
+
+def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
+    """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
+    from opi.services.project import Project
+
+    Project(project_data).set(f"services/{service_name}/config", config)
+
+
 MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...] = (
     (2.1, _migrate_v2_to_v2_1),
     (2.2, _migrate_v2_1_to_v2_2),
@@ -1208,6 +1282,7 @@ MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...
     (2.6, relocate_invites_to_service),
     (2.7, relocate_domain_settings_to_service),
     (2.8, remove_domain_mode),
+    (2.9, relocate_registries_to_service),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

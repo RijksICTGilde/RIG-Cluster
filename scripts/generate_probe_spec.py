@@ -111,6 +111,11 @@ SKIP: set[ServiceType] = {
     # variables of their own -- they ARE the user's own variables (RC-25).
     ServiceType.USER_ENV_VARS,
     ServiceType.ALIASES,
+    # image-registries injecteert geen verbindingsgegevens in de pod: de registry is waar
+    # het IMAGE vandaan komt, niet iets waar de applicatie mee praat. Wat er te bewijzen
+    # valt (haalt de pull het op, met welk secret) is het opstarten van de pod zelf, en dat
+    # meet de e2e-probe al doordat hij uberhaupt draait.
+    ServiceType.IMAGE_REGISTRIES,
 }
 
 

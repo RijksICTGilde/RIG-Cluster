@@ -3,7 +3,7 @@
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
   "title": "ZAD Project File (v2.8)",
   "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
-  "x-zad-schema-version": 2.8,
+  "x-zad-schema-version": 2.9,
   "type": "object",
   "required": ["name"],
   "additionalProperties": false,
@@ -28,10 +28,6 @@
     "repositories": {
       "type": "array",
       "items": { "$ref": "#/$defs/repository" }
-    },
-    "registries": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/registry" }
     },
     "components": {
       "type": "array",
@@ -102,19 +98,6 @@
         "branch": { "type": "string" },
         "path": { "type": "string" },
         "project_name": { "type": "string" }
-      }
-    },
-
-    "registry": {
-      "type": "object",
-      "required": ["name", "url"],
-      "additionalProperties": false,
-      "properties": {
-        "name": { "type": "string" },
-        "url": { "type": "string", "pattern": "^(?:(?:https?|ssh|git)://)?[^\\s\\u0000\"]+\\Z" },
-        "username": { "type": "string" },
-        "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
-        "secretName": { "type": "string" }
       }
     },
 
@@ -360,7 +343,6 @@
         "reference": { "type": "string" },
         "image": { "type": "string", "pattern": "^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\\Z" },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
-        "registry": { "type": "string" },
         "resources": { "$ref": "#/$defs/resources" },
         "path": {
           "type": "array",

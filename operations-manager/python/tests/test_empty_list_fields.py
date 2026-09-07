@@ -53,6 +53,7 @@ UNREACHABLE_BY_SCHEMA_WALK = {
     "services/cross-domain-access/config/outbound",
     "services/invite/config/active",
     "services/invite/config/active[*]/auth-methods",
+    "services/image-registries/config/registries",
     "services/invite/config/active[*]/realm-roles",
     "services/keycloak/config/additional-clients",
     "services/keycloak/config/additional-clients[*]/redirect-uris",

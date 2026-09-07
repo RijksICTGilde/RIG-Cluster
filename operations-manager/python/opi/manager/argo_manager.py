@@ -10,8 +10,10 @@ from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
 from opi.utils.naming import (
+    PROJECT_LEVEL_DIR,
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
+    generate_argocd_project_application_name,
     generate_argocd_repository_secret_name,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_application_filename,
@@ -139,6 +141,10 @@ class ArgoManager:
         await self.create_repository_secrets(project_data, deployment_name, deployment_names)
         await self.create_app_projects(project_data, deployment_name, deployment_names)
         await self.create_applications(project_data, deployment_name, deployment_names)
+        # De applicatie voor het PROJECTniveau staat naast de AppProject in dezelfde
+        # projectmap en is per definitie projectbreed, dus hij hangt niet aan de
+        # deployment-scope hierboven. Idempotent: dezelfde inhoud geeft geen diff.
+        await self.create_project_application(project_data)
         # The kustomization is a single shared per-project file that must enumerate
         # every manifest, so it intentionally stays project-wide.
         await self.create_kustomization_files(project_data, deployment_name)
@@ -493,6 +499,7 @@ class ArgoManager:
         repo_path: str,
         destination_namespace: str,
         project_label: str,
+        sync_wave: int = 1,
     ) -> str:
         """
         Generate an ArgoCD application manifest using the template file.
@@ -506,6 +513,8 @@ class ArgoManager:
             repo_path: Path in the Git repository
             destination_namespace: Target namespace
             project_label: Project label
+            sync_wave: ArgoCD sync-wave. Deployments run on 1; the project level runs on 0
+                so what is namespace-wide is there before the pods that need it.
 
         Returns:
             String containing the YAML manifest
@@ -523,6 +532,7 @@ class ArgoManager:
             "repoPath": repo_path,
             "labels": {"project": project_label},
             "destination": {"namespace": destination_namespace},
+            "sync_wave": sync_wave,
         }
 
         # Read and process the manifest template
@@ -637,6 +647,63 @@ class ArgoManager:
         except Exception as e:
             logger.exception(f"Error creating ArgoCD application: {e}")
             return False
+
+    async def create_project_application(self, project_data: dict[str, Any]) -> bool:
+        """Maak de ArgoCD-applicatie voor het PROJECTniveau van de deployments-repo.
+
+        Naast de AppProject die in dezelfde projectmap staat, en met sync-wave 0 terwijl de
+        deployment-applicaties op 1 staan, zodat het projectniveau eerst gaat. Hij wijst
+        naar ``<cluster>/<project>/_project`` -- de map met wat namespace-breed is in plaats
+        van van een enkele deployment.
+
+        De naam is ``{project}-project``; dat is de reden dat ``project`` in
+        ``RESERVED_DEPLOYMENT_NAMES`` staat.
+        """
+        project_name = await self.project_manager.get_name()
+        deployments = await self.project_manager.get_deployments(cluster_filter=True)
+        if not deployments:
+            logger.debug(f"Geen deployments op dit cluster voor '{project_name}'; geen projectapplicatie")
+            return True
+
+        deployment = min(deployments, key=lambda d: str(d.get("name", "")))
+        cluster_name = str(deployment.get("cluster"))
+        base_namespace = str(deployment.get("namespace"))
+        namespace = get_prefixed_namespace(cluster_name, base_namespace)
+
+        repositories = project_data.get("repositories", [])
+        repo_info = next((r for r in repositories if r.get("name") == deployment.get("repository")), None)
+        if not repo_info:
+            logger.error(f"Repository not found for project application: {deployment.get('repository')}")
+            return False
+
+        repo_path = repo_info.get("path", "")
+        project_path = f"{cluster_name}/{project_name}/{PROJECT_LEVEL_DIR}"
+        if repo_path:
+            project_path = f"{repo_path}/{project_path}"
+
+        app_name = generate_argocd_project_application_name(project_name)
+        content = self.generate_application_manifest(
+            name=app_name,
+            namespace=get_argo_namespace(cluster_name),
+            argo_project=generate_argocd_appproject_prefix(project_name, base_namespace),
+            repo_url=make_argocd_repository_url_unique(repo_info.get("url"), project_name),
+            target_revision=repo_info.get("branch", "main"),
+            repo_path=project_path,
+            destination_namespace=namespace,
+            project_label=project_name,
+            sync_wave=0,
+        )
+
+        git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
+        working_dir = await git_connector_for_argocd.get_working_dir()
+        project_dir = os.path.join(str(working_dir), cluster_name, str(project_name))
+        os.makedirs(project_dir, exist_ok=True)
+        output_filename = get_output_filename_from_template("argocd-application.yaml.jinja", app_name)
+        with open(os.path.join(project_dir, output_filename), "w") as f:
+            f.write(content)
+
+        logger.info(f"Successfully created ArgoCD project application file: {output_filename}")
+        return True
 
     async def create_kustomization_files(
         self, project_data: dict[str, Any], deployment_name: str | None = None
