@@ -1,0 +1,28 @@
+apiVersion: quay.redhat.com/v1
+kind: Organization
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: "{{ name }}"
+    app.kubernetes.io/component: image-registry
+    created-by: operations-manager
+spec:
+  friendlyName: "{{ friendly_name }}"
+  suffix: "{{ suffix }}"
+  proxyCache:
+    upstreamRegistry: "{{ upstream }}"
+    {% if credentials_secret %}
+    credentialsSecret:
+      name: "{{ credentials_secret }}"
+    {% endif %}
+  robot:
+    imagePullSecret:
+      # Expliciet gezet: de operator leidt deze naam af ZONDER spec.suffix, en dan
+      # botsen twee projecten met dezelfde upstream tenantbreed op een naam.
+      name: "{{ pull_secret_name }}"
+    rotation:
+      # rotation.enabled: false doet niet wat de documentatie belooft -- het token krijgt
+      # alsnog retentionDays en verloopt, zonder dat iemand het ververst. Dus altijd aan.
+      enabled: true
+      retentionDays: {{ rotation_days }}

@@ -124,8 +124,8 @@ class TestServiceConfigSectionsLookup:
 
     def test_lookup_count(self):
         # +1 for postgresql-database's schema-list section (RC-17), +2 for the redis /
-        # minio-storage project-level sections (RC-25).
-        assert len(SERVICE_CONFIG_SECTIONS) == 10
+        # minio-storage project-level sections (RC-25), +1 for image-registries.
+        assert len(SERVICE_CONFIG_SECTIONS) == 11
 
 
 class TestFlowDefinitions:
@@ -133,8 +133,8 @@ class TestFlowDefinitions:
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25).
-        assert len(CREATE_FLOW.sections) == 17
+        # minio-storage (RC-25), +1 for image-registries.
+        assert len(CREATE_FLOW.sections) == 18
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
         # invite-config sits after the keycloak step so its realm-role picker reads the
         # keycloak config already entered in the draft.
@@ -144,14 +144,17 @@ class TestFlowDefinitions:
         # is populated from the components already in the draft project.
         section_ids = [s.section_id for s in CREATE_FLOW.sections]
         assert section_ids.index("sleep-mode-config") > section_ids.index("components")
+        # image-registries-config staat VOOR de componentenstap: de registry-select op een
+        # component leest die lijst, en een select die zijn opties nog niet kent toont niets.
+        assert section_ids.index("image-registries-config") < section_ids.index("components")
 
     def test_edit_flow(self):
         assert EDIT_FLOW.flow_id == "edit-project"
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25).
-        assert len(EDIT_FLOW.sections) == 16
+        # minio-storage (RC-25), +1 for image-registries.
+        assert len(EDIT_FLOW.sections) == 17
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]

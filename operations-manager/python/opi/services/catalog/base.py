@@ -636,6 +636,46 @@ class DeploymentManifestSpec:
     values: dict[str, Any]
 
 
+@dataclass
+class ProjectManifestContext:
+    """Inputs a service needs to contribute PROJECT-wide manifests.
+
+    The deployments repo has a level above the deployments: ``<cluster>/<project>/_project/``,
+    with its own kustomization and its own ArgoCD application. What lives there is what is
+    scoped to the namespace rather than to one deployment -- a namespace-scoped pull secret,
+    a proxy-cache ``Organization``, the project's own serviceaccount. The underscore is
+    deliberate: a deployment name is a DNS label and cannot contain one, so this directory
+    can never collide with a deployment.
+
+    Unlike ``DeploymentManifestContext`` this runs ONCE per project, on a project-wide
+    event (a refresh, or a change to a service config), not on every deployment task.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]
+    cluster: str
+    namespace: str
+
+
+@dataclass
+class ProjectManifestSpec:
+    """One project-wide manifest a service asks the generic emitter to write.
+
+    Same shape and the same rule as ``DeploymentManifestSpec``, one level up: ``filename``
+    MUST start with ``f"{service_type.value}-"`` so the symmetric prune can remove this
+    service's files again when it stops contributing. ``encrypt`` marks a manifest that
+    carries a secret and must go through SOPS.
+    """
+
+    #: Basename without ``.yaml``. Must start with ``f"{service_type.value}-"``.
+    filename: str
+    #: Template path resolvable relative to the ``manifests/`` directory.
+    template_path: str
+    values: dict[str, Any]
+    #: Whether the rendered file must be SOPS-encrypted before it is committed.
+    encrypt: bool = False
+
+
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -1501,6 +1541,22 @@ class Service(ABC):
         (``ProjectManager._write_secret_file``) does the actual write. A service that
         cannot build its secret (no provisioned credentials) returns ``[]`` and logs,
         matching the old warn-and-skip branches.
+        """
+        return []
+
+    def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
+        """Project-wide manifests this service contributes (default none).
+
+        The sibling of ``contribute_deployment_manifests`` one level up: resources that
+        belong to the whole project in its namespace rather than to one deployment. A
+        service with nothing to add inherits the empty default; the generic emitter and the
+        symmetric prune both skip it.
+
+        This is a HOOK and not a hardcoded writer on purpose. The ACME issuers, the
+        tenant-baseline NetworkPolicy and the namespace itself are project-wide too and sit
+        hardcoded today in places that have nothing to do with them; with this hook they
+        can later get an owner -- the service that needs the thing contributes it, and the
+        generic path needs to know nothing about it.
         """
         return []
 

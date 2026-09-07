@@ -27,6 +27,7 @@ from opi.forms.visualizers.wizard_sections import (
     DEPLOYMENTS_SECTION,
     IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
+    IMAGE_REGISTRIES_CONFIG_SECTION,
     INVITE_CONFIG_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     MINIO_CONFIG_SECTION,
@@ -108,6 +109,9 @@ CREATE_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
+        # Voor COMPONENTS_SECTION: de registry-select op een component leest deze lijst, dus
+        # hij moet al ingevuld zijn als het componentformulier gerenderd wordt.
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         # After KEYCLOAK_CONFIG_SECTION: the realm-role picker reads the keycloak config
         # (realm-roles + authorization-wall role) from the draft entered in the step before.
@@ -141,6 +145,7 @@ EDIT_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
@@ -197,6 +202,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
     show_review=True,
     sections=[
         SERVICES_EDIT_SECTION,
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
@@ -299,6 +305,14 @@ MODAL_EDIT_SEND_EMAIL_FLOW = FormFlow(
     sections=[SEND_EMAIL_CONFIG_SECTION],
 )
 
+MODAL_EDIT_IMAGE_REGISTRIES_FLOW = FormFlow(
+    flow_id="modal-edit-image-registries-config",
+    title="Eigen container registries",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[IMAGE_REGISTRIES_CONFIG_SECTION],
+)
+
 # ---------------------------------------------------------------------------
 # Backup & Restore modal flows
 # ---------------------------------------------------------------------------
@@ -345,6 +359,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_REDIS_FLOW.flow_id: MODAL_EDIT_REDIS_FLOW,
     MODAL_EDIT_MINIO_FLOW.flow_id: MODAL_EDIT_MINIO_FLOW,
     MODAL_EDIT_SEND_EMAIL_FLOW.flow_id: MODAL_EDIT_SEND_EMAIL_FLOW,
+    MODAL_EDIT_IMAGE_REGISTRIES_FLOW.flow_id: MODAL_EDIT_IMAGE_REGISTRIES_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 
