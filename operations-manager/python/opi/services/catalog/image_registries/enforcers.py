@@ -23,7 +23,7 @@ from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.catalog.image_registries.rules import normalize_image
+from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
 
@@ -131,7 +131,7 @@ def _repository_under(upstream: str, images: list[str]) -> str | None:
     De tag hoort bij de image en niet bij de repository: ``list-tags`` vraagt juist naar
     de tags, dus een tag meegeven zou de vraag onbeantwoordbaar maken.
     """
-    prefix = normalize_image(upstream)
+    prefix = normalize_prefix(upstream)
     for image in images:
         if image == prefix or image.startswith(prefix + "/"):
             return _strip_reference(image)

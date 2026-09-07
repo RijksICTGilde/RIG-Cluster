@@ -92,6 +92,19 @@ class TestVooruitInvullen:
         )
         assert _values(provider)[0] == "code-overheid"
 
+    def test_een_upstream_zonder_pad_komt_ook_voorop(self) -> None:
+        """De vorm die de vloot echt heeft (``algor-odc``: ``ghcr.io``). De upstream werd
+        eerder door de IMAGE-normalisatie gehaald en werd dan ``docker.io/library/ghcr.io``,
+        dus de passende registry bleef staan waar hij stond en de afnemer moest zelf zoeken.
+        """
+        kaal = {"name": "github-registry", "upstream": "ghcr.io"}
+        anders = {"name": "anders", "upstream": "quay.io/team"}
+        provider = ImageRegistryOptionsProvider(
+            yaml_data=_yaml([anders, kaal]),
+            row_data={"image": "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24"},
+        )
+        assert _values(provider) == ["github-registry", "anders"]
+
     def test_een_korte_naam_wordt_genormaliseerd(self) -> None:
         """``nginx:alpine`` is ``docker.io/library/nginx``; een registry op docker.io hoort
         hem dus te vangen."""

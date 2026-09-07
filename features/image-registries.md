@@ -116,6 +116,15 @@ Drie dingen die in die ene functie horen en nergens anders:
    secret van die regel (het dp-bn7-geval).
 3. **Geen match** betekent image ongewijzigd en geen secret.
 
+Een UPSTREAM-prefix gaat door een eigen normalisatie (`normalize_prefix()`), en dat is geen
+dubbeling: een prefix is een pad en geen naam. `ghcr.io` is al compleet, terwijl
+`normalize_image()` er `docker.io/library/ghcr.io` van maakt -- die aanvulling hoort bij een
+image-verwijzing (`nginx` is de naam van een repository) en niet bij een prefix. Wie de
+image-normalisatie op een prefix loslaat, laat een upstream zonder pad -- de vorm die
+`algor-odc` in de vloot heeft -- nooit meer matchen. De twee plekken die een prefix
+vergelijken zijn de tokentoets (`enforcers.py`) en het vooruit invullen van het keuzeveld
+(`providers.py`).
+
 `display_image()` is de weg terug, voor de schermen: een gebruiker ziet zijn eigen registry
 in plaats van de kale RCR-URL.
 

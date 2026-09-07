@@ -26,6 +26,7 @@ from opi.services.catalog.image_registries.resolution import (
 from opi.services.catalog.image_registries.rules import (
     RegistryRule,
     normalize_image,
+    normalize_prefix,
     original_image,
     resolve_image,
 )
@@ -82,6 +83,35 @@ class TestNormalisatieVanKorteNamen:
     def test_zonder_normalisatie_zou_hij_zijn_secret_missen(self) -> None:
         """De tegenproef: het is de normalisatie die de match maakt, niet de regel."""
         assert not "nginx:alpine".startswith("docker.io")
+
+
+class TestNormalisatieVanEenPrefix:
+    """Een upstream is een PAD, geen naam: ``ghcr.io`` is al compleet.
+
+    ``normalize_image`` vult voor een verwijzing zonder host ``docker.io/library/`` aan,
+    en dat is voor een prefix fout -- ``ghcr.io`` werd zo ``docker.io/library/ghcr.io``
+    en matchte daarna geen enkele image.
+    """
+
+    @pytest.mark.parametrize(
+        ("prefix", "verwacht"),
+        [
+            ("ghcr.io", "ghcr.io"),
+            ("docker.io", "docker.io"),
+            ("localhost:5000", "localhost:5000"),
+            ("rcr.rijksapps.nl/rig", "rcr.rijksapps.nl/rig"),
+            ("code.overheid.nl/robbert.uittenbroek", "code.overheid.nl/robbert.uittenbroek"),
+            ("bitnami", "docker.io/bitnami"),
+            ("", ""),
+        ],
+    )
+    def test_een_host_is_al_compleet(self, prefix: str, verwacht: str) -> None:
+        assert normalize_prefix(prefix) == verwacht
+
+    def test_het_verschil_met_de_image_normalisatie(self) -> None:
+        """De tegenproef op de fout zelf: dezelfde invoer, de andere functie."""
+        assert normalize_image("ghcr.io") == "docker.io/library/ghcr.io"
+        assert normalize_prefix("ghcr.io") == "ghcr.io"
 
 
 class TestEersteMatchWint:

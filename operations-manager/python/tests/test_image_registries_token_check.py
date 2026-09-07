@@ -63,6 +63,15 @@ class TestDeRepositoryDieGetoetstWordt:
     def test_alleen_op_segmentgrens(self) -> None:
         assert _repository_under("code.overheid.nl/robbert", ["code.overheid.nl/robbertx/app:1"]) is None
 
+    def test_een_upstream_zonder_pad_vindt_zijn_image_ook(self) -> None:
+        """De vorm die de vloot echt heeft: ``algor-odc`` noemt zijn upstream ``ghcr.io``.
+
+        Een prefix door de IMAGE-normalisatie halen maakte er ``docker.io/library/ghcr.io``
+        van, en dan matcht geen enkele image -- de toets sloeg zwijgend over.
+        """
+        image = "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24"
+        assert _repository_under("ghcr.io", [image]) == "ghcr.io/rijksictgilde/algoritmeregister/backend"
+
 
 @pytest.mark.asyncio
 class TestDeToets:
@@ -138,6 +147,25 @@ class TestDeToets:
         ):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         assert exc.value.field_path.endswith("registries[1]/password")
+
+    async def test_een_upstream_zonder_pad_wordt_ook_getoetst(self) -> None:
+        """Dezelfde invoer, alleen de upstream verschilt: ``ghcr.io`` tegenover
+        ``ghcr.io/rijksictgilde``. Op de kale host sloeg de toets zwijgend over -- skopeo
+        werd 0x aangeroepen, D5 werd niet geleverd, en het log meldde ten onrechte dat er
+        nog geen image was."""
+        kaal = {**REGISTRY, "upstream": "ghcr.io"}
+        image = "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24"
+        connector = _connector(False, "unauthorized: reqPackageAccess")
+        data = _data([kaal], [image])
+        with (
+            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        assert exc.value.field_path.endswith("registries[0]/password")
+        connector.check_repository_access.assert_awaited_once_with(
+            "ghcr.io/rijksictgilde/algoritmeregister/backend", "robbert.uittenbroek", "een-token"
+        )
 
 
 class TestDeConnector:
