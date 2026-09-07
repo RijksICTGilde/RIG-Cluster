@@ -15,10 +15,21 @@ eerder is opgeruimd.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
+import pytest
+import yaml
+from opi.core.project_schema import ProjectIntegrityError
+from opi.generation.manifests import render_template
 from opi.manager.project_manager import _select_obsolete_service_manifests
+from opi.manager.project_validation import validate_project_structure
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import (
+    PROJECT_LEVEL_DIR,
+    RESERVED_DEPLOYMENT_NAMES,
+    generate_argocd_project_application_name,
+)
 
 PREFIXES = {f"{service.value}-" for service in ServiceType}
 
@@ -72,39 +83,22 @@ class TestDePrune:
 class TestDeMapNaam:
     def test_de_underscore_kan_nooit_botsen_met_een_deployment(self) -> None:
         """Een deploymentnaam is een DNS-label en kan geen underscore bevatten."""
-        from opi.utils.naming import PROJECT_LEVEL_DIR
-
         assert PROJECT_LEVEL_DIR.startswith("_")
 
     def test_de_gereserveerde_deploymentnaam_hoort_bij_de_applicatienaam(self) -> None:
-        from opi.utils.naming import RESERVED_DEPLOYMENT_NAMES, generate_argocd_project_application_name
-
         assert generate_argocd_project_application_name("demo") == "demo-project"
         assert "project" in RESERVED_DEPLOYMENT_NAMES
 
     def test_een_deployment_die_project_heet_wordt_geweigerd(self) -> None:
-        import asyncio
-
-        from opi.core.project_schema import ProjectIntegrityError
-        from opi.manager.project_validation import validate_project_structure
-
         data = {
             "name": "demo",
             "components": [{"name": "web"}],
             "deployments": [{"name": "project", "cluster": "odcn-production", "namespace": "demo", "components": []}],
         }
-        try:
+        with pytest.raises(ProjectIntegrityError, match="gereserveerde"):
             asyncio.run(validate_project_structure(data))
-        except ProjectIntegrityError as e:
-            assert "gereserveerde" in str(e)
-        else:
-            raise AssertionError("een deployment met de naam 'project' had geweigerd moeten worden")
 
     def test_een_gewone_deploymentnaam_mag_gewoon(self) -> None:
-        import asyncio
-
-        from opi.manager.project_validation import validate_project_structure
-
         data = {
             "name": "demo",
             "components": [{"name": "web"}],
@@ -117,8 +111,6 @@ class TestDeArgoApplicatie:
     def test_het_projectniveau_gaat_op_wave_0_en_een_deployment_op_1(self) -> None:
         """Ordening, geen gereedheid: wat namespace-breed is staat er voor de pods die het
         nodig hebben."""
-        import yaml
-        from opi.generation.manifests import render_template
 
         base = {
             "name": "demo-app",

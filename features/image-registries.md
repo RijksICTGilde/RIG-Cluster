@@ -123,6 +123,12 @@ Het enige dat per cluster echt verschilt is wat er moet worden aangemaakt
 | `direct-secret` | een dockerconfigjson-secret in de namespace |
 | `quay-proxy-organization` | een credentials-secret plus een `Organization` met proxyCache |
 
+De groep en versie van de `Organization`-CRD staan in de clusterconfig
+(`organization_api_version`) en niet in het sjabloon. Reden: het is een platformfeit van
+ODC-Noord, de proef op productie is met de hand gedaan en de exacte apiVersion is niet in
+dit repo vastgelegd. Wijkt hij af, dan is dat één regel clusterconfig in plaats van een
+sjabloonwijziging.
+
 Een derde platform is een derde backend plus een tabel in de clusterconfig, en geen
 wijziging aan de dienst.
 

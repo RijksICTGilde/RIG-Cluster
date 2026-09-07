@@ -163,6 +163,14 @@ class TestDeGerenderdeOrganisatie:
             "codeoverheid-rig-demo-upstream-credentials"
         )
 
+    def test_de_api_version_komt_uit_de_clusterconfig(self, tmp_path: Any, service: ImageRegistriesService) -> None:
+        """Een platformfeit, geen vaste waarde in het sjabloon: als de groep/versie van de
+        CRD afwijkt is dat een regel clusterconfig en niet een sjabloonwijziging."""
+        from opi.core.cluster_config import get_image_registries_config
+
+        manifest = self._render(tmp_path, service)
+        assert manifest["apiVersion"] == get_image_registries_config(ODCN)["organization_api_version"]
+
     def test_rotatie_staat_altijd_aan(self, tmp_path: Any, service: ImageRegistriesService) -> None:
         """rotation.enabled: false doet niet wat de documentatie belooft: het token krijgt
         alsnog retentionDays en verloopt, zonder dat iemand het ververst."""
