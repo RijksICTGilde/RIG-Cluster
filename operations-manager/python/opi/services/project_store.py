@@ -65,7 +65,7 @@ from opi.core.project_schema import (
     find_plaintext_secret_violations,
     validate_project_schema,
 )
-from opi.manager.project_validation import validate_project_structure
+from opi.manager.project_validation import find_plaintext_service_config_violations, validate_project_structure
 from opi.services.project_service import ProjectSummary, ProjectUser, get_project_service
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
@@ -685,7 +685,10 @@ class GitProjectStore(ProjectStore):
             # enforce=False tolerates pre-existing drift, never a decrypted secret.
             # Writing back a get_decrypted() view would otherwise land plaintext
             # credentials in git through one of the 11 non-enforcing call sites.
-            leaked = find_plaintext_secret_violations(data)
+            # BOTH halves: project_v2.json describes the secrets at the project root,
+            # a service's own model describes the ones in its config block. A secret
+            # that moves from the one to the other must not fall between them.
+            leaked = find_plaintext_secret_violations(data) + find_plaintext_service_config_violations(data)
             if leaked:
                 raise ProjectSchemaError(
                     f"Projectbestand '{data.get('name', '(onbekend)')}' is geweigerd: "

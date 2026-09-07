@@ -10,13 +10,16 @@ and BEFORE any write or commit. Fails closed on the first violation.
 """
 
 import logging
+from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
-from opi.core.project_schema import ProjectIntegrityError
+from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
@@ -37,6 +40,8 @@ from opi.utils.naming import RESERVED_DEPLOYMENT_NAMES, generate_extra_database_
 from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from opi.forms.editables.editable import Editable
 
 logger = logging.getLogger(__name__)
@@ -151,6 +156,138 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
         ) from None
 
 
+@dataclass(frozen=True)
+class ServiceConfigBlock:
+    """One service config block found in a project file, and where it sits.
+
+    The walk that finds these is deliberately shared: ``validate_service_configs``
+    checks each block against its service's model, and
+    ``find_plaintext_service_config_violations`` checks the same blocks for a stored
+    secret in plain text. Two walks would be two chances for one of them to miss a
+    layer -- which is how a config-borne secret loses its guard.
+    """
+
+    name: str
+    config: Any
+    layer: ConfigLayer
+    where: str
+    from_version: str | None
+    path: str
+
+
+def _service_config_blocks(project_data: dict[str, Any]) -> Iterator[ServiceConfigBlock]:
+    """Every service config block in a project file, at every layer it can live at.
+
+    Project-level service definitions (keycloak, namespace-postgres, auth-wall),
+    component-level references (storage mounts, metrics port/path), deployment-level
+    entries and deployment-component entries. A bare service reference and a service
+    without a config block yield nothing.
+    """
+    view = Project(project_data)
+
+    # Project-level service definitions.
+    for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
+        entry = view.service_entry(name)
+        raw = view.service_config(name)
+        if raw is None:
+            continue  # bare service / no project-level config to validate
+        yield ServiceConfigBlock(
+            name=name,
+            config=raw,
+            layer=ConfigLayer.PROJECT,
+            where="op projectniveau",
+            from_version=service_entry_schema_version(entry),
+            path=f"services/{name}/config",
+        )
+
+    # Component-level service references (storage mounts, metrics port/path). Their
+    # config lives on the component's service entry, not at project level, so the
+    # project-level walk above never sees it.
+    for comp_index, component in enumerate(project_data.get("components", []) or []):
+        if not isinstance(component, dict):
+            continue
+        comp_name = component.get("name", "(onbekend)")
+        for entry_index, entry in enumerate(component.get("services", []) or []):
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is None or config is None:
+                continue  # bare reference / no config to validate
+            yield ServiceConfigBlock(
+                name=name,
+                config=config,
+                layer=ConfigLayer.COMPONENT,
+                where=f"in component '{comp_name}'",
+                from_version=service_entry_schema_version(entry),
+                path=f"components/{comp_index}/services/{entry_index}/config",
+            )
+
+    # Deployment-level service entries (clone state today, anything a service declares
+    # tomorrow). ``$defs/deployment-service-config`` in the global schema is deliberately
+    # open, so this walk is the only thing between a typo and a silently ignored setting.
+    for dep_index, deployment in enumerate(project_data.get("deployments", []) or []):
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name", "(onbekend)")
+        for entry_index, entry in enumerate(deployment.get("services", []) or []):
+            name = service_entry_name(entry)
+            config = service_entry_config(entry)
+            if name is None or config is None:
+                continue  # bare reference / no config to validate
+            yield ServiceConfigBlock(
+                name=name,
+                config=config,
+                layer=ConfigLayer.DEPLOYMENT,
+                where=f"in deployment '{dep_name}'",
+                from_version=service_entry_schema_version(entry),
+                path=f"deployments/{dep_index}/services/{entry_index}/config",
+            )
+
+    # Deployment-component service entries. Two shapes live here: a dict keyed by service
+    # name (``{publish-on-web: {config: ...}}``) and, for the storage services, a list of
+    # per-mount records under that key. Both are walked, because the global schema no longer
+    # guards this layer: opening up the deployment envelope moved that job here.
+    for dep_index, deployment in enumerate(project_data.get("deployments", []) or []):
+        if not isinstance(deployment, dict):
+            continue
+        dep_name = deployment.get("name", "(onbekend)")
+        for comp_index, component in enumerate(deployment.get("components", []) or []):
+            if not isinstance(component, dict):
+                continue
+            comp_name = component.get("reference") or component.get("name", "(onbekend)")
+            where = f"in component '{comp_name}' van deployment '{dep_name}'"
+            base = f"deployments/{dep_index}/components/{comp_index}/services"
+            services = component.get("services")
+            if isinstance(services, dict):
+                for name, body in services.items():
+                    for body_index, entry in enumerate(body if isinstance(body, list) else [body]):
+                        config = entry.get("config") if isinstance(entry, dict) else None
+                        if config is None:
+                            continue
+                        suffix = f"{name}/{body_index}" if isinstance(body, list) else name
+                        yield ServiceConfigBlock(
+                            name=name,
+                            config=config,
+                            layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                            where=where,
+                            from_version=service_entry_schema_version(entry),
+                            path=f"{base}/{suffix}/config",
+                        )
+            elif isinstance(services, list):
+                for entry_index, entry in enumerate(services):
+                    name = service_entry_name(entry)
+                    config = service_entry_config(entry)
+                    if name is None or config is None:
+                        continue
+                    yield ServiceConfigBlock(
+                        name=name,
+                        config=config,
+                        layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                        where=where,
+                        from_version=service_entry_schema_version(entry),
+                        path=f"{base}/{entry_index}/config",
+                    )
+
+
 def validate_service_configs(project_data: dict[str, Any]) -> None:
     """Validate every service's config against its provider's typed model (RC-5 A:
     the per-service config-validation chokepoint).
@@ -165,100 +302,57 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
     view = Project(project_data)
     project_name = project_data.get("name", "(onbekend)")
 
-    # Project-level service definitions.
+    # The DEFINE side first: what a service stores under ``data`` (the attachments
+    # catalog today). It was validated by nothing at all -- the config walk only ever
+    # looked at ``config`` -- so a catalog entry with a missing filename or an id that
+    # cannot become a volume name was committed and failed at deploy time.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
-        entry = view.service_entry(name)
-        # The DEFINE side first: what the service stores under ``data`` (the attachments
-        # catalog today). It was validated by nothing at all -- this walk only ever
-        # looked at ``config`` -- so a catalog entry with a missing filename or an id
-        # that cannot become a volume name was committed and failed at deploy time.
-        data = service_entry_data(entry)
+        data = service_entry_data(view.service_entry(name))
         if data is not None:
             _validate_one_data_block(name, data, ConfigLayer.PROJECT, "op projectniveau", project_name)
-        raw = view.service_config(name)
-        if raw is None:
-            continue  # bare service / no project-level config to validate
-        from_version = service_entry_schema_version(entry)
-        _validate_one_config(name, raw, ConfigLayer.PROJECT, "op projectniveau", project_name, from_version)
 
-    # Component-level service references (storage mounts, metrics port/path). Their
-    # config lives on the component's service entry, not at project level, so the
-    # project-level walk above never sees it.
-    for component in project_data.get("components", []) or []:
-        if not isinstance(component, dict):
-            continue
-        comp_name = component.get("name", "(onbekend)")
-        for entry in component.get("services", []) or []:
-            name = service_entry_name(entry)
-            config = service_entry_config(entry)
-            if name is None or config is None:
-                continue  # bare reference / no config to validate
-            from_version = service_entry_schema_version(entry)
-            _validate_one_config(
-                name, config, ConfigLayer.COMPONENT, f"in component '{comp_name}'", project_name, from_version
-            )
-
-    # Deployment-level service entries (clone state today, anything a service declares
-    # tomorrow). ``$defs/deployment-service-config`` in the global schema is deliberately
-    # open, so this walk is the only thing between a typo and a silently ignored setting.
-    for deployment in project_data.get("deployments", []) or []:
-        if not isinstance(deployment, dict):
-            continue
-        dep_name = deployment.get("name", "(onbekend)")
-        for entry in deployment.get("services", []) or []:
-            name = service_entry_name(entry)
-            config = service_entry_config(entry)
-            if name is None or config is None:
-                continue  # bare reference / no config to validate
-            from_version = service_entry_schema_version(entry)
-            _validate_one_config(
-                name, config, ConfigLayer.DEPLOYMENT, f"in deployment '{dep_name}'", project_name, from_version
-            )
-
-    # Deployment-component service entries. Two shapes live here: a dict keyed by service
-    # name (``{publish-on-web: {config: ...}}``) and, for the storage services, a list of
-    # per-mount records under that key. Both are walked, because the global schema no longer
-    # guards this layer: opening up the deployment envelope moved that job here.
-    for deployment in project_data.get("deployments", []) or []:
-        if not isinstance(deployment, dict):
-            continue
-        dep_name = deployment.get("name", "(onbekend)")
-        for component in deployment.get("components", []) or []:
-            if not isinstance(component, dict):
-                continue
-            comp_name = component.get("reference") or component.get("name", "(onbekend)")
-            where = f"in component '{comp_name}' van deployment '{dep_name}'"
-            services = component.get("services")
-            if isinstance(services, dict):
-                for name, body in services.items():
-                    for entry in body if isinstance(body, list) else [body]:
-                        config = entry.get("config") if isinstance(entry, dict) else None
-                        if config is None:
-                            continue
-                        _validate_one_config(
-                            name,
-                            config,
-                            ConfigLayer.DEPLOYMENT_COMPONENT,
-                            where,
-                            project_name,
-                            service_entry_schema_version(entry),
-                        )
-            elif isinstance(services, list):
-                for entry in services:
-                    name = service_entry_name(entry)
-                    config = service_entry_config(entry)
-                    if name is None or config is None:
-                        continue
-                    _validate_one_config(
-                        name,
-                        config,
-                        ConfigLayer.DEPLOYMENT_COMPONENT,
-                        where,
-                        project_name,
-                        service_entry_schema_version(entry),
-                    )
+    for block in _service_config_blocks(project_data):
+        _validate_one_config(block.name, block.config, block.layer, block.where, project_name, block.from_version)
 
     _validate_owned_properties(project_data, project_name)
+
+
+def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> list[str]:
+    """Paths in a SERVICE config that must hold an AGE-encrypted value but do not.
+
+    The counterpart of ``find_plaintext_secret_violations`` for the half of a project
+    file that ``project_v2.json`` deliberately does not describe: a service's config
+    shape is owned by that service's model. Without this, a secret that lives in a
+    service config -- the image-registries token -- would be guarded on the enforcing
+    write paths only, and the eleven ``enforce_validation=False`` call sites would
+    commit it in plain text. That is exactly what happened when ``registries[]`` moved
+    out of the project root and left its AGE pattern behind.
+
+    Like its counterpart the detection is derived from the schema (a ``pattern``
+    carrying the AGE marker), never from a field list, so a service that starts storing
+    a secret is covered the moment its model says the value must be encrypted. The block
+    is checked in the shape it is STORED in, not migrated forward: what lands in git is
+    what is judged.
+
+    Returns the offending field paths, empty when there are none.
+    """
+    violations: list[str] = []
+    for block in _service_config_blocks(project_data):
+        try:
+            service_type = ServiceType(block.name)
+        except ValueError:
+            continue  # unknown service name -- other validation handles it
+        model = get_service(service_type).config_model_for(block.layer)
+        if model is None:
+            continue  # service has no model at this layer, so nothing declares a secret
+        violations.extend(age_pattern_violations(_model_validator(model), block.config, prefix=block.path))
+    return sorted(set(violations))
+
+
+@cache
+def _model_validator(model: type[BaseModel]) -> Draft202012Validator:
+    """The JSON-schema validator for one config model, built once per model."""
+    return Draft202012Validator(model.model_json_schema())
 
 
 def _validate_owned_properties(project_data: dict[str, Any], project_name: str) -> None:

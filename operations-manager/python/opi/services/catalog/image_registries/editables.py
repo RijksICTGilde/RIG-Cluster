@@ -2,47 +2,23 @@
 
 Twee lagen: de registries op projectniveau (een sequence), en de verwijzing bij naam op
 component- en deployment-componentniveau (een select).
+
+Hier staan het yaml-pad, de validators en de converters, en verder niets: het formulier en
+de API lopen daarmee hetzelfde logicapad. Waar een regel ook voor de API geldt staat hij in
+``config_model.py`` en wijst dit bestand ernaar (``ModelFieldValidator``), zodat er een
+definitie is en geen tweeling die uit elkaar loopt.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import KubernetesNameValidator, RequiredValidator
+from opi.forms.editables.validators import KubernetesNameValidator, ModelFieldValidator, RequiredValidator
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.image_registries.config_model import UPSTREAM_MESSAGE, RegistryEntry
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.services_enums import ServiceType
 
 _SVC = ServiceType.IMAGE_REGISTRIES
-
-
-class UpstreamValidator:
-    """De registry waar de images echt staan: host, eventueel gevolgd door een pad.
-
-    De afnemer schrijft de UPSTREAM, nooit een RCR-URL. Dat houdt het bestand
-    overdraagbaar naar een ander platform en het is precies wat er vandaag met de publieke
-    proxies ook gebeurt. Een protocol hoort er niet in, want een image-verwijzing draagt er
-    geen, en een tag of digest hoort bij de image en niet bij de registry.
-    """
-
-    def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:
-        if not value:
-            return ["Dit veld is verplicht"]
-        if not isinstance(value, str):
-            return ["Vul de registry in als tekst, bijvoorbeeld code.overheid.nl/jouw-naam"]
-        text = value.strip()
-        if "://" in text:
-            return ["Laat het protocol weg: schrijf code.overheid.nl/jouw-naam, niet https://..."]
-        host = text.split("/", 1)[0]
-        if "." not in host and host != "localhost" and ":" not in host:
-            return ["De registry moet met een hostnaam beginnen, bijvoorbeeld code.overheid.nl/jouw-naam"]
-        path = text.split("/", 1)[1] if "/" in text else ""
-        if "@" in text or ":" in path:
-            return ["Laat de tag of digest weg: die hoort bij de image, niet bij de registry"]
-        if text != text.lower():
-            return ["Schrijf de registry in kleine letters"]
-        return []
 
 
 def _project(*parts: str) -> str:
@@ -55,10 +31,16 @@ REGISTRY_NAME_EDITABLE = Editable(
     required=True,
 )
 
+# De regel staat in het MODEL en niet hier. Dit veld gaat een manifest in en het is de
+# sleutel waarop een image wordt herkend, dus het formulier mag niet iets anders toelaten
+# dan de API en dan een met de hand geschreven projectbestand. ModelFieldValidator wijst
+# naar dezelfde constraint waarmee ``validate_service_configs`` een opgeslagen bestand
+# toetst; alleen de UITLEG komt van hier, want de pydantic-melding is Engels en praat over
+# patronen.
 REGISTRY_UPSTREAM_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "upstream"),
     required=True,
-    validator=UpstreamValidator(),
+    validator=ModelFieldValidator(RegistryEntry, "upstream", UPSTREAM_MESSAGE),
 )
 
 REGISTRY_USERNAME_EDITABLE = Editable(

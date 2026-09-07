@@ -12,6 +12,7 @@
         "password": {
           "anyOf": [
             {
+              "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:|^plain:)",
               "type": "string"
             },
             {
@@ -37,6 +38,7 @@
         },
         "upstream": {
           "description": "De registry inclusief pad waar de images staan, zonder protocol, bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'.",
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}|localhost)(?:/[a-z0-9][a-z0-9._-]*)*$",
           "title": "Upstream",
           "type": "string"
         },

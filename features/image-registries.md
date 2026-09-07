@@ -191,6 +191,57 @@ bestaanscontrole die de umbrella-refresh aanzet, en er wordt op gewacht tot hij 
 - Het veld `registry:` binnen de config van `namespace-postgresql-database` blijft bestaan:
   dat is een verwijzing bij naam vanuit een andere dienst, en die wijst nu naar een entry in
   de config van `image-registries`.
+- **De constraints verhuizen mee.** `$defs/registry` in `project_v2.json` droeg twee regels
+  die er niet louter cosmetisch stonden, en die staan nu in `config_model.py`. Zie hieronder.
+
+## De twee schemabewakers op de dienstconfig
+
+Een sleutel die van de projectwortel naar een dienstconfig verhuist, verhuist van een schema
+dat jsonschema draait naar een schema dat pydantic draait. De VORM reist dan mee, de
+CONSTRAINTS niet vanzelf -- en juist die twee waren hier dragend.
+
+**`upstream` heeft een patroon** (`UPSTREAM_PATTERN`). Het manifest
+`quay-proxy-organization.yaml.jinja` zet deze waarde in `spec.proxyCache.upstreamRegistry`.
+Zonder patroon breekt een upstream met een aanhalingsteken en een regeleinde uit zijn
+YAML-scalar, en dan staan er extra DOCUMENTEN in dat bestand: het gaat onversleuteld naar
+`<cluster>/<project>/_project/`, komt in de kustomization en wordt door de projectapplicatie
+gesynct, dus ArgoCD maakt ze aan als gewone namespaced resources. Twee onafhankelijke sloten:
+het patroon weigert de waarde aan de poort, en het sjabloon quoteert hem met `yaml_scalar`
+voor het geval hij er binnendoor toch komt (een bestaand bestand, een migratie).
+
+Het patroon is strikter dan het oude `$defs/registry.url`: hostnaam met een punt (of een
+poort, of `localhost`), eventueel een pad, kleine letters, geen protocol en geen tag of
+digest. Allebei de waarden die de vloot werkelijk heeft (`ghcr.io` en `rcr.rijksapps.nl/rig`)
+komen er nog door.
+
+**`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_OR_PLAIN_PATTERN`). Dat is niet alleen
+een vormregel: `find_plaintext_secret_violations` herkent een AGE-veld AAN dat patroon, en
+`ProjectStore._validate` draait die controle op ELKE schrijfroute -- ook op de elf plekken
+met `enforce_validation=False`, waar de rest van de validatie alleen wordt gelogd. De reden
+staat er letterlijk bij: een teruggeschreven `get_decrypted()`-view zou anders
+platte-tekst-credentials in git zetten, en `decrypt_tree()` ontsleutelt generiek elke
+AGE-waarde in de boom, dus ook deze.
+
+Die controle keek alleen naar `project_v2.json`, en een dienstconfig staat daar bewust niet
+in. De helft die een dienst zelf beschrijft wordt daarom gemeten door
+`find_plaintext_service_config_violations` (`opi/manager/project_validation.py`), die
+dezelfde detectie op de configmodellen van de diensten draait. Beide helften worden in
+`ProjectStore._validate` naast elkaar aangeroepen. Ook hier is de detectie AFGELEID van het
+schema (een `pattern` met de AGE-markering) en niet van een handgeschreven veldenlijst, dus
+een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zegt.
+
+## Een regel, een pad: formulier en API
+
+De regel voor `upstream` staat in `config_model.py` en niet in het formulier. Dat model is
+waar de API tegenaan schrijft en waar een opgeslagen projectbestand mee wordt gevalideerd;
+het formulier hergebruikt dezelfde constraint via `ModelFieldValidator`, en levert alleen de
+Nederlandse uitleg. Er is dus een definitie en geen tweeling die uit elkaar loopt.
+
+Dat is niet theoretisch: de vorige vorm had de regel als `UpstreamValidator` in de
+formulierlaag, en `POST /projects/{p}/registries/by-credentials` kwam daar niet langs. Die
+twee endpoints (`by-secret` en `by-credentials`) schrijven nu tegen hetzelfde patroon, zodat
+een aanroeper aan de deur wordt afgewezen in plaats van een laag dieper met een melding over
+een schema.
 
 ## Wat we niet kunnen verbergen
 

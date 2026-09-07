@@ -304,6 +304,23 @@ def _walk_errors(errors: Any) -> Any:
         yield from _walk_errors(error.context or [])
 
 
+def age_pattern_violations(validator: Draft202012Validator, data: Any, *, prefix: str = "") -> list[str]:
+    """Paths in ``data`` that a schema wants AGE-encrypted but that hold plain text.
+
+    The detection is derived from the schema (a ``pattern`` carrying the AGE marker)
+    rather than from a hand-written field list, so it cannot drift when a new secret
+    field is added. ``prefix`` names where ``data`` sits inside a larger document, so
+    a caller that validates a fragment can still report a path a reader recognises.
+    """
+    violations: list[str] = []
+    for error in _walk_errors(validator.iter_errors(data)):
+        schema = error.schema if isinstance(error.schema, dict) else {}
+        if _AGE_PATTERN_MARKER in str(schema.get("pattern", "")):
+            path = "/".join(str(part) for part in error.absolute_path)
+            violations.append("/".join(part for part in (prefix, path) if part) or "(root)")
+    return sorted(set(violations))
+
+
 def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
     """Field paths that must hold an AGE-encrypted value but do not.
 
@@ -313,12 +330,12 @@ def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
     it is not a licence to commit a decrypted secret, which is what writing back a
     ``get_decrypted()`` view would do.
 
+    Covers only what ``project_v2.json`` describes. A secret that lives in a SERVICE
+    config is described by that service's own model, not by this schema, so the same
+    check on that half lives in ``project_validation.find_plaintext_service_config_violations``
+    -- ``ProjectStore._validate`` runs both. Splitting a secret over two schemas is
+    exactly how the image-registries token lost its guard when it moved out of here.
+
     Returns the offending field paths, empty when there are none.
     """
-    validator = _get_validator()
-    violations: list[str] = []
-    for error in _walk_errors(validator.iter_errors(project_data)):
-        schema = error.schema if isinstance(error.schema, dict) else {}
-        if _AGE_PATTERN_MARKER in str(schema.get("pattern", "")):
-            violations.append("/".join(str(part) for part in error.absolute_path) or "(root)")
-    return sorted(set(violations))
+    return age_pattern_violations(_get_validator(), project_data)

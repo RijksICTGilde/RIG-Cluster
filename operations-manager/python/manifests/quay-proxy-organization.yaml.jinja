@@ -11,7 +11,11 @@ spec:
   friendlyName: "{{ friendly_name }}"
   suffix: "{{ suffix }}"
   proxyCache:
-    upstreamRegistry: "{{ upstream }}"
+    # yaml_scalar, want dit is de enige waarde in dit sjabloon die RECHTSTREEKS van de
+    # afnemer komt: de andere lopen door sanitize_kubernetes_name. Zonder de filter breekt
+    # een aanhalingsteken plus regeleinde uit de scalar en staan er extra DOCUMENTEN in het
+    # bestand, die ArgoCD als gewone resources in de namespace aanmaakt.
+    upstreamRegistry: {{ upstream | yaml_scalar }}
     {% if credentials_secret %}
     credentialsSecret:
       name: "{{ credentials_secret }}"
