@@ -63,14 +63,21 @@ berekend op het moment dat een manifest wordt gegenereerd, net zoals databasenam
 bucketnamen en keycloak client-ids dat al zijn. Niets opslaan betekent ook niets dat uit de
 pas kan lopen met de werkelijkheid.
 
-De vier naamregels staan in `opi/services/catalog/image_registries/naming.py`:
+De naamregels staan in `opi/services/catalog/image_registries/naming.py`:
 
 | Naam | Regel |
 |---|---|
 | `friendlyName` | de host zonder TLD en zonder punten (`code.overheid.nl` -> `codeoverheid`) |
-| organisatie | `<friendlyName>-<customerName>-<project>` |
+| `suffix` | `<project>-<upstream-namespace>`, of alleen `<project>` als de upstream geen pad heeft |
+| organisatie | `<friendlyName>-<customerName>-<suffix>` |
 | pull-secret | `<organisatie>-robot-pull-secret`, expliciet gezet want de operator laat de suffix weg |
 | image-omzetting | host vervangen, namespace-segment eruit |
+
+De upstream-namespace hoort in de suffix omdat `friendlyName` alleen de HOST draagt. Zonder
+dat deel komen `ghcr.io/orga` en `ghcr.io/orgb` van hetzelfde project op één
+organisatienaam uit -- en daarmee op één bestandsnaam op het projectniveau, één
+credentials-secret en één bestemming, waarna de tweede registry de eerste stil overschrijft
+en twee componenten die verschillende images bedoelen dezelfde ophalen.
 
 ## Eén regelvorm, twee bronnen
 
@@ -81,8 +88,8 @@ doen bijna hetzelfde, en dat is precies de reden om er niet twee mechanismen van
 gedeeld:  match code.overheid.nl             -> to rcr.rijksapps.nl/code-overheid-rig
           code.overheid.nl/robbert/demo:tag  => rcr.rijksapps.nl/code-overheid-rig/robbert/demo:tag
 
-privé:    match code.overheid.nl/robbert     -> to rcr.rijksapps.nl/codeoverheid-rig-<project>
-          code.overheid.nl/robbert/demo:tag  => rcr.rijksapps.nl/codeoverheid-rig-<project>/demo:tag
+privé:    match code.overheid.nl/robbert     -> to rcr.rijksapps.nl/codeoverheid-rig-<project>-robbert
+          code.overheid.nl/robbert/demo:tag  => rcr.rijksapps.nl/codeoverheid-rig-<project>-robbert/demo:tag
 ```
 
 Het namespace-segment dat bij de privévariant wegvalt is geen apart gedrag: het volgt uit

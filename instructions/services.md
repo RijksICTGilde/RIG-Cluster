@@ -747,6 +747,7 @@ Every hook a service may implement, so a new service knows what it can own:
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
+| `contribute_project_manifests(ctx)` | project-wide manifests, written once per project into `<cluster>/<project>/_project/` in the deployments repo (e.g. a registry pull-secret, a ServiceAccount). The filename MUST start with the service name, so the symmetric prune removes it again when the service goes away. See `features/image-registries.md` |
 
 ### Events: the one way to hook into a moment
 
@@ -1090,5 +1091,5 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
 
 - `features/service-provider-registry.md` - why the registry exists and what it replaced
 - `features/components-services-deployments.md` - the Project / Service / Component / Deployment model
-- `features/manifest-extension-pipeline.md` - how manifests are assembled
+- `features/image-registries.md` - how an image gets its registry and pull-secret (this replaced the manifest-extension pipeline; the old doc is in `archive/manifest-extension-pipeline.md`)
 - `operations-manager/CLAUDE.md` - module map and code style
