@@ -1,0 +1,16 @@
+{
+  "additionalProperties": false,
+  "description": "Component- en deployment-componentniveau: welke registry bij deze image hoort.",
+  "properties": {
+    "registry": {
+      "description": "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt.",
+      "title": "Registry",
+      "type": "string"
+    }
+  },
+  "required": [
+    "registry"
+  ],
+  "title": "ComponentRegistryConfig",
+  "type": "object"
+}

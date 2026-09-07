@@ -86,6 +86,11 @@ CLUSTER_CONFIG = {
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
         },
+        # De dienst image-registries op dit cluster: de nodes kunnen zelf bij de registry,
+        # dus een private registry wordt een dockerconfigjson-secret in de namespace en de
+        # image blijft ongewijzigd. Geen "rules": er is geen proxytabel, en dan gebeurt er
+        # met een publieke image dus niets.
+        "image_registries": {"backend": "direct-secret"},
     },
     "sandboxed-local": {
         "ingress_postfix": ".sandbox.rijksapp.dev",
@@ -163,6 +168,11 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
+        # De dienst image-registries op dit cluster: de nodes kunnen zelf bij de registry,
+        # dus een private registry wordt een dockerconfigjson-secret in de namespace en de
+        # image blijft ongewijzigd. Geen "rules": er is geen proxytabel, en dan gebeurt er
+        # met een publieke image dus niets.
+        "image_registries": {"backend": "direct-secret"},
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -266,6 +276,46 @@ CLUSTER_CONFIG = {
             ],
         },
         "extensions": ["odcn-registry-rewrite"],
+        # De dienst image-registries op dit cluster: achter een Quay-operator, dus een
+        # private registry wordt een proxy-organisatie in RCR en de image wordt
+        # herschreven. De regels hieronder zijn de GEDEELDE proxy-caches die het platform
+        # al aanbiedt -- dezelfde tabel die odcn-registry-rewrite draagt, nu bij zijn
+        # eigenaar. Een projectregel komt hier VOOR te staan, want de eigen registry van
+        # een project moet winnen van de gedeelde proxy voor dezelfde upstream.
+        "image_registries": {
+            "backend": "quay-proxy-organization",
+            "registry_host": "rcr.rijksapps.nl",
+            "customer_name": "rig",
+            # rotation.enabled: false doet niet wat de documentatie belooft -- het token
+            # krijgt alsnog retentionDays: 90 en verloopt, zonder dat iemand het ververst
+            # (gemeten 2026-09-07). Dus altijd true.
+            "rotation_days": 90,
+            "rules": [
+                {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
+                {
+                    "match": "docker.io",
+                    "to": "rcr.rijksapps.nl/dockerhub-rig",
+                    "secret": "dockerhub-rig-robot-pull-secret",
+                },
+                {
+                    "match": "registry.gitlab.com",
+                    "to": "rcr.rijksapps.nl/gitlab-rig",
+                    "secret": "gitlab-rig-robot-pull-secret",
+                },
+                {"match": "gcr.io", "to": "rcr.rijksapps.nl/gcr-rig", "secret": "gcr-rig-robot-pull-secret"},
+                {"match": "quay.io", "to": "rcr.rijksapps.nl/quay-rig", "secret": "quay-rig-robot-pull-secret"},
+                {
+                    "match": "registry.k8s.io",
+                    "to": "rcr.rijksapps.nl/k8s-rig",
+                    "secret": "k8s-rig-robot-pull-secret",
+                },
+                {
+                    "match": "code.overheid.nl",
+                    "to": "rcr.rijksapps.nl/code-overheid-rig",
+                    "secret": "code-overheid-rig-robot-pull-secret",
+                },
+            ],
+        },
     },
 }
 
@@ -1349,6 +1399,25 @@ def get_extensions(cluster_name: str) -> list[str]:
     """
     config = get_cluster_config(cluster_name)
     return config.get("extensions", [])
+
+
+def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
+    """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
+
+    Keys: ``backend`` (welke provisioning-backend hier geldt), en voor de Quay-variant
+    ``registry_host`` / ``customer_name`` / ``rotation_days`` plus ``rules``, de tabel van
+    upstream naar gedeelde proxy inclusief het secret dat erbij hoort.
+
+    Een cluster zonder de sleutel levert de ``direct-secret``-backend zonder tabel, wat
+    het antwoord is voor elk cluster waar de nodes zelf bij de registry kunnen: geen
+    herschrijving, geen tabel, alleen een secret als het project er een opgeeft. Dat een
+    dienst platformfeiten uit de clusterconfig leest is bestaand gedrag (publish-on-web
+    leest ``get_ingress_postfix()``, vlam ``get_vlam_config()``).
+    """
+    config = get_cluster_config(cluster_name).get("image_registries")
+    if not isinstance(config, dict):
+        return {"backend": "direct-secret"}
+    return config
 
 
 def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
