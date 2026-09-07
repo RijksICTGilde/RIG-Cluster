@@ -334,6 +334,13 @@ werkelijk een image uit haalt. Is er nog geen zo'n image -- de normale toestand 
 wizard, waar de registry vóór de componenten komt -- dan wordt er niets geweigerd: een
 weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname.
 
+De toets draait NA de formulierverwerking, en die heeft het token op dat moment al
+versleuteld. Hij pakt de opgeslagen waarde dus eerst uit -- alle drie de opslagvormen die
+het veld mag dragen, net als de secretbouwer in `backends.py` -- voordat hij hem aan
+skopeo geeft. Zonder dat uitpakken toetst hij het cijfertekstblok en wordt een geldig
+token geweigerd. Is de waarde niet uit te pakken (geen sleutel), dan wordt er niets
+getoetst en dus niets geweigerd.
+
 ## Op de projectpagina
 
 De dienst levert een blok met wat de afnemer heeft ingevuld, en haalt de toestand van de
