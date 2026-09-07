@@ -1,0 +1,29 @@
+{# De toestand van de proxy-organisaties, met htmx opgehaald bij het openen van de pagina.
+
+   Waarom een lazyload en niet gewoon in het blok: dit leest de status uit het CLUSTER, en
+   een blok dat op een pagina rendert mag geen connector aanroepen. Het blok zelf komt uit
+   het projectbestand; dit is wat daar niet in staat.
+
+   ORDENING IS NIET HETZELFDE ALS GEREEDHEID. De sync-wave regelt alleen de volgorde van
+   aanmaken. Een pod die te vroeg is belandt in ImagePullBackOff en herstelt vanzelf zodra
+   de proxy werkt - gemeten in de proef. Dit blok is er zodat een wachtende afnemer ziet
+   WAAROM hij wacht, niet omdat er iets kapot is. #}
+{% if not applicable %}
+    <c-paragraph size="sm">Op dit cluster halen de nodes je images rechtstreeks op; er is geen proxy die klaar moet staan.</c-paragraph>
+{% elif not statuses %}
+    <c-paragraph size="sm">Nog geen registries ingevuld.</c-paragraph>
+{% else %}
+    <c-stack gap="sm">
+        {% for status in statuses %}
+            <c-stack gap="xs">
+                <c-cluster gap="sm" align="center">
+                    <c-icon :icon="'check-circle' if status.state == 'ready' else 'klok'" size="md" />
+                    <c-span><strong>{{ status.registry }}</strong> - {{ status.message }}</c-span>
+                </c-cluster>
+                {% if status.expires_at %}
+                    <c-paragraph size="sm">Het token van deze proxy verloopt op {{ status.expires_at[:10] }}. Daarna moet je hier een nieuw token invullen.</c-paragraph>
+                {% endif %}
+            </c-stack>
+        {% endfor %}
+    </c-stack>
+{% endif %}

@@ -242,3 +242,99 @@ class TestReadOwnership:
         }
         with pytest.raises(ProjectIntegrityError, match=PROJECT_B):
             await validate_project_structure(data)
+
+
+# ---------------------------------------------------------------------------
+# De proxy-organisaties: dezelfde vraag, de andere registry (RC-177)
+# ---------------------------------------------------------------------------
+
+
+class TestProxyOrganizationOwnership:
+    """Elke pod in de tenant krijgt het gerepliceerde pull-secret van elk project, dus wie
+    de naam van andermans proxy-organisatie kent kan er met ANDERMANS credentials uit
+    lezen. Dat is dezelfde weigering als bij de gedeelde platformregistry, een registry
+    verder."""
+
+    @staticmethod
+    def _project(image: str, name: str = "eigen") -> dict:
+        return {
+            "name": name,
+            "deployments": [
+                {
+                    "name": "prod",
+                    "cluster": "odcn-production",
+                    "namespace": name,
+                    "components": [{"reference": "web", "image": image}],
+                }
+            ],
+        }
+
+    @staticmethod
+    def _store(*project_names: str):
+        from unittest.mock import MagicMock, patch
+
+        store = MagicMock()
+        store.get_all.return_value = [MagicMock(name=n) for n in project_names]
+        # MagicMock(name=...) zet de REPR en niet het attribuut; zet hem expliciet.
+        for summary, project_name in zip(store.get_all.return_value, project_names, strict=True):
+            summary.name = project_name
+        return patch("opi.services.project_store.get_project_store", return_value=store)
+
+    def test_andermans_organisatie_wordt_geweigerd(self) -> None:
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/codeoverheid-rig-ander/app:1")
+        with self._store("eigen", "ander"):
+            errors = validate_proxy_organization_ownership(data)
+        assert len(errors) == 1
+        assert "ander" in errors[0]
+
+    def test_de_eigen_organisatie_mag(self) -> None:
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/codeoverheid-rig-eigen/app:1")
+        with self._store("eigen", "ander"):
+            assert validate_proxy_organization_ownership(data) == []
+
+    def test_een_gedeelde_proxy_mag(self) -> None:
+        """ghcr-rig en code-overheid-rig eindigen niet op een projectnaam; die zijn van
+        iedereen."""
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        for organization in ("ghcr-rig", "code-overheid-rig", "dockerhub-rig"):
+            data = self._project(f"rcr.rijksapps.nl/{organization}/x/app:1")
+            with self._store("eigen", "ander"):
+                assert validate_proxy_organization_ownership(data) == [], organization
+
+    def test_een_image_buiten_de_proxy_registry_gaat_dit_niet_aan(self) -> None:
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("ghcr.io/codeoverheid-rig-ander/app:1")
+        with self._store("eigen", "ander"):
+            assert validate_proxy_organization_ownership(data) == []
+
+    def test_een_hoofdletterhost_en_poort_ontsnappen_niet(self) -> None:
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        for image in (
+            "RCR.rijksapps.nl/codeoverheid-rig-ander/app:1",
+            "rcr.rijksapps.nl:443/codeoverheid-rig-ander/app:1",
+        ):
+            with self._store("eigen", "ander"):
+                assert validate_proxy_organization_ownership(self._project(image)), image
+
+    def test_een_cluster_zonder_proxy_operator_zegt_niets(self) -> None:
+        """Op sandbox bestaat er geen proxy-organisatie, dus valt er ook niets te weigeren."""
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/codeoverheid-rig-ander/app:1")
+        data["deployments"][0]["cluster"] = "sandboxed-local"
+        with self._store("eigen", "ander"):
+            assert validate_proxy_organization_ownership(data) == []
+
+    def test_zonder_andere_projecten_valt_er_niets_te_weigeren(self) -> None:
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/codeoverheid-rig-ander/app:1")
+        with self._store("eigen"):
+            assert validate_proxy_organization_ownership(data) == []

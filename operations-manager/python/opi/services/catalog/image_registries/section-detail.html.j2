@@ -1,0 +1,35 @@
+{# Het blok dat de dienst image-registries op de projectpagina levert.
+
+   Wat er in het projectbestand staat is de INVOER van de afnemer: de naam van de registry
+   en waar hij staat. De RCR-URL, de organisatienaam en de naam van het pull-secret staan
+   er bewust niet in - het zijn berekeningen, en ze opslaan zou een tweede waarheid geven
+   die kan gaan afwijken van de organisatie zoals die er werkelijk staat. Het token wordt
+   niet getoond: het is versleuteld opgeslagen en er is geen leesweg naar terug.
+
+   De TOESTAND komt uit het cluster en wordt daarom apart opgehaald (status-fragment). #}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        <c-section-head title="Eigen container registries" icon="server" />
+        <c-paragraph size="sm">De private registries waaruit dit project images haalt.</c-paragraph>
+
+        {% for registry in section.context.registries %}
+            <c-stack gap="xs">
+                <c-heading type="h3" size="5" label="{{ registry.name }}" />
+                <c-secret-field value="{{ registry.upstream }}" revealed show-copy />
+                {% if registry.username %}
+                    <c-paragraph size="sm">Ingelogd als {{ registry.username }}; het token is versleuteld opgeslagen.</c-paragraph>
+                {% elif registry.secretName %}
+                    <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
+                {% else %}
+                    <c-paragraph size="sm">Zonder inloggegevens: alleen publieke images uit deze registry.</c-paragraph>
+                {% endif %}
+            </c-stack>
+        {% endfor %}
+
+        <div hx-get="/projects/details/{{ section.context.project_name }}/image-registries/status"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <c-paragraph size="sm">Toestand van de proxy wordt opgehaald...</c-paragraph>
+        </div>
+    </c-stack>
+</c-card>

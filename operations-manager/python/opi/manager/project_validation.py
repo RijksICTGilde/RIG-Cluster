@@ -563,6 +563,80 @@ def _split_image_reference(image: str) -> tuple[str, str | None, bool]:
     return repo, tag, bool(digest_separator)
 
 
+def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[str]:
+    """Weiger een image die naar de proxy-organisatie van een ANDER project wijst.
+
+    De zusterregel van ``validate_platform_registry_image_ownership``, en om dezelfde
+    reden nodig: elke pod in de tenant krijgt het gerepliceerde pull-secret via de default
+    serviceaccount en kan dus elk pad onder zo'n organisatie opvragen, waarna RCR met
+    ANDERMANS credentials bovenstrooms ophaalt. Dat is geen theoretisch pad: de eigen
+    serviceaccount neemt de erfenis weg voor de pods die WIJ maken, maar de organisatie
+    zelf blijft leesbaar voor wie zijn naam kent.
+
+    Wij maken die organisaties zelf, dus we weten hoe ze heten:
+    ``<friendlyName>-<customerName>-<project>``. Een organisatie die eindigt op
+    ``-<customerName>-<een ander projectnaam>`` is er dus een van dat project, en die
+    verwijzing wordt geweigerd. Een GEDEELDE proxy (``ghcr-rig``, ``code-overheid-rig``)
+    eindigt niet op een projectnaam en blijft gewoon bruikbaar -- dat is wat elk project
+    daar mag gebruiken.
+
+    De projectnamen komen uit de projectenlijst en niet uit een gok op koppeltekens: een
+    friendlyName mag zelf koppeltekens bevatten, dus de naam uit elkaar trekken zou net zo
+    goed ``code-overheid-rig`` als "project overheid-rig" kunnen lezen.
+    """
+    from opi.core.cluster_config import get_image_registries_config
+    from opi.services.project_store import get_project_store
+
+    project_name = project_data.get("name", "")
+    if not project_name:
+        return []
+
+    other_projects = [p.name for p in get_project_store().get_all() if p.name != project_name]
+    if not other_projects:
+        return []
+
+    errors: list[str] = []
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        cluster_config = get_image_registries_config(str(deployment.get("cluster", "")))
+        registry_host = cluster_config.get("registry_host")
+        customer_name = cluster_config.get("customer_name")
+        if not registry_host or not customer_name:
+            continue
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict):
+                continue
+            image = component.get("image")
+            if not isinstance(image, str) or not image:
+                continue
+            organization = _proxy_organization_of(image, registry_host)
+            if organization is None:
+                continue
+            owner = next((p for p in other_projects if organization.endswith(f"-{customer_name}-{p}")), None)
+            if owner is not None:
+                errors.append(
+                    f"deployment '{deployment.get('name')}' component '{component.get('reference')}' verwijst met "
+                    f"'{image}' naar de registry-organisatie van project '{owner}'. Die is met de inloggegevens "
+                    f"van dat project gevuld; gebruik je eigen registry"
+                )
+    return errors
+
+
+def _proxy_organization_of(image: str, registry_host: str) -> str | None:
+    """Het organisatie-segment van een image op de proxy-registry, of None.
+
+    ``rcr.rijksapps.nl/codeoverheid-rig-demo/app:1`` -> ``codeoverheid-rig-demo``.
+    """
+    repo, _tag, _digest = _split_image_reference(image)
+    normalized = _normalize_registry_repo(repo)
+    host, separator, path = normalized.partition("/")
+    if not separator or host != registry_host.lower():
+        return None
+    organization = path.split("/", 1)[0]
+    return organization or None
+
+
 def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> list[str]:
     """Reject deployment images that point at another project's tag in the shared registry.
 
@@ -793,8 +867,11 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
     # A deployment may not point at another project's tag in the shared platform
-    # registry. This is the read half of the ownership the push endpoint pins.
+    # registry, nor at another project's proxy-cache organization. Both are the read half
+    # of an ownership the write side already pins: the push endpoint for the shared
+    # registry, and "we create the organization ourselves" for the proxy caches.
     registry_errors = validate_platform_registry_image_ownership(project_data)
+    registry_errors += validate_proxy_organization_ownership(project_data)
     if registry_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(registry_errors)}")
 

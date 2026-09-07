@@ -1404,7 +1404,15 @@ def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
     dienst platformfeiten uit de clusterconfig leest is bestaand gedrag (publish-on-web
     leest ``get_ingress_postfix()``, vlam ``get_vlam_config()``).
     """
-    config = get_cluster_config(cluster_name).get("image_registries")
+    try:
+        config = get_cluster_config(cluster_name).get("image_registries")
+    except ValueError:
+        # Een onbekende clusternaam is geen vraag die HIER beantwoord wordt: de
+        # clustercontrole zit in validate_service_availability en in het schema. Deze
+        # functie wordt onder andere door de opslagcontrole aangeroepen, op projectdata die
+        # nog van alles kan bevatten, en daar een ValueError uit laten komen zou een
+        # ontbrekend clusterveld als een registryfout laten aankomen.
+        return {"backend": "direct-secret"}
     if not isinstance(config, dict):
         return {"backend": "direct-secret"}
     return config
