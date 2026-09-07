@@ -13,6 +13,7 @@ from opi.services.schema_migration import (
     normalize_domains_location,
     normalize_service_entries,
     relocate_domain_settings_to_service,
+    relocate_registries_to_service,
     remove_domain_mode,
 )
 
@@ -1422,3 +1423,178 @@ class TestRemoveDomainMode:
         once = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
         assert remove_domain_mode(once) is True
         assert remove_domain_mode(once) is False
+
+
+#: Een AGE-blok in de vorm die het schema eist; de inhoud doet er voor de migratie niet toe.
+_AGE_BLOK = "-----BEGIN AGE ENCRYPTED FILE-----\ntest\n-----END AGE ENCRYPTED FILE-----"
+
+
+class TestRelocateRegistriesToService:
+    """v2.8 -> v2.9: de registries verhuizen naar de dienst image-registries (RC-177).
+
+    Gemodelleerd op de twee bestanden die dit in de vloot echt hebben -- ``algor-odc``
+    (ghcr.io met inloggegevens, verwezen vanaf twee deployment-componenten en vanuit
+    ``namespace-postgresql-database``) en ``dp-bn7`` (``secretName``, het noodverband uit
+    de storing van mei) -- en niet op een minimaal project, want juist die twee vormen
+    moeten er heelhuids doorheen komen.
+
+    Migreren en dan valideren, in die volgorde: dat is de volgorde die de loader gebruikt.
+    """
+
+    def _algor_odc_shaped(self) -> dict:
+        return {
+            "schema-version": 2.8,
+            "name": "algor-odc",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "services": [
+                "publish-on-web",
+                {
+                    "name": "namespace-postgresql-database",
+                    "config": {
+                        "image": "ghcr.io/rijksictgilde/algoritmeregister/postgresql:2024.11.19",
+                        "registry": "github-registry",
+                    },
+                },
+            ],
+            "registries": [
+                {
+                    "name": "github-registry",
+                    "url": "ghcr.io",
+                    "username": "someuser",
+                    "password": _AGE_BLOK,
+                }
+            ],
+            "components": [
+                {
+                    "name": "component-1",
+                    "type": "deployment",
+                    "ports": {"inbound": [8000], "outbound": [443]},
+                },
+                {
+                    "name": "component-2",
+                    "type": "deployment",
+                    "ports": {"inbound": [3000], "outbound": [443]},
+                },
+            ],
+            "deployments": [
+                {
+                    "name": "deployment-1",
+                    "cluster": "odcn-production",
+                    "namespace": "algor-odc",
+                    "components": [
+                        {
+                            "reference": "component-1",
+                            "image": "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24",
+                            "registry": "github-registry",
+                        },
+                        {
+                            "reference": "component-2",
+                            "image": "ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21",
+                            "registry": "github-registry",
+                        },
+                    ],
+                }
+            ],
+        }
+
+    def _dp_bn7_shaped(self) -> dict:
+        return {
+            "schema-version": 2.8,
+            "name": "dp-bn7",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "services": ["publish-on-web"],
+            "registries": [{"name": "platform", "url": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}],
+            "components": [
+                {"name": "component1", "type": "deployment", "ports": {"inbound": [8080], "outbound": [443]}}
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "dp-bn7",
+                    "components": [{"reference": "component1", "image": "rcr.rijksapps.nl/rig/zad:desa-portfolio-11"}],
+                }
+            ],
+        }
+
+    @staticmethod
+    def _service_config(data: dict, name: str) -> dict:
+        for entry in data.get("services", []):
+            if isinstance(entry, dict) and entry.get("name") == name:
+                return entry.get("config") or {}
+        raise AssertionError(f"dienst '{name}' staat niet in het bestand")
+
+    def test_de_lijst_verhuist_en_url_wordt_upstream(self) -> None:
+        result, was_migrated = migrate_to_latest(self._algor_odc_shaped())
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert "registries" not in result
+        assert self._service_config(result, "image-registries")["registries"] == [
+            {
+                "name": "github-registry",
+                "upstream": "ghcr.io",
+                "username": "someuser",
+                "password": _AGE_BLOK,
+            }
+        ]
+
+    def test_de_sleutel_op_het_deployment_component_wordt_een_dienstvermelding(self) -> None:
+        result, _ = migrate_to_latest(self._algor_odc_shaped())
+
+        for component in result["deployments"][0]["components"]:
+            assert "registry" not in component
+            assert component["services"] == {"image-registries": {"config": {"registry": "github-registry"}}}
+
+    def test_de_verwijzing_van_binnen_een_andere_dienst_blijft_staan(self) -> None:
+        """``namespace-postgresql-database`` verwijst bij NAAM naar een entry, en die
+        verwijzing blijft werken -- hij wijst nu naar de config van image-registries."""
+        result, _ = migrate_to_latest(self._algor_odc_shaped())
+        assert self._service_config(result, "namespace-postgresql-database")["registry"] == "github-registry"
+
+    def test_een_secretname_entry_verhuist_ongewijzigd(self) -> None:
+        """dp-bn7: geen inloggegevens, alleen een verwijzing naar een secret dat het
+        platform zelf neerzet. Er valt niets te hernoemen, en de componenten hebben geen
+        ``registry``-sleutel om te verhuizen."""
+        result, was_migrated = migrate_to_latest(self._dp_bn7_shaped())
+
+        assert was_migrated is True
+        assert "registries" not in result
+        assert self._service_config(result, "image-registries")["registries"] == [
+            {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
+        ]
+        assert "services" not in result["deployments"][0]["components"][0]
+
+    def test_beide_bestanden_valideren_na_de_migratie(self) -> None:
+        # Migreren en dan valideren, in die volgorde: de volgorde die de loader gebruikt.
+        for data in (self._algor_odc_shaped(), self._dp_bn7_shaped()):
+            result, _ = migrate_to_latest(data)
+            validate_project_schema(result)
+
+    def test_een_lege_lijst_levert_geen_dienst_op(self) -> None:
+        """Een sleutel zonder inhoud is geen dienst waard, alleen een sleutel die weg kan."""
+        data = self._dp_bn7_shaped()
+        data["registries"] = []
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert "registries" not in result
+        assert all(
+            not (isinstance(entry, dict) and entry.get("name") == "image-registries") for entry in result["services"]
+        )
+        validate_project_schema(result)
+
+    def test_de_oude_vorm_valideert_nog_onder_zijn_eigen_versie(self) -> None:
+        """Een bestand dat nog niet opnieuw verwerkt is moet leesbaar blijven, anders is
+        het verschil tussen 'nog niet gemigreerd' en 'kapot' niet te zien."""
+        validate_declared_project_schema(self._algor_odc_shaped())
+        validate_declared_project_schema(self._dp_bn7_shaped())
+
+    def test_het_is_idempotent(self) -> None:
+        once, _ = migrate_to_latest(self._algor_odc_shaped())
+        assert relocate_registries_to_service(copy.deepcopy(once)) is False
+        twice, was_migrated = migrate_to_latest(copy.deepcopy(once))
+        assert was_migrated is False
+        assert twice == once
