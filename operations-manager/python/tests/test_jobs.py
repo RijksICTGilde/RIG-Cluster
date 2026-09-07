@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
+import pytest
 import yaml
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
@@ -324,3 +326,93 @@ def test_job_modal_succeeded_renders():
         enabled=True,
     )
     assert "voltooid" in html.lower()
+
+
+class TestDeJobImageIsGeenVrijeKeuze:
+    """De tweede blokkerende vondst uit de securityreview, op de route die geen
+    projectbestand kent.
+
+    ``apply_bundle`` krijgt sinds deze branch ``project_data`` mee, dus de PROJECTregels
+    gelden ook voor de door een gebruiker INGETYPTE job-image: een image onder andermans
+    proxy-organisatie krijgt het pull-secret van dat project aangehangen en elk projectlid
+    mag zo'n job starten. De validators bij het opslaan zien deze image nooit -- die lopen
+    over ``deployments[].components[].image`` in het projectbestand.
+    """
+
+    ODCN = "odcn-production"
+
+    def _manager(self, kubectl: Any) -> Any:
+        from unittest.mock import patch
+
+        from opi.manager.job_manager import JobManager
+
+        with patch("opi.manager.job_manager.create_kubectl_connector", return_value=kubectl):
+            return JobManager()
+
+    def _project(self, name: str) -> Any:
+        return SimpleNamespace(
+            name=name,
+            data={
+                "name": name,
+                "deployments": [{"name": "prod", "cluster": self.ODCN, "namespace": name, "components": []}],
+            },
+        )
+
+    def _store(self, *project_names: str):
+        from unittest.mock import MagicMock, patch
+
+        projects = {name: self._project(name) for name in project_names}
+        store = MagicMock()
+        store.get.side_effect = projects.get
+        store.get_all.return_value = list(projects.values())
+        return patch("opi.manager.job_manager.get_project_store", return_value=store), patch(
+            "opi.services.project_store.get_project_store", return_value=store
+        )
+
+    async def _begin(self, image: str) -> str | None:
+        """De foutmelding van ``begin()``, of None als hij de image accepteert."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from opi.manager.job_manager import JobError
+
+        kubectl = MagicMock()
+        kubectl.get_resources_by_label = AsyncMock(return_value=[])
+        runs = MagicMock()
+        runs.get_latest_run = AsyncMock(return_value=None)
+        runs.create_run = AsyncMock(return_value=None)
+        job_store, validation_store = self._store("eigen", "slachtoffer")
+        with (
+            job_store,
+            validation_store,
+            patch("opi.core.config.settings.CLUSTER_MANAGER", self.ODCN),
+            patch("opi.manager.job_manager.get_runs_service", return_value=runs),
+        ):
+            manager = self._manager(kubectl)
+            try:
+                await manager.begin("eigen", "prod", image, "sh -c id", "u@x.nl")
+            except JobError as error:
+                return str(error)
+        return None
+
+    @pytest.mark.asyncio
+    async def test_andermans_proxy_organisatie_wordt_geweigerd(self) -> None:
+        from opi.services.catalog.image_registries.naming import organization_name
+
+        organisatie = organization_name("ghcr.io/team", "rig", "slachtoffer")
+        melding = await self._begin(f"rcr.rijksapps.nl/{organisatie}/geheime-app:1")
+        assert melding is not None
+        assert "slachtoffer" in melding
+
+    @pytest.mark.asyncio
+    async def test_de_eigen_proxy_organisatie_mag(self) -> None:
+        """De tegenproef op de toegestane kant: zonder deze had de weigering ook op een
+        te brede grendel kunnen slaan."""
+        from opi.services.catalog.image_registries.naming import organization_name
+
+        organisatie = organization_name("ghcr.io/team", "rig", "eigen")
+        assert await self._begin(f"rcr.rijksapps.nl/{organisatie}/eigen-app:1") is None
+
+    @pytest.mark.asyncio
+    async def test_een_gedeelde_proxy_en_een_gewone_image_mogen(self) -> None:
+        assert await self._begin("rcr.rijksapps.nl/ghcr-rig/library/alpine:3") is None
+        assert await self._begin("ghcr.io/eigen/app:1") is None

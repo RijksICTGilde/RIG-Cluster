@@ -6,6 +6,8 @@
       "properties": {
         "name": {
           "description": "Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
+          "maxLength": 63,
+          "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?$",
           "title": "Name",
           "type": "string"
         },

@@ -27,7 +27,7 @@ from opi.core.config import settings
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
-from opi.services.catalog.image_registries.config_model import UPSTREAM_PATTERN
+from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, UPSTREAM_PATTERN
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
@@ -822,7 +822,7 @@ _REGISTRY_URL_DESCRIPTION = "Registry host without protocol, optionally with a p
 class AddRegistryBySecretRequest(BaseModel):
     """Request to add a registry that references a pre-existing Kubernetes secret."""
 
-    name: str = Field(..., max_length=63, description="Unique registry identifier")
+    name: str = Field(..., max_length=63, pattern=REGISTRY_NAME_PATTERN, description="Unique registry identifier")
     url: str = Field(..., max_length=512, pattern=UPSTREAM_PATTERN, description=_REGISTRY_URL_DESCRIPTION)
     secret_name: str = Field(
         ..., max_length=253, alias="secretName", description="Name of existing K8s dockerconfigjson secret"
@@ -832,7 +832,7 @@ class AddRegistryBySecretRequest(BaseModel):
 class AddRegistryByCredentialsRequest(BaseModel):
     """Request to add a registry with username/password credentials."""
 
-    name: str = Field(..., max_length=63, description="Unique registry identifier")
+    name: str = Field(..., max_length=63, pattern=REGISTRY_NAME_PATTERN, description="Unique registry identifier")
     url: str = Field(..., max_length=512, pattern=UPSTREAM_PATTERN, description=_REGISTRY_URL_DESCRIPTION)
     username: str = Field(..., max_length=256, description="Registry username or token name")
     password: str = Field(..., max_length=4096, description="Registry password or token (will be AGE-encrypted)")

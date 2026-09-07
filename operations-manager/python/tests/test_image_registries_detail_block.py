@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
+from opi.services.catalog.image_registries.naming import organization_name
 from opi.services.catalog.image_registries.web import _organization_status, registry_status_fragment
 from opi.services.services_enums import UIEvent
 
@@ -76,7 +77,7 @@ class TestDeToestandUitHetCluster:
             "demo",
         )
         assert status["state"] == "ready"
-        assert status["organization"] == "codeoverheid-rig-demo-robbert-uittenbroek"
+        assert status["organization"] == organization_name("code.overheid.nl/robbert.uittenbroek", "rig", "demo")
 
     async def test_de_proxy_draait_maar_de_credentials_nog_niet(self) -> None:
         status = await _organization_status(
@@ -122,8 +123,9 @@ class TestDeToestandUitHetCluster:
     async def test_hij_vraagt_de_organisatie_op_zijn_berekende_naam(self) -> None:
         kubectl = _kubectl('{"status": {}}')
         await _organization_status(kubectl, "rig-prd-demo", "code-overheid", "code.overheid.nl/robbert", "rig", "demo")
+        organisatie = organization_name("code.overheid.nl/robbert", "rig", "demo")
         kubectl.run_command.assert_awaited_once_with(
-            ["get", "organization", "codeoverheid-rig-demo-robbert", "-n", "rig-prd-demo", "-o", "json"]
+            ["get", "organization", organisatie, "-n", "rig-prd-demo", "-o", "json"]
         )
 
 

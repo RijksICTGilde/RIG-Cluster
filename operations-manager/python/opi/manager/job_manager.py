@@ -18,6 +18,7 @@ from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.generation.manifests import render_template
+from opi.manager.project_validation import foreign_proxy_organization_owner
 from opi.manager.run_support import (
     ANNOT_EXPIRES,
     ANNOT_OPENED_BY,
@@ -104,6 +105,18 @@ class JobManager:
         if cluster != settings.CLUSTER_MANAGER:
             raise JobError(
                 f"Deployment '{deployment_name}' draait op cluster '{cluster}', niet beheerd door deze instance."
+            )
+
+        # Deze image komt uit een formulierveld en niet uit het projectbestand, dus hij
+        # ziet geen van de validators die bij het opslaan draaien -- terwijl apply_bundle
+        # er wel de PROJECTregels op toepast en er dus een pull-secret aan hangt. Zonder
+        # deze toets draait elk projectlid een job op de private image van een ander
+        # project, met het robot-credential van dat project eraan.
+        owner = foreign_proxy_organization_owner(image, cluster, project_name)
+        if owner is not None:
+            raise JobError(
+                f"Image '{image}' hoort bij de registry-organisatie van project '{owner}'. "
+                f"Gebruik een image uit je eigen registry."
             )
 
         namespace = f"{get_namespace_prefix(cluster)}{project_name}"

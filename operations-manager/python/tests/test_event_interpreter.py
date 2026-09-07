@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.event_interpreter import (
     EventSeverity,
     condense_render_error,
@@ -120,7 +121,8 @@ class TestInterpretEvents:
                 }
             ],
         }
-        rcr = "rcr.rijksapps.nl/codeoverheid-rig-demo-robbert-uittenbroek/zad-deployment-demo:0a611d9d"
+        destination = registry_destination("code.overheid.nl/robbert.uittenbroek", "rcr.rijksapps.nl", "rig", "demo")
+        rcr = f"{destination}/zad-deployment-demo:0a611d9d"
         errors = [
             {
                 "resource": "Event/demo-web-abc-xyz",

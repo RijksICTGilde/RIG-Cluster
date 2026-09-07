@@ -71,12 +71,32 @@ UPSTREAM_MESSAGE = (
 AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+age:|^plain:)"
 
 
+#: Wat een registrynaam mag zijn: een DNS-1123-achtige naam die met een kleine LETTER
+#: begint, zodat hij nooit als YAML-getal gelezen wordt. Dezelfde regel die
+#: ``KubernetesNameValidator`` in het formulier stelde -- en om dezelfde reden als bij
+#: ``upstream`` staat hij nu HIER: het formulier had hem wel en het model niet, dus
+#: ``POST /projects/{p}/registries/by-credentials`` liet namen door die het formulier
+#: weigert. De naam gaat door ``sanitize_kubernetes_name`` een secretnaam in en staat als
+#: keuze in het componentformulier; één definitie, geen tweeling.
+REGISTRY_NAME_PATTERN = r"^[a-z]([-a-z0-9]*[a-z0-9])?$"
+
+#: De uitleg die bij dat patroon hoort, in dezelfde woorden die het formulier al gebruikte.
+REGISTRY_NAME_MESSAGE = (
+    "Registrynaam moet met een kleine letter beginnen en mag alleen kleine letters, "
+    "cijfers en streepjes bevatten, geen spaties of hoofdletters"
+)
+
+
 class RegistryEntry(BaseModel):
     """Eén private registry van het project."""
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(description="Naam waarmee een component naar deze registry verwijst, uniek binnen het project.")
+    name: str = Field(
+        pattern=REGISTRY_NAME_PATTERN,
+        max_length=63,
+        description="Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
+    )
     upstream: str = Field(
         pattern=UPSTREAM_PATTERN,
         description=(

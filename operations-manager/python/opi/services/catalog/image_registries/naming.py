@@ -13,6 +13,8 @@ zijn die kan gaan afwijken van de organisatie zoals die er werkelijk staat.
 
 from __future__ import annotations
 
+import hashlib
+
 from opi.utils.naming import sanitize_kubernetes_name
 
 #: Wat de operator zelf achter de organisatienaam plakt bij het pull-secret dat hij maakt.
@@ -20,6 +22,10 @@ from opi.utils.naming import sanitize_kubernetes_name
 #: ZONDER ``spec.suffix`` -- gemeten op 2026-09-07 -- en dan botsen twee projecten met
 #: dezelfde upstream op één naam, tenantbreed.
 PULL_SECRET_POSTFIX = "robot-pull-secret"
+
+#: Hoeveel hex-tekens van de upstream-hash in de suffix terechtkomen. Lang genoeg om een
+#: botsing bij toeval uit te sluiten, kort genoeg om de naam leesbaar te houden.
+UPSTREAM_HASH_LENGTH = 8
 
 
 def upstream_host(upstream: str) -> str:
@@ -55,22 +61,47 @@ def upstream_namespace(upstream: str) -> str:
     return path.strip("/")
 
 
+def upstream_hash(upstream: str) -> str:
+    """Het onderscheidende deel van de suffix: acht hex-tekens over de HELE upstream.
+
+    Waarom een hash en niet de leesbare namespace erachter: de suffix voegt twee delen
+    samen die allebei door ``sanitize_kubernetes_name`` gaan, en die zet ``.`` en ``/``
+    om in ``-``. Er blijft dus geen enkel teken over dat als grens kan dienen, en zonder
+    grens is de samenvoeging niet omkeerbaar. Gemeten: project ``demo`` met upstream
+    ``ghcr.io/team`` en project ``demo-team`` met upstream ``ghcr.io`` kwamen allebei op
+    suffix ``demo-team`` uit, dus op EEN tenantbrede organisatie, EEN pull-secretnaam en
+    EEN bestemming -- twee projecten die elkaars proxy besturen. Binnen een project deed
+    hetzelfde zich voor tussen ``.../robbert.uittenbroek``, ``.../robbert/uittenbroek`` en
+    ``.../robbert-uittenbroek``.
+
+    Over de hele upstream en niet alleen over de namespace, want ``friendly_name`` laat de
+    TLD weg: ``code.overheid.nl/x`` en ``code.overheid.com/x`` leveren allebei
+    ``codeoverheid`` op en zouden zonder de host in de hash weer op één naam uitkomen.
+
+    Met een vaste lengte aan het EIND van de suffix is de samenvoeging eenduidig: gelijke
+    namen betekent gelijke hash (dus dezelfde upstream) en daarmee ook een gelijk voorste
+    deel (dus dezelfde projectnaam).
+    """
+    return hashlib.sha256(upstream.strip().strip("/").encode()).hexdigest()[:UPSTREAM_HASH_LENGTH]
+
+
 def organization_suffix(upstream: str, project_name: str) -> str:
     """Wat wij als ``spec.suffix`` op de ``Organization`` zetten.
 
-    De projectnaam PLUS de upstream-namespace, want D2 zegt één organisatie per project
+    De projectnaam PLUS een hash van de upstream, want D2 zegt één organisatie per project
     per upstream-NAMESPACE en de eerste twee delen van de naam die de operator samenstelt
-    (``friendlyName``-``customerName``) dragen alleen de HOST. Zonder dit deel vallen
-    ``ghcr.io/orga`` en ``ghcr.io/orgb`` van hetzelfde project op één organisatienaam, en
-    daarmee op één bestandsnaam op het projectniveau, één credentials-secret en één
-    bestemming -- de tweede registry overschrijft dan stil de eerste, en twee componenten
-    die verschillende images bedoelen halen dezelfde op.
+    (``friendlyName``-``customerName``) dragen alleen de HOST -- en die host raakt bovendien
+    zijn TLD kwijt. Zonder dit deel vallen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van
+    hetzelfde project op één organisatienaam, en daarmee op één bestandsnaam op het
+    projectniveau, één credentials-secret en één bestemming: de tweede registry
+    overschrijft dan stil de eerste, en twee componenten die verschillende images bedoelen
+    halen dezelfde op.
 
-    Een upstream zonder pad houdt de kale projectnaam, zodat een registry op hostniveau
-    dezelfde naam houdt die de proef op productie gemeten heeft.
+    Ook een upstream zonder pad draagt de hash. Dat is niet cosmetisch: alleen als het
+    onderscheidende deel er ALTIJD staat, en met een vaste lengte aan het eind, kan de
+    projectnaam er niet overheen groeien (zie ``upstream_hash``).
     """
-    namespace = upstream_namespace(upstream)
-    return sanitize_kubernetes_name(f"{project_name}-{namespace}" if namespace else project_name)
+    return f"{sanitize_kubernetes_name(project_name)}-{upstream_hash(upstream)}"
 
 
 def organization_name(upstream: str, customer_name: str, project_name: str) -> str:

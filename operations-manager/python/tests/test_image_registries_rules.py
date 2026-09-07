@@ -16,6 +16,7 @@ from opi.services.catalog.image_registries.naming import (
     organization_suffix,
     pull_secret_name,
     registry_destination,
+    upstream_hash,
 )
 from opi.services.catalog.image_registries.resolution import (
     build_rules,
@@ -178,20 +179,52 @@ class TestNaamgeving:
         assert friendly_name("registry.gitlab.com") == "registrygitlab"
         assert friendly_name("localhost:5000") == "localhost"
 
-    def test_organisatie_draagt_de_projectnaam_en_de_upstream_namespace(self) -> None:
-        assert organization_name("code.overheid.nl/x", "rig", "demo") == "codeoverheid-rig-demo-x"
+    def test_organisatie_draagt_de_projectnaam_en_een_hash_van_de_upstream(self) -> None:
+        assert organization_name("code.overheid.nl/x", "rig", "demo") == (
+            f"codeoverheid-rig-demo-{upstream_hash('code.overheid.nl/x')}"
+        )
 
-    def test_organisatie_zonder_pad_houdt_de_kale_projectnaam(self) -> None:
-        """Een upstream op hostniveau heeft geen namespace om te onderscheiden."""
-        assert organization_name("ghcr.io", "rig", "demo") == "ghcr-rig-demo"
+    def test_ook_een_upstream_zonder_pad_draagt_de_hash(self) -> None:
+        """Anders is de samenvoeging afhankelijk van de INHOUD van de projectnaam: met een
+        kale projectnaam voor de ene upstream en projectnaam-plus-iets voor de andere is
+        er geen grens meer tussen de twee delen."""
+        assert organization_name("ghcr.io", "rig", "demo") == f"ghcr-rig-demo-{upstream_hash('ghcr.io')}"
 
     def test_suffix_is_wat_de_operator_achter_de_hostnaam_plakt(self) -> None:
         """De operator stelt ``<friendlyName>-<customerName>-<suffix>`` samen, en
-        ``friendlyName`` draagt alleen de HOST. Wat de twee registries onderscheidt moet
-        dus in de suffix zitten, anders komt de organisatie er onder één naam te staan."""
-        assert organization_suffix("ghcr.io/orga", "demo") == "demo-orga"
-        assert organization_suffix("ghcr.io", "demo") == "demo"
-        assert organization_suffix("code.overheid.nl/robbert.uittenbroek", "demo") == "demo-robbert-uittenbroek"
+        ``friendlyName`` draagt alleen de HOST -- en die zonder TLD. Wat twee registries
+        onderscheidt moet dus in de suffix zitten, anders komt de organisatie er onder één
+        naam te staan."""
+        assert organization_suffix("ghcr.io/orga", "demo") == f"demo-{upstream_hash('ghcr.io/orga')}"
+        assert organization_suffix("ghcr.io", "demo") == f"demo-{upstream_hash('ghcr.io')}"
+
+    def test_de_samenvoeging_van_projectnaam_en_upstream_is_eenduidig(self) -> None:
+        """De blokkerende vondst uit de securityreview, rij voor rij.
+
+        ``sanitize_kubernetes_name`` maakt van ``.`` en ``/`` ook een koppelteken, dus een
+        suffix die projectnaam en upstream-namespace met een koppelteken aan elkaar plakt
+        heeft geen grens tussen de twee delen. Gemeten op de oude vorm: deze vijf rijen
+        leverden DRIE verschillende suffixen op voor vijf verschillende invoeren, en de
+        eerste twee rijen zijn twee VERSCHILLENDE projecten op één tenantbrede organisatie,
+        één pull-secretnaam en één bestemming.
+        """
+        rijen = [
+            ("ghcr.io/team", "demo"),
+            ("ghcr.io", "demo-team"),
+            ("code.overheid.nl/robbert.uittenbroek", "demo"),
+            ("code.overheid.nl/robbert/uittenbroek", "demo"),
+            ("code.overheid.nl/robbert-uittenbroek", "demo"),
+            # De TLD valt weg in friendly_name, dus ook de host hoort in de hash.
+            ("code.overheid.com/robbert.uittenbroek", "demo"),
+        ]
+        organisaties = [organization_name(upstream, "rig", project) for upstream, project in rijen]
+        secrets = [pull_secret_name(upstream, "rig", project) for upstream, project in rijen]
+        bestemmingen = [
+            registry_destination(upstream, "rcr.rijksapps.nl", "rig", project) for upstream, project in rijen
+        ]
+        assert len(set(organisaties)) == len(rijen), organisaties
+        assert len(set(secrets)) == len(rijen), secrets
+        assert len(set(bestemmingen)) == len(rijen), bestemmingen
 
     def test_twee_registries_onder_dezelfde_host_botsen_niet(self) -> None:
         """De blokkerende vondst uit de review: ``friendly_name`` neemt alleen de host,
@@ -200,8 +233,8 @@ class TestNaamgeving:
         bestandsnaam op het projectniveau en dezelfde bestemming."""
         een = organization_name("ghcr.io/orga", "rig", "demo")
         ander = organization_name("ghcr.io/orgb", "rig", "demo")
-        assert een == "ghcr-rig-demo-orga"
-        assert ander == "ghcr-rig-demo-orgb"
+        assert een == f"ghcr-rig-demo-{upstream_hash('ghcr.io/orga')}"
+        assert ander == f"ghcr-rig-demo-{upstream_hash('ghcr.io/orgb')}"
         assert een != ander
         assert pull_secret_name("ghcr.io/orga", "rig", "demo") != pull_secret_name("ghcr.io/orgb", "rig", "demo")
         assert registry_destination("ghcr.io/orga", "rcr.rijksapps.nl", "rig", "demo") != registry_destination(
@@ -213,13 +246,12 @@ class TestNaamgeving:
         botsen tenantbreed. Daarom zetten wij de naam zelf."""
         een = pull_secret_name("code.overheid.nl/x", "rig", "demo")
         ander = pull_secret_name("code.overheid.nl/y", "rig", "ander")
-        assert een == "codeoverheid-rig-demo-x-robot-pull-secret"
+        assert een == f"codeoverheid-rig-demo-{upstream_hash('code.overheid.nl/x')}-robot-pull-secret"
         assert een != ander
 
     def test_bestemming_is_host_plus_organisatie(self) -> None:
-        assert (
-            registry_destination("code.overheid.nl/x", "rcr.rijksapps.nl", "rig", "demo")
-            == "rcr.rijksapps.nl/codeoverheid-rig-demo-x"
+        assert registry_destination("code.overheid.nl/x", "rcr.rijksapps.nl", "rig", "demo") == (
+            f"rcr.rijksapps.nl/codeoverheid-rig-demo-{upstream_hash('code.overheid.nl/x')}"
         )
 
 
@@ -236,10 +268,9 @@ class TestDeTweeBronnen:
 
     def test_met_private_registry_de_eigen_organisatie(self) -> None:
         resolved = resolve_project_image(self.IMAGE, _project([self.REGISTRY]), ODCN)
-        assert resolved.image == (
-            "rcr.rijksapps.nl/codeoverheid-rig-demo-robbert-uittenbroek/zad-deployment-demo:0a611d9d"
-        )
-        assert resolved.secret == "codeoverheid-rig-demo-robbert-uittenbroek-robot-pull-secret"
+        organisatie = organization_name("code.overheid.nl/robbert.uittenbroek", "rig", "demo")
+        assert resolved.image == f"rcr.rijksapps.nl/{organisatie}/zad-deployment-demo:0a611d9d"
+        assert resolved.secret == f"{organisatie}-robot-pull-secret"
 
     def test_zonder_private_registry_de_gedeelde_proxy(self) -> None:
         resolved = resolve_project_image(self.IMAGE, _project(), ODCN)
@@ -402,4 +433,5 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         # Beide registries hebben dezelfde upstream, dus dezelfde organisatie -- het
         # SECRET is hetzelfde en het verschil zit in welke regel vooraan stond.
         assert zonder.image == met.image
-        assert zonder.image.startswith("rcr.rijksapps.nl/codeoverheid-rig-demo-team/")
+        organisatie = organization_name("code.overheid.nl/team", "rig", "demo")
+        assert zonder.image.startswith(f"rcr.rijksapps.nl/{organisatie}/")
