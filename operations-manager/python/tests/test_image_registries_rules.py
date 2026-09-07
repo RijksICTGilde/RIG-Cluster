@@ -260,3 +260,86 @@ class TestProjectRegistriesLezen:
 
     def test_een_entry_zonder_naam_telt_niet_mee(self) -> None:
         assert project_registries(_project([{"upstream": "x.nl"}])) == []
+
+
+class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
+    """De koppeling staat op het COMPONENT en de deployment mag hem overschrijven met
+    dezelfde dienstvermelding -- de vorm die publish-on-web en temp-storage daar ook
+    gebruiken. Wat eruit komt is het pull-secret in ``imagePullSecretsMap``, dus daar wordt
+    het op gemeten."""
+
+    EEN: ClassVar[dict[str, Any]] = {
+        "name": "een",
+        "upstream": "code.overheid.nl/team",
+        "username": "a",
+        "password": "x",
+    }
+    ANDER: ClassVar[dict[str, Any]] = {
+        "name": "ander",
+        "upstream": "code.overheid.nl/team",
+        "username": "b",
+        "password": "y",
+    }
+    IMAGE = "code.overheid.nl/team/app:1"
+
+    def _project(self) -> dict[str, Any]:
+        data = _project([self.EEN, self.ANDER])
+        data["components"] = [
+            {
+                "name": "web",
+                "services": [{"reference": "image-registries", "config": {"registry": "ander"}}],
+            }
+        ]
+        return data
+
+    def test_de_keuze_van_het_component_erft(self) -> None:
+        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
+
+        data = self._project()
+        deployment_component = {"reference": "web", "image": self.IMAGE}
+        resolved = resolve_deployment_component_image(data, deployment_component, data["components"][0], SANDBOX)
+        assert resolved.secret == "demo-ander-registry"
+
+    def test_de_deployment_override_wint(self) -> None:
+        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
+
+        data = self._project()
+        deployment_component = {
+            "reference": "web",
+            "image": self.IMAGE,
+            # Op een deployment-component is ``services`` een dict keyed op dienstnaam.
+            "services": {"image-registries": {"config": {"registry": "een"}}},
+        }
+        resolved = resolve_deployment_component_image(data, deployment_component, data["components"][0], SANDBOX)
+        assert resolved.secret == "demo-een-registry"
+
+    def test_zonder_enige_keuze_wint_de_eerste_in_het_bestand(self) -> None:
+        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
+
+        data = _project([self.EEN, self.ANDER])
+        resolved = resolve_deployment_component_image(data, {"reference": "web", "image": self.IMAGE}, None, SANDBOX)
+        assert resolved.secret == "demo-een-registry"
+
+    def test_op_odcn_levert_de_override_een_andere_organisatie_op(self) -> None:
+        """De tegenproef dat de keuze echt doorwerkt tot in de herschrijving, niet alleen
+        tot in het secret: op een cluster mét proxy verandert ook de bestemming."""
+        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
+
+        data = self._project()
+        zonder = resolve_deployment_component_image(
+            data, {"reference": "web", "image": self.IMAGE}, data["components"][0], ODCN
+        )
+        met = resolve_deployment_component_image(
+            data,
+            {
+                "reference": "web",
+                "image": self.IMAGE,
+                "services": {"image-registries": {"config": {"registry": "een"}}},
+            },
+            data["components"][0],
+            ODCN,
+        )
+        # Beide registries hebben dezelfde upstream, dus dezelfde organisatie -- het
+        # SECRET is hetzelfde en het verschil zit in welke regel vooraan stond.
+        assert zonder.image == met.image
+        assert zonder.image.startswith("rcr.rijksapps.nl/codeoverheid-rig-demo/")

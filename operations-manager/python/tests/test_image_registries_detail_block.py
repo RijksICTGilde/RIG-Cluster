@@ -122,3 +122,66 @@ class TestDeToestandUitHetCluster:
         kubectl.run_command.assert_awaited_once_with(
             ["get", "organization", "codeoverheid-rig-demo", "-n", "rig-prd-demo", "-o", "json"]
         )
+
+
+class TestDeVerloopwaarschuwing:
+    """Het token roteert elke 90 dagen en niemand ververst het uit zichzelf, dus de afnemer
+    moet het zien aankomen terwijl er nog tijd is om er iets aan te doen."""
+
+    @staticmethod
+    def _over(days: int) -> str:
+        from datetime import UTC, datetime, timedelta
+
+        return (datetime.now(UTC) + timedelta(days=days)).isoformat().replace("+00:00", "Z")
+
+    def test_binnen_veertien_dagen_is_dringend(self) -> None:
+        from opi.services.catalog.image_registries.web import _expires_soon
+
+        assert _expires_soon(self._over(3)) is True
+
+    def test_al_verlopen_is_ook_dringend(self) -> None:
+        from opi.services.catalog.image_registries.web import _expires_soon
+
+        assert _expires_soon(self._over(-1)) is True
+
+    def test_ruim_op_tijd_is_geen_waarschuwing(self) -> None:
+        from opi.services.catalog.image_registries.web import _expires_soon
+
+        assert _expires_soon(self._over(60)) is False
+
+    def test_geen_datum_is_geen_waarschuwing(self) -> None:
+        from opi.services.catalog.image_registries.web import _expires_soon
+
+        assert _expires_soon("") is False
+
+    def test_een_onleesbare_datum_is_geen_waarschuwing(self) -> None:
+        """Dringend melden op een aanname is erger dan zwijgen over iets wat misschien
+        niets is."""
+        from opi.services.catalog.image_registries.web import _expires_soon
+
+        assert _expires_soon("morgen") is False
+
+    async def test_de_vlag_komt_mee_uit_het_cluster(self) -> None:
+        import json
+
+        from opi.services.catalog.image_registries.web import _organization_status
+
+        status = await _organization_status(
+            _kubectl(
+                json.dumps(
+                    {
+                        "status": {
+                            "proxyCache": {"ready": True},
+                            "credentialsConfigured": True,
+                            "tokenExpiryDate": self._over(2),
+                        }
+                    }
+                )
+            ),
+            "rig-prd-demo",
+            "code-overheid",
+            "code.overheid.nl/x",
+            "rig",
+            "demo",
+        )
+        assert status["expires_soon"] is True

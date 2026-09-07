@@ -20,8 +20,16 @@
                     <c-icon :icon="('check-mark-circle' if status.state == 'ready' else 'timer') | nldd_icon" size="md" />
                     <c-span><strong>{{ status.registry }}</strong> - {{ status.message }}</c-span>
                 </c-cluster>
-                {% if status.expires_at %}
-                    <c-paragraph size="sm">Het token van deze proxy verloopt op {{ status.expires_at[:10] }}. Daarna moet je hier een nieuw token invullen.</c-paragraph>
+{# De datum wordt hier een variabele en niet in het attribuut afgesneden: de
+                   LOTC-voorbewerker leest een :attribuut als een expressie en struikelt over
+                   de plak (``[:10]``). Dat is een parseerfout op het RENDEREN, niet in de
+                   browser -- en precies wat de blokkentest hierboven vangt. #}
+                {% set verloopdag = status.expires_at[:10] if status.expires_at else "" %}
+                {% if status.expires_soon %}
+                    {% set waarschuwing = "Het token van deze proxy verloopt op " ~ verloopdag ~ ". Vul hier een nieuw token in voordat het zover is, anders kan het platform je images niet meer ophalen." %}
+                    <c-alert type="warning" :heading="waarschuwing" />
+                {% elif verloopdag %}
+                    <c-paragraph size="sm">Het token van deze proxy verloopt op {{ verloopdag }}. Daarna moet je hier een nieuw token invullen.</c-paragraph>
                 {% endif %}
             </c-stack>
         {% endfor %}
