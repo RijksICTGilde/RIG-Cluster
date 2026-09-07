@@ -143,3 +143,40 @@ class TestDeConnector:
         masked = SkopeoConnector._mask_userinfo("error pinging docker://robbert:geheim@code.overheid.nl/v2/")
         assert "geheim" not in masked
         assert "***@code.overheid.nl" in masked
+
+
+class TestDeTokenConverter:
+    """Wat het formulier leest en terugschrijft. De valkuil is de leesKANT: een leeg veld
+    dat de gebruiker niet aanraakt komt als lege waarde terug, en die leest de schrijfkant
+    als 'gewist'."""
+
+    AGE = "-----BEGIN AGE ENCRYPTED FILE-----\nxxx\n-----END AGE ENCRYPTED FILE-----"
+
+    def _converter(self) -> Any:
+        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
+
+        return ProjectAgeSecretConverter()
+
+    def test_zonder_sleutel_blijft_het_blok_staan(self) -> None:
+        """Anders toont het formulier een leeg veld, slaat de gebruiker op zonder iets aan
+        te raken, en is het token weg."""
+        gelezen = self._converter().read(self.AGE, context_data={})
+        assert gelezen == self.AGE
+        # En de schrijfkant laat hem dan met rust, want hij ziet de AGE-markering.
+        assert self._converter().write(gelezen, context_data={}) == self.AGE
+
+    def test_een_leesbare_waarde_komt_er_gewoon_uit(self) -> None:
+        assert self._converter().read("nog-niet-versleuteld", context_data={}) == "nog-niet-versleuteld"
+
+    def test_niets_ingevuld_blijft_niets(self) -> None:
+        assert self._converter().read(None, context_data={}) == ""
+        assert self._converter().read("", context_data={}) == ""
+
+    def test_het_zicht_toont_nooit_de_waarde(self) -> None:
+        assert self._converter().view(self.AGE) == "Versleuteld opgeslagen"
+        assert self._converter().view("") == "Niet ingevuld"
+
+    def test_zonder_publieke_sleutel_blijft_de_waarde_leesbaar_maar_bewaard(self) -> None:
+        """Een token weggooien omdat we hem niet kunnen versleutelen is erger dan hem
+        opslaan zoals hij is; de opslag zelf is SOPS-versleuteld."""
+        assert self._converter().write("geheim", context_data={}) == "geheim"
