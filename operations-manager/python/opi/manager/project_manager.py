@@ -3973,8 +3973,17 @@ class ProjectManager:
                     output_filename=spec.filename,
                     use_sops=spec.encrypt,
                 )
-                created_files.append(f"{spec.filename}.to-sops.yaml" if spec.encrypt else f"{spec.filename}.yaml")
-                logger.info(f"Created project manifest '{created_files[-1]}' for project '{project_name}'")
+                if spec.encrypt:
+                    # BEIDE namen in de gewenste toestand. Het bestand staat er nu als
+                    # .to-sops.yaml en wordt hieronder .sops.yaml, maar de vorige run liet
+                    # het al versleuteld achter. Zou de prune die versleutelde kopie als
+                    # overbodig zien, dan verdwijnt hij vlak voor de encryptie -- en dan
+                    # heeft de skip-if-unchanged niets meer om tegen te vergelijken en
+                    # herschrijft SOPS het blok bij elke run.
+                    created_files.extend([f"{spec.filename}.to-sops.yaml", f"{spec.filename}.sops.yaml"])
+                else:
+                    created_files.append(f"{spec.filename}.yaml")
+                logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
 
         self._prune_obsolete_project_manifests(target_path, created_files)
 
