@@ -8,13 +8,15 @@ connector aanroepen.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi.responses import HTMLResponse
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
-from opi.services.catalog.image_registries.web import _organization_status
+from opi.services.catalog.image_registries.web import _organization_status, registry_status_fragment
 from opi.services.services_enums import UIEvent
 
 REGISTRY = {
@@ -185,3 +187,74 @@ class TestDeVerloopwaarschuwing:
             "demo",
         )
         assert status["expires_soon"] is True
+
+
+@pytest.mark.asyncio
+class TestDeLeeswegVanHetStatusEndpoint:
+    """Welke weg de handler naar het projectbestand neemt.
+
+    Het fragment gebruikt uit elke registry precies twee tekstvelden, ``name`` en
+    ``upstream``. ``get_decrypted()`` zou daarvoor ``decrypt_tree()`` over de hele boom
+    draaien -- de AGE-privesleutel, de api-key, de user-env-vars en het registry-token --
+    en die waarden komen nergens in dit antwoord terecht. ``get()`` levert hetzelfde
+    antwoord zonder ze aan te raken.
+    """
+
+    def _patch(self, monkeypatch: pytest.MonkeyPatch, registries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        import opi.connectors.kubectl as kubectl_module
+        import opi.core.cluster_config as cluster_config
+        import opi.services.project_authorization as authorization
+        import opi.services.project_store as project_store
+        import opi.web.lotc_switch as lotc_switch
+        from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
+
+        async def _geen_ontsleuteling(name: str) -> None:
+            raise AssertionError("het statusfragment hoeft het projectbestand niet ontsleuteld")
+
+        project = SimpleNamespace(
+            data={"name": "demo", "services": [{"name": "image-registries", "config": {"registries": registries}}]}
+        )
+        store = SimpleNamespace(get=lambda name: project, get_decrypted=_geen_ontsleuteling)
+
+        monkeypatch.setattr(project_store, "get_project_store", lambda: store)
+        monkeypatch.setattr(authorization, "is_user_authorized_for_project", lambda project_name, email: True)
+        monkeypatch.setattr(
+            cluster_config,
+            "get_image_registries_config",
+            lambda cluster: {"backend": BACKEND_QUAY_PROXY, "customer_name": "rig"},
+        )
+        monkeypatch.setattr(cluster_config, "get_prefixed_namespace", lambda cluster, project_name: "rig-prd-demo")
+        monkeypatch.setattr(
+            kubectl_module,
+            "KubectlConnector",
+            lambda: _kubectl('{"status": {"proxyCache": {"ready": true}, "credentialsConfigured": true}}'),
+        )
+
+        gerenderd: list[dict[str, Any]] = []
+
+        def _render(request: Any, *, template: str, context: dict[str, Any]) -> Any:
+            gerenderd.append(context)
+            return HTMLResponse("")
+
+        monkeypatch.setattr(lotc_switch, "render", _render)
+        return gerenderd
+
+    def _request(self) -> Any:
+        return SimpleNamespace(state=SimpleNamespace(user={"email": "admin@rijksoverheid.nl"}))
+
+    async def test_het_fragment_leest_het_bestand_zonder_te_ontsleutelen(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gerenderd = self._patch(monkeypatch, [REGISTRY])
+
+        await registry_status_fragment(self._request(), "demo")
+
+        (context,) = gerenderd
+        assert context["applicable"] is True
+        assert [status["registry"] for status in context["statuses"]] == ["code-overheid"]
+        assert context["statuses"][0]["state"] == "ready"
+
+    async def test_zonder_registries_wordt_het_cluster_niet_bevraagd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        gerenderd = self._patch(monkeypatch, [])
+
+        await registry_status_fragment(self._request(), "demo")
+
+        assert gerenderd == [{"applicable": True, "statuses": []}]

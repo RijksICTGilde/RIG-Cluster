@@ -1592,6 +1592,32 @@ class TestRelocateRegistriesToService:
         validate_declared_project_schema(self._algor_odc_shaped())
         validate_declared_project_schema(self._dp_bn7_shaped())
 
+    def test_een_protocol_en_hoofdletters_worden_omgezet(self) -> None:
+        """Twee vormen die op 2.8 GELDIG waren en op 2.9 geweigerd worden.
+
+        Het oude ``$defs/registry.url`` liet een protocol expliciet toe
+        (``^(?:(?:https?|ssh|git)://)?...``) en had geen hoofdletterregel. Letterlijk
+        overzetten levert dan een bestand op dat leest maar niet meer op te slaan is, met
+        een fout over een veld dat de gebruiker nooit heeft aangeraakt.
+        """
+        from opi.manager.project_validation import validate_service_configs
+
+        for url, verwacht in (
+            ("https://ghcr.io", "ghcr.io"),
+            ("http://registry.local:5000/team", "registry.local:5000/team"),
+            ("GHCR.IO", "ghcr.io"),
+            ("git://code.overheid.nl/Robbert", "code.overheid.nl/robbert"),
+            ("https://ghcr.io/", "ghcr.io"),  # de afsluitende schuine streep hoort er ook niet
+        ):
+            data = self._algor_odc_shaped()
+            data["registries"][0]["url"] = url
+            result, _ = migrate_to_latest(data)
+
+            assert self._service_config(result, "image-registries")["registries"][0]["upstream"] == verwacht
+            # De poorten die een save draait: hier sneuvelde de letterlijke kopie.
+            validate_project_schema(result)
+            validate_service_configs(result)
+
     def test_het_is_idempotent(self) -> None:
         once, _ = migrate_to_latest(self._algor_odc_shaped())
         assert relocate_registries_to_service(copy.deepcopy(once)) is False
