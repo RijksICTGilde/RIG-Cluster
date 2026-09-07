@@ -19,7 +19,7 @@ from typing import Any
 
 from opi.core.cluster_config import get_image_registries_config
 from opi.services.catalog.image_registries.naming import direct_secret_name, pull_secret_name, registry_destination
-from opi.services.catalog.image_registries.rules import RegistryRule, ResolvedImage, resolve_image
+from opi.services.catalog.image_registries.rules import RegistryRule, ResolvedImage, original_image, resolve_image
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 
@@ -54,6 +54,36 @@ def find_registry(project_data: dict[str, Any], name: str) -> dict[str, Any] | N
     for registry in project_registries(project_data):
         if registry.get("name") == name:
             return registry
+    return None
+
+
+def component_registry_name(component: dict[str, Any] | None) -> str | None:
+    """De registry die dit component aanwijst, uit zijn eigen dienstvermelding.
+
+    Werkt op allebei de vormen die het schema kent: een gewoon component draagt
+    ``services`` als LIJST, een deployment-component als DICT keyed op dienstnaam. Beide
+    komen hier langs, want de deployment mag de keuze van het component overschrijven met
+    dezelfde dienstvermelding.
+
+    Geen vermelding betekent geen registry, en dat is de non-waarde: de image is publiek.
+    """
+    if not isinstance(component, dict):
+        return None
+    services = component.get("services")
+    config: Any = None
+    if isinstance(services, dict):
+        # De dict-vorm draagt de dienstnaam als SLEUTEL, dus de waarde is de record zelf
+        # ({config: ...}) en niet een entry waar service_entry_config een naam in zoekt.
+        record = services.get(ServiceType.IMAGE_REGISTRIES.value)
+        config = record.get("config") if isinstance(record, dict) else None
+    elif isinstance(services, list):
+        for entry in services:
+            if service_entry_name(entry) == ServiceType.IMAGE_REGISTRIES.value:
+                config = service_entry_config(entry)
+                break
+    if isinstance(config, dict):
+        name = config.get("registry")
+        return name if isinstance(name, str) and name else None
     return None
 
 
@@ -120,6 +150,35 @@ def build_rules(project_data: dict[str, Any], cluster: str, preferred: str | Non
     rules = [rule for registry in ordered if (rule := registry_rule(registry, project_name, cluster)) is not None]
     rules.extend(cluster_rules(cluster))
     return rules
+
+
+def display_image(image: str, cluster: str, project_data: dict[str, Any] | None = None) -> str:
+    """De image zoals de AFNEMER hem kent, terug uit zijn platformvorm.
+
+    De weergavekant (diagnostiek, logregels, event-uitleg) toont een gebruiker zijn eigen
+    registry in plaats van de kale RCR-URL. Dat is de omgekeerde weg van
+    ``resolve_image()`` en hij hoort dus bij dezelfde regels: zonder ``project_data``
+    alleen de clustertabel, ermee ook de eigen proxy-organisaties van dit project -- want
+    zonder die laatste ziet een afnemer met een private registry juist wel de kale URL.
+    """
+    rules = build_rules(project_data, cluster) if project_data else cluster_rules(cluster)
+    return original_image(image, rules)
+
+
+def resolve_deployment_component_image(
+    project_data: dict[str, Any],
+    deployment_component: dict[str, Any],
+    component_def: dict[str, Any] | None,
+    cluster: str,
+) -> ResolvedImage:
+    """De image van één deployment-component, opgelost tegen de regels van dit project.
+
+    De keuze van het COMPONENT geldt, tenzij de deployment hem overschrijft met dezelfde
+    dienstvermelding onder ``deployments[*]/components[*]/services`` -- dezelfde vorm die
+    publish-on-web en temp-storage daar ook gebruiken.
+    """
+    preferred = component_registry_name(deployment_component) or component_registry_name(component_def)
+    return resolve_project_image(deployment_component.get("image", ""), project_data, cluster, preferred)
 
 
 def resolve_project_image(

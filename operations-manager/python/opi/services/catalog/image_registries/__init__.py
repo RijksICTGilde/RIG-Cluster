@@ -141,12 +141,19 @@ class ImageRegistriesService(Service):
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value
+        # Op een deployment-component is ``services`` een dict keyed op dienstnaam, dus het
+        # pad is een gewoon segment en niet de {..}-vorm van een component. En zoals bij
+        # publish-on-web: de dienstenlijst van het COMPONENT beslist of er uberhaupt een
+        # registry in het spel is, en die lijst is geen veld van dit formulier -- dus staat
+        # het fieldset er onvoorwaardelijk en zegt de legend wat het overschrijft.
         return [
             Fieldset(
-                legend="Eigen registry",
-                depends_on="services",
-                show_when={"contains": svc},
-                children=[f"services{{{svc}}}/config/registry"],
+                legend="Eigen registry (alleen voor deze deployment)",
+                description=(
+                    "Standaard volgt deze deployment de registry van het component. "
+                    "Vul dit alleen in als deze deployment een andere registry moet gebruiken."
+                ),
+                children=[f"services/{svc}/config/registry"],
             )
         ]
 

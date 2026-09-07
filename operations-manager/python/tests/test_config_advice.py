@@ -343,7 +343,16 @@ class TestTheDeclarationDrivesTheValueCheck:
             for editable in flatten(service.config_editables(layer))
             if editable.values_must_exist
         }
-        assert declaring == {"services/invite/config/active[*]/realm-roles[*]"}
+        assert declaring == {
+            "services/invite/config/active[*]/realm-roles[*]",
+            # De registryverwijzing bij een (deployment-)component is het tweede geval van
+            # de regel die de vlag beschrijft: de waarde is een VERWIJZING binnen dit
+            # project, naar een entry in de projectconfig van dezelfde dienst. Een naam die
+            # daar niet staat is geen keuze met een nadeel maar een typefout, en die hoort
+            # bij het opslaan te sneuvelen in plaats van pas bij het pullen.
+            "components[*]/services{image-registries}/config/registry",
+            "deployments[*]/components[*]/services/image-registries/config/registry",
+        }
 
 
 class TestTheSaveGateRefuses:

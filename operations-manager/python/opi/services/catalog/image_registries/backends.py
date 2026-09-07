@@ -65,7 +65,9 @@ class DirectSecretBackend:
             return []
 
         name = direct_secret_name(ctx.project_name, str(registry.get("name", "")))
-        secret = RegistrySecret(registry_url=str(upstream).split("/", 1)[0], username=str(username), password=password)
+        # De VOLLEDIGE upstream als sleutel in auths, inclusief pad: dat is wat het
+        # veld altijd al droeg en wat kubelet als meest specifieke match kiest.
+        secret = RegistrySecret(registry_url=str(upstream), username=str(username), password=password)
         return [
             ProjectManifestSpec(
                 filename=f"{FILENAME_PREFIX}{name}",

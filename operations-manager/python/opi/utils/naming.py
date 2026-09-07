@@ -877,6 +877,28 @@ def generate_keycloak_client_id(project_name: str, deployment_name: str, compone
     return _truncate_if_needed(client_id, 255)  # Keycloak client ID limit
 
 
+#: De map in de deployments-repo waar de PROJECTbrede manifesten staan, naast de mappen
+#: van de deployments. De underscore is bewust: een deploymentnaam is een DNS-label en kan
+#: er geen bevatten, dus deze map kan nooit botsen met een deployment.
+PROJECT_LEVEL_DIR = "_project"
+
+#: Deploymentnamen die het platform zelf al gebruikt en die een project dus niet mag
+#: kiezen. ``project`` is de eerste bewoner: de ArgoCD-applicatie van het projectniveau
+#: heet ``{project}-project``, en een deployment die letterlijk ``project`` heet zou
+#: daarmee op dezelfde applicatienaam uitkomen.
+RESERVED_DEPLOYMENT_NAMES: frozenset[str] = frozenset({"project"})
+
+
+def generate_argocd_project_application_name(project_name: str) -> str:
+    """De naam van de ArgoCD-applicatie voor het PROJECTniveau.
+
+    ``{project}-project``, dezelfde vorm als een deployment-applicatie. Dat botst met een
+    deployment die letterlijk ``project`` heet, en daarom staat die naam in
+    ``RESERVED_DEPLOYMENT_NAMES``.
+    """
+    return _truncate_if_needed(f"{_sanitize_for_lowercase(project_name)}-project", 253)
+
+
 def generate_argocd_application_name(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent ArgoCD application name.

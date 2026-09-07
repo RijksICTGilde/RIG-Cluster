@@ -219,10 +219,9 @@ _IMAGE_IN_MSG_RE = re.compile(r'image "([^"]+)"')
 def _source_image(rewritten: str) -> str:
     """Show the source-registry image, not the rcr.rijksapps.nl proxy rewrite."""
     from opi.core.config import settings
-    from opi.extensions.pipeline import get_registry_rewrite_mappings
-    from opi.extensions.registry_rewrite import original_image
+    from opi.services.catalog.image_registries.resolution import display_image
 
-    return original_image(rewritten, get_registry_rewrite_mappings(settings.CLUSTER_MANAGER))
+    return display_image(rewritten, settings.CLUSTER_MANAGER)
 
 
 def _image_pull_suggestion(message: str) -> str:

@@ -17,6 +17,7 @@ from opi.core.project_schema import (
     validate_declared_project_schema,
     validate_project_schema,
 )
+from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.shared.storage import StorageEntry
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
 from pydantic import ValidationError
@@ -165,22 +166,31 @@ def test_deployment_with_invalid_sleep_state_is_rejected() -> None:
 def test_registry_with_secret_name_and_image_host_passes() -> None:
     """A private image registry referenced by a pull secret is a real feature.
 
-    The 'add registry' API writes registries[].secretName (a pre-existing
+    The 'add registry' API writes a registry with ``secretName`` (a pre-existing
     imagePullSecret), and image-registry hosts are scheme-less (e.g.
-    rcr.rijksapps.nl/rig). A fail-closed schema that omits secretName or forces
-    a URL scheme rejects every project pulling from a private image registry -
-    exactly what silently broke dp-bn7's reprocessing.
+    rcr.rijksapps.nl/rig). A fail-closed gate that omits secretName or forces a URL
+    scheme rejects every project pulling from a private image registry - exactly what
+    silently broke dp-bn7's reprocessing.
+
+    Since schema version 2.9 the list lives in the config of the image-registries
+    service, so this shape is judged by that service's model rather than by the root
+    schema; both gates are exercised here, because passing one and failing the other is
+    the same outage.
     """
     project = _valid_project()
-    project["registries"] = [
+    project["services"] = [
         {
-            "name": "rcr",
-            "url": "rcr.rijksapps.nl/rig",
-            "secretName": "rig-robot-pull-secret",
+            "name": "image-registries",
+            "config": {
+                "registries": [
+                    {"name": "rcr", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
+                ]
+            },
         }
     ]
 
     validate_project_schema(project)
+    validate_service_configs(project)
 
 
 def test_namespace_with_newline_is_rejected() -> None:

@@ -105,8 +105,9 @@ DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.DEPLOYMENT_COMPONENT, _SVC, "config", "registry"),
     values_provider="ImageRegistryOptionsProvider",
     values_must_exist=True,
-    depends_on="deployments[*]/components[*]/services",
-    show_when={"contains": _SVC.value},
+    # Geen depends_on: op een deployment-component is ``services`` een DICT keyed op
+    # dienstnaam, dus een "contains"-poort op die lijst zegt daar niets. Het veld is
+    # optioneel en leeg laten betekent "volg het component" (remove_when_none).
     virtualize=SERVICE_VIRTUALIZE,
     remove_when_none=True,
 )
