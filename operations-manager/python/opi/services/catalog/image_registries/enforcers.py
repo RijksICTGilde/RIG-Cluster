@@ -19,11 +19,13 @@ import logging
 from typing import Any
 
 from opi.connectors.skopeo import SkopeoConnector
+from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.image_registries.rules import normalize_image
 from opi.services.services_enums import ServiceType
+from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class RegistryTokenEnforcer:
                 continue
             upstream = registry.get("upstream")
             username = registry.get("username")
-            password = registry.get("password")
+            password = _plain_token(registry, value)
             if not upstream or not username or not password:
                 # Zonder inloggegevens valt er niets uit te wisselen; een publieke upstream
                 # is een geldige invoer.
@@ -76,6 +78,34 @@ def _connector() -> SkopeoConnector:
     blokkeren op een platformgat.
     """
     return SkopeoConnector()
+
+
+def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str | None:
+    """Het token in leesbare vorm, of None als er niets te toetsen valt.
+
+    De enforcer krijgt de UITKOMST van ``process_json_submission``, dus wat
+    ``ProjectAgeSecretConverter.write()`` ervan gemaakt heeft: het armored AGE-blok, niet
+    de platte waarde die de gebruiker intypte. Dat blok aan skopeo geven toetst een token
+    dat niemand heeft -- gemeten: een GELDIG token wordt dan geweigerd, en dat is precies
+    het omgekeerde van wat deze toets moet doen.
+
+    Het veld draagt drie opslagvormen (armored blok, ``base64+age:``, ``plain:``); die
+    drie pakt ``decrypt_password_smart_sync`` uit, net als ``_plain_password`` in
+    ``backends.py`` doet voor de ``.dockerconfigjson``.
+
+    Anders dan daar is een onbruikbare of ontbrekende sleutel hier geen fout maar een
+    reden om te ZWIJGEN: dit is een toets, en deze module weigert niets op iets wat ze
+    niet heeft kunnen meten.
+    """
+    stored = registry.get("password")
+    if not isinstance(stored, str) or not stored:
+        return None
+    private_key = resolve_project_private_key(project_data) if carries_encrypted_value(stored) else None
+    try:
+        return decrypt_password_smart_sync(stored, private_key)
+    except ValueError:
+        logger.warning(f"Registry '{registry.get('name')}': token niet uit te pakken; het token wordt niet getoetst")
+        return None
 
 
 def _project_images(data: dict[str, Any]) -> list[str]:
