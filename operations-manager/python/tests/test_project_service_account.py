@@ -71,6 +71,12 @@ class TestHetGerenderdeManifest:
         assert manifest["metadata"]["name"] == "demo-sa"
         assert "imagePullSecrets" not in manifest
 
+    def test_hij_verandert_verder_niets_aan_de_pod(self, tmp_path: Any) -> None:
+        """Alleen de erfenis van andermans pull-secrets is het punt. De pods draaiden tot
+        nu toe op de default serviceaccount, die de API-token wel aankoppelt; hem hier
+        uitzetten zou elke pod die de Kubernetes-API aanspreekt stil zijn token afnemen."""
+        assert "automountServiceAccountToken" not in self._render(tmp_path)
+
 
 class TestDePodsDraaienErOp:
     def test_de_deployment_zet_de_serviceaccount(self) -> None:
