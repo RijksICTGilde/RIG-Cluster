@@ -8,7 +8,7 @@ cluster, en dat is het enige dat per platform verschilt.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 import yaml
@@ -101,14 +101,18 @@ class TestQuayProxyOrganizationBackend:
     def test_twee_bestanden_de_credentials_en_de_organisatie(self, service: ImageRegistriesService) -> None:
         specs = service.contribute_project_manifests(_ctx(ODCN, [REGISTRY]))
         assert [s.filename for s in specs] == [
-            f"{FILENAME_PREFIX}codeoverheid-rig-demo-upstream-credentials",
-            f"{FILENAME_PREFIX}codeoverheid-rig-demo",
+            f"{FILENAME_PREFIX}codeoverheid-rig-demo-robbert-uittenbroek-upstream-credentials",
+            f"{FILENAME_PREFIX}codeoverheid-rig-demo-robbert-uittenbroek",
         ]
         assert [s.encrypt for s in specs] == [True, False]
 
-    def test_de_organisatie_draagt_de_projectnaam_als_suffix(self, service: ImageRegistriesService) -> None:
+    def test_de_organisatie_draagt_de_projectnaam_en_de_upstream_namespace_als_suffix(
+        self, service: ImageRegistriesService
+    ) -> None:
+        """friendly_name draagt alleen de HOST, dus zonder het padsegment in de suffix
+        komen twee registries onder dezelfde host op één organisatie uit."""
         organization = service.contribute_project_manifests(_ctx(ODCN, [REGISTRY]))[1]
-        assert organization.values["suffix"] == "demo"
+        assert organization.values["suffix"] == "demo-robbert-uittenbroek"
         assert organization.values["friendly_name"] == "codeoverheid"
         assert organization.values["upstream"] == "code.overheid.nl/robbert.uittenbroek"
 
@@ -116,7 +120,7 @@ class TestQuayProxyOrganizationBackend:
         """De operator leidt hem af ZONDER spec.suffix, en dan botsen twee projecten met
         dezelfde upstream tenantbreed op een naam."""
         organization = service.contribute_project_manifests(_ctx(ODCN, [REGISTRY]))[1]
-        assert organization.values["pull_secret_name"] == "codeoverheid-rig-demo-robot-pull-secret"
+        assert organization.values["pull_secret_name"] == "codeoverheid-rig-demo-robbert-uittenbroek-robot-pull-secret"
 
         ander = ProjectManifestContext(
             project_name="ander",
@@ -132,6 +136,79 @@ class TestQuayProxyOrganizationBackend:
             != organization.values["pull_secret_name"]
         )
 
+
+class TestTweeRegistriesOnderDezelfdeHost:
+    """De blokkerende vondst uit de review.
+
+    ``friendly_name`` neemt alleen de HOST, dus zonder het upstream-padsegment in de
+    suffix kwamen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van hetzelfde project op één
+    organisatienaam uit. Gevolg was drie keer stil: dezelfde bestandsnaam op het
+    projectniveau (de tweede overschreef het credentials-secret van de eerste), dezelfde
+    bestemming (twee componenten haalden dezelfde image op), en de keuze per component uit
+    D3 die op deze backend niets meer deed.
+    """
+
+    EEN: ClassVar[dict[str, Any]] = {"name": "een", "upstream": "ghcr.io/orga", "username": "a", "password": "token-a"}
+    ANDER: ClassVar[dict[str, Any]] = {
+        "name": "ander",
+        "upstream": "ghcr.io/orgb",
+        "username": "b",
+        "password": "token-b",
+    }
+
+    def test_vier_bestanden_en_geen_enkele_botsing(self, service: ImageRegistriesService) -> None:
+        specs = service.contribute_project_manifests(_ctx(ODCN, [self.EEN, self.ANDER]))
+        namen = [spec.filename for spec in specs]
+        assert namen == [
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orga-upstream-credentials",
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orga",
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orgb-upstream-credentials",
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orgb",
+        ]
+        assert len(set(namen)) == len(namen)
+
+    def test_elk_token_landt_in_zijn_eigen_secret(self, service: ImageRegistriesService) -> None:
+        """De tegenproef op de meting uit de review: eerst gebruikersnaam a, daarna b, op
+        hetzelfde pad -- dan is er van a niets meer over."""
+        specs = service.contribute_project_manifests(_ctx(ODCN, [self.EEN, self.ANDER]))
+        paren = {spec.filename: spec.values.get("secret_pairs") for spec in specs if spec.encrypt}
+        assert paren[f"{FILENAME_PREFIX}ghcr-rig-demo-orga-upstream-credentials"] == {
+            "username": "a",
+            "password": "token-a",
+        }
+        assert paren[f"{FILENAME_PREFIX}ghcr-rig-demo-orgb-upstream-credentials"] == {
+            "username": "b",
+            "password": "token-b",
+        }
+
+    def test_de_twee_images_gaan_naar_verschillende_organisaties(self) -> None:
+        """En daarmee doet de keuze per component weer iets: twee regels, twee
+        bestemmingen, twee secrets."""
+        from opi.services.catalog.image_registries.resolution import resolve_project_image
+
+        data = _ctx(ODCN, [self.EEN, self.ANDER]).project_data
+        een = resolve_project_image("ghcr.io/orga/app:1", data, ODCN)
+        ander = resolve_project_image("ghcr.io/orgb/app:1", data, ODCN)
+        assert een.image == "rcr.rijksapps.nl/ghcr-rig-demo-orga/app:1"
+        assert ander.image == "rcr.rijksapps.nl/ghcr-rig-demo-orgb/app:1"
+        assert een.secret != ander.secret
+
+    def test_dezelfde_upstream_twee_keer_levert_geen_stille_overschrijving(
+        self, service: ImageRegistriesService
+    ) -> None:
+        """Eén organisatie per project per upstream-namespace (D2), dus twee entries met
+        dezelfde upstream KUNNEN geen twee organisaties zijn. Dan wint de eerste, net als
+        in de regellijst -- en niet de laatste die het bestand overschrijft."""
+        tweede = {**self.EEN, "name": "kopie", "username": "b", "password": "token-b"}
+        specs = service.contribute_project_manifests(_ctx(ODCN, [self.EEN, tweede]))
+        assert [spec.filename for spec in specs] == [
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orga-upstream-credentials",
+            f"{FILENAME_PREFIX}ghcr-rig-demo-orga",
+        ]
+        assert specs[0].values["secret_pairs"] == {"username": "a", "password": "token-a"}
+
+
+class TestQuayProxyOrganizationBackendZonderInloggegevens:
     def test_zonder_inloggegevens_alleen_de_organisatie(self, service: ImageRegistriesService) -> None:
         naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
         specs = service.contribute_project_manifests(_ctx(ODCN, [naked]))
@@ -160,7 +237,7 @@ class TestDeGerenderdeOrganisatie:
         assert manifest["kind"] == "Organization"
         assert manifest["spec"]["proxyCache"]["upstreamRegistry"] == "code.overheid.nl/robbert.uittenbroek"
         assert manifest["spec"]["proxyCache"]["credentialsSecret"]["name"] == (
-            "codeoverheid-rig-demo-upstream-credentials"
+            "codeoverheid-rig-demo-robbert-uittenbroek-upstream-credentials"
         )
 
     def test_de_api_version_komt_uit_de_clusterconfig(self, tmp_path: Any, service: ImageRegistriesService) -> None:

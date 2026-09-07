@@ -289,6 +289,25 @@ class TestProxyOrganizationOwnership:
         assert len(errors) == 1
         assert "ander" in errors[0]
 
+    def test_andermans_organisatie_met_upstream_namespace_wordt_ook_geweigerd(self) -> None:
+        """De suffix draagt naast de projectnaam ook de upstream-namespace, dus de
+        projectnaam staat niet meer per se aan het EIND van de organisatienaam."""
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/ghcr-rig-ander-teamx/app:1")
+        with self._store("eigen", "ander"):
+            errors = validate_proxy_organization_ownership(data)
+        assert len(errors) == 1
+        assert "ander" in errors[0]
+
+    def test_een_langere_projectnaam_wordt_niet_voor_een_kortere_aangezien(self) -> None:
+        """Op segmentgrens: ``demo`` mag de organisaties van ``demonstratie`` niet opeisen."""
+        from opi.manager.project_validation import validate_proxy_organization_ownership
+
+        data = self._project("rcr.rijksapps.nl/ghcr-rig-demonstratie/app:1", name="demonstratie")
+        with self._store("demonstratie", "demo"):
+            assert validate_proxy_organization_ownership(data) == []
+
     def test_de_eigen_organisatie_mag(self) -> None:
         from opi.manager.project_validation import validate_proxy_organization_ownership
 

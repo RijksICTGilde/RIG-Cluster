@@ -13,6 +13,7 @@ import pytest
 from opi.services.catalog.image_registries.naming import (
     friendly_name,
     organization_name,
+    organization_suffix,
     pull_secret_name,
     registry_destination,
 )
@@ -147,21 +148,48 @@ class TestNaamgeving:
         assert friendly_name("registry.gitlab.com") == "registrygitlab"
         assert friendly_name("localhost:5000") == "localhost"
 
-    def test_organisatie_draagt_de_projectnaam_als_suffix(self) -> None:
-        assert organization_name("code.overheid.nl/x", "rig", "demo") == "codeoverheid-rig-demo"
+    def test_organisatie_draagt_de_projectnaam_en_de_upstream_namespace(self) -> None:
+        assert organization_name("code.overheid.nl/x", "rig", "demo") == "codeoverheid-rig-demo-x"
+
+    def test_organisatie_zonder_pad_houdt_de_kale_projectnaam(self) -> None:
+        """Een upstream op hostniveau heeft geen namespace om te onderscheiden."""
+        assert organization_name("ghcr.io", "rig", "demo") == "ghcr-rig-demo"
+
+    def test_suffix_is_wat_de_operator_achter_de_hostnaam_plakt(self) -> None:
+        """De operator stelt ``<friendlyName>-<customerName>-<suffix>`` samen, en
+        ``friendlyName`` draagt alleen de HOST. Wat de twee registries onderscheidt moet
+        dus in de suffix zitten, anders komt de organisatie er onder één naam te staan."""
+        assert organization_suffix("ghcr.io/orga", "demo") == "demo-orga"
+        assert organization_suffix("ghcr.io", "demo") == "demo"
+        assert organization_suffix("code.overheid.nl/robbert.uittenbroek", "demo") == "demo-robbert-uittenbroek"
+
+    def test_twee_registries_onder_dezelfde_host_botsen_niet(self) -> None:
+        """De blokkerende vondst uit de review: ``friendly_name`` neemt alleen de host,
+        dus zonder het padsegment kregen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van
+        hetzelfde project dezelfde organisatie, hetzelfde credentials-secret, dezelfde
+        bestandsnaam op het projectniveau en dezelfde bestemming."""
+        een = organization_name("ghcr.io/orga", "rig", "demo")
+        ander = organization_name("ghcr.io/orgb", "rig", "demo")
+        assert een == "ghcr-rig-demo-orga"
+        assert ander == "ghcr-rig-demo-orgb"
+        assert een != ander
+        assert pull_secret_name("ghcr.io/orga", "rig", "demo") != pull_secret_name("ghcr.io/orgb", "rig", "demo")
+        assert registry_destination("ghcr.io/orga", "rcr.rijksapps.nl", "rig", "demo") != registry_destination(
+            "ghcr.io/orgb", "rcr.rijksapps.nl", "rig", "demo"
+        )
 
     def test_pull_secret_draagt_de_projectnaam(self) -> None:
         """De operator laat spec.suffix weg, dus twee projecten met dezelfde upstream
         botsen tenantbreed. Daarom zetten wij de naam zelf."""
         een = pull_secret_name("code.overheid.nl/x", "rig", "demo")
         ander = pull_secret_name("code.overheid.nl/y", "rig", "ander")
-        assert een == "codeoverheid-rig-demo-robot-pull-secret"
+        assert een == "codeoverheid-rig-demo-x-robot-pull-secret"
         assert een != ander
 
     def test_bestemming_is_host_plus_organisatie(self) -> None:
         assert (
             registry_destination("code.overheid.nl/x", "rcr.rijksapps.nl", "rig", "demo")
-            == "rcr.rijksapps.nl/codeoverheid-rig-demo"
+            == "rcr.rijksapps.nl/codeoverheid-rig-demo-x"
         )
 
 
@@ -178,8 +206,10 @@ class TestDeTweeBronnen:
 
     def test_met_private_registry_de_eigen_organisatie(self) -> None:
         resolved = resolve_project_image(self.IMAGE, _project([self.REGISTRY]), ODCN)
-        assert resolved.image == "rcr.rijksapps.nl/codeoverheid-rig-demo/zad-deployment-demo:0a611d9d"
-        assert resolved.secret == "codeoverheid-rig-demo-robot-pull-secret"
+        assert resolved.image == (
+            "rcr.rijksapps.nl/codeoverheid-rig-demo-robbert-uittenbroek/zad-deployment-demo:0a611d9d"
+        )
+        assert resolved.secret == "codeoverheid-rig-demo-robbert-uittenbroek-robot-pull-secret"
 
     def test_zonder_private_registry_de_gedeelde_proxy(self) -> None:
         resolved = resolve_project_image(self.IMAGE, _project(), ODCN)
@@ -342,4 +372,4 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         # Beide registries hebben dezelfde upstream, dus dezelfde organisatie -- het
         # SECRET is hetzelfde en het verschil zit in welke regel vooraan stond.
         assert zonder.image == met.image
-        assert zonder.image.startswith("rcr.rijksapps.nl/codeoverheid-rig-demo/")
+        assert zonder.image.startswith("rcr.rijksapps.nl/codeoverheid-rig-demo-team/")
