@@ -894,3 +894,62 @@ def test_summarize_leaves_out_a_disabled_component():
         "components": [{"reference": "profielservice", "image": "ghcr.io/x/y:1", "disabled": True}],
     }
     assert summarize_component_pods([], deployment=deployment) == []
+
+
+# ---------------------------------------------------------------------------
+# De bronvorm van een image (RC-177)
+# ---------------------------------------------------------------------------
+#
+# Op een cluster met een proxy staat in de podspec een RCR-pad, en dat is niet wat de
+# afnemer heeft ingevuld. Terugrekenen kan alleen tegen de regels van de dienst
+# image-registries, en de eigen proxy-organisaties van een project staan alleen in die
+# lijst als het PROJECTBESTAND erbij zit. Zonder dat bestand leest hij hier de kale URL.
+
+_PRIVATE_PROJECT: dict[str, Any] = {
+    "name": "demo",
+    "services": [
+        {
+            "name": "image-registries",
+            "config": {
+                "registries": [
+                    {
+                        "name": "code-overheid",
+                        "upstream": "code.overheid.nl/robbert.uittenbroek",
+                        "username": "robbert.uittenbroek",
+                        "password": "een-token",
+                    }
+                ]
+            },
+        }
+    ],
+}
+_RCR_IMAGE = "rcr.rijksapps.nl/codeoverheid-rig-demo-robbert-uittenbroek/zad-deployment-demo:0a611d9d"
+_UPSTREAM_IMAGE = "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo:0a611d9d"
+
+
+def _odcn_settings() -> Any:
+    return patch("opi.services.deployment_diagnostics.settings.CLUSTER_MANAGER", "odcn-production")
+
+
+def test_summarize_shows_the_private_registry_the_consumer_typed():
+    deployment = {"name": "pr-114", "components": [{"reference": "web", "image": _UPSTREAM_IMAGE}]}
+    pods = [_pod("pr-114-web-849d475c4-4qp6p", app="pr-114-web", ready=True, image=_RCR_IMAGE)]
+
+    with _odcn_settings():
+        (summary,) = summarize_component_pods(pods, deployment=deployment, project_data=_PRIVATE_PROJECT)
+
+    assert summary.image == _UPSTREAM_IMAGE
+    assert summary.configured_image == _UPSTREAM_IMAGE
+    assert summary.runs_configured_image is True
+
+
+def test_summarize_without_the_project_file_leaves_the_bare_rcr_url():
+    """De tegenproef: het is het projectbestand dat de eigen organisatie terugvertaalt,
+    niet de clustertabel -- die kent alleen de GEDEELDE proxies."""
+    deployment = {"name": "pr-114", "components": [{"reference": "web", "image": _UPSTREAM_IMAGE}]}
+    pods = [_pod("pr-114-web-849d475c4-4qp6p", app="pr-114-web", ready=True, image=_RCR_IMAGE)]
+
+    with _odcn_settings():
+        (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.image == _RCR_IMAGE

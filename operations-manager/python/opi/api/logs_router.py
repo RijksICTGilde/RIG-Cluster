@@ -263,6 +263,11 @@ async def get_component_pods(
         raise HTTPException(status_code=404, detail="Component not found")
 
     # De bronvorm van de image, niet de rcr-proxyrewrite: hetzelfde wat de kaart toont.
+    # Met het projectbestand erbij, want de eigen proxy-organisaties van dit project staan
+    # alleen in de regellijst als dat bestand er is -- zonder ziet een afnemer met een
+    # private registry hier juist wel de kale RCR-URL.
+    project_info = get_project_store().get(project_name)
+    project_data = (project_info.data or {}) if project_info else None
     return JSONResponse(
         content={
             "project": project_name,
@@ -272,7 +277,7 @@ async def get_component_pods(
                 {
                     "name": pod["name"],
                     "ready": pod["ready"],
-                    "image": display_image(pod.get("image", ""), settings.CLUSTER_MANAGER),
+                    "image": display_image(pod.get("image", ""), settings.CLUSTER_MANAGER, project_data),
                     "running_since": pod.get("started_at"),
                     "restart_count": pod.get("restart_count", 0),
                     "has_previous_attempt": pod.get("has_previous_attempt", False),
