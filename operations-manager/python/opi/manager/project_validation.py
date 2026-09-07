@@ -574,11 +574,13 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
     zelf blijft leesbaar voor wie zijn naam kent.
 
     Wij maken die organisaties zelf, dus we weten hoe ze heten:
-    ``<friendlyName>-<customerName>-<project>``. Een organisatie die eindigt op
-    ``-<customerName>-<een ander projectnaam>`` is er dus een van dat project, en die
-    verwijzing wordt geweigerd. Een GEDEELDE proxy (``ghcr-rig``, ``code-overheid-rig``)
-    eindigt niet op een projectnaam en blijft gewoon bruikbaar -- dat is wat elk project
-    daar mag gebruiken.
+    ``<friendlyName>-<customerName>-<project>``, en daarachter nog de upstream-namespace
+    als de upstream er een heeft (``organization_suffix``) -- twee registries onder
+    dezelfde host zouden anders op één organisatie uitkomen. Een organisatie waarin
+    ``-<customerName>-<een ander projectnaam>`` staat, aan het eind of gevolgd door nog
+    een segment, is er dus een van dat project, en die verwijzing wordt geweigerd. Een
+    GEDEELDE proxy (``ghcr-rig``, ``code-overheid-rig``) draagt geen projectnaam en blijft
+    gewoon bruikbaar -- dat is wat elk project daar mag gebruiken.
 
     De projectnamen komen uit de projectenlijst en niet uit een gok op koppeltekens: een
     friendlyName mag zelf koppeltekens bevatten, dus de naam uit elkaar trekken zou net zo
@@ -613,7 +615,7 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
             organization = _proxy_organization_of(image, registry_host)
             if organization is None:
                 continue
-            owner = next((p for p in other_projects if organization.endswith(f"-{customer_name}-{p}")), None)
+            owner = next((p for p in other_projects if _belongs_to_project(organization, customer_name, p)), None)
             if owner is not None:
                 errors.append(
                     f"deployment '{deployment.get('name')}' component '{component.get('reference')}' verwijst met "
@@ -621,6 +623,18 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
                     f"van dat project gevuld; gebruik je eigen registry"
                 )
     return errors
+
+
+def _belongs_to_project(organization: str, customer_name: str, project: str) -> bool:
+    """Of een proxy-organisatie van ``project`` is.
+
+    Twee vormen, want de suffix draagt naast de projectnaam ook de upstream-namespace als
+    de upstream er een heeft: ``<friendly>-<customer>-<project>`` en
+    ``<friendly>-<customer>-<project>-<namespace>``. Op een SEGMENTgrens, zodat een
+    project ``demo`` niet ook de organisaties van ``demonstratie`` opeist.
+    """
+    marker = f"-{customer_name}-{project}"
+    return organization.endswith(marker) or f"{marker}-" in organization
 
 
 def _proxy_organization_of(image: str, registry_host: str) -> str | None:

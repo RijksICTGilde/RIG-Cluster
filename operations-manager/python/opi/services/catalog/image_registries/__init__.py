@@ -236,6 +236,22 @@ class ImageRegistriesService(Service):
             return []
         backend = backend_for_cluster(ctx.cluster)
         specs: list[ProjectManifestSpec] = []
+        seen: set[str] = set()
         for registry in registries:
-            specs.extend(backend.manifests(ctx, registry))
+            for spec in backend.manifests(ctx, registry):
+                if spec.filename in seen:
+                    # Twee registries die op dezelfde bestandsnaam uitkomen -- op de
+                    # Quay-backend is dat twee entries met dezelfde upstream, want daar is
+                    # de organisatie per project per upstream-namespace (D2). De EERSTE
+                    # wint, net als in de regellijst, waar de eerste in bestandsvolgorde
+                    # ook vooraan staat. Zonder deze regel schreef de tweede de eerste
+                    # stil over en liepen het secret in het manifest en het secret in de
+                    # regel uiteen.
+                    logger.warning(
+                        f"Registry '{registry.get('name')}' van project '{ctx.project_name}' levert dezelfde "
+                        f"projectmanifest '{spec.filename}' als een eerdere registry; de eerste blijft staan"
+                    )
+                    continue
+                seen.add(spec.filename)
+                specs.append(spec)
         return specs

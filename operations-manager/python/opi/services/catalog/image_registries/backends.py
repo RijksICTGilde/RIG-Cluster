@@ -24,6 +24,7 @@ from opi.services.catalog.image_registries.naming import (
     direct_secret_name,
     friendly_name,
     organization_name,
+    organization_suffix,
     pull_secret_name,
 )
 from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
@@ -147,7 +148,10 @@ class QuayProxyOrganizationBackend:
                     "name": organization,
                     "namespace": ctx.namespace,
                     "friendly_name": friendly_name(str(upstream)),
-                    "suffix": ctx.project_name,
+                    # De projectnaam PLUS de upstream-namespace: de operator stelt de naam
+                    # samen uit friendlyName (de HOST) en de klantnaam, dus zonder dit
+                    # deel botsen twee registries onder dezelfde host op één organisatie.
+                    "suffix": organization_suffix(str(upstream), ctx.project_name),
                     "upstream": str(upstream),
                     "credentials_secret": credentials_secret,
                     "pull_secret_name": pull_secret_name(str(upstream), customer_name, ctx.project_name),

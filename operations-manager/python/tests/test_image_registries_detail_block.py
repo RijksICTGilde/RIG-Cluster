@@ -73,7 +73,7 @@ class TestDeToestandUitHetCluster:
             "demo",
         )
         assert status["state"] == "ready"
-        assert status["organization"] == "codeoverheid-rig-demo"
+        assert status["organization"] == "codeoverheid-rig-demo-robbert-uittenbroek"
 
     async def test_de_proxy_draait_maar_de_credentials_nog_niet(self) -> None:
         status = await _organization_status(
@@ -120,7 +120,7 @@ class TestDeToestandUitHetCluster:
         kubectl = _kubectl('{"status": {}}')
         await _organization_status(kubectl, "rig-prd-demo", "code-overheid", "code.overheid.nl/robbert", "rig", "demo")
         kubectl.run_command.assert_awaited_once_with(
-            ["get", "organization", "codeoverheid-rig-demo", "-n", "rig-prd-demo", "-o", "json"]
+            ["get", "organization", "codeoverheid-rig-demo-robbert", "-n", "rig-prd-demo", "-o", "json"]
         )
 
 

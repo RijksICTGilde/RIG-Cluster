@@ -46,14 +46,44 @@ def friendly_name(upstream: str) -> str:
     return sanitize_kubernetes_name("".join(stem))
 
 
+def upstream_namespace(upstream: str) -> str:
+    """Het pad achter de host: ``code.overheid.nl/robbert.uittenbroek`` -> ``robbert.uittenbroek``.
+
+    Leeg als de upstream alleen een host is (``ghcr.io``).
+    """
+    _, _, path = upstream.partition("/")
+    return path.strip("/")
+
+
+def organization_suffix(upstream: str, project_name: str) -> str:
+    """Wat wij als ``spec.suffix`` op de ``Organization`` zetten.
+
+    De projectnaam PLUS de upstream-namespace, want D2 zegt één organisatie per project
+    per upstream-NAMESPACE en de eerste twee delen van de naam die de operator samenstelt
+    (``friendlyName``-``customerName``) dragen alleen de HOST. Zonder dit deel vallen
+    ``ghcr.io/orga`` en ``ghcr.io/orgb`` van hetzelfde project op één organisatienaam, en
+    daarmee op één bestandsnaam op het projectniveau, één credentials-secret en één
+    bestemming -- de tweede registry overschrijft dan stil de eerste, en twee componenten
+    die verschillende images bedoelen halen dezelfde op.
+
+    Een upstream zonder pad houdt de kale projectnaam, zodat een registry op hostniveau
+    dezelfde naam houdt die de proef op productie gemeten heeft.
+    """
+    namespace = upstream_namespace(upstream)
+    return sanitize_kubernetes_name(f"{project_name}-{namespace}" if namespace else project_name)
+
+
 def organization_name(upstream: str, customer_name: str, project_name: str) -> str:
     """De naam van de proxy-organisatie in RCR.
 
-    ``<friendlyName>-<customerName>-<project>``: de eerste twee delen stelt de operator
+    ``<friendlyName>-<customerName>-<suffix>``: de eerste twee delen stelt de operator
     zelf samen uit ``spec.friendlyName`` en de klantnaam, het derde deel is onze
-    ``spec.suffix``. Eén organisatie per project per upstream-namespace (D2).
+    ``spec.suffix`` (zie ``organization_suffix``). Eén organisatie per project per
+    upstream-namespace (D2).
     """
-    return sanitize_kubernetes_name(f"{friendly_name(upstream)}-{customer_name}-{project_name}")
+    return sanitize_kubernetes_name(
+        f"{friendly_name(upstream)}-{customer_name}-{organization_suffix(upstream, project_name)}"
+    )
 
 
 def pull_secret_name(upstream: str, customer_name: str, project_name: str) -> str:
