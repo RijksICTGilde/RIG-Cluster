@@ -137,6 +137,53 @@ class TestWieHetProjectniveauDraagt:
     def test_een_deployment_zonder_naam_telt_niet_mee(self) -> None:
         assert project_level_deployment([{"repository": "a"}]) is None
 
+    def test_de_verwijderaar_zoekt_in_dezelfde_repository_als_de_schrijver(self, tmp_path: Any) -> None:
+        """De derde kant. Koos de verwijderaar op bestandsvolgorde, dan ging hij bij twee
+        repositories in de VERKEERDE repo zoeken -- en dan blijft de map met zijn
+        SOPS-secrets staan terwijl de verwijdering 'not_found' meldt."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from opi.manager.delete_project_manager import DeleteProjectManager
+
+        # De map staat in repo 'a', de repository van de ALFABETISCH EERSTE deployment.
+        (tmp_path / "a" / "odcn-production" / "demo" / PROJECT_LEVEL_DIR).mkdir(parents=True)
+
+        gevraagd: list[str] = []
+
+        async def _connector(name: str, _config: dict[str, Any]) -> Any:
+            gevraagd.append(name)
+            connector = MagicMock()
+            connector.ensure_repo_cloned = AsyncMock()
+            connector.get_working_dir = AsyncMock(return_value=str(tmp_path / name))
+            connector.commit_and_push_changes = AsyncMock()
+            return connector
+
+        manager = DeleteProjectManager.__new__(DeleteProjectManager)
+        manager.project_manager = MagicMock()
+        manager.project_manager.get_git_connector_for_deployment = _connector
+
+        project_data = {
+            "repositories": [{"name": "a", "path": ""}, {"name": "b", "path": ""}],
+        }
+        # In BESTANDSvolgorde staat 'productie' (repo b) vooraan; alfabetisch wint 'acceptatie'.
+        deployments = [
+            {"name": "productie", "repository": "b"},
+            {"name": "acceptatie", "repository": "a"},
+        ]
+        results: dict[str, Any] = {"operations": [], "errors": []}
+        asyncio.run(manager._delete_project_level_folder("demo", "odcn-production", project_data, deployments, results))
+
+        assert gevraagd == ["a"]
+        assert results["errors"] == []
+        assert results["operations"] == [
+            {
+                "type": "project_level_folder_deletion",
+                "target": f"odcn-production/demo/{PROJECT_LEVEL_DIR}",
+                "status": "success",
+            }
+        ]
+        assert not (tmp_path / "a" / "odcn-production" / "demo" / PROJECT_LEVEL_DIR).exists()
+
 
 class TestDeArgoApplicatie:
     def test_het_projectniveau_gaat_op_wave_0_en_een_deployment_op_1(self) -> None:
