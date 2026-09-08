@@ -120,6 +120,63 @@ class TestOverEenMap:
         apply_rules_to_directory(str(tmp_path), [GHCR])
         assert path.stat().st_mtime_ns == voor
 
+    def test_een_meerregelig_command_blijft_een_literal_block(self, tmp_path: Any) -> None:
+        """De pas schrijft via de canonieke schrijver, dus een blok blijft een blok.
+
+        Met een eigen PyYAML-dump werd elk aangeraakt manifest volledig opnieuw
+        geserialiseerd: een heredoc kwam terug als een regel vol ``\\n``-escapes en het
+        commentaar uit het sjabloon verdween. ``opi/utils/yaml_util.py`` is de enige
+        schrijver, en die kiest de literal block style zodat elk schrijfpad hem erft.
+        """
+        path = tmp_path / "deployment.yaml"
+        path.write_text(
+            "# De sidecar draait op een vaste image uit zijn sjabloon.\n"
+            "apiVersion: apps/v1\n"
+            "kind: Deployment\n"
+            "spec:\n"
+            "  template:\n"
+            "    spec:\n"
+            "      containers:\n"
+            "        - name: app\n"
+            "          image: ghcr.io/org/web:1\n"
+            "          command:\n"
+            "            - /bin/sh\n"
+            "            - -c\n"
+            "            - |\n"
+            "              cat <<EOF > /etc/haproxy.cfg\n"
+            "              frontend in\n"
+            "              EOF\n"
+        )
+
+        apply_rules_to_directory(str(tmp_path), [GHCR])
+
+        geschreven = path.read_text()
+        assert "image: rcr.rijksapps.nl/ghcr-rig/org/web:1" in geschreven
+        assert "            - |\n" in geschreven, geschreven
+        assert "\\n" not in geschreven, geschreven
+        assert geschreven.startswith("# De sidecar draait op een vaste image uit zijn sjabloon.\n")
+        spec = yaml.safe_load(geschreven)["spec"]["template"]["spec"]
+        assert spec["containers"][0]["command"][2] == "cat <<EOF > /etc/haproxy.cfg\nfrontend in\nEOF\n"
+        assert spec["imagePullSecrets"] == [{"name": "ghcr-rig-robot-pull-secret"}]
+
+    def test_een_multidocument_bestand_telt_helemaal_mee(self, tmp_path: Any) -> None:
+        """Eerder viel zo'n bestand stil weg met alleen een waarschuwing."""
+        path = tmp_path / "bundle.yaml"
+        path.write_text(
+            yaml.dump(_deployment("ghcr.io/org/web:1"))
+            + "---\n"
+            + yaml.dump({"kind": "Pod", "spec": {"containers": [{"name": "side", "image": "quay.io/x/y:1"}]}})
+        )
+
+        apply_rules_to_directory(str(tmp_path), [GHCR, QUAY])
+
+        documenten = list(yaml.safe_load_all(path.read_text()))
+        assert len(documenten) == 2
+        assert documenten[0]["spec"]["template"]["spec"]["containers"][0]["image"] == (
+            "rcr.rijksapps.nl/ghcr-rig/org/web:1"
+        )
+        assert documenten[1]["spec"]["containers"][0]["image"] == "rcr.rijksapps.nl/quay-rig/x/y:1"
+
 
 class TestOverEenLosDocument:
     def test_een_kale_pod_krijgt_zijn_secret(self) -> None:
@@ -133,6 +190,23 @@ class TestOverEenLosDocument:
     def test_zonder_regels_komt_de_tekst_ongewijzigd_terug(self) -> None:
         document = "kind: Pod\nspec:\n  containers: []\n"
         assert apply_rules_to_document(document, []) == document
+
+    def test_zonder_iets_op_te_lossen_komt_de_tekst_letterlijk_terug(self) -> None:
+        """Niets te doen betekent ook niet opnieuw serialiseren."""
+        document = "# een sjabloon met commentaar\nkind: Service\nspec: {}\n"
+        assert apply_rules_to_document(document, [GHCR]) == document
+
+    def test_alle_documenten_van_een_bundel_tellen_mee(self) -> None:
+        document = (
+            yaml.safe_dump({"kind": "Pod", "spec": {"containers": [{"name": "a", "image": "ghcr.io/org/a:1"}]}})
+            + "---\n"
+            + yaml.safe_dump({"kind": "Pod", "spec": {"containers": [{"name": "b", "image": "quay.io/org/b:1"}]}})
+        )
+        documenten = list(yaml.safe_load_all(apply_rules_to_document(document, [GHCR, QUAY])))
+        assert [d["spec"]["containers"][0]["image"] for d in documenten] == [
+            "rcr.rijksapps.nl/ghcr-rig/org/a:1",
+            "rcr.rijksapps.nl/quay-rig/org/b:1",
+        ]
 
 
 class TestDeClustertabelIsDeBron:

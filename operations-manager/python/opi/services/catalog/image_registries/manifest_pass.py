@@ -3,6 +3,10 @@
 Een wandeling en geen tweede mechanisme: sidecars, backup-, restore-, db-console- en
 jobpods lopen niet door de componentlus, maar gebruiken hier dezelfde regels en dezelfde
 ``resolve_image()``. Idempotent, want een al opgeloste image staat al op zijn bestemming.
+
+Lezen en schrijven gaat door ``opi/utils/yaml_util.py``, de enige schrijver: die houdt
+commentaar en meerregelige strings (een literal block) in stand. Een manifest waaraan
+niets is opgelost wordt niet aangeraakt.
 """
 
 from __future__ import annotations
@@ -12,9 +16,8 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from opi.services.catalog.image_registries.rules import resolve_image
+from opi.utils.yaml_util import dump_yaml_documents_to_string, load_yaml_documents_from_string
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -51,10 +54,21 @@ def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict
 
     Muteert en retourneert hetzelfde manifest.
     """
+    _apply_rules(manifest, rules)
+    return manifest
+
+
+def _apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> bool:
+    """De pas zelf. True als er aan dit manifest iets is veranderd.
+
+    De schrijvers hieronder hebben dat antwoord nodig: alleen een manifest dat echt is
+    opgelost wordt opnieuw geschreven, de rest komt letterlijk terug zoals hij binnenkwam.
+    """
     pod_spec = pod_spec_of(manifest)
     if pod_spec is None or not rules:
-        return manifest
+        return False
 
+    changed = False
     secrets: list[str] = []
     for container_list in ("containers", "initContainers"):
         for container in pod_spec.get(container_list, []) or []:
@@ -66,13 +80,23 @@ def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict
             resolved = resolve_image(image, rules)
             if resolved.image != image:
                 container["image"] = resolved.image
+                changed = True
                 logger.info(f"Image opgelost: {image} -> {resolved.image}")
             if resolved.secret and resolved.secret not in secrets:
                 secrets.append(resolved.secret)
 
-    if secrets:
-        _ensure_pull_secrets(pod_spec, secrets)
-    return manifest
+    if secrets and _ensure_pull_secrets(pod_spec, secrets):
+        changed = True
+    return changed
+
+
+def _resolve_documents(documents: list[Any], rules: Sequence[RegistryRule]) -> bool:
+    """Draai de pas over elk document uit een bestand. True als er iets is veranderd."""
+    changed = False
+    for document in documents:
+        if isinstance(document, dict) and _apply_rules(document, rules):
+            changed = True
+    return changed
 
 
 def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) -> None:
@@ -86,40 +110,48 @@ def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) ->
         filename = os.path.basename(file_path)
         if filename in _SKIP_NAMES or any(filename.endswith(suffix) for suffix in _SKIP_SUFFIXES):
             continue
-        try:
-            with open(file_path) as handle:
-                manifest = yaml.safe_load(handle)
-        except yaml.YAMLError:
+        with open(file_path, encoding="utf-8") as handle:
+            original = handle.read()
+        documents = load_yaml_documents_from_string(original)
+        if documents is None:
             logger.warning(f"Kon manifest niet lezen voor de registrypas: {filename}")
             continue
-        if not isinstance(manifest, dict):
+        if not _resolve_documents(documents, rules):
             continue
-        before = yaml.dump(manifest, default_flow_style=False, sort_keys=False)
-        after = yaml.dump(apply_rules(manifest, rules), default_flow_style=False, sort_keys=False)
-        if after != before:
-            with open(file_path, "w") as handle:
-                handle.write(after)
+        # Eerst volledig in het geheugen serialiseren, dan pas het bestand aanraken: een
+        # dumper die halverwege blaast mag geen afgekapt manifest achterlaten.
+        rewritten = dump_yaml_documents_to_string(documents)
+        with open(file_path, "w", encoding="utf-8") as handle:
+            handle.write(rewritten)
 
 
 def apply_rules_to_document(document: str, rules: Sequence[RegistryRule]) -> str:
-    """Draai de pas over één YAML-document als tekst, voor een kale pod die los wordt toegepast."""
-    if not rules:
+    """Draai de pas over een YAML-tekst, voor een kale pod die los wordt toegepast.
+
+    Een tekst met meer dan een document telt mee, en wat niet is opgelost komt letterlijk
+    terug: er wordt alleen opnieuw geschreven als er ook echt iets is veranderd.
+    """
+    if not rules or not document.strip():
         return document
-    text = document.strip()
-    if not text:
+    documents = load_yaml_documents_from_string(document)
+    if documents is None or not _resolve_documents(documents, rules):
         return document
-    parsed = yaml.safe_load(text)
-    if not isinstance(parsed, dict):
-        return document
-    return yaml.safe_dump(apply_rules(parsed, rules), default_flow_style=False, sort_keys=False)
+    return dump_yaml_documents_to_string(documents)
 
 
-def _ensure_pull_secrets(pod_spec: dict[str, Any], secrets: Sequence[str]) -> None:
-    """Voeg de pull-secrets toe die er nog niet staan, met behoud van wat er al stond."""
+def _ensure_pull_secrets(pod_spec: dict[str, Any], secrets: Sequence[str]) -> bool:
+    """Voeg de pull-secrets toe die er nog niet staan, met behoud van wat er al stond.
+
+    True als er iets is bijgekomen.
+    """
     existing = pod_spec.get("imagePullSecrets") or []
     present = {entry.get("name") for entry in existing if isinstance(entry, dict)}
+    added = False
     for name in secrets:
         if name not in present:
             existing.append({"name": name})
             present.add(name)
-    pod_spec["imagePullSecrets"] = existing
+            added = True
+    if added:
+        pod_spec["imagePullSecrets"] = existing
+    return added
