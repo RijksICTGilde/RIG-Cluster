@@ -160,11 +160,8 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
 class ServiceConfigBlock:
     """One service config block found in a project file, and where it sits.
 
-    The walk that finds these is deliberately shared: ``validate_service_configs``
-    checks each block against its service's model, and
-    ``find_plaintext_service_config_violations`` checks the same blocks for a stored
-    secret in plain text. Two walks would be two chances for one of them to miss a
-    layer -- which is how a config-borne secret loses its guard.
+    The walk is shared by ``validate_service_configs`` and
+    ``find_plaintext_service_config_violations``, so neither can miss a layer.
     """
 
     name: str
@@ -303,9 +300,8 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
     project_name = project_data.get("name", "(onbekend)")
 
     # The DEFINE side first: what a service stores under ``data`` (the attachments
-    # catalog today). It was validated by nothing at all -- the config walk only ever
-    # looked at ``config`` -- so a catalog entry with a missing filename or an id that
-    # cannot become a volume name was committed and failed at deploy time.
+    # catalog today). The config walk only ever looked at ``config``, so a catalog entry
+    # with a missing filename was committed and failed at deploy time.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
         data = service_entry_data(view.service_entry(name))
         if data is not None:
@@ -320,28 +316,17 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
 def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> list[str]:
     """Paths in a SERVICE config that must hold an AGE-encrypted value but do not.
 
-    The counterpart of ``find_plaintext_secret_violations`` for the half of a project
-    file that ``project_v2.json`` deliberately does not describe: a service's config
-    shape is owned by that service's model. Without this, a secret that lives in a
-    service config -- the image-registries token -- would be guarded on the enforcing
-    write paths only, and the eleven ``enforce_validation=False`` call sites would
-    commit it in plain text. That is exactly what happened when ``registries[]`` moved
-    out of the project root and left its AGE pattern behind.
-
-    Like its counterpart the detection is derived from the schema (a ``pattern``
-    carrying the AGE marker), never from a field list, so a service that starts storing
-    a secret is covered the moment its model says the value must be encrypted. The block
-    is checked in the shape it is STORED in, not migrated forward: what lands in git is
-    what is judged.
-
-    Returns the offending field paths, empty when there are none.
+    The counterpart of ``find_plaintext_secret_violations`` for the half of a project file
+    that ``project_v2.json`` does not describe, because a service's config shape is owned
+    by that service's model. Detection comes from the schema (a ``pattern`` carrying the
+    AGE marker), never from a field list, and judges the block as it is STORED.
     """
     violations: list[str] = []
     for block in _service_config_blocks(project_data):
         try:
             service_type = ServiceType(block.name)
         except ValueError:
-            continue  # unknown service name -- other validation handles it
+            continue  # unknown service name, other validation handles it
         model = get_service(service_type).config_model_for(block.layer)
         if model is None:
             continue  # service has no model at this layer, so nothing declares a secret
@@ -660,25 +645,11 @@ def _split_image_reference(image: str) -> tuple[str, str | None, bool]:
 def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[str]:
     """Weiger een image die naar de proxy-organisatie van een ANDER project wijst.
 
-    De zusterregel van ``validate_platform_registry_image_ownership``, en om dezelfde
-    reden nodig: elke pod in de tenant krijgt het gerepliceerde pull-secret via de default
-    serviceaccount en kan dus elk pad onder zo'n organisatie opvragen, waarna RCR met
-    ANDERMANS credentials bovenstrooms ophaalt. Dat is geen theoretisch pad: de eigen
-    serviceaccount neemt de erfenis weg voor de pods die WIJ maken, maar de organisatie
-    zelf blijft leesbaar voor wie zijn naam kent.
-
-    Wij maken die organisaties zelf, dus we weten hoe ze heten:
-    ``<friendlyName>-<customerName>-<project>``, en daarachter nog de upstream-namespace
-    als de upstream er een heeft (``organization_suffix``) -- twee registries onder
-    dezelfde host zouden anders op één organisatie uitkomen. Een organisatie waarin
-    ``-<customerName>-<een ander projectnaam>`` staat, aan het eind of gevolgd door nog
-    een segment, is er dus een van dat project, en die verwijzing wordt geweigerd. Een
-    GEDEELDE proxy (``ghcr-rig``, ``code-overheid-rig``) draagt geen projectnaam en blijft
-    gewoon bruikbaar -- dat is wat elk project daar mag gebruiken.
-
-    De projectnamen komen uit de projectenlijst en niet uit een gok op koppeltekens: een
-    friendlyName mag zelf koppeltekens bevatten, dus de naam uit elkaar trekken zou net zo
-    goed ``code-overheid-rig`` als "project overheid-rig" kunnen lezen.
+    De zusterregel van ``validate_platform_registry_image_ownership``: wie de naam van
+    zo'n organisatie kent haalt er met ANDERMANS credentials bovenstrooms uit op. Een
+    gedeelde proxy (``ghcr-rig``) draagt geen projectnaam en blijft bruikbaar. De
+    projectnamen komen uit de projectenlijst, want een friendlyName mag zelf koppeltekens
+    bevatten.
     """
     from opi.core.cluster_config import get_image_registries_config
     from opi.services.project_store import get_project_store
@@ -722,12 +693,9 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
 def _belongs_to_project(organization: str, customer_name: str, project: str) -> bool:
     """Of een proxy-organisatie van ``project`` is.
 
-    Eén vorm, want elke organisatie die wij maken draagt achter de projectnaam nog de
-    upstream-hash: ``<friendly>-<customer>-<project>-<hash>`` (zie
-    ``image_registries.naming.organization_suffix``). Aan beide kanten op een SEGMENTgrens,
-    zodat een project ``demo`` niet de organisaties van ``demonstratie`` opeist -- en
-    andersom een project dat toevallig ``demo-1a2b3c4d`` heet niet die van ``demo``, wat
-    met een kale ``endswith`` op de projectnaam wél gebeurde zodra er een hash achter kwam.
+    Elke organisatie heeft de vorm ``<friendly>-<customer>-<project>-<hash>``, dus aan
+    beide kanten op een segmentgrens matchen: anders eist ``demo`` die van
+    ``demonstratie`` op.
     """
     return f"-{customer_name}-{project}-" in organization
 
@@ -735,9 +703,8 @@ def _belongs_to_project(organization: str, customer_name: str, project: str) -> 
 def _project_clusters(project_data: dict[str, Any]) -> list[str]:
     """Elk cluster waar dit project iets op draait, zonder dubbelen.
 
-    De registries staan in de PROJECTconfig en gelden dus voor elk cluster van het
-    project; de clusterconfig bepaalt pas hoe de organisatie gaat heten. Een deployment
-    mag een cluster noemen dat niet in ``clusters:`` staat, dus beide bronnen tellen mee.
+    Een deployment mag een cluster noemen dat niet in ``clusters:`` staat, dus beide
+    bronnen tellen mee.
     """
     clusters: list[str] = []
     for cluster in project_data.get("clusters", []) or []:
@@ -753,8 +720,7 @@ def _project_clusters(project_data: dict[str, Any]) -> list[str]:
 def _foreign_owner_of_organization(organization: str, cluster: str, project_name: str) -> str | None:
     """Het ANDERE project waarvan deze proxy-ORGANISATIE is, of None.
 
-    Een GEDEELDE proxy (``ghcr-rig``, ``code-overheid-rig``) draagt geen projectnaam en
-    levert dus None op: die is van iedereen.
+    Een gedeelde proxy draagt geen projectnaam en levert dus None op.
     """
     from opi.core.cluster_config import get_image_registries_config
     from opi.services.project_store import get_project_store
@@ -769,13 +735,9 @@ def _foreign_owner_of_organization(organization: str, cluster: str, project_name
 def foreign_proxy_organization_owner(reference: str, cluster: str, project_name: str) -> str | None:
     """Het ANDERE project waarvan ``reference`` de proxy-organisatie noemt, of None.
 
-    ``reference`` is een image of een kale registry-verwijzing op de proxy-registry van
-    dit cluster (``rcr.rijksapps.nl/<organisatie>[/pad][:tag]``). Alles wat niet op die
-    host staat is niemands eigendom hier en levert None op.
-
-    Publiek en niet privé, want dit is dezelfde toets op twee routes: het projectbestand
-    (waar hij bij het opslaan draait) en de ad-hoc jobpod (waar de gebruiker de image zelf
-    intypt en er dus geen projectbestand langskomt).
+    ``reference`` is een image of een kale registry-verwijzing; alles buiten de
+    proxy-registry van dit cluster levert None op. Publiek, want de ad-hoc jobpod gebruikt
+    dezelfde toets zonder projectbestand.
     """
     from opi.core.cluster_config import get_image_registries_config
 
@@ -791,17 +753,10 @@ def foreign_proxy_organization_owner(reference: str, cluster: str, project_name:
 def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]:
     """Weiger een registry-entry die naar de proxy-organisatie van een ANDER project wijst.
 
-    De andere helft van ``validate_proxy_organization_ownership``. Die toetst de IMAGES in
-    het projectbestand, maar een registry-entry is zelf al genoeg: ``registry_rule()``
-    maakt er een regel van die op ELKE image onder die upstream slaat en het opgegeven
-    ``secretName`` eraan hangt, en sinds ``apply_bundle`` de projectregels meekrijgt geldt
-    dat ook voor een ad-hoc jobpod met een door de gebruiker ingetypte image. Zonder deze
-    toets zet een project ``{upstream: rcr.rijksapps.nl/<org van een ander>, secretName:
-    <org van een ander>-robot-pull-secret}`` neer en draait daarna elk projectLID een job
-    op andermans private image, met andermans robot-credential eraan gehangen.
-
-    Twee velden, want ze leveren allebei die uitkomst: de ``upstream`` bepaalt WELKE images
-    de regel raakt, het ``secretName`` bepaalt WELK credential eraan hangt.
+    De andere helft van ``validate_proxy_organization_ownership``, die de images toetst.
+    Een entry alleen bouwt al een regel die op elke image onder die upstream slaat, ook op
+    de ad-hoc jobpod. Twee velden, want de ``upstream`` bepaalt welke images de regel raakt
+    en het ``secretName`` welk credential eraan hangt.
     """
     from opi.services.catalog.image_registries.naming import PULL_SECRET_POSTFIX
     from opi.services.catalog.image_registries.resolution import project_registries
@@ -811,8 +766,7 @@ def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]
     if not registries:
         return []
 
-    # Meerdere clusters met dezelfde klantnaam leveren dezelfde melding op; die hoort de
-    # afnemer een keer te lezen.
+    # Meerdere clusters met dezelfde klantnaam leveren dezelfde melding op.
     errors: list[str] = []
     for cluster in _project_clusters(project_data):
         for registry in registries:
@@ -821,8 +775,7 @@ def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]
                 if not isinstance(value, str) or not value:
                     continue
                 if field == "secretName":
-                    # Een secretName noemt de organisatie niet als PAD maar als naam; de
-                    # postfix eraf laat de organisatienaam zelf over.
+                    # Een secretName noemt de organisatie als naam, niet als pad.
                     owner = _foreign_owner_of_organization(
                         value.removesuffix(f"-{PULL_SECRET_POSTFIX}"), cluster, project_name
                     )
@@ -839,20 +792,10 @@ def validate_registry_entry_ownership(project_data: dict[str, Any]) -> list[str]
 def validate_proxy_organization_claims(project_data: dict[str, Any]) -> list[str]:
     """Weiger een organisatienaam die al door een ANDER project geclaimd is.
 
-    De naam is tenantbreed: twee ``Organization``-CR's in twee namespaces met dezelfde
-    ``metadata.name`` sturen EEN organisatie in RCR aan, en dan bezit de laatste die
-    reconcileert de upstream en de credentials van de ander, terwijl het gelijknamige
-    robot-pull-secret naar allebei de namespaces gerepliceerd wordt.
-
-    ``organization_suffix`` maakt zo'n botsing bij normaal gebruik onmogelijk (de
-    upstream-hash aan het eind maakt de samenvoeging eenduidig), maar de naam wordt op
-    63 tekens afgekapt en een naamregel kan later weer veranderen. Daarom staat de toets
-    hier: dit is de plek die de UITKOMST meet in plaats van de aanname, en hij weigert bij
-    het opslaan in plaats van bij het reconcileren.
-
-    Dezelfde toets binnen het project zelf: twee entries die op één organisatienaam
-    uitkomen leveren één bestandsnaam op het projectniveau op, dus de tweede overschrijft
-    stil de eerste terwijl er wél twee regels naar die ene bestemming wijzen.
+    De naam is tenantbreed: twee CR's met dezelfde ``metadata.name`` sturen EEN organisatie
+    in RCR aan. ``organization_suffix`` maakt dat bij normaal gebruik onmogelijk, maar de
+    naam wordt op 63 tekens afgekapt, dus dit meet de UITKOMST. Binnen het project zelf
+    geldt hetzelfde: twee entries op één naam is één bestand op het projectniveau.
     """
     from opi.core.cluster_config import get_image_registries_config
     from opi.services.catalog.image_registries.naming import organization_name
@@ -903,10 +846,7 @@ def validate_proxy_organization_claims(project_data: dict[str, Any]) -> list[str
 
 
 def _proxy_organization_of(image: str, registry_host: str) -> str | None:
-    """Het organisatie-segment van een image op de proxy-registry, of None.
-
-    ``rcr.rijksapps.nl/codeoverheid-rig-demo/app:1`` -> ``codeoverheid-rig-demo``.
-    """
+    """``rcr.rijksapps.nl/codeoverheid-rig-demo/app:1`` -> ``codeoverheid-rig-demo``."""
     repo, _tag, _digest = _split_image_reference(image)
     normalized = _normalize_registry_repo(repo)
     host, separator, path = normalized.partition("/")
@@ -1146,13 +1086,9 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
     # A deployment may not point at another project's tag in the shared platform
-    # registry, nor at another project's proxy-cache organization. Both are the read half
-    # of an ownership the write side already pins: the push endpoint for the shared
-    # registry, and "we create the organization ourselves" for the proxy caches.
-    # The same ownership on the registry ENTRY: an entry alone already builds a rule that
-    # attaches a pull secret to every image under its upstream, on routes that carry no
-    # project file at all (the ad-hoc job pod). And the organization name a project claims
-    # is tenant-wide, so no two projects may land on one.
+    # registry, nor at another project's proxy-cache organization. The same ownership
+    # applies to a registry ENTRY, which builds a rule on its own, and the organization
+    # name a project claims is tenant-wide, so no two projects may land on one.
     registry_errors = validate_platform_registry_image_ownership(project_data)
     registry_errors += validate_proxy_organization_ownership(project_data)
     registry_errors += validate_registry_entry_ownership(project_data)

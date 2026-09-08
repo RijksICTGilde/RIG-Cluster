@@ -180,12 +180,7 @@ def deployment_manifest_services() -> list[Service]:
 
 
 def project_manifest_services() -> list[Service]:
-    """Services that contribute PROJECT-wide manifests, in ``manifest_order``.
-
-    Only services that override ``contribute_project_manifests`` are included. The generic
-    emitter calls each once per project, on a project-wide event, and writes the returned
-    specs into ``<cluster>/<project>/_project/``.
-    """
+    """Services that override ``contribute_project_manifests``, in ``manifest_order``."""
     overriding = [
         s for s in SERVICES.values() if type(s).contribute_project_manifests is not Service.contribute_project_manifests
     ]

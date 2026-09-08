@@ -220,9 +220,7 @@ _IMAGE_IN_MSG_RE = re.compile(r'image "([^"]+)"')
 def _source_image(rewritten: str, project_data: dict[str, Any] | None = None) -> str:
     """Show the source-registry image, not the rcr.rijksapps.nl proxy rewrite.
 
-    ``project_data`` carries the project's own registries down from the caller. Without
-    it only the shared cluster table is reversed, and a consumer with a private registry
-    would read the bare RCR URL back in exactly the message that is about his image.
+    Without ``project_data`` only the shared cluster table is reversed.
     """
     from opi.core.config import settings
     from opi.services.catalog.image_registries.resolution import display_image

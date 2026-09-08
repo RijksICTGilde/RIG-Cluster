@@ -2,7 +2,7 @@
 
 De afnemer vinkt de dienst aan bij een component en kiest dan welke registry. Past de
 image-prefix bij PRECIES EEN registry, dan zetten we die vooruit, zodat hij in het gewone
-geval alleen bevestigt. Passen er twee -- dezelfde upstream met verschillende tokens -- dan
+geval alleen bevestigt. Passen er twee (dezelfde upstream met verschillende tokens), dan
 IS de keuze het punt en zetten we niets voorop.
 """
 

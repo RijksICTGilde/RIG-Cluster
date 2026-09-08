@@ -877,37 +877,28 @@ def generate_keycloak_client_id(project_name: str, deployment_name: str, compone
     return _truncate_if_needed(client_id, 255)  # Keycloak client ID limit
 
 
-#: De map in de deployments-repo waar de PROJECTbrede manifesten staan, naast de mappen
-#: van de deployments. De underscore is bewust: een deploymentnaam is een DNS-label en kan
-#: er geen bevatten, dus deze map kan nooit botsen met een deployment.
+#: De map met de PROJECTbrede manifesten, naast die van de deployments. De underscore is
+#: bewust: een deploymentnaam is een DNS-label, dus deze map kan nooit botsen.
 PROJECT_LEVEL_DIR = "_project"
 
-#: Deploymentnamen die het platform zelf al gebruikt en die een project dus niet mag
-#: kiezen. ``project`` is de eerste bewoner: de ArgoCD-applicatie van het projectniveau
-#: heet ``{project}-project``, en een deployment die letterlijk ``project`` heet zou
-#: daarmee op dezelfde applicatienaam uitkomen.
+#: Deploymentnamen die het platform zelf gebruikt. ``project`` botst met de
+#: ArgoCD-applicatie van het projectniveau (``{project}-project``).
 RESERVED_DEPLOYMENT_NAMES: frozenset[str] = frozenset({"project"})
 
 
 def generate_project_service_account_name(project_name: str) -> str:
     """De eigen serviceaccount van een project, waar zijn pods op draaien.
 
-    De ``default`` serviceaccount is geen vangnet dat we willen houden. Hij draagt elk
-    pull-secret dat het platform in de namespace repliceert, dus ook dat van de
-    proxy-organisatie van een ander project: zolang onze pods daarop draaien is een private
-    registry alleen op papier prive. En technisch is het ook geen goed idee -- alle secrets
-    wijzen naar dezelfde host en kubelet moet daar de juiste uit halen, wat bij negen
-    kandidaten al onzeker is.
+    Niet de ``default``: die draagt elk gerepliceerd pull-secret in de namespace, ook dat
+    van een ander project.
     """
     return sanitize_kubernetes_name(f"{project_name}-sa")
 
 
 def generate_argocd_project_application_name(project_name: str) -> str:
-    """De naam van de ArgoCD-applicatie voor het PROJECTniveau.
+    """``{project}-project``, dezelfde vorm als een deployment-applicatie.
 
-    ``{project}-project``, dezelfde vorm als een deployment-applicatie. Dat botst met een
-    deployment die letterlijk ``project`` heet, en daarom staat die naam in
-    ``RESERVED_DEPLOYMENT_NAMES``.
+    Vandaar ``project`` in ``RESERVED_DEPLOYMENT_NAMES``.
     """
     return _truncate_if_needed(f"{_sanitize_for_lowercase(project_name)}-project", 253)
 

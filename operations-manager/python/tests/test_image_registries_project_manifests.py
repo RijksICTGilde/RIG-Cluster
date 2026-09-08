@@ -1,9 +1,4 @@
-"""Het projectniveau: wat de dienst image-registries daar neerzet, per backend.
-
-Door data gedreven: geen registries in de config betekent geen enkel bestand, dus ook geen
-bijdrage aan het projectniveau. Wat een registry wordt hangt af van de backend van het
-cluster, en dat is het enige dat per platform verschilt.
-"""
+"""Het projectniveau: wat de dienst image-registries daar neerzet, per backend."""
 
 from __future__ import annotations
 
@@ -195,7 +190,7 @@ class TestTweeRegistriesOnderDezelfdeHost:
 
     def test_elk_token_landt_in_zijn_eigen_secret(self, service: ImageRegistriesService) -> None:
         """De tegenproef op de meting uit de review: eerst gebruikersnaam a, daarna b, op
-        hetzelfde pad -- dan is er van a niets meer over."""
+        hetzelfde pad, dan is er van a niets meer over."""
         specs = service.contribute_project_manifests(_ctx(ODCN, [self.EEN, self.ANDER]))
         paren = {spec.filename: spec.values.get("secret_pairs") for spec in specs if spec.encrypt}
         orga = organization_name(self.EEN["upstream"], "rig", "demo")
@@ -226,7 +221,7 @@ class TestTweeRegistriesOnderDezelfdeHost:
     ) -> None:
         """Eén organisatie per project per upstream-namespace (D2), dus twee entries met
         dezelfde upstream KUNNEN geen twee organisaties zijn. Dan wint de eerste, net als
-        in de regellijst -- en niet de laatste die het bestand overschrijft."""
+        in de regellijst, en niet de laatste die het bestand overschrijft."""
         tweede = {**self.EEN, "name": "kopie", "username": "b", "password": "token-b"}
         specs = service.contribute_project_manifests(_ctx(ODCN, [self.EEN, tweede]))
         orga = organization_name(self.EEN["upstream"], "rig", "demo")
@@ -298,7 +293,7 @@ class TestDeDrieOpslagvormenVanHetToken:
 
     Het veld draagt er drie (``AGE_ENCRYPTED_OR_PLAIN_PATTERN``): het armored blok, de
     eenregelige ``base64+age:``-vorm en ``plain:``. Alle drie komen langs de poort die een
-    save valideert, dus alle drie kunnen in een projectbestand staan -- en de eenregelige
+    save valideert, dus alle drie kunnen in een projectbestand staan, en de eenregelige
     vorm is de HUISVORM voor eenregelige geheimen (de repository-password, de api-key en de
     projectsleutel dragen hem allemaal). Code die alleen op de armored markering toetst zet
     de andere twee LETTERLIJK in de ``.dockerconfigjson``: geen fout, wel een credential dat

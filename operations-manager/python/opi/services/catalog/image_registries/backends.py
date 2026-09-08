@@ -1,17 +1,4 @@
-"""De provisioning-backends: het enige dat per cluster echt verschilt.
-
-Wat een afnemer invult is op elk platform hetzelfde. Wat er onder gebeurt niet:
-
-* ``direct-secret`` voor kind, sandbox en elk cluster waar de nodes zelf bij de registry
-  kunnen: een dockerconfigjson-secret in de namespace, image ongewijzigd. Dat is letterlijk
-  het pad dat een registry met gebruikersnaam en token vandaag al volgt.
-* ``quay-proxy-organization`` voor ODCN en elk cluster met dezelfde operator: een
-  credentials-secret plus een ``Organization`` met proxyCache. De RCR-URL en de secretnaam
-  volgen uit de naamfuncties, dus er valt niets terug te geven en niets op te wachten.
-
-Een derde platform is een derde backend plus een tabel in de clusterconfig, en geen
-wijziging aan de dienst.
-"""
+"""De provisioning-backends: het enige dat per cluster verschilt."""
 
 from __future__ import annotations
 
@@ -38,31 +25,22 @@ from opi.utils.secrets import RegistrySecret
 
 logger = logging.getLogger(__name__)
 
-#: Elk bestand dat deze dienst op het projectniveau neerzet begint hiermee, zodat de
-#: symmetrische prune ze weer weghaalt zodra de dienst uitgaat.
+#: Elk bestand van deze dienst op het projectniveau begint hiermee, voor de prune.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
-#: De groep en versie van de Organization-CRD als de clusterconfig hem niet noemt. Een
-#: cluster dat deze backend kiest hoort hem zelf te zetten (``organization_api_version``);
-#: dit is de waarde waarmee de proef op productie is gedaan.
+#: Terugval als de clusterconfig geen ``organization_api_version`` noemt.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.redhat.com/v1"
 
 
 class RegistryBackend(Protocol):
     """Wat er moet worden aangemaakt voor een registry die een afnemer opgeeft.
 
-    Alleen ``ensure``, geen ``remove``. Het VERWIJDEREN is hier declaratief: haalt een
-    project een registry weg, dan levert deze backend er geen spec meer voor, ruimt de
-    symmetrische prune het bestand uit ``_project/`` op, en verwijdert ArgoCD de resource
-    -- waarna de operator de organisatie in RCR opruimt. Een imperatieve ``remove``
-    ernaast zou een tweede weg naar dezelfde uitkomst zijn, en die twee kunnen uiteenlopen.
-    Verwijderen mag direct (D8): bij een proxy cache verliest de afnemer alleen de kopie,
-    bovenstrooms staat alles er nog.
+    Geen ``remove``: verwijderen is declaratief. Levert de backend geen spec meer, dan
+    ruimt de prune het bestand op en verwijdert ArgoCD de resource.
     """
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
-        """De projectbrede manifesten voor één registry. Replay-safe: dezelfde invoer
-        levert dezelfde bestanden, dus opnieuw draaien is een normale uitkomst."""
+        """De projectbrede manifesten voor één registry, replay-safe."""
         ...
 
 
@@ -71,8 +49,7 @@ class DirectSecretBackend:
 
     def manifests(self, ctx: ProjectManifestContext, registry: dict[str, Any]) -> list[ProjectManifestSpec]:
         if registry.get("secretName"):
-            # Het secret staat er al, gezet door het platform. Niets te schrijven; de regel
-            # in resolution.py hangt het aan de pods die het nodig hebben.
+            # Het secret staat er al, gezet door het platform.
             return []
         upstream = registry.get("upstream")
         username = registry.get("username")
@@ -85,8 +62,7 @@ class DirectSecretBackend:
             return []
 
         name = direct_secret_name(ctx.project_name, str(registry.get("name", "")))
-        # De VOLLEDIGE upstream als sleutel in auths, inclusief pad: dat is wat het
-        # veld altijd al droeg en wat kubelet als meest specifieke match kiest.
+        # De volledige upstream inclusief pad, want kubelet kiest de meest specifieke match.
         secret = RegistrySecret(registry_url=str(upstream), username=str(username), password=password)
         return [
             ProjectManifestSpec(
@@ -153,9 +129,6 @@ class QuayProxyOrganizationBackend:
                     "name": organization,
                     "namespace": ctx.namespace,
                     "friendly_name": friendly_name(str(upstream)),
-                    # De projectnaam PLUS de upstream-namespace: de operator stelt de naam
-                    # samen uit friendlyName (de HOST) en de klantnaam, dus zonder dit
-                    # deel botsen twee registries onder dezelfde host op één organisatie.
                     "suffix": organization_suffix(str(upstream), ctx.project_name),
                     "upstream": str(upstream),
                     "credentials_secret": credentials_secret,
@@ -177,20 +150,9 @@ def backend_for_cluster(cluster: str) -> RegistryBackend:
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:
     """Het token in leesbare vorm, of None als er geen token is opgegeven.
 
-    Het veld draagt niet EEN opslagvorm maar drie: het armored AGE-blok, de eenregelige
-    ``base64+age:``-vorm en een expliciet als platte tekst gemarkeerde ``plain:``-waarde
-    (``AGE_ENCRYPTED_OR_PLAIN_PATTERN`` in ``config_model.py``, en de huisvorm van elk
-    eenregelig geheim in een projectbestand -- de repository-password, de api-key en de
-    projectsleutel dragen hem allemaal). Alleen op de armored markering toetsen zou de
-    andere twee LETTERLIJK in de ``.dockerconfigjson`` zetten: geen fout, wel een
-    credential dat niet klopt en een pod die op ``invalid username/password`` blijft
-    hangen. Vandaar ``carries_encrypted_value`` (die beide versleutelde vormen kent) en
-    ``decrypt_password_smart_sync`` (die alle drie de vormen uitpakt), net als de
-    CNPG-route dat met ``decrypt_password_smart`` doet.
-
-    Geen sleutel is hier geen waarschuwing maar een fout: een secret dat stil niet
-    geschreven wordt levert een deployment op die aan de pull blijft hangen zonder dat er
-    iets in de weg stond. ``get_decoded_project_private_key_sync`` blaast daarom op.
+    Het veld draagt drie opslagvormen (armored AGE, ``base64+age:`` en ``plain:``), dus
+    de toets en de ontsleuteling moeten ze alle drie kennen. Een ontbrekende sleutel
+    blaast op in plaats van stil een onbruikbaar credential weg te schrijven.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:

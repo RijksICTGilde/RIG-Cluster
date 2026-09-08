@@ -640,15 +640,9 @@ class DeploymentManifestSpec:
 class ProjectManifestContext:
     """Inputs a service needs to contribute PROJECT-wide manifests.
 
-    The deployments repo has a level above the deployments: ``<cluster>/<project>/_project/``,
-    with its own kustomization and its own ArgoCD application. What lives there is what is
-    scoped to the namespace rather than to one deployment -- a namespace-scoped pull secret,
-    a proxy-cache ``Organization``, the project's own serviceaccount. The underscore is
-    deliberate: a deployment name is a DNS label and cannot contain one, so this directory
-    can never collide with a deployment.
-
-    Unlike ``DeploymentManifestContext`` this runs ONCE per project, on a project-wide
-    event (a refresh, or a change to a service config), not on every deployment task.
+    These land in ``<cluster>/<project>/_project/``, which has its own kustomization and
+    ArgoCD application and holds what is scoped to the namespace rather than to one
+    deployment. Unlike ``DeploymentManifestContext`` this runs once per project.
     """
 
     project_name: str
@@ -661,10 +655,7 @@ class ProjectManifestContext:
 class ProjectManifestSpec:
     """One project-wide manifest a service asks the generic emitter to write.
 
-    Same shape and the same rule as ``DeploymentManifestSpec``, one level up: ``filename``
-    MUST start with ``f"{service_type.value}-"`` so the symmetric prune can remove this
-    service's files again when it stops contributing. ``encrypt`` marks a manifest that
-    carries a secret and must go through SOPS.
+    Same shape as ``DeploymentManifestSpec``, one level up.
     """
 
     #: Basename without ``.yaml``. Must start with ``f"{service_type.value}-"``.
@@ -1548,15 +1539,7 @@ class Service(ABC):
         """Project-wide manifests this service contributes (default none).
 
         The sibling of ``contribute_deployment_manifests`` one level up: resources that
-        belong to the whole project in its namespace rather than to one deployment. A
-        service with nothing to add inherits the empty default; the generic emitter and the
-        symmetric prune both skip it.
-
-        This is a HOOK and not a hardcoded writer on purpose. The ACME issuers, the
-        tenant-baseline NetworkPolicy and the namespace itself are project-wide too and sit
-        hardcoded today in places that have nothing to do with them; with this hook they
-        can later get an owner -- the service that needs the thing contributes it, and the
-        generic path needs to know nothing about it.
+        belong to the whole project in its namespace rather than to one deployment.
         """
         return []
 

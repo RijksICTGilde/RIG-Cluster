@@ -11,10 +11,8 @@ spec:
   friendlyName: "{{ friendly_name }}"
   suffix: "{{ suffix }}"
   proxyCache:
-    # yaml_scalar, want dit is de enige waarde in dit sjabloon die RECHTSTREEKS van de
-    # afnemer komt: de andere lopen door sanitize_kubernetes_name. Zonder de filter breekt
-    # een aanhalingsteken plus regeleinde uit de scalar en staan er extra DOCUMENTEN in het
-    # bestand, die ArgoCD als gewone resources in de namespace aanmaakt.
+    # yaml_scalar: de enige waarde hier die rechtstreeks van de afnemer komt. Zonder de
+    # filter breekt een aanhalingsteken plus regeleinde uit de scalar.
     upstreamRegistry: {{ upstream | yaml_scalar }}
     {% if credentials_secret %}
     credentialsSecret:
@@ -22,11 +20,11 @@ spec:
     {% endif %}
   robot:
     imagePullSecret:
-      # Expliciet gezet: de operator leidt deze naam af ZONDER spec.suffix, en dan
-      # botsen twee projecten met dezelfde upstream tenantbreed op een naam.
+      # Expliciet gezet: de operator leidt deze naam af zonder spec.suffix, en dan botsen
+      # twee projecten met dezelfde upstream tenantbreed op een naam.
       name: "{{ pull_secret_name }}"
     rotation:
-      # rotation.enabled: false doet niet wat de documentatie belooft -- het token krijgt
-      # alsnog retentionDays en verloopt, zonder dat iemand het ververst. Dus altijd aan.
+      # Altijd aan: bij false krijgt het token alsnog retentionDays en verloopt het,
+      # zonder dat iemand het ververst.
       enabled: true
       retentionDays: {{ rotation_days }}

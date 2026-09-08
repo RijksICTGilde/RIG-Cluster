@@ -1,19 +1,8 @@
 """Eén regelvorm voor het oplossen van een image, gevoed door twee bronnen.
 
-De clustertabel (de gedeelde proxy-caches die het platform aanbiedt) en een private
-registry van een project doen bijna hetzelfde: een upstream-prefix wordt vervangen door
-een bestemming, en bij die bestemming hoort een pull-secret. Het namespace-segment dat
-bij de privévariant wegvalt is geen apart gedrag; het volgt uit een langere ``match``::
-
-    gedeeld:  match code.overheid.nl             -> to rcr.rijksapps.nl/code-overheid-rig
-              code.overheid.nl/robbert/demo:tag  => rcr.rijksapps.nl/code-overheid-rig/robbert/demo:tag
-
-    privé:    match code.overheid.nl/robbert     -> to rcr.rijksapps.nl/codeoverheid-rig-<project>
-              code.overheid.nl/robbert/demo:tag  => rcr.rijksapps.nl/codeoverheid-rig-<project>/demo:tag
-
-Daarom is er één regelvorm en één functie, en is "wie wint" een gewone eerste-match op
-één lijst: de projectregels staan vooraan, dus de eigen registry van een project wint van
-de gedeelde proxy voor dezelfde upstream. Volgorde is data, geen code.
+De clustertabel en een private registry doen dezelfde bewerking, alleen met een kortere
+of langere ``match``. "Wie wint" is daarmee een eerste-match op één lijst, met de
+projectregels vooraan.
 """
 
 from __future__ import annotations
@@ -24,12 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-#: Wat een image zonder host krijgt voorgezet. Docker Hub is de enige registry waarvoor
-#: een kale naam een geldige verwijzing is, en de admission-webhook van ODCN behandelt
-#: ``nginx:alpine`` ook zo -- gemeten: die maakt er ``rcr.rijksapps.nl/dockerhub-rig/
-#: library/nginx`` van. Zonder dezelfde normalisatie mist zo'n image hier zijn secret.
 DEFAULT_REGISTRY = "docker.io"
-#: Het pad-segment dat Docker Hub zelf voor een naam zonder namespace invult.
 DEFAULT_NAMESPACE = "library"
 
 
@@ -37,12 +21,10 @@ DEFAULT_NAMESPACE = "library"
 class RegistryRule:
     """Eén regel: welke upstream-prefix gaat waarheen, en met welk pull-secret."""
 
-    #: Upstream-prefix, met of zonder namespace-segment (``code.overheid.nl``,
-    #: ``code.overheid.nl/robbert.uittenbroek``).
+    #: Upstream-prefix, met of zonder namespace-segment.
     match: str
-    #: Bestemming: host plus organisatie (``rcr.rijksapps.nl/codeoverheid-rig-demo``).
+    #: Bestemming: host plus organisatie.
     to: str
-    #: Het pull-secret dat bij die bestemming hoort.
     secret: str
 
 
@@ -57,16 +39,14 @@ class ResolvedImage:
 def normalize_image(image: str) -> str:
     """Vul de impliciete Docker Hub-delen aan: ``nginx:alpine`` -> ``docker.io/library/nginx:alpine``.
 
-    Alleen de VERWIJZING wordt aangevuld, en alleen waar Docker dat zelf ook doet: een
-    eerste segment zonder punt, zonder dubbele punt en niet ``localhost`` is geen host maar
-    een pad, dus er staat geen registry in de verwijzing.
+    De admission-webhook van ODCN behandelt zo'n korte naam ook zo; zonder dezelfde
+    normalisatie mist de image hier zijn secret.
     """
     if not image:
         return image
 
     first, separator, rest = image.partition("/")
     if not separator or not _looks_like_host(first):
-        # Geen host in de verwijzing: het hele ding is een pad op Docker Hub.
         path = image
         if "/" not in path:
             path = f"{DEFAULT_NAMESPACE}/{path}"
@@ -76,17 +56,10 @@ def normalize_image(image: str) -> str:
 
 
 def normalize_prefix(prefix: str) -> str:
-    """Hetzelfde voor een upstream-PREFIX, met het verschil dat een prefix geen naam is.
+    """Hetzelfde voor een upstream-PREFIX: alleen de registry ervoor, geen ``library``.
 
-    ``normalize_image`` vult voor een verwijzing zonder host ``docker.io/library/`` aan,
-    want ``nginx`` is daar de NAAM van een repository. Een prefix is een PAD: ``ghcr.io``
-    is al compleet, en er ``docker.io/library/`` voor zetten maakt er een repository van
-    die nergens bij past -- gemeten: ``normalize_image('ghcr.io')`` geeft
-    ``docker.io/library/ghcr.io``, dus een upstream zonder pad matchte nooit een image.
-
-    Een eerste segment dat er als host uitziet is dus klaar. Staat er geen host, dan is het
-    een pad op Docker Hub en gaat alleen de registry ervoor -- geen ``library``, want een
-    prefix noemt een namespace en geen image.
+    Een prefix is een pad en geen repositorynaam, dus het aanvullen dat
+    ``normalize_image`` doet zou van ``ghcr.io`` een pad maken dat nooit matcht.
     """
     if not prefix:
         return prefix
@@ -103,26 +76,16 @@ def _looks_like_host(segment: str) -> bool:
 
 
 def _has_prefix(image: str, prefix: str) -> bool:
-    """Of ``image`` onder ``prefix`` valt -- op segmentgrens, niet op tekens.
-
-    Zonder de grens zou ``code.overheid.nl-anders/x`` onder ``code.overheid.nl`` vallen.
-    """
+    """Of ``image`` onder ``prefix`` valt, op segmentgrens en niet op tekens."""
     return image == prefix or image.startswith(prefix + "/")
 
 
 def resolve_image(image: str, rules: Sequence[RegistryRule]) -> ResolvedImage:
     """Los een image op tegen de regellijst: eerste match wint.
 
-    Drie dingen die hier horen en nergens anders:
-
-    1. **Normalisatie van korte namen**, zodat ``nginx:alpine`` de ``docker.io``-regel
-       raakt (zie ``normalize_image``).
-    2. **Een image die al op de bestemming staat** wordt niet herschreven, maar krijgt wel
-       het secret van die regel. Dat is het dp-bn7-geval, en het is hier één regel code in
-       plaats van een aparte uitzondering.
-    3. **Geen match betekent image ongewijzigd en geen secret.** De ONGENORMALISEERDE
-       verwijzing komt terug: op een cluster zonder tabel verandert er dan niets aan een
-       gegenereerd manifest.
+    Een image die al op de bestemming staat wordt niet herschreven maar krijgt wel het
+    secret van die regel. Zonder match komt de ONGENORMALISEERDE verwijzing terug, zodat
+    een cluster zonder tabel niets aan een manifest verandert.
     """
     if not image:
         return ResolvedImage(image, None)
@@ -138,11 +101,7 @@ def resolve_image(image: str, rules: Sequence[RegistryRule]) -> ResolvedImage:
 
 
 def original_image(image: str, rules: Sequence[RegistryRule]) -> str:
-    """De omgekeerde weg: van een bestemming terug naar de upstream die de afnemer kent.
-
-    De weergavekant (diagnostiek, logregels, event-uitleg) toont een gebruiker zijn eigen
-    registry in plaats van de kale proxy-URL. Zonder match komt de invoer ongewijzigd terug.
-    """
+    """De omgekeerde weg, voor de weergavekant: van bestemming terug naar upstream."""
     for rule in rules:
         if _has_prefix(image, rule.to):
             return rule.match + image[len(rule.to) :]

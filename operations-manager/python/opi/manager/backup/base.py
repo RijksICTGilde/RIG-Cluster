@@ -566,13 +566,9 @@ class BaseBackupManager:
     def _template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
         """Render a manifest template, then run the image-registries pass over it.
 
-        Backup pods are bare ``Pod``s applied directly (outside the project manifest
-        pipeline), so without this they keep raw upstream image refs (e.g. ghcr.io) and
-        fail to pull on ODCN. They go through the same rules and the same resolve_image()
-        the project workloads use, so their image is resolved and their pull secret
-        attached. The backup image is a platform image, so the cluster rules are the whole
-        answer here; no project is involved. No-op on a cluster with no rules
-        (local/sandbox).
+        Backup pods are bare ``Pod``s applied directly, outside the project manifest
+        pipeline, so without this they keep raw upstream image refs and fail to pull on
+        ODCN. The image is a platform image, so the cluster rules are the whole answer.
         """
         rendered = self.kubectl.template_manifest(manifest_content, variables)
         return apply_rules_to_document(rendered, cluster_rules(settings.CLUSTER_MANAGER))

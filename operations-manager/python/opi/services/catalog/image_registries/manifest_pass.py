@@ -1,18 +1,8 @@
 """De manifestpas: los elke image in een podspec op en hang er het juiste secret aan.
 
-Niet elke image loopt door de componentlus. Een sidecar staat als vaste waarde in zijn
-sjabloon, en de backup-, restore-, db-console- en jobpods worden als kale ``Pod`` los
-toegepast, buiten de manifestpijplijn om. Die plekken hebben dezelfde bewerking nodig, en
-dat is precies waarom hier een WANDELING staat en geen tweede regelmechanisme: de regels
-komen van dezelfde dienst en de omzetting is dezelfde ``resolve_image()``.
-
-Dit verving ``RegistryRewriteExtension``. Die deed hetzelfde werk met een eigen tabel in
-``extensions/odcn-registry-rewrite.yaml``, naast onze eigen ``imagePullSecretsMap`` en de
-erfenis van de serviceaccount -- drie mechanismen die elkaar aanvulden, waarvan er twee
-konden gaan afwijken. Nu is er één eigenaar van "welke registry, welk secret".
-
-Idempotent: een image die de componentlus al heeft opgelost staat al op zijn bestemming,
-en dan levert deze pas hetzelfde secret op en verandert er niets.
+Een wandeling en geen tweede mechanisme: sidecars, backup-, restore-, db-console- en
+jobpods lopen niet door de componentlus, maar gebruiken hier dezelfde regels en dezelfde
+``resolve_image()``. Idempotent, want een al opgeloste image staat al op zijn bestemming.
 """
 
 from __future__ import annotations
@@ -35,10 +25,8 @@ logger = logging.getLogger(__name__)
 
 #: Kinds die een podspec op ``spec.template.spec`` dragen.
 _POD_TEMPLATE_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job"}
-#: CronJob draagt hem een niveau dieper.
 _CRONJOB_KIND = "CronJob"
 
-#: Bestanden die de wandeling overslaat: versleutelde secrets en de kustomize-plumbing.
 _SKIP_SUFFIXES = (".sops.yaml", ".to-sops.yaml")
 _SKIP_NAMES = ("kustomization.yaml", "decrypt-sops.yaml")
 
@@ -59,10 +47,9 @@ def pod_spec_of(manifest: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict[str, Any]:
-    """Los elke container-image in dit manifest op en zorg dat zijn secret erbij staat.
+    """Los elke container-image in dit manifest op en zet zijn secret erbij.
 
-    Muteert en retourneert hetzelfde manifest. Zonder podspec of zonder regels gebeurt er
-    niets.
+    Muteert en retourneert hetzelfde manifest.
     """
     pod_spec = pod_spec_of(manifest)
     if pod_spec is None or not rules:
@@ -91,8 +78,7 @@ def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict
 def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) -> None:
     """Draai de pas over elk gewoon YAML-manifest in een map.
 
-    Slaat versleutelde secrets en kustomize-bestanden over: daar staat geen podspec in, en
-    een .to-sops.yaml openen zou hem alleen maar kunnen beschadigen.
+    Versleutelde secrets en kustomize-bestanden blijven ongemoeid.
     """
     if not rules:
         return

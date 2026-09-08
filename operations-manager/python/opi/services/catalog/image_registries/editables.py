@@ -1,12 +1,7 @@
 """Editable-definities voor de dienst ``image-registries``.
 
-Twee lagen: de registries op projectniveau (een sequence), en de verwijzing bij naam op
-component- en deployment-componentniveau (een select).
-
-Hier staan het yaml-pad, de validators en de converters, en verder niets: het formulier en
-de API lopen daarmee hetzelfde logicapad. Waar een regel ook voor de API geldt staat hij in
-``config_model.py`` en wijst dit bestand ernaar (``ModelFieldValidator``), zodat er een
-definitie is en geen tweeling die uit elkaar loopt.
+Een regel die ook voor de API geldt staat in ``config_model.py``; dit bestand wijst er
+via ``ModelFieldValidator`` naar.
 """
 
 from __future__ import annotations
@@ -29,21 +24,12 @@ def _project(*parts: str) -> str:
     return config_path(ConfigLayer.PROJECT, _SVC, "config", *parts)
 
 
-# Ook deze regel staat in het MODEL, en om dezelfde reden als bij ``upstream``: het
-# formulier mag niet iets anders toelaten dan de API en dan een met de hand geschreven
-# projectbestand.
 REGISTRY_NAME_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "name"),
     validator=ModelFieldValidator(RegistryEntry, "name", REGISTRY_NAME_MESSAGE),
     required=True,
 )
 
-# De regel staat in het MODEL en niet hier. Dit veld gaat een manifest in en het is de
-# sleutel waarop een image wordt herkend, dus het formulier mag niet iets anders toelaten
-# dan de API en dan een met de hand geschreven projectbestand. ModelFieldValidator wijst
-# naar dezelfde constraint waarmee ``validate_service_configs`` een opgeslagen bestand
-# toetst; alleen de UITLEG komt van hier, want de pydantic-melding is Engels en praat over
-# patronen.
 REGISTRY_UPSTREAM_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "upstream"),
     required=True,
@@ -72,19 +58,15 @@ REGISTRIES_SEQUENCE_EDITABLE = Editable(
     ],
 )
 
-# De keuze bij een component komt van de dienst, niet uit het componentformulier: een
-# gewone dienstvermelding met een configblok, in dezelfde vorm die publish-on-web en
-# temp-storage daar al gebruiken. values_must_exist zorgt dat een verwijzing naar een
-# registry die niet bestaat bij het OPSLAAN sneuvelt in plaats van pas bij het pullen.
+# ``values_must_exist``: een verwijzing naar een registry die niet bestaat sneuvelt bij
+# het opslaan in plaats van pas bij het pullen.
 COMPONENT_REGISTRY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.COMPONENT, _SVC, "config", "registry"),
     values_provider="ImageRegistryOptionsProvider",
     values_must_exist=True,
     validator=RequiredValidator(),
     required=True,
-    # Alleen als het component de dienst aanvinkt. Zonder deze poort zou "verplicht" ook
-    # gelden voor elk component dat een publieke image draait, en dat is precies de
-    # non-waarde die er niet hoort te zijn: geen vermelding, geen sleutel.
+    # "Verplicht" geldt alleen als het component de dienst aanvinkt.
     depends_on="components[*]/services",
     show_when={"contains": _SVC.value},
     virtualize=SERVICE_VIRTUALIZE,
@@ -94,9 +76,8 @@ DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.DEPLOYMENT_COMPONENT, _SVC, "config", "registry"),
     values_provider="ImageRegistryOptionsProvider",
     values_must_exist=True,
-    # Geen depends_on: op een deployment-component is ``services`` een DICT keyed op
-    # dienstnaam, dus een "contains"-poort op die lijst zegt daar niets. Het veld is
-    # optioneel en leeg laten betekent "volg het component" (remove_when_none).
+    # Geen depends_on: ``services`` is hier een dict, dus een "contains"-poort zegt niets.
+    # Leeg laten betekent "volg het component".
     virtualize=SERVICE_VIRTUALIZE,
     remove_when_none=True,
 )

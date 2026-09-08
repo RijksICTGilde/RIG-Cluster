@@ -1,14 +1,8 @@
-"""Het blok van deze dienst op de projectpagina, en het endpoint dat het vult.
+"""Het endpoint dat het detailblok van deze dienst met clusterstatus vult.
 
-Wat een afnemer wil weten staat NIET in het projectbestand: of de proxy-cache al klaar is,
-of zijn inloggegevens aangekomen zijn, en wanneer het token verloopt. Dat staat in de
-status van de ``Organization`` in het cluster, en een blok dat op een pagina rendert mag
-geen connector aanroepen -- vandaar dat het blok zelf uit het projectbestand komt en de
-status er met een htmx-lazyload bij wordt gehaald, dezelfde vorm als de backups.
-
-De route staat hier omdat een dienst die een blok bezit ook het endpoint bezit dat het
-vult; anders blijft de helft van het blok achter in de algemene router. Alles zwaars wordt
-BINNEN de handler geimporteerd, zodat de catalogus zelf import-licht blijft.
+Of de proxy klaar is staat in de ``Organization`` in het cluster en niet in het
+projectbestand, en een renderend blok mag geen connector aanroepen; vandaar een
+htmx-lazyload, dezelfde vorm als de backups.
 """
 
 from __future__ import annotations
@@ -57,10 +51,7 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
     if cluster_config.get("backend") != BACKEND_QUAY_PROXY:
         return render(request, template=STATUS_TEMPLATE, context={"applicable": False, "statuses": []})
 
-    # ``get()``, niet ``get_decrypted()``: dit fragment leest alleen ``name`` en
-    # ``upstream``. Ontsleutelen zou ``decrypt_tree()`` over de hele boom draaien -- de
-    # AGE-privesleutel, de api-key, de user-env-vars en het registry-token -- voor een
-    # statusfragment dat daar niets van gebruikt.
+    # ``get()`` en niet ``get_decrypted()``: dit fragment leest alleen ``name`` en ``upstream``.
     project = get_project_store().get(project_name)
     project_data = project.data if project else None
     registries = project_registries(project_data or {})
@@ -91,9 +82,7 @@ async def _organization_status(
 ) -> dict[str, Any]:
     """Wat het cluster over een proxy-organisatie zegt, in de woorden van het scherm.
 
-    Een organisatie die er nog niet is, is geen fout: hij wordt door ArgoCD aangemaakt en
-    de proef mat 20 tot 25 seconden. Een pod die te vroeg is belandt in ImagePullBackOff en
-    herstelt vanzelf; dit blok is er zodat een wachtende afnemer ziet WAAROM hij wacht.
+    Een organisatie die er nog niet is, is geen fout: ArgoCD maakt hem aan.
     """
     from opi.services.catalog.image_registries.naming import organization_name
 
@@ -135,22 +124,15 @@ async def _organization_status(
     }
 
 
-#: Hoeveel dagen voor het verlopen van het token de melding dringend wordt. Het token
-#: roteert elke 90 dagen en er is niemand die het uit zichzelf ververst, dus de afnemer
-#: moet het zien aankomen terwijl er nog tijd is om er iets aan te doen.
+#: Hoeveel dagen voor het verlopen van het token de melding dringend wordt.
 EXPIRY_WARNING_DAYS = 14
 
 
 def _expires_soon(expires_at: str) -> bool:
-    """Of het token binnen ``EXPIRY_WARNING_DAYS`` verloopt (of al verlopen is).
-
-    Een datum die we niet kunnen lezen is GEEN waarschuwing: dan weten we het niet, en
-    dringend melden op een aanname is erger dan zwijgen over iets wat misschien niets is.
-    """
+    """Of het token binnen ``EXPIRY_WARNING_DAYS`` verloopt; een onleesbare datum niet."""
     if not expires_at:
         return False
     try:
-        # Python 3.11+ leest de Z-suffix zelf; geen .replace() nodig.
         moment = datetime.fromisoformat(expires_at)
     except ValueError:
         logger.info(f"Onleesbare tokenverloopdatum '{expires_at}'; geen waarschuwing")

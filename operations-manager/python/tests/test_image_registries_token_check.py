@@ -1,10 +1,4 @@
-"""De tokentoets bij het opslaan (D5).
-
-Een te smal token wordt upstream met ``reqPackageAccess`` (401) beantwoord, Quay vertaalt
-dat naar ``name unknown: repository not found``, en de afnemer ziet ImagePullBackOff met
-een melding die de verkeerde kant op wijst. Deze toets is de plek waar hij wel een
-bruikbare fout krijgt.
-"""
+"""De tokentoets bij het opslaan (D5)."""
 
 from __future__ import annotations
 
@@ -67,7 +61,7 @@ class TestDeRepositoryDieGetoetstWordt:
         """De vorm die de vloot echt heeft: ``algor-odc`` noemt zijn upstream ``ghcr.io``.
 
         Een prefix door de IMAGE-normalisatie halen maakte er ``docker.io/library/ghcr.io``
-        van, en dan matcht geen enkele image -- de toets sloeg zwijgend over.
+        van, en dan matcht geen enkele image, dus de toets sloeg zwijgend over.
         """
         image = "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24"
         assert _repository_under("ghcr.io", [image]) == "ghcr.io/rijksictgilde/algoritmeregister/backend"
@@ -122,7 +116,7 @@ class TestDeToets:
 
     async def test_zonder_skopeo_wordt_er_niets_geweigerd(self) -> None:
         """Geen skopeo is geen oordeel over het token, en die beslissing zit in de
-        CONNECTOR zelf -- daarom staat er in de enforcer geen tweede vangnet omheen.
+        CONNECTOR zelf, daarom staat er in de enforcer geen tweede vangnet omheen.
         Gemeten op de echte methode met een connector die niet beschikbaar is."""
         from types import SimpleNamespace
 
@@ -150,7 +144,7 @@ class TestDeToets:
 
     async def test_een_upstream_zonder_pad_wordt_ook_getoetst(self) -> None:
         """Dezelfde invoer, alleen de upstream verschilt: ``ghcr.io`` tegenover
-        ``ghcr.io/rijksictgilde``. Op de kale host sloeg de toets zwijgend over -- skopeo
+        ``ghcr.io/rijksictgilde``. Op de kale host sloeg de toets zwijgend over, want skopeo
         werd 0x aangeroepen, D5 werd niet geleverd, en het log meldde ten onrechte dat er
         nog geen image was."""
         kaal = {**REGISTRY, "upstream": "ghcr.io"}
@@ -243,7 +237,7 @@ class TestDeConverterKentAlleDrieDeOpslagvormen:
 
     Dit is de gevaarlijkste kant van dezelfde vraag: toetst ``read()`` alleen op het
     armored blok, dan toont het formulier de cijfertekst van de eenregelige vorm, ziet
-    ``write()`` daar geen AGE-markering in en versleutelt hem als NIEUW token -- waarna het
+    ``write()`` daar geen AGE-markering in en versleutelt hem als NIEUW token, waarna het
     echte token weg is zonder dat iemand het veld heeft aangeraakt.
     """
 
@@ -307,7 +301,7 @@ class TestDeToetsLangsDeOpslagroute:
     De modaal voor deze dienst heeft ``show_review=False`` en één sectie, dus de enige
     route erdoorheen is de stap-vooruit (``router_wizard.py`` / ``router_detail_edit.py``):
     verwerk de inzending, en toets daarna de UITKOMST daarvan. Die uitkomst draagt het
-    token niet meer plat maar als armored AGE-blok -- ``ProjectAgeSecretConverter.write()``
+    token niet meer plat maar als armored AGE-blok, want ``ProjectAgeSecretConverter.write()``
     heeft het versleuteld. Een toets die de opgeslagen waarde onbewerkt aan skopeo geeft
     meet dus een token dat niemand heeft: een GELDIG token wordt geweigerd.
 

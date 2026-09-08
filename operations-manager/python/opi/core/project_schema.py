@@ -307,10 +307,8 @@ def _walk_errors(errors: Any) -> Any:
 def age_pattern_violations(validator: Draft202012Validator, data: Any, *, prefix: str = "") -> list[str]:
     """Paths in ``data`` that a schema wants AGE-encrypted but that hold plain text.
 
-    The detection is derived from the schema (a ``pattern`` carrying the AGE marker)
-    rather than from a hand-written field list, so it cannot drift when a new secret
-    field is added. ``prefix`` names where ``data`` sits inside a larger document, so
-    a caller that validates a fragment can still report a path a reader recognises.
+    Derived from the schema (a ``pattern`` carrying the AGE marker) and not from a field
+    list, so it cannot drift. ``prefix`` names where ``data`` sits in a larger document.
     """
     violations: list[str] = []
     for error in _walk_errors(validator.iter_errors(data)):
@@ -331,10 +329,9 @@ def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
     ``get_decrypted()`` view would do.
 
     Covers only what ``project_v2.json`` describes. A secret that lives in a SERVICE
-    config is described by that service's own model, not by this schema, so the same
-    check on that half lives in ``project_validation.find_plaintext_service_config_violations``
-    -- ``ProjectStore._validate`` runs both. Splitting a secret over two schemas is
-    exactly how the image-registries token lost its guard when it moved out of here.
+    config is described by that service's own model, so the same check on that half lives
+    in ``project_validation.find_plaintext_service_config_violations``, and
+    ``ProjectStore._validate`` runs both.
 
     Returns the offending field paths, empty when there are none.
     """
