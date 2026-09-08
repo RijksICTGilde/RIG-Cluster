@@ -219,6 +219,14 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
+**Zoek eerst, schrijf daarna.** Voordat je een helper, een converter, een validator, een naamfunctie of een uitpakroutine schrijft: zoek of hij al bestaat. Deze codebase heeft er veel, en ze staan op voorspelbare plekken (`opi/utils/`, `opi/services/catalog/shared/`, de haken uit `instructions/services.md`). Doe dat per blok terwijl je bouwt, niet aan het eind.
+
+- Vind je iets dat lijkt op wat je nodig hebt, gebruik het, ook als het net niet past. Uitbreiden van het bestaande gaat voor een tweede exemplaar ernaast.
+- Schrijf je toch iets nieuws naast iets bestaands, zeg dan in de PR waarom het bestaande niet volstond. Zonder die zin is het een dubbeling.
+- Lijkt de bestaande oplossing verkeerd te staan, verplaats hem dan niet stilzwijgend: benoem het.
+
+Het patroon dat dit voorkomt is duur en herkenbaar: een tweede uitpakker naast een bestaande decrypt-functie, een eigen normalisatie naast een bestaande, dezelfde hulpfunctie drie keer in een pakket. Dat kost geen tijd bij het schrijven, maar bij elke lezer en elke wijziging daarna.
+
 ## 3. Surgical Changes
 
 **Touch only what you must. Clean up only your own mess.**
