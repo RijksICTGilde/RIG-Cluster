@@ -20,12 +20,13 @@ draait, en op het gerenderde manifest.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 import pytest
 import yaml
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
-from opi.generation.manifests import ManifestGenerator
+from opi.generation.manifests import ManifestGenerator, render_template
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
@@ -309,3 +310,180 @@ class TestDeRegistrynaamHeeftDezelfdeRegelAlsHetFormulier:
         assert REGISTRY_NAME_EDITABLE.validator is not None
         assert REGISTRY_NAME_EDITABLE.validator.validate("Hoofdletters")
         assert REGISTRY_NAME_EDITABLE.validator.validate("code-overheid") == []
+
+
+#: De payload uit de securityreview op ``secretName``. Hij zet eerst twee podvelden bij de
+#: pod van het component (``hostNetwork``, ``hostPID``) en hangt er dan een TWEEDE document
+#: achteraan: een RoleBinding naar ClusterRole ``cluster-admin`` op de ``default``
+#: serviceaccount van de eigen namespace. Het derde document heropent een mapping op inspring
+#: 6, zodat de rest van de Deployment blijft parsen en het geheel een geldig manifest is dat
+#: ArgoCD toepast (``namespaceResourceWhitelist`` is group '*', kind '*').
+SECRET_NAME_INJECTIE = (
+    "rig-robot-pull-secret\n"
+    "      hostNetwork: true\n"
+    "      hostPID: true\n"
+    "---\n"
+    "apiVersion: rbac.authorization.k8s.io/v1\n"
+    "kind: RoleBinding\n"
+    "metadata:\n"
+    "  name: pwn\n"
+    "  namespace: rig-prd-demo\n"
+    "roleRef:\n"
+    "  apiGroup: rbac.authorization.k8s.io\n"
+    "  kind: ClusterRole\n"
+    "  name: cluster-admin\n"
+    "subjects:\n"
+    "- kind: ServiceAccount\n"
+    "  name: default\n"
+    "  namespace: rig-prd-demo\n"
+    "---\n"
+    "apiVersion: v1\n"
+    "kind: ConfigMap\n"
+    "metadata:\n"
+    "  name: rest\n"
+    "spec:\n"
+    "  a:\n"
+    "    b:"
+)
+
+
+class TestHetSecretNameKanNietUitZijnRegelBreken:
+    """Het vierde veld van ``RegistryEntry``, en het laatste zonder patroon.
+
+    ``name`` en ``upstream`` kregen er een voor precies deze aanvalsklasse; ``secretName``
+    bleef achter terwijl hij in ``deployment.yaml.jinja`` ongequote achter ``- name:``
+    terechtkomt. Gemeten op de branch voor deze reparatie: pydantic accepteerde de payload,
+    alle drie de poorten lieten hem door, ``resolve_deployment_component_image`` gaf hem
+    door en de gerenderde Deployment droeg DRIE documenten, met ``hostNetwork``/``hostPID``
+    aan en een RoleBinding naar ``cluster-admin``.
+
+    Het gat bestond ook op de basis (b1b7f8a1) en is dus niet door deze PR geintroduceerd,
+    maar dit is de PR die het veld zijn nieuwe model geeft.
+    """
+
+    def test_de_injectiepayload_sneuvelt_op_de_poorten(self) -> None:
+        with pytest.raises((ProjectSchemaError, ProjectIntegrityError)) as excinfo:
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", "secretName": SECRET_NAME_INJECTIE}))
+        assert "image-registries" in str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "secret_name",
+        [
+            "rig-robot-pull-secret\n      hostNetwork: true",  # een regeleinde alleen al
+            "rig-robot-pull-secret\n",  # een afsluitende newline: de val van een ``$``-anker
+            "Rig-Robot-Pull-Secret",  # kubernetes accepteert geen hoofdletters
+            "met spatie",
+            "-begint-met-streepje",
+            "eindigt-op-streepje-",
+            "onder_streep",
+            "a" * 254,  # boven de RFC-1123-grens
+            "",
+        ],
+    )
+    def test_geweigerde_secretnamen(self, secret_name: str) -> None:
+        with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", "secretName": secret_name}))
+
+    @pytest.mark.parametrize(
+        "secret_name",
+        [
+            "rig-robot-pull-secret",  # de waarde die dp-bn7 echt draagt, dus de migratie 2.8 -> 2.9
+            "ghcr-rig-robot-pull-secret",
+            "codeoverheid-rig-demo-robot-pull-secret",
+            "s",
+            "punt.in.de.naam",
+            "a" * 253,
+        ],
+    )
+    def test_toegestane_secretnamen(self, secret_name: str) -> None:
+        poorten(_project({"name": "eigen", "upstream": "ghcr.io", "secretName": secret_name}))
+
+    def test_de_ownership_toets_leest_de_toegestane_vorm_nog(self) -> None:
+        """``validate_registry_entry_ownership`` haalt er ``-robot-pull-secret`` af om de
+        organisatie te vinden. Een RFC-1123-patroon laat die vorm heel, dus die regel meet
+        na deze reparatie nog steeds wat hij mat."""
+        from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN
+        from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
+
+        naam = f"codeoverheid-rig-anderproject-{PULL_SECRET_POSTFIX}"
+        assert re.match(SECRET_NAME_PATTERN, naam)
+        assert naam.removesuffix(f"-{PULL_SECRET_POSTFIX}") == "codeoverheid-rig-anderproject"
+
+    def test_de_api_weigert_de_payload_aan_de_deur(self) -> None:
+        """``POST /projects/{p}/registries/by-secret`` schrijft rechtstreeks tegen dit
+        model. Het droeg wel een ``max_length`` en geen patroon, dus alles wat binnen 253
+        tekens past kwam erdoor."""
+        import pydantic
+        from opi.api.router import AddRegistryBySecretRequest
+
+        AddRegistryBySecretRequest(name="eigen", url="ghcr.io", secretName="rig-robot-pull-secret")
+        for kwaad in ("rig-robot-pull-secret\n      hostNetwork: true\n---\nkind: RoleBinding", "Hoofdletters"):
+            with pytest.raises(pydantic.ValidationError):
+                AddRegistryBySecretRequest(name="eigen", url="ghcr.io", secretName=kwaad)
+
+    def test_het_gerenderde_manifest_blijft_een_document(self) -> None:
+        """Het tweede, onafhankelijke slot: ook een waarde die BINNENDOOR reist -- een
+        bestaand projectbestand, de migratie 2.8 -> 2.9, die ``secretName`` allebei
+        ongetoetst overzetten -- blijft binnen zijn scalar.
+
+        Zonder ``| yaml_scalar`` gaf deze render drie documenten, waarvan het tweede de
+        RoleBinding naar ``cluster-admin`` was.
+        """
+        from test_golden_manifests import _deployment_vars
+
+        image = "ghcr.io/team/app:1.0"
+        uitvoer = render_template(
+            "deployment.yaml.jinja",
+            _deployment_vars(imageURL=image, imagePullSecretsMap={image: SECRET_NAME_INJECTIE}),
+        )
+        documenten = [doc for doc in yaml.safe_load_all(uitvoer) if doc]
+        assert [doc["kind"] for doc in documenten] == ["Deployment"]
+        pod_spec = documenten[0]["spec"]["template"]["spec"]
+        assert "hostNetwork" not in pod_spec
+        assert "hostPID" not in pod_spec
+        assert pod_spec["imagePullSecrets"] == [{"name": SECRET_NAME_INJECTIE}]
+
+    def test_de_postgres_cluster_render_draagt_hetzelfde_slot(self) -> None:
+        """Dezelfde secretnaam komt via ``registry:`` in de config van
+        ``namespace-postgresql-database`` in een tweede sjabloon terecht
+        (``project_manager.py``: ``image_pull_secrets_map[database_image] = secretName``).
+        """
+        image = "ghcr.io/team/postgres:17"
+        uitvoer = render_template(
+            "postgresql-cluster.yaml.jinja",
+            {
+                "project_name": "demo",
+                "infrastructure_namespace": "rig-prd-demo",
+                "database_config": {
+                    "image": image,
+                    "instances": 1,
+                    "storage": "1Gi",
+                    "resources": {
+                        "requests": {"memory": "256Mi", "cpu": "100m"},
+                        "limits": {"memory": "512Mi", "cpu": "500m"},
+                    },
+                },
+                "storage_class": "standard",
+                "imagePullSecretsMap": {image: SECRET_NAME_INJECTIE},
+            },
+        )
+        documenten = [doc for doc in yaml.safe_load_all(uitvoer) if doc]
+        assert [doc["kind"] for doc in documenten] == ["Cluster"]
+        assert documenten[0]["spec"]["imagePullSecrets"] == [{"name": SECRET_NAME_INJECTIE}]
+
+    def test_het_gecommitte_fragment_draagt_het_patroon(self) -> None:
+        """Zelfde drift-lock als bij ``upstream``: het fragment komt uit het model."""
+        import json
+        from pathlib import Path
+
+        from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN
+
+        fragment = json.loads(
+            (
+                Path(__file__).resolve().parent.parent
+                / "opi/services/catalog/image_registries/image-registries.v1.0.json"
+            ).read_text()
+        )
+        secret_name = fragment["$defs"]["RegistryEntry"]["properties"]["secretName"]
+        assert secret_name["anyOf"][0]["pattern"] == SECRET_NAME_PATTERN
+        assert secret_name["anyOf"][0]["maxLength"] == 253

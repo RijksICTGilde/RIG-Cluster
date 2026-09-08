@@ -40,6 +40,18 @@ class TestHetBlok:
         assert section.context["registries"][0]["upstream"] == "code.overheid.nl/robbert.uittenbroek"
         assert section.context["project_name"] == "demo"
 
+    def test_het_blok_draagt_het_token_niet(self) -> None:
+        """``ctx.project_data`` is ONTSLEUTELD (zie ``ProjectPageContext``), dus de entry
+        zelf draagt het token in platte tekst. Het sjabloon toont het niet, maar een
+        rendercontext is geen plek om het toch mee te geven.
+        """
+        ontsleuteld = {**REGISTRY, "password": "ghp_HET_ECHTE_TOKEN"}
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([ontsleuteld]))
+        assert "ghp_HET_ECHTE_TOKEN" not in str(section.context)
+        assert "password" not in section.context["registries"][0]
+        # De velden die het sjabloon wel toont blijven staan.
+        assert section.context["registries"][0]["username"] == "robbert.uittenbroek"
+
     def test_het_blok_rekent_geen_rcr_url_uit(self) -> None:
         """Die is een BEREKENING; hem hier neerzetten zou een tweede waarheid geven."""
         (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([REGISTRY]))
