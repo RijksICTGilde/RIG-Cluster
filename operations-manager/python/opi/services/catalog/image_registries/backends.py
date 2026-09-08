@@ -150,9 +150,17 @@ def backend_for_cluster(cluster: str) -> RegistryBackend:
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:
     """Het token in leesbare vorm, of None als er geen token is opgegeven.
 
-    Het veld draagt drie opslagvormen (armored AGE, ``base64+age:`` en ``plain:``), dus
-    de toets en de ontsleuteling moeten ze alle drie kennen. Een ontbrekende sleutel
-    blaast op in plaats van stil een onbruikbaar credential weg te schrijven.
+    Dit is de bestaande AGE-gereedschapskist voor een projectbestand en niets nieuws:
+    ``carries_encrypted_value`` herkent de vorm, ``get_decoded_project_private_key_sync``
+    haalt de projectsleutel uit ``config`` en ``decrypt_password_smart_sync`` kent alle
+    drie de opslagvormen (armored AGE, ``base64+age:``, ``plain:``).
+
+    Wat de dienst zelf kiest is welke van de twee sleutelzoekers erbij hoort, en dat is
+    de fail-closed: dit is de SCHRIJFkant, dus een ontbrekende sleutel blaast op in
+    plaats van stil een onbruikbaar credential naar git te schrijven. De leeskant
+    (``ProjectAgeSecretConverter``) en de tokentoets (``enforcers._plain_token``) nemen
+    dezelfde helpers met ``resolve_project_private_key``, die None teruggeeft: daar is
+    "niet uit te pakken" een reden om te zwijgen, niet om te weigeren.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:

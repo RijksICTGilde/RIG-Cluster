@@ -187,6 +187,16 @@ def project_manifest_services() -> list[Service]:
     return sorted(overriding, key=lambda s: s.manifest_order)
 
 
+def project_validating_services() -> list[Service]:
+    """Services that override ``validate_project``, in registry order.
+
+    ``validate_project_structure`` iterates these instead of naming each service's rules,
+    so a service's cross-object rules live with the service and adding one is a
+    declaration rather than an edit to the shared validator.
+    """
+    return [s for s in SERVICES.values() if type(s).validate_project is not Service.validate_project]
+
+
 def approval_services() -> list[Service]:
     """Services that declare at least one ApprovalSpec, in registry order (RC-5).
 

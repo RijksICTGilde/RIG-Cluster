@@ -21,6 +21,11 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.events import on
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
+from opi.services.catalog.image_registries.ownership import (
+    validate_proxy_organization_claims,
+    validate_proxy_organization_ownership,
+    validate_registry_entry_ownership,
+)
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
@@ -185,6 +190,21 @@ class ImageRegistriesService(Service):
         from opi.services.catalog.image_registries.web import image_registries_router
 
         return [*super().web_routers(), image_registries_router]
+
+    # --- regels over het hele project --------------------------------------------------
+
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``).
+
+        Ze kijken naar de andere projecten op het cluster en niet naar een configblok, dus
+        ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit project de dienst
+        aanvinkt: het gaat om waar een image NAAR wijst.
+        """
+        return [
+            *validate_proxy_organization_ownership(project_data),
+            *validate_registry_entry_ownership(project_data),
+            *validate_proxy_organization_claims(project_data),
+        ]
 
     # --- projectbrede manifesten ------------------------------------------------------
 

@@ -313,6 +313,7 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 | De twee bronnen samengevoegd | `opi/services/catalog/image_registries/resolution.py` |
 | Naamregels | `opi/services/catalog/image_registries/naming.py` |
 | Backends | `opi/services/catalog/image_registries/backends.py` |
+| Eigendomsregels over het hele project | `opi/services/catalog/image_registries/ownership.py`, aan de haak `validate_project` |
 | Clusterconfig | `get_image_registries_config` in `opi/core/cluster_config.py` |
 | Organization-sjabloon | `manifests/quay-proxy-organization.yaml.jinja` |
 | Projectniveau-haak | `contribute_project_manifests` in `opi/services/catalog/base.py` |
@@ -355,6 +356,14 @@ daar staat het secret in de resource-spec zelf.
 | De ingetypte image van een ad-hoc job | `foreign_proxy_organization_owner` in `JobManager.begin` | Die image komt uit een formulierveld en ziet geen enkele validator bij het opslaan, terwijl `apply_bundle` er wel de projectregels op toepast |
 | Een registrynaam die niet bestaat | `values_must_exist` op de componentkeuze | Een typefout hoort bij het opslaan te sneuvelen, niet pas bij het pullen |
 | `project` als deploymentnaam | `RESERVED_DEPLOYMENT_NAMES` | De ArgoCD-applicatie van het projectniveau heet `{project}-project` |
+
+De drie eigendomsregels staan in `ownership.py` bij de dienst en niet in de gedeelde
+validator: ze kijken naar de andere projecten op het cluster en niet naar één configblok,
+dus `validate_config` kan ze niet beoordelen. Ze hangen aan `Service.validate_project`, de
+haak die `validate_project_structure` voor elke dienst afloopt; dat is de poort waar elke
+schrijfroute langskomt. De haak draait op ELK project, ook op een dat de dienst niet
+aanvinkt: het gaat erom waar een image naar wijst, en dat zou anders te omzeilen zijn door
+de dienst weg te laten.
 
 De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
 `tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
