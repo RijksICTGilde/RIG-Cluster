@@ -7,10 +7,12 @@ This module provides centralized utilities for YAML file operations using JSONPa
 import logging
 import os
 import tempfile
+from io import StringIO
 from typing import Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from ruamel.yaml.representer import RoundTripRepresenter
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, SingleQuotedScalarString
 
@@ -196,8 +198,6 @@ def load_yaml_from_string(yaml_string: str) -> dict[str, Any] | None:
         yaml.preserve_quotes = True
         yaml.width = 4096
 
-        from io import StringIO
-
         data = yaml.load(StringIO(yaml_string))
 
         return data
@@ -224,10 +224,47 @@ def dump_yaml_to_string(data: dict[str, Any]) -> str:
     """
     yaml = _create_yaml_writer()
 
-    from io import StringIO
-
     output = StringIO()
     yaml.dump(data, output)
+
+    return output.getvalue()
+
+
+def load_yaml_documents_from_string(yaml_string: str) -> list[Any] | None:
+    """Load every document of a possibly multi-document YAML string, round-trip.
+
+    The round-trip loader is what makes the canonical writer able to keep comments and
+    literal blocks: a value read back as a block scalar carries that style with it.
+    A generated manifest directory contains both single- and multi-document files, so a
+    reader that only understands the first document silently skips the rest.
+
+    Returns:
+        Every document in order, or None when the text does not parse.
+    """
+    yaml = YAML()
+    yaml.preserve_quotes = True
+    yaml.width = 4096
+
+    try:
+        return list(yaml.load_all(StringIO(yaml_string)))
+    except YAMLError as e:
+        logger.warning(f"Error parsing YAML string: {e}")
+        return None
+
+
+def dump_yaml_documents_to_string(documents: list[Any]) -> str:
+    """Dump one or more documents back to a string through the canonical writer.
+
+    A single document comes out without a leading ``---``, so a file that holds one
+    document keeps the shape it had.
+
+    Raises:
+        Propagates any dumper error, for the reason given on dump_yaml_to_string.
+    """
+    yaml = _create_yaml_writer()
+
+    output = StringIO()
+    yaml.dump_all(documents, output)
 
     return output.getvalue()
 
