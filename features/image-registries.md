@@ -55,6 +55,34 @@ keuze overschrijven met dezelfde dienstvermelding onder `deployments[].component
 De afnemer schrijft altijd de UPSTREAM, nooit een adres van het platform. Dat houdt het
 bestand overdraagbaar naar een ander platform.
 
+### De keuze bij een component is een voorrangsregel, geen aan/uit
+
+Wat een component aanvinkt bepaalt WELKE van je registries voorgaat, niet OF er een van je
+registries geldt. `build_rules()` zet alle registries van het project in de lijst, met de
+gekozen registry vooraan en de clustertabel erachter. Een component dat de dienst niet
+aanvinkt maar wel een image draait die onder een van je eigen upstreams valt, gaat dus ook
+langs je eigen proxy en krijgt dat pull-secret.
+
+Bewust zo, en om twee redenen:
+
+- Een registry-entry zegt "deze upstream is van mij, en dit is het token". Een image onder
+  die prefix bij de GEDEELDE proxy laten uitkomen betekent een pull zonder credentials, en
+  dus een `ImagePullBackOff` met de melding dat de image niet bestaat -- precies de fout
+  die de verkeerde kant op wijst.
+- De manifestpas loopt over de hele deployment-map met dezelfde `build_rules()` en weet
+  niet welk component welke container is. Zou de componentlus een andere lijst gebruiken,
+  dan gaven de twee wegen een ander antwoord op dezelfde vraag, en herschreef de pas het
+  daarna alsnog.
+
+Het overwogen alternatief -- voor een component met een keuze alleen die ene regel plus de
+clustertabel, en voor een component zonder keuze alleen de clustertabel -- is daarop
+afgewezen.
+
+De consequentie hoort de afnemer wel te horen, en `help.md` zegt hem: niet aanvinken is
+geen keuze voor de publieke weg. Publiek is wat een image is als hij buiten al je eigen
+registries valt. `TestEenEigenRegistryGeldtVoorHetHeleProject` in
+`tests/test_image_registries_rules.py` pint het vast.
+
 ## Wat er niet in het bestand staat
 
 De RCR-URL, de naam van de proxy-organisatie en de naam van het pull-secret staan er
