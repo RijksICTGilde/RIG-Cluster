@@ -295,7 +295,21 @@ Naam `<friendlyName>-<customerName>-<project>`. De secretnaam zetten we explicie
 **D3. De koppeling is componentconfig van de dienst, geen sleutel op de component.**
 `registry:` als directe sleutel naast `image:` gaat eruit. De component vermeldt de dienst met een configblok, zoals elke andere componentgebonden dienst dat doet. Dat levert het veld gratis op via de drie componenthaken, het laat het veld verdwijnen zodra de dienst uitgaat, en het maakt "publiek" een echte non-waarde: geen vermelding, geen sleutel. Puur afleiden uit de image-URL is geen alternatief, want dat faalt in twee gevallen die we allebei hebben meegemaakt: twee registries met dezelfde URL en verschillende tokens, en een image zonder enige verwijzing (de dp-bn7-storing).
 
-**D4. De lijst verhuist van root naar de dienstconfig.**
+**D4. De lijst verhuist van root naar de dienstconfig, met een inventaris van wat er mee moet.**
+
+Een verhuizing is pas af als alles wat op de oude plek gold ook op de nieuwe plek geldt. Twee lijstjes horen daarom in de taak, en het ontbreken ervan heeft in de eerste bouwronde twee blokkerende securitybevindingen opgeleverd.
+
+*Beperkingen die mee moeten verhuizen*, af te lezen uit `$defs/registry` op de basis:
+
+| Wat | Op de oude plek | Waarom het telt |
+|---|---|---|
+| patroon op `url` | `^(?:(?:https?\|ssh\|git)://)?[^\s\u0000"]+\Z` | verbiedt aanhalingsteken en regeleinde; zonder dit rendert een upstream als extra YAML-documenten in het manifest |
+| `password` is `age-encrypted-or-plain` | AGE-patroon | `find_plaintext_secret_violations` matcht op precies dat patroon en draait fail-closed op elke schrijfroute; een kale string zet die grendel uit |
+| `name` uniek binnen de lijst | validator | verwijzingen vanaf componenten lossen op naam op |
+
+*Lezers van het veld*, want elke lezer moet dezelfde uitpakking gebruiken (`carries_encrypted_value` plus `decrypt_password_smart`), en er is er altijd eentje meer dan je denkt: de provisioning-backend, de formulierconverter, de enforcer die het token toetst, en `project_manager.py`. Inventariseer ze vóór de wijziging en noem ze in de PR.
+
+
 Root-`registries:` heeft nu geen eigenaar en daarmee geen formulier, geen configmodel, geen schemafragment en geen validatie. Schemaversie omhoog en de twee bestaande projecten meenemen in de fixup. `dp-bn7` migreert waarschijnlijk naar niets: die entry is een noodverband voor de platformregistry en hoort thuis in de auto-wiring uit `features/futures/platform-registry-pull-secret-wiring.md`. Van `algor-odc` eerst nameten of die ghcr-credentials iets doen; als het pakket publiek is, werken ze niet eens en verdwijnen ze.
 
 **D5. Het token wordt bij het opslaan getoetst.**
