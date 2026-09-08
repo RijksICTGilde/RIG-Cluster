@@ -179,10 +179,16 @@ class ImageRegistriesService(Service):
         registries = project_registries(ctx.project_data)
         if not registries:
             return []
+        # Alleen wat het sjabloon toont. ``ctx.project_data`` is ONTSLEUTELD, dus de entry
+        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext.
+        getoond = [
+            {key: registry.get(key) for key in ("name", "upstream", "username", "secretName")}
+            for registry in registries
+        ]
         return [
             DetailPageSection(
                 template="image_registries/section-detail.html.j2",
-                context={"registries": registries, "project_name": ctx.project_data.get("name", "")},
+                context={"registries": getoond, "project_name": ctx.project_data.get("name", "")},
             )
         ]
 

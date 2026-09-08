@@ -48,6 +48,14 @@ REGISTRY_NAME_MESSAGE = (
     "cijfers en streepjes bevatten, geen spaties of hoofdletters"
 )
 
+#: Een RFC-1123-subdomeinnaam: precies wat kubernetes een secret laat heten. Net als bij
+#: ``upstream`` is dit ook een veiligheidsgrendel: de waarde komt in
+#: ``deployment.yaml.jinja`` achter ``- name:`` te staan, dus zonder patroon zet een
+#: regeleinde er podvelden bij en een ``---`` een tweede DOCUMENT achteraan.
+#:
+#: ``$`` en niet ``\Z``, om dezelfde reden als bij ``UPSTREAM_PATTERN`` hierboven.
+SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+
 
 class RegistryEntry(BaseModel):
     """Eén private registry van het project."""
@@ -77,6 +85,8 @@ class RegistryEntry(BaseModel):
     )
     secret_name: str | None = Field(
         default=None,
+        pattern=SECRET_NAME_PATTERN,
+        max_length=253,
         alias="secretName",
         description=(
             "Naam van een al bestaand kubernetes.io/dockerconfigjson-secret in de namespace, "
