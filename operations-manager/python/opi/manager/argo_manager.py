@@ -10,15 +10,16 @@ from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
 from opi.utils.naming import (
-    PROJECT_LEVEL_DIR,
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
     generate_argocd_project_application_name,
+    generate_argocd_project_folder_path,
     generate_argocd_repository_secret_name,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_application_filename,
     generate_infrastructure_argocd_appproject_filename,
     generate_infrastructure_argocd_folder_path,
+    generate_project_level_manifest_path,
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
 )
@@ -118,6 +119,22 @@ class ArgoManager:
         self.last_umbrella_revision: str | None = None
         self.last_umbrella_reconciled_at: str | None = None
 
+    @staticmethod
+    def _write_manifest_file(target_dir: str, filename: str, content: str) -> str:
+        """Schrijf een gerenderd manifest in de uitgecheckte repo en geef het pad terug.
+
+        De vijf schrijfplekken in dit bestand deden hier dezelfde drie regels voor. Voor
+        een manifest dat nog uit een template moet komen is ``ManifestGenerator`` de weg;
+        deze schrijft wat ``generate_*_manifest`` al gerenderd heeft. Committen doet de
+        aanroeper niet: alles van een ronde gaat in de ene commit van
+        ``create_argocd_resources``.
+        """
+        os.makedirs(target_dir, exist_ok=True)
+        path = os.path.join(target_dir, filename)
+        with open(path, "w") as f:
+            f.write(content)
+        return path
+
     async def create_argocd_resources(
         self, deployment_name: str | None = None, deployment_names: list[str] | None = None
     ) -> None:
@@ -209,7 +226,9 @@ class ArgoManager:
 
         # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
-        project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
+        project_dir = os.path.join(
+            str(working_dir), generate_argocd_project_folder_path(str(cluster_name), project_name)
+        )
         logger.info(f"Creating cluster/project directory: {project_dir}")
         os.makedirs(project_dir, exist_ok=True)
 
@@ -439,12 +458,8 @@ class ArgoManager:
             output_filename = get_output_filename_from_template(template_filename, appproject_name)
 
             # Create cluster/project subdirectory structure
-            project_dir = os.path.join(working_dir, cluster_name, project_name)
-            os.makedirs(project_dir, exist_ok=True)
-
-            appproject_file_path = os.path.join(project_dir, output_filename)
-            with open(appproject_file_path, "w") as f:
-                f.write(appproject_content)
+            project_dir = os.path.join(working_dir, generate_argocd_project_folder_path(cluster_name, project_name))
+            appproject_file_path = self._write_manifest_file(project_dir, output_filename, appproject_content)
 
             logger.info(
                 f"Successfully created ArgoCD AppProject file for cluster {cluster_name}, "
@@ -632,13 +647,10 @@ class ArgoManager:
 
                 # Create cluster/project subdirectory structure
                 cluster_name = deployment.get("cluster")
-                project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
-                os.makedirs(project_dir, exist_ok=True)
-
-                app_file_path = os.path.join(project_dir, output_filename)
-
-                with open(app_file_path, "w") as f:
-                    f.write(argocd_app_content)
+                project_dir = os.path.join(
+                    str(working_dir), generate_argocd_project_folder_path(str(cluster_name), str(project_name))
+                )
+                app_file_path = self._write_manifest_file(project_dir, output_filename, argocd_app_content)
 
                 logger.info(f"Successfully created ArgoCD application file: {app_file_path}")
 
@@ -674,10 +686,9 @@ class ArgoManager:
             logger.error(f"Repository not found for project application: {deployment.get('repository')}")
             return False
 
-        repo_path = repo_info.get("path", "")
-        project_path = f"{cluster_name}/{project_name}/{PROJECT_LEVEL_DIR}"
-        if repo_path:
-            project_path = f"{repo_path}/{project_path}"
+        # Dezelfde functie als de schrijver van die map (``_process_project_manifests``),
+        # zodat de applicatie niet naar een pad kan wijzen dat er niet staat.
+        project_path = generate_project_level_manifest_path(cluster_name, project_name, repo_info.get("path", ""))
 
         app_name = generate_argocd_project_application_name(project_name)
         content = self.generate_application_manifest(
@@ -694,11 +705,9 @@ class ArgoManager:
 
         git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
         working_dir = await git_connector_for_argocd.get_working_dir()
-        project_dir = os.path.join(str(working_dir), cluster_name, str(project_name))
-        os.makedirs(project_dir, exist_ok=True)
+        project_dir = os.path.join(str(working_dir), generate_argocd_project_folder_path(cluster_name, project_name))
         output_filename = get_output_filename_from_template("argocd-application.yaml.jinja", app_name)
-        with open(os.path.join(project_dir, output_filename), "w") as f:
-            f.write(content)
+        self._write_manifest_file(project_dir, output_filename, content)
 
         logger.info(f"Successfully created ArgoCD project application file: {output_filename}")
         return True
@@ -726,7 +735,9 @@ class ArgoManager:
 
         # Use CLUSTER_MANAGER directly - this instance only manages one cluster
         cluster_name = settings.CLUSTER_MANAGER
-        project_dir = os.path.join(str(working_dir), str(cluster_name), str(project_name))
+        project_dir = os.path.join(
+            str(working_dir), generate_argocd_project_folder_path(str(cluster_name), str(project_name))
+        )
 
         self.project_manager._manifest_generator.create_kustomization_files(
             output_dir=project_dir,
@@ -811,9 +822,7 @@ class ArgoManager:
 
             # Write AppProject
             appproject_filename = generate_infrastructure_argocd_appproject_filename(project_name)
-            appproject_file_path = os.path.join(infra_argo_dir, appproject_filename)
-            with open(appproject_file_path, "w") as f:
-                f.write(appproject_content)
+            appproject_file_path = self._write_manifest_file(infra_argo_dir, appproject_filename, appproject_content)
 
             logger.info(f"Created infrastructure AppProject: {appproject_file_path}")
 
@@ -879,10 +888,7 @@ class ArgoManager:
 
             # Write Application
             app_filename = generate_infrastructure_argocd_application_filename(project_name)
-            app_file_path = os.path.join(infra_argo_dir, app_filename)
-
-            with open(app_file_path, "w") as f:
-                f.write(argocd_app_content)
+            app_file_path = self._write_manifest_file(infra_argo_dir, app_filename, argocd_app_content)
 
             logger.info(f"Created infrastructure Application: {app_file_path}")
 
