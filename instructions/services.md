@@ -953,7 +953,7 @@ approver UI needs no change to pick up a new one.
 | `notices_for` | What does an ungranted approval mean for this deployment? | `collect_deployment_approval_notices` → the project page |
 
 Each item `list_items` returns carries a `subject`: WHAT is being asked for, in words the
-approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it — the
+approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it. The
 service is the only thing that knows how to say it. Without one, generic code has to
 assemble the sentence from the fields it happens to know, and that is exactly how a service
 request ended up on the approver page as an empty domain column. `collect_approval_items`
@@ -1001,7 +1001,7 @@ APPROVAL = service_use_approval(
 
 It returns three things: `spec` for `config_approvals()`, `is_approved(project_data)` and
 `ensure_requested(project_data)`. Hang **everything** the service switches on off that one
-`is_approved`, so the parts can never disagree — send-email gates its account, its network
+`is_approved`, so the parts can never disagree: send-email gates its account, its network
 policy, its envFrom secret and its secret file on it. And keep the `consequence`: a service
 that is switched on and silently does nothing is the fault this shape exists to prevent.
 
