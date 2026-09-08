@@ -1015,7 +1015,9 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 2. `catalog/<name>/__init__.py` with a `Service` subclass carrying its own `definition`, and
    one line in `SERVICES`. Variables it exposes go in `variables.py` in the same package.
 3. Config? Add `config_model.py`, set `config_model` + `config_schema_version`, run
-   `uv run python -m opi.services.config_schema`, commit the fragment.
+   `uv run python -m opi.services.config_schema`, commit the fragment. That model plus the
+   editables are what BOTH the form and the API use; you write no endpoint and no second
+   validator. See "One path for the form and the API".
 4. **Decide the UI, explicitly, and write down the decision.** Two questions:
    - *May a user switch this on?* Then `hidden` stays `False` and the service gets a card in
      the services step. If not, set `hidden=True` **and say in the definition why**, so the
@@ -1068,6 +1070,11 @@ its four wiring points are listed under "Forms and wizard screens".
   automatically. A project-level section also needs registering in `wizard_sections.py`, adding
   to the flows in `flows.py`, a modal `FormFlow` when you declared `modal_flow_id`, and a
   regenerated flow snapshot.
+- **The form and the API are one path, and it is easy to fork by accident.** Writing a
+  small endpoint "just for this service", or a check that only the form runs, gives two
+  behaviours that drift silently: a form that writes what the API rejects, or an API that
+  writes what the form cannot show. The declarations (editables + `config_model`) are the
+  single source; a deliberate difference is declared with `api_actions()`.
 - **Identity via `service_entry_name`, always.** See the entry forms above.
 - **A services list is a selection set.** A name may appear at most once, at every level.
   `validate_project_structure` rejects a duplicate; the wizard merge folds entries so one
