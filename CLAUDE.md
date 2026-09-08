@@ -169,6 +169,15 @@ When introducing a new feature, create a markdown document in `features/` with: 
 - **Error handling**: Specific exception types, avoid generic `except Exception`
 - **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md` en `features/roos-eruit.md`
 
+## Uitleg in code en tekst
+
+Geldt voor alle code, commentaar, documentatie en commit-berichten in deze repo.
+
+- **Minimale uitleg.** Een commentaar of docstring zegt kort *wat* iets doet, en alleen als dat niet al uit de code volgt. Herhaalt de uitleg wat de code zelf zegt, dan is het ruis die veroudert.
+- **Comply or explain.** Wijk je af van een afspraak of van de voor de hand liggende oplossing, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
+- **Wat wel blijft staan**: waarom een afwijking bestaat, welke valkuil de vorige versie in liep, welke afspraak hier geldt. Dat kan een lezer niet uit de code halen.
+- **Nooit em dashes.** Niet in code, niet in commentaar, niet in documentatie, niet in commit-berichten. Gebruik een komma, een dubbele punt of een punt.
+
 ## Post-Development Validation
 
 ```bash
