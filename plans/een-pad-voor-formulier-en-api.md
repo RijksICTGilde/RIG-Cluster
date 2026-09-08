@@ -16,8 +16,6 @@ De regel dat het formulier en de API hetzelfde pad lopen stond in de instructies
 4. **Geen dubbele code.** Bestaat er al een mechanisme, gebruik dat. Een eigen oplossing naast een bestaande is de duurste vorm van "het werkte bij mij".
 5. **Volledige API-documentatie.** Elk configveld heeft een `description`, elke operatie een `summary`, en de OpenAPI is wat een afnemer leest.
 6. **De standaard API-route volgen.**
-7. **Zo min mogelijk uitleg in de code.** Een commentaar of docstring zegt *wat het doet*, niet een heel verhaal, en alleen wanneer het niet al uit de code volgt. Comply or explain: wijk je af van een afspraak, leg dat uit; doet de code precies wat er staat, dan is een toelichting ruis die veroudert. Dit is een verandering van richting ten opzichte van delen van de bestaande code, en geldt voor wat er nieuw bij komt; bestaande uitleg gaan we niet herschrijven.
-8. **Geen em dashes.** Niet in code, niet in commentaar, niet in documentatie, niet in commit-berichten.
 
 ### Wat die standaard route precies is
 
@@ -46,7 +44,6 @@ Er is al een plek en een patroon: `tests/test_openapi_grouping.py` loopt `app.op
 - **Herkomst van elke dienstroute.** Bouw de verwachte verzameling paden uit `SERVICES` maal `ConfigLayer` met dezelfde helpers die de generator gebruikt, en vergelijk met wat er in `app.routes` staat onder `/services/`. Faalt zodra iemand er met de hand een endpoint bij zet, en faalt ook als de generator een laag overslaat die de dienst wel declareert.
 - **De body is het model van de dienst.** Voor elke gegenereerde schrijfroute: het body-model is `config_model_for(layer)` van die dienst, of de expliciet gedeclareerde enkelvoudige gevel. Geen los model dat toevallig lijkt op het echte.
 - **Documentatie compleet.** Elke operatie heeft een `summary` en precies één tag; elk configveld heeft een `description`. Het tweede bestaat al (`test_service_config_field_descriptions.py`), het eerste hoort ernaast.
-- **Geen em dashes.** Een grep op de gewijzigde bestanden. Mechanisch, dus geen reden om er een oordeel van te maken.
 - **Geen dienstnaam in generieke code.** Bestaat als reviewpunt in de checklist, maar is prima te meten: de dienstnamen uit `ServiceType` mogen niet voorkomen in `opi/api/`, `opi/forms/` (buiten de afgeleide registers) en `opi/schemas/project_v2.json`.
 
 ### Oordeel, dus een reviewpunt
@@ -57,7 +54,6 @@ Toe te voegen aan `instructions/service-review-checklist.md`, met per punt wat "
 - **Duidelijk en herbruikbaar pad.** Als het formulier en de API verschillen, is dat verschil dan benoemd en beperkt tot het binnenkomen, of loopt het door tot in de opslag?
 - **Editables gebruikt.** Elk veld dat een gebruiker kan zetten heeft een editable met yaml-pad en validators. Een veld zonder editable moet uitgelegd worden, niet stilzwijgend bestaan.
 - **Wizard flows gebruikt.** Een projectniveau-scherm loopt via de secties en flows die er zijn, niet via een eigen route of een eigen template.
-- **Uitleg in de code is minimaal en verdient zijn plek.** Zegt het commentaar wat de code al zegt, dan weg ermee. Blijft staan wat een lezer niet uit de code kan halen: waarom een afwijking bestaat, welke afspraak hier geldt, welke valkuil de vorige versie in liep. Een docstring die het gedrag herhaalt is geen documentatie maar een tweede plek die kan gaan afwijken.
 - **Niets nieuws voor iets dat al bestaat.** Voor de vraag "waar hoort deze code" is de lagentabel in `instructions/services.md` (dienst, manager, connector) de leidraad, plus de bestaande haken. Vind je jezelf een dienstnaam in generieke code schrijven, dan ontbreekt er een haak en is die haak toevoegen goedkoper dan de uitzondering.
 
 ## Fasering
