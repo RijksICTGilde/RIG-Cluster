@@ -314,6 +314,34 @@ Is er wel een versleutelde waarde maar geen projectsleutel, dan stopt het schrij
 fout (`get_decoded_project_private_key_sync`). Stil geen secret schrijven levert een
 deployment op die aan de pull blijft hangen zonder dat er iets in de weg stond.
 
+### Elk stringveld van de entry draagt een patroon
+
+`upstream` en `password` waren de twee die met de sleutel mee hadden moeten verhuizen. De
+andere twee velden van `RegistryEntry` hebben er om dezelfde reden een gekregen, want beide
+komen ongequote in een gerenderd manifest terecht.
+
+`name` is een DNS-1123-achtige naam die met een kleine LETTER begint
+(`REGISTRY_NAME_PATTERN`), zodat hij nooit als YAML-getal wordt gelezen.
+
+`secretName` is een RFC-1123-subdomeinnaam (`SECRET_NAME_PATTERN`, met `max_length=253`):
+precies wat kubernetes een secret laat heten. Zonder patroon zette een waarde met
+regeleindes er in `deployment.yaml.jinja` podvelden bij (`hostNetwork`, `hostPID`) en met
+een `---` een TWEEDE document, tot een RoleBinding naar ClusterRole `cluster-admin` op de
+`default` serviceaccount van de eigen namespace aan toe; de `AppProject` heeft
+`namespaceResourceWhitelist` op group `*`, kind `*`, dus ArgoCD past dat toe.
+
+Twee sloten, net als bij `upstream`. Het patroon weigert de waarde op de save-poorten en
+aan de API-deur (`AddRegistryBySecretRequest`), en de twee sjablonen die de secretnaam
+renderen quoteren hem met `yaml_scalar` voor het geval hij er binnendoor komt: de migratie
+2.8 -> 2.9 (`relocate_registries_to_service`) en een bestaand projectbestand zetten
+`secretName` ongetoetst over. Het tweede sjabloon is `postgresql-cluster.yaml.jinja`, waar
+dezelfde naam terechtkomt via de sleutel `registry` in de config van
+`namespace-postgresql-database`.
+
+`validate_registry_entry_ownership` leest een `secretName` met
+`removesuffix("-robot-pull-secret")` om de organisatie te vinden; RFC-1123 laat streepjes
+toe, dus die vorm blijft heel.
+
 ## Een regel, een pad: formulier en API
 
 De regel voor `upstream` staat in `config_model.py` en niet in het formulier. Dat model is
