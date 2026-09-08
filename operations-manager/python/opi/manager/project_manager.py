@@ -148,7 +148,6 @@ from opi.utils.env_vars import (
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
-    PROJECT_LEVEL_DIR,
     ROOT_COMPONENT_FORMAT_IDS,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
@@ -163,6 +162,7 @@ from opi.utils.naming import (
     generate_network_policy_manifest_name,
     generate_network_policy_name,
     generate_nice_url_root_hostname,
+    generate_project_level_manifest_path,
     generate_project_realm_name,
     generate_project_service_account_name,
     generate_public_url,
@@ -3968,10 +3968,9 @@ class ProjectManager:
         project_data = await self.get_contents()
         project_name = await self.get_name()
 
-        repo_path = repo_config.get("path", "")
-        project_dir = f"{cluster_name}/{project_name}/{PROJECT_LEVEL_DIR}"
-        if repo_path:
-            project_dir = f"{repo_path}/{project_dir}"
+        # Dezelfde functie als de ArgoCD-applicatie die naar deze map wijst, zodat de map
+        # en de verwijzing ernaar niet uit elkaar kunnen lopen.
+        project_dir = generate_project_level_manifest_path(cluster_name, project_name, repo_config.get("path", ""))
         target_path = os.path.join(await git_connector.get_working_dir(), project_dir)
         os.makedirs(target_path, exist_ok=True)
 
@@ -4011,10 +4010,7 @@ class ProjectManager:
 
         public_key = get_project_public_key(project_data)
         if not public_key:
-            raise RuntimeError(
-                f"Geen SOPS public key voor het projectniveau van '{project_name}'; "
-                "dit zou secrets in platte tekst naar git committen."
-            )
+            raise RuntimeError(f"Geen SOPS public key voor het projectniveau van '{project_name}'")
         encrypt_to_sops_files_or_fail(
             target_path,
             public_key,
@@ -8798,11 +8794,9 @@ class ProjectManager:
         Sinds schemaversie 2.9 staat de lijst niet meer op de projectwortel maar bij zijn
         eigenaar. Dit is de ene schrijfplek; beide upsert-routes hieronder gaan erlangs.
         """
-        from opi.services.project import Project
-
+        service_name = ServiceType.IMAGE_REGISTRIES.value
         project = Project(project_data)
-        path = f"services/{ServiceType.IMAGE_REGISTRIES.value}/config"
-        config = project.get(path)
+        config = project.service_config(service_name)
         registries = list(config.get("registries", [])) if isinstance(config, dict) else []
 
         created = True
@@ -8814,7 +8808,10 @@ class ProjectManager:
         else:
             registries.append(entry)
 
-        project.set(path, {**(config if isinstance(config, dict) else {}), "registries": registries})
+        project.set(
+            f"services/{service_name}/config",
+            {**(config if isinstance(config, dict) else {}), "registries": registries},
+        )
         return created
 
     async def upsert_registry_by_secret(

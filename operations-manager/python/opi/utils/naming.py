@@ -1393,6 +1393,33 @@ def generate_infrastructure_application_name(project_name: str) -> str:
     return f"{project_clean}-infrastructure"
 
 
+def generate_project_level_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
+    """Het PROJECTniveau van de deployments-repo: ``{cluster}/{project}/_project``.
+
+    Zelfde vorm als ``generate_infrastructure_manifest_path``, een map ernaast. De
+    schrijver van de map en de ArgoCD-applicatie die ernaar wijst leiden hem allebei
+    hiervandaan af, zodat de twee niet uit elkaar kunnen lopen.
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+        repo_path: Optional repository base path
+
+    Returns:
+        Project-level manifest path
+
+    Example:
+        generate_project_level_manifest_path("production", "myproject")
+        -> "production/myproject/_project"
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+
+    if repo_path:
+        return f"{repo_path}/{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}"
+    return f"{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}"
+
+
 def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
     """
     Generate the path to infrastructure manifests in the deployment git repository.
@@ -1461,6 +1488,27 @@ def generate_infrastructure_argocd_appproject_filename(project_name: str) -> str
     """
     project_clean = _sanitize_for_lowercase(project_name)
     return f"{project_clean}-infrastructure-argocd-appproject.yaml"
+
+
+def generate_argocd_project_folder_path(cluster: str, project_name: str) -> str:
+    """De map in de argo-applications repo waar de ArgoCD-manifesten van een project staan.
+
+    Format: {cluster}/{project}
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+
+    Returns:
+        ArgoCD project folder path
+
+    Example:
+        generate_argocd_project_folder_path("production", "myproject")
+        -> "production/myproject"
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{cluster_clean}/{project_clean}"
 
 
 def generate_infrastructure_argocd_folder_path(cluster: str, project_name: str) -> str:
@@ -2361,3 +2409,4 @@ def registry_tag_owner(registry_tag: str) -> str | None:
     if not separator or not REGISTRY_TAG_OWNER_RE.match(owner):
         return None
     return owner
+

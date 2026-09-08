@@ -26,7 +26,6 @@ from opi.utils.naming import generate_project_admin_username, generate_project_r
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 from opi.utils.naming import (
-    PROJECT_LEVEL_DIR,
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
     generate_backup_prefix,
@@ -34,6 +33,7 @@ from opi.utils.naming import (
     generate_gitops_argocd_application_path,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_folder_path,
+    generate_project_level_manifest_path,
     get_output_filename_from_template,
 )
 from opi.utils.project_utils import project_level_deployment
@@ -735,10 +735,7 @@ class DeleteProjectManager:
         try:
             connector = await self.project_manager.get_git_connector_for_deployment(str(repository_name), repo_config)
             await connector.ensure_repo_cloned()
-            repo_path = repo_config.get("path", "")
-            folder = f"{cluster}/{project_name}/{PROJECT_LEVEL_DIR}"
-            if repo_path:
-                folder = f"{repo_path}/{folder}"
+            folder = generate_project_level_manifest_path(cluster, project_name, repo_config.get("path", ""))
             full_path = os.path.join(await connector.get_working_dir(), folder)
             if not os.path.exists(full_path):
                 deletion_results["operations"].append(
