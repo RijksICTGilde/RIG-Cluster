@@ -18,7 +18,6 @@ from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
 from opi.generation.manifests import render_template
-from opi.manager.project_validation import foreign_proxy_organization_owner
 from opi.manager.run_support import (
     ANNOT_EXPIRES,
     ANNOT_OPENED_BY,
@@ -33,6 +32,7 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
+from opi.services.catalog.image_registries.ownership import foreign_proxy_organization_owner
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
 from opi.utils.naming import generate_job_name, generate_project_service_account_name

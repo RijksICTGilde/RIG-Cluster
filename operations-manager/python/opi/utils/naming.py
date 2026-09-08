@@ -2410,3 +2410,33 @@ def registry_tag_owner(registry_tag: str) -> str | None:
         return None
     return owner
 
+
+def normalize_registry_repo(repo: str) -> str:
+    """The comparable form of a registry repository, so one repo has one spelling.
+
+    A hostname is case-insensitive and the https port may be written out, so
+    ``RCR.rijksapps.nl/rig`` and ``rcr.rijksapps.nl:443/rig`` are the same repository
+    as ``rcr.rijksapps.nl/rig``. The path after the host is left alone: registries
+    treat it case-sensitively.
+    """
+    host, separator, path = repo.partition("/")
+    if not separator or not ("." in host or ":" in host or host == "localhost"):
+        # No registry host in front (e.g. 'nginx' or 'library/nginx'): nothing to normalize.
+        return repo
+    host = host.lower()
+    host = host.removesuffix(":443")
+    return f"{host}/{path}"
+
+
+def split_image_reference(image: str) -> tuple[str, str | None, bool]:
+    """Split an image reference into (repository, tag, carries-a-digest).
+
+    Handles the shapes the project schema allows: ``repo``, ``repo:tag``,
+    ``repo@sha256:...`` and ``repo:tag@sha256:...``, with an optional port in the
+    host. A colon that is followed by a ``/`` is a port, not a tag separator.
+    """
+    reference, digest_separator, _digest = image.partition("@")
+    repo, tag_separator, tag = reference.rpartition(":")
+    if not tag_separator or "/" in tag:
+        return reference, None, bool(digest_separator)
+    return repo, tag, bool(digest_separator)

@@ -17,10 +17,9 @@ from typing import TYPE_CHECKING, Any
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.manager.project_validation import _split_image_reference
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.event_interpreter import _friendly_resource_name
-from opi.utils.naming import generate_unique_name
+from opi.utils.naming import generate_unique_name, split_image_reference
 
 if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
@@ -462,8 +461,8 @@ def _compare_image_references(running: str | None, configured: str | None) -> bo
     """
     if not running or not configured:
         return None
-    _, _, running_has_digest = _split_image_reference(running)
-    _, _, configured_has_digest = _split_image_reference(configured)
+    _, _, running_has_digest = split_image_reference(running)
+    _, _, configured_has_digest = split_image_reference(configured)
     if running_has_digest != configured_has_digest:
         return None
     return running == configured
