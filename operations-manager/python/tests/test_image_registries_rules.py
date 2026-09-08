@@ -320,6 +320,53 @@ class TestVoorrangTussenTweeGelijkeUpstreams:
         assert [r.match for r in rules[1:]] == [r.match for r in cluster_rules(ODCN)]
 
 
+class TestEenEigenRegistryGeldtVoorHetHeleProject:
+    """De keuze bij een component is een VOORRANGSregel, geen aan/uit-schakelaar.
+
+    Een project dat ``ghcr.io/mijnorg`` als eigen registry opgeeft zegt daarmee dat die
+    upstream van hem is. Een component dat de dienst NIET aanvinkt maar wel een image onder
+    die prefix draait gaat dus ook langs de eigen proxy, met hetzelfde token. Bewust zo, en
+    om twee redenen:
+
+    - Het alternatief (alleen de gekozen regel plus de clustertabel) laat zo'n image bij de
+      GEDEELDE proxy uitkomen, en die heeft geen credentials voor een prive-pakket. Dat is
+      precies de ImagePullBackOff met een melding die de verkeerde kant op wijst.
+    - De manifestpas loopt over de hele map met dezelfde ``build_rules()`` en weet niet welk
+      component welke container is. Twee antwoorden op dezelfde vraag zouden daar meteen
+      uiteenlopen.
+
+    Wat de afnemer ervan moet weten staat in ``help.md``: niet-aanvinken is geen keuze voor
+    de publieke weg, het is alleen "hier valt niets te kiezen".
+    """
+
+    EIGEN: ClassVar[dict[str, Any]] = {
+        "name": "eigen",
+        "upstream": "ghcr.io/mijnorg",
+        "username": "u",
+        "password": "t",
+    }
+
+    def test_zonder_keuze_wint_de_eigen_registry_van_de_gedeelde_proxy(self) -> None:
+        image = "ghcr.io/mijnorg/andere-app:1"
+        gedeeld = resolve_project_image(image, _project(), ODCN)
+        eigen = resolve_project_image(image, _project([self.EIGEN]), ODCN)
+
+        assert (gedeeld.image, gedeeld.secret) == (
+            "rcr.rijksapps.nl/ghcr-rig/mijnorg/andere-app:1",
+            "ghcr-rig-robot-pull-secret",
+        )
+        assert (
+            eigen.image == f"{registry_destination('ghcr.io/mijnorg', 'rcr.rijksapps.nl', 'rig', 'demo')}/andere-app:1"
+        )
+        assert eigen.secret == pull_secret_name("ghcr.io/mijnorg", "rig", "demo")
+
+    def test_een_image_buiten_de_eigen_prefix_blijft_de_gedeelde_proxy_volgen(self) -> None:
+        """De regel is een PREFIX, geen hele host: alleen wat onder de eigen namespace valt."""
+        resolved = resolve_project_image("ghcr.io/iemand-anders/app:1", _project([self.EIGEN]), ODCN)
+        assert resolved.image == "rcr.rijksapps.nl/ghcr-rig/iemand-anders/app:1"
+        assert resolved.secret == "ghcr-rig-robot-pull-secret"
+
+
 class TestEntryMetEenBestaandSecret:
     """Het noodverband uit de dp-bn7-storing: verwijs naar een secret dat het platform zelf
     neerzet, en herschrijf nooit."""
