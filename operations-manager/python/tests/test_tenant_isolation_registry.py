@@ -305,7 +305,7 @@ class TestProxyOrganizationOwnership:
     def test_een_project_dat_naar_een_hash_heet_eist_niets_van_een_ander_op(self) -> None:
         """De spiegelkant van de eerste blokkerende vondst: nu de organisatie op een hash
         EINDIGT zou een kale ``endswith`` op de projectnaam de organisatie van ``eigen``
-        aan een project ``eigen-<hash>`` toewijzen -- en dan wordt de eigenaar zelf
+        aan een project ``eigen-<hash>`` toewijzen, en dan wordt de eigenaar zelf
         geweigerd op zijn eigen image."""
         from opi.manager.project_validation import validate_proxy_organization_ownership
 
@@ -483,8 +483,7 @@ class TestProxyOrganizationClaims:
     latere naamwijziging bij het OPSLAAN sneuvelt en niet pas bij het reconcileren.
     """
 
-    #: Lang genoeg dat ``<friendly>-rig-<projectnaam>-<hash>`` over de 63 tekens heen gaat
-    #: en de afkapping precies het onderscheidende deel opeet.
+    #: Lang genoeg dat ``<friendly>-rig-<projectnaam>-<hash>`` over de 63 tekens heen gaat.
     LANGE_UPSTREAM = "registry." + "a" * 30 + ".example.nl/team"
 
     @staticmethod
@@ -513,8 +512,7 @@ class TestProxyOrganizationClaims:
 
         ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaab")
         eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaac")
-        # De tegenproef op de meting zelf: het zijn werkelijk twee verschillende projecten
-        # die op een en dezelfde organisatie uitkomen.
+        # Tegenproef: het zijn werkelijk twee verschillende projecten.
         assert organization_name(self.LANGE_UPSTREAM, "rig", eigen["name"]) == organization_name(
             self.LANGE_UPSTREAM, "rig", ander["name"]
         )

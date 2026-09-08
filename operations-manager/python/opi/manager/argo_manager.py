@@ -142,9 +142,7 @@ class ArgoManager:
         await self.create_repository_secrets(project_data, deployment_name, deployment_names)
         await self.create_app_projects(project_data, deployment_name, deployment_names)
         await self.create_applications(project_data, deployment_name, deployment_names)
-        # De applicatie voor het PROJECTniveau staat naast de AppProject in dezelfde
-        # projectmap en is per definitie projectbreed, dus hij hangt niet aan de
-        # deployment-scope hierboven. Idempotent: dezelfde inhoud geeft geen diff.
+        # Projectbreed, dus buiten de deployment-scope hierboven. Idempotent.
         await self.create_project_application(project_data)
         # The kustomization is a single shared per-project file that must enumerate
         # every manifest, so it intentionally stays project-wide.
@@ -652,13 +650,8 @@ class ArgoManager:
     async def create_project_application(self, project_data: dict[str, Any]) -> bool:
         """Maak de ArgoCD-applicatie voor het PROJECTniveau van de deployments-repo.
 
-        Naast de AppProject die in dezelfde projectmap staat, en met sync-wave 0 terwijl de
-        deployment-applicaties op 1 staan, zodat het projectniveau eerst gaat. Hij wijst
-        naar ``<cluster>/<project>/_project`` -- de map met wat namespace-breed is in plaats
-        van van een enkele deployment.
-
-        De naam is ``{project}-project``; dat is de reden dat ``project`` in
-        ``RESERVED_DEPLOYMENT_NAMES`` staat.
+        Naast de AppProject in dezelfde projectmap, op sync-wave 0 terwijl de
+        deployment-applicaties op 1 staan.
         """
         project_name = await self.project_manager.get_name()
         deployments = await self.project_manager.get_deployments(cluster_filter=True)
@@ -666,8 +659,8 @@ class ArgoManager:
             logger.debug(f"Geen deployments op dit cluster voor '{project_name}'; geen projectapplicatie")
             return True
 
-        # Dezelfde regel als de schrijver van het projectniveau gebruikt, zodat de
-        # applicatie nooit naar een andere repository wijst dan waar de map geschreven is.
+        # Dezelfde regel als de schrijver, zodat de applicatie naar dezelfde repository
+        # wijst als waar de map geschreven is.
         deployment = project_level_deployment(deployments)
         if deployment is None:
             return True

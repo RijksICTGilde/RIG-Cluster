@@ -189,16 +189,9 @@ class SkopeoConnector:
     ) -> tuple[bool, str]:
         """Can these credentials READ this repository? Returns (ok, reason).
 
-        The check the platform owes a user when they hand over a token: a token with too
-        little scope is answered upstream with ``reqPackageAccess`` (401), which Quay then
-        translates into ``name unknown: repository not found`` -- so the failure arrives as
-        an ImagePullBackOff with a message pointing the wrong way. Asking here means the
-        form can say what is actually wrong.
-
-        ``skopeo list-tags`` is the tag listing the registry API calls ``tags/list``, which
-        is exactly the call that needs the read scope. Availability of the CLI is not a
-        verdict about the token: with no skopeo this returns ok, because refusing a save
-        over a check we could not run would block a user for a platform gap.
+        ``list-tags`` is the ``tags/list`` call, which is exactly what needs the read
+        scope. With no skopeo CLI this returns ok: refusing a save over a check we could
+        not run would block a user for a platform gap.
         """
         if not self.is_skopeo_available:
             logger.info("Skopeo CLI not available; registry credentials not verified")
@@ -219,9 +212,8 @@ class SkopeoConnector:
 
         if process.returncode == 0:
             return True, ""
-        # The registry's own words are the only thing that says what went wrong, but they
-        # can carry the credentials back (skopeo echoes the URL it tried). Keep the first
-        # line and strip anything that looks like a userinfo part.
+        # The registry's own words say what went wrong, but skopeo echoes the URL it
+        # tried, so strip anything that looks like a userinfo part.
         reason = stderr_bytes.decode(errors="replace").strip().splitlines()
         return False, self._mask_userinfo(reason[0]) if reason else "de registry gaf geen reden"
 

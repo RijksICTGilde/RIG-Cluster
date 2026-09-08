@@ -810,12 +810,8 @@ class SelfServiceComponent(BaseModel):
     root: bool = False  # Whether this component receives the root path in nice-url mode
 
 
-#: The shape rule for ``url`` on both registry endpoints below. It is a REFERENCE to the
-#: image-registries config model, not a second definition: these two endpoints write into
-#: that service's config (``upstream``), so a caller must be judged by the same rule the
-#: form, the generic service-config API and a hand-written project file are judged by.
-#: Without it the value was only refused at the save chokepoint, one layer deeper and with
-#: a message about a schema instead of about this field.
+#: The description for ``url`` on both registry endpoints below; the rule itself comes
+#: from the image-registries config model, so a caller is judged like every other writer.
 _REGISTRY_URL_DESCRIPTION = "Registry host without protocol, optionally with a path (lowercase, no tag or digest)"
 
 

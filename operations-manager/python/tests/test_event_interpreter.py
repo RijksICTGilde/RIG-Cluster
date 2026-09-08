@@ -101,7 +101,7 @@ class TestInterpretEvents:
     def test_the_message_names_the_private_registry_the_consumer_typed(self):
         """Het gemelde pad is het RCR-pad van de eigen proxy-organisatie. De eigen
         organisaties van een project staan alleen in de regellijst als het PROJECTBESTAND
-        erbij zit, dus zonder dat bestand leest hij hier de kale URL terug -- in precies
+        erbij zit, dus zonder dat bestand leest hij hier de kale URL terug, in precies
         de melding die over zijn image gaat."""
         project_data = {
             "name": "demo",

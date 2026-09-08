@@ -75,7 +75,7 @@ De naamregels staan in `opi/services/catalog/image_registries/naming.py`:
 
 De upstream hoort in de suffix omdat `friendlyName` alleen de HOST draagt, en die zonder
 TLD. Zonder dat deel komen `ghcr.io/orga` en `ghcr.io/orgb` van hetzelfde project op één
-organisatienaam uit -- en daarmee op één bestandsnaam op het projectniveau, één
+organisatienaam uit, en daarmee op één bestandsnaam op het projectniveau, één
 credentials-secret en één bestemming, waarna de tweede registry de eerste stil overschrijft
 en twee componenten die verschillende images bedoelen dezelfde ophalen.
 
@@ -84,7 +84,7 @@ Waarom een **hash** en niet de leesbare namespace: beide delen van de suffix gaa
 geen teken over dat als grens kan dienen, en dan is de samenvoeging niet omkeerbaar.
 Gemeten: project `demo` met upstream `ghcr.io/team` en project `demo-team` met upstream
 `ghcr.io` kwamen allebei op suffix `demo-team` uit, dus op één tenantbrede organisatie, één
-pull-secretnaam en één bestemming -- twee projecten die elkaars proxy besturen. Binnen één
+pull-secretnaam en één bestemming: twee projecten die elkaars proxy besturen. Binnen één
 project deed hetzelfde zich voor tussen `.../robbert.uittenbroek`, `.../robbert/uittenbroek`
 en `.../robbert-uittenbroek`. De hash loopt over de HELE upstream en niet alleen over het
 pad, want `code.overheid.nl/x` en `code.overheid.com/x` leveren allebei `codeoverheid` op.
@@ -134,10 +134,10 @@ Drie dingen die in die ene functie horen en nergens anders:
 
 Een UPSTREAM-prefix gaat door een eigen normalisatie (`normalize_prefix()`), en dat is geen
 dubbeling: een prefix is een pad en geen naam. `ghcr.io` is al compleet, terwijl
-`normalize_image()` er `docker.io/library/ghcr.io` van maakt -- die aanvulling hoort bij een
+`normalize_image()` er `docker.io/library/ghcr.io` van maakt; die aanvulling hoort bij een
 image-verwijzing (`nginx` is de naam van een repository) en niet bij een prefix. Wie de
-image-normalisatie op een prefix loslaat, laat een upstream zonder pad -- de vorm die
-`algor-odc` in de vloot heeft -- nooit meer matchen. De twee plekken die een prefix
+image-normalisatie op een prefix loslaat, laat een upstream zonder pad (de vorm die
+`algor-odc` in de vloot heeft) nooit meer matchen. De twee plekken die een prefix
 vergelijken zijn de tokentoets (`enforcers.py`) en het vooruit invullen van het keuzeveld
 (`providers.py`).
 
@@ -194,8 +194,8 @@ naar een serviceaccount wijst die er nog niet is krijgt helemaal geen pod:
     Error creating: pods "productie-web-..." is forbidden: error looking up
     service account rig-waard-vqs/waard-vqs-sa: serviceaccount "waard-vqs-sa" not found
 
-Gemeten op de sandbox op 2026-09-07. Het herstelt vanzelf -- de ReplicaSet probeert het
-opnieuw en de OUDE pod blijft ondertussen draaien, dus er is geen storing -- maar het kostte
+Gemeten op de sandbox op 2026-09-07. Het herstelt vanzelf, want de ReplicaSet probeert het
+opnieuw en de OUDE pod blijft ondertussen draaien, dus er is geen storing, maar het kostte
 2 minuten en 39 seconden nadat de serviceaccount er stond, want de ReplicaSet zit dan in zijn
 FailedCreate-backoff.
 
@@ -230,7 +230,7 @@ bestaanscontrole die de umbrella-refresh aanzet, en er wordt op gewacht tot hij 
 
 Een sleutel die van de projectwortel naar een dienstconfig verhuist, verhuist van een schema
 dat jsonschema draait naar een schema dat pydantic draait. De VORM reist dan mee, de
-CONSTRAINTS niet vanzelf -- en juist die twee waren hier dragend.
+CONSTRAINTS niet vanzelf, en juist die twee waren hier dragend.
 
 **`upstream` heeft een patroon** (`UPSTREAM_PATTERN`). Het manifest
 `quay-proxy-organization.yaml.jinja` zet deze waarde in `spec.proxyCache.upstreamRegistry`.
@@ -248,7 +248,7 @@ komen er nog door.
 
 **`password` heeft het AGE-patroon** (`AGE_ENCRYPTED_OR_PLAIN_PATTERN`). Dat is niet alleen
 een vormregel: `find_plaintext_secret_violations` herkent een AGE-veld AAN dat patroon, en
-`ProjectStore._validate` draait die controle op ELKE schrijfroute -- ook op de elf plekken
+`ProjectStore._validate` draait die controle op ELKE schrijfroute, ook op de elf plekken
 met `enforce_validation=False`, waar de rest van de validatie alleen wordt gelogd. De reden
 staat er letterlijk bij: een teruggeschreven `get_decrypted()`-view zou anders
 platte-tekst-credentials in git zetten, en `decrypt_tree()` ontsleutelt generiek elke
@@ -268,15 +268,15 @@ een dienst die morgen een geheim gaat opslaan is gedekt zodra zijn model dat zeg
 
 Datzelfde patroon laat het token in drie vormen toe: het armored AGE-blok, de eenregelige
 `base64+age:`-vorm en een expliciet als platte tekst gemarkeerde `plain:`-waarde. Dat is
-geen randgeval maar de huisvorm van een projectbestand -- de repository-password, de
+geen randgeval maar de huisvorm van een projectbestand: de repository-password, de
 api-key en de projectsleutel dragen allemaal de eenregelige vorm.
 
 Wie de waarde uitleest moet ze dus alle drie kennen. Toetsen op alleen de armored markering
 zet de andere twee LETTERLIJK in de `.dockerconfigjson` (of in het
 `-upstream-credentials`-secret van Quay): geen fout, geen waarschuwing, wel een credential
 dat niet klopt en een pod die op `invalid username/password` of `name unknown: repository
-not found` blijft hangen. Beide lezers -- `_plain_password` in `backends.py` en
-`ProjectAgeSecretConverter` in `converters.py` -- gaan daarom langs `carries_encrypted_value`
+not found` blijft hangen. Beide lezers, `_plain_password` in `backends.py` en
+`ProjectAgeSecretConverter` in `converters.py`, gaan daarom langs `carries_encrypted_value`
 en `decrypt_password_smart_sync` (`opi/utils/age.py`), net als de CNPG-route dat met
 `decrypt_password_smart` doet. In de formulierlaag is het verschil het scherpst: `read()`
 zou anders de cijfertekst tonen en `write()` die als NIEUW token versleutelen, waarna het
@@ -324,7 +324,7 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 De ``default`` serviceaccount is geen vangnet dat we willen houden, om twee redenen. Hij
 draagt elk pull-secret dat het platform in de namespace repliceert, dus ook dat van de
 proxy-organisatie van een ander project: zolang onze pods daarop draaien is een private
-registry alleen op papier privé. En technisch is het ook geen goed idee -- alle secrets
+registry alleen op papier privé. En technisch is het ook geen goed idee: alle secrets
 wijzen naar dezelfde host en kubelet moet daar de juiste uit halen, wat bij negen secrets
 al onzeker is en bij honderd een probleem.
 
@@ -339,7 +339,7 @@ Gemeten op 2026-09-07 met een lege serviceaccount in `rig-prd-test`: een pod met
 secret in de podspec slaagt. De eerste rij is de belangrijkste: na admission stond er
 `rcr.rijksapps.nl/dockerhub-rig/library/alpine:3.20.3`, inclusief het `library/`-segment.
 Elke image belandt op een RCR-pad, elk RCR-pad vraagt authenticatie, en dus heeft élke pod
-een secret nodig -- ook voor een doodgewone publieke image.
+een secret nodig, ook voor een doodgewone publieke image.
 
 Operators die hun eigen serviceaccount maken (CNPG met `rig-db`) draaien niet op de onze;
 daar staat het secret in de resource-spec zelf.
@@ -350,7 +350,7 @@ daar staat het secret in de resource-spec zelf.
 |---|---|---|
 | Het token wordt bij het opslaan getoetst | `enforcers.RegistryTokenEnforcer` | Een te smal token komt anders pas naar boven als `ImagePullBackOff` met de melding `repository not found`, en die wijst de verkeerde kant op |
 | Een verwijzing naar de proxy-organisatie van een ander project | `validate_proxy_organization_ownership` | Wie de naam van andermans organisatie kent leest er met ANDERMANS credentials uit |
-| Een registry-ENTRY die naar de organisatie van een ander project wijst (`upstream` of `secretName`) | `validate_registry_entry_ownership` | De entry maakt een regel die op elke image onder die upstream slaat en het opgegeven secret eraan hangt -- ook op routes zonder projectbestand |
+| Een registry-ENTRY die naar de organisatie van een ander project wijst (`upstream` of `secretName`) | `validate_registry_entry_ownership` | De entry maakt een regel die op elke image onder die upstream slaat en het opgegeven secret eraan hangt, ook op routes zonder projectbestand |
 | Een organisatienaam die een ander project al claimt, of twee entries van één project op één naam | `validate_proxy_organization_claims` | De organisatienaam is tenantbreed: twee CR's met dezelfde naam sturen één organisatie in RCR aan |
 | De ingetypte image van een ad-hoc job | `foreign_proxy_organization_owner` in `JobManager.begin` | Die image komt uit een formulierveld en ziet geen enkele validator bij het opslaan, terwijl `apply_bundle` er wel de projectregels op toepast |
 | Een registrynaam die niet bestaat | `values_must_exist` op de componentkeuze | Een typefout hoort bij het opslaan te sneuvelen, niet pas bij het pullen |
@@ -358,13 +358,13 @@ daar staat het secret in de resource-spec zelf.
 
 De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
 `tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
-werkelijk een image uit haalt. Is er nog geen zo'n image -- de normale toestand in de
-wizard, waar de registry vóór de componenten komt -- dan wordt er niets geweigerd: een
+werkelijk een image uit haalt. Is er nog geen zo'n image (de normale toestand in de
+wizard, waar de registry vóór de componenten komt), dan wordt er niets geweigerd: een
 weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname.
 
 De toets draait NA de formulierverwerking, en die heeft het token op dat moment al
-versleuteld. Hij pakt de opgeslagen waarde dus eerst uit -- alle drie de opslagvormen die
-het veld mag dragen, net als de secretbouwer in `backends.py` -- voordat hij hem aan
+versleuteld. Hij pakt de opgeslagen waarde dus eerst uit, alle drie de opslagvormen die
+het veld mag dragen, net als de secretbouwer in `backends.py`, voordat hij hem aan
 skopeo geeft. Zonder dat uitpakken toetst hij het cijfertekstblok en wordt een geldig
 token geweigerd. Is de waarde niet uit te pakken (geen sleutel), dan wordt er niets
 getoetst en dus niets geweigerd.

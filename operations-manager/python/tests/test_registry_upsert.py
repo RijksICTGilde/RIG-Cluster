@@ -2,8 +2,8 @@
 
 Sinds schemaversie 2.9 (RC-177) staat de lijst niet meer op de projectwortel maar in de
 config van de dienst image-registries, en heet het veld ``upstream`` in plaats van ``url``.
-De registries worden hier dus gelezen zoals de rest van de code ze leest -- via
-``project_registries`` -- en niet via een sleutel op de wortel.
+De registries worden hier dus gelezen zoals de rest van de code ze leest, via
+``project_registries``, en niet via een sleutel op de wortel.
 """
 
 from typing import Any

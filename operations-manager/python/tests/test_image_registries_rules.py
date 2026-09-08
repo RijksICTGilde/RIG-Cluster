@@ -1,9 +1,4 @@
-"""De regelvorm en de twee bronnen die hem voeden.
-
-De toets die er het meest toe doet houdt de twee bronnen uit elkaar: dezelfde
-``code.overheid.nl``-image levert MET een private registry de eigen proxy-organisatie op
-met het eigen secret, en ZONDER die registry de gedeelde proxy met het robot-secret.
-"""
+"""De regelvorm en de twee bronnen die hem voeden."""
 
 from __future__ import annotations
 
@@ -90,7 +85,7 @@ class TestNormalisatieVanEenPrefix:
     """Een upstream is een PAD, geen naam: ``ghcr.io`` is al compleet.
 
     ``normalize_image`` vult voor een verwijzing zonder host ``docker.io/library/`` aan,
-    en dat is voor een prefix fout -- ``ghcr.io`` werd zo ``docker.io/library/ghcr.io``
+    en dat is voor een prefix fout: ``ghcr.io`` werd zo ``docker.io/library/ghcr.io``
     en matchte daarna geen enkele image.
     """
 
@@ -192,7 +187,7 @@ class TestNaamgeving:
 
     def test_suffix_is_wat_de_operator_achter_de_hostnaam_plakt(self) -> None:
         """De operator stelt ``<friendlyName>-<customerName>-<suffix>`` samen, en
-        ``friendlyName`` draagt alleen de HOST -- en die zonder TLD. Wat twee registries
+        ``friendlyName`` draagt alleen de HOST, en die zonder TLD. Wat twee registries
         onderscheidt moet dus in de suffix zitten, anders komt de organisatie er onder één
         naam te staan."""
         assert organization_suffix("ghcr.io/orga", "demo") == f"demo-{upstream_hash('ghcr.io/orga')}"
@@ -355,7 +350,7 @@ class TestProjectRegistriesLezen:
 
 class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
     """De koppeling staat op het COMPONENT en de deployment mag hem overschrijven met
-    dezelfde dienstvermelding -- de vorm die publish-on-web en temp-storage daar ook
+    dezelfde dienstvermelding, de vorm die publish-on-web en temp-storage daar ook
     gebruiken. Wat eruit komt is het pull-secret in ``imagePullSecretsMap``, dus daar wordt
     het op gemeten."""
 
@@ -430,8 +425,8 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
             data["components"][0],
             ODCN,
         )
-        # Beide registries hebben dezelfde upstream, dus dezelfde organisatie -- het
-        # SECRET is hetzelfde en het verschil zit in welke regel vooraan stond.
+        # Dezelfde upstream, dus dezelfde organisatie: het secret is hetzelfde en het
+        # verschil zit in welke regel vooraan stond.
         assert zonder.image == met.image
         organisatie = organization_name("code.overheid.nl/team", "rig", "demo")
         assert zonder.image.startswith(f"rcr.rijksapps.nl/{organisatie}/")

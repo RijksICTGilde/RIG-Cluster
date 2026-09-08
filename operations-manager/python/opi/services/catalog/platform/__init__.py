@@ -30,16 +30,8 @@ class PlatformService(Service):
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
         """De eigen serviceaccount van het project, zonder pull-secrets.
 
-        Bij het platform en niet bij image-registries, want elk project heeft hem nodig --
-        ook een project dat nooit een eigen registry opgeeft. Een dienst die alleen
-        bijdraagt als er registries in staan zou hem juist daar laten ontbreken.
-
-        Waarom hij er is: de ``default`` serviceaccount draagt elk pull-secret dat het
-        platform in de namespace repliceert, dus ook dat van de proxy-organisatie van een
-        ander project. Draaien op ``default`` maakt een private registry alleen op papier
-        prive, en laat kubelet uit negen secrets voor dezelfde host de juiste vissen.
-        Elke gegenereerde podspec draagt in plaats daarvan de secrets die hij zelf nodig
-        heeft (resolve_image); meestal is dat er precies een.
+        Bij het platform en niet bij image-registries, want elk project heeft hem nodig,
+        ook een project zonder eigen registry. Zie ``generate_project_service_account_name``.
         """
         from opi.utils.naming import generate_project_service_account_name
 

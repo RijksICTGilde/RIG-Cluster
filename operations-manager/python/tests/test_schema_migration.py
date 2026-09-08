@@ -1432,10 +1432,10 @@ _AGE_BLOK = "-----BEGIN AGE ENCRYPTED FILE-----\ntest\n-----END AGE ENCRYPTED FI
 class TestRelocateRegistriesToService:
     """v2.8 -> v2.9: de registries verhuizen naar de dienst image-registries (RC-177).
 
-    Gemodelleerd op de twee bestanden die dit in de vloot echt hebben -- ``algor-odc``
+    Gemodelleerd op de twee bestanden die dit in de vloot echt hebben (``algor-odc``
     (ghcr.io met inloggegevens, verwezen vanaf twee deployment-componenten en vanuit
     ``namespace-postgresql-database``) en ``dp-bn7`` (``secretName``, het noodverband uit
-    de storing van mei) -- en niet op een minimaal project, want juist die twee vormen
+    de storing van mei), en niet op een minimaal project, want juist die twee vormen
     moeten er heelhuids doorheen komen.
 
     Migreren en dan valideren, in die volgorde: dat is de volgorde die de loader gebruikt.
@@ -1550,7 +1550,7 @@ class TestRelocateRegistriesToService:
 
     def test_de_verwijzing_van_binnen_een_andere_dienst_blijft_staan(self) -> None:
         """``namespace-postgresql-database`` verwijst bij NAAM naar een entry, en die
-        verwijzing blijft werken -- hij wijst nu naar de config van image-registries."""
+        verwijzing blijft werken: hij wijst nu naar de config van image-registries."""
         result, _ = migrate_to_latest(self._algor_odc_shaped())
         assert self._service_config(result, "namespace-postgresql-database")["registry"] == "github-registry"
 

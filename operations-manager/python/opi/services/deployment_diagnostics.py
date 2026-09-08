@@ -395,10 +395,8 @@ def summarize_component_pods(
     replicas are the intended end state, the card already names them and their reason, and
     a red "nothing is running" next to that would contradict it.
     """
-    # De bronvorm van een image komt van de dienst image-registries, want die bezit de
-    # regels. Met ``project_data`` erbij worden ook de eigen proxy-organisaties van dit
-    # project teruggerekend; zonder zou een afnemer met een private registry juist wel de
-    # kale RCR-URL zien.
+    # Met ``project_data`` worden ook de eigen proxy-organisaties van dit project
+    # teruggerekend, niet alleen de gedeelde clustertabel.
     cluster = settings.CLUSTER_MANAGER
     deployment_name = deployment.get("name") or ""
 

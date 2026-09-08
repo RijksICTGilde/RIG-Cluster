@@ -109,8 +109,7 @@ CREATE_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
-        # Voor COMPONENTS_SECTION: de registry-select op een component leest deze lijst, dus
-        # hij moet al ingevuld zijn als het componentformulier gerenderd wordt.
+        # Voor COMPONENTS_SECTION, want de registry-select op een component leest deze lijst.
         IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         # After KEYCLOAK_CONFIG_SECTION: the realm-role picker reads the keycloak config

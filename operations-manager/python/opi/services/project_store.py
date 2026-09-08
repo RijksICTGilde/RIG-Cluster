@@ -685,9 +685,8 @@ class GitProjectStore(ProjectStore):
             # enforce=False tolerates pre-existing drift, never a decrypted secret.
             # Writing back a get_decrypted() view would otherwise land plaintext
             # credentials in git through one of the 11 non-enforcing call sites.
-            # BOTH halves: project_v2.json describes the secrets at the project root,
-            # a service's own model describes the ones in its config block. A secret
-            # that moves from the one to the other must not fall between them.
+            # BOTH halves: project_v2.json describes the secrets at the project root, a
+            # service's own model the ones in its config block.
             leaked = find_plaintext_secret_violations(data) + find_plaintext_service_config_violations(data)
             if leaked:
                 raise ProjectSchemaError(

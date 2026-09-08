@@ -1,5 +1,5 @@
-> **VERVALLEN (RC-177).** De vorm die dit document beschrijft -- een `registries:`-blok op
-> de projectwortel en een `registry:`-sleutel naast `image:` op een deployment-component --
+> **VERVALLEN (RC-177).** De vorm die dit document beschrijft, een `registries:`-blok op
+> de projectwortel en een `registry:`-sleutel naast `image:` op een deployment-component,
 > bestaat sinds schemaversie 2.9 niet meer. De lijst staat nu in de config van de dienst
 > `image-registries` en de koppeling is een gewone dienstvermelding op het component. Zie
 > **`features/image-registries.md`**; de migratie doet de omzetting zelf.

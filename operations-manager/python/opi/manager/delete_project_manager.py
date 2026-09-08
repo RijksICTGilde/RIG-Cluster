@@ -719,16 +719,9 @@ class DeleteProjectManager:
     ) -> None:
         """Verwijder ``<cluster>/<project>/_project`` uit de deployments-repo.
 
-        Het projectniveau hangt aan het project en niet aan een deployment, dus de
-        per-deployment opruiming raakt het nooit. Zonder deze stap blijft de map staan
-        nadat de laatste deployment weg is, en wijst de ArgoCD-applicatie van het
-        projectniveau naar iets waar niemand meer eigenaar van is.
-
-        WELKE repository de map draagt beslist ``project_level_deployment``, dezelfde
-        functie die de schrijver (``ProjectManager._process_repository_manifests``) en de
-        applicatie (``ArgoManager.create_project_application``) gebruiken. Dat is precies
-        waarvoor die functie bestaat: op bestandsvolgorde kiezen zou bij twee repositories
-        in de verkeerde repo gaan zoeken, en dan blijft de map met zijn SOPS-secrets staan.
+        Het projectniveau hangt aan het project, dus de per-deployment opruiming raakt het
+        nooit. Welke repository de map draagt beslist ``project_level_deployment``,
+        dezelfde functie als de schrijver en de ArgoCD-applicatie gebruiken.
         """
         owner = project_level_deployment(deployments)
         repository_name = owner.get("repository") if owner else None
@@ -939,10 +932,8 @@ class DeleteProjectManager:
                     )
 
             # Step 4.65: Delete the project level of the deployments repo
-            # (<cluster>/<project>/_project). The deployment folders are removed per
-            # deployment above; this level hangs off the project, so nothing else would
-            # ever take it away and the ArgoCD project application would keep pointing at
-            # a folder whose owner is gone.
+            # (<cluster>/<project>/_project). It hangs off the project, so the
+            # per-deployment cleanup above never touches it.
             if deletion_results["success"] or force:
                 await self._delete_project_level_folder(
                     project_name, current_cluster, project_data, current_cluster_deployments, deletion_results

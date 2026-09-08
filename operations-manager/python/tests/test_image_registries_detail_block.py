@@ -1,10 +1,4 @@
-"""Het blok op de projectpagina, en het endpoint dat zijn toestand ophaalt.
-
-Twee dingen die uit elkaar horen: wat in het PROJECTBESTAND staat (de invoer van de
-afnemer) komt uit de synchrone haak, en wat in het CLUSTER staat (is de proxy klaar,
-wanneer verloopt het token) wordt lazy opgehaald -- want een blok dat rendert mag geen
-connector aanroepen.
-"""
+"""Het blok op de projectpagina, en het endpoint dat zijn toestand uit het cluster haalt."""
 
 from __future__ import annotations
 
@@ -198,7 +192,7 @@ class TestDeLeeswegVanHetStatusEndpoint:
 
     Het fragment gebruikt uit elke registry precies twee tekstvelden, ``name`` en
     ``upstream``. ``get_decrypted()`` zou daarvoor ``decrypt_tree()`` over de hele boom
-    draaien -- de AGE-privesleutel, de api-key, de user-env-vars en het registry-token --
+    draaien (de AGE-privesleutel, de api-key, de user-env-vars en het registry-token)
     en die waarden komen nergens in dit antwoord terecht. ``get()`` levert hetzelfde
     antwoord zonder ze aan te raken.
     """

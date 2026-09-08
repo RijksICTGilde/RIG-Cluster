@@ -1,17 +1,4 @@
-"""De twee bronnen van de regellijst, en het oplossen van een image ertegen.
-
-De dienst kent twee bronnen van waarheid en één bewerking:
-
-* **Clusterconfiguratie**, niet door een gebruiker te bewerken: welke provisioning-backend
-  hier geldt, de platformfeiten en de tabel van upstream naar gedeelde proxy inclusief het
-  secret dat erbij hoort (``get_image_registries_config``).
-* **Gebruikersconfiguratie**: de private registries die een project zelf opgeeft.
-
-``resolve_image()`` is een FUNCTIE, geen haak. Hij heeft geen staat en geen activatie, en
-de generator roept hem aan zoals hij vandaag ook een naamfunctie aanroept. Er is dus geen
-"dienst die draait zonder gekozen te zijn"; er is een functie die altijd hetzelfde antwoord
-geeft op dezelfde vraag.
-"""
+"""De twee bronnen van de regellijst: de clustertabel en de registries van het project."""
 
 from __future__ import annotations
 
@@ -23,21 +10,14 @@ from opi.services.catalog.image_registries.rules import RegistryRule, ResolvedIm
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 
-#: De backend die een registry als dockerconfigjson-secret in de namespace neerzet en de
-#: image ongewijzigd laat.
+#: Dockerconfigjson-secret in de namespace, image ongewijzigd.
 BACKEND_DIRECT_SECRET = "direct-secret"
-#: De backend die een ``Organization`` met proxyCache in RCR aanmaakt en de image
-#: herschrijft naar de organisatie van dit project.
+#: ``Organization`` met proxyCache in RCR, image herschreven naar die organisatie.
 BACKEND_QUAY_PROXY = "quay-proxy-organization"
 
 
 def project_registries(project_data: dict[str, Any]) -> list[dict[str, Any]]:
-    """De registries uit de projectconfig van deze dienst, in bestandsvolgorde.
-
-    Leest de dienstvermelding via ``service_entry_name``, nooit via de sleutels van de
-    dict: een record dat config draagt heeft ``name``/``config`` als sleutels, dus
-    sleutel-lezende code laat precies de entries vallen waar het om gaat.
-    """
+    """De registries uit de projectconfig van deze dienst, in bestandsvolgorde."""
     for entry in project_data.get("services", []) or []:
         if service_entry_name(entry) != ServiceType.IMAGE_REGISTRIES.value:
             continue
@@ -60,20 +40,15 @@ def find_registry(project_data: dict[str, Any], name: str) -> dict[str, Any] | N
 def component_registry_name(component: dict[str, Any] | None) -> str | None:
     """De registry die dit component aanwijst, uit zijn eigen dienstvermelding.
 
-    Werkt op allebei de vormen die het schema kent: een gewoon component draagt
-    ``services`` als LIJST, een deployment-component als DICT keyed op dienstnaam. Beide
-    komen hier langs, want de deployment mag de keuze van het component overschrijven met
-    dezelfde dienstvermelding.
-
-    Geen vermelding betekent geen registry, en dat is de non-waarde: de image is publiek.
+    Werkt op allebei de vormen die het schema kent: ``services`` als lijst op een gewoon
+    component, als dict op een deployment-component. Geen vermelding betekent publiek.
     """
     if not isinstance(component, dict):
         return None
     services = component.get("services")
     config: Any = None
     if isinstance(services, dict):
-        # De dict-vorm draagt de dienstnaam als SLEUTEL, dus de waarde is de record zelf
-        # ({config: ...}) en niet een entry waar service_entry_config een naam in zoekt.
+        # De dienstnaam is hier de sleutel, dus de waarde is de record zelf.
         record = services.get(ServiceType.IMAGE_REGISTRIES.value)
         config = record.get("config") if isinstance(record, dict) else None
     elif isinstance(services, list):
@@ -90,14 +65,8 @@ def component_registry_name(component: dict[str, Any] | None) -> str | None:
 def set_deployment_component_registry(component: dict[str, Any], registry_name: str) -> None:
     """Zet de registrykeuze op een DEPLOYMENT-component, als dienstvermelding.
 
-    De tegenhanger van ``component_registry_name`` op de dict-vorm, en de ene plek die
-    weet hoe die vermelding eruitziet. Sinds schemaversie 2.9 bestaat de losse sleutel
-    ``registry:`` naast ``image:`` niet meer -- ``$defs/deployment-component`` staat geen
-    onbekende sleutels toe, dus wie hem nog schrijft krijgt zijn eigen wijziging afgekeurd
-    bij het opslaan. Dit schrijft dezelfde vorm die de migratie op die sleutel zet.
-
-    Overschrijft een bestaande keuze (de aanroeper wijst hem expliciet aan) en laat de
-    rest van de dienstvermelding staan.
+    De tegenhanger van ``component_registry_name`` op de dict-vorm. De losse sleutel
+    ``registry:`` bestaat sinds v2.9 niet meer en wordt door het schema geweigerd.
     """
     services = component.get("services")
     if not isinstance(services, dict):
@@ -117,17 +86,8 @@ def set_deployment_component_registry(component: dict[str, Any], registry_name: 
 def registry_rule(registry: dict[str, Any], project_name: str, cluster: str) -> RegistryRule | None:
     """De regel die bij één private registry hoort, of None als er niets te regelen valt.
 
-    Wat de regel doet hangt af van de backend van het cluster, en dat is het enige dat per
-    platform verschilt:
-
-    * ``direct-secret``: bestemming IS de upstream, dus de image blijft ongewijzigd en
-      krijgt alleen het secret. Dat is letterlijk het pad dat een registry met
-      gebruikersnaam en token vandaag al volgt.
-    * ``quay-proxy-organization``: bestemming is de proxy-organisatie van dit project in
-      RCR, dus de image wordt herschreven en het namespace-segment valt weg.
-
-    Een entry met ``secretName`` verwijst naar een secret dat het platform zelf neerzet en
-    wordt op geen enkel cluster herschreven: de bestemming is de upstream.
+    Bij ``direct-secret`` en bij een entry met een bestaand ``secretName`` is de
+    bestemming de upstream zelf, dus blijft de image ongewijzigd.
     """
     upstream = registry.get("upstream")
     if not isinstance(upstream, str) or not upstream:
@@ -164,11 +124,8 @@ def cluster_rules(cluster: str) -> list[RegistryRule]:
 def build_rules(project_data: dict[str, Any], cluster: str, preferred: str | None = None) -> list[RegistryRule]:
     """De hele regellijst voor dit project op dit cluster, in voorrangsvolgorde.
 
-    Projectregels vooraan, want de eigen registry van een project moet winnen van de
-    gedeelde proxy voor dezelfde upstream. ``preferred`` is de registry die een component
-    zelf aanwijst en gaat vóór de andere projectregels -- dat is het geval waarin twee
-    registries dezelfde upstream hebben met verschillende tokens, en het is de reden dat
-    de koppeling een keuze van de afnemer is en geen afleiding uit de image-URL.
+    Projectregels vóór de gedeelde proxy, en ``preferred`` (de registry die een component
+    zelf aanwijst) vóór de andere projectregels.
     """
     project_name = project_data.get("name", "")
     registries = project_registries(project_data)
@@ -182,11 +139,8 @@ def build_rules(project_data: dict[str, Any], cluster: str, preferred: str | Non
 def display_image(image: str, cluster: str, project_data: dict[str, Any] | None = None) -> str:
     """De image zoals de AFNEMER hem kent, terug uit zijn platformvorm.
 
-    De weergavekant (diagnostiek, logregels, event-uitleg) toont een gebruiker zijn eigen
-    registry in plaats van de kale RCR-URL. Dat is de omgekeerde weg van
-    ``resolve_image()`` en hij hoort dus bij dezelfde regels: zonder ``project_data``
-    alleen de clustertabel, ermee ook de eigen proxy-organisaties van dit project -- want
-    zonder die laatste ziet een afnemer met een private registry juist wel de kale URL.
+    Zonder ``project_data`` alleen de clustertabel, ermee ook de eigen
+    proxy-organisaties van dit project.
     """
     rules = build_rules(project_data, cluster) if project_data else cluster_rules(cluster)
     return original_image(image, rules)
@@ -200,9 +154,7 @@ def resolve_deployment_component_image(
 ) -> ResolvedImage:
     """De image van één deployment-component, opgelost tegen de regels van dit project.
 
-    De keuze van het COMPONENT geldt, tenzij de deployment hem overschrijft met dezelfde
-    dienstvermelding onder ``deployments[*]/components[*]/services`` -- dezelfde vorm die
-    publish-on-web en temp-storage daar ook gebruiken.
+    De keuze van het component geldt, tenzij de deployment hem overschrijft.
     """
     preferred = component_registry_name(deployment_component) or component_registry_name(component_def)
     return resolve_project_image(deployment_component.get("image", ""), project_data, cluster, preferred)

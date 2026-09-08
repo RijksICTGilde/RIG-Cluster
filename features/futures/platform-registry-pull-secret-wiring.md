@@ -2,8 +2,8 @@
 
 > **ACHTERHAALD (RC-177).** Het mechanisme dat dit document beschrijft bestaat niet meer:
 > `RegistryRewriteExtension`, `opi/extensions/` en `extensions/odcn-registry-rewrite.yaml`
-> zijn verwijderd. De regel die het gemelde gat dichtte -- een image die AL op de
-> bestemming staat krijgt het secret van die regel, zonder herschrijving -- zit nu in
+> zijn verwijderd. De regel die het gemelde gat dichtte (een image die AL op de
+> bestemming staat krijgt het secret van die regel, zonder herschrijving) zit nu in
 > `resolve_image()` (`opi/services/catalog/image_registries/rules.py`) en is daar één
 > regel code in plaats van een aparte uitzondering. De storingsanalyse hieronder blijft
 > leesbaar als beschrijving van WAT er misging; de voorgestelde oplossing is ingehaald.

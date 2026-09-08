@@ -3230,19 +3230,10 @@ class ProjectManager:
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
 
-                # De applicatie van het PROJECTNIVEAU hoort in deze zelfde vraag. Hij is
-                # geen deployment, dus hij staat niet in app_deployments -- en zonder deze
-                # regel werd de umbrella niet ververst zolang de deployment-applicaties al
-                # bestonden. Gemeten op de sandbox: de Deployment kreeg zijn
-                # serviceAccountName voordat de ServiceAccount er was, en de ReplicaSet gaf
-                # "error looking up service account ... not found". Geen storing (de oude
-                # pod bleef draaien en de ReplicaSet probeert het opnieuw), maar de uitrol
-                # stond minuten stil op iets wat wij zelf net hadden weggeschreven.
-                #
-                # De sync-wave doet dit niet: die ordent RESOURCES binnen een applicatie,
-                # en dit zijn twee applicaties. Wat de wave wel doet is de umbrella zijn
-                # wave-0-applicatie eerst laten aanmaken; dit zorgt dat de umbrella
-                # uberhaupt kijkt.
+                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments,
+                # dus zonder deze regel werd de umbrella niet ververst zolang de
+                # deployment-applicaties al bestonden, en kreeg een Deployment zijn
+                # serviceAccountName voordat de ServiceAccount er was.
                 project_app_name = generate_argocd_project_application_name(project_name)
                 project_app_exists = await self._kubectl_connector.argocd_application_exists(
                     project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
@@ -3293,18 +3284,10 @@ class ProjectManager:
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
                     )
 
-                # En dan WACHTEN tot het projectniveau er echt staat, niet alleen tot zijn
-                # Application-CR bestaat. Het verschil is precies wat er misging: de
-                # ServiceAccount komt pas als die applicatie gesynct is, en de deployments
-                # hieronder zetten hun podspec erop. De sync-wave ordent de twee
-                # applicaties binnen de UMBRELLA-sync, maar OPI ververst de
-                # deployment-applicatie daarnaast ook rechtstreeks, en die weg kent de wave
-                # niet. Dit is de poort die hem wel kent.
-                #
-                # Een mislukking hier is geen reden om de uitrol af te breken: het
-                # projectniveau kan leeg zijn, en een deployment die te vroeg is herstelt
-                # vanzelf (gemeten: 2m39s ReplicaSet-backoff, met de oude pod die
-                # doordraait). Wel melden, want die 2m39s hoort niemand te hoeven raden.
+                # Wachten tot het projectniveau GESYNCT is, want de ServiceAccount komt pas
+                # dan en de deployments hieronder zetten hun podspec erop. De sync-wave
+                # dekt dit niet: OPI ververst de deployment-applicatie ook rechtstreeks.
+                # Mislukken is geen reden om af te breken, een te vroege pod herstelt zelf.
                 try:
                     await self._argo_manager.wait_for_application_synced(
                         app_name=project_app_name, timeout=180, poll_interval=2
@@ -3851,15 +3834,9 @@ class ProjectManager:
             await self._process_deployment_manifests(deployment, project_repo_connector)
             await project_repo_connector.commit_changes(f"Update manifests for {project_name}/{deployment['name']}")
 
-        # Het PROJECTniveau, na de deployments en eenmalig per repository. Het hangt niet
-        # aan een deployment maar aan de namespace, en die is voor elke deployment van dit
-        # project dezelfde (enforce_namespace_pin). De schrijver zelf slaat over wat niet
-        # veranderd is, dus dit levert geen commit op als er niets te doen was -- dat is de
-        # bestaande skip-if-unchanged, en zonder die zou SOPS elke run opnieuw versleutelen.
-        # In PRECIES EEN repository, ook als het project deployments over twee repo's heeft:
-        # er is een ArgoCD-applicatie die naar deze map wijst, en een tweede kopie zou
-        # blijven rondslingeren zonder eigenaar. Welke repository dat is, beslist
-        # project_level_deployment -- dezelfde functie die de applicatie gebruikt.
+        # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
+        # project deployments over twee repo's heeft. Welke, beslist
+        # project_level_deployment, dezelfde functie die de applicatie gebruikt.
         owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
         if owner is not None and owner.get("repository") == repo_config.get("name"):
             await self._process_project_manifests(
@@ -3966,10 +3943,7 @@ class ProjectManager:
     def _prune_obsolete_project_manifests(self, target_path: str, generated_files: list[str]) -> None:
         """Verwijder projectbrede dienstbestanden die deze run niet opnieuw heeft gemaakt.
 
-        Dezelfde vorm als de prune op deploymentniveau, een laag hoger: een dienst schrijft
-        bestanden die met ``<dienstnaam>-`` beginnen, en zodra hij uitgaat of niets meer
-        bijdraagt haalt dit het restant weg zodat ArgoCD de resource opruimt. Zonder dit
-        loopt het projectniveau nooit leeg.
+        Dezelfde vorm als de prune op deploymentniveau, een laag hoger.
         """
         service_prefixes = {f"{service.value}-" for service in ServiceType}
         obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
@@ -3988,15 +3962,8 @@ class ProjectManager:
     ) -> None:
         """Schrijf het PROJECTniveau van de deployments-repo: ``<cluster>/<project>/_project/``.
 
-        Een laag boven de deployments, voor wat namespace-breed is in plaats van van één
-        deployment: vandaag het pull-secret en de proxy-organisatie van de dienst
-        image-registries. De ACME-issuers, de tenant-baseline netwerkpolicy en de namespace
-        zelf horen er ook thuis; die staan nog hardgecodeerd elders en kunnen later langs
-        dezelfde haak verhuizen.
-
-        Wat er komt te staan bepalen de DIENSTEN (``contribute_project_manifests``), niet
-        deze methode: dit is de generieke emitter. Draagt geen enkele dienst iets bij, dan
-        loopt de map leeg via de prune en blijft alleen zijn kustomization staan.
+        De generieke emitter: wat er komt te staan bepalen de diensten met
+        ``contribute_project_manifests``.
         """
         project_data = await self.get_contents()
         project_name = await self.get_name()
@@ -4027,12 +3994,9 @@ class ProjectManager:
                     use_sops=spec.encrypt,
                 )
                 if spec.encrypt:
-                    # BEIDE namen in de gewenste toestand. Het bestand staat er nu als
-                    # .to-sops.yaml en wordt hieronder .sops.yaml, maar de vorige run liet
-                    # het al versleuteld achter. Zou de prune die versleutelde kopie als
-                    # overbodig zien, dan verdwijnt hij vlak voor de encryptie -- en dan
-                    # heeft de skip-if-unchanged niets meer om tegen te vergelijken en
-                    # herschrijft SOPS het blok bij elke run.
+                    # Beide namen in de gewenste toestand: zag de prune de .sops.yaml van de
+                    # vorige run als overbodig, dan verdwijnt hij vlak voor de encryptie en
+                    # heeft de skip-if-unchanged niets om tegen te vergelijken.
                     created_files.extend([f"{spec.filename}.to-sops.yaml", f"{spec.filename}.sops.yaml"])
                 else:
                     created_files.append(f"{spec.filename}.yaml")
@@ -4138,11 +4102,8 @@ class ProjectManager:
         # files carry no component prefix).
         self._prune_obsolete_service_manifests(deployment, target_path, created_files)
 
-        # De registrypas over de weggeschreven manifesten. De componentlus heeft de images
-        # van de componenten zelf al opgelost, maar niet elke image loopt daar langs: een
-        # sidecar staat als vaste waarde in zijn sjabloon. Deze pas pakt die op met dezelfde
-        # regels en dezelfde functie, dus er is geen tweede tabel die kan gaan afwijken.
-        # Idempotent op wat de componentlus al deed: die images staan al op hun bestemming.
+        # De registrypas voor de images die niet door de componentlus lopen, zoals een
+        # sidecar met een vaste waarde in zijn sjabloon. Idempotent op de rest.
         apply_rules_to_directory(target_path, build_rules(project_data, cluster_name))
 
         # Create a kustomization file BEFORE encrypting .to-sops.yaml files
@@ -5682,16 +5643,8 @@ class ProjectManager:
         )
 
         # Waar komt de image van elk component vandaan, en welk pull-secret hoort erbij.
-        # Een vraag, een antwoord: resolve_image() zet de private registries van dit project
-        # voor de gedeelde proxytabel van het cluster en past de eerste match toe. Er is dus
-        # geen onderhandeling tussen mechanismen -- de dienst image-registries bezit
-        # "welke registry, welk secret" en de generator vraagt het hem, zoals hij ook een
-        # naamfunctie aanroept.
-        #
-        # Wat hier NIET meer gebeurt is het schrijven van het secret zelf: dat is
-        # namespace-scoped en hoort dus op het PROJECTniveau van de deployments-repo, waar
-        # elke deployment van dit project hetzelfde secret deelt in dezelfde namespace
-        # (contribute_project_manifests op de dienst).
+        # Het secret zelf wordt hier niet meer geschreven: dat is namespace-scoped en staat
+        # op het projectniveau (contribute_project_manifests op de dienst).
         component_definitions = {
             c.get("name"): c for c in project_data.get("components", []) or [] if isinstance(c, dict)
         }
@@ -5731,8 +5684,8 @@ class ProjectManager:
                 logger.info(f"Component '{component_reference}' has no image in deployment {deployment_name}, skipping")
                 continue
 
-            # Vanaf hier is de OPGELOSTE verwijzing de image: dat is wat er in het manifest
-            # komt en waar imagePullSecretsMap op gesleuteld staat.
+            # Vanaf hier de opgeloste verwijzing: die komt in het manifest en is de sleutel
+            # van imagePullSecretsMap.
             image_url = resolved_images[component_reference].image
 
             component_name = component_reference
@@ -6123,9 +6076,8 @@ class ProjectManager:
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
                 # Registry authentication
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
-                # De eigen serviceaccount van het project (projectniveau, bijgedragen door
-                # de platform-dienst). Elke gegenereerde podspec draagt daarnaast zijn eigen
-                # pull-secret, dus de erfenis van de default serviceaccount is niet nodig.
+                # De eigen serviceaccount van het project; elke podspec draagt daarnaast zijn
+                # eigen pull-secret, dus de erfenis van de default serviceaccount vervalt.
                 "service_account_name": generate_project_service_account_name(project_name),
                 # Timestamp to force pod restart when secrets are regenerated
                 "generated_at": generated_at,
@@ -6781,11 +6733,8 @@ class ProjectManager:
                         created_files.append(attachment_sops_filename)
                     logger.info(f"Created attachment secret manifest: {secret_name}")
 
-            # GEEN registry-secret meer op deployment-niveau. Het secret is
-            # namespace-scoped en elke deployment van dit project deelt dezelfde namespace,
-            # dus het hoorde nooit per deployment geschreven te worden. Het staat nu op het
-            # PROJECTniveau van de deployments-repo, bijgedragen door de dienst
-            # image-registries (contribute_project_manifests).
+            # Het registry-secret staat niet meer hier maar op het projectniveau: het is
+            # namespace-scoped en elke deployment van dit project deelt die namespace.
 
             # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
             if base_domain and issuer_config and issuer_config.startswith("letsencrypt"):

@@ -1,28 +1,8 @@
-"""De dienst ``image-registries``.
+"""De dienst ``image-registries``: welke image waar vandaan komt, en met welk secret.
 
-Bewust naar het ONDERWERP genoemd in plaats van naar de functie: niet "private
-registries", want de dienst regelt ook wat er met publieke images gebeurt, en niet
-"repositories", want Quay gebruikt dat woord voor de dingen ín een registry.
-
-De dienst kent twee bronnen van waarheid en één bewerking:
-
-* de **clusterconfiguratie** (``get_image_registries_config``): welke provisioning-backend
-  hier geldt, de platformfeiten, en de tabel van upstream naar gedeelde proxy;
-* de **gebruikersconfiguratie**: de private registries die dit project zelf opgeeft, plus
-  de verwijzing per component;
-* en ``resolve_image()`` (``resolution.py``), die beide als regels achter elkaar zet en de
-  eerste match toepast.
-
-Drie dingen houden netjes dat een ``USER``-dienst een tabel draagt die ook geldt voor
-projecten die hem nooit aanraken:
-
-1. ``resolve_image()`` is een FUNCTIE, geen haak -- geen staat, geen activatie.
-2. Wat wél activatie kent is alleen het PROVISIONEREN, en dat is door data gedreven: geen
-   registries in de config betekent geen ``Organization``, geen secret, geen bijdrage aan
-   het projectniveau.
-3. De selectie wordt AFGELEID uit de data: de dienst staat aan zodra er minstens één
-   registry in staat. Dan bestaat "aangevinkt maar leeg" niet en wordt de clustertabel
-   nergens als een keuze van de afnemer gepresenteerd.
+De clustertabel en de registries van het project vormen samen één regellijst
+(``resolution.py``). Alleen het provisioneren kent activatie, en dat is door data
+gedreven: geen registries in de config betekent geen enkel manifest.
 """
 
 from __future__ import annotations
@@ -69,8 +49,7 @@ class ImageRegistriesService(Service):
     config_section_id = "image-registries-config"
     modal_flow_id = "modal-edit-image-registries-config"
     # De registries staan op projectniveau, dus een component dat de dienst aanvinkt mag
-    # zichzelf op projectniveau bijschrijven; de lege lijst die dat oplevert is precies
-    # "aangevinkt, nog niets ingevuld" en het formulier vraagt er meteen om.
+    # zichzelf daar bijschrijven.
     allows_implicit_project_selection = True
     config_component_order = 8
 
@@ -83,9 +62,7 @@ class ImageRegistriesService(Service):
     def config_roles(self, layer: ConfigLayer):
         from opi.services.catalog.base import ConfigRole
 
-        # Het project DEFINIEERT geen catalogus onder ``data``: de registries staan onder
-        # ``config`` en worden door het project zelf gebruikt. Een component GEBRUIKT er
-        # een en BINDT hem daarmee aan zijn image -- dezelfde vermelding doet allebei.
+        # Het project gebruikt zijn eigen registries; een component bindt er een aan zijn image.
         if layer is ConfigLayer.PROJECT:
             return (ConfigRole.USE,)
         return (ConfigRole.USE, ConfigRole.BIND)
@@ -112,10 +89,7 @@ class ImageRegistriesService(Service):
             return [DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE]
         return []
 
-    # --- component- en deployment-componentniveau: volledig automatisch ---------------
-    # Drie haken en klaar, precies zoals instructions/services.md het noemt. Geen
-    # ``owned_property``, geen uitbreiding aan het formulierraamwerk, en geen hardgecodeerd
-    # veld naast ``image:`` in het componentformulier.
+    # --- component- en deployment-componentniveau -------------------------------------
 
     def config_component_visualizers(self) -> list[EditableVisualizer]:
         from opi.services.catalog.image_registries.visualizers import COMPONENT_REGISTRY
@@ -144,11 +118,9 @@ class ImageRegistriesService(Service):
         from opi.forms.layout import Fieldset
 
         svc = self.service_type.value
-        # Op een deployment-component is ``services`` een dict keyed op dienstnaam, dus het
-        # pad is een gewoon segment en niet de {..}-vorm van een component. En zoals bij
-        # publish-on-web: de dienstenlijst van het COMPONENT beslist of er uberhaupt een
-        # registry in het spel is, en die lijst is geen veld van dit formulier -- dus staat
-        # het fieldset er onvoorwaardelijk en zegt de legend wat het overschrijft.
+        # ``services`` is hier een dict keyed op dienstnaam, dus een gewoon padsegment. Het
+        # fieldset staat er onvoorwaardelijk, want de dienstenlijst van het component is
+        # geen veld van dit formulier.
         return [
             Fieldset(
                 legend="Eigen registry (alleen voor deze deployment)",
@@ -169,8 +141,6 @@ class ImageRegistriesService(Service):
 
     def config_form_section(self, layer: ConfigLayer):
         if layer is not ConfigLayer.PROJECT:
-            # De component- en deployment-componentsectie bouwt de basisklasse zelf uit de
-            # visualizers en layout-nodes die hierboven al gedeclareerd staan.
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
@@ -187,9 +157,7 @@ class ImageRegistriesService(Service):
                 post_save_action="process_project",
                 editables=[REGISTRIES_SEQUENCE],
                 layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")],
-                # D5: het token wordt bij het OPSLAAN getoetst. Anders komt een te smal
-                # token pas naar boven als ImagePullBackOff met de melding
-                # "repository not found", en die wijst de verkeerde kant op.
+                # D5: het token wordt bij het opslaan getoetst.
                 enforcer=RegistryTokenEnforcer(),
             )
             self._config_section_cache = cached
@@ -199,11 +167,9 @@ class ImageRegistriesService(Service):
 
     @on(UIEvent.PROJECT_SECTIONS)
     def registries_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
-        """Wat dit project aan eigen registries heeft, en hoe ver de proxy is.
+        """Wat dit project aan eigen registries heeft.
 
-        Antwoordt uit het PROJECTBESTAND, zoals een synchrone haak hoort te doen. De
-        toestand van de proxy staat in het cluster en wordt door het blok zelf lazy
-        opgehaald (``web.py``), want een blok dat rendert mag geen connector aanroepen.
+        De toestand van de proxy staat in het cluster en wordt lazy opgehaald (``web.py``).
         """
         registries = project_registries(ctx.project_data)
         if not registries:
@@ -223,12 +189,7 @@ class ImageRegistriesService(Service):
     # --- projectbrede manifesten ------------------------------------------------------
 
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
-        """Wat deze dienst op het PROJECTniveau van de deployments-repo neerzet.
-
-        Door data gedreven: geen registries in de config betekent geen enkel bestand, dus
-        ook geen bijdrage aan het projectniveau. Welke vorm een registry aanneemt is de
-        keuze van de backend van het cluster, niet van deze methode.
-        """
+        """Wat deze dienst op het PROJECTniveau van de deployments-repo neerzet."""
         from opi.services.catalog.image_registries.backends import backend_for_cluster
 
         registries = project_registries(ctx.project_data)
@@ -240,13 +201,8 @@ class ImageRegistriesService(Service):
         for registry in registries:
             for spec in backend.manifests(ctx, registry):
                 if spec.filename in seen:
-                    # Twee registries die op dezelfde bestandsnaam uitkomen -- op de
-                    # Quay-backend is dat twee entries met dezelfde upstream, want daar is
-                    # de organisatie per project per upstream-namespace (D2). De EERSTE
-                    # wint, net als in de regellijst, waar de eerste in bestandsvolgorde
-                    # ook vooraan staat. Zonder deze regel schreef de tweede de eerste
-                    # stil over en liepen het secret in het manifest en het secret in de
-                    # regel uiteen.
+                    # Twee registries op dezelfde bestandsnaam: de eerste wint, net als in
+                    # de regellijst.
                     logger.warning(
                         f"Registry '{registry.get('name')}' van project '{ctx.project_name}' levert dezelfde "
                         f"projectmanifest '{spec.filename}' als een eerdere registry; de eerste blijft staan"

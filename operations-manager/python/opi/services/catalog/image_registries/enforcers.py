@@ -1,16 +1,9 @@
-"""De tokentoets bij het opslaan.
+"""De tokentoets bij het opslaan (D5).
 
-Waarom hier en niet bij het pullen: upstream antwoordt op een te smal token met
-``reqPackageAccess`` (401), Quay vertaalt dat naar ``name unknown: repository not found``,
-en de afnemer ziet ``ImagePullBackOff`` met een melding die de verkeerde kant op wijst.
-Gemeten in de proef op 2026-09-07. De enige plek waar we hem een bruikbare fout kunnen
-geven is het formulier waar hij het token invult.
-
-De toets meet wat er te meten valt: het TAG-OVERZICHT van een repository waar dit project
-werkelijk een image uit haalt. Zonder zo'n image is er geen repository om tegen te toetsen
--- dat is de normale toestand in de wizard, waar de registry vóór de componenten komt --
-en dan wordt er niets geweigerd. Een weigering op iets wat we niet gemeten hebben zou een
-gebruiker blokkeren op een aanname.
+Bij het pullen levert een te smal token ``ImagePullBackOff`` met "repository not found",
+een melding die de verkeerde kant op wijst. Getoetst wordt het tag-overzicht van een
+repository waar dit project werkelijk een image uit haalt; is die er niet, dan wordt er
+niets geweigerd.
 """
 
 from __future__ import annotations
@@ -50,8 +43,7 @@ class RegistryTokenEnforcer:
             username = registry.get("username")
             password = _plain_token(registry, value)
             if not upstream or not username or not password:
-                # Zonder inloggegevens valt er niets uit te wisselen; een publieke upstream
-                # is een geldige invoer.
+                # Een publieke upstream zonder inloggegevens is geldige invoer.
                 continue
             repository = _repository_under(str(upstream), images)
             if repository is None:
@@ -72,10 +64,7 @@ class RegistryTokenEnforcer:
 def _connector() -> SkopeoConnector:
     """De skopeo-connector; een dienst praat nooit zelf met de buitenwereld.
 
-    Geen vangnet eromheen. ``SkopeoConnector.__init__`` vangt zijn eigen fouten al af en
-    zet ``is_skopeo_available``, en ``check_repository_access`` geeft dan ok terug: een
-    opslag weigeren op een toets die we niet hebben kunnen draaien zou een gebruiker
-    blokkeren op een platformgat.
+    Zonder vangnet: ontbreekt skopeo, dan geeft ``check_repository_access`` zelf ok terug.
     """
     return SkopeoConnector()
 
@@ -83,19 +72,9 @@ def _connector() -> SkopeoConnector:
 def _plain_token(registry: dict[str, Any], project_data: dict[str, Any]) -> str | None:
     """Het token in leesbare vorm, of None als er niets te toetsen valt.
 
-    De enforcer krijgt de UITKOMST van ``process_json_submission``, dus wat
-    ``ProjectAgeSecretConverter.write()`` ervan gemaakt heeft: het armored AGE-blok, niet
-    de platte waarde die de gebruiker intypte. Dat blok aan skopeo geven toetst een token
-    dat niemand heeft -- gemeten: een GELDIG token wordt dan geweigerd, en dat is precies
-    het omgekeerde van wat deze toets moet doen.
-
-    Het veld draagt drie opslagvormen (armored blok, ``base64+age:``, ``plain:``); die
-    drie pakt ``decrypt_password_smart_sync`` uit, net als ``_plain_password`` in
-    ``backends.py`` doet voor de ``.dockerconfigjson``.
-
-    Anders dan daar is een onbruikbare of ontbrekende sleutel hier geen fout maar een
-    reden om te ZWIJGEN: dit is een toets, en deze module weigert niets op iets wat ze
-    niet heeft kunnen meten.
+    De enforcer krijgt de OPGESLAGEN vorm, dus wat de converter ervan gemaakt heeft; die
+    aan skopeo geven zou een geldig token afkeuren. Anders dan in ``backends.py`` is een
+    onbruikbare sleutel hier geen fout maar een reden om te zwijgen: dit is een toets.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:
@@ -126,11 +105,7 @@ def _project_images(data: dict[str, Any]) -> list[str]:
 
 
 def _repository_under(upstream: str, images: list[str]) -> str | None:
-    """De eerste repository uit deze images die onder ``upstream`` valt, zonder tag.
-
-    De tag hoort bij de image en niet bij de repository: ``list-tags`` vraagt juist naar
-    de tags, dus een tag meegeven zou de vraag onbeantwoordbaar maken.
-    """
+    """De eerste repository uit deze images die onder ``upstream`` valt, zonder tag."""
     prefix = normalize_prefix(upstream)
     for image in images:
         if image == prefix or image.startswith(prefix + "/"):

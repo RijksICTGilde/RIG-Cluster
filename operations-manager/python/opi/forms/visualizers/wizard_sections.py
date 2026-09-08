@@ -367,8 +367,7 @@ SEND_EMAIL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.SEND_EMAIL).config_form_section(ConfigLayer.PROJECT), ServiceType.SEND_EMAIL
 )
 
-# image-registries owns its project-level list of private registries
-# (ImageRegistriesService.config_form_section), re-exported here so the derived
+# Owned by ImageRegistriesService.config_form_section; re-exported so the derived
 # SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
 IMAGE_REGISTRIES_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT),

@@ -1,10 +1,4 @@
-"""De manifestpas: elke image in een podspec langs dezelfde regels.
-
-Niet elke image loopt door de componentlus -- een sidecar staat als vaste waarde in zijn
-sjabloon, en de backup-, db-console- en jobpods zijn kale ``Pod``s die los worden
-toegepast. Deze pas dekt die plekken, met dezelfde regels en dezelfde ``resolve_image()``,
-zodat er geen tweede tabel is die kan gaan afwijken.
-"""
+"""De manifestpas: elke image in een podspec langs dezelfde regels."""
 
 from __future__ import annotations
 
@@ -143,7 +137,7 @@ class TestOverEenLosDocument:
 
 class TestDeClustertabelIsDeBron:
     """Wat de extensie in extensions/odcn-registry-rewrite.yaml droeg, staat nu in de
-    clusterconfig van de dienst -- een eigenaar voor 'welke registry, welk secret'."""
+    clusterconfig van de dienst: een eigenaar voor 'welke registry, welk secret'."""
 
     def test_odcn_draagt_de_gedeelde_proxies(self) -> None:
         matches = {rule.match for rule in cluster_rules(ODCN)}

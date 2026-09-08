@@ -1170,14 +1170,9 @@ class WakerComponentOptionsProvider:
 class ImageRegistryOptionsProvider:
     """De registries die dit project zelf heeft opgegeven, om er bij een component naar te verwijzen.
 
-    Leest uit de omringende formuliergegevens, dus via ``smart_get_value``: in de wizard
-    staat de config onder de virtuele ``_services-config``-root en in het projectbestand
-    onder ``services``. Een provider die het echte pad vraagt krijgt in de wizard een lege
-    lijst terug, en dat is precies hoe de realm-rollen bij een uitnodiging leeg bleven.
-
-    Een opgeslagen waarde die niet meer in de lijst staat blijft als optie staan, gemarkeerd:
-    anders valt de volgende opslag terug op de eerste optie en verandert de configuratie
-    zonder dat iemand er iets aan doet.
+    Via ``smart_get_value``, want in de wizard staat de config onder de virtuele
+    ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
+    gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1213,9 +1208,8 @@ class ImageRegistryOptionsProvider:
         )
         entries = [r for r in registries if isinstance(r, dict) and r.get("name")]
 
-        # Vooruit invullen zodra de image-prefix bij PRECIES EEN registry past: dan
-        # bevestigt de afnemer alleen. Passen er twee (dezelfde upstream, andere tokens),
-        # dan is de keuze juist het punt en zetten we niets voorop.
+        # Vooruit invullen zodra de image-prefix bij precies EEN registry past; passen er
+        # twee, dan is de keuze juist het punt.
         image = self._component_image()
         if image:
             normalized = normalize_image(image)
@@ -1239,8 +1233,7 @@ class ImageRegistryOptionsProvider:
     def _component_image(self) -> str:
         """De image van het component waar dit veld bij staat, of "".
 
-        Uit ``row_data`` als de sequence-renderer die meegeeft, anders opgezocht via de
-        index in ``yaml_path`` (``components[3]/services{...}/config/registry``).
+        Uit ``row_data``, anders via de index in ``yaml_path``.
         """
         image = self._row_data.get("image")
         if isinstance(image, str) and image:

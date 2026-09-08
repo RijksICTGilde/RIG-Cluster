@@ -1,15 +1,4 @@
-"""Naamregels die alleen deze dienst kent.
-
-Deze vier horen in het dienstpakket zelf en niet in de centrale ``opi/utils/naming.py``:
-de maatstaf is dat je de map moet kunnen kopiëren, hernoemen en dat het dan werkt, en
-naamregels die alleen over deze dienst gaan in een gedeeld bestand zetten is precies wat
-dat onmogelijk maakt. De centrale helpers worden wél gebruikt, niet nagebouwd
-(``publish_on_web/urls.py`` en ``vlam/endpoint.py`` doen dit al zo).
-
-Het zijn **berekeningen, geen opgeslagen waarden**. Daarom bevat het projectbestand
-alleen de invoer van de afnemer: alles wat wij eraan toevoegen zou een tweede waarheid
-zijn die kan gaan afwijken van de organisatie zoals die er werkelijk staat.
-"""
+"""Naamregels die alleen deze dienst kent, zodat de map verplaatsbaar blijft."""
 
 from __future__ import annotations
 
@@ -17,34 +6,22 @@ import hashlib
 
 from opi.utils.naming import sanitize_kubernetes_name
 
-#: Wat de operator zelf achter de organisatienaam plakt bij het pull-secret dat hij maakt.
-#: Wij zetten ``robot.imagePullSecret.name`` expliciet, want de operator leidt die naam af
-#: ZONDER ``spec.suffix`` -- gemeten op 2026-09-07 -- en dan botsen twee projecten met
-#: dezelfde upstream op één naam, tenantbreed.
+#: De operator plakt dit achter de naam van het pull-secret dat hij maakt.
 PULL_SECRET_POSTFIX = "robot-pull-secret"
 
-#: Hoeveel hex-tekens van de upstream-hash in de suffix terechtkomen. Lang genoeg om een
-#: botsing bij toeval uit te sluiten, kort genoeg om de naam leesbaar te houden.
 UPSTREAM_HASH_LENGTH = 8
 
 
 def upstream_host(upstream: str) -> str:
-    """De host uit een upstream-verwijzing: ``code.overheid.nl/robbert`` -> ``code.overheid.nl``."""
+    """``code.overheid.nl/robbert`` -> ``code.overheid.nl``."""
     return upstream.split("/", 1)[0]
 
 
 def friendly_name(upstream: str) -> str:
     """De ``friendlyName`` voor de Quay-organisatie: de host zonder TLD en zonder punten.
 
-    Quay verbiedt een punt in dat veld, dus er moet er iets met de punten gebeuren.
-    ``code.overheid.nl`` wordt ``codeoverheid``: het laatste label (de TLD) valt weg en de
-    rest wordt aan elkaar geschreven. Dat is niet alleen wat er in de proef op productie
-    gemeten is, het is ook precies de vorm die de GEDEELDE proxy-organisaties op ODCN al
-    hebben -- ``ghcr-rig``, ``gitlab-rig``, ``gcr-rig``, ``quay-rig``, ``code-overheid-rig``:
-    in elk daarvan is de TLD weggelaten. Een naam die daarvan afwijkt zou naast de
-    bestaande organisaties in dezelfde registry staan en er niet bij horen.
-
-    Een poort valt weg, en een host zonder punt (``localhost``) blijft zoals hij is.
+    Quay verbiedt een punt in dat veld. De TLD valt weg omdat de gedeelde organisaties op
+    ODCN (``ghcr-rig``, ``code-overheid-rig``) diezelfde vorm hebben.
     """
     host = upstream_host(upstream).split(":", 1)[0]
     labels = host.split(".")
@@ -53,34 +30,19 @@ def friendly_name(upstream: str) -> str:
 
 
 def upstream_namespace(upstream: str) -> str:
-    """Het pad achter de host: ``code.overheid.nl/robbert.uittenbroek`` -> ``robbert.uittenbroek``.
-
-    Leeg als de upstream alleen een host is (``ghcr.io``).
-    """
+    """Het pad achter de host, leeg als de upstream alleen een host is."""
     _, _, path = upstream.partition("/")
     return path.strip("/")
 
 
 def upstream_hash(upstream: str) -> str:
-    """Het onderscheidende deel van de suffix: acht hex-tekens over de HELE upstream.
+    """Het onderscheidende deel van de suffix.
 
-    Waarom een hash en niet de leesbare namespace erachter: de suffix voegt twee delen
-    samen die allebei door ``sanitize_kubernetes_name`` gaan, en die zet ``.`` en ``/``
-    om in ``-``. Er blijft dus geen enkel teken over dat als grens kan dienen, en zonder
-    grens is de samenvoeging niet omkeerbaar. Gemeten: project ``demo`` met upstream
-    ``ghcr.io/team`` en project ``demo-team`` met upstream ``ghcr.io`` kwamen allebei op
-    suffix ``demo-team`` uit, dus op EEN tenantbrede organisatie, EEN pull-secretnaam en
-    EEN bestemming -- twee projecten die elkaars proxy besturen. Binnen een project deed
-    hetzelfde zich voor tussen ``.../robbert.uittenbroek``, ``.../robbert/uittenbroek`` en
-    ``.../robbert-uittenbroek``.
-
-    Over de hele upstream en niet alleen over de namespace, want ``friendly_name`` laat de
-    TLD weg: ``code.overheid.nl/x`` en ``code.overheid.com/x`` leveren allebei
-    ``codeoverheid`` op en zouden zonder de host in de hash weer op één naam uitkomen.
-
-    Met een vaste lengte aan het EIND van de suffix is de samenvoeging eenduidig: gelijke
-    namen betekent gelijke hash (dus dezelfde upstream) en daarmee ook een gelijk voorste
-    deel (dus dezelfde projectnaam).
+    Een hash en niet de leesbare namespace, want beide delen van de suffix gaan door
+    ``sanitize_kubernetes_name`` en die maakt van ``.`` en ``/`` een ``-``: zonder een
+    deel van vaste lengte aan het eind is de samenvoeging niet omkeerbaar en botsen
+    project ``demo`` + ``ghcr.io/team`` en project ``demo-team`` + ``ghcr.io``. Over de
+    HELE upstream, want ``friendly_name`` laat de TLD weg.
     """
     return hashlib.sha256(upstream.strip().strip("/").encode()).hexdigest()[:UPSTREAM_HASH_LENGTH]
 
@@ -88,60 +50,29 @@ def upstream_hash(upstream: str) -> str:
 def organization_suffix(upstream: str, project_name: str) -> str:
     """Wat wij als ``spec.suffix`` op de ``Organization`` zetten.
 
-    De projectnaam PLUS een hash van de upstream, want D2 zegt één organisatie per project
-    per upstream-NAMESPACE en de eerste twee delen van de naam die de operator samenstelt
-    (``friendlyName``-``customerName``) dragen alleen de HOST -- en die host raakt bovendien
-    zijn TLD kwijt. Zonder dit deel vallen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van
-    hetzelfde project op één organisatienaam, en daarmee op één bestandsnaam op het
-    projectniveau, één credentials-secret en één bestemming: de tweede registry
-    overschrijft dan stil de eerste, en twee componenten die verschillende images bedoelen
-    halen dezelfde op.
-
-    Ook een upstream zonder pad draagt de hash. Dat is niet cosmetisch: alleen als het
-    onderscheidende deel er ALTIJD staat, en met een vaste lengte aan het eind, kan de
-    projectnaam er niet overheen groeien (zie ``upstream_hash``).
+    De naam die de operator eromheen bouwt draagt alleen de host, dus zonder dit deel
+    vallen ``ghcr.io/orga`` en ``ghcr.io/orgb`` van hetzelfde project op één organisatie.
     """
     return f"{sanitize_kubernetes_name(project_name)}-{upstream_hash(upstream)}"
 
 
 def organization_name(upstream: str, customer_name: str, project_name: str) -> str:
-    """De naam van de proxy-organisatie in RCR.
-
-    ``<friendlyName>-<customerName>-<suffix>``: de eerste twee delen stelt de operator
-    zelf samen uit ``spec.friendlyName`` en de klantnaam, het derde deel is onze
-    ``spec.suffix`` (zie ``organization_suffix``). Eén organisatie per project per
-    upstream-namespace (D2).
-    """
+    """``<friendlyName>-<customerName>-<suffix>``, de naam die de operator samenstelt."""
     return sanitize_kubernetes_name(
         f"{friendly_name(upstream)}-{customer_name}-{organization_suffix(upstream, project_name)}"
     )
 
 
 def pull_secret_name(upstream: str, customer_name: str, project_name: str) -> str:
-    """De naam van het pull-secret dat bij die organisatie hoort.
-
-    Wij zetten hem expliciet omdat de operator hem afleidt zonder de suffix. Hij draagt
-    daarom de projectnaam, zodat twee projecten met dezelfde upstream niet op één naam
-    botsen.
-    """
+    """De naam van het pull-secret, expliciet gezet omdat de operator de suffix weglaat."""
     return sanitize_kubernetes_name(f"{organization_name(upstream, customer_name, project_name)}-{PULL_SECRET_POSTFIX}")
 
 
 def registry_destination(upstream: str, registry_host: str, customer_name: str, project_name: str) -> str:
-    """Waar images van deze upstream heen gaan: ``<rcr-host>/<organisatie>``.
-
-    Samen met de upstream als ``match`` is dit de hele omzetting:
-    ``code.overheid.nl/robbert/demo:tag`` wordt ``rcr.rijksapps.nl/<org>/demo:tag``, dus
-    inclusief het wegvallen van het namespace-segment.
-    """
+    """Waar images van deze upstream heen gaan: ``<rcr-host>/<organisatie>``."""
     return f"{registry_host}/{organization_name(upstream, customer_name, project_name)}"
 
 
 def direct_secret_name(project_name: str, registry_name: str) -> str:
-    """De naam van het dockerconfigjson-secret op een cluster zonder proxy-operator.
-
-    Namespace-scoped en projectbreed: het staat op het projectniveau in de
-    deployments-repo, niet per deployment, want elke deployment van hetzelfde project in
-    dezelfde namespace heeft hetzelfde secret nodig.
-    """
+    """Het dockerconfigjson-secret op een cluster zonder proxy-operator, projectbreed."""
     return sanitize_kubernetes_name(f"{project_name}-{registry_name}-registry")

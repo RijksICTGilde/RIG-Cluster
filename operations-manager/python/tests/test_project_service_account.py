@@ -1,7 +1,7 @@
 """De eigen serviceaccount per project, en waarom pods er op draaien.
 
 De ``default`` serviceaccount draagt elk pull-secret dat het platform in de namespace
-repliceert -- ook dat van de proxy-organisatie van een ANDER project. Daarop draaien maakt
+repliceert, ook dat van de proxy-organisatie van een ANDER project. Daarop draaien maakt
 een private registry alleen op papier prive, en laat kubelet uit negen secrets voor
 dezelfde host de juiste vissen. Vandaar een eigen serviceaccount zonder pull-secrets, en
 elke gegenereerde podspec draagt de secrets die hij zelf nodig heeft.

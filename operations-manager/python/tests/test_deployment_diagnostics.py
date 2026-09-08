@@ -901,10 +901,9 @@ def test_summarize_leaves_out_a_disabled_component():
 # De bronvorm van een image (RC-177)
 # ---------------------------------------------------------------------------
 #
-# Op een cluster met een proxy staat in de podspec een RCR-pad, en dat is niet wat de
-# afnemer heeft ingevuld. Terugrekenen kan alleen tegen de regels van de dienst
-# image-registries, en de eigen proxy-organisaties van een project staan alleen in die
-# lijst als het PROJECTBESTAND erbij zit. Zonder dat bestand leest hij hier de kale URL.
+# Op een cluster met een proxy staat in de podspec een RCR-pad. Terugrekenen kan alleen
+# tegen de regels van de dienst, en de eigen proxy-organisaties staan daar alleen in als
+# het projectbestand erbij zit.
 
 _PRIVATE_PROJECT: dict[str, Any] = {
     "name": "demo",
@@ -924,9 +923,8 @@ _PRIVATE_PROJECT: dict[str, Any] = {
         }
     ],
 }
-# De organisatienaam wordt BEREKEND (projectnaam plus een hash van de upstream), dus hij
-# hoort hier ook berekend te worden -- een letterlijke naam zou stil naast de naamregel
-# komen te staan zodra die verandert.
+# De organisatienaam wordt berekend, dus hier ook: een letterlijke naam zou stil naast de
+# naamregel komen te staan zodra die verandert.
 _RCR_IMAGE = (
     f"{registry_destination('code.overheid.nl/robbert.uittenbroek', 'rcr.rijksapps.nl', 'rig', 'demo')}"
     f"/zad-deployment-demo:0a611d9d"
@@ -952,7 +950,7 @@ def test_summarize_shows_the_private_registry_the_consumer_typed():
 
 def test_summarize_without_the_project_file_leaves_the_bare_rcr_url():
     """De tegenproef: het is het projectbestand dat de eigen organisatie terugvertaalt,
-    niet de clustertabel -- die kent alleen de GEDEELDE proxies."""
+    niet de clustertabel, want die kent alleen de GEDEELDE proxies."""
     deployment = {"name": "pr-114", "components": [{"reference": "web", "image": _UPSTREAM_IMAGE}]}
     pods = [_pod("pr-114-web-849d475c4-4qp6p", app="pr-114-web", ready=True, image=_RCR_IMAGE)]
 

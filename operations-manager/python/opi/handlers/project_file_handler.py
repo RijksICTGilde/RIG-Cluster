@@ -2831,10 +2831,7 @@ class ProjectFileHandler:
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """De private registries van dit project, uit de config van de dienst image-registries.
 
-        Tot schemaversie 2.9 stond deze lijst als ``registries:`` op de projectwortel, waar
-        hij geen eigenaar had en dus geen formulier, geen configmodel, geen schemafragment
-        en geen validatie. De migratie verhuist hem naar de dienst; dit blijft de ene plek
-        waar de rest van de code hem opvraagt.
+        Tot schemaversie 2.9 stond deze lijst als ``registries:`` op de projectwortel.
 
         Returns:
             Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
@@ -2861,8 +2858,7 @@ class ProjectFileHandler:
             Registry config dict with keys: name, upstream, username, password
             or None if the component points at no registry
         """
-        # De verwijzing bij naam staat sinds schemaversie 2.9 in de dienstvermelding van
-        # het component, niet meer als losse sleutel ernaast.
+        # Sinds v2.9 een dienstvermelding op het component, geen losse sleutel ernaast.
         from opi.services.catalog.image_registries.resolution import component_registry_name
 
         component = next(

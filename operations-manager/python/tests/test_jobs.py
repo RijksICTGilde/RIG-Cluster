@@ -335,7 +335,7 @@ class TestDeJobImageIsGeenVrijeKeuze:
     ``apply_bundle`` krijgt sinds deze branch ``project_data`` mee, dus de PROJECTregels
     gelden ook voor de door een gebruiker INGETYPTE job-image: een image onder andermans
     proxy-organisatie krijgt het pull-secret van dat project aangehangen en elk projectlid
-    mag zo'n job starten. De validators bij het opslaan zien deze image nooit -- die lopen
+    mag zo'n job starten. De validators bij het opslaan zien deze image nooit, want die lopen
     over ``deployments[].components[].image`` in het projectbestand.
     """
 

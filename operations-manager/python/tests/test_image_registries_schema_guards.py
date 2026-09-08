@@ -7,7 +7,7 @@ cosmetisch waren, en die zijn bij de verhuizing achtergebleven:
 * ``url`` had het patroon ``^(?:(?:https?|ssh|git)://)?[^\\s\\u0000"]+\\Z``, dat een
   aanhalingsteken en een regeleinde juist verbood. Zonder dat patroon breekt een upstream
   uit zijn YAML-scalar in ``quay-proxy-organization.yaml.jinja`` en staan er extra
-  DOCUMENTEN in het manifest -- willekeurige namespaced resources, aangemaakt door ArgoCD.
+  DOCUMENTEN in het manifest: willekeurige namespaced resources, aangemaakt door ArgoCD.
 * ``password`` was een ``age-encrypted-or-plain``, en ``find_plaintext_secret_violations``
   herkent een AGE-veld AAN dat patroon. Zonder het patroon accepteerden de save-poorten een
   token in platte tekst, ook op de elf ``enforce_validation=False``-routes waar dat juist
@@ -139,7 +139,7 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         """Geen validator die alleen het formulier draait: de editable WIJST naar het model.
 
         Zou iemand de regel in het formulier opnieuw opschrijven, dan lopen de twee uit
-        elkaar en accepteert de API wat het formulier weigert -- precies hoe deze payload
+        elkaar en accepteert de API wat het formulier weigert, precies hoe deze payload
         langs de UpstreamValidator kwam.
         """
         from opi.services.catalog.image_registries.editables import REGISTRY_UPSTREAM_EDITABLE
@@ -242,7 +242,7 @@ class TestHetTokenValtNietUitDeFailClosedControle:
     def test_de_controle_leest_het_patroon_uit_het_model(self) -> None:
         """Afgeleid van het schema, niet van een handgeschreven veldenlijst.
 
-        Haal het AGE-patroon van ``password`` weg en deze controle vindt niets meer -- dat
+        Haal het AGE-patroon van ``password`` weg en deze controle vindt niets meer, dat
         is precies wat er bij de verhuizing gebeurde.
         """
         from opi.services.catalog.image_registries.config_model import RegistryEntry

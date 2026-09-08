@@ -107,11 +107,8 @@ class JobManager:
                 f"Deployment '{deployment_name}' draait op cluster '{cluster}', niet beheerd door deze instance."
             )
 
-        # Deze image komt uit een formulierveld en niet uit het projectbestand, dus hij
-        # ziet geen van de validators die bij het opslaan draaien -- terwijl apply_bundle
-        # er wel de PROJECTregels op toepast en er dus een pull-secret aan hangt. Zonder
-        # deze toets draait elk projectlid een job op de private image van een ander
-        # project, met het robot-credential van dat project eraan.
+        # Deze image komt uit een formulierveld en ziet dus geen van de validators die bij
+        # het opslaan draaien, terwijl apply_bundle er wel een pull-secret aan hangt.
         owner = foreign_proxy_organization_owner(image, cluster, project_name)
         if owner is not None:
             raise JobError(
@@ -237,8 +234,7 @@ class JobManager:
                     "db_secret_name": db_secret_name,
                 },
             )
-            # Met project_data erbij tellen de eigen private registries van dit project
-            # mee in de regels, want een job kan op een image uit de eigen registry draaien.
+            # Met project_data tellen ook de eigen private registries mee in de regels.
             project_data = await get_project_store().get_decrypted(project_name)
             ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster, project_data)
             if not ok:

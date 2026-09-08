@@ -2,7 +2,7 @@
 
 Het projectniveau is een tweede exemplaar van een bestaand begrip: de diensten bepalen wat
 er komt te staan (``contribute_project_manifests``), de emitter schrijft het weg, en de
-prune haalt weg wat deze run niet opnieuw maakte -- anders loopt de map nooit leeg als een
+prune haalt weg wat deze run niet opnieuw maakte, anders loopt de map nooit leeg als een
 dienst uitgaat.
 
 Wat hier het meest toe doet is de prune tegenover de SOPS-encryptie. Een dienstbestand met
@@ -139,7 +139,7 @@ class TestWieHetProjectniveauDraagt:
 
     def test_de_verwijderaar_zoekt_in_dezelfde_repository_als_de_schrijver(self, tmp_path: Any) -> None:
         """De derde kant. Koos de verwijderaar op bestandsvolgorde, dan ging hij bij twee
-        repositories in de VERKEERDE repo zoeken -- en dan blijft de map met zijn
+        repositories in de VERKEERDE repo zoeken, en dan blijft de map met zijn
         SOPS-secrets staan terwijl de verwijdering 'not_found' meldt."""
         from unittest.mock import AsyncMock, MagicMock
 

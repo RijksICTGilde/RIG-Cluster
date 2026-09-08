@@ -427,7 +427,7 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
 17. Welke pull-secrets hebben wij nodig, en hoe komen we eraan?
 18. Mogen wij zelf images pushen naar die registry? Onder welk pad?
 
-*(Zonder mirror volstaat `"image_registries": {"backend": "direct-secret"}` — dan wordt een
+*(Zonder mirror volstaat `"image_registries": {"backend": "direct-secret"}`: dan wordt een
 private registry een dockerconfigjson-secret in de namespace en blijft de image ongewijzigd,
 precies zoals op `local` en `sandboxed-local`. Met een ándere mirror achter dezelfde
 Quay-operator is het het `image_registries`-blok in `cluster_config.py` met een eigen

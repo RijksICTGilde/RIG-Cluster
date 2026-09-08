@@ -1,53 +1,23 @@
 """Typed config-modellen voor de dienst ``image-registries``.
 
-Twee lagen, twee modellen:
-
-* **Projectniveau** (``ImageRegistriesConfig``): de private registries die het project
-  zelf opgeeft -- naam, upstream inclusief pad, gebruikersnaam en token. Meer staat er
-  niet in, en er wordt ook niets bij teruggeschreven: de RCR-URL en de naam van het
-  pull-secret zijn een functie van de projectnaam en de upstream en worden berekend op
-  het moment dat een manifest wordt gegenereerd (zie ``naming.py``).
-* **Componentniveau** (``ComponentRegistryConfig``): welke registry bij de image van dit
-  component hoort. Alleen een verwijzing bij naam, en alleen als er iets te verwijzen
-  valt. "Publieke registry" is een non-waarde: dan staat de dienst niet bij het component
-  en is er dus ook geen configblok.
+Projectniveau draagt de registries zelf, componentniveau alleen een verwijzing bij naam.
+Wat wij eruit afleiden (de RCR-URL, de secretnaam) wordt niet opgeslagen maar berekend,
+zie ``naming.py``.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-#: Wat een upstream mag zijn: een hostnaam (met een punt, of een poort, of ``localhost``),
-#: eventueel gevolgd door een pad, in kleine letters, zonder protocol en zonder tag of
-#: digest. De afnemer schrijft de UPSTREAM, nooit een RCR-URL, want dat houdt het bestand
-#: overdraagbaar naar een ander platform.
+#: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
+#: Ook een veiligheidsgrendel: zonder patroon komt een waarde met een aanhalingsteken en
+#: een regeleinde in ``upstreamRegistry`` van het Organization-manifest terecht.
 #:
-#: De regel staat HIER en niet in het formulier. Dit model is waar de API tegenaan
-#: schrijft en waar een opgeslagen projectbestand mee wordt gevalideerd; het formulier
-#: hergebruikt hem via ``ModelFieldValidator``. Er is dus een definitie en geen tweeling
-#: die uit elkaar loopt -- de vorige vorm had de regel alleen in de formulierlaag, en
-#: ``POST /projects/{p}/registries/by-credentials`` kwam er niet langs.
-#:
-#: Het is ook een veiligheidsgrendel. ``$defs/registry.url`` in project_v2.json droeg
-#: ``^(?:(?:https?|ssh|git)://)?[^\s\u0000"]+\Z`` zolang dit veld daar stond, en een
-#: sleutel die verhuist neemt zijn constraints mee: zonder patroon komt een waarde met een
-#: aanhalingsteken en een regeleinde in ``upstreamRegistry`` van het Organization-manifest
-#: terecht en staan er extra DOCUMENTEN in dat bestand. Dit patroon is strikter dan het
-#: oude en laat allebei de waarden door die de vloot werkelijk heeft (``ghcr.io`` en
-#: ``rcr.rijksapps.nl/rig``).
-#:
-#: ``$`` en niet ``\Z``: de standaard rust-regex-engine kent ``\Z`` niet, en zijn ``$``
-#: bindt aan het EINDE van de tekst (anders dan die van Python, die een afsluitende
-#: newline doorlaat). Zo draaien het model en de ``ModelFieldValidator`` van het formulier
-#: op dezelfde engine met dezelfde uitkomst.
-#:
-#: Let op wie dit patroon nog meer draagt: het gecommitte fragment
-#: ``image-registries.v1.0.json`` krijgt dezelfde tekst mee, en wie dat fragment met de
-#: PYTHON-engine valideert krijgt een andere uitkomst -- daar laat ``$`` een afsluitende
-#: newline wel door (``ghcr.io\n`` matcht). Vandaag is dat inert, want het fragment is een
-#: drift-lock en documentatie (``test_service_config_schema.py``) en geen validatiepoort;
-#: de poort die draait is dit model. Gaat iemand het fragment wel als poort gebruiken, dan
-#: hoort daar ``\Z``/``fullmatch`` bij.
+#: ``$`` en niet ``\Z``, want de rust-engine (waar pydantic op draait) kent ``\Z`` niet.
+#: Het gecommitte fragment ``image-registries.v1.0.json`` draagt hetzelfde patroon naar de
+#: Python-engine, waar ``$`` een afsluitende newline wel doorlaat; dat fragment is vandaag
+#: drift-lock en geen poort, maar wie het wel als poort gebruikt hoort er ``\Z`` bij te
+#: zetten.
 _HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 _PORT = r"[0-9]{1,5}"
 UPSTREAM_PATTERN = (
@@ -55,32 +25,24 @@ UPSTREAM_PATTERN = (
     r"(?:/[a-z0-9][a-z0-9._-]*)*$"
 )
 
-#: De uitleg die bij dat patroon hoort. Staat naast de regel zelf, zodat het formulier hem
-#: kan tonen zonder de regel opnieuw op te schrijven (de pydantic-melding is Engels en
-#: praat over patronen).
+#: De uitleg bij dat patroon; de pydantic-melding zelf is Engels en praat over patronen.
 UPSTREAM_MESSAGE = (
     "Vul de registry in als hostnaam met eventueel een pad, in kleine letters, zonder "
     "protocol en zonder tag, bijvoorbeeld code.overheid.nl/jouw-naam"
 )
 
-#: Wat een opgeslagen geheim mag zijn: AGE-versleuteld, of expliciet als platte tekst
-#: gemarkeerd met ``plain:``. Gelijk aan ``$defs/age-encrypted-or-plain`` in
-#: ``project_v2.json``, dat dit veld droeg zolang het daar stond. Het is niet alleen een
-#: vormregel: ``find_plaintext_service_config_violations`` herkent een AGE-veld AAN dit
-#: patroon en weigert daarop ook op de schrijfroutes met ``enforce_validation=False``.
+#: AGE-versleuteld, of expliciet als platte tekst gemarkeerd met ``plain:``. Niet alleen
+#: een vormregel: ``find_plaintext_service_config_violations`` herkent een AGE-veld AAN
+#: dit patroon en weigert platte tekst ook zonder ``enforce_validation``.
 AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+age:|^plain:)"
 
 
-#: Wat een registrynaam mag zijn: een DNS-1123-achtige naam die met een kleine LETTER
-#: begint, zodat hij nooit als YAML-getal gelezen wordt. Dezelfde regel die
-#: ``KubernetesNameValidator`` in het formulier stelde -- en om dezelfde reden als bij
-#: ``upstream`` staat hij nu HIER: het formulier had hem wel en het model niet, dus
-#: ``POST /projects/{p}/registries/by-credentials`` liet namen door die het formulier
-#: weigert. De naam gaat door ``sanitize_kubernetes_name`` een secretnaam in en staat als
-#: keuze in het componentformulier; één definitie, geen tweeling.
+#: Een DNS-1123-achtige naam die met een kleine LETTER begint, zodat hij nooit als
+#: YAML-getal gelezen wordt. In het model en niet in het formulier, zodat de API dezelfde
+#: regel draagt.
 REGISTRY_NAME_PATTERN = r"^[a-z]([-a-z0-9]*[a-z0-9])?$"
 
-#: De uitleg die bij dat patroon hoort, in dezelfde woorden die het formulier al gebruikte.
+#: De uitleg bij dat patroon.
 REGISTRY_NAME_MESSAGE = (
     "Registrynaam moet met een kleine letter beginnen en mag alleen kleine letters, "
     "cijfers en streepjes bevatten, geen spaties of hoofdletters"

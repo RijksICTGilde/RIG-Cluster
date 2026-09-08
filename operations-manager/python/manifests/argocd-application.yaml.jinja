@@ -6,10 +6,8 @@ metadata:
   labels:
     project: {{ labels.project }}
   annotations:
-    {# Het projectniveau gaat op wave 0, de deployments op wave 1: wat namespace-breed is
-       (het pull-secret, de proxy-organisatie, de serviceaccount) staat er dan voor de pods
-       die het nodig hebben. Ordening is niet hetzelfde als gereedheid -- een pod die te
-       vroeg is belandt in ImagePullBackOff en herstelt vanzelf. #}
+    {# Het projectniveau op wave 0, de deployments op wave 1, zodat wat namespace-breed
+       is er staat voor de pods die het nodig hebben. #}
     argocd.argoproj.io/sync-wave: "{{ sync_wave | default(1) }}"
     # https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation
     argocd.argoproj.io/manifest-generate-paths: .

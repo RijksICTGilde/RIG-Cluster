@@ -112,9 +112,8 @@ _VERZOEK = SimpleNamespace(state=SimpleNamespace(csrf_token="VOORBEELD-CSRF-TOKE
 #: geworden, met de code in de paginarender, dus het fragment en zijn endpoint zijn weg.
 #: De lijst blijft staan omdat het volgende fragment hem weer nodig heeft.
 FRAGMENTEN: dict[str, dict[str, Any]] = {
-    # De toestand van de proxy-organisaties, met htmx opgehaald: hij komt uit het CLUSTER
-    # en niet uit het projectbestand, dus hij krijgt geen ``section`` maar zijn eigen
-    # context. De drie takken die het fragment kent staan er alle drie in.
+    # De toestand komt uit het cluster, dus dit fragment krijgt geen ``section`` maar zijn
+    # eigen context. De drie takken die het kent staan er alle drie in.
     "image_registries/status-fragment.html.j2": {
         "applicable": True,
         "statuses": [
@@ -131,8 +130,7 @@ FRAGMENTEN: dict[str, dict[str, Any]] = {
                 "organization": "ghcr-rig-voorbeeld",
                 "state": "pending",
                 "message": "De proxy wordt klaargezet.",
-                # De dringende tak: die tekent een alert in plaats van een alinea, dus hij
-                # hoort net zo goed gerenderd te worden als de rustige.
+                # De dringende tak tekent een alert in plaats van een alinea.
                 "expires_at": "2026-09-20T00:00:00Z",
                 "expires_soon": True,
             },

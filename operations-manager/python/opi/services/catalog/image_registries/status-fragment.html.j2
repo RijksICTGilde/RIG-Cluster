@@ -1,13 +1,6 @@
-{# De toestand van de proxy-organisaties, met htmx opgehaald bij het openen van de pagina.
-
-   Waarom een lazyload en niet gewoon in het blok: dit leest de status uit het CLUSTER, en
-   een blok dat op een pagina rendert mag geen connector aanroepen. Het blok zelf komt uit
-   het projectbestand; dit is wat daar niet in staat.
-
-   ORDENING IS NIET HETZELFDE ALS GEREEDHEID. De sync-wave regelt alleen de volgorde van
-   aanmaken. Een pod die te vroeg is belandt in ImagePullBackOff en herstelt vanzelf zodra
-   de proxy werkt - gemeten in de proef. Dit blok is er zodat een wachtende afnemer ziet
-   WAAROM hij wacht, niet omdat er iets kapot is. #}
+{# De toestand van de proxy-organisaties, met htmx opgehaald: dit leest het CLUSTER, en
+   een blok dat rendert mag geen connector aanroepen. Wachten is hier normaal, de pod
+   herstelt vanzelf zodra de proxy werkt. #}
 {% if not applicable %}
     <c-paragraph size="sm">Op dit cluster halen de nodes je images rechtstreeks op; er is geen proxy die klaar moet staan.</c-paragraph>
 {% elif not statuses %}
@@ -20,10 +13,8 @@
                     <c-icon :icon="('check-mark-circle' if status.state == 'ready' else 'timer') | nldd_icon" size="md" />
                     <c-span><strong>{{ status.registry }}</strong> - {{ status.message }}</c-span>
                 </c-cluster>
-{# De datum wordt hier een variabele en niet in het attribuut afgesneden: de
-                   LOTC-voorbewerker leest een :attribuut als een expressie en struikelt over
-                   de plak (``[:10]``). Dat is een parseerfout op het RENDEREN, niet in de
-                   browser -- en precies wat de blokkentest hierboven vangt. #}
+                {# De datum als variabele en niet in het attribuut afgesneden: de
+                   LOTC-voorbewerker struikelt over de plak in een :attribuut. #}
                 {% set verloopdag = status.expires_at[:10] if status.expires_at else "" %}
                 {% if status.expires_soon %}
                     {% set waarschuwing = "Het token van deze proxy verloopt op " ~ verloopdag ~ ". Vul hier een nieuw token in voordat het zover is, anders kan het platform je images niet meer ophalen." %}

@@ -1,19 +1,10 @@
-{# Het blok dat de dienst image-registries op de projectpagina levert.
-
-   Wat er in het projectbestand staat is de INVOER van de afnemer: de naam van de registry
-   en waar hij staat. De RCR-URL, de organisatienaam en de naam van het pull-secret staan
-   er bewust niet in - het zijn berekeningen, en ze opslaan zou een tweede waarheid geven
-   die kan gaan afwijken van de organisatie zoals die er werkelijk staat. Het token staat
-   hier niet op: het is versleuteld opgeslagen, en het bewerkformulier is de enige plek waar
-   het weer leesbaar wordt (ProjectAgeSecretConverter.read) - een detailpagina die iedereen
-   met leesrecht ziet is dat niet.
-
-   De TOESTAND komt uit het cluster en wordt daarom apart opgehaald (status-fragment). #}
+{# Het blok dat de dienst image-registries op de projectpagina levert: de invoer van de
+   afnemer, zonder het token. De toestand komt uit het cluster en wordt apart opgehaald
+   (status-fragment). #}
 <c-card outline padding="lg">
     <c-stack gap="md">
-        {# De NLDD-naam staat hier letterlijk: een icoon in een SJABLOON gaat niet langs de
-           ROOS->NLDD-tabel (die geldt voor namen uit gegevens en uit Python), dus een ROOS-naam
-           zou hier stil leeg renderen. #}
+        {# De NLDD-naam letterlijk: een icoon in een sjabloon gaat niet langs de
+           ROOS->NLDD-tabel en zou stil leeg renderen. #}
         <c-section-head title="Eigen container registries" icon="globe-rack-server" />
         <c-paragraph size="sm">De private registries waaruit dit project images haalt.</c-paragraph>
 
@@ -31,9 +22,7 @@
             </c-stack>
         {% endfor %}
 
-{# Wat we NIET kunnen verbergen hoort hier te staan en niet alleen achter het vraagteken:
-           wie deze kaart leest is de persoon die het token beheert. De verloopdatum zelf komt
-           uit het cluster en staat in het statusblok hieronder. #}
+        {# Wat we niet kunnen verbergen, hier en niet alleen achter het vraagteken. #}
         <c-paragraph size="sm">Het token heeft leesrecht op packages nodig. Er geldt een quotum op wat het platform van je images bewaart, en het token verloopt periodiek - dan vul je hier een nieuw token in. Zet je deze dienst uit, dan verdwijnt de kopie die het platform bewaart; in je eigen registry verandert er niets.</c-paragraph>
 
         <div hx-get="/projects/details/{{ section.context.project_name }}/image-registries/status"

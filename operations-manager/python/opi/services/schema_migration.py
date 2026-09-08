@@ -1203,21 +1203,12 @@ def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
 def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
     """Verhuis de registries naar de dienst ``image-registries`` (v2.8 -> v2.9, RC-177).
 
-    Twee bewegingen die bij elkaar horen, want de een is zonder de ander onbruikbaar:
+    Twee bewegingen: de top-level lijst ``registries:`` gaat naar de dienstconfig met
+    ``url`` hernoemd naar ``upstream``, en de sleutel ``registry:`` op een
+    deployment-component wordt een dienstvermelding op datzelfde component. Een verwijzing
+    bij naam van binnen een andere dienstconfig blijft staan.
 
-    * de TOP-LEVEL lijst ``registries:`` gaat naar ``services/image-registries/config/
-      registries``, met ``url`` hernoemd naar ``upstream`` (dat is wat het veld altijd al
-      was: de registry inclusief pad, zonder protocol);
-    * de sleutel ``registry:`` op een deployment-component wordt een dienstvermelding op
-      datzelfde component, in dezelfde vorm die publish-on-web en temp-storage daar al
-      gebruiken.
-
-    Een verwijzing van BINNEN een andere dienstconfig (``namespace-postgresql-database``
-    heeft er een) blijft staan: dat is een verwijzing bij naam, en die blijft werken --
-    hij wijst straks naar een entry in de config van image-registries.
-
-    Idempotent: zonder ``registries`` en zonder ``registry``-sleutel is dit een no-op.
-    Retourneert True als er iets veranderd is.
+    Idempotent. Retourneert True als er iets veranderd is.
     """
     registries = project_data.get("registries")
     changed = False
@@ -1250,9 +1241,8 @@ def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
             changed = True
             if not registry_name:
                 continue
-            # Op een DEPLOYMENT-component is ``services`` een dict keyed op dienstnaam
-            # ($defs/deployment-component in project_v2.json), niet de lijst die een gewoon
-            # component draagt. Een lijst hier zou het schema meteen afkeuren.
+            # Op een deployment-component is ``services`` een dict keyed op dienstnaam,
+            # niet de lijst die een gewoon component draagt.
             services = component.get("services")
             if not isinstance(services, dict):
                 services = {}
@@ -1270,20 +1260,14 @@ def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
 def _normalize_upstream(url: Any) -> Any:
     """Zet een 2.8-``url`` om in de vorm die ``UPSTREAM_PATTERN`` op 2.9 nog toelaat.
 
-    Het oude ``$defs/registry.url`` liet een protocol expliciet toe
-    (``^(?:(?:https?|ssh|git)://)?...``) en had geen hoofdletterregel; het nieuwe patroon
-    op ``RegistryEntry.upstream`` verbiedt allebei, en ook de afsluitende schuine streep die
-    het oude tekenklasse-patroon toeliet. Zonder deze omzetting migreert zo'n projectbestand
-    wel (lezen valideert niet) maar sneuvelt het bij de eerste save, op een veld dat de
-    gebruiker niet heeft aangeraakt.
+    Het oude patroon liet een protocol, hoofdletters en een afsluitende schuine streep toe;
+    zonder deze omzetting sneuvelt zo'n bestand bij de eerste save.
     """
     if not isinstance(url, str):
         return url
-    # ``.lower()`` EERST: het oude patroon was hoofdletterongevoelig, dus ``HTTPS://GHCR.IO``
-    # was een geldige 2.8-waarde en zou een protocol-strip op de originele tekst overleven.
-    # Wat hier bewust NIET wordt weggeknipt is userinfo (``ssh://git@code.overheid.nl/x``):
-    # die waarde omzetten zou een upstream opleveren die er geldig uitziet maar naar iets
-    # anders wijst; hij valt nu op de eerste save op, met de melding van het patroon erbij.
+    # ``.lower()`` eerst, want ``HTTPS://GHCR.IO`` was een geldige 2.8-waarde. Userinfo
+    # (``ssh://git@host/x``) wordt bewust NIET weggeknipt: dat zou een upstream opleveren
+    # die er geldig uitziet maar ergens anders heen wijst.
     return re.sub(r"^(?:https?|ssh|git)://", "", url.lower()).rstrip("/")
 
 

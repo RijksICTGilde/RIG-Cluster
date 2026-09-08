@@ -86,10 +86,8 @@ CLUSTER_CONFIG = {
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
         },
-        # De dienst image-registries op dit cluster: de nodes kunnen zelf bij de registry,
-        # dus een private registry wordt een dockerconfigjson-secret in de namespace en de
-        # image blijft ongewijzigd. Geen "rules": er is geen proxytabel, en dan gebeurt er
-        # met een publieke image dus niets.
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
         "image_registries": {"backend": "direct-secret"},
     },
     "sandboxed-local": {
@@ -168,10 +166,8 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
-        # De dienst image-registries op dit cluster: de nodes kunnen zelf bij de registry,
-        # dus een private registry wordt een dockerconfigjson-secret in de namespace en de
-        # image blijft ongewijzigd. Geen "rules": er is geen proxytabel, en dan gebeurt er
-        # met een publieke image dus niets.
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
         "image_registries": {"backend": "direct-secret"},
     },
     "odcn-production": {
@@ -275,25 +271,15 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
-        # De dienst image-registries op dit cluster: achter een Quay-operator, dus een
-        # private registry wordt een proxy-organisatie in RCR en de image wordt
-        # herschreven. De regels hieronder zijn de GEDEELDE proxy-caches die het platform
-        # al aanbiedt -- dezelfde tabel die odcn-registry-rewrite draagt, nu bij zijn
-        # eigenaar. Een projectregel komt hier VOOR te staan, want de eigen registry van
-        # een project moet winnen van de gedeelde proxy voor dezelfde upstream.
+        # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
+        # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
+        # proxy-caches van het platform; projectregels komen ervoor te staan.
         "image_registries": {
             "backend": "quay-proxy-organization",
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
-            # De apiVersion van de Organization-CRD van de Quay-operator. Hij staat HIER
-            # en niet in het sjabloon omdat hij een platformfeit is: de proef op productie
-            # is met de hand gedaan en de groep/versie is niet in dit repo vastgelegd, dus
-            # als hij afwijkt is dit de ene regel die bijgesteld moet worden in plaats van
-            # een sjabloon dat opnieuw langs review moet.
+            # Hier en niet in het sjabloon: een platformfeit dat per cluster kan afwijken.
             "organization_api_version": "quay.redhat.com/v1",
-            # rotation.enabled: false doet niet wat de documentatie belooft -- het token
-            # krijgt alsnog retentionDays: 90 en verloopt, zonder dat iemand het ververst
-            # (gemeten 2026-09-07). Dus altijd true.
             "rotation_days": 90,
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
@@ -1400,24 +1386,15 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
 def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
     """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
 
-    Keys: ``backend`` (welke provisioning-backend hier geldt), en voor de Quay-variant
-    ``registry_host`` / ``customer_name`` / ``rotation_days`` plus ``rules``, de tabel van
-    upstream naar gedeelde proxy inclusief het secret dat erbij hoort.
-
-    Een cluster zonder de sleutel levert de ``direct-secret``-backend zonder tabel, wat
-    het antwoord is voor elk cluster waar de nodes zelf bij de registry kunnen: geen
-    herschrijving, geen tabel, alleen een secret als het project er een opgeeft. Dat een
-    dienst platformfeiten uit de clusterconfig leest is bestaand gedrag (publish-on-web
-    leest ``get_ingress_postfix()``, vlam ``get_vlam_config()``).
+    Keys: ``backend``, en voor de Quay-variant ``registry_host`` / ``customer_name`` /
+    ``rotation_days`` plus ``rules``. Een cluster zonder de sleutel krijgt
+    ``direct-secret`` zonder tabel.
     """
     try:
         config = get_cluster_config(cluster_name).get("image_registries")
     except ValueError:
-        # Een onbekende clusternaam is geen vraag die HIER beantwoord wordt: de
-        # clustercontrole zit in validate_service_availability en in het schema. Deze
-        # functie wordt onder andere door de opslagcontrole aangeroepen, op projectdata die
-        # nog van alles kan bevatten, en daar een ValueError uit laten komen zou een
-        # ontbrekend clusterveld als een registryfout laten aankomen.
+        # De clustercontrole zit in validate_service_availability en in het schema; hier
+        # opblazen zou een ontbrekend clusterveld als een registryfout laten aankomen.
         return {"backend": "direct-secret"}
     if not isinstance(config, dict):
         return {"backend": "direct-secret"}
