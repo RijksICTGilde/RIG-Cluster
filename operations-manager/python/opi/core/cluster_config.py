@@ -279,7 +279,11 @@ CLUSTER_CONFIG = {
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
             # Hier en niet in het sjabloon: een platformfeit dat per cluster kan afwijken.
-            "organization_api_version": "quay.redhat.com/v1",
+            # Gemeten op odcn-production met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl`
+            # (organizations, org, quay.k8s.rijksapps.nl/v1alpha1, namespaced, Organization). Op
+            # 2026-09-07 is met precies deze apiVersion een Organization aangemaakt die
+            # reconcileerde (OrganizationReady, ProxyCacheReady) en daarna weer verwijderd.
+            "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},

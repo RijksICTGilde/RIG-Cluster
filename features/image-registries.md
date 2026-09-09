@@ -401,6 +401,33 @@ een secret nodig, ook voor een doodgewone publieke image.
 Operators die hun eigen serviceaccount maken (CNPG met `rig-db`) draaien niet op de onze;
 daar staat het secret in de resource-spec zelf.
 
+### De overstap kost geen enkel recht
+
+Gemeten in `rig-prd-test` op 2026-09-09. Naar de `default` serviceaccount wijst in de
+namespace **geen enkele rolbinding**. Van de tien rolbindingen die er staan gaan er acht naar
+platform-serviceaccounts uit andere namespaces (`argocd-server`,
+`argocd-application-controller`, `external-dns`, `namespace-manager`) en twee naar de
+OpenShift-standaarden `builder` en `deployer`. Een workload die overstapt naar `{project}-sa`
+verliest dus niets: er was niets te verliezen.
+
+Wat `default` wél draagt zijn acht `imagePullSecrets` plus capsule- en ODCN-labels, waaronder
+`projectcapsule.dev/managed-by=replications`. Dat object is daarmee eigendom van de replicatie
+van ODCN: haal je de pull-secrets er met de hand af, dan zet de replicatie ze terug. Een eigen
+serviceaccount is dus niet de nette weg naast een andere, het is de enige weg.
+
+Dat een kale serviceaccount genoeg is, is apart gemeten: op 2026-09-07 draaide een pod op een
+serviceaccount zonder enige rolbinding en zonder pull-secret gewoon tot `Succeeded`, met alleen
+een expliciet secret in de podspec. Alles wat een pod nodig heeft komt uit de namespace of uit
+de podspec, niet uit de serviceaccount.
+
+### Het label dat er nooit op mag
+
+Onze serviceaccount mag **nooit** het label `customer.odc-noord.nl/replication=true` dragen.
+Dat is het merkteken waarop de replicatie van ODCN selecteert; met dat label krijgt hij alsnog
+alle pull-secrets van elk project aangehangen en is precies het probleem terug waarvoor hij
+bestaat. `manifests/project-serviceaccount.yaml.jinja` zet het label niet, en dat blijft zo:
+`test_project_service_account.py` toetst dat het er niet op staat.
+
 ## Validaties
 
 | Wat | Waar | Waarom |

@@ -29,7 +29,12 @@ logger = logging.getLogger(__name__)
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
 #: Terugval als de clusterconfig geen ``organization_api_version`` noemt.
-DEFAULT_ORGANIZATION_API_VERSION = "quay.redhat.com/v1"
+#: De waarde komt van het cluster, niet uit de operator-documentatie: gemeten op
+#: odcn-production met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl`
+#: (organizations, org, quay.k8s.rijksapps.nl/v1alpha1, namespaced, Organization), en op
+#: 2026-09-07 bevestigd door er een echte Organization mee aan te maken die reconcileerde
+#: (OrganizationReady, ProxyCacheReady) en daarna weer is verwijderd.
+DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
 
 
 class RegistryBackend(Protocol):
