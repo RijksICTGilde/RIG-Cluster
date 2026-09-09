@@ -72,9 +72,11 @@ class TestHetGerenderdeManifest:
         assert "imagePullSecrets" not in manifest
 
     def test_hij_draagt_het_replicatielabel_niet(self, tmp_path: Any) -> None:
-        """`customer.odc-noord.nl/replication=true` is het merkteken waarop de replicatie van
-        ODCN selecteert. Met dat label hangt zij alsnog elk pull-secret van elk project aan
-        deze serviceaccount, en is het probleem terug waarvoor hij bestaat."""
+        """Volgens de documentatie van ODC-Noord selecteert de replicatie op
+        `customer.odc-noord.nl/replication=true`; met dat label hangt zij alsnog elk pull-secret
+        van elk project aan deze serviceaccount en is het probleem terug waarvoor hij bestaat.
+        Die sleutel is door ons niet gemeten (zie features/image-registries.md), dus dit is
+        voorzorg - maar voorzorg die gratis is zolang niemand het label nodig heeft."""
         labels = self._render(tmp_path)["metadata"].get("labels", {})
         assert "customer.odc-noord.nl/replication" not in labels
 
