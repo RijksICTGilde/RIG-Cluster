@@ -9,7 +9,7 @@ cd operations-manager/python
 uv sync --all-groups        # installs all dependencies (main + test + dev)
 ```
 
-This creates `.venv/` with Python 3.14 and all packages. uv handles the venv automatically — no manual `python -m venv` needed.
+This creates `.venv/` with Python 3.14 and all packages. uv handles the venv automatically - no manual `python -m venv` needed.
 
 ## Playwright (for E2E tests)
 
@@ -41,11 +41,11 @@ This starts a FastAPI test server with mocked dependencies and runs Playwright a
 
 ## Live-Sandbox E2E Tests (optional)
 
-The E2E suite can also run against a live sandbox cluster (a local Kind cluster reachable at `https://zad.sandbox.rijksapp.dev` — see `workflow/sandbox.md`). These verify the real UI, API, and project-file writes end to end.
+The E2E suite can also run against a live sandbox cluster (a local Kind cluster reachable at `https://zad.sandbox.rijksapp.dev` - see `workflow/sandbox.md`). These verify the real UI, API, and project-file writes end to end.
 
 ```bash
 task sandbox:setup          # if no sandbox is running yet (~5-10 min)
-task test-e2e-sandbox       # runs tests/e2e/ with -m "e2e and sandbox"
+task test-e2e-sandbox       # runs tests/e2e/ with -m "e2e and sandbox and not reallife"
 ```
 
 Without a running sandbox (`E2E_BASE_URL` unset), all `@pytest.mark.sandbox` tests skip automatically. The local E2E suite (`-m "e2e and not sandbox"`) needs no cluster.
@@ -57,8 +57,8 @@ Without a running sandbox (`E2E_BASE_URL` unset), all `@pytest.mark.sandbox` tes
 - No Keycloak, PostgreSQL, MinIO, or ArgoCD instances
 - Tests mock all external connectors via fixtures in `tests/conftest.py`
 
-## What You DO Need for Integration/Functional Tests
+## What You DO Need for Integration Tests
 
 - A running sandbox cluster (`task sandbox:setup`)
 - Or a docker-compose environment (`docker compose -f docker-compose.dev.yaml up`)
-- These are marked `@pytest.mark.requires_infra` and excluded from default test runs
+- The infra-dependent tests are marked `@pytest.mark.requires_infra` and excluded from default test runs; the Kind-based ones in `tests/integration/` self-skip when Docker/kind/kubectl are missing
