@@ -64,11 +64,7 @@ COMPONENT_REGISTRY = EditableVisualizer(
     editable=COMPONENT_REGISTRY_EDITABLE,
     widget=WidgetType.SELECT,
     label="Registry",
-    help_text=(
-        "De eigen registry waar de image van dit component vandaan komt. Kiezen hoeft alleen als meer dan een "
-        "van je registries bij deze image past: een registry die je hierboven opgeeft geldt sowieso voor elke "
-        "image die eronder valt."
-    ),
+    help_text="De eigen registry waar de image van dit component vandaan komt.",
 )
 
 DEPLOYMENT_COMPONENT_REGISTRY = EditableVisualizer(
