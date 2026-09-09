@@ -71,6 +71,13 @@ class TestHetGerenderdeManifest:
         assert manifest["metadata"]["name"] == "demo-sa"
         assert "imagePullSecrets" not in manifest
 
+    def test_hij_draagt_het_replicatielabel_niet(self, tmp_path: Any) -> None:
+        """`customer.odc-noord.nl/replication=true` is het merkteken waarop de replicatie van
+        ODCN selecteert. Met dat label hangt zij alsnog elk pull-secret van elk project aan
+        deze serviceaccount, en is het probleem terug waarvoor hij bestaat."""
+        labels = self._render(tmp_path)["metadata"].get("labels", {})
+        assert "customer.odc-noord.nl/replication" not in labels
+
     def test_hij_verandert_verder_niets_aan_de_pod(self, tmp_path: Any) -> None:
         """Alleen de erfenis van andermans pull-secrets is het punt. De pods draaiden tot
         nu toe op de default serviceaccount, die de API-token wel aankoppelt; hem hier
