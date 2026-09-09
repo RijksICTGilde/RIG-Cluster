@@ -184,10 +184,17 @@ Het enige dat per cluster echt verschilt is wat er moet worden aangemaakt
 | `quay-proxy-organization` | een credentials-secret plus een `Organization` met proxyCache |
 
 De groep en versie van de `Organization`-CRD staan in de clusterconfig
-(`organization_api_version`) en niet in het sjabloon. Reden: het is een platformfeit van
-ODC-Noord, de proef op productie is met de hand gedaan en de exacte apiVersion is niet in
-dit repo vastgelegd. Wijkt hij af, dan is dat één regel clusterconfig in plaats van een
-sjabloonwijziging.
+(`organization_api_version`) en niet in het sjabloon. Reden: het is een platformfeit dat per
+cluster kan afwijken. Op `odcn-production` is het `quay.k8s.rijksapps.nl/v1alpha1`, gemeten
+met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl` en bevestigd door er op
+2026-09-07 een `Organization` mee aan te maken die reconcileerde (`OrganizationReady`,
+`ProxyCacheReady`). Die herkomst staat bij allebei de plekken waar de waarde staat: de
+clusterconfig (`cluster_config.py`) en de terugval in `backends.py`.
+
+Neem hem niet over uit de operator-documentatie: die noemt `quay.redhat.com/v1`, en met die
+waarde weigert de API-server elk gegenereerd manifest met `no matches for kind Organization in
+version quay.redhat.com/v1` en blijft de projectapplicatie in ArgoCD hangen. Vraag het dus het
+cluster. Wijkt hij af, dan is dat één regel clusterconfig in plaats van een sjabloonwijziging.
 
 Een derde platform is een derde backend plus een tabel in de clusterconfig, en geen
 wijziging aan de dienst.
@@ -423,10 +430,19 @@ de podspec, niet uit de serviceaccount.
 ### Het label dat er nooit op mag
 
 Onze serviceaccount mag **nooit** het label `customer.odc-noord.nl/replication=true` dragen.
-Dat is het merkteken waarop de replicatie van ODCN selecteert; met dat label krijgt hij alsnog
-alle pull-secrets van elk project aangehangen en is precies het probleem terug waarvoor hij
-bestaat. `manifests/project-serviceaccount.yaml.jinja` zet het label niet, en dat blijft zo:
-`test_project_service_account.py` toetst dat het er niet op staat.
+Die sleutel komt uit de documentatie van ODC-Noord; wij hebben hem **niet** zelf gemeten en
+weten dus niet zeker dat de replicatie erop selecteert. Wat we wel hebben gezien wijst twee
+andere kanten op: van de meting in `rig-prd-test` hierboven is als ODCN-label
+`projectcapsule.dev/managed-by=replications` opgeschreven en niet deze, en de proef van
+2026-09-07 beschrijft het gedrag als "hangt het aan elke `default` serviceaccount", dus op
+naam. Welke van de drie het is — dit label, dat label, of de naam — staat als vraag 7 bij
+"Vragen aan ODC-Noord" in `plans/private-images-uit-een-eigen-registry.md`.
+
+Voor ons gedrag maakt het niets uit: onze serviceaccount heet `{project}-sa` en draagt alleen
+`app.kubernetes.io/name`, `app.kubernetes.io/component` en `created-by`, dus geen van beide
+labels. `manifests/project-serviceaccount.yaml.jinja` zet het label niet, en dat blijft zo:
+`test_project_service_account.py` toetst dat het er niet op staat. Zolang de selector niet
+vaststaat is dat verbod goedkope voorzorg en geen gemeten noodzaak.
 
 ## Validaties
 
