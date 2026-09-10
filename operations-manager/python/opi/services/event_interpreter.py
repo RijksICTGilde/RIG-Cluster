@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from opi.handlers.project_file_handler import is_transient_registry_error
+from opi.handlers.project_file_handler import image_is_confirmed_absent
 from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -229,20 +229,20 @@ def _image_pull_suggestion(message: str) -> str:
     """Short suggestion for an image-pull failure, naming the source-registry image.
 
     Only two outcomes are distinguished, and only on wording the registry is explicit
-    about (see ``is_transient_registry_error``): a 5xx or a rate limit means the
-    registry could not answer, anything else is treated as a problem with the image
-    reference. Deliberately no finer than that -- the exact status is unreliable, an
-    auth problem can surface as more than one code -- so the second branch stays one
-    check of the common causes plus an anonymous ``docker pull`` to test public access.
+    about (see ``image_is_confirmed_absent``): the registry saying the image is absent
+    or refused is a problem with the image reference, anything else means we never got
+    an answer and cannot blame the image. Deliberately no finer than that -- the exact
+    status is unreliable, an auth problem can surface as more than one code -- so the
+    branch stays one check of the common causes plus an anonymous ``docker pull``.
     """
     match = _IMAGE_IN_MSG_RE.search(message)
-    if is_transient_registry_error(message):
+    if not image_is_confirmed_absent(message):
         subject = f"De image {_source_image(match.group(1))}" if match else "De image"
         return (
             f"{subject} kon niet worden opgehaald omdat de registry zelf geen antwoord gaf. Dat zegt niets "
             "over de image: die kan prima bestaan. Hier is niets voor je te doen, het ophalen wordt vanzelf "
-            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het uren aan, meld het dan "
-            "bij het platformteam."
+            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het langer dan een paar "
+            "minuten aan en je hebt geen storingsmelding gehad, meld het dan sowieso bij het platformteam."
         )
     if not match:
         return "Controleer of de image publiek toegankelijk is en of de naam en tag kloppen."
@@ -255,20 +255,30 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
+# One pod's image-pull failure is one problem, whichever source reports it. The two
+# titles differ only in whether the registry answered, so they must dedupe together:
+# ArgoCD's resource tree carries the registry's own words while the matching K8s event
+# is often a bare "Back-off pulling image", and showing both would tell the user the
+# registry is fine and broken at once.
+IMAGE_PULL_TITLE_NO_ANSWER = "Registry kon de container image niet leveren"
+IMAGE_PULL_TITLE_ABSENT = "Container image kan niet worden opgehaald"
+_IMAGE_PULL_TITLES = (IMAGE_PULL_TITLE_NO_ANSWER, IMAGE_PULL_TITLE_ABSENT)
+
+
 def _image_pull_translation(message: str) -> tuple[str, str, EventSeverity]:
     """Title, suggestion and severity for an image-pull failure.
 
     A registry that could not answer is INFORMATIONAL: the user cannot fix it and the
     pull retries by itself, so presenting it as something to act on sends them looking
-    for a broken image that is fine. A missing or unreachable image stays ACTIONABLE.
+    for a broken image that is fine. A missing or refused image stays ACTIONABLE.
     """
-    if is_transient_registry_error(message):
+    if not image_is_confirmed_absent(message):
         return (
-            "Registry kon de container image niet leveren",
+            IMAGE_PULL_TITLE_NO_ANSWER,
             _image_pull_suggestion(message),
             EventSeverity.INFORMATIONAL,
         )
-    return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+    return IMAGE_PULL_TITLE_ABSENT, _image_pull_suggestion(message), EventSeverity.ACTIONABLE
 
 
 # --- Een container die de kubelet kilt omdat de probe faalt -------------------------
@@ -505,18 +515,24 @@ def _dedupe_cross_source(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     """Deduplicate errors with the same translated message for the same component.
 
     The same issue often appears from both ArgoCD resource tree (Pod/x) and
-    K8s events (x) — keep only the first occurrence.
+    K8s events (x) — keep only the first occurrence. Image-pull failures collapse on
+    the pod alone, because the two sources word the same failure differently.
     """
-    seen: set[str] = set()
+    position_of: dict[str, int] = {}
     result: list[dict[str, str]] = []
     for error in errors:
         base = _resource_base_name(error.get("resource", ""))
         title = error.get("message", "")
-        key = f"{base}:{title}"
-        if key in seen:
+        key = f"{base}:image-pull" if title in _IMAGE_PULL_TITLES else f"{base}:{title}"
+        position = position_of.get(key)
+        if position is None:
+            position_of[key] = len(result)
+            result.append(error)
             continue
-        seen.add(key)
-        result.append(error)
+        # Of two reports of one pull failure, the one quoting the registry's answer
+        # wins: the other only means that source never saw what the registry said.
+        if title == IMAGE_PULL_TITLE_ABSENT and result[position].get("message") == IMAGE_PULL_TITLE_NO_ANSWER:
+            result[position] = error
     return result
 
 
