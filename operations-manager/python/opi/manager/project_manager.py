@@ -75,7 +75,7 @@ from opi.handlers.project_file_handler import (
     extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
-    is_transient_registry_error,
+    image_is_confirmed_absent,
     remove_attachment_references,
     remove_component_references,
 )
@@ -3513,18 +3513,15 @@ class ProjectManager:
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
                     # Split the image-pull failures on what the registry actually told
-                    # us. A 5xx or a rate limit means the registry could not answer, so
-                    # whether the image exists is unknown -- those must never disable the
-                    # component: disabling scales it to 0, which removes the very pod
-                    # that would have retried, so a registry hiccup becomes a permanent
-                    # outage that no refresh undoes. Kubelet retries the pull with its
-                    # own backoff and recovers by itself once the registry does.
+                    # us. Only an explicit "absent" disables; anything we could not
+                    # diagnose leaves the component alone, because disabling scales it
+                    # to 0, which removes the very pod that would have retried, so an
+                    # outage becomes permanent and no refresh undoes it. Kubelet retries
+                    # the pull with its own backoff and recovers once the registry does.
                     all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    image_pull_failures = [f for f in all_image_pull_failures if image_is_confirmed_absent(f.message)]
                     registry_down_failures = [
-                        f for f in all_image_pull_failures if is_transient_registry_error(f.message)
-                    ]
-                    image_pull_failures = [
-                        f for f in all_image_pull_failures if not is_transient_registry_error(f.message)
+                        f for f in all_image_pull_failures if not image_is_confirmed_absent(f.message)
                     ]
 
                     task_service = (
