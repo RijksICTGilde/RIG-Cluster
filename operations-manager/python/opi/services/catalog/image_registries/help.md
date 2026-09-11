@@ -51,6 +51,10 @@ stilletjes veranderen waar een image vandaan komt, en daar hoort iemand bij na t
 
 ## De dienst uitzetten
 
+Net als bij een losse registry kan dat pas als geen enkel component er nog een van je
+registries bij staan heeft: anders weigeren we het opslaan en noemen we de componenten erbij.
+Zet die dus eerst op de publieke registry.
+
 Zet je de dienst uit, dan wordt de kopie die het platform van je images bewaart opgeruimd,
 inclusief de organisatie die daarvoor is aangemaakt. Bovenstrooms, in je eigen registry,
 verandert er niets: je images staan er nog. De eerste keer dat een pod daarna start
