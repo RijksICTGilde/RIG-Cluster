@@ -26,6 +26,7 @@ from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
@@ -57,6 +58,11 @@ class ImageRegistriesService(Service):
     # zichzelf daar bijschrijven.
     allows_implicit_project_selection = True
     config_component_order = 8
+    # Er is geen aan/uit voor deze dienst bij een component: de gekozen registry IS de
+    # selectie. Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken
+    # wat een aangevinkte dienst met waarde "publiek" betekent, en wat een uitgevinkte
+    # dienst met een registry erin betekent, en die twee regels lopen uit elkaar.
+    component_selection_follows_config = True
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         # De registries op het project, de verwijzing bij naam op (deployment-)component.
@@ -102,14 +108,15 @@ class ImageRegistriesService(Service):
         return [COMPONENT_REGISTRY]
 
     def config_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
+        from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div
 
         svc = self.service_type.value
+        # In het slot achter het image-veld en niet in een eigen fieldset onderaan: de
+        # vraag is waar DIE image vandaan komt. Geen ``depends_on`` op de dienstenlijst
+        # meer -- de keuze IS de selectie, dus het veld zou wachten op wat het zelf zet.
         return [
-            Fieldset(
-                legend="Eigen registry",
-                depends_on="services",
-                show_when={"contains": svc},
+            Div(
+                slot=COMPONENT_IMAGE_SLOT,
                 children=[f"services{{{svc}}}/config/registry"],
             )
         ]
@@ -199,16 +206,20 @@ class ImageRegistriesService(Service):
     # --- regels over het hele project --------------------------------------------------
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``).
+        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``), plus
+        de weg terug (``references.py``).
 
-        Ze kijken naar de andere projecten op het cluster en niet naar een configblok, dus
-        ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit project de dienst
-        aanvinkt: het gaat om waar een image NAAR wijst.
+        De eerste drie kijken naar de andere projecten op het cluster en niet naar een
+        configblok, dus ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit
+        project de dienst aanvinkt: het gaat om waar een image NAAR wijst. De vierde kijkt
+        naar het project als geheel -- componenten tegen de registrylijst -- en hoort om
+        dezelfde reden hier en niet bij een van de twee blokken.
         """
         return [
             *validate_proxy_organization_ownership(project_data),
             *validate_registry_entry_ownership(project_data),
             *validate_proxy_organization_claims(project_data),
+            *validate_registry_references(project_data),
         ]
 
     # --- projectbrede manifesten ------------------------------------------------------

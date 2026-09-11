@@ -7,7 +7,7 @@ via ``ModelFieldValidator`` naar.
 from __future__ import annotations
 
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import ModelFieldValidator, RequiredValidator
+from opi.forms.editables.validators import ModelFieldValidator
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.image_registries.config_model import (
     REGISTRY_NAME_MESSAGE,
@@ -58,18 +58,22 @@ REGISTRIES_SEQUENCE_EDITABLE = Editable(
     ],
 )
 
+# De keuze IS de selectie (RC-187). Het veld staat er zodra het project een registry
+# heeft, met "publiek" als standaard; een gekozen registry materialiseert de
+# dienstvermelding op dit component, de standaardwaarde haalt hem juist weg. Daarom geen
+# ``required`` en geen ``depends_on`` op de dienstenlijst: het veld bepaalt die lijst, niet
+# andersom. Of het veld verschijnt volgt uit zijn eigen keuzelijst
+# (``ImageRegistryOptionsProvider``), zodat er een bron is en geen tweede voorwaarde die
+# eruit kan lopen.
+#
 # ``values_must_exist``: een verwijzing naar een registry die niet bestaat sneuvelt bij
 # het opslaan in plaats van pas bij het pullen.
 COMPONENT_REGISTRY_EDITABLE = Editable(
     yaml_path=config_path(ConfigLayer.COMPONENT, _SVC, "config", "registry"),
     values_provider="ImageRegistryOptionsProvider",
     values_must_exist=True,
-    validator=RequiredValidator(),
-    required=True,
-    # "Verplicht" geldt alleen als het component de dienst aanvinkt.
-    depends_on="components[*]/services",
-    show_when={"contains": _SVC.value},
     virtualize=SERVICE_VIRTUALIZE,
+    remove_when_none=True,
 )
 
 DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE = Editable(

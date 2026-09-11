@@ -131,10 +131,15 @@ def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
 
     Walks up the path removing each dict key whose value became an empty dict, stopping
     at the first non-empty container or a list-item segment (``...[N]``). Skipped for
-    service-config and service-map (``{...}``) paths, where an empty entry is meaningful
-    (it marks a selected service in the base-component services list).
+    service-config paths. A service-map (``{...}``) path is normally skipped too, because
+    an empty entry is meaningful there -- it marks a selected service in the base-component
+    services list -- unless the service says its config IS that selection, in which case
+    the entry goes with it.
     """
-    if is_service_config_path(path) or "{" in path:
+    if is_service_config_path(path):
+        return
+    if "{" in path:
+        _prune_service_map_entry(data, path)
         return
     parts = path.split("/")
     while len(parts) > 1:
@@ -147,6 +152,74 @@ def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
             smart_delete_value(data, parent_path)
         else:
             break
+
+
+def _prune_service_map_entry(data: dict[str, Any], path: str) -> None:
+    """Remove the service entry *path* points into when nothing but its name is left.
+
+    Only for a service that declares ``component_selection_follows_config`` (RC-187):
+    there the chosen value IS the selection, so an entry whose config has just been
+    emptied says nothing at all -- not "public", not "chosen", nothing a reader could put
+    a meaning on. Emptying the field therefore also deselects the service on that
+    component, which is the whole point of having one control instead of two.
+
+    For every other service the entry stays: ticking the box and leaving the settings
+    blank is a state a user deliberately arrives at.
+    """
+    from opi.services.registry import get_service
+    from opi.services.services import service_entry_name
+    from opi.services.services_enums import ServiceType
+
+    segments = path.split("/")
+    index = next((i for i in reversed(range(len(segments))) if "{" in segments[i]), None)
+    if index is None:
+        return
+    key, _, filt = segments[index].partition("{")
+    service_name = filt.rstrip("}")
+    if "=" in service_name:
+        return
+    try:
+        service = get_service(ServiceType(service_name))
+    except ValueError:
+        return
+    if not service.component_selection_follows_config:
+        return
+
+    entries = smart_get_value(data, "/".join([*segments[:index], key]))
+    if not isinstance(entries, list):
+        return
+    for position, entry in enumerate(entries):
+        if service_entry_name(entry) != service_name:
+            continue
+        if _entry_carries_only_its_name(entry, service_name):
+            entries.pop(position)
+        return
+
+
+def _entry_carries_only_its_name(entry: Any, service_name: str) -> bool:
+    """Whether a services-list entry holds nothing beyond its identity.
+
+    Both entry shapes, because both occur in the fleet: the uniform record
+    (``{name: X, config: {...}}``) and the legacy single-key dict (``{X: {config: ...}}``),
+    which is what the ``{K}`` path filter still writes when it creates an entry.
+    """
+    from opi.services.services import service_entry_body
+
+    if isinstance(entry, str):
+        return True
+    if not isinstance(entry, dict):
+        return False
+    body = service_entry_body(entry, service_name)
+    if not isinstance(body, dict):
+        return not body
+    identity = {"name", "reference", "schema-version"}
+    for field_name, value in body.items():
+        if field_name in identity:
+            continue
+        if field_name == "config" and not value:
+            continue
+        return False
+    return True
 
 
 if TYPE_CHECKING:
