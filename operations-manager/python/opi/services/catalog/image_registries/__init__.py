@@ -144,6 +144,48 @@ class ImageRegistriesService(Service):
             )
         ]
 
+    # --- het vrije label en de slug die eruit volgt -----------------------------------
+
+    def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
+        """Geef elke registry zonder ``name`` er een, afgeleid van zijn label.
+
+        De afnemer typt "Code Overheid"; dat wij er een DNS-label van maken is onze eis en
+        niet zijn probleem. Hier en niet in een converter van de editable, want allebei de
+        schrijfwegen komen hier langs: de portal via ``post_merge`` van de sectie en de API
+        via ``registry.generate_missing_values``. Zo kan er geen registry ontstaan die de
+        ene weg wel een naam geeft en de andere niet.
+
+        Een bestaande naam blijft staan, ook als het label verandert: hij is de verwijzing
+        vanaf componenten en hij zit in de naam van het pull-secret.
+        """
+        from opi.services.catalog.image_registries.naming import registry_slug
+        from opi.services.project import Project
+
+        base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")
+        registries = Project(project_data).get(base) or []
+        if not isinstance(registries, list):
+            return {}
+        bezet = {entry["name"] for entry in registries if isinstance(entry, dict) and entry.get("name")}
+        gegenereerd: dict[str, str] = {}
+        for index, entry in enumerate(registries):
+            if not isinstance(entry, dict) or entry.get("name") or not entry.get("display-name"):
+                continue
+            slug = registry_slug(str(entry["display-name"]), bezet)
+            entry["name"] = slug
+            bezet.add(slug)
+            gegenereerd[f"{base}[{index}]/name"] = slug
+        if gegenereerd:
+            logger.info(
+                f"Registrynaam afgeleid voor {len(gegenereerd)} registry(s) van project "
+                f"'{project_data.get('name', 'unknown')}'"
+            )
+        return gegenereerd
+
+    def _generate_missing_names(self, project_data: dict[str, Any], _form_data: dict[str, Any]) -> None:
+        """De ``post_merge``-vorm van :meth:`generate_missing_values`: de portal geeft twee
+        dicts en wil niets terug, en een implementatie bedient allebei de wegen."""
+        self.generate_missing_values(project_data)
+
     # --- projectniveau: de wizardsectie ----------------------------------------------
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
@@ -170,6 +212,7 @@ class ImageRegistriesService(Service):
                 editables=[REGISTRIES_SEQUENCE],
                 layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")],
                 enforcer=RegistryTokenEnforcer(),
+                post_merge=self._generate_missing_names,
             )
             self._config_section_cache = cached
         return cached

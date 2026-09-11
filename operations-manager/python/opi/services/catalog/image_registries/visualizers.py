@@ -8,17 +8,26 @@ from opi.services.catalog.image_registries.editables import (
     COMPONENT_REGISTRY_EDITABLE,
     DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
     REGISTRIES_SEQUENCE_EDITABLE,
+    REGISTRY_DISPLAY_NAME_EDITABLE,
     REGISTRY_NAME_EDITABLE,
     REGISTRY_PASSWORD_EDITABLE,
     REGISTRY_UPSTREAM_EDITABLE,
     REGISTRY_USERNAME_EDITABLE,
 )
 
-REGISTRY_NAME = EditableVisualizer(
-    editable=REGISTRY_NAME_EDITABLE,
+REGISTRY_DISPLAY_NAME = EditableVisualizer(
+    editable=REGISTRY_DISPLAY_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Naam",
-    help_text="De naam waarmee je bij een component naar deze registry verwijst.",
+    help_text="Hoe je deze registry noemt, bijvoorbeeld Code Overheid. Vrije tekst.",
+)
+
+# Meegestuurd maar niet op het scherm: de slug is de verwijzing vanaf componenten en ligt
+# vast zodra hij bestaat. Zie REGISTRY_NAME_EDITABLE voor waarom hij niet weg kan.
+REGISTRY_NAME = EditableVisualizer(
+    editable=REGISTRY_NAME_EDITABLE,
+    widget=WidgetType.HIDDEN,
+    label="Verwijzing",
 )
 
 REGISTRY_UPSTREAM = EditableVisualizer(
@@ -57,7 +66,7 @@ REGISTRIES_SEQUENCE = EditableVisualizer(
         "De private registries waaruit dit project images haalt. Voor een publieke image hoef je hier niets "
         "in te vullen."
     ),
-    children=[REGISTRY_NAME, REGISTRY_UPSTREAM, REGISTRY_USERNAME, REGISTRY_PASSWORD],
+    children=[REGISTRY_DISPLAY_NAME, REGISTRY_NAME, REGISTRY_UPSTREAM, REGISTRY_USERNAME, REGISTRY_PASSWORD],
 )
 
 COMPONENT_REGISTRY = EditableVisualizer(

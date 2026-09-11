@@ -1242,6 +1242,9 @@ class ImageRegistryOptionsProvider:
             if len(passend) == 1:
                 entries = [passend[0], *(e for e in entries if e is not passend[0])]
 
+        # Het LABEL op het scherm, de slug als waarde: de afnemer noemde hem "Code
+        # Overheid" en hoort dat terug te zien, ook al verwijst het bestand met de slug.
+        labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
         names = [entry["name"] for entry in entries]
         if not names and not self._current_value:
             # Niets te kiezen, dus geen veld. Dat is de toestand van 47 van de 49
@@ -1251,7 +1254,7 @@ class ImageRegistryOptionsProvider:
         # De standaardwaarde staat vooraan en schrijft niets weg: afwezig BETEKENT
         # publiek, en de keuze ernaast is de selectie van de dienst op dit component.
         options = [{"value": "", "label": self._empty_label()}]
-        options.extend({"value": name, "label": name} for name in names)
+        options.extend({"value": name, "label": labels[name]} for name in names)
         if self._current_value and self._current_value not in names:
             options.append({"value": self._current_value, "label": f"{self._current_value} (bestaat niet meer)"})
         return options

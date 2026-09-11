@@ -33,6 +33,22 @@ services:
             password: <AGE>
 ```
 
+De naam is vrije tekst plus een afgeleide verwijzing, net als bij het project zelf:
+
+```yaml
+        registries:
+          - name: code-overheid          # de verwijzing, afgeleid en daarna bevroren
+            display-name: Code Overheid  # wat de afnemer typte
+```
+
+`display-name` mag ontbreken (elke registry van voor RC-187 heeft alleen een `name`); dan
+is de verwijzing zelf het label op het scherm. `name` mag ook ontbreken, maar alleen met een
+label ernaast: `generate_missing_values` leidt de slug er dan uit af met `registry_slug()`,
+uniek binnen het project, en laat een bestaande slug met rust -- hij is de verwijzing vanaf
+componenten en hij zit in de naam van het dockerconfigjson-secret, dus een gewijzigd label
+mag hem niet meenemen. Die haak draait op allebei de schrijfwegen: de portal via `post_merge`
+van de configsectie, de API via `registry.generate_missing_values`.
+
 Bij een component staat alleen een verwijzing bij naam, en alleen als er iets te verwijzen
 valt:
 
@@ -51,6 +67,55 @@ components:
 
 "Publieke registry" is een non-waarde: geen vermelding, geen sleutel. Een deployment mag de
 keuze overschrijven met dezelfde dienstvermelding onder `deployments[].components[].services`.
+
+### De keuze staat bij de image, en de keuze IS de selectie
+
+Zodra het project minstens een registry heeft, staat er bij elk component een keuzeveld
+**Registry**, direct achter het image-veld, zonder dat de dienst bij dat component is
+aangevinkt. Waar dat veld staat bepaalt het FORMULIER (`COMPONENT_IMAGE_SLOT` in
+`opi/forms/layout.py`), wat erin komt bepaalt de dienst (`slot=` op zijn layoutknoop).
+Een dienst die geen slot noemt landt nog steeds onderaan de componentvorm.
+
+Er is geen aan/uit voor deze dienst op componentniveau: hij staat niet in het rijtje vinkjes.
+Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken wat een
+aangevinkte dienst met waarde "publiek" betekent, en wat een uitgevinkte dienst met een
+registry erin betekent, en die twee regels lopen uit elkaar. Een keuzelijst met een
+expliciete "geen"-optie is net zo expliciet als een vinkje, alleen met meer opties.
+
+Drie richtingen, en ze gelden voor het formulier en voor de API:
+
+| Wat de afnemer doet | Wat er gebeurt |
+|---|---|
+| een registry kiezen | de dienstvermelding wordt gematerialiseerd op dat component |
+| "Publieke registry" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
+| niets kiezen | er verandert niets; afwezig BETEKENT publiek |
+
+Dat is precies de val waar `instructions/services.md` voor waarschuwt -- het `{K}`-padfilter
+materialiseert een dienst als bijwerking, dus een default wordt stil een selectie -- en die
+willen we hier WEL, maar alleen in de ene richting.
+
+De regel staat een keer, als `component_selection_follows_config` op de dienst, met twee
+lezers: `FilteredServiceOptionsProvider` laat de dienst uit het vinkjesrijtje, en
+`ServiceAdapter.remove_service_config` haalt bij het wissen de vermelding weg in plaats van
+hem terug te zetten naar een kale naam. Aan de formulierkant doet
+`_prune_service_map_entry` (`opi/forms/editables/processor.py`) hetzelfde zodra de laatste
+waarde uit het blok verdwijnt.
+
+Waar het veld VERSCHIJNT volgt uit zijn eigen keuzelijst: `hidden_without_options` op de
+editable vraagt dezelfde provider die de widget vult en waar `values_must_exist` een
+opgeslagen waarde tegen houdt. Geen tweede voorwaarde ernaast die eruit kan lopen. Heeft het
+project geen registries, dan blijft de componentvorm precies zoals hij was -- de toestand van
+47 van de 49 projecten.
+
+### De weg terug is geen stille weg
+
+Het keuzeveld verdwijnt als de laatste registry weggaat, maar de verwijzing in het
+projectbestand niet. `validate_registry_references` (`references.py`, aan de haak
+`validate_project`) weigert daarom het opslaan, met de componenten erbij die de registry nog
+gebruiken. Niet automatisch opruimen: dan verandert stilletjes waar een image vandaan komt.
+
+Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
+keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.
 
 De afnemer schrijft altijd de UPSTREAM, nooit een adres van het platform. Dat houdt het
 bestand overdraagbaar naar een ander platform.
@@ -170,6 +235,41 @@ vergelijken zijn de tokentoets (`enforcers.py`) en het vooruit invullen van het 
 
 `display_image()` is de weg terug, voor de schermen: een gebruiker ziet de eigen registry
 in plaats van de kale RCR-URL.
+
+## Wat een afnemer plakt is zelden een upstream
+
+`normalize_upstream()` (`upstream.py`) maakt van een geplakte browser-URL of een volledige
+image-verwijzing de upstream die wij nodig hebben:
+
+| Geplakt | Upstream |
+|---|---|
+| `https://code.overheid.nl/robbert/-/packages` | `code.overheid.nl/robbert` |
+| `https://github.com/orgs/rijksictgilde/packages` | `ghcr.io/rijksictgilde` |
+| `https://hub.docker.com/r/bitnami/nginx` | `docker.io/bitnami` |
+| `https://gitlab.com/groep/project/container_registry` | `registry.gitlab.com/groep/project` |
+| `code.overheid.nl/team/app:1.2` | `code.overheid.nl/team` |
+
+Alleen een tag of digest onderscheidt een image-verwijzing van een upstream met een pad:
+`code.overheid.nl/team` blijft dus zoals hij is. Een vorm die we niet kennen laten we met
+rust op de generieke bewerkingen na (protocol eraf, kleine letters, geen afsluitende schuine
+streep), zodat het patroon hem afwijst in plaats van er iets van te maken dat ergens anders
+heen wijst. Een eigen GitLab wordt om die reden niet geraden: de registryhost is daar een
+installatiekeuze.
+
+De omzetting hangt als `BeforeValidator` aan het veld in `config_model.py`, dus de API en het
+formulier (via `ModelFieldValidator`, dat zijn toets uit de ANNOTATIE bouwt) krijgen hem
+allebei; de schrijfkant van het formulier roept dezelfde functie aan via `UpstreamConverter`,
+en de migratie 2.8 -> 2.9 ook.
+
+Wat hij bewust NIET doet is een projectbestand repareren dat er al staat. De
+hele-bestandspoort draait het model met `STORED_CONTEXT_KEY`, en daar slaat de omzetting
+over: valideren schrijft niet terug, dus een opgeslagen `https://ghcr.io` zou door de poort
+komen en ONgewijzigd in het bestand blijven staan, waarna `normalize_prefix` hem nooit matcht
+en de registry stil niet meer geldt in plaats van luid geweigerd te worden.
+
+De volgorde in `Annotated` is niet vrijblijvend: met het patroon VOOR de before-validator
+staat het patroon ook in het gerenderde JSON-schema, en dat fragment is waar een client de
+regel leest.
 
 ## De provisioning-backend
 
@@ -385,7 +485,9 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 |---|---|
 | Regelvorm en `resolve_image()` | `opi/services/catalog/image_registries/rules.py` |
 | De twee bronnen samengevoegd | `opi/services/catalog/image_registries/resolution.py` |
-| Naamregels | `opi/services/catalog/image_registries/naming.py` |
+| Naamregels en de slug uit een label | `opi/services/catalog/image_registries/naming.py` |
+| Upstream uit wat er geplakt is | `opi/services/catalog/image_registries/upstream.py` |
+| De weg terug bij het opslaan | `opi/services/catalog/image_registries/references.py` |
 | Backends | `opi/services/catalog/image_registries/backends.py` |
 | Eigendomsregels over het hele project | `opi/services/catalog/image_registries/ownership.py`, aan de haak `validate_project` |
 | Clusterconfig | `get_image_registries_config` in `opi/core/cluster_config.py` |

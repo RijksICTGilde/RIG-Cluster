@@ -1,25 +1,34 @@
 # Eigen container registries
 
 Draait je applicatie op een image die in je eigen private registry staat, dan vul je hier
-in waar die registry is en met welk token wij erbij mogen. Daarna kies je bij een component
-welke registry bij de image van dat component hoort.
+in waar die registry is en met welk token wij erbij mogen. Daarna staat er bij elk component
+een keuzeveld **Registry**, direct onder het image-veld, waar je zegt waar die image vandaan
+komt.
 
 ## Wat je invult
 
-- **Naam** - waarmee je bij een component naar deze registry verwijst.
+- **Naam** - hoe jij deze registry noemt, bijvoorbeeld `Code Overheid`. Vrije tekst; wij
+  maken er zelf een korte verwijzing van.
 - **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol,
-  bijvoorbeeld `code.overheid.nl/jouw-naam`. In kleine letters, en zonder tag: die hoort
-  bij de image en niet bij de registry.
+  bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag
+  je die URL hier ook gewoon plakken: wij maken er de goede vorm van. Datzelfde geldt voor
+  een volledige image-verwijzing met tag.
 - **Gebruikersnaam** en **token** - waarmee wij bij je images mogen.
 
 Je schrijft altijd je eigen registry, nooit een adres van het platform. Wat er technisch
 onder gebeurt verschilt per cluster, en dat hoef je niet te weten: je projectbestand blijft
 hetzelfde.
 
+De naam die je kiest ligt vast zodra de registry bestaat, ook als je het label later
+verandert: componenten verwijzen ernaar en hij zit in de naam van het pull-secret.
+
 ## Een publieke image
 
-Dan vink je deze dienst bij dat component niet aan en vul je niets in. Publieke images
-werken vanzelf.
+Dan laat je het keuzeveld bij dat component op **Publieke registry, geen token nodig**
+staan. Dat is de standaard, en er wordt niets opgeslagen. Publieke images werken vanzelf.
+
+Heeft je project nog geen enkele registry, dan is dat keuzeveld er ook niet: er valt dan
+niets te kiezen. Je eerste registry voeg je dus hier toe, in dit blok.
 
 De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt.
 Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder
@@ -33,6 +42,12 @@ alleen als meer dan een van je registries bij dezelfde image past.
   kant op. Wij toetsen het token daarom bij het opslaan.
 - Op productie **verloopt het token na 90 dagen**. Daarna moet je het opnieuw invullen.
 - Er zit een **quotum** op wat er van je images wordt bewaard.
+
+## Een registry weghalen
+
+Dat kan pas als geen enkel component hem meer gebruikt. Anders weigeren we het opslaan en
+noemen we de componenten erbij die hem nog aanwijzen. We ruimen ze niet zelf op: dan zou
+stilletjes veranderen waar een image vandaan komt, en daar hoort iemand bij na te denken.
 
 ## De dienst uitzetten
 

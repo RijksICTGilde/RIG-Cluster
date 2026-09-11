@@ -76,3 +76,36 @@ def registry_destination(upstream: str, registry_host: str, customer_name: str, 
 def direct_secret_name(project_name: str, registry_name: str) -> str:
     """Het dockerconfigjson-secret op een cluster zonder proxy-operator, projectbreed."""
     return sanitize_kubernetes_name(f"{project_name}-{registry_name}-registry")
+
+
+#: Hoeveel varianten we proberen voor we het opgeven; met meer registries dan dit in een
+#: project is er iets anders aan de hand dan een naambotsing.
+SLUG_ATTEMPTS = 100
+
+
+def registry_slug(label: str, taken: set[str]) -> str:
+    """De verwijzing die bij een vrij label hoort, uniek binnen het project.
+
+    De afnemer typt "Code Overheid" en niet "code-overheid": een DNS-label is onze eis en
+    niet zijn probleem. Dezelfde vorm die het project zelf al heeft met ``name`` plus
+    ``display-name``, een niveau lager.
+
+    De slug is BEVROREN zodra hij bestaat -- deze functie draait alleen voor een entry die
+    er nog geen heeft (zie ``ImageRegistriesService.generate_missing_values``). Hij is de
+    verwijzing vanaf componenten en hij zit in de naam van het dockerconfigjson-secret,
+    dus een label dat later verandert mag hem niet meenemen.
+
+    ``REGISTRY_NAME_PATTERN`` eist een kleine LETTER vooraan, zodat de naam nooit als
+    YAML-getal wordt gelezen; een label dat met een cijfer begint krijgt daarom een ``r``.
+    """
+    basis = sanitize_kubernetes_name(label, max_length=60)
+    if not basis[0].isalpha():
+        basis = f"r{basis}"[:60]
+    if basis not in taken:
+        return basis
+    for volgnummer in range(2, SLUG_ATTEMPTS + 1):
+        kandidaat = f"{basis}-{volgnummer}"
+        if kandidaat not in taken:
+            return kandidaat
+    msg = f"Geen vrije registrynaam te maken voor label '{label}'"
+    raise ValueError(msg)
