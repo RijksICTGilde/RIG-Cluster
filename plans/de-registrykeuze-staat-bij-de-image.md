@@ -13,10 +13,10 @@ De volgorde moet omgekeerd: de keuze staat er altijd, bij het image-veld, en het
 ## Wat we bouwen
 
 1. **Projectniveau blijft zoals het is.** Dienst aanvinken, configureren in een eigen blok, net als attachments. Daar verandert niets aan.
-2. **Bij elk component met een image staat een keuzeveld "Registry"**, altijd zichtbaar, zonder dat de dienst bij dat component is aangevinkt.
+2. **Zodra het project minstens één private registry heeft, staat er bij elk component met een image een keuzeveld "Registry"**, zonder dat de dienst bij dat component is aangevinkt. Heeft het project er geen, dan is dat veld er ook niet: de componentvorm blijft dan precies zoals hij nu is, en dat geldt vandaag voor 47 van de 49 projecten.
 3. **De standaardwaarde is "Publieke registry, geen token nodig"**, en die schrijft niets weg. Geen dienstvermelding, geen configblok, geen sleutel. Afwezig betekent publiek, precies zoals nu.
 4. **Kies je wel een registry, dan materialiseert dat de dienstvermelding** op dat component. De keuze is de selectie.
-5. **In dezelfde keuzelijst zit "nieuwe registry toevoegen"**, met de upstream alvast ingevuld uit de image waar je op staat. Dan hoeft niemand terug naar het projectblok om verder te kunnen.
+5. **De eerste registry voeg je altijd toe in het dienstblok**, want daar komt het veld vandaan. Een "nieuwe registry toevoegen" in dezelfde keuzelijst kan later nog, voor de tweede en verder, maar dat is een gemak en geen onderdeel van dit plan.
 
 ## De nieuwe haak: een plek in plaats van een aanhangsel
 
@@ -34,6 +34,10 @@ Twee vormen zijn denkbaar en de keuze is niet vrijblijvend:
 
 - **Een slot in de layout** (voorkeur): de fieldset noemt de plek, een dienst declareert bij zijn layoutknopen in welk slot ze horen, en zonder opgave blijft het gedrag zoals het is. Voorspelbaar, want de volgorde in het formulier blijft van het formulier.
 - **Een anker op de knoop** (`after="image"`): de dienst zegt waar hij landt. Flexibeler, maar dan bepaalt een dienst de volgorde van een formulier dat hij niet bezit, en twee diensten die hetzelfde anker kiezen vechten.
+
+### Waar de zichtbaarheid vandaan komt
+
+Het veld verschijnt wanneer zijn eigen keuzelijst iets te kiezen heeft, dus wanneer de options-provider minstens één registry uit de dienstconfig van dit project teruggeeft. Geen aparte voorwaarde ernaast die uit de pas kan lopen met de lijst: één bron, en de zichtbaarheid volgt eruit.
 
 ## De val die we hier bewust opzoeken
 
@@ -72,4 +76,3 @@ Allebei horen ze op de plek waar het formulier en de API samenkomen, dus in het 
 
 - Slot of anker. Ik neig naar het slot, zie hierboven.
 - Geldt hetzelfde veld ook op een deployment-component, waar de override zit? Waarschijnlijk ja, met dezelfde standaard.
-- Wat toont het veld bij een project zonder enkele registry: alleen "publiek", of "publiek" plus "nieuwe registry toevoegen"? Dat tweede maakt de dienst vindbaar op de plek waar de vraag ontstaat, maar zet ook een dienstconfiguratie in een componentscherm.
