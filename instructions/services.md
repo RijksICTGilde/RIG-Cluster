@@ -472,10 +472,15 @@ first inhabitant.
 
 `component_selection_follows_config` (default False) says a component does not tick this
 service separately: its own field, with an explicit "none" option, is the choice.
-`image-registries` is the first and so far only one. Two consequences follow from that one
-declaration -- the service gets no checkbox in the per-component picker, and clearing its
-config removes the ENTRY instead of demoting it to a bare string, on the form path
-(`_prune_service_map_entry`) and on the API path (`ServiceAdapter.remove_service_config`).
+`image-registries` is the first and so far only one. Three consequences follow from that one
+declaration -- the service gets no checkbox in the per-component picker; clearing its config
+removes the ENTRY instead of demoting it to a bare string, on the form path
+(`_prune_service_map_entry`) and on the API path (`ServiceAdapter.remove_service_config`); and
+`_strip_removed_services_from_components` (the `post_merge` of the services section) leaves its
+component entries alone. That last one is what lets a `validate_project` guard still SEE the
+reference when the project-level service is deselected: without it the hook, which runs first,
+has already thrown the entry away, and a removal that should be refused happens silently
+instead.
 
 Only declare it where the config has an explicit "none" value, otherwise there is no way
 left to say "not this one". And note it INVERTS the default-seeding trap below: here a

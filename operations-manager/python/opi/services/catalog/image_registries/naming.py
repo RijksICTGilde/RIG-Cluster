@@ -97,10 +97,14 @@ def registry_slug(label: str, taken: set[str]) -> str:
 
     ``REGISTRY_NAME_PATTERN`` eist een kleine LETTER vooraan, zodat de naam nooit als
     YAML-getal wordt gelezen; een label dat met een cijfer begint krijgt daarom een ``r``.
+    Dat prefix schuift de grens een teken naar links, en het afkappen daarna kan dus weer
+    op een streepje eindigen -- wat het patroon weigert, op een veld dat de afnemer sinds
+    RC-187 niet meer ziet. Daarom hier de opschoning van ``sanitize_kubernetes_name``
+    herhalen op de nieuwe grens.
     """
     basis = sanitize_kubernetes_name(label, max_length=60)
     if not basis[0].isalpha():
-        basis = f"r{basis}"[:60]
+        basis = f"r{basis}"[:60].rstrip("-")
     if basis not in taken:
         return basis
     for volgnummer in range(2, SLUG_ATTEMPTS + 1):

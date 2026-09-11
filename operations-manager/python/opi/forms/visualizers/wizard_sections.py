@@ -459,6 +459,15 @@ def _strip_removed_services_from_components(
     the YAML becomes inconsistent and the service-removal detection in
     ``cleanup_removed_services_from_yaml_change`` won't fire (it checks
     component-level usage).
+
+    Met EEN uitzondering: een dienst die ``component_selection_follows_config``
+    declareert wordt hier niet opgeruimd (RC-187). Daar IS de waarde de selectie, dus
+    wegstrippen betekent stilletjes veranderen waar een image vandaan komt -- precies
+    de wijziging waar iemand bij moet nadenken. De verwijzing blijft dus staan en
+    ``validate_registry_references`` weigert de save met de componenten erbij.
+    Zonder deze uitzondering doet dezelfde handeling bovendien twee verschillende
+    dingen: de lijstvorm op een component wordt gestript, de dict-vorm op een
+    deployment-component niet, en die laatste wordt dan wel geweigerd.
     """
     project_services = set(_extract_services(project_data))
     for comp in project_data.get("components", []):
@@ -470,7 +479,21 @@ def _strip_removed_services_from_components(
         # Use the canonical helper: the previous local reader ignored the component
         # ``{reference: X, config: Y}`` two-key record and returned None for it, so a
         # storage/config-carrying entry was stripped out as "not a project service".
-        comp["services"] = [svc for svc in comp_services if service_entry_name(svc) in project_services]
+        comp["services"] = [
+            svc
+            for svc in comp_services
+            if service_entry_name(svc) in project_services or _selection_follows_config(service_entry_name(svc))
+        ]
+
+
+def _selection_follows_config(service_name: str | None) -> bool:
+    """Of deze dienst zijn componentvermelding zelf draagt (de waarde IS de selectie)."""
+    if service_name is None:
+        return False
+    try:
+        return get_service(ServiceType(service_name)).component_selection_follows_config
+    except ValueError:
+        return False
 
 
 # Wire the same component-reconciliation hook onto the create-wizard services

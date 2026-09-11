@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from opi.forms.visualizers.wizard_sections import _strip_removed_services_from_components
 from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
@@ -35,9 +36,18 @@ class TestDeGrendel:
         assert "component 'web'" in fouten[0]
 
     def test_de_dienst_uitzetten_wordt_net_zo_goed_geweigerd(self) -> None:
-        """Geen dienstvermelding op projectniveau betekent geen registries."""
+        """Geen dienstvermelding op projectniveau betekent geen registries.
+
+        Gemeten door de SAVE-ROUTE heen, want die is de reden dat deze grendel bestaat:
+        de dienstensectie draait haar ``post_merge`` voor ``validate_project`` kijkt, en
+        die gooide de componentvermelding weg voordat de grendel hem kon zien. Dan is de
+        toets los groen terwijl de route stilletjes opruimt -- precies wat het plan
+        verbiedt.
+        """
         project = _project([])
         del project["services"]
+        _strip_removed_services_from_components(project, {})
+        assert project["components"][0]["services"], "de vermelding mag niet stil verdwijnen"
         assert len(validate_registry_references(project)) == 1
 
     def test_met_de_registry_erin_is_er_niets_aan_de_hand(self) -> None:
@@ -46,6 +56,13 @@ class TestDeGrendel:
     def test_een_component_zonder_keuze_houdt_niets_tegen(self) -> None:
         """Publiek is de afwezigheid van een keuze, en die blokkeert nooit."""
         assert validate_registry_references(_project([], component_registry=None)) == []
+
+    def test_de_laatste_registry_weghalen_overleeft_de_save_route_ook(self) -> None:
+        """De dienst staat er nog, alleen de registries zijn weg: de strip laat de
+        vermelding dan sowieso staan, en de grendel weigert."""
+        project = _project([])
+        _strip_removed_services_from_components(project, {})
+        assert len(validate_registry_references(project)) == 1
 
     def test_de_override_op_een_deployment_telt_mee(self) -> None:
         """Daar is ``services`` een dict, en een verwijzing die daar achterblijft is net
