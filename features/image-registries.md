@@ -256,6 +256,13 @@ streep), zodat het patroon hem afwijst in plaats van er iets van te maken dat er
 heen wijst. Een eigen GitLab wordt om die reden niet geraden: de registryhost is daar een
 installatiekeuze.
 
+`upstream_from_project_images()` doet het omgekeerde en vult het veld vooruit in: een
+nieuwe registry krijgt de upstream die uit de images van dit project volgt, en alleen als
+die eenduidig is. De afnemer heeft zijn image al ingetypt, en op ODCN kunnen we de vraag
+niet weglaten -- daar wordt een proxy-organisatie aangemaakt voor precies een
+upstream-namespace, en die moet er zijn voordat er een image is. Wijzen de images naar meer
+dan een prefix, dan is de vraag juist het punt en vullen we niets in.
+
 De omzetting hangt als `BeforeValidator` aan het veld in `config_model.py`, dus de API en het
 formulier (via `ModelFieldValidator`, dat zijn toets uit de ANNOTATIE bouwt) krijgen hem
 allebei; de schrijfkant van het formulier roept dezelfde functie aan via `UpstreamConverter`,

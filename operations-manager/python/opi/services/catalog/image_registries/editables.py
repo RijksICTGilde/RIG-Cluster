@@ -15,6 +15,7 @@ from opi.services.catalog.image_registries.config_model import (
     RegistryEntry,
 )
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter, UpstreamConverter
+from opi.services.catalog.image_registries.upstream import upstream_from_project_images
 from opi.services.services_enums import ServiceType
 
 _SVC = ServiceType.IMAGE_REGISTRIES
@@ -47,11 +48,15 @@ REGISTRY_NAME_EDITABLE = Editable(
     remove_when_none=True,
 )
 
+# De ``default`` vult de upstream vooruit in uit de images die het project al heeft, en
+# alleen als die eenduidig zijn. Een default die niets overschrijft: hij geldt alleen voor
+# een rij die nog geen upstream draagt, dus voor een nieuwe registry.
 REGISTRY_UPSTREAM_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "upstream"),
     required=True,
     validator=ModelFieldValidator(RegistryEntry, "upstream", UPSTREAM_MESSAGE),
     converter=UpstreamConverter(),
+    default=upstream_from_project_images,
 )
 
 REGISTRY_USERNAME_EDITABLE = Editable(
