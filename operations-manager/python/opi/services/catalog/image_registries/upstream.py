@@ -17,6 +17,7 @@ zodat een onbekende vorm door het patroon wordt afgewezen in plaats van stil ver
 from __future__ import annotations
 
 import re
+from typing import Any
 
 #: Waar GitHub-packages werkelijk staan; ``github.com`` is de BROWSER en geen registry.
 GITHUB_REGISTRY = "ghcr.io"
@@ -118,3 +119,39 @@ def _without_image_reference(host: str, segments: list[str]) -> str:
     if not segments or not _TAG_OR_DIGEST.search(segments[-1]):
         return "/".join([host, *segments])
     return "/".join([host, *segments[:-1]])
+
+
+def upstream_from_project_images(project_data: dict[str, Any]) -> str | None:
+    """De upstream die uit de images van dit project volgt, of None als hij niet volgt.
+
+    De afnemer heeft zijn image al ingetypt voordat hij een registry toevoegt, en de
+    upstream staat daar in: ``code.overheid.nl/team/app:1.2`` zegt ``code.overheid.nl/team``.
+    Dat vooruit invullen scheelt hem de vraag waarom wij iets willen weten dat hij ons al
+    verteld heeft -- op ODCN moeten we het namelijk wel weten: daar wordt een
+    proxy-organisatie aangemaakt voor precies EEN upstream-namespace, en die moet er zijn
+    voordat er een image is.
+
+    Alleen als het ANTWOORD eenduidig is. Wijzen de images van dit project naar meer dan een
+    prefix, dan is er niets af te leiden en is de vraag juist het punt; een gok zou een
+    registry opleveren die nergens bij hoort. Een image zonder host (``nginx:alpine``) telt
+    niet mee: die staat op Docker Hub en daar heb je geen eigen registry voor nodig.
+    """
+    prefixes = {
+        prefix
+        for image in _project_images(project_data)
+        if (prefix := normalize_upstream(image)) and "." in prefix.split("/", 1)[0]
+    }
+    return prefixes.pop() if len(prefixes) == 1 else None
+
+
+def _project_images(project_data: dict[str, Any]) -> list[str]:
+    """Elke image die in dit projectbestand staat, op een component of op een deployment."""
+    dragers = list(project_data.get("components", []) or [])
+    for deployment in project_data.get("deployments", []) or []:
+        if isinstance(deployment, dict):
+            dragers.extend(deployment.get("components", []) or [])
+    return [
+        component["image"]
+        for component in dragers
+        if isinstance(component, dict) and isinstance(component.get("image"), str)
+    ]

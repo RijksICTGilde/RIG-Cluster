@@ -222,3 +222,66 @@ class TestEenBestaandeRegistryBlijftOpslaanbaar:
         RegistryEntry(**{"display-name": "Code Overheid", "upstream": "ghcr.io"})
         with pytest.raises(ValidationError):
             RegistryEntry(upstream="ghcr.io")
+
+
+class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
+    """De afnemer heeft zijn image al ingetypt; de upstream staat daarin.
+
+    Wij kunnen hem niet weglaten -- op ODCN wordt er een proxy-organisatie aangemaakt voor
+    precies EEN upstream-namespace, en die moet er zijn voordat er een image is -- dus nemen
+    we de vraag weg in plaats van het veld.
+    """
+
+    def test_uit_een_image_op_een_component(self) -> None:
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        project = {"components": [{"name": "web", "image": "code.overheid.nl/team/app:1.2"}]}
+        assert upstream_from_project_images(project) == "code.overheid.nl/team"
+
+    def test_uit_een_image_op_een_deployment(self) -> None:
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        project = {"deployments": [{"components": [{"reference": "web", "image": "ghcr.io/org/app:1"}]}]}
+        assert upstream_from_project_images(project) == "ghcr.io/org"
+
+    def test_twee_prefixen_leveren_niets_op(self) -> None:
+        """Dan is de vraag juist het punt, en zou een gok een registry opleveren die
+        nergens bij hoort."""
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        project = {"components": [{"image": "code.overheid.nl/team/a:1"}, {"image": "ghcr.io/org/b:2"}]}
+        assert upstream_from_project_images(project) is None
+
+    def test_dezelfde_prefix_twee_keer_is_wel_eenduidig(self) -> None:
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        project = {"components": [{"image": "code.overheid.nl/team/a:1"}, {"image": "code.overheid.nl/team/b:2"}]}
+        assert upstream_from_project_images(project) == "code.overheid.nl/team"
+
+    def test_een_image_zonder_host_telt_niet_mee(self) -> None:
+        """``nginx:alpine`` staat op Docker Hub, en daar heb je geen eigen registry voor."""
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        assert upstream_from_project_images({"components": [{"image": "nginx:alpine"}]}) is None
+
+    def test_zonder_images_wordt_er_niets_ingevuld(self) -> None:
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        assert upstream_from_project_images({}) is None
+
+    def test_het_veld_draagt_die_default(self) -> None:
+        from opi.services.catalog.image_registries.editables import REGISTRY_UPSTREAM_EDITABLE
+        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
+
+        assert REGISTRY_UPSTREAM_EDITABLE.default is upstream_from_project_images
+
+    def test_een_bestaande_upstream_wordt_er_niet_door_overschreven(self) -> None:
+        """De default geldt alleen voor een rij die er nog geen draagt, dus voor een nieuwe
+        registry; anders zou het openen van het blok bestaande registries verbouwen."""
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.services.catalog.image_registries.visualizers import REGISTRY_UPSTREAM
+
+        processor = EditableFormProcessor()
+        processor._yaml_data = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
+        assert processor._effective_value(REGISTRY_UPSTREAM, "ghcr.io/anders") == "ghcr.io/anders"
+        assert processor._effective_value(REGISTRY_UPSTREAM, "") == "code.overheid.nl/team"
