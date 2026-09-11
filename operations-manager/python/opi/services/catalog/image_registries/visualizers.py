@@ -19,7 +19,11 @@ REGISTRY_DISPLAY_NAME = EditableVisualizer(
     editable=REGISTRY_DISPLAY_NAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Naam",
-    help_text="Hoe je deze registry noemt, bijvoorbeeld Code Overheid. Vrije tekst.",
+    help_text=(
+        "Hoe je deze registry noemt, bijvoorbeeld Code Overheid. Vrije tekst; wij maken er "
+        "zelf een korte verwijzing van. Laat je hem leeg bij een registry die er al is, dan "
+        "blijft die verwijzing op het scherm staan."
+    ),
 )
 
 # Meegestuurd maar niet op het scherm: de slug is de verwijzing vanaf componenten en ligt
