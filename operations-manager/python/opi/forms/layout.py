@@ -24,6 +24,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+#: De benoemde plek in het componentformulier, direct achter het image-veld.
+#:
+#: Het FORMULIER bepaalt WAAR de plek zit, een dienst bepaalt WAT erin komt: een
+#: layoutknoop met ``slot=COMPONENT_IMAGE_SLOT`` landt daar in plaats van onderaan de
+#: componentvorm. Andersom -- een dienst die zelf een anker kiest ("na image") -- zou
+#: betekenen dat een dienst de volgorde bepaalt van een formulier dat hij niet bezit, en
+#: dat twee diensten die hetzelfde anker kiezen om dezelfde plek vechten.
+COMPONENT_IMAGE_SLOT = "component-image"
+
+
 @dataclass
 class LayoutElement:
     """
@@ -32,10 +42,14 @@ class LayoutElement:
     Attributes:
         css_class: Additional CSS classes
         attributes: Extra HTML attributes
+        slot: Name of the form slot this node belongs in. ``None`` (the
+            default) keeps the existing behaviour: the node is appended
+            where the collecting form appends unslotted nodes.
     """
 
     css_class: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)
+    slot: str | None = None
 
     def __post_init__(self) -> None:
         """Initialize default attributes dict if None."""

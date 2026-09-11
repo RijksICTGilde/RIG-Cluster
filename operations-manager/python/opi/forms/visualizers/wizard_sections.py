@@ -17,7 +17,7 @@ from opi.forms.editables.enforcers import (
     UniqueReferencesEnforcer,
     extract_service_names,
 )
-from opi.forms.layout import Fieldset, LayoutElement, Sequence, TemplatePartial
+from opi.forms.layout import COMPONENT_IMAGE_SLOT, Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
@@ -64,18 +64,25 @@ def _extract_services(data: dict[str, Any]) -> list[str]:
     return []
 
 
-def _service_component_layouts() -> list[Any]:
+def _service_component_layouts(slot: str | None = None) -> list[Any]:
     """Collect the per-component layout nodes each service hooks into the component
     form (RC-5 'service owns its fields'), in registry order. A component-level service
     (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
-    of it living hand-authored in COMPONENTS_SECTION."""
+    of it living hand-authored in COMPONENTS_SECTION.
+
+    *slot* selects which PLACE in the component form is being filled. The form names
+    its slots (``COMPONENT_IMAGE_SLOT``) and a service marks a layout node for one by
+    setting ``slot=`` on it; a node without a slot keeps landing at the bottom, which
+    is what ``slot=None`` (the default) collects. One node belongs to exactly one
+    place, so the two calls together still yield every node exactly once.
+    """
     contributors = sorted(
         (get_service(service_type) for service_type in ServiceType),
         key=lambda s: s.config_component_order,
     )
     nodes: list[Any] = []
     for service in contributors:
-        nodes.extend(service.config_component_layout())
+        nodes.extend(node for node in service.config_component_layout() if getattr(node, "slot", None) == slot)
     return nodes
 
 
@@ -160,6 +167,11 @@ COMPONENTS_SECTION = FormSection(
                     children=[
                         "name",
                         "image",
+                        # De benoemde plek direct achter het image-veld: waar een image
+                        # vandaan komt is een eigenschap van dat veld, niet iets dat
+                        # onderaan het formulier hoort. Welke dienst hier landt bepaalt
+                        # de dienst zelf, met ``slot=`` op zijn layoutknoop.
+                        *_service_component_layouts(COMPONENT_IMAGE_SLOT),
                         # Het startcommando hoort bij het image: het vervangt de entrypoint
                         # daarvan, dus je beoordeelt de twee samen.
                         "command",
