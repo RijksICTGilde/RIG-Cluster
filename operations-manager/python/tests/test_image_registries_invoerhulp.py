@@ -103,8 +103,12 @@ class TestDeNaamMagEenVrijLabelZijn:
 
         from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN
 
-        for label in ("Code Overheid", "2e registry", "A" * 90, "!!!"):
-            assert re.match(REGISTRY_NAME_PATTERN, registry_slug(label, set()))
+        # De laatste twee zijn de combinatie die de losse gevallen missen: niet-letter
+        # vooraan EN lang. Het ``r``-prefix schuift de afkapgrens dan een teken naar
+        # links, en die grens kan midden in een streepje vallen.
+        for label in ("Code Overheid", "2e registry", "A" * 90, "!!!", "9" + "a" * 57 + "-b", "9" + "a" * 90):
+            slug = registry_slug(label, set())
+            assert re.fullmatch(REGISTRY_NAME_PATTERN, slug), f"{label!r} -> {slug!r}"
 
 
 def _project(registries: list[dict[str, Any]]) -> dict[str, Any]:

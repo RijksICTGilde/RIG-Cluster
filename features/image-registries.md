@@ -109,10 +109,21 @@ project geen registries, dan blijft de componentvorm precies zoals hij was -- de
 
 ### De weg terug is geen stille weg
 
-Het keuzeveld verdwijnt als de laatste registry weggaat, maar de verwijzing in het
-projectbestand niet. `validate_registry_references` (`references.py`, aan de haak
-`validate_project`) weigert daarom het opslaan, met de componenten erbij die de registry nog
-gebruiken. Niet automatisch opruimen: dan verandert stilletjes waar een image vandaan komt.
+Het keuzeveld verdwijnt als de laatste registry weggaat OF als de dienst op projectniveau
+wordt uitgezet, maar de verwijzing in het projectbestand niet. `validate_registry_references`
+(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de
+componenten erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert
+stilletjes waar een image vandaan komt.
+
+Voor de tweede route is daar een uitzondering voor nodig in
+`_strip_removed_services_from_components` (`wizard_sections.py`, de `post_merge` van de
+dienstensectie). Die hook draait VOOR `validate_project` en gooit elke componentvermelding weg
+waarvan de dienst niet meer op projectniveau staat -- dan is de verwijzing er niet meer tegen
+de tijd dat de grendel kijkt. Diensten die `component_selection_follows_config` declareren
+slaat hij daarom over: daar IS de waarde de selectie, dus opruimen betekent stilletjes
+veranderen waar een image vandaan komt. Zonder die uitzondering deed dezelfde handeling
+bovendien twee verschillende dingen -- de lijstvorm op een component werd gestript, de
+dict-vorm op een deployment-component niet, en die laatste werd dan wel geweigerd.
 
 Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
 keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.

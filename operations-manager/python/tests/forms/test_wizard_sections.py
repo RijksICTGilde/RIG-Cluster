@@ -20,6 +20,7 @@ from opi.forms.visualizers.wizard_sections import (
     _strip_removed_services_from_components,
 )
 from opi.services.services import service_entry_name
+from opi.services.services_enums import ServiceType
 
 
 class TestSectionDefinitions:
@@ -274,6 +275,28 @@ class TestStripRemovedServicesFromComponents:
         _strip_removed_services_from_components(data, {})
         assert data["components"][0]["services"] == ["persistent-storage"]
         assert data["components"][1]["services"] == []
+
+    def test_een_dienst_waarvan_de_waarde_de_selectie_is_blijft_staan(self):
+        """RC-187: bij ``image-registries`` IS de keuze de vermelding, dus wegstrippen
+        verandert stilletjes waar een image vandaan komt. Die verwijzing blijft staan en
+        ``validate_registry_references`` weigert de save. Een gewone dienst ernaast gaat
+        wel weg -- dat is de tegenproef dat de uitzondering niet te breed is."""
+        data = {
+            "services": [],
+            "components": [
+                {
+                    "name": "app",
+                    "services": [
+                        "keycloak",
+                        {"name": ServiceType.IMAGE_REGISTRIES.value, "config": {"registry": "code-overheid"}},
+                    ],
+                },
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == [
+            {"name": ServiceType.IMAGE_REGISTRIES.value, "config": {"registry": "code-overheid"}}
+        ]
 
     def test_services_edit_section_has_post_merge(self):
         assert SERVICES_EDIT_SECTION.post_merge is _strip_removed_services_from_components
