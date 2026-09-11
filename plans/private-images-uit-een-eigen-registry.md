@@ -329,7 +329,7 @@ Onderweg zijn drie vormen overwogen. Eén dienst met een altijd-draaiend deel en
 4. Hoeveel proxy-organisaties verdraagt RCR per klant, en telt hun quotum mee in de 50 GB van de klant?
 5. Kan jullie admission-rewrite een proxy-organisatie in de eigen namespace voorrang geven boven de gedeelde proxy? Nu stuurt hij een private upstream naar de gedeelde cache, waar geen credentials op zitten, en daarom moeten wij zelf herschrijven. Kan het aan jullie kant, dan vervalt onze omzetting helemaal.
 6. In de gedeelde `code-overheid-rig` staat nog een image uit de tijd dat het pakket publiek was, terwijl het bovenstrooms nu privé is. Hoe gaan jullie om met zulke restanten?
-7. Waarop selecteert de replicatie van `pullsecrets-rig` een serviceaccount: op het label `customer.odc-noord.nl/replication=true` uit jullie documentatie, op `projectcapsule.dev/managed-by=replications` (dat is wat wij in `rig-prd-test` op de `default` serviceaccount zagen staan), of gewoon op de naam `default`? Onze eigen serviceaccount heet `<project>-sa` en draagt geen van beide labels, dus wij vallen er zo te zien buiten — maar wij willen weten waar wij vanaf moeten blijven in plaats van het te gokken.
+7. Waarop selecteert de replicatie van `pullsecrets-rig` een serviceaccount: op het label `customer.odc-noord.nl/replication=true` uit jullie documentatie, op `projectcapsule.dev/managed-by=replications` (dat is wat wij in `rig-prd-test` op de `default` serviceaccount zagen staan), of gewoon op de naam `default`? Onze eigen serviceaccount heet `<project>-sa` en draagt geen van beide labels, dus wij vallen er zo te zien buiten, maar wij willen weten waar wij vanaf moeten blijven in plaats van het te gokken.
 
 ## Wat we bewust niet doen
 

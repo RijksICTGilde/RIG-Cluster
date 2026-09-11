@@ -321,11 +321,11 @@ Is er wel een versleutelde waarde maar geen projectsleutel, dan stopt het schrij
 fout (`get_decoded_project_private_key_sync`). Stil geen secret schrijven levert een
 deployment op die aan de pull blijft hangen zonder dat er iets in de weg stond.
 
-### Elk stringveld van de entry draagt een patroon
+### Vier van de vijf velden van de entry dragen een patroon
 
-`upstream` en `password` waren de twee die met de sleutel mee hadden moeten verhuizen. De
-andere twee velden van `RegistryEntry` hebben er om dezelfde reden een gekregen, want beide
-komen ongequote in een gerenderd manifest terecht.
+`upstream` en `password` waren de twee die met de sleutel mee hadden moeten verhuizen. Twee
+van de drie andere velden van `RegistryEntry` hebben er om dezelfde reden een gekregen, want
+beide komen ongequote in een gerenderd manifest terecht.
 
 `name` is een DNS-1123-achtige naam die met een kleine LETTER begint
 (`REGISTRY_NAME_PATTERN`), zodat hij nooit als YAML-getal wordt gelezen.
@@ -348,6 +348,18 @@ dezelfde naam terechtkomt via de sleutel `registry` in de config van
 `validate_registry_entry_ownership` leest een `secretName` met
 `removesuffix("-robot-pull-secret")` om de organisatie te vinden; RFC-1123 laat streepjes
 toe, dus die vorm blijft heel.
+
+Het vijfde veld, `username`, draagt bewust geen patroon: een echte gebruikersnaam mag een
+punt, een apenstaartje of een hoofdletter bevatten en een vormregel zou die weigeren. Wat
+hem tegenhoudt is het sjabloon. `generic-secret.yaml.to-sops.jinja` heeft twee takken: een
+meerregelige waarde wordt een literal block met `indent(4, true)` en een eenregelige gaat
+door `yaml_scalar`. Nagemeten met vijf payloads (een regeleinde met `kind: RoleBinding`
+erachter, een `---`-blok met een RoleBinding naar `cluster-admin`, een quote-uitbraak met
+gelijke inspringing, een kale CR, en leidende spaties) langs allebei de backends: de
+quay-backend zet `username` rauw in `secret_pairs` en houdt één document met precies
+`username` en `password`, en de direct-secret-backend laat de waarde eerst door
+`json.dumps` van `RegistrySecret.to_dockerconfigjson`, die het regeleinde escapet voordat
+`yaml_scalar` eraan komt.
 
 ## Een regel, een pad: formulier en API
 
@@ -435,7 +447,7 @@ weten dus niet zeker dat de replicatie erop selecteert. Wat we wel hebben gezien
 andere kanten op: van de meting in `rig-prd-test` hierboven is als ODCN-label
 `projectcapsule.dev/managed-by=replications` opgeschreven en niet deze, en de proef van
 2026-09-07 beschrijft het gedrag als "hangt het aan elke `default` serviceaccount", dus op
-naam. Welke van de drie het is — dit label, dat label, of de naam — staat als vraag 7 bij
+naam. Welke van de drie het is (dit label, dat label, of de naam) staat als vraag 7 bij
 "Vragen aan ODC-Noord" in `plans/private-images-uit-een-eigen-registry.md`.
 
 Voor ons gedrag maakt het niets uit: onze serviceaccount heet `{project}-sa` en draagt alleen
