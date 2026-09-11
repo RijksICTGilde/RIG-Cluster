@@ -104,7 +104,10 @@ class ComponentRegistryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     registry: str = Field(
+        min_length=1,
         description=(
-            "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt."
-        )
+            "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt. "
+            "Er is geen lege waarde: een component zonder deze dienstvermelding haalt zijn image publiek op. "
+            "Gebruik DELETE om die keuze terug te draaien; dat haalt de vermelding weg."
+        ),
     )

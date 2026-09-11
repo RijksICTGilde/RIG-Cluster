@@ -741,8 +741,8 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
         # hand-authored "Variabelen" fieldset used to sit.
         "Aliassen",
         "Eigen omgevingsvariabelen",
-        # Waar de image vandaan komt staat boven wat er verder aan het component hangt.
-        "Eigen registry",
+        # image-registries staat hier NIET meer tussen: die knoop noemt een slot en landt
+        # daarmee bij het image-veld in plaats van onderaan (RC-187).
         "services{persistent-storage}/config",
         "services{temp-storage}/config",
         "services{attachments}/config",

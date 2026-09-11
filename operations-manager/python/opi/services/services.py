@@ -1250,15 +1250,26 @@ class ServiceAdapter:
         Fields the platform writes are not the caller's to clear either, so a block that
         holds them keeps exactly those and loses the rest -- "reset my settings" must not
         mean "throw away the realm-admin password". See ``_keep_platform_fields``.
+
+        The exception is a service that declares ``component_selection_follows_config``:
+        there the config IS the selection, so a demoted entry would say nothing at all.
+        Clearing removes the entry, and the service is deselected by the same act.
         """
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
         )
+        entry_is_its_config = cls._entry_is_its_config(service_name, layer)
         for index, entry in enumerate(target_list):
             if service_entry_name(entry) == service_name:
                 if isinstance(entry, str):
+                    if entry_is_its_config:
+                        target_list.pop(index)
+                        return True
                     return False  # already bare -- no config to remove
                 kept = cls._platform_fields_of(service_name, layer, service_entry_config(entry))
+                if not kept and entry_is_its_config:
+                    target_list.pop(index)
+                    return True
                 if kept:
                     cls.set_service_config(
                         project_data,
@@ -1272,6 +1283,25 @@ class ServiceAdapter:
                 target_list[index] = service_name
                 return True
         return False
+
+    @classmethod
+    def _entry_is_its_config(cls, service_name: str, layer: ConfigLayer) -> bool:
+        """Whether an entry of this service at *layer* carries meaning without its config.
+
+        Only at the two component layers: at project level the selection is the user's
+        own separate decision and stands on its own.
+        """
+        from opi.services.catalog.base import ConfigLayer as _ConfigLayer
+
+        if layer not in (_ConfigLayer.COMPONENT, _ConfigLayer.DEPLOYMENT_COMPONENT):
+            return False
+        from opi.services.registry import get_service
+
+        try:
+            service = get_service(ServiceType(service_name))
+        except ValueError:
+            return False
+        return service.component_selection_follows_config
 
     @classmethod
     def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:

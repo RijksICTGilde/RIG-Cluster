@@ -3,7 +3,8 @@
   "description": "Component- en deployment-componentniveau: welke registry bij deze image hoort.",
   "properties": {
     "registry": {
-      "description": "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt.",
+      "description": "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt. Er is geen lege waarde: een component zonder deze dienstvermelding haalt zijn image publiek op. Gebruik DELETE om die keuze terug te draaien; dat haalt de vermelding weg.",
+      "minLength": 1,
       "title": "Registry",
       "type": "string"
     }
