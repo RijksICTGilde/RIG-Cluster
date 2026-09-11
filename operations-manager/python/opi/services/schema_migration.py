@@ -8,7 +8,6 @@ number directly.
 """
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
 from opi.services.postgres_scope import database_generation_service_type
@@ -1258,13 +1257,14 @@ def _normalize_upstream(url: Any) -> Any:
 
     Het oude patroon liet een protocol, hoofdletters en een afsluitende schuine streep toe;
     zonder deze omzetting sneuvelt zo'n bestand bij de eerste save.
+
+    Dezelfde omzetting die het configmodel op een NIEUWE invoer draait, en met opzet
+    dezelfde functie: een bestaand bestand hoort niet door een andere regel te gaan dan
+    wat een afnemer vandaag intypt.
     """
-    if not isinstance(url, str):
-        return url
-    # ``.lower()`` eerst, want ``HTTPS://GHCR.IO`` was een geldige 2.8-waarde. Userinfo
-    # (``ssh://git@host/x``) wordt bewust NIET weggeknipt: dat zou een upstream opleveren
-    # die er geldig uitziet maar ergens anders heen wijst.
-    return re.sub(r"^(?:https?|ssh|git)://", "", url.lower()).rstrip("/")
+    from opi.services.catalog.image_registries.upstream import normalize_upstream
+
+    return normalize_upstream(url) if isinstance(url, str) else url
 
 
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:

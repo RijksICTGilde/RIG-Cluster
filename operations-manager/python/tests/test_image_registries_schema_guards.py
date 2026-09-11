@@ -143,6 +143,10 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         Zou iemand de regel in het formulier opnieuw opschrijven, dan lopen de twee uit
         elkaar en accepteert de API wat het formulier weigert, precies hoe deze payload
         langs de UpstreamValidator kwam.
+
+        Een geplakte URL is sinds RC-187 geen fout meer maar invoer die wordt omgezet, en
+        ook dat doen de twee samen: de omzetting hangt aan het VELD in het model, dus de
+        toets die het formulier eruit bouwt draagt hem mee.
         """
         from opi.services.catalog.image_registries.editables import REGISTRY_UPSTREAM_EDITABLE
 
@@ -150,7 +154,8 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         assert validator is not None
         assert validator.validate("code.overheid.nl/robbert.uittenbroek") == []
         assert validator.validate(YAML_INJECTIE_UPSTREAM) != []
-        assert validator.validate("https://ghcr.io") != []
+        assert validator.validate("ghcr") != []
+        assert validator.validate("https://ghcr.io") == []
 
     def test_de_api_weigert_de_payload_aan_de_deur(self) -> None:
         """``POST /projects/{p}/registries/by-credentials`` was de gemeten ingang."""
@@ -273,6 +278,50 @@ class TestHetTokenValtNietUitDeFailClosedControle:
 
         pattern = str(RegistryEntry.model_json_schema()["properties"]["password"]["anyOf"][0]["pattern"])
         assert "BEGIN AGE ENCRYPTED FILE" in pattern
+
+
+class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
+    """De omzetting is een hulp aan de DEUR, geen versoepeling van de opgeslagen vorm.
+
+    Valideren schrijft niet terug, dus zou de hele-bestandspoort ook normaliseren, dan kwam
+    een opgeslagen ``https://ghcr.io`` door de poort en bleef hij ongewijzigd in het
+    bestand staan -- waarna ``normalize_prefix`` hem nooit matcht en de registry stil niet
+    meer geldt in plaats van luid geweigerd te worden.
+    """
+
+    @pytest.mark.parametrize(
+        "upstream",
+        ["https://ghcr.io", "GHCR.IO", "ghcr.io/app:1.0", "ghcr.io\n"],
+    )
+    def test_de_poorten_weigeren_hem_nog_steeds(self, upstream: str) -> None:
+        with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
+            poorten(_project({"name": "eigen", "upstream": upstream}))
+
+    @pytest.mark.parametrize(
+        ("geplakt", "upstream"),
+        [
+            ("https://code.overheid.nl/robbert.uittenbroek/-/packages", "code.overheid.nl/robbert.uittenbroek"),
+            ("https://github.com/orgs/rijksictgilde/packages", "ghcr.io/rijksictgilde"),
+            ("https://hub.docker.com/r/bitnami/nginx", "docker.io/bitnami"),
+            ("https://gitlab.com/groep/project/container_registry", "registry.gitlab.com/groep/project"),
+            ("code.overheid.nl/team/app:1.2", "code.overheid.nl/team"),
+            ("HTTPS://GHCR.IO/", "ghcr.io"),
+        ],
+    )
+    def test_aan_de_deur_wordt_hij_wel_omgezet(self, geplakt: str, upstream: str) -> None:
+        """Zonder validatiecontext -- het formulier en de API -- is dit invoer die wij
+        onder water goed zetten."""
+        from opi.services.catalog.image_registries.config_model import RegistryEntry
+
+        assert RegistryEntry(name="eigen", upstream=geplakt).upstream == upstream
+
+    def test_een_onbekende_vorm_wordt_niet_stil_verminkt(self) -> None:
+        """Wat we niet herkennen laten we met rust, zodat het patroon hem afwijst in plaats
+        van er iets van te maken dat ergens anders heen wijst."""
+        from opi.services.catalog.image_registries.config_model import RegistryEntry
+
+        with pytest.raises(ValidationError):
+            RegistryEntry(name="eigen", upstream=YAML_INJECTIE_UPSTREAM)
 
 
 class TestHetPatroonStaatOpEenPlek:
