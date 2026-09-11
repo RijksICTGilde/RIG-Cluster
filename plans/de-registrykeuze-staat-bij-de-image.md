@@ -16,7 +16,9 @@ De volgorde moet omgekeerd: de keuze staat er altijd, bij het image-veld, en het
 2. **Zodra het project minstens één private registry heeft, staat er bij elk component met een image een keuzeveld "Registry"**, zonder dat de dienst bij dat component is aangevinkt. Heeft het project er geen, dan is dat veld er ook niet: de componentvorm blijft dan precies zoals hij nu is, en dat geldt vandaag voor 47 van de 49 projecten.
 3. **De standaardwaarde is "Publieke registry, geen token nodig"**, en die schrijft niets weg. Geen dienstvermelding, geen configblok, geen sleutel. Afwezig betekent publiek, precies zoals nu.
 4. **Kies je wel een registry, dan materialiseert dat de dienstvermelding** op dat component. De keuze is de selectie.
-5. **De eerste registry voeg je altijd toe in het dienstblok**, want daar komt het veld vandaan. Een "nieuwe registry toevoegen" in dezelfde keuzelijst kan later nog, voor de tweede en verder, maar dat is een gemak en geen onderdeel van dit plan.
+5. **Er is geen aan/uit voor deze dienst op componentniveau.** Hij staat niet in het rijtje vinkjes onderaan het componentformulier. Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken wat een aangevinkte dienst met waarde "publiek" betekent, en wat een uitgevinkte dienst met een registry erin betekent, en die twee regels lopen uit elkaar. Een keuzelijst met een expliciete "geen"-optie is net zo expliciet als een vinkje, alleen met meer opties.
+6. **Hetzelfde veld en dezelfde regel op een deployment-component**, want daar zit de override. Zonder dat is de override alleen via de API of met de hand te zetten.
+7. **De eerste registry voeg je altijd toe in het dienstblok**, want daar komt het veld vandaan. Een "nieuwe registry toevoegen" in dezelfde keuzelijst kan later nog, voor de tweede en verder, maar dat is een gemak en geen onderdeel van dit plan.
 
 ## De nieuwe haak: een plek in plaats van een aanhangsel
 
@@ -72,7 +74,12 @@ Allebei horen ze op de plek waar het formulier en de API samenkomen, dus in het 
 2. **Het veld.** Altijd zichtbaar bij een component met een image, standaard publiek, met de materialisatie in de converter en een test per richting.
 3. **De invoerhulp.** Upstream uit een geplakte URL, upstream voorgevuld vanaf de image, en het vrije label met afgeleide slug.
 
+## De weg terug
+
+De projectdienst uitzetten of de laatste registry verwijderen mag niet stilzwijgend kunnen terwijl componenten er nog naar verwijzen. Het keuzeveld verdwijnt dan, de verwijzing in het projectbestand blijft staan, en de eerstvolgende save sneuvelt op `values_must_exist` met een melding over een veld dat de gebruiker niet meer ziet.
+
+Voorstel: weigeren bij het opslaan, met de componenten erbij die de registry nog gebruiken. Niet automatisch opruimen, want dan verandert stilletjes waar een image vandaan komt, en dat is precies het soort wijziging waar iemand bij moet nadenken.
+
 ## Open
 
 - Slot of anker. Ik neig naar het slot, zie hierboven.
-- Geldt hetzelfde veld ook op een deployment-component, waar de override zit? Waarschijnlijk ja, met dezelfde standaard.
