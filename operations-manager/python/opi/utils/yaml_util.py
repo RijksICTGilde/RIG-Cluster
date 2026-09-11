@@ -258,13 +258,17 @@ def dump_yaml_documents_to_string(documents: list[Any]) -> str:
     A single document comes out without a leading ``---``, so a file that holds one
     document keeps the shape it had.
 
+    Empty documents are dropped. The loader turns a trailing ``---`` into a ``None``
+    document, and ``dump_all`` would write that back as ``--- null``, which kubectl
+    rejects with ``Object 'Kind' is missing``.
+
     Raises:
         Propagates any dumper error, for the reason given on dump_yaml_to_string.
     """
     yaml = _create_yaml_writer()
 
     output = StringIO()
-    yaml.dump_all(documents, output)
+    yaml.dump_all([document for document in documents if document is not None], output)
 
     return output.getvalue()
 
