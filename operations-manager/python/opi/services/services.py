@@ -1286,17 +1286,20 @@ class ServiceAdapter:
 
     @classmethod
     def _entry_is_its_config(cls, service_name: str, layer: ConfigLayer) -> bool:
-        """Whether an entry of this service at *layer* carries meaning without its config.
+        """Whether an entry of this service at *layer* is NOTHING without its config.
 
-        Only at the two component layers: at project level the selection is the user's
-        own separate decision and stands on its own.
+        True means the config IS the selection, so clearing it removes the entry rather
+        than demoting it to a bare string -- a bare entry would say nothing a reader could
+        put a meaning on. Only at the two component layers: at project level the selection
+        is the user's own separate decision and stands on its own.
         """
+        # Lazy, both of them: the registry imports this module, and ``catalog.base`` is
+        # part of that same cycle.
         from opi.services.catalog.base import ConfigLayer as _ConfigLayer
+        from opi.services.registry import get_service
 
         if layer not in (_ConfigLayer.COMPONENT, _ConfigLayer.DEPLOYMENT_COMPONENT):
             return False
-        from opi.services.registry import get_service
-
         try:
             service = get_service(ServiceType(service_name))
         except ValueError:
