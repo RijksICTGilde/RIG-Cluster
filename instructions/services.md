@@ -455,6 +455,41 @@ across all services in `config_component_order`, and
 `wizard_sections._service_component_layouts()` appends the layout nodes to the component
 form. No section, no flow, no snapshot edit.
 
+#### A field that belongs next to one of the form's own fields
+
+Appending is the default and the right one for a fieldset of its own. A field that is ABOUT
+one of the hand-authored fields belongs beside it, and for that the component form names a
+place: `COMPONENT_IMAGE_SLOT` (`opi/forms/layout.py`), directly after `image`. A service
+lands there by putting `slot=COMPONENT_IMAGE_SLOT` on its layout node; without a slot
+nothing changes.
+
+The form names the place, the service fills it -- not the other way round. An anchor on the
+node (`after="image"`) would let a service decide the order of a form it does not own, and
+two services choosing the same anchor would fight over one spot. `image-registries` is the
+first inhabitant.
+
+#### A service whose config IS its selection
+
+`component_selection_follows_config` (default False) says a component does not tick this
+service separately: its own field, with an explicit "none" option, is the choice.
+`image-registries` is the first and so far only one. Two consequences follow from that one
+declaration -- the service gets no checkbox in the per-component picker, and clearing its
+config removes the ENTRY instead of demoting it to a bare string, on the form path
+(`_prune_service_map_entry`) and on the API path (`ServiceAdapter.remove_service_config`).
+
+Only declare it where the config has an explicit "none" value, otherwise there is no way
+left to say "not this one". And note it INVERTS the default-seeding trap below: here a
+chosen value materialising the service is exactly what is wanted -- but only in that one
+direction, so cover each direction with its own test.
+
+#### A field that is only there when there is something to choose
+
+`Editable.hidden_without_options` drops a field when its own `values_provider` offers
+nothing. Use it where the list IS the field's reason to exist; the point is that there is
+ONE source. A `depends_on` next to the provider states the same condition twice and lets the
+two drift: a field showing while its own list is empty, or hiding while it has something to
+offer.
+
 ### Editable versus visualizer
 
 Two objects, deliberately split, and mixing them up produces a field that saves nothing or
@@ -1132,7 +1167,8 @@ its four wiring points are listed under "Forms and wizard screens".
   cannot arise.
 - **Do not seed a service's config defaults onto something that has not selected it.** The
   `{K}` path filter materialises the service into the list as a side effect, so a default
-  quietly turns into a selection.
+  quietly turns into a selection. The one service that WANTS this says so with
+  `component_selection_follows_config`, and then only in one direction -- see above.
 - **Provisioning is replay-safe by contract**, and so is manifest generation.
 - **Keep the catalog import-light.** Import forms, managers and connectors inside the method
   that needs them, not at module scope.

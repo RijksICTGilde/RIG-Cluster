@@ -7,7 +7,12 @@ zie ``naming.py``.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
+
+from opi.services.catalog.image_registries.upstream import normalize_upstream
+from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 
 #: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
 #: Ook een veiligheidsgrendel, zie features/image-registries.md.
@@ -49,21 +54,64 @@ REGISTRY_NAME_MESSAGE = (
 SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 
 
+def _normalize_upstream(value: object, info: ValidationInfo) -> object:
+    """De invoerhulp, VOOR de vormregel: wat een afnemer plakt is zelden de upstream.
+
+    Hier en niet in een converter van de editable, zodat het formulier en de API dezelfde
+    omzetting krijgen -- de converter roept deze functie aan, hij herhaalt hem niet.
+
+    Wat hij NIET doet is een projectbestand dat er al staat repareren. De hele-bestandspoort
+    draait dit model over elk bestand bij elke save en elke herverwerking, met
+    ``STORED_CONTEXT_KEY`` erbij; zou de omzetting daar ook draaien, dan kwam een opgeslagen
+    ``https://ghcr.io`` door de poort en bleef hij ONgewijzigd in het bestand staan -- want
+    valideren schrijft niet terug. ``normalize_prefix`` matcht die vorm nooit, dus de
+    registry zou stil niet meer gelden in plaats van luid geweigerd te worden. Een
+    opgeslagen waarde hoort dus al canoniek te zijn, en blijft dat.
+    """
+    if info.context and info.context.get(STORED_CONTEXT_KEY):
+        return value
+    return normalize_upstream(value) if isinstance(value, str) else value
+
+
+#: De upstream: eerst omgezet vanuit wat er geplakt is, dan pas aan de vormregel gehouden.
+#: Als geannoteerd type en niet als losse ``field_validator``, want ``ModelFieldValidator``
+#: bouwt zijn toets uit de ANNOTATIE van het veld -- een validator naast het model zou het
+#: formulier een geplakte URL laten afwijzen die de API wel accepteert.
+#: De volgorde in ``Annotated`` is niet vrijblijvend: met het patroon VOOR de
+#: before-validator staat het patroon ook in het gerenderde JSON-schema, en dat fragment is
+#: waar een client de regel leest. Andersom valt het uit het schema weg (pydantic beschrijft
+#: dan de INVOER, en die mag van een before-validator alles zijn) terwijl de toets zelf
+#: gewoon blijft draaien -- een stille regel is precies wat we hier niet willen.
+Upstream = Annotated[str, Field(pattern=UPSTREAM_PATTERN), BeforeValidator(_normalize_upstream)]
+
+
 class RegistryEntry(BaseModel):
     """Eén private registry van het project."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(
+    name: str | None = Field(
+        default=None,
         pattern=REGISTRY_NAME_PATTERN,
         max_length=63,
-        description="Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
+        description=(
+            "De verwijzing waarmee een component deze registry aanwijst, uniek binnen het project. "
+            "Laat hem weg en geef een 'display-name': het platform leidt hem daar dan uit af. "
+            "Hij ligt vast zodra hij bestaat, want componenten wijzen ernaar en hij zit in de naam "
+            "van het pull-secret; een gewijzigd label verandert hem niet mee."
+        ),
     )
-    upstream: str = Field(
-        pattern=UPSTREAM_PATTERN,
+    display_name: str | None = Field(
+        default=None,
+        max_length=255,
+        alias="display-name",
+        description="Het label dat je op het scherm ziet; vrije tekst, dus geen DNS-label nodig.",
+    )
+    upstream: Upstream = Field(
         description=(
             "De registry inclusief pad waar de images staan, zonder protocol, "
-            "bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'."
+            "bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'. Een geplakte browser-URL of "
+            "een volledige image-referentie wordt omgezet naar deze vorm."
         ),
     )
     username: str | None = Field(
@@ -85,6 +133,20 @@ class RegistryEntry(BaseModel):
             "in plaats van gebruikersnaam en token. Voor een secret dat het platform zelf neerzet."
         ),
     )
+
+    @model_validator(mode="after")
+    def _has_something_to_be_called(self) -> RegistryEntry:
+        """Een entry zonder naam EN zonder label is nergens naar te verwijzen.
+
+        ``name`` mag ontbreken omdat het platform hem uit het label afleidt
+        (``ImageRegistriesService.generate_missing_values``), maar dan moet dat label er
+        wel zijn -- anders valt er niets af te leiden en is de entry onzichtbaar voor
+        ``project_registries``, dus voor de hele dienst.
+        """
+        if not self.name and not self.display_name:
+            msg = "Geef een 'name' of een 'display-name'"
+            raise ValueError(msg)
+        return self
 
 
 class ImageRegistriesConfig(BaseModel):
