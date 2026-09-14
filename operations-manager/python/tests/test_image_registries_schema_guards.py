@@ -576,8 +576,8 @@ class TestEenRegistryHeeftEenManierOmTePullen:
     Gemeten op de save-poort, want daar komen formulier en API allebei langs.
 
     De gebruikersnaam hoort NIET bij de regel (RC-187): wat hij betekent verschilt per
-    registry, dus hij is optioneel en de tokentoets is de plek waar een registry die er wel
-    een eist zich meldt.
+    registry, dus hij is optioneel. Een registry die er wel een eist houdt niets hier tegen;
+    de tokentoets vangt het alleen bij het opslaan van het registryblok met al een image.
     """
 
     @pytest.mark.parametrize(
