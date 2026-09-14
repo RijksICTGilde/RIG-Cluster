@@ -17,9 +17,11 @@ PULL_SECRET_POSTFIX = "robot-pull-secret"
 #: weigeren registries als een lege gebruikersnaam.
 #:
 #: Wat de waarde IS doet er bij de meeste registries niet toe zolang het token klopt
-#: (ghcr.io kijkt er niet naar); waar hij er wel toe doet -- Docker Hub, Quay -- vult de
-#: afnemer hem zelf in en komt de plaatshouder nooit in beeld. ``x-access-token`` is de
-#: naam die GitLab en GitHub in hun eigen documentatie gebruiken voor precies dit gat.
+#: (ghcr.io kijkt er niet naar); waar hij er wel toe doet -- Docker Hub, Quay -- moet de
+#: afnemer hem zelf invullen. Laat hij hem daar leeg, dan komt de plaatshouder in het
+#: pull-secret en weigert de registry de pull; de tokentoets (``enforcers.py``) meldt dat
+#: alleen onder zijn eigen voorwaarden. ``x-access-token`` is de naam die GitLab en GitHub
+#: in hun eigen documentatie gebruiken voor precies dit gat.
 #:
 #: Hij wordt berekend, niet opgeslagen: het projectbestand draagt alleen wat de afnemer
 #: heeft ingevuld, net als bij de RCR-URL en de secretnaam hieronder. Laat de afnemer het

@@ -69,10 +69,11 @@ class RegistryTokenEnforcer:
 def _access_denied_message(repository: str, reason: str, has_username: bool) -> str:
     """Wat de afnemer op het scherm krijgt als de registry ons niet binnenlaat.
 
-    De gebruikersnaam is optioneel (RC-187), en deze toets is de plek waar een registry die
-    er wel een echte eist zich meldt -- ghcr.io kijkt niet naar de waarde, Docker Hub en Quay
-    wel. Zonder die zin gaat de melding alleen over het token en zoekt de afnemer het in de
-    verkeerde hoek.
+    De gebruikersnaam is optioneel (RC-187), en een registry die er wel een echte eist
+    weigert hier -- ghcr.io kijkt niet naar de waarde, Docker Hub en Quay wel. Deze toets
+    draait alleen bij het opslaan van het registryblok en alleen als er al een image onder de
+    upstream staat, dus hij is geen poort; maar ALS hij faalt terwijl de naam leeg was, zoekt
+    de afnemer het zonder die zin in de verkeerde hoek.
     """
     if has_username:
         opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen."

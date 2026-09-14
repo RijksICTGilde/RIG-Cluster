@@ -121,8 +121,10 @@ class RegistryEntry(BaseModel):
             "wat hij betekent verschilt per registry: bij GitHub (ghcr.io) doet de waarde er niet toe "
             "zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het "
             "robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het "
-            "platform een neutrale plaatshouder in het pull-secret; eist de registry een echte naam, "
-            "dan zegt de tokentoets bij het opslaan dat."
+            "platform een neutrale plaatshouder in het pull-secret. Eist de registry een echte naam, "
+            "dan mislukt het ophalen van de images. De tokentoets vangt dat alleen bij het opslaan "
+            "van het registryblok in het formulier, en alleen als het project al een image uit deze "
+            "registry gebruikt; via de API wordt er niet getoetst."
         ),
     )
     password: str | None = Field(
@@ -169,8 +171,11 @@ class RegistryEntry(BaseModel):
         betekent verschilt per registry -- bij ghcr.io doet de waarde er niet toe, bij Docker
         Hub is het de accountnaam, bij Quay de robotnaam -- en dat verschil kan een formulier
         niet weten. Laat de afnemer hem leeg, dan vult ``PULL_USERNAME_PLACEHOLDER`` het gat in
-        de dockerconfigjson en is de tokentoets bij het opslaan de plek waar een registry die
-        wel een echte naam eist zich meldt.
+        de dockerconfigjson. Eist de registry wel een echte naam, dan vangt de tokentoets
+        (``enforcers.py``) dat alleen onder twee voorwaarden: bij het opslaan van het
+        registryblok in het formulier, en als het project al een image onder die upstream
+        heeft. Via ``POST .../registries/by-credentials`` of zonder image komt zo'n entry
+        ongetoetst door en loopt hij pas bij de pull vast.
         """
         if self.secret_name and (self.username or self.password):
             msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"

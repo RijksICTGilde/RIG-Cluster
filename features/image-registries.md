@@ -64,10 +64,15 @@ de secretnaam: het projectbestand draagt alleen wat de afnemer heeft ingevuld, d
 berekening. Er MOET iets staan omdat een `kubernetes.io/dockerconfigjson` per registry een
 `auth` van `base64(gebruikersnaam:wachtwoord)` draagt: er is geen veld voor alleen een token.
 
-De poort waar een registry die wel een echte naam eist zich meldt, is de tokentoets bij het
-opslaan: die praat echt met de registry, met precies het paar dat de backend daarna schrijft.
-Faalt hij terwijl het veld leeg was, dan noemt de melding dat de gebruikersnaam waarschijnlijk
-nodig is in plaats van alleen te zeggen dat het token niet werkt (`_access_denied_message`).
+Een registry die wel een echte naam eist heeft geen poort die hem bij een lege gebruikersnaam
+tegenhoudt. De tokentoets (`enforcers.py`) praat echt met de registry, met precies het paar
+dat de backend daarna schrijft, maar alleen onder twee voorwaarden: hij hangt aan het
+formulier van het registryblok (niet aan `POST .../registries/by-credentials` en niet aan het
+opslaan van een component), en hij toetst pas als er al een image onder de upstream staat,
+zie de alinea over de tokentoets verderop. In de normale wizardvolgorde, registry voor de
+componenten, draait hij dus niet, en loopt zo'n entry pas bij de pull vast. Faalt hij wel
+terwijl het veld leeg was, dan noemt de melding dat de gebruikersnaam waarschijnlijk nodig is
+in plaats van alleen te zeggen dat het token niet werkt (`_access_denied_message`).
 
 Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
 
