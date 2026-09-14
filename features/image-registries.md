@@ -66,13 +66,17 @@ berekening. Er MOET iets staan omdat een `kubernetes.io/dockerconfigjson` per re
 
 Een registry die wel een echte naam eist heeft geen poort die hem bij een lege gebruikersnaam
 tegenhoudt. De tokentoets (`enforcers.py`) praat echt met de registry, met precies het paar
-dat de backend daarna schrijft, maar alleen onder twee voorwaarden: hij hangt aan het
-formulier van het registryblok (niet aan `POST .../registries/by-credentials` en niet aan het
-opslaan van een component), en hij toetst pas als er al een image onder de upstream staat,
-zie de alinea over de tokentoets verderop. In de normale wizardvolgorde, registry voor de
-componenten, draait hij dus niet, en loopt zo'n entry pas bij de pull vast. Faalt hij wel
-terwijl het veld leeg was, dan noemt de melding dat de gebruikersnaam waarschijnlijk nodig is
-in plaats van alleen te zeggen dat het token niet werkt (`_access_denied_message`).
+dat de backend daarna schrijft, maar alleen onder twee voorwaarden. Hij draait in elke
+formulierflow waar het registryblok in zit: de create- en edit-wizard (bij de stap vooruit en
+bij de eindinzending), de dienstenmodal en de modal van het blok. Hij draait niet in de
+componentmodal (die heeft alleen de componentsectie) en niet via de API (ook niet
+`POST .../registries/by-credentials`). En hij toetst alleen tegen images onder de upstream die
+in de data van die flow staan, zie de alinea over de tokentoets verderop. In de wizard staan
+de componenten er bij de eindinzending bij, dus daar wordt getoetst. Een component dat later
+via de componentmodal of de API bijkomt wordt niet getoetst, en zo'n entry loopt dan pas bij
+de pull vast. Faalt de toets terwijl het veld leeg was, dan noemt de melding dat de
+gebruikersnaam waarschijnlijk nodig is in plaats van alleen te zeggen dat het token niet werkt
+(`_access_denied_message`).
 
 Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
 
@@ -640,9 +644,11 @@ de dienst weg te laten.
 
 De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
 `tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
-werkelijk een image uit haalt. Is er nog geen zo'n image (de normale toestand in de
-wizard, waar de registry vóór de componenten komt), dan wordt er niets geweigerd: een
-weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname.
+werkelijk een image uit haalt. Is er nog geen zo'n image in de data (bij de stap vooruit
+in de wizard, waar de registry vóór de componenten komt), dan wordt er niets geweigerd: een
+weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname. Bij de
+eindinzending draait `_validate_whole_flow` de toets opnieuw over alle secties, en dan staan
+de componenten er wel bij.
 
 De toets draait NA de formulierverwerking, en die heeft het token op dat moment al
 versleuteld. Hij pakt de opgeslagen waarde dus eerst uit, alle drie de opslagvormen die
