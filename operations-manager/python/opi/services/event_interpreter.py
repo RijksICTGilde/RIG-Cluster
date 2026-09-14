@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any
 
 from opi.handlers.project_file_handler import image_is_confirmed_absent
+from opi.services.catalog.image_registries.resolution import display_image
 from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -223,7 +224,6 @@ def _source_image(rewritten: str, project_data: dict[str, Any] | None = None) ->
     Without ``project_data`` only the shared cluster table is reversed.
     """
     from opi.core.config import settings
-    from opi.services.catalog.image_registries.resolution import display_image
 
     return display_image(rewritten, settings.CLUSTER_MANAGER, project_data)
 

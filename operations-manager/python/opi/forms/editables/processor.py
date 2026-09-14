@@ -24,6 +24,9 @@ from opi.forms.editables.service_path import (
     smart_set_value,
 )
 from opi.forms.visualizers.bridge import should_render_editable
+from opi.services.registry import get_service
+from opi.services.services import service_entry_body, service_entry_name
+from opi.services.services_enums import ServiceType
 
 logger = logging.getLogger(__name__)
 
@@ -166,10 +169,6 @@ def _prune_service_map_entry(data: dict[str, Any], path: str) -> None:
     For every other service the entry stays: ticking the box and leaving the settings
     blank is a state a user deliberately arrives at.
     """
-    from opi.services.registry import get_service
-    from opi.services.services import service_entry_name
-    from opi.services.services_enums import ServiceType
-
     segments = path.split("/")
     index = next((i for i in reversed(range(len(segments))) if "{" in segments[i]), None)
     if index is None:
@@ -203,8 +202,6 @@ def _entry_carries_only_its_name(entry: Any, service_name: str) -> bool:
     (``{name: X, config: {...}}``) and the legacy single-key dict (``{X: {config: ...}}``),
     which is what the ``{K}`` path filter still writes when it creates an entry.
     """
-    from opi.services.services import service_entry_body
-
     if isinstance(entry, str):
         return True
     if not isinstance(entry, dict):

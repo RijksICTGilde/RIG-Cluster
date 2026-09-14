@@ -15,7 +15,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from opi.core.auth_decorators import requires_sso
+from opi.connectors.kubectl import KubectlConnector
+from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.cluster_config import get_image_registries_config, get_prefixed_namespace
+from opi.core.config import settings
+from opi.services.catalog.image_registries.naming import organization_name
+from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY, project_registries
+from opi.services.project_authorization import is_user_authorized_for_project
+from opi.services.project_store import get_project_store
+from opi.web.lotc_switch import render
 
 logger = logging.getLogger(__name__)
 
@@ -33,15 +41,6 @@ async def registry_status_fragment(request: Request, project_name: str) -> HTMLR
     Alleen zinvol op een cluster met de Quay-operator; elders is er geen organisatie en
     zegt het fragment dat er niets te wachten valt.
     """
-    from opi.connectors.kubectl import KubectlConnector
-    from opi.core.auth_decorators import get_current_user
-    from opi.core.cluster_config import get_image_registries_config, get_prefixed_namespace
-    from opi.core.config import settings
-    from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY, project_registries
-    from opi.services.project_authorization import is_user_authorized_for_project
-    from opi.services.project_store import get_project_store
-    from opi.web.lotc_switch import render
-
     user = get_current_user(request) or {}
     if not is_user_authorized_for_project(project_name, user.get("email", "").lower()):
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -84,8 +83,6 @@ async def _organization_status(
 
     Een organisatie die er nog niet is, is geen fout: ArgoCD maakt hem aan.
     """
-    from opi.services.catalog.image_registries.naming import organization_name
-
     organization = organization_name(upstream, customer_name, project_name)
     stdout, stderr, code = await kubectl.run_command(
         ["get", "organization", organization, "-n", namespace, "-o", "json"]

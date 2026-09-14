@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 from opi.core.project_schema import ProjectIntegrityError
 from opi.generation.manifests import render_template
+from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import _select_obsolete_service_manifests
 from opi.manager.project_validation import validate_project_structure
 from opi.services.services_enums import ServiceType
@@ -141,10 +143,6 @@ class TestWieHetProjectniveauDraagt:
         """De derde kant. Koos de verwijderaar op bestandsvolgorde, dan ging hij bij twee
         repositories in de VERKEERDE repo zoeken, en dan blijft de map met zijn
         SOPS-secrets staan terwijl de verwijdering 'not_found' meldt."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from opi.manager.delete_project_manager import DeleteProjectManager
-
         # De map staat in repo 'a', de repository van de ALFABETISCH EERSTE deployment.
         (tmp_path / "a" / "odcn-production" / "demo" / PROJECT_LEVEL_DIR).mkdir(parents=True)
 
