@@ -373,8 +373,12 @@ carries no config, so it does not appear in the read (`GET .../config`).
 
 The save chokepoint (`save_and_commit_project` -> `validate_service_configs`) is the
 backstop: it re-validates the block against the service's typed model, so a config
-that slips past the request-time check still fails the task with `validation_error`
-and the accepted-field list. No schema-version bump and no change to the global
+that slips past the request-time check still fails the task with `validation_error`.
+The message puts the location before each reason (`registries, nummer 2: ...`, list
+indexes counted from 1; the location carries field names and indexes only, never a
+value), and appends the accepted-field list only when a key is unknown
+(`extra_forbidden`) -- for a wrong or missing value inside a field it would suggest the
+field itself is not accepted. No schema-version bump and no change to the global
 project schema is involved: the record shapes are already valid there. After a
 successful write the project is processed (reconciled) so the config takes effect. A
 `DELETE` that changed nothing is a quiet, idempotent no-op.
