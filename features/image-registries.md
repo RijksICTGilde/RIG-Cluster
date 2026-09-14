@@ -71,8 +71,9 @@ formulierflow waar het registryblok in zit: de create- en edit-wizard (bij de st
 bij de eindinzending), de dienstenmodal en de modal van het blok. Hij draait niet in de
 componentmodal (die heeft alleen de componentsectie) en niet via de API (ook niet
 `POST .../registries/by-credentials`). En hij toetst alleen tegen images onder de upstream die
-in de data van die flow staan, zie de alinea over de tokentoets verderop. In de wizard staan
-de componenten er bij de eindinzending bij, dus daar wordt getoetst. Een component dat later
+in de samengevoegde data van de flow staan, zie de alinea over de tokentoets verderop. In de
+edit-wizard en de modals staan de bestaande componenten daar altijd in, ook als de flow ze niet
+toont; alleen bij de eerste stap vooruit in de create-wizard nog niet. Een component dat later
 via de componentmodal of de API bijkomt wordt niet getoetst, en zo'n entry loopt dan pas bij
 de pull vast. Faalt de toets terwijl het veld leeg was, dan noemt de melding dat de
 gebruikersnaam waarschijnlijk nodig is in plaats van alleen te zeggen dat het token niet werkt
@@ -644,11 +645,13 @@ de dienst weg te laten.
 
 De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
 `tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
-werkelijk een image uit haalt. Is er nog geen zo'n image in de data (bij de stap vooruit
-in de wizard, waar de registry vóór de componenten komt), dan wordt er niets geweigerd: een
-weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname. Bij de
-eindinzending draait `_validate_whole_flow` de toets opnieuw over alle secties, en dan staan
-de componenten er wel bij.
+werkelijk een image uit haalt. Hij leest de samengevoegde data van de flow
+(`WizardState.get_merged_data`). In de edit-wizard en de modals staan de bestaande
+componenten daar altijd in; alleen bij de eerste stap vooruit in de create-wizard, waar de
+registry vóór de componenten komt, nog niet. Is er geen image onder de upstream, dan wordt er
+niets geweigerd: een weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op
+een aanname. Bij de eindinzending draait `_validate_whole_flow` de toets opnieuw over alle
+secties, en dan staan de componenten er in de create-wizard ook bij.
 
 De toets draait NA de formulierverwerking, en die heeft het token op dat moment al
 versleuteld. Hij pakt de opgeslagen waarde dus eerst uit, alle drie de opslagvormen die

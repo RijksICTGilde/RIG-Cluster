@@ -99,9 +99,10 @@ class TestDeToets:
             assert await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"}) is data
 
     async def test_zonder_image_wordt_er_niets_geweigerd(self) -> None:
-        """De stap vooruit in de wizard: de registry komt voor de componenten. Een weigering
-        op iets wat we niet gemeten hebben zou een gebruiker blokkeren op een aanname. Bij de
-        eindinzending staan de componenten er wel bij en wordt er getoetst."""
+        """De eerste stap vooruit in de create-wizard: de registry komt voor de componenten.
+        In de edit-wizard en de modals staan de bestaande componenten al in de samengevoegde
+        data. Een weigering op iets wat we niet gemeten hebben zou een gebruiker blokkeren op
+        een aanname."""
         connector = _connector(False, "zou niet aangeroepen mogen worden")
         data = _data([REGISTRY])
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
