@@ -12,6 +12,8 @@
                 <c-secret-field value="{{ registry.upstream }}" revealed show-copy />
                 {% if registry.username %}
                     <c-paragraph size="sm">Ingelogd als {{ registry.username }}; het token is versleuteld opgeslagen.</c-paragraph>
+                {% elif registry.has_token %}
+                    <c-paragraph size="sm">Het token is versleuteld opgeslagen. Je hebt geen gebruikersnaam ingevuld; die heeft deze registry blijkbaar niet nodig.</c-paragraph>
                 {% elif registry.secretName %}
                     <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
                 {% endif %}

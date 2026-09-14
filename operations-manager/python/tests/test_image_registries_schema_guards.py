@@ -19,6 +19,7 @@ draait, en op het gerenderde manifest.
 
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import os
@@ -39,9 +40,11 @@ from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN, UPSTREAM_PATTERN, RegistryEntry
 from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
+from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import get_service
+from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
 
@@ -102,6 +105,21 @@ def poorten(project_data: dict[str, Any]) -> None:
     """De twee synchrone poorten die ``ProjectStore._validate`` ook draait."""
     validate_project_schema(project_data)
     validate_service_configs(project_data)
+
+
+def _leeg_project() -> dict[str, Any]:
+    """Een geldig projectbestand met een lege registrylijst, klaar voor een inzending."""
+    project = _project({"name": "eigen", "upstream": "ghcr.io/team", **SECRET})
+    project["services"][0]["config"]["registries"] = []
+    return project
+
+
+def _inzending(registry: dict[str, Any]) -> dict[str, Any]:
+    """Wat de modaal post: de dienstconfig plus de lijst met gerenderde reeksen."""
+    return {
+        "_services-config": {"image-registries": {"config": {"registries": [registry]}}},
+        GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+    }
 
 
 class TestDeBasisIsZelfGeldig:
@@ -550,40 +568,40 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
 
 
 class TestEenRegistryHeeftEenManierOmTePullen:
-    """Een entry draagt OF een ``secretName`` OF een gebruikersnaam plus token, nooit geen
-    van beide en nooit allebei.
+    """Een entry draagt OF een ``secretName`` OF een token, nooit geen van beide en nooit
+    allebei.
 
     Zonder deze regel kwam een entry zonder token door formulier en API, schreef de backend
     stil geen pull-secret, en merkte de afnemer het pas aan een pod die niet kon pullen.
     Gemeten op de save-poort, want daar komen formulier en API allebei langs.
+
+    De gebruikersnaam hoort NIET bij de regel (RC-187): wat hij betekent verschilt per
+    registry, dus hij is optioneel en de tokentoets is de plek waar een registry die er wel
+    een eist zich meldt.
     """
 
     @pytest.mark.parametrize(
         "manier",
         [
             pytest.param({"username": "u", "password": AGE_BLOCK}, id="gebruikersnaam-plus-token"),
+            pytest.param({"password": AGE_BLOCK}, id="alleen-token"),
+            pytest.param({"username": "", "password": AGE_BLOCK}, id="lege-gebruikersnaam-plus-token"),
             pytest.param({"secretName": "rig-robot-pull-secret"}, id="secretname"),
         ],
     )
-    def test_elk_van_de_twee_vormen_komt_door_de_poorten(self, manier: dict[str, str]) -> None:
+    def test_elke_geldige_vorm_komt_door_de_poorten(self, manier: dict[str, str]) -> None:
         poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
 
     @pytest.mark.parametrize(
         ("manier", "melding"),
         [
-            pytest.param({}, "Vul een gebruikersnaam en een token in", id="niets"),
+            pytest.param({}, "Vul een token in", id="niets"),
             pytest.param({"username": "u"}, "Vul een token in bij de gebruikersnaam", id="alleen-gebruikersnaam"),
-            pytest.param({"password": AGE_BLOCK}, "Vul een gebruikersnaam in bij het token", id="alleen-token"),
-            pytest.param(
-                {"username": "", "password": AGE_BLOCK},
-                "Vul een gebruikersnaam in bij het token",
-                id="lege-gebruikersnaam",
-            ),
         ],
     )
-    def test_zonder_volledige_inloggegevens_wordt_hij_geweigerd(self, manier: dict[str, str], melding: str) -> None:
-        """De melding noemt wat er MIST: bij een entry met een token vraagt hij alleen de
-        gebruikersnaam, niet ook het token dat er al staat."""
+    def test_zonder_token_wordt_hij_geweigerd(self, manier: dict[str, str], melding: str) -> None:
+        """De melding noemt wat er MIST: bij een entry met een gebruikersnaam vraagt hij
+        alleen het token, niet ook de naam die er al staat."""
         with pytest.raises(ProjectIntegrityError, match=melding):
             poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
 
@@ -600,10 +618,28 @@ class TestEenRegistryHeeftEenManierOmTePullen:
             poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, **manier}))
 
     def test_de_melding_noemt_het_token_niet(self) -> None:
-        """De weigering gaat als melding naar het scherm; het token hoort er niet in."""
+        """De weigering gaat als melding naar het scherm; het token hoort er niet in.
+
+        Gemeten op de mengvorm, want dat is de weigering die een token IN de entry heeft:
+        een entry met alleen een token is sinds RC-187 juist geldig.
+        """
         with pytest.raises(ProjectIntegrityError) as excinfo:
-            poorten(_project({"name": "eigen", "upstream": "ghcr.io", "password": "plain:ghp_GEHEIM"}))
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, "password": "plain:ghp_GEHEIM"}))
         assert "ghp_GEHEIM" not in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_het_formulier_zonder_gebruikersnaam_komt_er_wel_door(self) -> None:
+        """De spiegel van de test hieronder: het token is de eis, de gebruikersnaam niet."""
+        section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
+        assert section is not None
+        submitted, errors = await EditableFormProcessor().process_json_submission(
+            _inzending({"name": "eigen", "upstream": "ghcr.io/team", "username": "", "password": "plain:een-token"}),
+            section.editables,
+            copy.deepcopy(_leeg_project()),
+            edit_mode=True,
+        )
+        assert not errors, errors
+        await GitProjectStore(working_dir="/tmp/unused-by-this-test")._validate(submitted, enforce=False)
 
     @pytest.mark.asyncio
     async def test_het_formulier_zonder_token_sneuvelt_op_de_store(self) -> None:
@@ -634,3 +670,58 @@ class TestEenRegistryHeeftEenManierOmTePullen:
 
         with pytest.raises(ProjectIntegrityError, match="Vul een token in bij de gebruikersnaam"):
             await GitProjectStore(working_dir="/tmp/unused-by-this-test")._validate(submitted, enforce=True)
+
+
+class TestDeGebruikersnaamBlijftLeegInHetProjectbestand:
+    """De harde eis bij RC-187: de plaatshouder wordt BEREKEND, niet opgeslagen.
+
+    Het projectbestand draagt alleen wat de afnemer heeft ingevuld -- dezelfde regel als bij
+    de RCR-URL en de secretnaam. Laat de afnemer de gebruikersnaam leeg, dan blijft hij leeg
+    in de config; ``PULL_USERNAME_PLACEHOLDER`` ontstaat pas als de dockerconfigjson wordt
+    gebouwd. Gemeten op de weg waarlangs hij er anders in zou sluipen: het formulier, de
+    save-poort en de migratie.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ingevuld", ["", None], ids=["leeg-veld", "veld-weggelaten"])
+    async def test_na_een_save_staat_er_nog_steeds_geen_gebruikersnaam(self, ingevuld: str | None) -> None:
+        section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
+        assert section is not None
+        registry: dict[str, Any] = {"name": "eigen", "upstream": "ghcr.io/team", "password": "plain:een-token"}
+        if ingevuld is not None:
+            registry["username"] = ingevuld
+        submitted, errors = await EditableFormProcessor().process_json_submission(
+            _inzending(registry), section.editables, copy.deepcopy(_leeg_project()), edit_mode=True
+        )
+        assert not errors, errors
+
+        await GitProjectStore(working_dir="/tmp/unused-by-this-test")._validate(submitted, enforce=False)
+
+        opgeslagen = submitted["services"][0]["config"]["registries"][0]
+        assert not opgeslagen.get("username"), opgeslagen
+        assert PULL_USERNAME_PLACEHOLDER not in json.dumps(submitted)
+
+    def test_het_gegenereerde_secret_draagt_wel_een_volledig_paar(self) -> None:
+        """De andere helft van de eis: leeg in het bestand, compleet in het manifest."""
+        registry = {"name": "eigen", "upstream": "ghcr.io/team", "password": "plain:een-token"}
+        ctx = ProjectManifestContext(
+            project_name="demo",
+            project_data=_project(registry),
+            cluster="sandboxed-local",
+            namespace="rig-prd-demo",
+        )
+        spec = ImageRegistriesService().contribute_project_manifests(ctx)[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["ghcr.io/team"]["auth"]).decode()
+        assert auth == f"{PULL_USERNAME_PLACEHOLDER}:een-token"
+
+    def test_de_migratie_vult_hem_niet_aan(self) -> None:
+        """De migratie 2.8 -> 2.9 verhuist de sleutel; aanvullen doet ze niet."""
+        oud = {
+            "schema-version": 2.8,
+            "name": "demo",
+            "registries": [{"name": "eigen", "url": "ghcr.io/team", "password": "plain:een-token"}],
+        }
+        relocate_registries_to_service(oud)
+        verhuisd = oud["services"][0]["config"]["registries"][0]
+        assert "username" not in verhuisd, verhuisd

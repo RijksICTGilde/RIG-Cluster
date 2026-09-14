@@ -12,6 +12,7 @@ import opi.services.catalog.image_registries.web as web
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
+from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.naming import organization_name
@@ -60,6 +61,26 @@ class TestHetBlok:
         assert "password" not in section.context["registries"][0]
         # De velden die het sjabloon wel toont blijven staan.
         assert section.context["registries"][0]["username"] == "robbert.uittenbroek"
+
+    def test_een_entry_zonder_gebruikersnaam_zegt_nog_steeds_dat_er_een_token_is(self) -> None:
+        """RC-187: de gebruikersnaam is optioneel, en zonder deze tak zou zo'n registry in
+        het blok helemaal geen regel krijgen -- niet te onderscheiden van een entry zonder
+        inloggegevens. Gemeten op het ECHT gerenderde blok."""
+        zonder = {k: v for k, v in REGISTRY.items() if k != "username"}
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([zonder]))
+        assert section.context["registries"][0]["has_token"] is True
+
+        html = templates_lotc.env.get_template(section.template).render(section=section)
+        assert "Het token is versleuteld opgeslagen" in html
+        assert "geen gebruikersnaam ingevuld" in html
+        assert "Ingelogd als" not in html
+
+    def test_met_een_gebruikersnaam_blijft_het_de_oude_regel(self) -> None:
+        """De tegenproef op dezelfde render: de tak eronder mag hem niet overnemen."""
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([REGISTRY]))
+        html = templates_lotc.env.get_template(section.template).render(section=section)
+        assert "Ingelogd als robbert.uittenbroek" in html
+        assert "geen gebruikersnaam ingevuld" not in html
 
     def test_het_blok_rekent_geen_rcr_url_uit(self) -> None:
         """Die is een BEREKENING; hem hier neerzetten zou een tweede waarheid geven."""
