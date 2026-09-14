@@ -48,7 +48,11 @@ REGISTRY_USERNAME = EditableVisualizer(
     editable=REGISTRY_USERNAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Gebruikersnaam",
-    help_text="De gebruikersnaam waarmee ZAD bij je registry inlogt. Zonder gebruikersnaam en token kunnen we je images niet ophalen.",
+    help_text=(
+        "De gebruikersnaam waarmee ZAD bij je registry inlogt, en hij is altijd nodig naast het token. "
+        "Bij GitHub (ghcr.io) mag het elke waarde zijn, bijvoorbeeld je GitHub-naam. Bij Docker Hub "
+        "en Quay is het je accountnaam of de naam van je robotaccount."
+    ),
 )
 
 REGISTRY_PASSWORD = EditableVisualizer(

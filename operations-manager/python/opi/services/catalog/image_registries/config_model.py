@@ -118,7 +118,9 @@ class RegistryEntry(BaseModel):
         default=None,
         description=(
             "Gebruikersnaam waarmee ZAD bij de registry inlogt, samen met 'password'. "
-            "Laat hem alleen weg bij een 'secretName'."
+            "Verplicht naast een token, ook waar de registry hem niet controleert: bij GitHub "
+            "(ghcr.io) mag het elke niet-lege waarde zijn, bij Docker Hub en Quay is het de "
+            "accountnaam of de naam van het robotaccount. Laat hem alleen weg bij een 'secretName'."
         ),
     )
     password: str | None = Field(
@@ -166,7 +168,14 @@ class RegistryEntry(BaseModel):
             msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
             raise ValueError(msg)
         if not self.secret_name and not (self.username and self.password):
-            msg = "Vul een gebruikersnaam en een token in, anders kunnen we de images niet ophalen"
+            # Noem wat er MIST: bij een entry met alleen een token zei "vul een gebruikersnaam
+            # en een token in" iets dat de lezer al gedaan had.
+            if self.password:
+                msg = "Vul een gebruikersnaam in bij het token, anders kunnen we de images niet ophalen"
+            elif self.username:
+                msg = "Vul een token in bij de gebruikersnaam, anders kunnen we de images niet ophalen"
+            else:
+                msg = "Vul een gebruikersnaam en een token in, anders kunnen we de images niet ophalen"
             raise ValueError(msg)
         return self
 
