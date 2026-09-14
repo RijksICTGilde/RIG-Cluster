@@ -43,7 +43,8 @@ class RegistryTokenEnforcer:
             username = registry.get("username")
             password = _plain_token(registry, value)
             if not upstream or not username or not password:
-                # Een entry met een secretName: er is geen token om te toetsen.
+                # Een entry met een secretName heeft geen token om te toetsen; een entry zonder
+                # beide weigert het model (``RegistryEntry``) bij het opslaan.
                 continue
             repository = _repository_under(str(upstream), images)
             if repository is None:
