@@ -572,6 +572,12 @@ def _prefix_layout_children(items: list, prefix: str) -> list:
                     child_layout=child_layout,
                 )
             )
+        elif hasattr(item, "children"):
+            # Elke andere knoop die kinderen draagt, zoals de Div van een slot. Op TYPE
+            # afgaan liet die kinderen ongeprefixt achter, waardoor het veld in een modal
+            # in de wortel van het projectbestand ging zoeken in plaats van in dit
+            # component, en dus leeg bleef.
+            result.append(dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix)))
         else:
             result.append(item)
     return result
