@@ -14,8 +14,6 @@
                     <c-paragraph size="sm">Ingelogd als {{ registry.username }}; het token is versleuteld opgeslagen.</c-paragraph>
                 {% elif registry.secretName %}
                     <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
-                {% else %}
-                    <c-paragraph size="sm">Zonder inloggegevens: alleen publieke images uit deze registry.</c-paragraph>
                 {% endif %}
             </c-stack>
         {% endfor %}

@@ -19,6 +19,7 @@ draait, en op het gerenderde manifest.
 
 from __future__ import annotations
 
+import copy
 import os
 import re
 from typing import Any
@@ -26,11 +27,16 @@ from typing import Any
 import pytest
 import yaml
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.generation.manifests import ManifestGenerator, render_template
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
-from opi.services.catalog.base import ProjectManifestContext
+from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.config_model import UPSTREAM_PATTERN
+from opi.services.project_store import GitProjectStore
+from opi.services.registry import get_service
+from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
 
 #: Een upstream die uit zijn scalar breekt en er twee documenten achteraan hangt, waarvan
@@ -625,15 +631,6 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         Het formulier heeft geen ``secretName``-veld, dus wie daar het token leeg laat heeft
         geen van beide vormen. De weigering komt van de store, dezelfde poort als de API.
         """
-        import copy
-
-        from opi.forms.editables.processor import EditableFormProcessor
-        from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
-        from opi.services.catalog.base import ConfigLayer
-        from opi.services.project_store import GitProjectStore
-        from opi.services.registry import get_service
-        from opi.services.services_enums import ServiceType
-
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         inzending = {

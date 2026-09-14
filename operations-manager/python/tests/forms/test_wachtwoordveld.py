@@ -18,6 +18,7 @@ from opi.forms.field import FormField
 from opi.forms.visualizers.bridge import editable_to_form_field
 from opi.forms.visualizers.visualizer import EditableVisualizer
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.services.catalog.image_registries.visualizers import REGISTRY_PASSWORD
 
 
 def _veld(widget_type: str) -> FormField:
@@ -63,6 +64,4 @@ def test_de_brug_leest_een_wachtwoordveld_als_bewerkbare_waarde() -> None:
 
 
 def test_het_registrytoken_staat_op_het_wachtwoordveld() -> None:
-    from opi.services.catalog.image_registries.visualizers import REGISTRY_PASSWORD
-
     assert REGISTRY_PASSWORD.widget is WidgetType.PASSWORD
