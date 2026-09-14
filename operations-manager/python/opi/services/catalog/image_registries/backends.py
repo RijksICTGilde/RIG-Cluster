@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from opi.core.cluster_config import get_image_registries_config
 from opi.services.catalog.base import ProjectManifestContext, ProjectManifestSpec
 from opi.services.catalog.image_registries.naming import (
+    PULL_USERNAME_PLACEHOLDER,
     direct_secret_name,
     friendly_name,
     organization_name,
@@ -31,12 +32,12 @@ DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
 
 
 class MissingRegistryCredentialsError(ValueError):
-    """Een registry zonder secretName en zonder gebruikersnaam plus token."""
+    """Een registry zonder secretName en zonder token."""
 
     def __init__(self, registry: str, project: str) -> None:
         super().__init__(
-            f"Registry '{registry}' van project '{project}' heeft geen secretName en geen gebruikersnaam "
-            f"plus token; er valt geen pull-secret te schrijven"
+            f"Registry '{registry}' van project '{project}' heeft geen secretName en geen token; "
+            f"er valt geen pull-secret te schrijven"
         )
 
 
@@ -60,17 +61,17 @@ class DirectSecretBackend:
             # Het secret staat er al, gezet door het platform.
             return []
         upstream = registry.get("upstream")
-        username = registry.get("username")
         password = _plain_password(registry, ctx)
-        if not upstream or not username or not password:
-            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een gebruikersnaam plus
-            # token. Komt hij hier toch, dan blazen we op in plaats van stil geen pull-secret
-            # te schrijven -- anders merkt de afnemer het pas als de pod niet kan pullen.
+        if not upstream or not password:
+            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een token. Komt hij hier
+            # toch, dan blazen we op in plaats van stil geen pull-secret te schrijven --
+            # anders merkt de afnemer het pas als de pod niet kan pullen.
             raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
+        username = _pull_username(registry)
 
         name = direct_secret_name(ctx.project_name, str(registry.get("name", "")))
         # De volledige upstream inclusief pad, want kubelet kiest de meest specifieke match.
-        secret = RegistrySecret(registry_url=str(upstream), username=str(username), password=password)
+        secret = RegistrySecret(registry_url=str(upstream), username=username, password=password)
         return [
             ProjectManifestSpec(
                 filename=f"{FILENAME_PREFIX}{name}",
@@ -102,11 +103,11 @@ class QuayProxyOrganizationBackend:
         rotation_days = cluster_config.get("rotation_days", 90)
         organization = organization_name(str(upstream), customer_name, ctx.project_name)
 
-        username = registry.get("username")
         password = _plain_password(registry, ctx)
-        if not username or not password:
+        if not password:
             # Onbereikbaar, om dezelfde reden als in ``DirectSecretBackend``.
             raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
+        username = _pull_username(registry)
 
         credentials_secret = f"{organization}-upstream-credentials"
         specs: list[ProjectManifestSpec] = [
@@ -117,7 +118,7 @@ class QuayProxyOrganizationBackend:
                     "name": credentials_secret,
                     "namespace": ctx.namespace,
                     "secret_type": "registry",
-                    "secret_pairs": {"username": str(username), "password": password},
+                    "secret_pairs": {"username": username, "password": password},
                 },
                 encrypt=True,
             )
@@ -147,6 +148,18 @@ def backend_for_cluster(cluster: str) -> RegistryBackend:
     if get_image_registries_config(cluster).get("backend") == BACKEND_QUAY_PROXY:
         return QuayProxyOrganizationBackend()
     return DirectSecretBackend()
+
+
+def _pull_username(registry: dict[str, Any]) -> str:
+    """De gebruikersnaam voor de dockerconfigjson: wat de afnemer opgaf, anders de plaatshouder.
+
+    Hier en niet bij het opslaan, want dit is de enige plek waar hij nodig is. Zie
+    ``PULL_USERNAME_PLACEHOLDER`` voor waarom er iets moet staan.
+    """
+    username = registry.get("username")
+    if isinstance(username, str) and username:
+        return username
+    return PULL_USERNAME_PLACEHOLDER
 
 
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:

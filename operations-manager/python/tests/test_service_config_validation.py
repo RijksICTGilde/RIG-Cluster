@@ -117,16 +117,17 @@ def test_invalid_metrics_value_names_the_field_without_the_hint():
 
 
 def test_missing_field_in_a_list_item_names_the_item_without_the_hint():
-    # Three registries, the second lacks its username: the message points at that entry
-    # (counted from 1) and does not append the accepted-field list.
+    # Three registries, the second lacks its token: the message points at that entry
+    # (counted from 1) and does not append the accepted-field list. The username is
+    # optional since RC-187, so the token is what a valid entry cannot do without.
     token = "-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----"
     registries = [
         {"name": "een", "upstream": "ghcr.io/een", "username": "u", "password": token},
-        {"name": "twee", "upstream": "ghcr.io/twee", "password": token},
+        {"name": "twee", "upstream": "ghcr.io/twee", "username": "u"},
         {"name": "drie", "upstream": "ghcr.io/drie", "username": "u", "password": token},
     ]
     data = {"name": "p", "services": [{"image-registries": {"config": {"registries": registries}}}]}
-    with pytest.raises(ProjectIntegrityError, match="registries, nummer 2: Vul een gebruikersnaam in") as excinfo:
+    with pytest.raises(ProjectIntegrityError, match="registries, nummer 2: Vul een token in") as excinfo:
         validate_service_configs(data)
     assert "Geaccepteerde velden" not in str(excinfo.value)
 

@@ -5,7 +5,7 @@ de registry en een token. Wat er technisch onder gebeurt verschilt per cluster, 
 verschil merkt de afnemer niet.
 
 ```
-afnemer geeft:  upstream + gebruikersnaam + token          (eenmalig, projectniveau)
+afnemer geeft:  upstream + token (+ gebruikersnaam waar die telt)  (eenmalig, projectniveau)
                 per component: welke registry hoort bij deze image
 
 ZAD doet op een cluster met internettoegang (kind, sandbox):
@@ -44,15 +44,30 @@ wordt er dus ook geen proxy-organisatie zonder credentials meer aangemaakt. De t
 entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met `secretName`) voldoen
 allebei.
 
-De weigering noemt wat er mist: een entry met een token maar zonder gebruikersnaam krijgt
-"Vul een gebruikersnaam in bij het token", niet een vraag om het token dat er al staat. De
+De weigering noemt wat er mist: een entry met een gebruikersnaam maar zonder token krijgt
+"Vul een token in bij de gebruikersnaam", niet de kale vraag om allebei. De
 generieke foutopbouw in `project_validation.py` zet er de plek voor (`registries, nummer 2: ...`,
 geteld vanaf 1), zodat je bij meer registries weet welke je moet repareren.
 
-`username` blijft verplicht naast een token, ook bij GitHub (ghcr.io) waar de waarde er niet toe
-doet. Docker Hub en Quay hebben hem echt nodig, en zo meet de tokentoets bij het opslaan precies
-het paar dat de backend daarna gebruikt. De hulptekst in het formulier en de `description` in het
-model zeggen per registry wat je invult.
+### De gebruikersnaam is optioneel, het token niet
+
+Wat `username` betekent verschilt per registry: bij ghcr.io doet de waarde er niet toe zolang
+het token klopt, bij Docker Hub moet het de accountnaam zijn en bij Quay de robotnaam. Dat
+verschil kan een formulier niet weten en de afnemer hoeft het niet te weten, dus het veld is
+optioneel (RC-187, een herziening van de eerste vorm waarin hij verplicht was).
+
+Leeg laten verandert niets aan het projectbestand: er komt geen waarde in, ook niet bij het
+opslaan en ook niet in de migratie. De gebruikersnaam voor de dockerconfigjson ontstaat pas op
+het moment dat het manifest wordt gebouwd, uit `PULL_USERNAME_PLACEHOLDER` (`naming.py`,
+`x-access-token`) via `_pull_username()` in `backends.py`. Dezelfde regel als bij de RCR-URL en
+de secretnaam: het projectbestand draagt alleen wat de afnemer heeft ingevuld, de rest is een
+berekening. Er MOET iets staan omdat een `kubernetes.io/dockerconfigjson` per registry een
+`auth` van `base64(gebruikersnaam:wachtwoord)` draagt: er is geen veld voor alleen een token.
+
+De poort waar een registry die wel een echte naam eist zich meldt, is de tokentoets bij het
+opslaan: die praat echt met de registry, met precies het paar dat de backend daarna schrijft.
+Faalt hij terwijl het veld leeg was, dan noemt de melding dat de gebruikersnaam waarschijnlijk
+nodig is in plaats van alleen te zeggen dat het token niet werkt (`_access_denied_message`).
 
 Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
 

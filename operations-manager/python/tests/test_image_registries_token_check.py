@@ -7,7 +7,7 @@ import copy
 import shutil
 import subprocess
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -18,6 +18,7 @@ from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
 from opi.services.catalog.base import ConfigLayer
 from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
+from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.age import encrypt_age_content_sync
@@ -165,6 +166,72 @@ class TestDeToets:
         connector.check_repository_access.assert_awaited_once_with(
             "ghcr.io/rijksictgilde/algoritmeregister/backend", "robbert.uittenbroek", "een-token"
         )
+
+
+class TestZonderGebruikersnaam:
+    """RC-187: de gebruikersnaam is optioneel, en DEZE toets is de poort.
+
+    Het model laat een entry zonder gebruikersnaam door, want wat hij betekent verschilt per
+    registry. Hier praten we echt met de registry, met precies het paar dat de backend daarna
+    in de dockerconfigjson zet -- dus met dezelfde plaatshouder. Een registry die wel een
+    echte naam eist weigert hier, en dan moet de melding dat noemen.
+    """
+
+    ZONDER: ClassVar[dict[str, str]] = {k: v for k, v in REGISTRY.items() if k != "username"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("leeg", [None, ""], ids=["afwezig", "leeg"])
+    async def test_de_plaatshouder_gaat_naar_de_registry(self, leeg: str | None) -> None:
+        """Niet een lege gebruikersnaam en niet overslaan: hetzelfde paar als de backend."""
+        connector = _connector(True)
+        registry = dict(self.ZONDER) if leeg is None else {**self.ZONDER, "username": leeg}
+        data = _data([registry], [IMAGE])
+        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        connector.check_repository_access.assert_awaited_once_with(
+            "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo", PULL_USERNAME_PLACEHOLDER, "een-token"
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_registry_die_een_echte_naam_eist_geeft_een_leesbare_fout(self) -> None:
+        """Wat Docker Hub en Quay doen: het token klopt, de gebruikersnaam niet. Zonder de
+        zin over de gebruikersnaam zoekt de afnemer het in het token."""
+        data = _data([self.ZONDER], [IMAGE])
+        with (
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, "unauthorized: incorrect username or password"),
+            ),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        melding = str(exc.value)
+        assert "geen gebruikersnaam ingevuld" in melding
+        assert "Docker Hub en Quay" in melding
+        assert "incorrect username or password" in melding
+
+    @pytest.mark.asyncio
+    async def test_met_een_gebruikersnaam_blijft_de_melding_over_het_token_gaan(self) -> None:
+        """De tegenproef: wie hem wel invulde krijgt geen raad over een veld dat al gevuld is."""
+        data = _data([REGISTRY], [IMAGE])
+        with (
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, "unauthorized: reqPackageAccess"),
+            ),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        assert "geen gebruikersnaam ingevuld" not in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_zonder_token_wordt_er_nog_steeds_niets_getoetst(self) -> None:
+        """De eis die BLEEF: zonder token valt er niets te meten, en het model weigert hem."""
+        connector = _connector(False)
+        data = _data([{"name": "eigen", "upstream": "code.overheid.nl/robbert.uittenbroek"}], [IMAGE])
+        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        connector.check_repository_access.assert_not_awaited()
 
 
 class TestDeConnector:

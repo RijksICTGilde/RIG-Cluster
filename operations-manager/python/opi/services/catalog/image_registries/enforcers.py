@@ -16,6 +16,7 @@ from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.services_enums import ServiceType
 from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync
@@ -40,26 +41,50 @@ class RegistryTokenEnforcer:
             if not isinstance(registry, dict):
                 continue
             upstream = registry.get("upstream")
-            username = registry.get("username")
+            given_username = registry.get("username")
             password = _plain_token(registry, value)
-            if not upstream or not username or not password:
+            if not upstream or not password:
                 # Een entry met een secretName heeft geen token om te toetsen; een entry zonder
                 # beide weigert het model (``RegistryEntry``) bij het opslaan.
                 continue
+            # Dezelfde plaatshouder als de backend in de dockerconfigjson zet, want dit is de
+            # toets OP dat paar: met een andere gebruikersnaam meten we iets anders dan wat er
+            # straks wordt geschreven.
+            username = str(given_username) if given_username else PULL_USERNAME_PLACEHOLDER
             repository = _repository_under(str(upstream), images)
             if repository is None:
                 logger.info(
                     f"Registry '{registry.get('name')}' heeft nog geen image in dit project; token niet getoetst"
                 )
                 continue
-            ok, reason = await connector.check_repository_access(repository, str(username), str(password))
+            ok, reason = await connector.check_repository_access(repository, username, str(password))
             if not ok:
                 raise FieldError(
                     f"{_REGISTRIES_PATH}[{index}]/password",
-                    f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen. "
-                    f"Het token heeft leesrecht op packages nodig. De registry zei: {reason}",
+                    _access_denied_message(repository, reason, bool(given_username)),
                 )
         return value
+
+
+def _access_denied_message(repository: str, reason: str, has_username: bool) -> str:
+    """Wat de afnemer op het scherm krijgt als de registry ons niet binnenlaat.
+
+    De gebruikersnaam is optioneel (RC-187), en deze toets is de plek waar een registry die
+    er wel een echte eist zich meldt -- ghcr.io kijkt niet naar de waarde, Docker Hub en Quay
+    wel. Zonder die zin gaat de melding alleen over het token en zoekt de afnemer het in de
+    verkeerde hoek.
+    """
+    if has_username:
+        opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen."
+        raad = "Het token heeft leesrecht op packages nodig."
+    else:
+        opening = f"Met dit token kunnen we '{repository}' niet lezen."
+        raad = (
+            "Het token heeft leesrecht op packages nodig. Je hebt geen gebruikersnaam ingevuld: "
+            "bij Docker Hub en Quay is die wel nodig, dus vul daar je accountnaam of de naam van "
+            "je robotaccount in."
+        )
+    return f"{opening} {raad} De registry zei: {reason}"
 
 
 def _connector() -> SkopeoConnector:
