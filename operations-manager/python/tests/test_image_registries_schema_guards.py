@@ -63,6 +63,13 @@ YAML_INJECTIE_UPSTREAM = (
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----"
 AGE_ENTRY = {"name": "versleuteld", "upstream": "ghcr.io", "username": "u", "password": AGE_BLOCK}
 
+#: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
+#: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
+CREDS = {"username": "u", "password": "plain:een-token"}
+
+#: De andere manier om te pullen: een secret dat het platform zelf neerzet.
+SECRET = {"secretName": "rig-robot-pull-secret"}
+
 
 def _project(registry: dict[str, Any]) -> dict[str, Any]:
     """Een projectbestand dat geldig BEGINT, met precies een registry in de dienstconfig."""
@@ -96,7 +103,7 @@ class TestDeBasisIsZelfGeldig:
         waarden die in de vloot voorkomen; de migratie 2.8 -> 2.9 zet ze letterlijk over.
         """
         for upstream in ("ghcr.io", "rcr.rijksapps.nl/rig"):
-            poorten(_project({"name": "eigen", "upstream": upstream}))
+            poorten(_project({"name": "eigen", "upstream": upstream, **CREDS}))
 
 
 class TestDeUpstreamKanNietUitZijnScalarBreken:
@@ -104,7 +111,7 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         """Dit is de meting van de bevinding: op de branch zonder patroon kwam deze
         payload door alle drie de validaties heen."""
         with pytest.raises((ProjectSchemaError, ProjectIntegrityError)) as excinfo:
-            poorten(_project({"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM}))
+            poorten(_project({"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM, **CREDS}))
         assert "image-registries" in str(excinfo.value)
 
     @pytest.mark.parametrize(
@@ -122,7 +129,7 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
     )
     def test_geweigerde_vormen(self, upstream: str) -> None:
         with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
-            poorten(_project({"name": "eigen", "upstream": upstream}))
+            poorten(_project({"name": "eigen", "upstream": upstream, **CREDS}))
 
     @pytest.mark.parametrize(
         "upstream",
@@ -135,7 +142,7 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         ],
     )
     def test_toegestane_vormen(self, upstream: str) -> None:
-        poorten(_project({"name": "eigen", "upstream": upstream}))
+        poorten(_project({"name": "eigen", "upstream": upstream, **CREDS}))
 
     def test_het_formulier_draait_dezelfde_regel_als_de_api(self) -> None:
         """Geen validator die alleen het formulier draait: de editable WIJST naar het model.
@@ -180,7 +187,7 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
                     "services": [
                         {
                             "name": "image-registries",
-                            "config": {"registries": [{"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM}]},
+                            "config": {"registries": [{"name": "eigen", "upstream": YAML_INJECTIE_UPSTREAM, **CREDS}]},
                         }
                     ],
                 },
@@ -265,7 +272,7 @@ class TestHetTokenValtNietUitDeFailClosedControle:
         assert find_plaintext_service_config_violations(project) == []
 
     def test_een_leeg_token_is_geen_overtreding(self) -> None:
-        """Een registry zonder inlog is een geldige invoer (een publieke upstream)."""
+        """Een ontbrekend token is geen PLATTE TEKST; dat hij ontbreekt weigert het model zelf."""
         assert find_plaintext_service_config_violations(_project({"name": "eigen", "upstream": "ghcr.io"})) == []
 
     def test_de_controle_leest_het_patroon_uit_het_model(self) -> None:
@@ -295,7 +302,7 @@ class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
     )
     def test_de_poorten_weigeren_hem_nog_steeds(self, upstream: str) -> None:
         with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
-            poorten(_project({"name": "eigen", "upstream": upstream}))
+            poorten(_project({"name": "eigen", "upstream": upstream, **CREDS}))
 
     @pytest.mark.parametrize(
         ("geplakt", "upstream"),
@@ -313,7 +320,7 @@ class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
         onder water goed zetten."""
         from opi.services.catalog.image_registries.config_model import RegistryEntry
 
-        assert RegistryEntry(name="eigen", upstream=geplakt).upstream == upstream
+        assert RegistryEntry(name="eigen", upstream=geplakt, **CREDS).upstream == upstream
 
     def test_een_onbekende_vorm_wordt_niet_stil_verminkt(self) -> None:
         """Wat we niet herkennen laten we met rust, zodat het patroon hem afwijst in plaats
@@ -321,7 +328,7 @@ class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
         from opi.services.catalog.image_registries.config_model import RegistryEntry
 
         with pytest.raises(ValidationError):
-            RegistryEntry(name="eigen", upstream=YAML_INJECTIE_UPSTREAM)
+            RegistryEntry(name="eigen", upstream=YAML_INJECTIE_UPSTREAM, **CREDS)
 
 
 class TestHetPatroonStaatOpEenPlek:
@@ -360,11 +367,11 @@ class TestDeRegistrynaamHeeftDezelfdeRegelAlsHetFormulier:
     )
     def test_geweigerde_namen(self, name: str) -> None:
         with pytest.raises((ProjectSchemaError, ProjectIntegrityError)):
-            poorten(_project({"name": name, "upstream": "ghcr.io"}))
+            poorten(_project({"name": name, "upstream": "ghcr.io", **CREDS}))
 
     @pytest.mark.parametrize("name", ["code-overheid", "ghcr", "a", "registry-2"])
     def test_toegestane_namen(self, name: str) -> None:
-        poorten(_project({"name": name, "upstream": "ghcr.io"}))
+        poorten(_project({"name": name, "upstream": "ghcr.io", **CREDS}))
 
     def test_het_api_model_draagt_dezelfde_regel(self) -> None:
         """Het endpoint schrijft rechtstreeks tegen dit model; zonder het patroon daar komt
@@ -559,3 +566,93 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
         secret_name = fragment["$defs"]["RegistryEntry"]["properties"]["secretName"]
         assert secret_name["anyOf"][0]["pattern"] == SECRET_NAME_PATTERN
         assert secret_name["anyOf"][0]["maxLength"] == 253
+
+
+class TestEenRegistryHeeftEenManierOmTePullen:
+    """Een entry draagt OF een ``secretName`` OF een gebruikersnaam plus token, nooit geen
+    van beide en nooit allebei.
+
+    Zonder deze regel kwam een entry zonder token door formulier en API, schreef de backend
+    stil geen pull-secret, en merkte de afnemer het pas aan een pod die niet kon pullen.
+    Gemeten op de save-poort, want daar komen formulier en API allebei langs.
+    """
+
+    @pytest.mark.parametrize(
+        "manier",
+        [
+            pytest.param({"username": "u", "password": AGE_BLOCK}, id="gebruikersnaam-plus-token"),
+            pytest.param({"secretName": "rig-robot-pull-secret"}, id="secretname"),
+        ],
+    )
+    def test_elk_van_de_twee_vormen_komt_door_de_poorten(self, manier: dict[str, str]) -> None:
+        poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
+
+    @pytest.mark.parametrize(
+        "manier",
+        [
+            pytest.param({}, id="niets"),
+            pytest.param({"username": "u"}, id="alleen-gebruikersnaam"),
+            pytest.param({"password": AGE_BLOCK}, id="alleen-token"),
+            pytest.param({"username": "", "password": AGE_BLOCK}, id="lege-gebruikersnaam"),
+        ],
+    )
+    def test_zonder_volledige_inloggegevens_wordt_hij_geweigerd(self, manier: dict[str, str]) -> None:
+        with pytest.raises(ProjectIntegrityError, match="gebruikersnaam en een token"):
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
+
+    @pytest.mark.parametrize(
+        "manier",
+        [
+            pytest.param({"username": "u", "password": AGE_BLOCK}, id="secretname-plus-beide"),
+            pytest.param({"username": "u"}, id="secretname-plus-gebruikersnaam"),
+            pytest.param({"password": AGE_BLOCK}, id="secretname-plus-token"),
+        ],
+    )
+    def test_de_twee_vormen_mengen_wordt_geweigerd(self, manier: dict[str, str]) -> None:
+        with pytest.raises(ProjectIntegrityError, match="niet allebei"):
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", **SECRET, **manier}))
+
+    def test_de_melding_noemt_het_token_niet(self) -> None:
+        """De weigering gaat als melding naar het scherm; het token hoort er niet in."""
+        with pytest.raises(ProjectIntegrityError) as excinfo:
+            poorten(_project({"name": "eigen", "upstream": "ghcr.io", "password": "plain:ghp_GEHEIM"}))
+        assert "ghp_GEHEIM" not in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_het_formulier_zonder_token_sneuvelt_op_de_store(self) -> None:
+        """De portaalroute: de inzending verwerken zoals de modaal doet, dan de save-poort.
+
+        Het formulier heeft geen ``secretName``-veld, dus wie daar het token leeg laat heeft
+        geen van beide vormen. De weigering komt van de store, dezelfde poort als de API.
+        """
+        import copy
+
+        from opi.forms.editables.processor import EditableFormProcessor
+        from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+        from opi.services.catalog.base import ConfigLayer
+        from opi.services.project_store import GitProjectStore
+        from opi.services.registry import get_service
+        from opi.services.services_enums import ServiceType
+
+        section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
+        assert section is not None
+        inzending = {
+            "_services-config": {
+                "image-registries": {
+                    "config": {"registries": [{"name": "eigen", "upstream": "ghcr.io/team", "username": "u"}]}
+                }
+            },
+            GERENDERDE_REEKSEN_VELD: ["_services-config/image-registries/config/registries"],
+        }
+        project = _project({"name": "eigen", "upstream": "ghcr.io/team", **SECRET})
+        project["services"][0]["config"]["registries"] = []
+        submitted, errors = await EditableFormProcessor().process_json_submission(
+            inzending, section.editables, copy.deepcopy(project), edit_mode=True
+        )
+        assert not errors, errors
+        assert submitted["services"][0]["config"]["registries"] == [
+            {"name": "eigen", "upstream": "ghcr.io/team", "username": "u"}
+        ]
+
+        with pytest.raises(ProjectIntegrityError, match="gebruikersnaam en een token"):
+            await GitProjectStore(working_dir="/tmp/unused-by-this-test")._validate(submitted, enforce=True)

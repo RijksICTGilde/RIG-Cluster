@@ -33,6 +33,19 @@ services:
             password: <AGE>
 ```
 
+Een entry draagt precies een van twee manieren om te pullen: `username` plus `password`, of
+een `secretName` naar een dockerconfigjson-secret dat het platform zelf neerzet. Geen van
+beide of allebei weigert `RegistryEntry` (`_has_exactly_one_way_to_pull`), dus het formulier
+en de API op dezelfde save-poort. Zonder die regel kwam een entry zonder token overal
+doorheen en schreef de backend stil geen pull-secret, waarna de afnemer het pas merkte aan
+een pod die niet kon pullen. De tak in `backends.py` die dat vroeger stil deed is nu
+onbereikbaar en blaast op (`MissingRegistryCredentialsError`) als hij er toch komt; op ODCN
+wordt er dus ook geen proxy-organisatie zonder credentials meer aangemaakt. De twee
+entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met `secretName`) voldoen
+allebei.
+
+Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
+
 De naam is vrije tekst plus een afgeleide verwijzing, net als bij het project zelf:
 
 ```yaml

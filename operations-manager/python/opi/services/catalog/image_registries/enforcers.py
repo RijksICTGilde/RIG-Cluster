@@ -43,7 +43,7 @@ class RegistryTokenEnforcer:
             username = registry.get("username")
             password = _plain_token(registry, value)
             if not upstream or not username or not password:
-                # Een publieke upstream zonder inloggegevens is geldige invoer.
+                # Een entry met een secretName: er is geen token om te toetsen.
                 continue
             repository = _repository_under(str(upstream), images)
             if repository is None:

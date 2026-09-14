@@ -6,7 +6,7 @@ Draait je applicatie op een image die in je eigen private registry staat, dan vu
 
 - **Naam** - hoe jij deze registry noemt, bijvoorbeeld `Code Overheid`. Vrije tekst; wij maken er zelf een korte verwijzing van.
 - **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol, bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag je die URL hier ook gewoon plakken: wij maken er de goede vorm van. Datzelfde geldt voor een volledige image-verwijzing met tag.
-- **Gebruikersnaam** en **token** - waarmee wij bij je images mogen.
+- **Gebruikersnaam** en **token** - waarmee wij bij je images mogen. Allebei verplicht: zonder kunnen we je images niet ophalen.
 
 Je schrijft altijd je eigen registry, nooit een adres van het platform. Wat er technisch onder gebeurt verschilt per cluster, en dat hoef je niet te weten: je projectbestand blijft hetzelfde.
 

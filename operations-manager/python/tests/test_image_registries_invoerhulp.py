@@ -14,6 +14,10 @@ from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 
+#: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
+#: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
+CREDS = {"username": "u", "password": "plain:een-token"}
+
 _SVC = ServiceType.IMAGE_REGISTRIES.value
 
 
@@ -117,7 +121,7 @@ def _project(registries: list[dict[str, Any]]) -> dict[str, Any]:
 
 class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
     def test_een_registry_zonder_naam_krijgt_er_een(self) -> None:
-        project = _project([{"display-name": "Code Overheid", "upstream": "code.overheid.nl/team"}])
+        project = _project([{"display-name": "Code Overheid", "upstream": "code.overheid.nl/team", **CREDS}])
         gegenereerd = get_service(ServiceType.IMAGE_REGISTRIES).generate_missing_values(project)
         assert project["services"][0]["config"]["registries"][0]["name"] == "code-overheid"
         assert gegenereerd == {"services/image-registries/config/registries[0]/name": "code-overheid"}
@@ -125,15 +129,17 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
     def test_een_bestaande_naam_verandert_niet_mee_met_het_label(self) -> None:
         """De slug is de verwijzing vanaf componenten en zit in de naam van het
         pull-secret, dus hij ligt vast zodra hij bestaat."""
-        project = _project([{"name": "oude-naam", "display-name": "Een hele andere naam", "upstream": "ghcr.io"}])
+        project = _project(
+            [{"name": "oude-naam", "display-name": "Een hele andere naam", "upstream": "ghcr.io", **CREDS}]
+        )
         assert get_service(ServiceType.IMAGE_REGISTRIES).generate_missing_values(project) == {}
         assert project["services"][0]["config"]["registries"][0]["name"] == "oude-naam"
 
     def test_twee_labels_die_dezelfde_slug_geven_botsen_niet(self) -> None:
         project = _project(
             [
-                {"display-name": "Code Overheid", "upstream": "code.overheid.nl/a"},
-                {"display-name": "code overheid", "upstream": "code.overheid.nl/b"},
+                {"display-name": "Code Overheid", "upstream": "code.overheid.nl/a", **CREDS},
+                {"display-name": "code overheid", "upstream": "code.overheid.nl/b", **CREDS},
             ]
         )
         get_service(ServiceType.IMAGE_REGISTRIES).generate_missing_values(project)
@@ -143,8 +149,8 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
     def test_een_nieuwe_slug_wijkt_uit_voor_een_bestaande(self) -> None:
         project = _project(
             [
-                {"name": "code-overheid", "upstream": "code.overheid.nl/a"},
-                {"display-name": "Code Overheid", "upstream": "code.overheid.nl/b"},
+                {"name": "code-overheid", "upstream": "code.overheid.nl/a", **CREDS},
+                {"display-name": "Code Overheid", "upstream": "code.overheid.nl/b", **CREDS},
             ]
         )
         get_service(ServiceType.IMAGE_REGISTRIES).generate_missing_values(project)
@@ -160,7 +166,7 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
         section = service.config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         assert section.post_merge is not None
-        project = _project([{"display-name": "Code Overheid", "upstream": "code.overheid.nl/team"}])
+        project = _project([{"display-name": "Code Overheid", "upstream": "code.overheid.nl/team", **CREDS}])
         section.post_merge(project, {})
         assert project["services"][0]["config"]["registries"][0]["name"] == "code-overheid"
 
@@ -170,21 +176,21 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            RegistryEntry(upstream="ghcr.io")
+            RegistryEntry(upstream="ghcr.io", **CREDS)
 
 
 class TestHetScherm:
     def test_de_keuzelijst_toont_het_label_en_verwijst_met_de_slug(self) -> None:
         from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
 
-        project = _project([{"name": "code-overheid", "display-name": "Code Overheid", "upstream": "ghcr.io"}])
+        project = _project([{"name": "code-overheid", "display-name": "Code Overheid", "upstream": "ghcr.io", **CREDS}])
         opties = ImageRegistryOptionsProvider(yaml_data=project).get_options()
         assert opties[1] == {"value": "code-overheid", "label": "Code Overheid"}
 
     def test_zonder_label_blijft_de_slug_op_het_scherm(self) -> None:
         from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
 
-        project = _project([{"name": "code-overheid", "upstream": "ghcr.io"}])
+        project = _project([{"name": "code-overheid", "upstream": "ghcr.io", **CREDS}])
         opties = ImageRegistryOptionsProvider(yaml_data=project).get_options()
         assert opties[1] == {"value": "code-overheid", "label": "code-overheid"}
 
@@ -209,7 +215,7 @@ class TestEenBestaandeRegistryBlijftOpslaanbaar:
     def test_zonder_label_is_de_entry_geldig(self) -> None:
         from opi.services.catalog.image_registries.config_model import RegistryEntry
 
-        assert RegistryEntry(name="code-overheid", upstream="ghcr.io").display_name is None
+        assert RegistryEntry(name="code-overheid", upstream="ghcr.io", **CREDS).display_name is None
 
     def test_het_labelveld_is_niet_verplicht(self) -> None:
         from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE
@@ -222,10 +228,10 @@ class TestEenBestaandeRegistryBlijftOpslaanbaar:
         from opi.services.catalog.image_registries.config_model import RegistryEntry
         from pydantic import ValidationError
 
-        RegistryEntry(name="code-overheid", upstream="ghcr.io")
-        RegistryEntry(**{"display-name": "Code Overheid", "upstream": "ghcr.io"})
-        with pytest.raises(ValidationError):
-            RegistryEntry(upstream="ghcr.io")
+        RegistryEntry(name="code-overheid", upstream="ghcr.io", **CREDS)
+        RegistryEntry(**{"display-name": "Code Overheid", "upstream": "ghcr.io", **CREDS})
+        with pytest.raises(ValidationError, match="Geef een 'name' of een 'display-name'"):
+            RegistryEntry(upstream="ghcr.io", **CREDS)
 
 
 class TestDeUpstreamWordtVooruitIngevuldUitDeImage:

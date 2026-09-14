@@ -116,7 +116,10 @@ class RegistryEntry(BaseModel):
     )
     username: str | None = Field(
         default=None,
-        description="Gebruikersnaam waarmee ZAD bij de registry inlogt; leeg voor een registry zonder inlog.",
+        description=(
+            "Gebruikersnaam waarmee ZAD bij de registry inlogt, samen met 'password'. "
+            "Laat hem alleen weg bij een 'secretName'."
+        ),
     )
     password: str | None = Field(
         default=None,
@@ -145,6 +148,25 @@ class RegistryEntry(BaseModel):
         """
         if not self.name and not self.display_name:
             msg = "Geef een 'name' of een 'display-name'"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _has_exactly_one_way_to_pull(self) -> RegistryEntry:
+        """Een entry draagt OF een ``secretName`` OF een gebruikersnaam plus token.
+
+        Zonder een van beide komt hij overal doorheen en schrijft de backend stil geen
+        pull-secret; de afnemer merkt het pas als de pod niet kan pullen, met een melding die
+        niet over een ontbrekend token gaat. De twee vormen mengen kan ook niet: met een
+        ``secretName`` slaat de backend gebruikersnaam en token over, dus die zouden er voor
+        niets staan. In het model, zodat het formulier en de API dezelfde regel krijgen.
+        """
+        has_credentials = bool(self.username) or bool(self.password)
+        if self.secret_name and has_credentials:
+            msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
+            raise ValueError(msg)
+        if not self.secret_name and not (self.username and self.password):
+            msg = "Vul een gebruikersnaam en een token in, anders kunnen we de images niet ophalen"
             raise ValueError(msg)
         return self
 

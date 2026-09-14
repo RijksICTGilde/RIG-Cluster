@@ -98,9 +98,9 @@ class TestDeToets:
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         connector.check_repository_access.assert_not_awaited()
 
-    async def test_zonder_inloggegevens_wordt_er_niets_getoetst(self) -> None:
+    async def test_met_een_secretname_wordt_er_niets_getoetst(self) -> None:
         connector = _connector(False)
-        data = _data([{"name": "publiek", "upstream": "code.overheid.nl/open"}], [IMAGE])
+        data = _data([{"name": "platform", "upstream": "code.overheid.nl/open", "secretName": "rig-pull"}], [IMAGE])
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         connector.check_repository_access.assert_not_awaited()
