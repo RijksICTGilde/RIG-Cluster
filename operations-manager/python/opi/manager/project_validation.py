@@ -106,7 +106,7 @@ def validation_reasons(error: ValidationError) -> str:
 def _located(loc: tuple[int | str, ...], reason: str) -> str:
     """Zet de plek voor de reden, zodat je bij drie registries weet welke je moet repareren.
 
-    ``loc`` draagt alleen veldnamen en lijstindexen, nooit een waarde, dus hier lekt niets
+    ``loc`` draagt veldnamen, lijstindexen en dict-sleutels, geen waarden, dus hier lekt niets
     wat ``msg`` alleen zou verbergen. Een index telt vanaf 1: ``registries, nummer 2`` is de
     tweede entry zoals een mens hem telt.
     """
