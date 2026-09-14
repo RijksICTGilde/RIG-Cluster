@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
@@ -2857,8 +2858,6 @@ class ProjectFileHandler:
             Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
             ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
         """
-        from opi.services.catalog.image_registries.resolution import project_registries
-
         registries = project_registries(project_data)
         if registries:
             logger.info(f"Found {len(registries)} container registr{'y' if len(registries) == 1 else 'ies'}")
@@ -2878,8 +2877,6 @@ class ProjectFileHandler:
             Registry config dict with keys: name, upstream, username, password
             or None if the component points at no registry
         """
-        from opi.services.catalog.image_registries.resolution import component_registry_name
-
         component = next(
             (
                 c

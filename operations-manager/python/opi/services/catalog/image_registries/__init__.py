@@ -10,8 +10,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div, Fieldset
+from opi.forms.visualizers.sections import FormSection
 from opi.services.catalog.base import (
     ConfigLayer,
+    ConfigRole,
     DetailPageSection,
     ProjectManifestContext,
     ProjectManifestSpec,
@@ -20,7 +23,15 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.catalog.events import on
+from opi.services.catalog.image_registries.backends import backend_for_cluster
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
+from opi.services.catalog.image_registries.editables import (
+    COMPONENT_REGISTRY_EDITABLE,
+    DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
+    REGISTRIES_SEQUENCE_EDITABLE,
+)
+from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer
+from opi.services.catalog.image_registries.naming import registry_slug
 from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_claims,
     validate_proxy_organization_ownership,
@@ -28,6 +39,11 @@ from opi.services.catalog.image_registries.ownership import (
 )
 from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
+from opi.services.catalog.image_registries.visualizers import (
+    COMPONENT_REGISTRY,
+    DEPLOYMENT_COMPONENT_REGISTRY,
+    REGISTRIES_SEQUENCE,
+)
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
@@ -71,8 +87,6 @@ class ImageRegistriesService(Service):
         return self.config_model
 
     def config_roles(self, layer: ConfigLayer):
-        from opi.services.catalog.base import ConfigRole
-
         # Het project gebruikt zijn eigen registries; een component bindt er een aan zijn image.
         if layer is ConfigLayer.PROJECT:
             return (ConfigRole.USE,)
@@ -86,12 +100,6 @@ class ImageRegistriesService(Service):
         return []
 
     def config_editables(self, layer: ConfigLayer):
-        from opi.services.catalog.image_registries.editables import (
-            COMPONENT_REGISTRY_EDITABLE,
-            DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
-            REGISTRIES_SEQUENCE_EDITABLE,
-        )
-
         if layer is ConfigLayer.PROJECT:
             return [REGISTRIES_SEQUENCE_EDITABLE]
         if layer is ConfigLayer.COMPONENT:
@@ -103,13 +111,9 @@ class ImageRegistriesService(Service):
     # --- component- en deployment-componentniveau -------------------------------------
 
     def config_component_visualizers(self) -> list[EditableVisualizer]:
-        from opi.services.catalog.image_registries.visualizers import COMPONENT_REGISTRY
-
         return [COMPONENT_REGISTRY]
 
     def config_component_layout(self) -> list[Any]:
-        from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div
-
         svc = self.service_type.value
         # In het slot achter het image-veld en niet in een eigen fieldset onderaan: de
         # vraag is waar DIE image vandaan komt. Geen ``depends_on`` op de dienstenlijst
@@ -122,13 +126,9 @@ class ImageRegistriesService(Service):
         ]
 
     def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
-        from opi.services.catalog.image_registries.visualizers import DEPLOYMENT_COMPONENT_REGISTRY
-
         return [DEPLOYMENT_COMPONENT_REGISTRY]
 
     def config_deployment_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
-
         svc = self.service_type.value
         # ``services`` is hier een dict keyed op dienstnaam, dus een gewoon padsegment. Het
         # fieldset staat er onvoorwaardelijk, want de dienstenlijst van het component is
@@ -158,7 +158,8 @@ class ImageRegistriesService(Service):
         Een bestaande naam blijft staan, ook als het label verandert: hij is de verwijzing
         vanaf componenten en hij zit in de naam van het pull-secret.
         """
-        from opi.services.catalog.image_registries.naming import registry_slug
+        # Lazy: ``opi.services.project`` leest ``opi.forms``, en dat leest via de providers
+        # deze module.
         from opi.services.project import Project
 
         base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")
@@ -198,10 +199,6 @@ class ImageRegistriesService(Service):
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
-            from opi.forms.visualizers.sections import FormSection
-            from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer
-            from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
-
             cached = FormSection(
                 section_id=self.config_section_id or "image-registries-config",
                 title="Eigen container registries",
@@ -242,6 +239,8 @@ class ImageRegistriesService(Service):
         ]
 
     def web_routers(self) -> list[Any]:
+        # Lazy: de router leest de projectstore, en die leest via ``project_validation`` en
+        # ``opi.forms`` deze module.
         from opi.services.catalog.image_registries.web import image_registries_router
 
         return [*super().web_routers(), image_registries_router]
@@ -269,8 +268,6 @@ class ImageRegistriesService(Service):
 
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
         """Wat deze dienst op het PROJECTniveau van de deployments-repo neerzet."""
-        from opi.services.catalog.image_registries.backends import backend_for_cluster
-
         registries = project_registries(ctx.project_data)
         if not registries:
             return []

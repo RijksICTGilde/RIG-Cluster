@@ -12,7 +12,10 @@ from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.forms.editables.service_path import smart_get_value
+from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -598,6 +601,8 @@ class FilteredServiceOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get service options filtered to project-enabled services."""
+        # Lazy: de registry laadt de dienstencatalogus, en die leest ``opi.forms`` en daarmee
+        # deze module.
         from opi.services.registry import get_service
 
         options: list[dict[str, Any]] = []
@@ -1214,11 +1219,6 @@ class ImageRegistryOptionsProvider:
         self._current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.forms.editables.service_path import smart_get_value
-        from opi.services.catalog.base import ConfigLayer, config_path
-        from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
-        from opi.services.services_enums import ServiceType
-
         registries = (
             smart_get_value(
                 self._yaml_data,

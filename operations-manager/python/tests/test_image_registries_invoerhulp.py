@@ -6,13 +6,23 @@ de naam mag een vrij label zijn waar wij de verwijzing uit afleiden.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
+from opi.forms.editables.editable import WidgetType
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
+from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN, RegistryEntry
+from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
 from opi.services.catalog.image_registries.naming import registry_slug
-from opi.services.catalog.image_registries.upstream import normalize_upstream
+from opi.services.catalog.image_registries.upstream import normalize_upstream, upstream_from_project_images
+from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE, REGISTRY_UPSTREAM
 from opi.services.registry import get_service
+from opi.services.schema_migration import relocate_registries_to_service
 from opi.services.services_enums import ServiceType
+from pydantic import ValidationError
 
 #: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
 #: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
@@ -82,8 +92,6 @@ class TestEenGeplakteUrlWordtEenUpstream:
     def test_de_migratie_draait_dezelfde_omzetting(self) -> None:
         """Een bestaand bestand hoort niet door een andere regel te gaan dan wat een
         afnemer vandaag intypt."""
-        from opi.services.schema_migration import relocate_registries_to_service
-
         project: dict[str, Any] = {"registries": [{"name": "a", "url": "HTTPS://GHCR.IO/"}]}
         relocate_registries_to_service(project)
         assert project["services"][0]["config"]["registries"][0]["upstream"] == "ghcr.io"
@@ -103,10 +111,6 @@ class TestDeNaamMagEenVrijLabelZijn:
         assert registry_slug("Code Overheid", {"code-overheid", "code-overheid-2"}) == "code-overheid-3"
 
     def test_de_slug_past_in_het_patroon(self) -> None:
-        import re
-
-        from opi.services.catalog.image_registries.config_model import REGISTRY_NAME_PATTERN
-
         # De laatste twee zijn de combinatie die de losse gevallen missen: niet-letter
         # vooraan EN lang. Het ``r``-prefix schuift de afkapgrens dan een teken naar
         # links, en die grens kan midden in een streepje vallen.
@@ -160,8 +164,6 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
     def test_de_portal_loopt_langs_dezelfde_functie(self) -> None:
         """Via ``post_merge`` van de configsectie, zodat de twee wegen geen registry kunnen
         opleveren die de ene wel een naam geeft en de andere niet."""
-        from opi.services.catalog.base import ConfigLayer
-
         service = get_service(ServiceType.IMAGE_REGISTRIES)
         section = service.config_form_section(ConfigLayer.PROJECT)
         assert section is not None
@@ -172,24 +174,17 @@ class TestDeSlugWordtAfgeleidOpBeideSchrijfwegen:
 
     def test_een_entry_zonder_naam_en_zonder_label_wordt_geweigerd(self) -> None:
         """Anders is hij nergens naar te verwijzen en onzichtbaar voor de hele dienst."""
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             RegistryEntry(upstream="ghcr.io", **CREDS)
 
 
 class TestHetScherm:
     def test_de_keuzelijst_toont_het_label_en_verwijst_met_de_slug(self) -> None:
-        from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
-
         project = _project([{"name": "code-overheid", "display-name": "Code Overheid", "upstream": "ghcr.io", **CREDS}])
         opties = ImageRegistryOptionsProvider(yaml_data=project).get_options()
         assert opties[1] == {"value": "code-overheid", "label": "Code Overheid"}
 
     def test_zonder_label_blijft_de_slug_op_het_scherm(self) -> None:
-        from opi.forms.visualizers.providers import ImageRegistryOptionsProvider
-
         project = _project([{"name": "code-overheid", "upstream": "ghcr.io", **CREDS}])
         opties = ImageRegistryOptionsProvider(yaml_data=project).get_options()
         assert opties[1] == {"value": "code-overheid", "label": "code-overheid"}
@@ -197,9 +192,6 @@ class TestHetScherm:
     def test_de_slug_komt_mee_in_de_inzending_maar_niet_op_het_scherm(self) -> None:
         """Zonder die sleutel koppelt ``_match_original_item`` de rijen op INDEX, en schuift
         bij het weghalen van een rij de slug van de ene registry onder de andere."""
-        from opi.forms.editables.editable import WidgetType
-        from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
-
         per_pad = {kind.editable.yaml_path.rsplit("/", 1)[-1]: kind for kind in REGISTRIES_SEQUENCE.children or []}
         assert per_pad["name"].widget is WidgetType.HIDDEN
         assert per_pad["display-name"].widget is WidgetType.TEXT
@@ -213,21 +205,14 @@ class TestEenBestaandeRegistryBlijftOpslaanbaar:
     """
 
     def test_zonder_label_is_de_entry_geldig(self) -> None:
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-
         assert RegistryEntry(name="code-overheid", upstream="ghcr.io", **CREDS).display_name is None
 
     def test_het_labelveld_is_niet_verplicht(self) -> None:
-        from opi.services.catalog.image_registries.editables import REGISTRY_DISPLAY_NAME_EDITABLE
-
         assert REGISTRY_DISPLAY_NAME_EDITABLE.required is False
 
     def test_de_regel_gaat_over_de_twee_velden_samen(self) -> None:
         """Niet "label verplicht" maar "ergens naar te verwijzen", en die regel staat in het
         model zodat de API hem ook draagt."""
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-        from pydantic import ValidationError
-
         RegistryEntry(name="code-overheid", upstream="ghcr.io", **CREDS)
         RegistryEntry(**{"display-name": "Code Overheid", "upstream": "ghcr.io", **CREDS})
         with pytest.raises(ValidationError, match="Geef een 'name' of een 'display-name'"):
@@ -243,54 +228,36 @@ class TestDeUpstreamWordtVooruitIngevuldUitDeImage:
     """
 
     def test_uit_een_image_op_een_component(self) -> None:
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         project = {"components": [{"name": "web", "image": "code.overheid.nl/team/app:1.2"}]}
         assert upstream_from_project_images(project) == "code.overheid.nl/team"
 
     def test_uit_een_image_op_een_deployment(self) -> None:
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         project = {"deployments": [{"components": [{"reference": "web", "image": "ghcr.io/org/app:1"}]}]}
         assert upstream_from_project_images(project) == "ghcr.io/org"
 
     def test_twee_prefixen_leveren_niets_op(self) -> None:
         """Dan is de vraag juist het punt, en zou een gok een registry opleveren die
         nergens bij hoort."""
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         project = {"components": [{"image": "code.overheid.nl/team/a:1"}, {"image": "ghcr.io/org/b:2"}]}
         assert upstream_from_project_images(project) is None
 
     def test_dezelfde_prefix_twee_keer_is_wel_eenduidig(self) -> None:
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         project = {"components": [{"image": "code.overheid.nl/team/a:1"}, {"image": "code.overheid.nl/team/b:2"}]}
         assert upstream_from_project_images(project) == "code.overheid.nl/team"
 
     def test_een_image_zonder_host_telt_niet_mee(self) -> None:
         """``nginx:alpine`` staat op Docker Hub, en daar heb je geen eigen registry voor."""
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         assert upstream_from_project_images({"components": [{"image": "nginx:alpine"}]}) is None
 
     def test_zonder_images_wordt_er_niets_ingevuld(self) -> None:
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         assert upstream_from_project_images({}) is None
 
     def test_het_veld_draagt_die_default(self) -> None:
-        from opi.services.catalog.image_registries.editables import REGISTRY_UPSTREAM_EDITABLE
-        from opi.services.catalog.image_registries.upstream import upstream_from_project_images
-
         assert REGISTRY_UPSTREAM_EDITABLE.default is upstream_from_project_images
 
     def test_een_bestaande_upstream_wordt_er_niet_door_overschreven(self) -> None:
         """De default geldt alleen voor een rij die er nog geen draagt, dus voor een nieuwe
         registry; anders zou het openen van het blok bestaande registries verbouwen."""
-        from opi.forms.editables.processor import EditableFormProcessor
-        from opi.services.catalog.image_registries.visualizers import REGISTRY_UPSTREAM
-
         processor = EditableFormProcessor()
         processor._yaml_data = {"components": [{"image": "code.overheid.nl/team/app:1"}]}
         assert processor._effective_value(REGISTRY_UPSTREAM, "ghcr.io/anders") == "ghcr.io/anders"

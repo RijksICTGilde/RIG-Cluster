@@ -17,6 +17,7 @@ from opi.services.catalog.image_registries.resolution import (
     build_rules,
     cluster_rules,
     project_registries,
+    resolve_deployment_component_image,
     resolve_project_image,
 )
 from opi.services.catalog.image_registries.rules import (
@@ -426,16 +427,12 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         return data
 
     def test_de_keuze_van_het_component_erft(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         deployment_component = {"reference": "web", "image": self.IMAGE}
         resolved = resolve_deployment_component_image(data, deployment_component, data["components"][0], SANDBOX)
         assert resolved.secret == "demo-ander-registry"
 
     def test_de_deployment_override_wint(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         deployment_component = {
             "reference": "web",
@@ -447,8 +444,6 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         assert resolved.secret == "demo-een-registry"
 
     def test_zonder_enige_keuze_wint_de_eerste_in_het_bestand(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = _project([self.EEN, self.ANDER])
         resolved = resolve_deployment_component_image(data, {"reference": "web", "image": self.IMAGE}, None, SANDBOX)
         assert resolved.secret == "demo-een-registry"
@@ -456,8 +451,6 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
     def test_op_odcn_levert_de_override_een_andere_organisatie_op(self) -> None:
         """De tegenproef dat de keuze echt doorwerkt tot in de herschrijving, niet alleen
         tot in het secret: op een cluster mét proxy verandert ook de bestemming."""
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         zonder = resolve_deployment_component_image(
             data, {"reference": "web", "image": self.IMAGE}, data["components"][0], ODCN

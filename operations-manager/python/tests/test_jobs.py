@@ -5,13 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
-from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobManager, JobRun
+from opi.manager.job_manager import ANNOT_COMMAND, ANNOT_IMAGE, JobError, JobManager, JobRun
 from opi.manager.run_support import ANNOT_EXPIRES, ANNOT_OPENED_BY, LABEL_RUN, LABEL_RUN_DEPLOYMENT
+from opi.services.catalog.image_registries.naming import organization_name
 from opi.utils import naming
 
 
@@ -342,10 +344,6 @@ class TestDeJobImageIsGeenVrijeKeuze:
     ODCN = "odcn-production"
 
     def _manager(self, kubectl: Any) -> Any:
-        from unittest.mock import patch
-
-        from opi.manager.job_manager import JobManager
-
         with patch("opi.manager.job_manager.create_kubectl_connector", return_value=kubectl):
             return JobManager()
 
@@ -359,8 +357,6 @@ class TestDeJobImageIsGeenVrijeKeuze:
         )
 
     def _store(self, *project_names: str):
-        from unittest.mock import MagicMock, patch
-
         projects = {name: self._project(name) for name in project_names}
         store = MagicMock()
         store.get.side_effect = projects.get
@@ -371,10 +367,6 @@ class TestDeJobImageIsGeenVrijeKeuze:
 
     async def _begin(self, image: str) -> str | None:
         """De foutmelding van ``begin()``, of None als hij de image accepteert."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from opi.manager.job_manager import JobError
-
         kubectl = MagicMock()
         kubectl.get_resources_by_label = AsyncMock(return_value=[])
         runs = MagicMock()
@@ -396,8 +388,6 @@ class TestDeJobImageIsGeenVrijeKeuze:
 
     @pytest.mark.asyncio
     async def test_andermans_proxy_organisatie_wordt_geweigerd(self) -> None:
-        from opi.services.catalog.image_registries.naming import organization_name
-
         organisatie = organization_name("ghcr.io/team", "rig", "slachtoffer")
         melding = await self._begin(f"rcr.rijksapps.nl/{organisatie}/geheime-app:1")
         assert melding is not None
@@ -407,8 +397,6 @@ class TestDeJobImageIsGeenVrijeKeuze:
     async def test_de_eigen_proxy_organisatie_mag(self) -> None:
         """De tegenproef op de toegestane kant: zonder deze had de weigering ook op een
         te brede grendel kunnen slaan."""
-        from opi.services.catalog.image_registries.naming import organization_name
-
         organisatie = organization_name("ghcr.io/team", "rig", "eigen")
         assert await self._begin(f"rcr.rijksapps.nl/{organisatie}/eigen-app:1") is None
 

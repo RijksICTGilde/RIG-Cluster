@@ -20,12 +20,16 @@ draait, en op het gerenderde manifest.
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
+import pydantic
 import pytest
 import yaml
+from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
@@ -33,11 +37,15 @@ from opi.generation.manifests import ManifestGenerator, render_template
 from opi.manager.project_validation import find_plaintext_service_config_violations, validate_service_configs
 from opi.services.catalog.base import ConfigLayer, ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
-from opi.services.catalog.image_registries.config_model import UPSTREAM_PATTERN
+from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN, UPSTREAM_PATTERN, RegistryEntry
+from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE, REGISTRY_UPSTREAM_EDITABLE
+from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
+
+from test_golden_manifests import _deployment_vars
 
 #: Een upstream die uit zijn scalar breekt en er twee documenten achteraan hangt, waarvan
 #: het tweede een RoleBinding is naar de privileged SCC. Binnen de ``max_length=512`` van
@@ -161,8 +169,6 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         ook dat doen de twee samen: de omzetting hangt aan het VELD in het model, dus de
         toets die het formulier eruit bouwt draagt hem mee.
         """
-        from opi.services.catalog.image_registries.editables import REGISTRY_UPSTREAM_EDITABLE
-
         validator = REGISTRY_UPSTREAM_EDITABLE.validator
         assert validator is not None
         assert validator.validate("code.overheid.nl/robbert.uittenbroek") == []
@@ -172,9 +178,6 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
 
     def test_de_api_weigert_de_payload_aan_de_deur(self) -> None:
         """``POST /projects/{p}/registries/by-credentials`` was de gemeten ingang."""
-        import pydantic
-        from opi.api.router import AddRegistryByCredentialsRequest
-
         AddRegistryByCredentialsRequest(name="eigen", url="ghcr.io", username="u", password="t")
         with pytest.raises(pydantic.ValidationError):
             AddRegistryByCredentialsRequest(name="eigen", url=YAML_INJECTIE_UPSTREAM, username="u", password="t")
@@ -265,8 +268,6 @@ class TestHetTokenValtNietUitDeFailClosedControle:
         (``test_store_refuses_plaintext_secret_even_without_enforcement``); deze is zijn
         spiegelbeeld voor de dienstconfig.
         """
-        from opi.services.project_store import GitProjectStore
-
         store = GitProjectStore(working_dir="/tmp/unused-by-this-test")
         leaked = _project({"name": "eigen", "upstream": "ghcr.io", "username": "u", "password": "ghp_KLARTEKST"})
 
@@ -287,8 +288,6 @@ class TestHetTokenValtNietUitDeFailClosedControle:
         Haal het AGE-patroon van ``password`` weg en deze controle vindt niets meer, dat
         is precies wat er bij de verhuizing gebeurde.
         """
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-
         pattern = str(RegistryEntry.model_json_schema()["properties"]["password"]["anyOf"][0]["pattern"])
         assert "BEGIN AGE ENCRYPTED FILE" in pattern
 
@@ -324,15 +323,11 @@ class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
     def test_aan_de_deur_wordt_hij_wel_omgezet(self, geplakt: str, upstream: str) -> None:
         """Zonder validatiecontext -- het formulier en de API -- is dit invoer die wij
         onder water goed zetten."""
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-
         assert RegistryEntry(name="eigen", upstream=geplakt, **CREDS).upstream == upstream
 
     def test_een_onbekende_vorm_wordt_niet_stil_verminkt(self) -> None:
         """Wat we niet herkennen laten we met rust, zodat het patroon hem afwijst in plaats
         van er iets van te maken dat ergens anders heen wijst."""
-        from opi.services.catalog.image_registries.config_model import RegistryEntry
-
         with pytest.raises(ValidationError):
             RegistryEntry(name="eigen", upstream=YAML_INJECTIE_UPSTREAM, **CREDS)
 
@@ -340,9 +335,6 @@ class TestDeInvoerhulpRepareertGeenOpgeslagenBestand:
 class TestHetPatroonStaatOpEenPlek:
     def test_de_gecommitte_fragment_draagt_hetzelfde_patroon(self) -> None:
         """Het schemafragment wordt uit het model gerenderd; drift is uitgesloten."""
-        import json
-        from pathlib import Path
-
         fragment = json.loads(
             (
                 Path(__file__).resolve().parent.parent
@@ -382,16 +374,12 @@ class TestDeRegistrynaamHeeftDezelfdeRegelAlsHetFormulier:
     def test_het_api_model_draagt_dezelfde_regel(self) -> None:
         """Het endpoint schrijft rechtstreeks tegen dit model; zonder het patroon daar komt
         een naam die het formulier weigert alsnog het projectbestand in."""
-        from opi.api.router import AddRegistryByCredentialsRequest, AddRegistryBySecretRequest
-
         for model in (AddRegistryBySecretRequest, AddRegistryByCredentialsRequest):
             velden = {"name": "Hoofdletters", "url": "ghcr.io", "secretName": "s", "username": "u", "password": "p"}
             with pytest.raises(ValidationError):
                 model(**velden)
 
     def test_het_formulier_en_het_model_wijzen_naar_dezelfde_regel(self) -> None:
-        from opi.services.catalog.image_registries.editables import REGISTRY_NAME_EDITABLE
-
         assert REGISTRY_NAME_EDITABLE.validator is not None
         assert REGISTRY_NAME_EDITABLE.validator.validate("Hoofdletters")
         assert REGISTRY_NAME_EDITABLE.validator.validate("code-overheid") == []
@@ -487,9 +475,6 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
         """``validate_registry_entry_ownership`` haalt er ``-robot-pull-secret`` af om de
         organisatie te vinden. Een RFC-1123-patroon laat die vorm heel, dus die regel meet
         na deze reparatie nog steeds wat hij mat."""
-        from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN
-        from opi.services.catalog.image_registries.ownership import PULL_SECRET_POSTFIX
-
         naam = f"codeoverheid-rig-anderproject-{PULL_SECRET_POSTFIX}"
         assert re.match(SECRET_NAME_PATTERN, naam)
         assert naam.removesuffix(f"-{PULL_SECRET_POSTFIX}") == "codeoverheid-rig-anderproject"
@@ -498,9 +483,6 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
         """``POST /projects/{p}/registries/by-secret`` schrijft rechtstreeks tegen dit
         model. Het droeg wel een ``max_length`` en geen patroon, dus alles wat binnen 253
         tekens past kwam erdoor."""
-        import pydantic
-        from opi.api.router import AddRegistryBySecretRequest
-
         AddRegistryBySecretRequest(name="eigen", url="ghcr.io", secretName="rig-robot-pull-secret")
         for kwaad in ("rig-robot-pull-secret\n      hostNetwork: true\n---\nkind: RoleBinding", "Hoofdletters"):
             with pytest.raises(pydantic.ValidationError):
@@ -514,8 +496,6 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
         Zonder ``| yaml_scalar`` gaf deze render drie documenten, waarvan het tweede de
         RoleBinding naar ``cluster-admin`` was.
         """
-        from test_golden_manifests import _deployment_vars
-
         image = "ghcr.io/team/app:1.0"
         uitvoer = render_template(
             "deployment.yaml.jinja",
@@ -558,11 +538,6 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
 
     def test_het_gecommitte_fragment_draagt_het_patroon(self) -> None:
         """Zelfde drift-lock als bij ``upstream``: het fragment komt uit het model."""
-        import json
-        from pathlib import Path
-
-        from opi.services.catalog.image_registries.config_model import SECRET_NAME_PATTERN
-
         fragment = json.loads(
             (
                 Path(__file__).resolve().parent.parent
@@ -594,16 +569,22 @@ class TestEenRegistryHeeftEenManierOmTePullen:
         poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
 
     @pytest.mark.parametrize(
-        "manier",
+        ("manier", "melding"),
         [
-            pytest.param({}, id="niets"),
-            pytest.param({"username": "u"}, id="alleen-gebruikersnaam"),
-            pytest.param({"password": AGE_BLOCK}, id="alleen-token"),
-            pytest.param({"username": "", "password": AGE_BLOCK}, id="lege-gebruikersnaam"),
+            pytest.param({}, "Vul een gebruikersnaam en een token in", id="niets"),
+            pytest.param({"username": "u"}, "Vul een token in bij de gebruikersnaam", id="alleen-gebruikersnaam"),
+            pytest.param({"password": AGE_BLOCK}, "Vul een gebruikersnaam in bij het token", id="alleen-token"),
+            pytest.param(
+                {"username": "", "password": AGE_BLOCK},
+                "Vul een gebruikersnaam in bij het token",
+                id="lege-gebruikersnaam",
+            ),
         ],
     )
-    def test_zonder_volledige_inloggegevens_wordt_hij_geweigerd(self, manier: dict[str, str]) -> None:
-        with pytest.raises(ProjectIntegrityError, match="gebruikersnaam en een token"):
+    def test_zonder_volledige_inloggegevens_wordt_hij_geweigerd(self, manier: dict[str, str], melding: str) -> None:
+        """De melding noemt wat er MIST: bij een entry met een token vraagt hij alleen de
+        gebruikersnaam, niet ook het token dat er al staat."""
+        with pytest.raises(ProjectIntegrityError, match=melding):
             poorten(_project({"name": "eigen", "upstream": "ghcr.io", **manier}))
 
     @pytest.mark.parametrize(
@@ -651,5 +632,5 @@ class TestEenRegistryHeeftEenManierOmTePullen:
             {"name": "eigen", "upstream": "ghcr.io/team", "username": "u"}
         ]
 
-        with pytest.raises(ProjectIntegrityError, match="gebruikersnaam en een token"):
+        with pytest.raises(ProjectIntegrityError, match="Vul een token in bij de gebruikersnaam"):
             await GitProjectStore(working_dir="/tmp/unused-by-this-test")._validate(submitted, enforce=True)
