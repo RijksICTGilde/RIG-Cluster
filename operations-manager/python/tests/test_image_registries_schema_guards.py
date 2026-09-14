@@ -577,7 +577,8 @@ class TestEenRegistryHeeftEenManierOmTePullen:
 
     De gebruikersnaam hoort NIET bij de regel (RC-187): wat hij betekent verschilt per
     registry, dus hij is optioneel. Een registry die er wel een eist houdt niets hier tegen;
-    de tokentoets vangt het alleen bij het opslaan van het registryblok met al een image.
+    de tokentoets vangt het alleen in een formulierflow met het registryblok, tegen de images
+    in die flow (niet in de componentmodal, niet via de API).
     """
 
     @pytest.mark.parametrize(

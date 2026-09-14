@@ -122,9 +122,10 @@ class RegistryEntry(BaseModel):
             "zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het "
             "robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het "
             "platform een neutrale plaatshouder in het pull-secret. Eist de registry een echte naam, "
-            "dan mislukt het ophalen van de images. De tokentoets vangt dat alleen bij het opslaan "
-            "van het registryblok in het formulier, en alleen als het project al een image uit deze "
-            "registry gebruikt; via de API wordt er niet getoetst."
+            "dan mislukt het ophalen van de images. De tokentoets vangt dat alleen in een formulier "
+            "met het registryblok (de wizards, de dienstenmodal en de modal van het blok), en alleen "
+            "tegen images uit deze registry die in dat formulier al staan; in het componentformulier "
+            "en via de API wordt er niet getoetst."
         ),
     )
     password: str | None = Field(
