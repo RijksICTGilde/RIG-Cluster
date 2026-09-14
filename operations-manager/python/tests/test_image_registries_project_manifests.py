@@ -14,7 +14,7 @@ import yaml
 from opi.generation.manifests import ManifestGenerator
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
-from opi.services.catalog.image_registries.backends import FILENAME_PREFIX
+from opi.services.catalog.image_registries.backends import FILENAME_PREFIX, MissingRegistryCredentialsError
 from opi.services.catalog.image_registries.naming import organization_name, upstream_hash
 from opi.services.registry import project_manifest_services
 from opi.services.services_enums import ServiceType
@@ -102,9 +102,11 @@ class TestDirectSecretBackend:
         auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
         assert auth == "robbert.uittenbroek:een-token"
 
-    def test_zonder_inloggegevens_geen_secret(self, service: ImageRegistriesService) -> None:
+    def test_zonder_inloggegevens_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+        """Het model laat zo'n entry niet door; komt hij hier toch, dan niet stil geen secret."""
         naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
-        assert service.contribute_project_manifests(_ctx(SANDBOX, [naked])) == []
+        with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
+            service.contribute_project_manifests(_ctx(SANDBOX, [naked]))
 
     def test_een_bestaand_secret_schrijft_niets(self, service: ImageRegistriesService) -> None:
         existing = {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
@@ -233,11 +235,11 @@ class TestTweeRegistriesOnderDezelfdeHost:
 
 
 class TestQuayProxyOrganizationBackendZonderInloggegevens:
-    def test_zonder_inloggegevens_alleen_de_organisatie(self, service: ImageRegistriesService) -> None:
+    def test_zonder_inloggegevens_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+        """Net als bij het directe secret: geen stille organisatie zonder credentials."""
         naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
-        specs = service.contribute_project_manifests(_ctx(ODCN, [naked]))
-        assert len(specs) == 1
-        assert specs[0].values["credentials_secret"] is None
+        with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
+            service.contribute_project_manifests(_ctx(ODCN, [naked]))
 
 
 class TestDeGerenderdeOrganisatie:

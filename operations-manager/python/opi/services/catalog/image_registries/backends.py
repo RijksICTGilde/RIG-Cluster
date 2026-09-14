@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any, Protocol
 
 from opi.core.cluster_config import get_image_registries_config
@@ -23,14 +22,22 @@ from opi.utils.age import (
 )
 from opi.utils.secrets import RegistrySecret
 
-logger = logging.getLogger(__name__)
-
 #: Elk bestand van deze dienst op het projectniveau begint hiermee, voor de prune.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
 #: Terugval als de clusterconfig geen ``organization_api_version`` noemt: de gemeten
 #: ODCN-waarde, zie features/image-registries.md.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
+
+
+class MissingRegistryCredentialsError(ValueError):
+    """Een registry zonder secretName en zonder gebruikersnaam plus token."""
+
+    def __init__(self, registry: str, project: str) -> None:
+        super().__init__(
+            f"Registry '{registry}' van project '{project}' heeft geen secretName en geen gebruikersnaam "
+            f"plus token; er valt geen pull-secret te schrijven"
+        )
 
 
 class RegistryBackend(Protocol):
@@ -56,11 +63,10 @@ class DirectSecretBackend:
         username = registry.get("username")
         password = _plain_password(registry, ctx)
         if not upstream or not username or not password:
-            logger.info(
-                f"Registry '{registry.get('name')}' van project '{ctx.project_name}' heeft geen inloggegevens; "
-                f"geen pull-secret geschreven"
-            )
-            return []
+            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een gebruikersnaam plus
+            # token. Komt hij hier toch, dan blazen we op in plaats van stil geen pull-secret
+            # te schrijven -- anders merkt de afnemer het pas als de pod niet kan pullen.
+            raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
 
         name = direct_secret_name(ctx.project_name, str(registry.get("name", "")))
         # De volledige upstream inclusief pad, want kubelet kiest de meest specifieke match.
@@ -96,31 +102,26 @@ class QuayProxyOrganizationBackend:
         rotation_days = cluster_config.get("rotation_days", 90)
         organization = organization_name(str(upstream), customer_name, ctx.project_name)
 
-        specs: list[ProjectManifestSpec] = []
-        credentials_secret: str | None = None
         username = registry.get("username")
         password = _plain_password(registry, ctx)
-        if username and password:
-            credentials_secret = f"{organization}-upstream-credentials"
-            specs.append(
-                ProjectManifestSpec(
-                    filename=f"{FILENAME_PREFIX}{credentials_secret}",
-                    template_path="generic-secret.yaml.to-sops.jinja",
-                    values={
-                        "name": credentials_secret,
-                        "namespace": ctx.namespace,
-                        "secret_type": "registry",
-                        "secret_pairs": {"username": str(username), "password": password},
-                    },
-                    encrypt=True,
-                )
-            )
-        else:
-            logger.info(
-                f"Registry '{registry.get('name')}' van project '{ctx.project_name}' heeft geen inloggegevens; "
-                f"de proxy-organisatie wordt zonder credentials aangemaakt"
-            )
+        if not username or not password:
+            # Onbereikbaar, om dezelfde reden als in ``DirectSecretBackend``.
+            raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
 
+        credentials_secret = f"{organization}-upstream-credentials"
+        specs: list[ProjectManifestSpec] = [
+            ProjectManifestSpec(
+                filename=f"{FILENAME_PREFIX}{credentials_secret}",
+                template_path="generic-secret.yaml.to-sops.jinja",
+                values={
+                    "name": credentials_secret,
+                    "namespace": ctx.namespace,
+                    "secret_type": "registry",
+                    "secret_pairs": {"username": str(username), "password": password},
+                },
+                encrypt=True,
+            )
+        ]
         specs.append(
             ProjectManifestSpec(
                 filename=f"{FILENAME_PREFIX}{organization}",

@@ -30,6 +30,10 @@ REGISTRY_URL = "rcr.rijksapps.nl"
 REGISTRY_ORG = "rig/zad"
 PLATFORM_REPO = f"{REGISTRY_URL}/{REGISTRY_ORG}"
 
+#: Een entry draagt een gebruikersnaam plus token of een secretName (``RegistryEntry``); de
+#: tests hier gaan over iets anders en geven daarom gewoon inloggegevens mee.
+CREDS = {"username": "u", "password": "plain:een-token"}
+
 
 @pytest.fixture(autouse=True)
 def _reset_skopeo_singleton():
@@ -461,7 +465,7 @@ class TestRegistryEntryOwnership:
     def test_een_gewone_private_registry_mag(self) -> None:
         from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
 
-        data = self._project({"name": "eigen", "upstream": "code.overheid.nl/robbert.uittenbroek"})
+        data = self._project({"name": "eigen", "upstream": "code.overheid.nl/robbert.uittenbroek", **CREDS})
         with self._store("aanvaller", "slachtoffer"):
             assert validate_registry_entry_ownership(data) == []
 
@@ -510,8 +514,8 @@ class TestProxyOrganizationClaims:
     def test_twee_projecten_op_een_organisatienaam_worden_geweigerd(self) -> None:
         from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
 
-        ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaab")
-        eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaac")
+        ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaab")
+        eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaac")
         # Tegenproef: het zijn werkelijk twee verschillende projecten.
         assert organization_name(self.LANGE_UPSTREAM, "rig", eigen["name"]) == organization_name(
             self.LANGE_UPSTREAM, "rig", ander["name"]
@@ -524,8 +528,8 @@ class TestProxyOrganizationClaims:
     def test_twee_gewone_projecten_botsen_niet(self) -> None:
         from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
 
-        ander = self._project([{"name": "r", "upstream": "ghcr.io/team"}], "ander")
-        eigen = self._project([{"name": "r", "upstream": "ghcr.io/team"}], "eigen")
+        ander = self._project([{"name": "r", "upstream": "ghcr.io/team", **CREDS}], "ander")
+        eigen = self._project([{"name": "r", "upstream": "ghcr.io/team", **CREDS}], "eigen")
         with self._store(eigen, ander):
             assert validate_proxy_organization_claims(eigen) == []
 
@@ -537,8 +541,8 @@ class TestProxyOrganizationClaims:
 
         eigen = self._project(
             [
-                {"name": "een", "upstream": "ghcr.io/team"},
-                {"name": "twee", "upstream": "ghcr.io/team"},
+                {"name": "een", "upstream": "ghcr.io/team", **CREDS},
+                {"name": "twee", "upstream": "ghcr.io/team", **CREDS},
             ],
             "eigen",
         )
@@ -553,8 +557,8 @@ class TestProxyOrganizationClaims:
 
         eigen = self._project(
             [
-                {"name": "een", "upstream": "ghcr.io/orga"},
-                {"name": "twee", "upstream": "ghcr.io/orgb"},
+                {"name": "een", "upstream": "ghcr.io/orga", **CREDS},
+                {"name": "twee", "upstream": "ghcr.io/orgb", **CREDS},
             ],
             "eigen",
         )
@@ -564,8 +568,8 @@ class TestProxyOrganizationClaims:
     def test_op_een_cluster_zonder_proxy_operator_valt_er_niets_te_claimen(self) -> None:
         from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
 
-        ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaab")
-        eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM}], "aaaaaaaaaaaaaaaaaaac")
+        ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaab")
+        eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaac")
         eigen["clusters"] = ["sandboxed-local"]
         with self._store(eigen, ander):
             assert validate_proxy_organization_claims(eigen) == []
@@ -613,7 +617,7 @@ class TestDeGrendelsZittenAanDeSavePoort:
                 "secretName": f"{organisatie}-robot-pull-secret",
             },
         )
-        ander = self._with_registry("slachtoffer", {"name": "eigen", "upstream": "ghcr.io/team"})
+        ander = self._with_registry("slachtoffer", {"name": "eigen", "upstream": "ghcr.io/team", **CREDS})
         with self._store(eigen, ander), pytest.raises(ProjectIntegrityError, match="slachtoffer"):
             await validate_project_structure(eigen)
 
@@ -628,8 +632,8 @@ class TestDeGrendelsZittenAanDeSavePoort:
                     "name": "image-registries",
                     "config": {
                         "registries": [
-                            {"name": "een", "upstream": "ghcr.io/team"},
-                            {"name": "twee", "upstream": "ghcr.io/team"},
+                            {"name": "een", "upstream": "ghcr.io/team", **CREDS},
+                            {"name": "twee", "upstream": "ghcr.io/team", **CREDS},
                         ]
                     },
                 }
@@ -641,7 +645,7 @@ class TestDeGrendelsZittenAanDeSavePoort:
     @pytest.mark.asyncio
     async def test_een_eigen_registry_komt_er_gewoon_langs(self):
         """De toegestane tak, zodat de weigering hierboven niet aan iets anders ligt."""
-        eigen = self._with_registry("eigen", {"name": "code-overheid", "upstream": "code.overheid.nl/robbert"})
-        ander = self._with_registry("ander", {"name": "eigen", "upstream": "ghcr.io/team"})
+        eigen = self._with_registry("eigen", {"name": "code-overheid", "upstream": "code.overheid.nl/robbert", **CREDS})
+        ander = self._with_registry("ander", {"name": "eigen", "upstream": "ghcr.io/team", **CREDS})
         with self._store(eigen, ander):
             await validate_project_structure(eigen)
