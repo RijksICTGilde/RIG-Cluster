@@ -129,9 +129,8 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
             migrated = True
 
     # De stamp zegt "dit bestand voldoet aan versie X", niet "er is iets veranderd": ook als
-    # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie. Anders blijft het
-    # op een oude versie staan met nieuwe inhoud, en krijgt de configmigratie van een dienst
-    # die oude versie als ``from_version``.
+    # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie, dus dat hoort de
+    # stamp te zeggen.
     if migrated or version < LATEST_SCHEMA_VERSION:
         project_data["schema-version"] = LATEST_SCHEMA_VERSION
         migrated = True

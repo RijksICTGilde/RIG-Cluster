@@ -264,8 +264,7 @@ class TestMigrateToLatestNoOp:
     def test_an_older_file_where_every_step_is_a_no_op_is_stamped_latest(self):
         """De zpa-cj8-vorm: 2.7 zonder root-``registries``, dus de 2.8- en 2.9-stap hebben
         niets te doen. Toch voldoet het bestand daarna aan de nieuwste versie, en de stamp
-        moet dat zeggen -- anders valideert het tegen het 2.7-schema en krijgt de
-        configmigratie van een dienst ``from_version=2.7``."""
+        moet dat zeggen."""
         data = {**_v2_project(), "schema-version": 2.7}
         result, was_migrated = migrate_to_latest(data)
         assert result["schema-version"] == LATEST_SCHEMA_VERSION
