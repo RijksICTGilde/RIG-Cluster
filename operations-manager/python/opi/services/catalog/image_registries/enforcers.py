@@ -73,9 +73,11 @@ def _access_denied_message(repository: str, reason: str, has_username: bool) -> 
     weigert hier -- ghcr.io kijkt niet naar de waarde, Docker Hub en Quay wel. Deze toets
     draait alleen in een formulierflow met het registryblok (de wizards, ook bij de
     eindinzending, de dienstenmodal en de modal van het blok), niet in de componentmodal en
-    niet via de API, en alleen tegen images onder de upstream die in die flow staan. Hij is
-    dus geen poort; maar ALS hij faalt terwijl de naam leeg was, zoekt de afnemer het zonder
-    die zin in de verkeerde hoek.
+    niet via de API, en alleen tegen images onder de upstream in de samengevoegde data van die
+    flow (in de edit-wizard en de modals staan de bestaande componenten daar altijd in, alleen
+    bij de eerste stap vooruit in de create-wizard nog niet). Hij is dus geen poort; maar ALS
+    hij faalt terwijl de naam leeg was, zoekt de afnemer het zonder die zin in de verkeerde
+    hoek.
     """
     if has_username:
         opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen."

@@ -124,8 +124,10 @@ class RegistryEntry(BaseModel):
             "platform een neutrale plaatshouder in het pull-secret. Eist de registry een echte naam, "
             "dan mislukt het ophalen van de images. De tokentoets vangt dat alleen in een formulier "
             "met het registryblok (de wizards, de dienstenmodal en de modal van het blok), en alleen "
-            "tegen images uit deze registry die in dat formulier al staan; in het componentformulier "
-            "en via de API wordt er niet getoetst."
+            "tegen images uit deze registry in de samengevoegde data van dat formulier: in de "
+            "edit-wizard en de modals staan de bestaande componenten daar altijd in, alleen bij de "
+            "eerste stap vooruit in de create-wizard nog niet. In het componentformulier en via de "
+            "API wordt er niet getoetst."
         ),
     )
     password: str | None = Field(
@@ -173,9 +175,12 @@ class RegistryEntry(BaseModel):
         Hub is het de accountnaam, bij Quay de robotnaam -- en dat verschil kan een formulier
         niet weten. Laat de afnemer hem leeg, dan vult ``PULL_USERNAME_PLACEHOLDER`` het gat in
         de dockerconfigjson. Eist de registry wel een echte naam, dan vangt de tokentoets
-        (``enforcers.py``) dat alleen onder twee voorwaarden: bij het opslaan van het
-        registryblok in het formulier, en als het project al een image onder die upstream
-        heeft. Via ``POST .../registries/by-credentials`` of zonder image komt zo'n entry
+        (``enforcers.py``) dat alleen onder twee voorwaarden. Hij draait in een formulierflow
+        met het registryblok (de wizards, ook bij de eindinzending, de dienstenmodal en de modal
+        van het blok), niet in de componentmodal en niet via de API. En hij toetst tegen de
+        images onder die upstream in de samengevoegde data: in de edit-wizard en de modals staan
+        de bestaande componenten daar altijd in, alleen bij de eerste stap vooruit in de
+        create-wizard nog niet. Via de API, of zonder image in die data, komt zo'n entry
         ongetoetst door en loopt hij pas bij de pull vast.
         """
         if self.secret_name and (self.username or self.password):
