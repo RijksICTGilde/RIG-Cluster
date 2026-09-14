@@ -67,11 +67,10 @@ hij hem verbreedt).
 
 `migrate_to_latest` zet `schema-version` op de nieuwste versie zodra het bestand een oudere
 versie draagt, ook als elke stap in de keten niets te doen had. De stamp zegt "dit bestand
-voldoet aan versie X", niet "er is iets veranderd". Vroeger werd hij alleen opgehoogd als een
-stap echt iets wijzigde; een project zonder root-`registries` bleef zo op 2.7 staan met
-2.9-inhoud, werd tegen het 2.7-schema gevalideerd, en `_validate_one_config` gaf `2.7` als
-`from_version` door aan de configmigratie van een dienst die dan een migratie draaide die niet
-hoorde. Een ophoging telt als `was_migrated`, dus het bestand wordt bij die verwerking ook
+voldoet aan versie X", niet "er is iets veranderd", en na de keten voldoet het bestand aan de
+nieuwste versie. Vroeger werd hij alleen opgehoogd als een stap echt iets wijzigde; een
+project zonder root-`registries` bleef zo op 2.7 staan, terwijl de 2.8- en 2.9-stap er al
+overheen waren gegaan. Een ophoging telt als `was_migrated`, dus het bestand wordt bij die verwerking ook
 teruggeschreven.
 
 ## Een migratie toevoegen
