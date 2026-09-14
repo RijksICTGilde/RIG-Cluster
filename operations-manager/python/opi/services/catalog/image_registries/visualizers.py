@@ -48,16 +48,16 @@ REGISTRY_USERNAME = EditableVisualizer(
     editable=REGISTRY_USERNAME_EDITABLE,
     widget=WidgetType.TEXT,
     label="Gebruikersnaam",
-    help_text="De gebruikersnaam waarmee ZAD bij je registry inlogt.",
+    help_text="De gebruikersnaam waarmee ZAD bij je registry inlogt. Zonder gebruikersnaam en token kunnen we je images niet ophalen.",
 )
 
 REGISTRY_PASSWORD = EditableVisualizer(
     editable=REGISTRY_PASSWORD_EDITABLE,
-    widget=WidgetType.TEXT,
+    widget=WidgetType.PASSWORD,
     label="Token",
     help_text=(
-        "Een token met leesrecht op je packages. Het wordt versleuteld opgeslagen in het projectbestand; "
-        "wie dit formulier mag openen ziet het hier weer staan. Op productie verloopt het token na 90 dagen "
+        "Een token met leesrecht op je packages. Het wordt versleuteld opgeslagen in het projectbestand "
+        "en staat hier afgeschermd; wie dit formulier mag openen kan het wel opvragen. Op productie verloopt het token na 90 dagen "
         "en moet je het opnieuw invullen."
     ),
 )

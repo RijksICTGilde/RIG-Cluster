@@ -90,7 +90,7 @@ def editable_to_form_field(
     # (e.g. dict → string for select dropdowns). Use view() for read-only display.
     display_value = raw_value
     if converter:
-        if widget in ("select", "text", "textarea", "radio"):
+        if widget in ("select", "text", "password", "textarea", "radio"):
             display_value = converter.read(raw_value, context_data=yaml_data)
         else:
             display_value = converter.view(raw_value, context_data=yaml_data)
