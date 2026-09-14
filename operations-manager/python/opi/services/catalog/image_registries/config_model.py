@@ -117,10 +117,12 @@ class RegistryEntry(BaseModel):
     username: str | None = Field(
         default=None,
         description=(
-            "Gebruikersnaam waarmee ZAD bij de registry inlogt, samen met 'password'. "
-            "Verplicht naast een token, ook waar de registry hem niet controleert: bij GitHub "
-            "(ghcr.io) mag het elke niet-lege waarde zijn, bij Docker Hub en Quay is het de "
-            "accountnaam of de naam van het robotaccount. Laat hem alleen weg bij een 'secretName'."
+            "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel, want "
+            "wat hij betekent verschilt per registry: bij GitHub (ghcr.io) doet de waarde er niet toe "
+            "zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het "
+            "robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het "
+            "platform een neutrale plaatshouder in het pull-secret; eist de registry een echte naam, "
+            "dan zegt de tokentoets bij het opslaan dat."
         ),
     )
     password: str | None = Field(
@@ -155,27 +157,31 @@ class RegistryEntry(BaseModel):
 
     @model_validator(mode="after")
     def _has_exactly_one_way_to_pull(self) -> RegistryEntry:
-        """Een entry draagt OF een ``secretName`` OF een gebruikersnaam plus token.
+        """Een entry draagt OF een ``secretName`` OF een token.
 
         Zonder een van beide komt hij overal doorheen en schrijft de backend stil geen
         pull-secret; de afnemer merkt het pas als de pod niet kan pullen, met een melding die
         niet over een ontbrekend token gaat. De twee vormen mengen kan ook niet: met een
         ``secretName`` slaat de backend gebruikersnaam en token over, dus die zouden er voor
         niets staan. In het model, zodat het formulier en de API dezelfde regel krijgen.
+
+        De gebruikersnaam hoort hier NIET bij, en dat is een herziening (RC-187). Wat hij
+        betekent verschilt per registry -- bij ghcr.io doet de waarde er niet toe, bij Docker
+        Hub is het de accountnaam, bij Quay de robotnaam -- en dat verschil kan een formulier
+        niet weten. Laat de afnemer hem leeg, dan vult ``PULL_USERNAME_PLACEHOLDER`` het gat in
+        de dockerconfigjson en is de tokentoets bij het opslaan de plek waar een registry die
+        wel een echte naam eist zich meldt.
         """
-        has_credentials = bool(self.username) or bool(self.password)
-        if self.secret_name and has_credentials:
+        if self.secret_name and (self.username or self.password):
             msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
             raise ValueError(msg)
-        if not self.secret_name and not (self.username and self.password):
-            # Noem wat er MIST: bij een entry met alleen een token zei "vul een gebruikersnaam
-            # en een token in" iets dat de lezer al gedaan had.
-            if self.password:
-                msg = "Vul een gebruikersnaam in bij het token, anders kunnen we de images niet ophalen"
-            elif self.username:
+        if not self.secret_name and not self.password:
+            # Noem wat er MIST: bij een entry met een gebruikersnaam vraagt de melding alleen
+            # het token, niet ook de naam die er al staat.
+            if self.username:
                 msg = "Vul een token in bij de gebruikersnaam, anders kunnen we de images niet ophalen"
             else:
-                msg = "Vul een gebruikersnaam en een token in, anders kunnen we de images niet ophalen"
+                msg = "Vul een token in, anders kunnen we de images niet ophalen"
             raise ValueError(msg)
         return self
 

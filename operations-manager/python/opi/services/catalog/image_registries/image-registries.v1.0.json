@@ -78,7 +78,7 @@
             }
           ],
           "default": null,
-          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt, samen met 'password'. Verplicht naast een token, ook waar de registry hem niet controleert: bij GitHub (ghcr.io) mag het elke niet-lege waarde zijn, bij Docker Hub en Quay is het de accountnaam of de naam van het robotaccount. Laat hem alleen weg bij een 'secretName'.",
+          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel, want wat hij betekent verschilt per registry: bij GitHub (ghcr.io) doet de waarde er niet toe zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het platform een neutrale plaatshouder in het pull-secret; eist de registry een echte naam, dan zegt de tokentoets bij het opslaan dat.",
           "title": "Username"
         }
       },

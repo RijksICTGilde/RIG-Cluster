@@ -16,7 +16,11 @@ from opi.generation.manifests import ManifestGenerator
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.backends import FILENAME_PREFIX, MissingRegistryCredentialsError
-from opi.services.catalog.image_registries.naming import organization_name, upstream_hash
+from opi.services.catalog.image_registries.naming import (
+    PULL_USERNAME_PLACEHOLDER,
+    organization_name,
+    upstream_hash,
+)
 from opi.services.catalog.image_registries.resolution import resolve_project_image
 from opi.services.registry import project_manifest_services
 from opi.services.services_enums import ServiceType
@@ -101,9 +105,9 @@ class TestDirectSecretBackend:
         auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
         assert auth == "robbert.uittenbroek:een-token"
 
-    def test_zonder_inloggegevens_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+    def test_zonder_token_blaast_hij_op(self, service: ImageRegistriesService) -> None:
         """Het model laat zo'n entry niet door; komt hij hier toch, dan niet stil geen secret."""
-        naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
+        naked = {"name": "publiek", "upstream": "code.overheid.nl/open", "username": "u"}
         with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
             service.contribute_project_manifests(_ctx(SANDBOX, [naked]))
 
@@ -231,10 +235,56 @@ class TestTweeRegistriesOnderDezelfdeHost:
         assert specs[0].values["secret_pairs"] == {"username": "a", "password": "token-a"}
 
 
+class TestDeGebruikersnaamIsOptioneel:
+    """RC-187: een entry zonder gebruikersnaam schrijft wel degelijk een secret.
+
+    De dockerconfigjson draagt per registry een ``auth`` van
+    ``base64(gebruikersnaam:wachtwoord)``; er is geen veld voor alleen een token. De
+    plaatshouder ontstaat daarom HIER, bij het bouwen van het manifest, en staat niet in het
+    projectbestand -- zie ``TestDeGebruikersnaamBlijftLeegInHetProjectbestand`` in
+    ``test_image_registries_schema_guards.py`` voor die kant.
+    """
+
+    ZONDER: ClassVar[dict[str, Any]] = {
+        "name": "code-overheid",
+        "upstream": "code.overheid.nl/robbert.uittenbroek",
+        "password": "een-token",
+    }
+
+    def test_het_directe_secret_draagt_een_volledig_paar(self, service: ImageRegistriesService) -> None:
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [self.ZONDER]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth == f"{PULL_USERNAME_PLACEHOLDER}:een-token"
+
+    def test_het_upstream_credential_op_odcn_draagt_hem_ook(self, service: ImageRegistriesService) -> None:
+        specs = service.contribute_project_manifests(_ctx(ODCN, [self.ZONDER]))
+        assert specs[0].values["secret_pairs"] == {
+            "username": PULL_USERNAME_PLACEHOLDER,
+            "password": "een-token",
+        }
+
+    @pytest.mark.parametrize("leeg", [None, ""], ids=["afwezig", "leeg"])
+    def test_een_lege_waarde_telt_als_geen_waarde(self, service: ImageRegistriesService, leeg: str | None) -> None:
+        """Het formulier stuurt een leeg veld als lege string, de API laat de sleutel weg."""
+        entry = {**self.ZONDER} if leeg is None else {**self.ZONDER, "username": leeg}
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [entry]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth.split(":", 1)[0] == PULL_USERNAME_PLACEHOLDER
+
+    def test_een_ingevulde_gebruikersnaam_wordt_niet_vervangen(self, service: ImageRegistriesService) -> None:
+        """De tegenproef: met een naam erin komt die naam in het paar, niet de plaatshouder."""
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [REGISTRY]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth == "robbert.uittenbroek:een-token"
+
+
 class TestQuayProxyOrganizationBackendZonderInloggegevens:
-    def test_zonder_inloggegevens_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+    def test_zonder_token_blaast_hij_op(self, service: ImageRegistriesService) -> None:
         """Net als bij het directe secret: geen stille organisatie zonder credentials."""
-        naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
+        naked = {"name": "publiek", "upstream": "code.overheid.nl/open", "username": "u"}
         with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
             service.contribute_project_manifests(_ctx(ODCN, [naked]))
 

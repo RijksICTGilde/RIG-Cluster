@@ -9,6 +9,24 @@ from opi.utils.naming import sanitize_kubernetes_name
 #: De operator plakt dit achter de naam van het pull-secret dat hij maakt.
 PULL_SECRET_POSTFIX = "robot-pull-secret"
 
+#: De gebruikersnaam die wij invullen als de afnemer er geen opgaf.
+#:
+#: Er MOET iets staan, en dat is geen keuze van ons: een ``kubernetes.io/dockerconfigjson``
+#: draagt per registry een ``auth`` van ``base64(gebruikersnaam:wachtwoord)``. Er is geen
+#: veld voor alleen een token, dus een leeg linkerdeel zou ``:token`` opleveren, en dat
+#: weigeren registries als een lege gebruikersnaam.
+#:
+#: Wat de waarde IS doet er bij de meeste registries niet toe zolang het token klopt
+#: (ghcr.io kijkt er niet naar); waar hij er wel toe doet -- Docker Hub, Quay -- vult de
+#: afnemer hem zelf in en komt de plaatshouder nooit in beeld. ``x-access-token`` is de
+#: naam die GitLab en GitHub in hun eigen documentatie gebruiken voor precies dit gat.
+#:
+#: Hij wordt berekend, niet opgeslagen: het projectbestand draagt alleen wat de afnemer
+#: heeft ingevuld, net als bij de RCR-URL en de secretnaam hieronder. Laat de afnemer het
+#: veld leeg, dan blijft het leeg in de config en ontstaat deze waarde pas op het moment
+#: dat de dockerconfigjson wordt gebouwd.
+PULL_USERNAME_PLACEHOLDER = "x-access-token"
+
 UPSTREAM_HASH_LENGTH = 8
 
 

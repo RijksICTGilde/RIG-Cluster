@@ -226,9 +226,14 @@ class ImageRegistriesService(Service):
         if not registries:
             return []
         # Alleen wat het sjabloon toont. ``ctx.project_data`` is ONTSLEUTELD, dus de entry
-        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext.
+        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext. Van het
+        # token gaat daarom alleen de VRAAG mee of het er is: sinds de gebruikersnaam optioneel
+        # is (RC-187) is dat het enige waaraan het blok een entry met inloggegevens herkent.
         getoond = [
-            {key: registry.get(key) for key in ("name", "upstream", "username", "secretName")}
+            {
+                **{key: registry.get(key) for key in ("name", "upstream", "username", "secretName")},
+                "has_token": bool(registry.get("password")),
+            }
             for registry in registries
         ]
         return [

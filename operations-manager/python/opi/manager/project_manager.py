@@ -8880,7 +8880,7 @@ class ProjectManager:
         self,
         name: str,
         url: str,
-        username: str,
+        username: str | None,
         password: str,
     ) -> dict[str, Any]:
         """
@@ -8891,7 +8891,8 @@ class ProjectManager:
         Args:
             name: Unique registry identifier
             url: Registry URL (without protocol, may include path)
-            username: Registry username or token name
+            username: Registry username or token name; omitted from the entry when empty,
+                so the project file carries only what the caller supplied (RC-187)
             password: Registry password or token (will be AGE-encrypted)
 
         Returns:
@@ -8910,7 +8911,9 @@ class ProjectManager:
 
         encrypted_password = LiteralScalarString(await encrypt_age_content(password, public_key))
 
-        registry_entry = {"name": name, "upstream": url, "username": username, "password": encrypted_password}
+        registry_entry: dict[str, Any] = {"name": name, "upstream": url, "password": encrypted_password}
+        if username:
+            registry_entry["username"] = username
         created = self._upsert_registry_entry(project_data, registry_entry)
 
         action = "Add" if created else "Update"
