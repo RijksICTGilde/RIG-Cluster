@@ -44,6 +44,16 @@ wordt er dus ook geen proxy-organisatie zonder credentials meer aangemaakt. De t
 entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met `secretName`) voldoen
 allebei.
 
+De weigering noemt wat er mist: een entry met een token maar zonder gebruikersnaam krijgt
+"Vul een gebruikersnaam in bij het token", niet een vraag om het token dat er al staat. De
+generieke foutopbouw in `project_validation.py` zet er de plek voor (`registries, nummer 2: ...`,
+geteld vanaf 1), zodat je bij meer registries weet welke je moet repareren.
+
+`username` blijft verplicht naast een token, ook bij GitHub (ghcr.io) waar de waarde er niet toe
+doet. Docker Hub en Quay hebben hem echt nodig, en zo meet de tokentoets bij het opslaan precies
+het paar dat de backend daarna gebruikt. De hulptekst in het formulier en de `description` in het
+model zeggen per registry wat je invult.
+
 Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
 
 De naam is vrije tekst plus een afgeleide verwijzing, net als bij het project zelf:
