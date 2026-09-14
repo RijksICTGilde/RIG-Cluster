@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import base64
+import copy
 import shutil
 import subprocess
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opi.connectors.skopeo import SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
+from opi.services.registry import get_service
+from opi.services.services_enums import ServiceType
 from opi.utils.age import encrypt_age_content_sync
 
 REGISTRY = {
@@ -118,10 +127,6 @@ class TestDeToets:
         """Geen skopeo is geen oordeel over het token, en die beslissing zit in de
         CONNECTOR zelf, daarom staat er in de enforcer geen tweede vangnet omheen.
         Gemeten op de echte methode met een connector die niet beschikbaar is."""
-        from types import SimpleNamespace
-
-        from opi.connectors.skopeo import SkopeoConnector
-
         niet_beschikbaar = SimpleNamespace(is_skopeo_available=False)
         ok, reason = await SkopeoConnector.check_repository_access(
             niet_beschikbaar,  # type: ignore[arg-type]
@@ -166,8 +171,6 @@ class TestDeConnector:
     """De maskering, want een foutregel van skopeo kan de verwijzing mét token bevatten."""
 
     def test_de_creds_worden_gemaskeerd_in_het_log(self) -> None:
-        from opi.connectors.skopeo import SkopeoConnector
-
         masked = SkopeoConnector._mask_list_tags_credentials(
             ["skopeo", "list-tags", "--creds", "robbert:geheim", "docker://x"]
         )
@@ -175,8 +178,6 @@ class TestDeConnector:
         assert "geheim" not in " ".join(masked)
 
     def test_een_userinfo_in_een_foutmelding_wordt_gemaskeerd(self) -> None:
-        from opi.connectors.skopeo import SkopeoConnector
-
         masked = SkopeoConnector._mask_userinfo("error pinging docker://robbert:geheim@code.overheid.nl/v2/")
         assert "geheim" not in masked
         assert "***@code.overheid.nl" in masked
@@ -190,8 +191,6 @@ class TestDeTokenConverter:
     AGE = "-----BEGIN AGE ENCRYPTED FILE-----\nxxx\n-----END AGE ENCRYPTED FILE-----"
 
     def _converter(self) -> Any:
-        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
-
         return ProjectAgeSecretConverter()
 
     def test_zonder_sleutel_blijft_het_blok_staan(self) -> None:
@@ -256,8 +255,6 @@ class TestDeConverterKentAlleDrieDeOpslagvormen:
         }
 
     def _converter(self) -> Any:
-        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
-
         return ProjectAgeSecretConverter()
 
     def _opgeslagen(self, project: dict[str, Any], vorm: str) -> str:
@@ -328,10 +325,6 @@ class TestDeToetsLangsDeOpslagroute:
         }
 
     def _section(self) -> Any:
-        from opi.services.catalog.base import ConfigLayer
-        from opi.services.registry import get_service
-        from opi.services.services_enums import ServiceType
-
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         assert section.enforcer is not None
@@ -339,11 +332,6 @@ class TestDeToetsLangsDeOpslagroute:
 
     async def _opslaan(self, project: dict[str, Any], connector: Any) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """De vorm van ``router_detail_edit.py:995-1026``: verwerken, dan de sectie toetsen."""
-        import copy
-
-        from opi.forms.editables.processor import EditableFormProcessor
-        from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
-
         section = self._section()
         inzending = {
             "_services-config": {

@@ -20,6 +20,11 @@ from opi.connectors.skopeo import SkopeoConnector
 from opi.core.project_schema import ProjectIntegrityError
 from opi.manager.project_validation import validate_platform_registry_image_ownership, validate_project_structure
 from opi.services.catalog.image_registries.naming import organization_name
+from opi.services.catalog.image_registries.ownership import (
+    validate_proxy_organization_claims,
+    validate_proxy_organization_ownership,
+    validate_registry_entry_ownership,
+)
 
 PROJECT_A = "project-a"
 PROJECT_B = "project-b"
@@ -276,8 +281,6 @@ class TestProxyOrganizationOwnership:
 
     @staticmethod
     def _store(*project_names: str):
-        from unittest.mock import MagicMock, patch
-
         store = MagicMock()
         store.get_all.return_value = [MagicMock(name=n) for n in project_names]
         # MagicMock(name=...) zet de REPR en niet het attribuut; zet hem expliciet.
@@ -286,8 +289,6 @@ class TestProxyOrganizationOwnership:
         return patch("opi.services.project_store.get_project_store", return_value=store)
 
     def test_andermans_organisatie_wordt_geweigerd(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         organisatie = organization_name("code.overheid.nl/x", "rig", "ander")
         data = self._project(f"rcr.rijksapps.nl/{organisatie}/app:1")
         with self._store("eigen", "ander"):
@@ -298,8 +299,6 @@ class TestProxyOrganizationOwnership:
     def test_andermans_organisatie_met_upstream_namespace_wordt_ook_geweigerd(self) -> None:
         """De suffix draagt achter de projectnaam nog de upstream-hash, dus de projectnaam
         staat niet aan het EIND van de organisatienaam."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         data = self._project(f"rcr.rijksapps.nl/{organization_name('ghcr.io/teamx', 'rig', 'ander')}/app:1")
         with self._store("eigen", "ander"):
             errors = validate_proxy_organization_ownership(data)
@@ -311,8 +310,6 @@ class TestProxyOrganizationOwnership:
         EINDIGT zou een kale ``endswith`` op de projectnaam de organisatie van ``eigen``
         aan een project ``eigen-<hash>`` toewijzen, en dan wordt de eigenaar zelf
         geweigerd op zijn eigen image."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         organisatie = organization_name("ghcr.io/x", "rig", "eigen")
         naamgenoot = organisatie.rsplit("-", 1)[1]
         data = self._project(f"rcr.rijksapps.nl/{organisatie}/app:1")
@@ -321,16 +318,12 @@ class TestProxyOrganizationOwnership:
 
     def test_een_langere_projectnaam_wordt_niet_voor_een_kortere_aangezien(self) -> None:
         """Op segmentgrens: ``demo`` mag de organisaties van ``demonstratie`` niet opeisen."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         organisatie = organization_name("ghcr.io/x", "rig", "demonstratie")
         data = self._project(f"rcr.rijksapps.nl/{organisatie}/app:1", name="demonstratie")
         with self._store("demonstratie", "demo"):
             assert validate_proxy_organization_ownership(data) == []
 
     def test_de_eigen_organisatie_mag(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         data = self._project(f"rcr.rijksapps.nl/{organization_name('code.overheid.nl/x', 'rig', 'eigen')}/app:1")
         with self._store("eigen", "ander"):
             assert validate_proxy_organization_ownership(data) == []
@@ -338,23 +331,17 @@ class TestProxyOrganizationOwnership:
     def test_een_gedeelde_proxy_mag(self) -> None:
         """ghcr-rig en code-overheid-rig eindigen niet op een projectnaam; die zijn van
         iedereen."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         for organization in ("ghcr-rig", "code-overheid-rig", "dockerhub-rig"):
             data = self._project(f"rcr.rijksapps.nl/{organization}/x/app:1")
             with self._store("eigen", "ander"):
                 assert validate_proxy_organization_ownership(data) == [], organization
 
     def test_een_image_buiten_de_proxy_registry_gaat_dit_niet_aan(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         data = self._project(f"ghcr.io/{organization_name('ghcr.io/x', 'rig', 'ander')}/app:1")
         with self._store("eigen", "ander"):
             assert validate_proxy_organization_ownership(data) == []
 
     def test_een_hoofdletterhost_en_poort_ontsnappen_niet(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         organisatie = organization_name("code.overheid.nl/x", "rig", "ander")
         for image in (
             f"RCR.rijksapps.nl/{organisatie}/app:1",
@@ -365,16 +352,12 @@ class TestProxyOrganizationOwnership:
 
     def test_een_cluster_zonder_proxy_operator_zegt_niets(self) -> None:
         """Op sandbox bestaat er geen proxy-organisatie, dus valt er ook niets te weigeren."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         data = self._project(f"rcr.rijksapps.nl/{organization_name('ghcr.io/x', 'rig', 'ander')}/app:1")
         data["deployments"][0]["cluster"] = "sandboxed-local"
         with self._store("eigen", "ander"):
             assert validate_proxy_organization_ownership(data) == []
 
     def test_zonder_andere_projecten_valt_er_niets_te_weigeren(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_ownership
-
         data = self._project(f"rcr.rijksapps.nl/{organization_name('ghcr.io/x', 'rig', 'ander')}/app:1")
         with self._store("eigen"):
             assert validate_proxy_organization_ownership(data) == []
@@ -400,8 +383,6 @@ class TestRegistryEntryOwnership:
 
     @staticmethod
     def _store(*project_names: str):
-        from unittest.mock import MagicMock, patch
-
         summaries = []
         for project_name in project_names:
             summary = MagicMock()
@@ -413,8 +394,6 @@ class TestRegistryEntryOwnership:
         return patch("opi.services.project_store.get_project_store", return_value=store)
 
     def test_een_upstream_naar_andermans_proxy_organisatie_wordt_geweigerd(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         organisatie = organization_name("ghcr.io/team", "rig", "slachtoffer")
         data = self._project({"name": "buit", "upstream": f"rcr.rijksapps.nl/{organisatie}"})
         with self._store("aanvaller", "slachtoffer"):
@@ -426,8 +405,6 @@ class TestRegistryEntryOwnership:
     def test_andermans_robot_pull_secret_wordt_geweigerd(self) -> None:
         """De andere helft van dezelfde regel: de upstream bepaalt WELKE images hij raakt,
         het secretName bepaalt WELK credential eraan hangt."""
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         organisatie = organization_name("ghcr.io/team", "rig", "slachtoffer")
         data = self._project(
             {"name": "buit", "upstream": "ghcr.io/eigen", "secretName": f"{organisatie}-robot-pull-secret"}
@@ -439,8 +416,6 @@ class TestRegistryEntryOwnership:
         assert "secretName" in errors[0]
 
     def test_de_eigen_organisatie_mag(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         organisatie = organization_name("ghcr.io/team", "rig", "aanvaller")
         data = self._project(
             {
@@ -454,8 +429,6 @@ class TestRegistryEntryOwnership:
 
     def test_een_gedeelde_proxy_mag(self) -> None:
         """Het dp-bn7-geval: ``rcr.rijksapps.nl/rig`` met het platform-robotsecret."""
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         data = self._project(
             {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
         )
@@ -463,15 +436,11 @@ class TestRegistryEntryOwnership:
             assert validate_registry_entry_ownership(data) == []
 
     def test_een_gewone_private_registry_mag(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         data = self._project({"name": "eigen", "upstream": "code.overheid.nl/robbert.uittenbroek", **CREDS})
         with self._store("aanvaller", "slachtoffer"):
             assert validate_registry_entry_ownership(data) == []
 
     def test_op_een_cluster_zonder_proxy_operator_valt_er_niets_te_weigeren(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_registry_entry_ownership
-
         organisatie = organization_name("ghcr.io/team", "rig", "slachtoffer")
         data = self._project({"name": "buit", "upstream": f"rcr.rijksapps.nl/{organisatie}"})
         data["clusters"] = ["sandboxed-local"]
@@ -499,8 +468,6 @@ class TestProxyOrganizationClaims:
         }
 
     def _store(self, *projects: dict):
-        from unittest.mock import MagicMock, patch
-
         summaries = []
         for project in projects:
             summary = MagicMock()
@@ -512,8 +479,6 @@ class TestProxyOrganizationClaims:
         return patch("opi.services.project_store.get_project_store", return_value=store)
 
     def test_twee_projecten_op_een_organisatienaam_worden_geweigerd(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
-
         ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaab")
         eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaac")
         # Tegenproef: het zijn werkelijk twee verschillende projecten.
@@ -526,8 +491,6 @@ class TestProxyOrganizationClaims:
         assert ander["name"] in errors[0]
 
     def test_twee_gewone_projecten_botsen_niet(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
-
         ander = self._project([{"name": "r", "upstream": "ghcr.io/team", **CREDS}], "ander")
         eigen = self._project([{"name": "r", "upstream": "ghcr.io/team", **CREDS}], "eigen")
         with self._store(eigen, ander):
@@ -537,8 +500,6 @@ class TestProxyOrganizationClaims:
         """Een bestandsnaam op het projectniveau, dus de tweede Organization overschrijft
         stil de eerste terwijl ``build_rules`` wel twee regels naar die ene bestemming
         levert."""
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
-
         eigen = self._project(
             [
                 {"name": "een", "upstream": "ghcr.io/team", **CREDS},
@@ -553,8 +514,6 @@ class TestProxyOrganizationClaims:
         assert "een" in errors[0]
 
     def test_twee_verschillende_upstreams_van_een_project_mogen(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
-
         eigen = self._project(
             [
                 {"name": "een", "upstream": "ghcr.io/orga", **CREDS},
@@ -566,8 +525,6 @@ class TestProxyOrganizationClaims:
             assert validate_proxy_organization_claims(eigen) == []
 
     def test_op_een_cluster_zonder_proxy_operator_valt_er_niets_te_claimen(self) -> None:
-        from opi.services.catalog.image_registries.ownership import validate_proxy_organization_claims
-
         ander = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaab")
         eigen = self._project([{"name": "r", "upstream": self.LANGE_UPSTREAM, **CREDS}], "aaaaaaaaaaaaaaaaaaac")
         eigen["clusters"] = ["sandboxed-local"]
@@ -585,8 +542,6 @@ class TestDeGrendelsZittenAanDeSavePoort:
 
     @staticmethod
     def _store(*projects: dict):
-        from unittest.mock import MagicMock, patch
-
         summaries = []
         for project in projects:
             summary = MagicMock()

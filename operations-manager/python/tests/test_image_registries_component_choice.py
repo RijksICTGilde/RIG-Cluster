@@ -19,13 +19,19 @@ from typing import Any
 import pytest
 from opi.forms.editables.editable import Editable
 from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.layout import COMPONENT_IMAGE_SLOT
 from opi.forms.visualizers.providers import FilteredServiceOptionsProvider
 from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
 from opi.services.catalog.base import ConfigLayer
-from opi.services.catalog.image_registries.editables import COMPONENT_REGISTRY_EDITABLE
+from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig
+from opi.services.catalog.image_registries.editables import (
+    COMPONENT_REGISTRY_EDITABLE,
+    DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
+)
 from opi.services.registry import get_service
-from opi.services.services import ServiceAdapter, service_entry_name
+from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
+from pydantic import ValidationError
 
 _SVC = ServiceType.IMAGE_REGISTRIES.value
 _REGISTRY = {"name": "code-overheid", "upstream": "code.overheid.nl/team"}
@@ -75,8 +81,6 @@ async def _save(project: dict[str, Any], submitted: dict[str, Any]) -> list[Any]
 def _chose(services: list[Any]) -> str | None:
     for entry in services:
         if service_entry_name(entry) == _SVC:
-            from opi.services.services import service_entry_config
-
             config = service_entry_config(entry)
             return config.get("registry") if isinstance(config, dict) else None
     return None
@@ -177,17 +181,12 @@ class TestDezelfdeRegelViaDeApi:
         assert project["services"] == [_SVC]
 
     def test_een_lege_registrynaam_is_geen_waarde_aan_de_api_deur(self) -> None:
-        from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig
-        from pydantic import ValidationError
-
         with pytest.raises(ValidationError):
             ComponentRegistryConfig(registry="")
 
 
 class TestHetVeldStaatBijDeImage:
     def test_de_layoutknoop_noemt_het_slot_achter_image(self) -> None:
-        from opi.forms.layout import COMPONENT_IMAGE_SLOT
-
         nodes = get_service(ServiceType.IMAGE_REGISTRIES).config_component_layout()
         assert [node.slot for node in nodes] == [COMPONENT_IMAGE_SLOT]
 
@@ -235,8 +234,6 @@ class TestDezelfdeRegelOpEenDeploymentComponent:
         }
 
     def test_een_registry_kiezen_zet_de_override(self) -> None:
-        from opi.services.catalog.image_registries.editables import DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE
-
         data = self._deployment_project(None)
         path = "deployments[0]/components[0]/services/image-registries/config/registry"
         EditableFormProcessor._write_field(DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE, path, "code-overheid", data)
@@ -244,8 +241,6 @@ class TestDezelfdeRegelOpEenDeploymentComponent:
         assert component["services"][_SVC]["config"]["registry"] == "code-overheid"
 
     def test_de_lege_waarde_haalt_de_override_weg(self) -> None:
-        from opi.services.catalog.image_registries.editables import DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE
-
         data = self._deployment_project("code-overheid")
         path = "deployments[0]/components[0]/services/image-registries/config/registry"
         EditableFormProcessor._write_field(DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE, path, "", data)

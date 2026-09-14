@@ -11,11 +11,13 @@ from typing import Any, ClassVar
 
 import pytest
 import yaml
+from opi.core.cluster_config import get_image_registries_config
 from opi.generation.manifests import ManifestGenerator
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.backends import FILENAME_PREFIX, MissingRegistryCredentialsError
 from opi.services.catalog.image_registries.naming import organization_name, upstream_hash
+from opi.services.catalog.image_registries.resolution import resolve_project_image
 from opi.services.registry import project_manifest_services
 from opi.services.services_enums import ServiceType
 from opi.utils.age import encrypt_age_content_sync
@@ -93,9 +95,6 @@ class TestDirectSecretBackend:
 
     def test_de_upstream_inclusief_pad_is_de_sleutel_in_auths(self, service: ImageRegistriesService) -> None:
         """kubelet kiest de meest specifieke match; dat is wat het veld altijd al droeg."""
-        import base64
-        import json
-
         spec = service.contribute_project_manifests(_ctx(SANDBOX, [REGISTRY]))[0]
         config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
         assert list(config["auths"]) == ["code.overheid.nl/robbert.uittenbroek"]
@@ -209,8 +208,6 @@ class TestTweeRegistriesOnderDezelfdeHost:
     def test_de_twee_images_gaan_naar_verschillende_organisaties(self) -> None:
         """En daarmee doet de keuze per component weer iets: twee regels, twee
         bestemmingen, twee secrets."""
-        from opi.services.catalog.image_registries.resolution import resolve_project_image
-
         data = _ctx(ODCN, [self.EEN, self.ANDER]).project_data
         een = resolve_project_image("ghcr.io/orga/app:1", data, ODCN)
         ander = resolve_project_image("ghcr.io/orgb/app:1", data, ODCN)
@@ -269,8 +266,6 @@ class TestDeGerenderdeOrganisatie:
     def test_de_api_version_komt_uit_de_clusterconfig(self, tmp_path: Any, service: ImageRegistriesService) -> None:
         """Een platformfeit, geen vaste waarde in het sjabloon: als de groep/versie van de
         CRD afwijkt is dat een regel clusterconfig en niet een sjabloonwijziging."""
-        from opi.core.cluster_config import get_image_registries_config
-
         manifest = self._render(tmp_path, service)
         assert manifest["apiVersion"] == get_image_registries_config(ODCN)["organization_api_version"]
 
