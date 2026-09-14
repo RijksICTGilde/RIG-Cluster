@@ -4,7 +4,7 @@ import copy
 
 from opi.connectors.subdomain import get_domains_config
 from opi.core.project_schema import validate_declared_project_schema, validate_project_schema
-from opi.manager.project_validation import STORED_PROJECT_CONTEXT
+from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
@@ -254,12 +254,25 @@ class TestDetectSchemaVersion:
 
 
 class TestMigrateToLatestNoOp:
-    def test_already_v2(self):
-        data = _v2_project()
+    def test_already_latest(self):
+        data = {**_v2_project(), "schema-version": LATEST_SCHEMA_VERSION}
         original = copy.deepcopy(data)
         result, was_migrated = migrate_to_latest(data)
         assert was_migrated is False
         assert result == original
+
+    def test_an_older_file_where_every_step_is_a_no_op_is_stamped_latest(self):
+        """De zpa-cj8-vorm: 2.7 zonder root-``registries``, dus de 2.8- en 2.9-stap hebben
+        niets te doen. Toch voldoet het bestand daarna aan de nieuwste versie, en de stamp
+        moet dat zeggen -- anders valideert het tegen het 2.7-schema en krijgt de
+        configmigratie van een dienst ``from_version=2.7``."""
+        data = {**_v2_project(), "schema-version": 2.7}
+        result, was_migrated = migrate_to_latest(data)
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert was_migrated is True
+        assert {k: v for k, v in result.items() if k != "schema-version"} == {
+            k: v for k, v in _v2_project().items() if k != "schema-version"
+        }
 
     def test_higher_version_no_op(self):
         data = {"schema-version": 99, "name": "future"}
@@ -591,8 +604,10 @@ class TestMigrateV2ToV2_1:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        # No root flags to clean up — nothing to migrate
-        assert was_migrated is False
+        # No root flags to clean up; only the stamp moves to the latest version.
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["deployments"][0]["components"] == [{"reference": "frontend", "image": "app:latest"}]
         dep = result["deployments"][0]
         assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) is None
 
@@ -819,7 +834,7 @@ class TestMigrateV2_1ToV2_2:
         assert dep_comp["path"] == [{"match": "/api", "rewrite": "/"}]
 
     def test_no_path_no_migration(self):
-        """Component without path field is not migrated."""
+        """Component without path field is not migrated; only the stamp moves."""
         data = {
             "schema-version": 2.1,
             "name": "test-project",
@@ -828,11 +843,12 @@ class TestMigrateV2_1ToV2_2:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is False
-        assert "path" not in result["components"][0]
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"] == [{"name": "worker"}]
 
     def test_v2_2_not_migrated_again(self):
-        """Files already at v2.2 are not migrated."""
+        """A v2.2 path list is left alone by the 2.1 -> 2.2 step; only the stamp moves."""
         data = {
             "schema-version": 2.2,
             "name": "test-project",
@@ -843,8 +859,9 @@ class TestMigrateV2_1ToV2_2:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is False
-        assert result["schema-version"] == 2.2
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"] == [{"name": "api", "path": [{"match": "/api"}]}]
 
 
 # ---------------------------------------------------------------------------
@@ -1600,8 +1617,6 @@ class TestRelocateRegistriesToService:
         overzetten levert dan een bestand op dat leest maar niet meer op te slaan is, met
         een fout over een veld dat de gebruiker nooit heeft aangeraakt.
         """
-        from opi.manager.project_validation import validate_service_configs
-
         for url, verwacht in (
             ("https://ghcr.io", "ghcr.io"),
             ("http://registry.local:5000/team", "registry.local:5000/team"),

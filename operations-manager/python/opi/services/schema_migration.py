@@ -10,7 +10,9 @@ number directly.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.postgres_scope import database_generation_service_type
+from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_storage_name
@@ -126,8 +128,13 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         if version < step_version and step(project_data):
             migrated = True
 
-    if migrated:
+    # De stamp zegt "dit bestand voldoet aan versie X", niet "er is iets veranderd": ook als
+    # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie. Anders blijft het
+    # op een oude versie staan met nieuwe inhoud, en krijgt de configmigratie van een dienst
+    # die oude versie als ``from_version``.
+    if migrated or version < LATEST_SCHEMA_VERSION:
         project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        migrated = True
 
     # Always run v2 fixups to clean up corruption from past bugs
     if _fixup_v2_data(project_data):
@@ -1262,15 +1269,11 @@ def _normalize_upstream(url: Any) -> Any:
     dezelfde functie: een bestaand bestand hoort niet door een andere regel te gaan dan
     wat een afnemer vandaag intypt.
     """
-    from opi.services.catalog.image_registries.upstream import normalize_upstream
-
     return normalize_upstream(url) if isinstance(url, str) else url
 
 
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
     """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
-    from opi.services.project import Project
-
     Project(project_data).set(f"services/{service_name}/config", config)
 
 
