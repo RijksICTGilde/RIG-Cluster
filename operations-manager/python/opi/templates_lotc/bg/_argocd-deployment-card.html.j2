@@ -147,13 +147,13 @@
             {% if uit.image %}
                 {% set kop = (uit.image | length | string)
                              ~ (' component is uitgeschakeld' if uit.image | length == 1 else ' componenten zijn uitgeschakeld')
-                             ~ ': image ontbreekt' %}
+                             ~ ': image kan niet opgehaald worden' %}
                 <c-alert type="error" heading="{{ kop }}">
                     <c-stack gap="xs">
                         {% for comp in uit.image %}
                             <c-paragraph size="sm">{{ comp.reference }}{% if comp.image %} - {{ comp.image }}{% endif %}</c-paragraph>
                         {% endfor %}
-                        <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag; dan gaan ze vanzelf weer aan.</c-paragraph>
+                        <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag. Voor een private repository, controleer je credentials.</c-paragraph>
                     </c-stack>
                 </c-alert>
             {% endif %}

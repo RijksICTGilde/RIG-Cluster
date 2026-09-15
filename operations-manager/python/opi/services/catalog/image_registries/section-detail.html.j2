@@ -20,9 +20,6 @@
             </c-stack>
         {% endfor %}
 
-        {# Wat we niet kunnen verbergen, hier en niet alleen achter het vraagteken. #}
-        <c-paragraph size="sm">Het token heeft leesrecht op packages nodig. Er geldt een quotum op wat het platform van je images bewaart, en het token verloopt periodiek: dan vul je hier een nieuw token in. Zet je deze dienst uit, dan verdwijnt de kopie die het platform bewaart; in je eigen registry verandert er niets.</c-paragraph>
-
         <div hx-get="/projects/details/{{ section.context.project_name }}/image-registries/status"
              hx-trigger="load"
              hx-swap="innerHTML">
