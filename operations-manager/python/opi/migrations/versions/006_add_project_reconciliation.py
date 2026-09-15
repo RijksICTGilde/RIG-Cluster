@@ -31,10 +31,9 @@ def upgrade() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_reconciliation_scope "
         "ON project_reconciliation (project_name, COALESCE(deployment_name, ''));"
     )
-    # Backfill: de uitkomst van de meting die deze tabel vervangt, als projectbrede rij. Zo
-    # leest de teller op het omschakelmoment hetzelfde, en wordt hij pas vanaf de volgende
-    # verwerking beter. Letterlijk overgenomen, want de constante waar hij op leunde bestaat
-    # niet meer: de taaktypes die toen als volledige uitrol telden, en hun starttijd.
+    # Backfill: de uitkomst van de oude meting als projectbrede rij, zodat de teller op het
+    # omschakelmoment hetzelfde leest. De taaktypes staan er letterlijk, want de constante
+    # waar de oude meting op leunde bestaat niet meer.
     op.execute(
         """
         INSERT INTO project_reconciliation (project_name, deployment_name, reconciled_at)

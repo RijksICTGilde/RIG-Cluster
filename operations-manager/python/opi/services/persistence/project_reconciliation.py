@@ -29,9 +29,7 @@ class ProjectReconciliation(Base):
     deployment_name: Mapped[str | None] = mapped_column(String(63))
     reconciled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
-    # Geen primary key in de tabel: NULL is in een PK niet toegestaan en projectbreed IS
-    # NULL. De unieke index op de COALESCE doet dat werk; de mapper heeft alleen een
-    # identiteit nodig.
+    # Geen PK in de tabel (zie migratie 006); de mapper heeft alleen een identiteit nodig.
     __mapper_args__ = {"primary_key": [project_name, deployment_name]}  # noqa: RUF012
 
     __table_args__ = (
