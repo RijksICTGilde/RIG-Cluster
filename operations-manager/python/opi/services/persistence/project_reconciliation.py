@@ -1,8 +1,6 @@
-"""ORM model for the ``project_reconciliation`` table (RC-188).
+"""ORM model for ``project_reconciliation`` (RC-188, migration 006).
 
-What this operations manager actually reconciled, per deployment: written by
-``ProjectManager.process_project`` and read by ``AsyncTaskService.get_deferred_rollouts``.
-The table is created by migration 006.
+Written by ``ProjectManager.process_project``, read by ``AsyncTaskService.get_deferred_rollouts``.
 """
 
 from __future__ import annotations

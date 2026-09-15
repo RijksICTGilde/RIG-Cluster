@@ -86,10 +86,8 @@ manifestgeneratie en `create_argocd_resources`:
 - bij een project zonder deployments op dit cluster alleen de projectbrede rij: er viel
   niets te doen, en anders blijft een uitgestelde wijziging daaraan eeuwig wachten.
 
-Het taaktype doet er dus niet meer toe. Vroeger telde alleen `refresh_project` en
-`delete_component` als uitrol, terwijl onder meer `update_component`, `add_service`, de
-V1-route en de nachtelijke resource-tuner ook het hele project verwerken. Op `mpfm-w3h`
-stonden daardoor 15 wijzigingen "wachtend" na acht volledige verwerkingen.
+Het taaktype doet er niet toe: ook `update_component`, `add_service`, de V1-route en de
+nachtelijke resource-tuner verwerken het hele project.
 
 De leesregel, voor een wachtende taak `T` met scope `S`:
 
@@ -109,13 +107,11 @@ Het opruimen van oude taken leest dezelfde regel: een uitgestelde uitrol die nog
 gereconcilieerd wordt **niet** verwijderd, ongeacht leeftijd. Anders zou de melding na
 een week stil verdwijnen, precies de stille drift die dit moet voorkomen.
 
-`rollout_in_progress` gaat over OPEN taken, waarvoor nog niets is vastgelegd. Dat is een
-uitspraak over intentie: waar is een open taak van een type uit `PROCESSING_TASK_TYPES`
-(zijn handler verwerkt het project), zonder `rollout: false`, waarvan de scope de scope
-van alles wat wacht dekt (`covers()`). Omdat `scope_of()` een paar projectbrede handlers
-gescopet noemt (`configure_service`, `configure_service_values`,
-`manage_database_schemas`), meldt dit soms geen lopende uitrol terwijl die er wel is:
-de veilige kant.
+`rollout_in_progress` gaat over OPEN taken, waarvoor nog niets is vastgelegd: waar is een
+open taak uit `PROCESSING_TASK_TYPES`, zonder `rollout: false`, waarvan de scope alles
+dekt wat wacht (`covers()`). Omdat `scope_of()` een paar projectbrede handlers gescopet
+noemt (`configure_service`, `configure_service_values`, `manage_database_schemas`), meldt
+dit soms geen lopende uitrol terwijl die er wel is: de veilige kant.
 
 ### De grens is het LEESMOMENT van de verwerking, niet het einde
 

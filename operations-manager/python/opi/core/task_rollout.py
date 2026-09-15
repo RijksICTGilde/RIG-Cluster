@@ -54,11 +54,9 @@ NON_DEFERRABLE_REASONS: dict[str, str] = {
     "clone_bucket": "cloning acts on the cluster directly and writes nothing to the project file",
 }
 
-# Task types whose handler processes the project when it runs (unless rollout=false), so
-# an open one is a rollout on its way. An intention, which is all an open task is: what a
-# run really reconciled is recorded by the run itself, in ``project_reconciliation``.
-# update_image processes through ``process_project`` directly, the others through
-# ``process_project_from_git``.
+# Task types whose handler processes the project (unless rollout=false), so an open one is
+# a rollout on its way. What a run really reconciled is in ``project_reconciliation``.
+# update_image processes through ``process_project`` directly, not ``process_project_from_git``.
 PROCESSING_TASK_TYPES = frozenset(
     {
         "create_project",
