@@ -131,6 +131,8 @@ class QuayProxyOrganizationBackend:
                     "api_version": cluster_config.get("organization_api_version", DEFAULT_ORGANIZATION_API_VERSION),
                     "name": organization,
                     "namespace": ctx.namespace,
+                    "customer_name": customer_name,
+                    "tenants": cluster_config.get("tenants", []),
                     "friendly_name": friendly_name(str(upstream)),
                     "suffix": organization_suffix(str(upstream), ctx.project_name),
                     "upstream": str(upstream),
