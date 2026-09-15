@@ -1,3 +1,7 @@
+{# De vorm van deze CR is niet vrij: hij wordt getoetst tegen het schema in
+   opi/schemas/external/quay-organization.v1alpha1.json, dat uit het cluster komt.
+   customerName en tenants zijn verplicht; friendlyName hoort onder proxyCache en
+   rotation onder robot.imagePullSecret. #}
 apiVersion: {{ api_version }}
 kind: Organization
 metadata:
@@ -8,23 +12,33 @@ metadata:
     app.kubernetes.io/component: image-registry
     created-by: operations-manager
 spec:
-  friendlyName: "{{ friendly_name }}"
+  customerName: "{{ customer_name }}"
+  tenants:
+{% for tenant in tenants %}
+    - "{{ tenant }}"
+{% endfor %}
   suffix: "{{ suffix }}"
+  # Expliciet uit: bij true is de organisatie niet te verwijderen, en dan laat het
+  # uitzetten van de dienst een organisatie achter die niemand meer opruimt.
+  preventDeletion: false
   proxyCache:
-    # yaml_scalar: de enige waarde hier die rechtstreeks van de afnemer komt. Zonder de
-    # filter breekt een aanhalingsteken plus regeleinde uit de scalar.
+    enabled: true
+    friendlyName: "{{ friendly_name }}"
+    # yaml_scalar: de enige waarde hier die rechtstreeks van de afnemer komt.
     upstreamRegistry: {{ upstream | yaml_scalar }}
     {% if credentials_secret %}
-    credentialsSecret:
+    credentialsSecretRef:
       name: "{{ credentials_secret }}"
     {% endif %}
   robot:
+    enabled: true
     imagePullSecret:
+      enabled: true
       # Expliciet gezet: de operator leidt deze naam af zonder spec.suffix, en dan botsen
       # twee projecten met dezelfde upstream tenantbreed op een naam.
       name: "{{ pull_secret_name }}"
-    rotation:
-      # Altijd aan: bij false krijgt het token alsnog retentionDays en verloopt het,
-      # zonder dat iemand het ververst.
-      enabled: true
-      retentionDays: {{ rotation_days }}
+      rotation:
+        # Altijd aan: bij false krijgt het token alsnog retentionDays en verloopt het,
+        # zonder dat iemand het ververst.
+        enabled: true
+        retentionDays: {{ rotation_days }}

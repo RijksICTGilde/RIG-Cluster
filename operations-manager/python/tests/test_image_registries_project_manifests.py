@@ -309,7 +309,7 @@ class TestDeGerenderdeOrganisatie:
         manifest = self._render(tmp_path, service)
         assert manifest["kind"] == "Organization"
         assert manifest["spec"]["proxyCache"]["upstreamRegistry"] == "code.overheid.nl/robbert.uittenbroek"
-        assert manifest["spec"]["proxyCache"]["credentialsSecret"]["name"] == (
+        assert manifest["spec"]["proxyCache"]["credentialsSecretRef"]["name"] == (
             f"{organization_name(REGISTRY['upstream'], 'rig', 'demo')}-upstream-credentials"
         )
 
@@ -323,7 +323,7 @@ class TestDeGerenderdeOrganisatie:
         """rotation.enabled: false doet niet wat de documentatie belooft: het token krijgt
         alsnog retentionDays en verloopt, zonder dat iemand het ververst."""
         manifest = self._render(tmp_path, service)
-        assert manifest["spec"]["robot"]["rotation"] == {"enabled": True, "retentionDays": 90}
+        assert manifest["spec"]["robot"]["imagePullSecret"]["rotation"] == {"enabled": True, "retentionDays": 90}
 
 
 class TestElkBestandIsWeerOpTeRuimen:
