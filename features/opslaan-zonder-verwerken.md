@@ -69,8 +69,6 @@ want een trage uitrol merk je. Daarom:
 
 ### Hoe de drift gemeten wordt
 
-Twee bronnen, elk voor wat ze echt weten.
-
 **Wat er geschreven is** komt uit de taken: een afgeronde taak waarvan de payload
 `rollout: false` was, heeft geschreven en bewust niet verwerkt. Zijn scope staat in
 `affects_deployments` (NULL is projectbreed).
@@ -123,9 +121,7 @@ ArgoCD-wacht domineert.
 Daarom slaat de rij het moment op waarop de run het projectbestand las, en niet wanneer
 hij klaar was. Met het eindtijdstip werd een uitgestelde wijziging die tijdens een
 lopende refresh werd opgeslagen weggestreept door een refresh die hem nooit gelezen had
-(RC-82). Het moment wordt op de databaseklok berekend, dezelfde klok als `completed_at`
-van de taken: `now()` min hoe lang geleden de run las. Lopen twee runs over elkaar, dan
-wint de latere lezing (`GREATEST`).
+(RC-82).
 
 Bij de invoering (migratie 006) is per project de uitkomst van de oude meting als
 projectbrede rij weggeschreven, zodat de teller op het omschakelmoment hetzelfde leest en

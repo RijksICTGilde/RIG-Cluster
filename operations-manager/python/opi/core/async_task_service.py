@@ -43,9 +43,7 @@ def _deferred(task=AsyncTask):
 def _not_yet_reconciled(task=AsyncTask):
     """Rows whose change no processing run has read since they completed (RC-188).
 
-    The task waits while the project-wide row is older than its completion, and, for a
-    concrete scope, while one of its deployments also has no newer row of its own. A
-    project-wide task only clears through the project-wide row, as in ``covers()``.
+    The read rule is in ``features/opslaan-zonder-verwerken.md``.
     """
     reconciled_since = ProjectReconciliation.project_name == task.project_name
     reconciled_since &= ProjectReconciliation.reconciled_at >= task.completed_at
@@ -709,8 +707,7 @@ class AsyncTaskService:
 
         ``rollout_in_progress``: an open processing task covers the scope of everything
         waiting. A queued or running run has recorded nothing yet, so the count cannot say
-        this. ``scope_of()`` calls a few whole-project handlers scoped; then this reports no
-        rollout while there is one, the safe side.
+        this. Where it under-reports: ``features/opslaan-zonder-verwerken.md``.
         """
         async with session_scope() as session:
             rows = (

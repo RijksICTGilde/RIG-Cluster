@@ -5145,8 +5145,7 @@ class ProjectManager:
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
-                # Er is hier niets te reconciliëren, en dat is dan ook gebeurd: zonder deze rij
-                # blijft een uitgestelde wijziging aan zo'n project voor altijd wachten.
+                # Zonder rij blijft een uitgestelde wijziging aan zo'n project eeuwig wachten.
                 await self._record_reconciliation(project_name, [], targets, read_started)
                 self._processing_error = None
                 self._component_failures = None
@@ -5357,10 +5356,6 @@ class ProjectManager:
         read_started: float,
     ) -> None:
         """Write what this run reconciled (RC-188).
-
-        A deployment whose manifests recorded a failure gets no row. The project-wide row
-        only comes from an unscoped run without such a failure, because it clears every
-        deployment of the project at once.
 
         A failing write is logged and not raised: the rollout itself succeeded, and a
         missing row only makes the drift count over-report.
