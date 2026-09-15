@@ -9,18 +9,16 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime  # noqa: TC003
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from opi.core.config import settings
-from opi.core.db import session_scope
+from opi.core.db import configure_engine, dispose_engine, session_scope
 from opi.manager.project_manager import DeploymentResult, ProjectManager
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
-from sqlalchemy import func, select
-
-if TYPE_CHECKING:
-    import pytest
+from sqlalchemy import func, select, text
 
 HERE = settings.CLUSTER_MANAGER
 
@@ -151,11 +149,24 @@ async def test_an_earlier_read_never_moves_a_scope_back(orm_db) -> None:
     assert await _rows() == first
 
 
-async def test_a_database_that_is_gone_does_not_fail_the_rollout(orm_db, monkeypatch) -> None:
+async def _unreachable_database() -> None:
+    await dispose_engine()
+    # Poort 1: niets luistert, asyncpg geeft dan een kale ConnectionRefusedError (OSError).
+    configure_engine("postgresql+asyncpg://postgres:x@127.0.0.1:1/weg")
+
+
+async def _table_not_migrated() -> None:
+    async with session_scope() as session:
+        await session.execute(text("DROP TABLE project_reconciliation"))
+
+
+@pytest.mark.parametrize(
+    "break_database", [_unreachable_database, _table_not_migrated], ids=["unreachable", "no-table"]
+)
+async def test_a_database_that_fails_does_not_fail_the_rollout(orm_db, monkeypatch, break_database) -> None:
     """The rollout happened; a missing row only makes the count over-report."""
     pm = _manager(monkeypatch)
-    monkeypatch.setattr(
-        "opi.manager.project_manager.record_reconciliation", AsyncMock(side_effect=OSError("database weg"))
-    )
+    await break_database()
 
     assert await pm.process_project() is True
+    assert pm._processing_error is None

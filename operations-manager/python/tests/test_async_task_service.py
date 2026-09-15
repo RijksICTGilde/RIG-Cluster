@@ -1,10 +1,13 @@
 """Real-Postgres tests for the ORM-backed AsyncTaskService (RC-5 persistence)."""
 
 import uuid
+from datetime import datetime, timedelta
 
+import pytest
 from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
+from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
 from sqlalchemy import func, update
 
@@ -417,6 +420,40 @@ async def test_a_change_to_two_deployments_waits_until_both_are_reconciled(orm_d
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
 
 
+@pytest.mark.parametrize(
+    ("deployment_name", "offset_us", "waiting"),
+    [
+        (None, 0, 0),
+        (None, -1, 1),
+        ("d1", 0, 0),
+        ("d1", -1, 1),
+    ],
+    ids=[
+        "project-wide-at-completion",
+        "project-wide-just-before",
+        "deployment-at-completion",
+        "deployment-just-before",
+    ],
+)
+async def test_a_run_that_read_the_file_at_the_moment_the_change_completed_saw_it(
+    orm_db, deployment_name, offset_us, waiting
+):
+    """The read rule's boundary: waiting means reconciled strictly BEFORE completion."""
+    svc = _svc()
+    row = await _deferred_image(svc, "d1")
+    completed_at = datetime.fromisoformat((await svc.get_task(row["task_id"]))["completed_at"])
+    async with session_scope() as session:
+        session.add(
+            ProjectReconciliation(
+                project_name="p1",
+                deployment_name=deployment_name,
+                reconciled_at=completed_at + timedelta(microseconds=offset_us),
+            )
+        )
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == waiting
+
+
 async def test_a_reconciliation_of_another_project_clears_nothing(orm_db):
     svc = _svc()
     await _deferred_image(svc, "d1")
@@ -471,6 +508,41 @@ async def test_a_scoped_processing_task_covers_drift_on_its_own_deployment(orm_d
     assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
 
 
+@pytest.mark.parametrize(
+    ("waiting_scopes", "open_scope", "in_progress"),
+    [
+        ([["d1"], ["d2"]], ["d2"], False),
+        ([["d1"], ["d2"]], ["d1", "d2"], True),
+        ([None, ["d1"]], ["d1"], False),
+        ([["d1"], None], ["d1"], False),
+        ([None, ["d1"]], None, True),
+    ],
+    ids=[
+        "covers-only-the-newest-change",
+        "covers-the-union",
+        "project-wide-change-then-scoped",
+        "scoped-change-then-project-wide",
+        "project-wide-covers-all",
+    ],
+)
+async def test_an_open_task_is_in_progress_only_when_it_covers_every_waiting_change(
+    orm_db, waiting_scopes, open_scope, in_progress
+):
+    """The open scope must cover the union of all waiting scopes, whatever their order."""
+
+    def payload(scope: list[str] | None, **extra: object) -> dict:
+        return {"name": "web", **({"deployment_names": scope} if scope else {}), **extra}
+
+    svc = _svc()
+    for scope in waiting_scopes:
+        await _completed(svc, project="p1", task_type="add_component", payload=payload(scope, rollout=False))
+    await _create(svc, project="p1", deployment=None, task_type="add_component", payload=payload(open_scope))
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == len(waiting_scopes)
+    assert pending["rollout_in_progress"] is in_progress
+
+
 async def test_an_open_task_that_defers_its_own_rollout_is_not_in_progress(orm_db):
     svc = _svc()
     await _deferred_image(svc, "d1")
@@ -493,7 +565,8 @@ async def test_no_rollout_in_progress_once_it_finished(orm_db):
 async def test_a_running_task_that_rolls_nothing_out_is_not_reported(orm_db):
     """Anders zou een slaapstand of een kloon een uitrol aankondigen die niet gebeurt."""
     svc = _svc()
-    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    # Drift op dezelfde deployment: dan dekt de scope hem, en zegt alleen het taaktype nee.
+    await _deferred_image(svc, "d1")
     other = await _create(svc, project="p1", deployment="d1", task_type="sleep_deployment", payload={"a": 1})
     await svc.start_task(other["task_id"])
 
