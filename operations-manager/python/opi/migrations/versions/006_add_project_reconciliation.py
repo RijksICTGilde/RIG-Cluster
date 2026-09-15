@@ -31,6 +31,23 @@ def upgrade() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_project_reconciliation_scope "
         "ON project_reconciliation (project_name, COALESCE(deployment_name, ''));"
     )
+    # Backfill: de uitkomst van de meting die deze tabel vervangt, als projectbrede rij. Zo
+    # leest de teller op het omschakelmoment hetzelfde, en wordt hij pas vanaf de volgende
+    # verwerking beter. Letterlijk overgenomen, want de constante waar hij op leunde bestaat
+    # niet meer: de taaktypes die toen als volledige uitrol telden, en hun starttijd.
+    op.execute(
+        """
+        INSERT INTO project_reconciliation (project_name, deployment_name, reconciled_at)
+        SELECT project_name, NULL, max(coalesce(started_at, completed_at))
+        FROM async_tasks
+        WHERE status = 'completed'
+          AND task_type IN ('refresh_project', 'delete_component')
+          AND (payload ->> 'rollout') IS DISTINCT FROM 'false'
+        GROUP BY project_name
+        HAVING max(coalesce(started_at, completed_at)) IS NOT NULL
+        ON CONFLICT (project_name, COALESCE(deployment_name, '')) DO NOTHING;
+        """
+    )
 
 
 def downgrade() -> None:
