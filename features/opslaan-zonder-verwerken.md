@@ -81,8 +81,9 @@ manifestgeneratie en `create_argocd_resources`:
 - de projectbrede rij (`deployment_name` NULL) als de run ongescopet was;
 - geen rij voor een deployment waarvan de manifestgeneratie een fout vastlegde, en dan
   ook geen projectbrede rij, want die zou die deployment meteen mee afstrepen;
-- bij een project zonder deployments op dit cluster alleen de projectbrede rij: er viel
-  niets te doen, en anders blijft een uitgestelde wijziging daaraan eeuwig wachten.
+- bij een project zonder deployments op dit cluster alleen de projectbrede rij, en ook die
+  alleen als de run ongescopet was: er viel niets te doen, en anders blijft een uitgestelde
+  wijziging daaraan eeuwig wachten.
 
 Het taaktype doet er niet toe: ook `update_component`, `add_service`, de V1-route en de
 nachtelijke resource-tuner verwerken het hele project.
