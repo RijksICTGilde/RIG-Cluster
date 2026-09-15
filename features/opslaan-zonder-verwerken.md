@@ -65,34 +65,75 @@ want een trage uitrol merk je. Daarom:
   wijzigingen liggen, met het aantal, sinds wanneer de oudste wacht, en de knop
   "Nu verwerken" (dezelfde bevestiging als "Project herverwerken").
 - **API**: `GET /api/v2/projects/{project}/pending-rollout` geeft
-  `{project, count, since, task_types}`. Dit is wat een CLI of script kan pollen.
+  `{project, count, since, task_types, rollout_in_progress}`. Dit is wat een CLI of script kan pollen.
 
 ### Hoe de drift gemeten wordt
 
-Uit de taken zelf, want die zijn het bewijs van de schrijfactie: een afgeronde taak
-waarvan de payload `rollout: false` was, heeft geschreven en bewust niet verwerkt.
-Alles daarvóór wordt opgeruimd door een taak die het **hele** project verzoent —
-`refresh_project` en `delete_component` (die intern dezelfde refresh draait). Bewust
-smal: `refresh_deployment` of een `add_component` mét uitrol raakt maar één deployment
-en laat de rest van het bestand vooruitlopen, dus die tellen niet als "uitgerold".
+Twee bronnen, elk voor wat ze echt weten.
 
-Daarbij hoort één aanpassing aan het opruimen van oude taken: een uitgestelde uitrol die
-nog niet is uitgerold wordt **niet** verwijderd, ongeacht leeftijd. Anders zou de
-melding na een week stil verdwijnen — precies de stille drift die dit moet voorkomen.
+**Wat er geschreven is** komt uit de taken: een afgeronde taak waarvan de payload
+`rollout: false` was, heeft geschreven en bewust niet verwerkt. Zijn scope staat in
+`affects_deployments` (NULL is projectbreed).
 
-### De grens is de START van de uitrol, niet het einde
+**Wat er gereconcilieerd is** legt de verwerking zelf vast, in de tabel
+`project_reconciliation` (RC-188). `process_project` schrijft na geslaagde
+manifestgeneratie en `create_argocd_resources`:
 
-Een refresh leest het projectbestand **één keer, aan het begin van zijn eigen run**, en
-werkt de rest van de looptijd met die momentopname. Alles wat daarna wordt opgeslagen
-zit niet in die refresh, hoe lang hij daarna ook nog draait — en dat is meestal minuten,
-want de ArgoCD-wacht domineert.
+- een rij per verwerkte deployment van dit cluster (na het scope-filter);
+- de projectbrede rij (`deployment_name` NULL) als de run ongescopet was;
+- geen rij voor een deployment waarvan de manifestgeneratie een fout vastlegde, en dan
+  ook geen projectbrede rij, want die zou die deployment meteen mee afstrepen;
+- bij een project zonder deployments op dit cluster alleen de projectbrede rij: er viel
+  niets te doen, en anders blijft een uitgestelde wijziging daaraan eeuwig wachten.
 
-Daarom is de grens `started_at` van de uitrollende taak en niet `completed_at`. Met
-`completed_at` werd een uitgestelde wijziging die tijdens een lopende refresh werd
-opgeslagen weggestreept door een refresh die hem nooit gelezen had: `count` stond op 0
-terwijl de wijziging niet op het cluster stond. Een taak zonder starttijd valt terug op
-`completed_at`, zodat oudere rijen zich gedragen als voorheen. De richting is veilig:
-deze meting kan alleen méér melden dan er openstaat, nooit minder.
+Het taaktype doet er dus niet meer toe. Vroeger telde alleen `refresh_project` en
+`delete_component` als uitrol, terwijl onder meer `update_component`, `add_service`, de
+V1-route en de nachtelijke resource-tuner ook het hele project verwerken. Op `mpfm-w3h`
+stonden daardoor 15 wijzigingen "wachtend" na acht volledige verwerkingen.
+
+De leesregel, voor een wachtende taak `T` met scope `S`:
+
+```
+projectbreed_at  = rij (project, NULL)   of -oneindig
+deployment_at(d) = rij (project, d)      of -oneindig
+
+S is NULL  -> T wacht als projectbreed_at < T.completed_at
+S concreet -> T wacht als er een d in S is met max(projectbreed_at, deployment_at(d)) < T.completed_at
+```
+
+Een deployment op een ander cluster krijgt nooit een eigen rij; een uitgestelde
+wijziging daaraan wordt afgestreept door de eerstvolgende volledige verwerking van dit
+cluster.
+
+Het opruimen van oude taken leest dezelfde regel: een uitgestelde uitrol die nog niet is
+gereconcilieerd wordt **niet** verwijderd, ongeacht leeftijd. Anders zou de melding na
+een week stil verdwijnen, precies de stille drift die dit moet voorkomen.
+
+`rollout_in_progress` gaat over OPEN taken, waarvoor nog niets is vastgelegd. Dat is een
+uitspraak over intentie: waar is een open taak van een type uit `PROCESSING_TASK_TYPES`
+(zijn handler verwerkt het project), zonder `rollout: false`, waarvan de scope de scope
+van alles wat wacht dekt (`covers()`). Omdat `scope_of()` een paar projectbrede handlers
+gescopet noemt (`configure_service`, `configure_service_values`,
+`manage_database_schemas`), meldt dit soms geen lopende uitrol terwijl die er wel is:
+de veilige kant.
+
+### De grens is het LEESMOMENT van de verwerking, niet het einde
+
+Een verwerking leest het projectbestand **één keer, aan het begin van zijn eigen run**,
+en werkt de rest van de looptijd met die momentopname. Alles wat daarna wordt opgeslagen
+zit er niet in, hoe lang de run daarna ook nog draait. Dat is meestal minuten, want de
+ArgoCD-wacht domineert.
+
+Daarom slaat de rij het moment op waarop de run het projectbestand las, en niet wanneer
+hij klaar was. Met het eindtijdstip werd een uitgestelde wijziging die tijdens een
+lopende refresh werd opgeslagen weggestreept door een refresh die hem nooit gelezen had
+(RC-82). Het moment wordt op de databaseklok berekend, dezelfde klok als `completed_at`
+van de taken: `now()` min hoe lang geleden de run las. Lopen twee runs over elkaar, dan
+wint de latere lezing (`GREATEST`).
+
+Bij de invoering (migratie 006) is per project de uitkomst van de oude meting als
+projectbrede rij weggeschreven, zodat de teller op het omschakelmoment hetzelfde leest en
+pas vanaf de eerstvolgende verwerking beter wordt.
 
 Welke wijzigingen binnen dat venster kunnen vallen volgt uit de wachtrij. Taken zonder
 deployment in hun sleutel (`add_component`, `update_component`, `add_service`,
