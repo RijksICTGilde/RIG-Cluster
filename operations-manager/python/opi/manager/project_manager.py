@@ -5355,7 +5355,7 @@ class ProjectManager:
         targets: list[str] | None,
         read_started: float,
     ) -> None:
-        """Write what this run reconciled: the in-scope deployments of this cluster (RC-188).
+        """Write what this run reconciled (RC-188).
 
         A deployment whose manifests recorded a failure gets no row. The project-wide row
         only comes from an unscoped run without such a failure, because it clears every

@@ -43,13 +43,9 @@ def _deferred(task=AsyncTask):
 def _not_yet_reconciled(task=AsyncTask):
     """Rows whose change no processing run has read since they completed (RC-188).
 
-    Reads ``project_reconciliation``, which the runs write themselves. A row there says
-    when a run READ the project file, so a change completed after that is not in it.
-
     The task waits while the project-wide row is older than its completion, and, for a
     concrete scope, while one of its deployments also has no newer row of its own. A
-    project-wide task only clears through the project-wide row, as in ``covers()``. A
-    missing row is "never reconciled".
+    project-wide task only clears through the project-wide row, as in ``covers()``.
     """
     reconciled_since = ProjectReconciliation.project_name == task.project_name
     reconciled_since &= ProjectReconciliation.reconciled_at >= task.completed_at
@@ -705,19 +701,16 @@ class AsyncTaskService:
         A completed task whose payload said ``rollout: false`` wrote to the project file and
         deliberately did not process. It stays waiting until a processing run has read the
         project file after it, for the deployments it touched; see ``_not_yet_reconciled``.
-        That is measured, not derived from which task types ran (RC-188): a run records what
-        it reconciled in ``project_reconciliation``, whatever started it.
 
         Returns ``{"count": int, "since": str | None, "task_types": list[str],
         "rollout_in_progress": bool}``. ``since`` is the ISO timestamp of the oldest change
         still waiting, so the UI can say how long the project has been running ahead of the
         cluster rather than only that it is.
 
-        ``rollout_in_progress`` covers the gap the count itself cannot: a run that is queued
-        or running has recorded nothing yet. It is True when an open task that will process
-        the project (``PROCESSING_TASK_TYPES``, not deferred) covers the scope of everything
-        waiting. Its scope comes from ``scope_of()``, which calls a few whole-project
-        handlers scoped; then this reports no rollout while there is one, the safe side.
+        ``rollout_in_progress``: an open processing task covers the scope of everything
+        waiting. A queued or running run has recorded nothing yet, so the count cannot say
+        this. ``scope_of()`` calls a few whole-project handlers scoped; then this reports no
+        rollout while there is one, the safe side.
         """
         async with session_scope() as session:
             rows = (

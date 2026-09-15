@@ -1,8 +1,4 @@
-"""Record what a processing run actually reconciled (RC-188).
-
-One writer, ``ProjectManager.process_project``; the reader is the drift count in
-``AsyncTaskService.get_deferred_rollouts``.
-"""
+"""Record what a processing run actually reconciled (RC-188)."""
 
 from __future__ import annotations
 
