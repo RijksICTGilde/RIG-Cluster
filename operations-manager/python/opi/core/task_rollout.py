@@ -56,7 +56,8 @@ NON_DEFERRABLE_REASONS: dict[str, str] = {
 
 # Task types whose handler processes the project (unless rollout=false), so an open one is
 # a rollout on its way. What a run really reconciled is in ``project_reconciliation``.
-# update_image processes through ``process_project`` directly, not ``process_project_from_git``.
+# update_image processes through ``process_project`` directly, not ``process_project_from_git``;
+# restore through ``_provision_deployment_infrastructure``.
 PROCESSING_TASK_TYPES = frozenset(
     {
         "create_project",
@@ -74,6 +75,7 @@ PROCESSING_TASK_TYPES = frozenset(
         "refresh_deployment",
         "refresh_project",
         "delete_component",
+        "restore",
     }
 )
 

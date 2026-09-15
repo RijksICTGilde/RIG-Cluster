@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+import asyncpg
 from fastapi import HTTPException
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
@@ -5377,7 +5378,7 @@ class ProjectManager:
                 project_wide=targets is None and not failed,
                 read_seconds_ago=time.monotonic() - read_started,
             )
-        except (SQLAlchemyError, OSError) as e:
+        except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:
             logger.warning("Could not record the reconciliation of project %s: %s", project_name, e)
 
     async def create_application_manifests(

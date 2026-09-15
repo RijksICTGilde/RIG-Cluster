@@ -492,6 +492,15 @@ async def test_any_processing_task_that_covers_the_drift_is_a_rollout_in_progres
     assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
 
 
+async def test_a_restore_is_a_rollout_in_progress_on_its_deployment(orm_db):
+    """A restore processes its target deployment again, so it clears drift there."""
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    await _create(svc, project="p1", deployment="d1", task_type="restore", payload={"target_deployment": "d1"})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
 async def test_a_scoped_processing_task_does_not_cover_project_wide_drift(orm_db):
     svc = _svc()
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})

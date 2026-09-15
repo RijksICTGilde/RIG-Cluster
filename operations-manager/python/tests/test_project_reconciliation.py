@@ -19,6 +19,7 @@ from opi.manager.project_manager import DeploymentResult, ProjectManager
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
 from sqlalchemy import func, select, text
+from sqlalchemy.engine import make_url
 
 HERE = settings.CLUSTER_MANAGER
 
@@ -149,24 +150,48 @@ async def test_an_earlier_read_never_moves_a_scope_back(orm_db) -> None:
     assert await _rows() == first
 
 
-async def _unreachable_database() -> None:
+@pytest.fixture
+def database_url(_orm_db_url: str) -> str:
+    return _orm_db_url
+
+
+async def _unreachable_database(_: str) -> None:
     await dispose_engine()
     # Poort 1: niets luistert, asyncpg geeft dan een kale ConnectionRefusedError (OSError).
     configure_engine("postgresql+asyncpg://postgres:x@127.0.0.1:1/weg")
 
 
-async def _table_not_migrated() -> None:
+async def _reconnect_with(url: str, **change: str) -> None:
+    await dispose_engine()
+    configure_engine(make_url(url).set(**change).render_as_string(hide_password=False))
+
+
+async def _bad_password(url: str) -> None:
+    # asyncpg geeft InvalidPasswordError, geen SQLAlchemyError of OSError.
+    await _reconnect_with(url, password="fout")
+
+
+async def _no_database(url: str) -> None:
+    # asyncpg geeft InvalidCatalogNameError.
+    await _reconnect_with(url, database="bestaat_niet")
+
+
+async def _table_not_migrated(_: str) -> None:
     async with session_scope() as session:
         await session.execute(text("DROP TABLE project_reconciliation"))
 
 
 @pytest.mark.parametrize(
-    "break_database", [_unreachable_database, _table_not_migrated], ids=["unreachable", "no-table"]
+    "break_database",
+    [_unreachable_database, _bad_password, _no_database, _table_not_migrated],
+    ids=["unreachable", "bad-password", "no-database", "no-table"],
 )
-async def test_a_database_that_fails_does_not_fail_the_rollout(orm_db, monkeypatch, break_database) -> None:
+async def test_a_database_that_fails_does_not_fail_the_rollout(
+    orm_db, database_url, monkeypatch, break_database
+) -> None:
     """The rollout happened; a missing row only makes the count over-report."""
     pm = _manager(monkeypatch)
-    await break_database()
+    await break_database(database_url)
 
     assert await pm.process_project() is True
     assert pm._processing_error is None
