@@ -1,39 +1,18 @@
 #!/usr/bin/env bash
 #
 # setup-kind-registry.sh - zet een image-registry NAAST het kind-cluster neer en sluit
-# de nodes erop aan.
+# de nodes erop aan, volgens https://kind.sigs.k8s.io/docs/user/local-registry/.
 #
-# Waarom naast en niet in het cluster: de registry moet een clusterherbouw overleven.
-# De in-cluster rig-registry bewaart zijn lagen op een PVC, dus na een reset is alles
-# weg en kost de eerste deploy weer het volledige image. Deze container leeft naast het
-# cluster en houdt zijn lagen, ook als het cluster verdwijnt.
-#
-# Dit is de officiele kind-recipe (https://kind.sigs.k8s.io/docs/user/local-registry/):
-# registry-container op 127.0.0.1:5001, een hosts.toml per node, de registry aan het
-# kind-netwerk, en de local-registry-hosting configmap in kube-public.
-#
-# De poort is 5001 en niet 5000, want op de gedeelde dev-server bindt claude-dashboard
-# al op 127.0.0.1:5000 en loopt `docker run` daarop stuk. De kind-docs stapten om
-# dezelfde reden over (op macOS zit AirPlay op 5000).
-#
-# VEREIST in de kind-config van het cluster:
-#
-#   containerdConfigPatches:
-#   - |-
-#     [plugins."io.containerd.grpc.v1.cri".registry]
-#       config_path = "/etc/containerd/certs.d"
-#
-# Zonder die regel leest containerd de hosts.toml niet en pullt de node alsnog niets.
-# Dit script controleert het en weigert als het ontbreekt: de fout is anders stil en
-# komt pas boven bij de eerste deploy, en een kind-config geldt alleen bij `create`,
-# dus repareren kost dan een clusterherbouw.
+# Waarom naast het cluster, en de containerdConfigPatches die de kind-config daarvoor
+# nodig heeft: docs/sandbox-kind-registry.md. Ontbreekt die regel, dan leest containerd
+# de hosts.toml niet en weigert dit script; de fout is anders stil tot de eerste deploy.
 #
 # Gebruik: scripts/setup-kind-registry.sh [--cluster NAAM]
 #
 # Omgevingsvariabelen:
 #   KIND_CLUSTER_NAME    clusternaam (standaard rig-sandbox, --cluster gaat voor)
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
-#   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001)
+#   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001, 5000 is bezet op de dev-server)
 #   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2)
 #
 # Exitcodes: 0 = klaar, 1 = de kind-config mist containerdConfigPatches, 2 = fout gebruik.
@@ -63,8 +42,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# 1. De registry-container. Bestaat hij maar staat hij stil, dan starten we hem: een
-# `docker run` met dezelfde naam zou daarop stuklopen.
+# 1. Bestaat de container maar staat hij stil, dan starten we hem: een `docker run` met
+# dezelfde naam zou daarop stuklopen.
 reg_state="$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
 if [ "$reg_state" = "true" ]; then
     echo "[kind-registry] registry $REG_NAME draait al"
@@ -77,15 +56,14 @@ else
         --network bridge --name "$REG_NAME" "$REG_IMAGE"
 fi
 
-# 2. Elke node naar de registry wijzen. De hostnaam in hosts.toml is de containernaam op
-# het kind-netwerk, niet localhost: de node zoekt hem daar, niet op de host.
+# 2. De hostnaam in hosts.toml is de containernaam op het kind-netwerk, niet localhost:
+# de node zoekt de registry daar, niet op de host.
 REGISTRY_DIR="/etc/containerd/certs.d/localhost:${REG_PORT}"
 for node in $(kind get nodes --name "$CLUSTER"); do
     if ! docker exec "$node" grep -qE '^[[:space:]]*config_path[[:space:]]*=' /etc/containerd/config.toml; then
         echo "[kind-registry] node $node leest geen /etc/containerd/certs.d." >&2
-        echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches;" >&2
-        echo "[kind-registry] zonder die regel wordt hosts.toml genegeerd. Zie de kop van dit" >&2
-        echo "[kind-registry] script en sandboxed-local/kind-config.yaml, en bouw het cluster opnieuw." >&2
+        echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches." >&2
+        echo "[kind-registry] Voeg ze toe (docs/sandbox-kind-registry.md) en bouw het cluster opnieuw." >&2
         exit 1
     fi
     docker exec "$node" mkdir -p "$REGISTRY_DIR"
@@ -100,8 +78,8 @@ if [ "$(docker inspect -f '{{json .NetworkSettings.Networks.kind}}' "$REG_NAME")
     docker network connect kind "$REG_NAME"
 fi
 
-# 4. Vastleggen waar de registry zit, zoals KEP-1755 voorschrijft. Gereedschap dat een
-# lokale registry zoekt (skaffold, tilt) leest deze configmap.
+# 4. KEP-1755: gereedschap dat een lokale registry zoekt (skaffold, tilt) leest deze
+# configmap.
 kubectl --context "kind-${CLUSTER}" apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap

@@ -1,9 +1,9 @@
 # De registry naast het sandbox-cluster
 
 De sandbox heeft een image-registry die **naast** het kind-cluster draait, niet erin: een
-losse docker-container `kind-registry` op `127.0.0.1:5001`. Dat is niet af te leiden uit de
-manifesten in deze repo, want er staat geen manifest van. `scripts/setup-kind-registry.sh`
-zet hem neer, en `task sandbox:setup` roept dat script aan direct na `sandbox:create-cluster`.
+losse docker-container `kind-registry` op `127.0.0.1:5001`. Er is geen manifest van, dus dit
+staat nergens anders. `scripts/setup-kind-registry.sh` zet hem neer, aangeroepen door
+`task sandbox:setup` direct na `sandbox:create-cluster`.
 
 ## Waarom naast het cluster
 
@@ -11,10 +11,8 @@ Het punt van de hele oefening: de container **overleeft een clusterherbouw**. Na
 `task sandbox:destroy` of een reset staan alle lagen er nog, dus de eerste deploy erna
 verstuurt alleen wat er veranderd is in plaats van het volledige image van bijna 1 GB.
 
-De in-cluster `rig-registry` kan dat niet. Die bewaart zijn lagen op een PVC in het cluster,
-dus een reset wist ze. Daarnaast: htpasswd-auth (pull-secret in elke deploy), 256Mi geheugen,
-en een kip-ei bij bootstrap, want OPI kan niets pullen voordat de registry draait. Die
-registry blijft waar hij voor is, images van projecten; zie
+De in-cluster `rig-registry` kan dat niet: die bewaart zijn lagen op een PVC in het cluster,
+dus een reset wist ze. Hij blijft waar hij voor is, images van projecten; zie
 `docs/sandbox-image-deploy-via-registry.md`.
 
 ## Wat het script doet
@@ -42,11 +40,11 @@ containerdConfigPatches:
 ```
 
 Zonder die regel leest containerd de `hosts.toml` niet en pullt de node niets, zonder dat
-er iets misgaat tot de eerste deploy. Het script controleert daarom per node of containerd
-een `config_path` kent en weigert met een verwijzing naar de kind-config als dat niet zo is.
+er tot de eerste deploy iets misgaat. Het script controleert daarom per node of containerd
+een `config_path` kent, en weigert als dat niet zo is.
 
-Een kind-config geldt alleen bij `kind create cluster`. Een bestaand cluster dat de regel
-mist, moet opnieuw gebouwd worden; wijzigen achteraf werkt niet.
+Een kind-config geldt alleen bij `kind create cluster`, dus een bestaand cluster dat de
+regel mist moet opnieuw gebouwd worden.
 
 ## Gebruik
 

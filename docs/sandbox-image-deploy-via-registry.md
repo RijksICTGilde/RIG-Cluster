@@ -1,9 +1,8 @@
 # Sandbox: deploy een image via de in-cluster registry i.p.v. `kind load`
 
-> Dit document gaat over de **in-cluster** `rig-registry`, bedoeld voor images van
-> projecten. Voor platform-images staat er inmiddels een registry **naast** het cluster,
-> die een clusterherbouw overleeft: zie `docs/sandbox-kind-registry.md`. Volg die voor
-> het omzetten van `sandbox-deploy` en `task sandbox:update-operations-manager`.
+> Dit document gaat over de **in-cluster** `rig-registry`, voor images van projecten. Voor
+> platform-images staat er inmiddels een registry **naast** het cluster, die een
+> clusterherbouw overleeft: zie `docs/sandbox-kind-registry.md`.
 
 Een build op de dev-sandbox neerzetten met `kind load docker-image` is traag: `kind load`
 exporteert **elke keer de hele image als tar** uit de docker-daemon en importeert die in de
