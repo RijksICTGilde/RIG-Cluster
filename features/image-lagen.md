@@ -20,7 +20,7 @@ Vier stages, van zelden naar vaak wijzigend:
 | `uv` | het gepinde uv-image, alleen als bron voor de uv-binary | `UV_VERSION` verandert |
 | `base-system` | apt-pakketten, kubectl, sops, mc, kopia, skopeo, chisel, uv | een van de gepinde `ARG *_VERSION` verandert |
 | `dependencies` | `uv sync` van de productie-dependencies | `pyproject.toml` of `uv.lock` verandert |
-| `application` | alembic.ini, entrypoint, `opi`, `manifests`, `extensions`, `static` | de broncode verandert |
+| `application` | alembic.ini, entrypoint, `opi`, `manifests`, `static` | de broncode verandert |
 
 ## Vier regels die makkelijk stilletjes sneuvelen
 

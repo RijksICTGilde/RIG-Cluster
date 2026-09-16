@@ -34,6 +34,10 @@ class ServiceType(Enum):
     # Platform services (always-on, not user-selectable)
     PLATFORM = "platform"
 
+    # Waar de images van dit project vandaan komen, en wat er op dit cluster onder
+    # gebeurt (een pull-secret, of een proxy-organisatie in RCR).
+    IMAGE_REGISTRIES = "image-registries"
+
     # File attachments (uploaded files mounted into a pod or exposed as env-var)
     ATTACHMENTS = "attachments"
 

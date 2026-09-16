@@ -111,6 +111,9 @@ SKIP: set[ServiceType] = {
     # variables of their own -- they ARE the user's own variables (RC-25).
     ServiceType.USER_ENV_VARS,
     ServiceType.ALIASES,
+    # Injecteert geen verbindingsgegevens in de pod; dat de pull slaagt bewijst de probe
+    # al door te draaien.
+    ServiceType.IMAGE_REGISTRIES,
 }
 
 

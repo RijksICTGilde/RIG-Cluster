@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "RegistryEntry": {
+      "additionalProperties": false,
+      "description": "E\u00e9n private registry van het project.",
+      "properties": {
+        "name": {
+          "description": "Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
+          "maxLength": 63,
+          "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?$",
+          "title": "Name",
+          "type": "string"
+        },
+        "password": {
+          "anyOf": [
+            {
+              "pattern": "(-----BEGIN AGE ENCRYPTED FILE-----|^base64\\+age:|^plain:)",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Het token dat leesrecht op de packages geeft, AGE-versleuteld opgeslagen.",
+          "title": "Password"
+        },
+        "secretName": {
+          "anyOf": [
+            {
+              "maxLength": 253,
+              "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Naam van een al bestaand kubernetes.io/dockerconfigjson-secret in de namespace, in plaats van gebruikersnaam en token. Voor een secret dat het platform zelf neerzet.",
+          "title": "Secretname"
+        },
+        "upstream": {
+          "description": "De registry inclusief pad waar de images staan, zonder protocol, bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'.",
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}|localhost)(?:/[a-z0-9][a-z0-9._-]*)*$",
+          "title": "Upstream",
+          "type": "string"
+        },
+        "username": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt; leeg voor een registry zonder inlog.",
+          "title": "Username"
+        }
+      },
+      "required": [
+        "name",
+        "upstream"
+      ],
+      "title": "RegistryEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Projectniveau: de lijst private registries.",
+  "properties": {
+    "registries": {
+      "description": "De private registries van dit project, met hun upstream en inloggegevens.",
+      "items": {
+        "$ref": "#/$defs/RegistryEntry"
+      },
+      "title": "Registries",
+      "type": "array"
+    }
+  },
+  "title": "ImageRegistriesConfig",
+  "type": "object"
+}

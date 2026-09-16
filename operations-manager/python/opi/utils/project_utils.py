@@ -288,6 +288,18 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
     return normalized, was_normalized
 
 
+def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """De deployment die het PROJECTNIVEAU van dit project draagt, of None.
+
+    De alfabetisch eerste wijst de repository aan. Een gedeelde regel, zodat de schrijver
+    en de ArgoCD-applicatie nooit een andere repository kiezen.
+    """
+    on_cluster = [d for d in deployments if isinstance(d, dict) and d.get("name")]
+    if not on_cluster:
+        return None
+    return min(on_cluster, key=lambda d: str(d["name"]))
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.

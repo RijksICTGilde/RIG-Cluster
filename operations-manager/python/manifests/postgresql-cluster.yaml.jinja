@@ -18,8 +18,10 @@ spec:
 
   imageName: {{ database_config.image }}
   {% if imagePullSecretsMap and database_config.image in imagePullSecretsMap %}
+  # yaml_scalar: dezelfde secretnaam als in deployment.yaml.jinja, hier via de sleutel
+  # 'registry' in de config van namespace-postgresql-database. Zie daar.
   imagePullSecrets:
-    - name: {{ imagePullSecretsMap[database_config.image] }}
+    - name: {{ imagePullSecretsMap[database_config.image] | yaml_scalar }}
   {% endif %}
   primaryUpdateStrategy: unsupervised
   enableSuperuserAccess: true

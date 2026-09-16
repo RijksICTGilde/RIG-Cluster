@@ -12,14 +12,13 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-import yaml
-
 from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.minio_mc import create_minio_connector
 from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
 from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
-from opi.extensions.pipeline import load_extensions
+from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
+from opi.services.catalog.image_registries.resolution import cluster_rules
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -565,22 +564,14 @@ class BaseBackupManager:
         self.lock = BackupLock(self.kubectl)
 
     def _template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
-        """Render a manifest template, then apply the cluster's registry rewrite.
+        """Render a manifest template, then run the image-registries pass over it.
 
-        Backup pods are bare ``Pod``s applied directly (outside the project manifest
-        pipeline), so without this they keep raw upstream image refs (e.g. ghcr.io)
-        and fail to pull on ODCN. Routing them through the same RegistryRewriteExtension
-        used for project workloads rewrites images to the RCR mirror and attaches the
-        pull secret. No-op on clusters without registry-rewrite extensions (local/sandbox).
+        Backup pods are bare ``Pod``s applied directly, outside the project manifest
+        pipeline, so without this they keep raw upstream image refs and fail to pull on
+        ODCN. The image is a platform image, so the cluster rules are the whole answer.
         """
         rendered = self.kubectl.template_manifest(manifest_content, variables)
-        pipeline = load_extensions(settings.CLUSTER_MANAGER)
-        if not pipeline.has_extensions:
-            return rendered
-        manifest = yaml.safe_load(rendered)
-        if not isinstance(manifest, dict):
-            return rendered
-        return yaml.dump(pipeline.process_manifest(manifest), default_flow_style=False, sort_keys=False)
+        return apply_rules_to_document(rendered, cluster_rules(settings.CLUSTER_MANAGER))
 
     async def get_status(self) -> BackupStatus:
         """Get current backup status."""

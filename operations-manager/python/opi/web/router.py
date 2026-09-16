@@ -2001,6 +2001,7 @@ async def _fetch_argocd_deployment_status(
     argo: Any,
     kubectl: Any,
     deployment_state: DeploymentState | None = None,
+    project_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy.
 
@@ -2008,6 +2009,9 @@ async def _fetch_argocd_deployment_status(
     ``collect_deployment_state``). It only decides whether the pod summary is worth
     asking for: a deployment whose pods are MEANT to be absent -- asleep, switched off --
     would otherwise be told "nothing is running", which is true and not a problem.
+
+    ``project_data`` lets the card name an image in the project's own private registry
+    instead of its bare RCR URL.
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
@@ -2066,7 +2070,7 @@ async def _fetch_argocd_deployment_status(
                     get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
                     deployment_name,
                 )
-                pod_summaries = summarize_component_pods(pods, deployment=deployment)
+                pod_summaries = summarize_component_pods(pods, deployment=deployment, project_data=project_data)
         else:
             # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
             # read the cheap app-level conditions unconditionally - no extra API call - so a
@@ -2079,6 +2083,7 @@ async def _fetch_argocd_deployment_status(
             deployment_name=deployment_name,
             component_names=component_names,
             serving_components={s.reference for s in pod_summaries if s.is_serving},
+            project_data=project_data,
         )
         _annotate_argocd_error_ages(errors)
 
@@ -2334,7 +2339,7 @@ async def argocd_status_fragment(
         )
     else:
         status = await _fetch_argocd_deployment_status(
-            project_name, deployment, argo, create_kubectl_connector(), deployment_state
+            project_name, deployment, argo, create_kubectl_connector(), deployment_state, project.data or {}
         )
 
     return render(

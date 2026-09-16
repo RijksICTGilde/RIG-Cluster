@@ -715,12 +715,14 @@ class TestDeDownloadknop:
         """De route zonder de rest van de applicatie: genoeg om te meten wat hij teruggeeft.
 
         Het cluster van deze instantie is dat met VLAM -- de route kent geen project en
-        leest dus, net als het blok, ``settings.CLUSTER_MANAGER``.
+        leest dus, net als het blok, ``settings.CLUSTER_MANAGER``. Gepatcht op de
+        ``settings`` die de route zelf vasthoudt: laadt ``mock_settings`` de module eerder,
+        dan is dat de mock en niet ``opi.core.config.settings``.
         """
-        from opi.core.config import settings
+        from opi.services.catalog.vlam import routes
         from opi.services.catalog.vlam.routes import vlam_router
 
-        monkeypatch.setattr(settings, "CLUSTER_MANAGER", WITH_VLAM)
+        monkeypatch.setattr(routes.settings, "CLUSTER_MANAGER", WITH_VLAM)
         app = FastAPI()
         app.include_router(vlam_router)
         return TestClient(app)

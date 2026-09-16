@@ -33,16 +33,18 @@ class TestServiceType:
             "aliases",
             "send-email",
             "vlam",
+            "image-registries",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        # 23 sinds vlam erbij kwam (RC-142); 22 sinds send-email (RC-114); 21 sinds de gezondheidscheck een
+        # 24 sinds image-registries erbij kwam (RC-177); 23 sinds vlam (RC-142); 22 sinds
+        # send-email (RC-114); 21 sinds de gezondheidscheck een
         # systeemdienst werd (RC-28); 20 sinds user-env-vars en aliases systeemdiensten
         # werden (RC-25); daarvoor 18, sinds cross-domain-access en resource-tuning er
         # allebei bij kwamen.
-        assert len(ServiceType) == 23
+        assert len(ServiceType) == 24
 
 
 class TestGetAllServices:

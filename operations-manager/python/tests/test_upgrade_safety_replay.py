@@ -200,14 +200,44 @@ async def test_migration_does_not_drop_top_level_sections() -> None:
     silently drop a whole top-level section. A removed section is the visible edge of
     the "raakt iemand iets kwijt" question at the file level.
 
-    ``invites`` is the one deliberate removal (it moves into ``services/invite``), so
-    it is the only allowed disappearance.
+    ``invites`` is one deliberate removal (it moves into ``services/invite``), and
+    ``registries`` is the other (it moves into ``services/image-registries``, RC-177).
+    Those two are the only allowed disappearances.
     """
-    allowed_removals = {"invites"}
+    allowed_removals = {"invites", "registries"}
     for path in _fixture_paths():
         outcome = await replay_project_data(_load(path), os.path.basename(path))
         unexpected = set(outcome.removed_keys) - allowed_removals
         assert not unexpected, f"{outcome.name}: migration dropped top-level sections {sorted(unexpected)}"
+
+
+async def test_legacy_registries_block_is_relocated_not_lost() -> None:
+    """De root-``registries:`` moet in de dienst landen, niet verdwijnen.
+
+    Dezelfde vraag als bij ``invites``: "verhuisd" en "kwijt" zien er in de bovenstaande
+    toets hetzelfde uit, dus de aankomst moet apart gemeten worden. ``algor-odc`` is het
+    ene bestand in de vloot met inloggegevens erin.
+    """
+    from opi.services.catalog.image_registries.resolution import project_registries
+
+    gemeten = 0
+    for path in _fixture_paths():
+        raw = _load(path)
+        before = raw.get("registries")
+        if not before:
+            continue
+        gemeten += 1
+        name = os.path.basename(path)
+        outcome = await replay_project_data(copy.deepcopy(raw), name)
+        assert outcome.ok, f"{name} failed at {outcome.stage}: {outcome.error}"
+
+        migrated, _ = migrate_to_latest(copy.deepcopy(raw))
+        assert "registries" not in migrated, f"{name}: de wortelsleutel hoort weg te zijn"
+        after = project_registries(migrated)
+        assert len(after) == len(before), f"{name}: {len(before)} registries in, {len(after)} uit"
+        assert {r["name"] for r in after} == {r["name"] for r in before}
+        assert all(r.get("upstream") for r in after), f"{name}: url is niet upstream geworden"
+    assert gemeten, "geen enkele fixture draagt een root-registries-blok; deze toets meet niets"
 
 
 async def test_legacy_invites_block_is_relocated_not_lost() -> None:

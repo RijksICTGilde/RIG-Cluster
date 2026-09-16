@@ -63,6 +63,7 @@ from opi.utils.naming import (
     generate_db_console_client_id,
     generate_db_console_hostname,
     generate_db_console_name,
+    generate_project_service_account_name,
 )
 from opi.utils.secrets import DatabaseSecret
 
@@ -440,6 +441,7 @@ class DbConsoleManager:
             "cluster": cluster,
             "extra_labels": extra_labels,
             "extra_annotations": extra_annotations,
+            "service_account_name": generate_project_service_account_name(project_name),
         }
 
         # The run row already exists (begin() created it as 'starting'); a failure

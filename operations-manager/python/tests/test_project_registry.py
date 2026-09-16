@@ -75,8 +75,10 @@ class TestSequenceEditables:
         # +4 over the base for the health-check service's component fields
         # (scheme, port, liveness-path, readiness-path), +1 for the optional start command,
         # +1 for the authorization-wall signpost (a read-only pointer to the project-level
-        # setting, shown only when that service is on this component).
-        assert len(COMPONENTS_SEQUENCE.children) == 25
+        # setting, shown only when that service is on this component), +1 for the
+        # image-registries reference (welke eigen registry hoort bij de image van dit
+        # component, RC-177).
+        assert len(COMPONENTS_SEQUENCE.children) == 26
         assert COMPONENTS_SEQUENCE.editable.min_items == 1
 
     def test_deployments_sequence_has_children(self):
@@ -91,8 +93,9 @@ class TestSequenceEditables:
         assert nested_seq[0].editable.yaml_path == "deployments[*]/components"
         assert nested_seq[0].children is not None
         # reference, image, pullPolicy, user-env-vars, the publish-on-web certificate
-        # override (tls + attachment, RC-78), per-deployment attachments sequence
-        assert len(nested_seq[0].children) == 7
+        # override (tls + attachment, RC-78), per-deployment attachments sequence, and the
+        # image-registries override (een andere registry alleen voor deze deployment).
+        assert len(nested_seq[0].children) == 8
 
 
 class TestReadonlyEditables:

@@ -86,6 +86,9 @@ CLUSTER_CONFIG = {
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
         },
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        "image_registries": {"backend": "direct-secret"},
     },
     "sandboxed-local": {
         "ingress_postfix": ".sandbox.rijksapp.dev",
@@ -171,6 +174,9 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        "image_registries": {"backend": "direct-secret"},
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -298,7 +304,43 @@ CLUSTER_CONFIG = {
                 },
             ],
         },
-        "extensions": ["odcn-registry-rewrite"],
+        # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
+        # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
+        # proxy-caches van het platform; projectregels komen ervoor te staan.
+        "image_registries": {
+            "backend": "quay-proxy-organization",
+            "registry_host": "rcr.rijksapps.nl",
+            "customer_name": "rig",
+            # Gemeten op het cluster, niet uit de operator-documentatie; zie
+            # features/image-registries.md, "De provisioning-backend".
+            "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
+            "rotation_days": 90,
+            "rules": [
+                {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
+                {
+                    "match": "docker.io",
+                    "to": "rcr.rijksapps.nl/dockerhub-rig",
+                    "secret": "dockerhub-rig-robot-pull-secret",
+                },
+                {
+                    "match": "registry.gitlab.com",
+                    "to": "rcr.rijksapps.nl/gitlab-rig",
+                    "secret": "gitlab-rig-robot-pull-secret",
+                },
+                {"match": "gcr.io", "to": "rcr.rijksapps.nl/gcr-rig", "secret": "gcr-rig-robot-pull-secret"},
+                {"match": "quay.io", "to": "rcr.rijksapps.nl/quay-rig", "secret": "quay-rig-robot-pull-secret"},
+                {
+                    "match": "registry.k8s.io",
+                    "to": "rcr.rijksapps.nl/k8s-rig",
+                    "secret": "k8s-rig-robot-pull-secret",
+                },
+                {
+                    "match": "code.overheid.nl",
+                    "to": "rcr.rijksapps.nl/code-overheid-rig",
+                    "secret": "code-overheid-rig-robot-pull-secret",
+                },
+            ],
+        },
     },
 }
 
@@ -1375,13 +1417,20 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
     return False
 
 
-def get_extensions(cluster_name: str) -> list[str]:
-    """Get the list of manifest extension names configured for a cluster.
+def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
+    """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
 
-    Returns an empty list if no extensions are configured.
+    Een cluster zonder de sleutel krijgt ``direct-secret`` zonder tabel.
     """
-    config = get_cluster_config(cluster_name)
-    return config.get("extensions", [])
+    try:
+        config = get_cluster_config(cluster_name).get("image_registries")
+    except ValueError:
+        # De clustercontrole zit in validate_service_availability en in het schema; hier
+        # opblazen zou een ontbrekend clusterveld als een registryfout laten aankomen.
+        return {"backend": "direct-secret"}
+    if not isinstance(config, dict):
+        return {"backend": "direct-secret"}
+    return config
 
 
 def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
