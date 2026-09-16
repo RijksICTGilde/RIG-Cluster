@@ -377,7 +377,8 @@ class InviteManager:
             realm_name: The project's Keycloak realm name
 
         Returns:
-            Dict with user_id, email, created (bool), and assigned permissions
+            Dict with user_id, email, created (bool), assigned permissions and
+            verification_mail_sent (bool)
 
         Raises:
             InviteDomainError: If email doesn't match domain restriction
