@@ -71,9 +71,9 @@ registry staat, bit voor bit hetzelfde als wat er eerder draaide.
 
 ## Wat bewust niet is meegenomen
 
-- **Lokaal en sandbox.** Die bouwen een niet-gepubliceerde `operations-manager:latest` en laden die
-  rechtstreeks in Kind. Er is geen registry en dus geen rollback-probleem. De sandboxed-local-overlay
-  blijft daarom op `latest` staan.
+- **Lokaal en sandbox.** Lokaal bouwt een niet-gepubliceerde `operations-manager:latest` en laadt die
+  rechtstreeks in Kind. De sandbox pusht naar de registry naast het cluster met de commit als tag
+  (`docs/sandbox-kind-registry.md`). Geen van beide publiceert, dus er is geen rollback-probleem.
 - **De overige images** (rig-backup, cmp-kustomize-sops, hello-world). `docker-build-and-push`
   ondersteunt `IMAGE_TAG` en `EXTRA_TAG` inmiddels voor iedereen, dus dit is per image een kleine
   stap zodra het nodig is.
