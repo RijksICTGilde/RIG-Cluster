@@ -11,30 +11,14 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from opi.services.resource_analyzer import parse_k8s_memory_to_mi
+from opi.services.resource_analyzer import parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 logger = logging.getLogger(__name__)
 
-
-def parse_k8s_cpu_to_m(value: str) -> float:
-    """Convert a Kubernetes CPU quantity to millicores.
-
-    Supports millicores (`78m`), whole/fractional cores (`1`, `0.5`),
-    nanocores (`n`) and microcores (`u`) as emitted by the VPA recommender.
-
-    Raises:
-        ValueError: If the value cannot be parsed.
-    """
-    value = value.strip()
-    if not value:
-        raise ValueError("Empty CPU value")
-    if value.endswith("m"):
-        return float(value[:-1])
-    if value.endswith("n"):
-        return float(value[:-1]) / 1_000_000
-    if value.endswith("u"):
-        return float(value[:-1]) / 1000
-    return float(value) * 1000
+# Both quantity parsers live in opi/services/resource_analyzer.py, so "is 2 more than
+# 100m" is answered in one place. Re-exported here because this module is where every
+# caller already imports parse_k8s_cpu_to_m from.
+__all__ = ["VpaContainerRecommendation", "parse_k8s_cpu_to_m", "parse_vpa_status"]
 
 
 @dataclass
