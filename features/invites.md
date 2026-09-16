@@ -89,26 +89,46 @@ Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `role
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
 service model also accepts the underscore spelling that predates this service.
 
-## Wie een account krijgt, bevestigt voortaan eerst zijn adres
+## Wie een account krijgt, bevestigt eerst zijn adres
 
-Op een realm die verifieert (vandaag: de blauwdrukken `sso-support` en `algoritmeregister`)
-komt een nieuw account binnen met `emailVerified: false`, en Keycloak stuurt een
-bevestigingsmail. De uitgenodigde kiest zijn wachtwoord in het formulier hierboven zoals
-altijd, en loopt bij zijn eerste login tegen het bevestigingsscherm aan.
+Een nieuw account komt binnen met `emailVerified: false` en de required action
+`VERIFY_EMAIL`, ongeacht wat de blauwdruk van de realm zegt. De uitgenodigde kiest zijn
+wachtwoord in het formulier hierboven zoals altijd, en de stap erna is de bevestiging:
 
-Dat is nieuw sinds RC-159. `create_user()` zette `emailVerified` onvoorwaardelijk op `True`
-zodra er een adres was meegegeven, dus elke via deze weg aangemaakte gebruiker was vooraf
-geverifieerd zonder dat er ooit iets bevestigd was. De waarde volgt nu de realm.
+```
+/invite/{key}  formulier: naam, e-mail, wachtwoord
+      |
+create_user()  ->  emailVerified: false + VERIFY_EMAIL
+      |
+send_verify_email()  ->  de mail gaat METEEN de deur uit
+      |
+succespagina: "Bevestig eerst je e-mailadres", met het adres waar de mail heen ging
+      |
+gebruiker klikt de link, en kan daarna pas inloggen
+```
 
-Twee dingen om te weten als een uitgenodigde meldt dat hij niet binnenkomt:
+Waarom dit niet meer aan `verifyEmail` hangt: zie `features/keycloak-mail.md`.
+
+De SSO-weg raakt dit niet: die gebruiker komt via `trustEmail` al geverifieerd binnen en
+krijgt de oude succespagina.
+
+**De required action moet AAN staan op de realm, en dat borgt `create_user()` zelf.** Gemeten
+op Keycloak 25.0.6: staat de provider `VERIFY_EMAIL` uit, dan wordt de actie wel gewoon op de
+gebruiker opgeslagen, maar slaat de browserflow hem over en logt de gebruiker door naar de
+applicatie. Hij draagt de grendel dus zichtbaar en komt er toch langs. De directe
+wachtwoordgrant weigert in beide gevallen met "Account is not fully set up", dus daar is het
+verschil niet te zien.
+
+Drie dingen om te weten als een uitgenodigde meldt dat hij niet binnenkomt:
 
 - **De post gaat via de mailrelay van het platform**, met één account voor heel Keycloak. Er
   staat geen SMTP-configuratie in de realm die je kunt nakijken - dat is opzet. Zie
   `features/keycloak-mail.md`.
 - **"Geen foutmelding" is geen bewijs van aankomst.** Kijk in de sink (sandbox) of vraag de
   postbus na; een mislukte bezorging verdwijnt bij de relay als dubbele bounce.
-
-Op een realm die niet verifieert verandert er niets.
+- **Een mislukte verzending breekt de registratie niet.** De succespagina zegt het dan, met
+  het `contact-email` van de uitnodiging erbij, en het account draagt de required action nog
+  steeds: het inlogscherm van Keycloak stuurt de mail bij de eerste poging alsnog.
 
 ## Configuring via the API
 

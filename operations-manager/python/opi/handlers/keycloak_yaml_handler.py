@@ -531,7 +531,7 @@ class KeycloakYamlHandler:
 
         Not theoretical. This switch was really turned off on production on 21 August 2026
         during the relay's crash loop, and a realm that verifies while it cannot send locks
-        every new local user out of their own account.
+        out every user who changes their address.
         """
         return bool(settings.MAIL_RELAY_API_URL)
 
@@ -544,9 +544,8 @@ class KeycloakYamlHandler:
 
         ``verifyEmail`` is the one exception to "the blueprint decides": turning it ON is
         held back while the platform has no relay, because that realm would lock out every
-        new local user (``create_user`` makes them with ``emailVerified: false`` exactly when
-        the realm verifies). Turning it OFF is never held back -- that direction only ever
-        un-blocks people.
+        user who changes their address. Turning it OFF is never held back: that direction
+        only ever un-blocks people.
 
         A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
         carries on, and the next reconcile after the relay is configured completes it.
@@ -558,7 +557,7 @@ class KeycloakYamlHandler:
         if gewenst.get("verifyEmail") and not self._platform_can_send_mail():
             logger.warning(
                 f"Geen mailrelay op dit cluster, dus verifyEmail blijft uit op realm {realm_name}: een realm "
-                "die verifieert en niet kan mailen sluit nieuwe gebruikers buiten. Stel MAIL_RELAY_API_URL in; "
+                "die verifieert en niet kan mailen sluit wie zijn adres wijzigt buiten. Stel MAIL_RELAY_API_URL in; "
                 "de volgende verwerking zet het dan alsnog aan."
             )
             del gewenst["verifyEmail"]
