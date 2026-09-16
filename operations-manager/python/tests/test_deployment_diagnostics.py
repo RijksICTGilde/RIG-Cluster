@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.api.v2.models import ErrorCategory
+from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.deployment_diagnostics import (
     categorize_error,
     conditions_to_errors,
@@ -830,8 +831,12 @@ def test_summarize_gives_no_verdict_when_a_digest_faces_a_tag():
 
 
 def test_summarize_shows_the_source_registry_not_the_proxy():
-    """De gebruiker kent zijn eigen registry; de rcr-proxyvorm is een platformdetail."""
-    mappings = [{"from": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig"}]
+    """De gebruiker kent zijn eigen registry; de rcr-proxyvorm is een platformdetail.
+
+    De regels komen sinds RC-177 van de dienst image-registries en niet meer uit een eigen
+    extensietabel, dus hier wordt de CLUSTER gezet in plaats van een mapping gemockt: dat
+    meet ook dat de tabel op odcn-production werkelijk een ghcr-regel draagt.
+    """
     deployment = _deployment("ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344")
     pods = [
         _pod(
@@ -843,7 +848,7 @@ def test_summarize_shows_the_source_registry_not_the_proxy():
         )
     ]
 
-    with patch("opi.services.deployment_diagnostics.get_registry_rewrite_mappings", return_value=mappings):
+    with patch("opi.services.deployment_diagnostics.settings.CLUSTER_MANAGER", "odcn-production"):
         (summary,) = summarize_component_pods(pods, deployment=deployment)
 
     assert summary.image == "ghcr.io/minbzk/moza-profiel-service@sha256:25ab6344"
@@ -890,3 +895,66 @@ def test_summarize_leaves_out_a_disabled_component():
         "components": [{"reference": "profielservice", "image": "ghcr.io/x/y:1", "disabled": True}],
     }
     assert summarize_component_pods([], deployment=deployment) == []
+
+
+# ---------------------------------------------------------------------------
+# De bronvorm van een image (RC-177)
+# ---------------------------------------------------------------------------
+#
+# Op een cluster met een proxy staat in de podspec een RCR-pad. Terugrekenen kan alleen
+# tegen de regels van de dienst, en de eigen proxy-organisaties staan daar alleen in als
+# het projectbestand erbij zit.
+
+_PRIVATE_PROJECT: dict[str, Any] = {
+    "name": "demo",
+    "services": [
+        {
+            "name": "image-registries",
+            "config": {
+                "registries": [
+                    {
+                        "name": "code-overheid",
+                        "upstream": "code.overheid.nl/robbert.uittenbroek",
+                        "username": "robbert.uittenbroek",
+                        "password": "een-token",
+                    }
+                ]
+            },
+        }
+    ],
+}
+# De organisatienaam wordt berekend, dus hier ook: een letterlijke naam zou stil naast de
+# naamregel komen te staan zodra die verandert.
+_RCR_IMAGE = (
+    f"{registry_destination('code.overheid.nl/robbert.uittenbroek', 'rcr.rijksapps.nl', 'rig', 'demo')}"
+    f"/zad-deployment-demo:0a611d9d"
+)
+_UPSTREAM_IMAGE = "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo:0a611d9d"
+
+
+def _odcn_settings() -> Any:
+    return patch("opi.services.deployment_diagnostics.settings.CLUSTER_MANAGER", "odcn-production")
+
+
+def test_summarize_shows_the_private_registry_the_consumer_typed():
+    deployment = {"name": "pr-114", "components": [{"reference": "web", "image": _UPSTREAM_IMAGE}]}
+    pods = [_pod("pr-114-web-849d475c4-4qp6p", app="pr-114-web", ready=True, image=_RCR_IMAGE)]
+
+    with _odcn_settings():
+        (summary,) = summarize_component_pods(pods, deployment=deployment, project_data=_PRIVATE_PROJECT)
+
+    assert summary.image == _UPSTREAM_IMAGE
+    assert summary.configured_image == _UPSTREAM_IMAGE
+    assert summary.runs_configured_image is True
+
+
+def test_summarize_without_the_project_file_leaves_the_bare_rcr_url():
+    """De tegenproef: het is het projectbestand dat de eigen organisatie terugvertaalt,
+    niet de clustertabel, want die kent alleen de GEDEELDE proxies."""
+    deployment = {"name": "pr-114", "components": [{"reference": "web", "image": _UPSTREAM_IMAGE}]}
+    pods = [_pod("pr-114-web-849d475c4-4qp6p", app="pr-114-web", ready=True, image=_RCR_IMAGE)]
+
+    with _odcn_settings():
+        (summary,) = summarize_component_pods(pods, deployment=deployment)
+
+    assert summary.image == _RCR_IMAGE

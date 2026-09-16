@@ -2851,26 +2851,20 @@ class ProjectFileHandler:
         return False
 
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
-        """
-        Extract container registry configurations from project file.
-
-        Args:
-            project_data: The parsed project data
+        """De private registries van dit project, uit de config van de dienst image-registries.
 
         Returns:
-            List of registry configuration dicts with keys: name, url, and either
-            (username, password) for credential-based auth, or secretName for
-            pre-existing Kubernetes secrets. URL may include paths (e.g., rcr.rijksapps.nl/rig).
+            Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
+            ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
         """
-        registries_path = "$.registries[*]"
-        registries = self.extract_value_by_path(project_data, registries_path, [])
+        from opi.services.catalog.image_registries.resolution import project_registries
 
-        if isinstance(registries, list) and registries:
+        registries = project_registries(project_data)
+        if registries:
             logger.info(f"Found {len(registries)} container registr{'y' if len(registries) == 1 else 'ies'}")
-            return registries
-
-        logger.debug("No container registries configured in project file")
-        return []
+        else:
+            logger.debug("No container registries configured in project file")
+        return registries
 
     def extract_component_registry(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
         """
@@ -2881,12 +2875,20 @@ class ProjectFileHandler:
             component_name: Name of the component
 
         Returns:
-            Registry config dict with keys: name, url, username, password
-            or None if component has no registry configured
+            Registry config dict with keys: name, upstream, username, password
+            or None if the component points at no registry
         """
-        # Check if component has registry reference
-        path = f"$.components[?(@.name=='{component_name}')].registry"
-        registry_ref = self.extract_value_by_path(project_data, path, None)
+        from opi.services.catalog.image_registries.resolution import component_registry_name
+
+        component = next(
+            (
+                c
+                for c in project_data.get("components", []) or []
+                if isinstance(c, dict) and c.get("name") == component_name
+            ),
+            None,
+        )
+        registry_ref = component_registry_name(component)
 
         if not registry_ref:
             return None

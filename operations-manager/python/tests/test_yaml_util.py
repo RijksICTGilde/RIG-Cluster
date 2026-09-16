@@ -4,8 +4,10 @@ import os
 import tempfile
 
 from opi.utils.yaml_util import (
+    dump_yaml_documents_to_string,
     dump_yaml_to_string,
     find_value_by_jsonpath,
+    load_yaml_documents_from_string,
     load_yaml_from_string,
     save_yaml_to_path,
     update_value_by_jsonpath,
@@ -217,3 +219,23 @@ class TestMultilineScalarStyle:
         # read, which would silently turn "a\r\nb" into "a\nb".
         output = dump_yaml_to_string({"text": "a\r\nb"})
         assert load_yaml_from_string(output)["text"] == "a\r\nb"
+
+
+class TestMultiDocumentRoundTrip:
+    """A multi-document file must come back out as kubectl can read it."""
+
+    def test_single_document_keeps_its_shape(self):
+        source = "kind: Pod\nmetadata:\n  name: a\n"
+        assert dump_yaml_documents_to_string(load_yaml_documents_from_string(source)) == source
+
+    def test_two_documents_stay_two_documents(self):
+        source = "kind: Pod\n---\nkind: Service\n"
+        output = dump_yaml_documents_to_string(load_yaml_documents_from_string(source))
+        assert [d["kind"] for d in load_yaml_documents_from_string(output)] == ["Pod", "Service"]
+
+    def test_trailing_separator_does_not_become_a_null_document(self):
+        # The loader turns the trailing ``---`` into a None document. Written back as
+        # ``--- null`` kubectl rejects the whole file with "Object 'Kind' is missing".
+        output = dump_yaml_documents_to_string(load_yaml_documents_from_string("kind: Pod\nspec: {}\n---\n"))
+        assert output == "kind: Pod\nspec: {}\n"
+        assert "null" not in output

@@ -23,9 +23,8 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.errors import kenmerk_van, met_kenmerk
-from opi.extensions.pipeline import get_registry_rewrite_mappings
-from opi.extensions.registry_rewrite import original_image
 from opi.middleware.authorization import get_user
+from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.project_authorization import is_user_authorized_for_project
 from opi.services.project_store import get_project_store
 from opi.services.user_service import get_user_service
@@ -273,7 +272,10 @@ async def get_component_pods(
         raise HTTPException(status_code=404, detail="Component not found")
 
     # De bronvorm van de image, niet de rcr-proxyrewrite: hetzelfde wat de kaart toont.
-    mappings = get_registry_rewrite_mappings(settings.CLUSTER_MANAGER)
+    # Met het projectbestand erbij, want alleen dan staan de eigen proxy-organisaties van
+    # dit project in de regellijst.
+    project_info = get_project_store().get(project_name)
+    project_data = (project_info.data or {}) if project_info else None
     return JSONResponse(
         content={
             "project": project_name,
@@ -283,7 +285,7 @@ async def get_component_pods(
                 {
                     "name": pod["name"],
                     "ready": pod["ready"],
-                    "image": original_image(pod.get("image", ""), mappings),
+                    "image": display_image(pod.get("image", ""), settings.CLUSTER_MANAGER, project_data),
                     "running_since": pod.get("started_at"),
                     "restart_count": pod.get("restart_count", 0),
                     "has_previous_attempt": pod.get("has_previous_attempt", False),

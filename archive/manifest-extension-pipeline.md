@@ -1,3 +1,14 @@
+> **VERVALLEN (RC-177).** Het mechanisme dat dit document beschrijft bestaat niet meer:
+> `opi/extensions/`, de map `extensions/` met zijn YAML-definities en de clustersleutel
+> `extensions` zijn allemaal verwijderd. De omzetting van een image naar zijn
+> proxy-registry en het bijbehorende pull-secret is nu eigendom van de dienst
+> `image-registries`: de tabel staat in de clusterconfig van die dienst en de wandeling
+> over de gegenereerde bestanden in `opi/services/catalog/image_registries/manifest_pass.py`,
+> op dezelfde regels en dezelfde `resolve_image()` als elke andere plek waar een image in
+> een manifest belandt. Zie **`features/image-registries.md`**.
+>
+> Dit bestand blijft staan om te kunnen lezen hoe het WAS.
+
 # Manifest Extension Pipeline
 
 ## What it is

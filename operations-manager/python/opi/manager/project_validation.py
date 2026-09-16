@@ -11,13 +11,15 @@ and BEFORE any write or commit. Fails closed on the first violation.
 
 import logging
 from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, Any
 
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
 from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
-from opi.core.project_schema import ProjectIntegrityError
+from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
@@ -27,7 +29,7 @@ from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
-from opi.services.registry import SERVICES, get_service, property_owning_services
+from opi.services.registry import SERVICES, get_service, project_validating_services, property_owning_services
 from opi.services.services import (
     service_entry_config,
     service_entry_data,
@@ -35,7 +37,13 @@ from opi.services.services import (
     service_entry_schema_version,
 )
 from opi.services.services_enums import ServiceType
-from opi.utils.naming import generate_extra_database_schema, registry_tag_owner
+from opi.utils.naming import (
+    RESERVED_DEPLOYMENT_NAMES,
+    generate_extra_database_schema,
+    normalize_registry_repo,
+    registry_tag_owner,
+    split_image_reference,
+)
 from opi.utils.project_utils import ComponentValidationError, validate_root_component
 
 if TYPE_CHECKING:
@@ -224,6 +232,10 @@ class ServiceConfigBlock:
     layer: ConfigLayer
     config: Any
     from_version: str | None
+    #: Where the block sits by POSITION (``components/0/services/1/config``), for a
+    #: message that points into the file. ``location`` cannot give that: it keys on names
+    #: so it survives a reorder, and drops the indexes a path needs.
+    path: str
     #: Set for the SYSTEM services whose config is a plain component property
     #: (``user-env-vars``, ``aliases``) instead of an entry in a ``services:`` list.
     owned_property: str | None = None
@@ -254,17 +266,18 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
             layer=ConfigLayer.PROJECT,
             config=view.service_config(name),
             from_version=service_entry_schema_version(view.service_entry(name)),
+            path=f"services/{name}/config",
         )
 
     # Component-level service references (storage mounts, metrics port/path). Their
     # config lives on the component's service entry, not at project level, so the
     # project-level walk above never sees it.
-    for component in project_data.get("components", []) or []:
+    for comp_index, component in enumerate(project_data.get("components", []) or []):
         if not isinstance(component, dict):
             continue
         comp_name = component.get("name", "(onbekend)")
         location = f"component:{component.get('name')}"
-        for entry in component.get("services", []) or []:
+        for entry_index, entry in enumerate(component.get("services", []) or []):
             name = service_entry_name(entry)
             if name is None:
                 continue
@@ -275,10 +288,13 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
                 layer=ConfigLayer.COMPONENT,
                 config=service_entry_config(entry),
                 from_version=service_entry_schema_version(entry),
+                path=f"components/{comp_index}/services/{entry_index}/config",
             )
-        yield from _owned_property_blocks(component, location, ConfigLayer.COMPONENT, f"van component '{comp_name}'")
+        yield from _owned_property_blocks(
+            component, location, ConfigLayer.COMPONENT, f"van component '{comp_name}'", f"components/{comp_index}"
+        )
 
-    for deployment in project_data.get("deployments", []) or []:
+    for dep_index, deployment in enumerate(project_data.get("deployments", []) or []):
         if not isinstance(deployment, dict):
             continue
         dep_name = deployment.get("name", "(onbekend)")
@@ -287,7 +303,7 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
         # declares tomorrow). ``$defs/deployment-service-config`` in the global schema is
         # deliberately open, so this walk is the only thing between a typo and a silently
         # ignored setting.
-        for entry in deployment.get("services", []) or []:
+        for entry_index, entry in enumerate(deployment.get("services", []) or []):
             name = service_entry_name(entry)
             if name is None:
                 continue
@@ -298,6 +314,7 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
                 layer=ConfigLayer.DEPLOYMENT,
                 config=service_entry_config(entry),
                 from_version=service_entry_schema_version(entry),
+                path=f"deployments/{dep_index}/services/{entry_index}/config",
             )
 
         # Deployment-component service entries. Two shapes live here: a dict keyed by
@@ -311,17 +328,19 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
         # block with its previous version by (location, name), and without the mount two
         # mounts of the same service would share that key -- comparing one mount's size
         # with another's.
-        for component in deployment.get("components", []) or []:
+        for comp_index, component in enumerate(deployment.get("components", []) or []):
             if not isinstance(component, dict):
                 continue
             comp_name = component.get("reference") or component.get("name", "(onbekend)")
             location = f"{dep_location}/component:{comp_name}"
             where = f"in component '{comp_name}' van deployment '{dep_name}'"
+            base = f"deployments/{dep_index}/components/{comp_index}"
             services = component.get("services")
             if isinstance(services, dict):
                 for name, body in services.items():
                     per_mount = isinstance(body, list)
-                    for entry in body if isinstance(body, list) else [body]:
+                    for body_index, entry in enumerate(body if per_mount else [body]):
+                        suffix = f"{name}/{body_index}" if per_mount else name
                         mount = entry.get("reference") if per_mount and isinstance(entry, dict) else None
                         yield ServiceConfigBlock(
                             location=location if mount is None else f"{location}/mount:{mount}",
@@ -330,9 +349,10 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
                             layer=ConfigLayer.DEPLOYMENT_COMPONENT,
                             config=entry.get("config") if isinstance(entry, dict) else None,
                             from_version=service_entry_schema_version(entry),
+                            path=f"{base}/services/{suffix}/config",
                         )
             elif isinstance(services, list):
-                for entry in services:
+                for entry_index, entry in enumerate(services):
                     name = service_entry_name(entry)
                     if name is None:
                         continue
@@ -343,17 +363,19 @@ def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[Service
                         layer=ConfigLayer.DEPLOYMENT_COMPONENT,
                         config=service_entry_config(entry),
                         from_version=service_entry_schema_version(entry),
+                        path=f"{base}/services/{entry_index}/config",
                     )
             yield from _owned_property_blocks(
                 component,
                 location,
                 ConfigLayer.DEPLOYMENT_COMPONENT,
                 f"van component '{comp_name}' in deployment '{dep_name}'",
+                base,
             )
 
 
 def _owned_property_blocks(
-    component: dict[str, Any], location: str, layer: ConfigLayer, where: str
+    component: dict[str, Any], location: str, layer: ConfigLayer, where: str, path: str
 ) -> Iterator[ServiceConfigBlock]:
     """The blocks of the SYSTEM services that own a plain component property (RC-25).
 
@@ -374,6 +396,7 @@ def _owned_property_blocks(
             layer=layer,
             config=component.get(key),
             from_version=None,
+            path=f"{path}/{key}",
             owned_property=key,
         )
 
@@ -406,6 +429,36 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
             _validate_owned_property_block(block, project_name)
         else:
             _validate_one_config(block.name, block.config, block.layer, block.where, project_name, block.from_version)
+
+
+def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> list[str]:
+    """Paths in a SERVICE config that must hold an AGE-encrypted value but do not.
+
+    The counterpart of ``find_plaintext_secret_violations`` for the half of a project file
+    that ``project_v2.json`` does not describe, because a service's config shape is owned
+    by that service's model. Detection comes from the schema (a ``pattern`` carrying the
+    AGE marker), never from a field list, and judges the block as it is STORED. The
+    owned-property blocks are component properties, which ``project_v2.json`` does describe.
+    """
+    violations: list[str] = []
+    for block in iter_service_config_blocks(project_data):
+        if block.config is None or block.owned_property is not None:
+            continue
+        try:
+            service_type = ServiceType(block.name)
+        except ValueError:
+            continue  # unknown service name, other validation handles it
+        model = get_service(service_type).config_model_for(block.layer)
+        if model is None:
+            continue  # service has no model at this layer, so nothing declares a secret
+        violations.extend(age_pattern_violations(_model_validator(model), block.config, prefix=block.path))
+    return sorted(set(violations))
+
+
+@cache
+def _model_validator(model: type[BaseModel]) -> Draft202012Validator:
+    """The JSON-schema validator for one config model, built once per model."""
+    return Draft202012Validator(model.model_json_schema())
 
 
 def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str) -> None:
@@ -653,37 +706,6 @@ def _platform_registry_repo() -> str | None:
     return f"{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}"
 
 
-def _normalize_registry_repo(repo: str) -> str:
-    """The comparable form of a registry repository, so one repo has one spelling.
-
-    A hostname is case-insensitive and the https port may be written out, so
-    ``RCR.rijksapps.nl/rig`` and ``rcr.rijksapps.nl:443/rig`` are the same repository
-    as ``rcr.rijksapps.nl/rig``. The path after the host is left alone: registries
-    treat it case-sensitively.
-    """
-    host, separator, path = repo.partition("/")
-    if not separator or not ("." in host or ":" in host or host == "localhost"):
-        # No registry host in front (e.g. 'nginx' or 'library/nginx'): nothing to normalize.
-        return repo
-    host = host.lower()
-    host = host.removesuffix(":443")
-    return f"{host}/{path}"
-
-
-def _split_image_reference(image: str) -> tuple[str, str | None, bool]:
-    """Split an image reference into (repository, tag, carries-a-digest).
-
-    Handles the shapes the project schema allows: ``repo``, ``repo:tag``,
-    ``repo@sha256:...`` and ``repo:tag@sha256:...``, with an optional port in the
-    host. A colon that is followed by a ``/`` is a port, not a tag separator.
-    """
-    reference, digest_separator, _digest = image.partition("@")
-    repo, tag_separator, tag = reference.rpartition(":")
-    if not tag_separator or "/" in tag:
-        return reference, None, bool(digest_separator)
-    return repo, tag, bool(digest_separator)
-
-
 def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> list[str]:
     """Reject deployment images that point at another project's tag in the shared registry.
 
@@ -704,7 +726,7 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
     platform_repo = _platform_registry_repo()
     if platform_repo is None:
         return []
-    platform_repo = _normalize_registry_repo(platform_repo)
+    platform_repo = normalize_registry_repo(platform_repo)
 
     project_name = project_data.get("name", "")
     errors: list[str] = []
@@ -717,8 +739,8 @@ def validate_platform_registry_image_ownership(project_data: dict[str, Any]) -> 
             image = component.get("image")
             if not isinstance(image, str):
                 continue
-            repo, registry_tag, has_digest = _split_image_reference(image)
-            if _normalize_registry_repo(repo) != platform_repo:
+            repo, registry_tag, has_digest = split_image_reference(image)
+            if normalize_registry_repo(repo) != platform_repo:
                 continue
             where = f"deployment '{deployment.get('name')}' component '{component.get('reference')}'"
             if has_digest:
@@ -904,6 +926,11 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
             raise ProjectIntegrityError(f"Project '{project_name}': een deployment zonder naam")
         if dep_name in seen_deployments:
             raise ProjectIntegrityError(f"Project '{project_name}': deployment '{dep_name}' is meervoudig gedefinieerd")
+        if dep_name in RESERVED_DEPLOYMENT_NAMES:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': '{dep_name}' is een gereserveerde deploymentnaam en kan niet "
+                f"gebruikt worden. Het platform gebruikt hem zelf; kies een andere naam."
+            )
         seen_deployments.add(dep_name)
 
         refs = dep.get("components", []) or []
@@ -967,11 +994,18 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     if availability_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(availability_errors)}")
 
-    # A deployment may not point at another project's tag in the shared platform
-    # registry. This is the read half of the ownership the push endpoint pins.
+    # A deployment may not point at another project's tag in the shared platform registry.
+    # The platform's own registry is not a service, so this rule has no service to live in.
     registry_errors = validate_platform_registry_image_ownership(project_data)
     if registry_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(registry_errors)}")
+
+    # Every service's own rules on the whole project (``Service.validate_project``).
+    service_errors: list[str] = []
+    for service in project_validating_services():
+        service_errors.extend(service.validate_project(project_data))
+    if service_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(service_errors)}")
 
     # Values that point at something in this project: a realm role an invite hands out
     # has to be a realm role the keycloak config defines, or nobody gets it. Per-service

@@ -67,7 +67,9 @@ class TestSchemaSetCompleteness:
         # past the real chain, so this test does not have to be touched again when a
         # migration lands (which is exactly what happened when 2.7 became real).
         next_version = round(float(SCHEMA_VERSIONS[-1]) + 0.1, 1)
-        with pytest.raises(ProjectSchemaError, match=re.escape(str(next_version))):
+        # Op de naam zoals de code hem schrijft, niet zoals Python hem afdrukt: bij 3.0
+        # zijn dat twee verschillende dingen ("3" tegen "3.0").
+        with pytest.raises(ProjectSchemaError, match=re.escape(version_key(next_version))):
             check_schema_versions((*SCHEMA_VERSIONS, next_version))
 
     def test_a_gap_in_the_chain_fails_loudly(self) -> None:

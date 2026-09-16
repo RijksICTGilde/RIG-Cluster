@@ -343,7 +343,13 @@ class TestTheDeclarationDrivesTheValueCheck:
             for editable in flatten(service.config_editables(layer))
             if editable.values_must_exist
         }
-        assert declaring == {"services/invite/config/active[*]/realm-roles[*]"}
+        assert declaring == {
+            "services/invite/config/active[*]/realm-roles[*]",
+            # De registryverwijzing is een verwijzing binnen dit project, dus een naam die
+            # niet bestaat is een typefout en hoort bij het opslaan te sneuvelen.
+            "components[*]/services{image-registries}/config/registry",
+            "deployments[*]/components[*]/services/image-registries/config/registry",
+        }
 
 
 class TestTheSaveGateRefuses:

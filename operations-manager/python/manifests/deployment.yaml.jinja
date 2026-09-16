@@ -48,6 +48,11 @@ spec:
         {{ k }}: {{ v | tojson }}
 {% endfor %}
     spec:
+      {% if service_account_name %}
+      # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt
+      # hieronder alleen wat hij zelf nodig heeft.
+      serviceAccountName: {{ service_account_name }}
+      {% endif %}
       {% if host_aliases is defined and host_aliases %}
       # Extra regels in /etc/hosts van de pod. Een dienst zet ze wanneer een naam naar een
       # adres BINNEN het cluster moet wijzen terwijl de naam zelf buiten hoort: TLS
@@ -63,8 +68,10 @@ spec:
       {% endfor %}
       {% endif %}
       {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
+      # yaml_scalar: tweede slot naast SECRET_NAME_PATTERN, voor een secretnaam die
+      # binnendoor reist (een bestaand projectbestand, de migratie 2.8 -> 2.9).
       imagePullSecrets:
-        - name: {{ imagePullSecretsMap[imageURL] }}
+        - name: {{ imagePullSecretsMap[imageURL] | yaml_scalar }}
       {% endif %}
       # Pod-level security context (OpenShift compatible)
       securityContext:

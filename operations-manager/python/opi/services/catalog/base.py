@@ -645,6 +645,37 @@ class DeploymentManifestSpec:
     values: dict[str, Any]
 
 
+@dataclass
+class ProjectManifestContext:
+    """Inputs a service needs to contribute PROJECT-wide manifests.
+
+    These land in ``<cluster>/<project>/_project/``, which has its own kustomization and
+    ArgoCD application and holds what is scoped to the namespace rather than to one
+    deployment. Unlike ``DeploymentManifestContext`` this runs once per project.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]
+    cluster: str
+    namespace: str
+
+
+@dataclass
+class ProjectManifestSpec:
+    """One project-wide manifest a service asks the generic emitter to write.
+
+    Same shape as ``DeploymentManifestSpec``, one level up.
+    """
+
+    #: Basename without ``.yaml``. Must start with ``f"{service_type.value}-"``.
+    filename: str
+    #: Template path resolvable relative to the ``manifests/`` directory.
+    template_path: str
+    values: dict[str, Any]
+    #: Whether the rendered file must be SOPS-encrypted before it is committed.
+    encrypt: bool = False
+
+
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -1548,6 +1579,27 @@ class Service(ABC):
         (``ProjectManager._write_secret_file``) does the actual write. A service that
         cannot build its secret (no provisioned credentials) returns ``[]`` and logs,
         matching the old warn-and-skip branches.
+        """
+        return []
+
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """This service's rules on a WHOLE project, as messages (default none).
+
+        For a rule ``validate_config`` cannot judge from one block (the other deployments,
+        the other projects on the cluster, the cluster config). ``validate_project_structure``
+        refuses the write on any message, so this runs on every save, reprocess and replay.
+
+        Called for EVERY project, not only for projects that declare this service: a rule
+        about what a project may point AT would otherwise be dodged by leaving the service
+        out. Return [] when the service has nothing to say.
+        """
+        return []
+
+    def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
+        """Project-wide manifests this service contributes (default none).
+
+        The sibling of ``contribute_deployment_manifests`` one level up: resources that
+        belong to the whole project in its namespace rather than to one deployment.
         """
         return []
 

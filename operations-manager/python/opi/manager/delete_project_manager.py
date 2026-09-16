@@ -33,8 +33,10 @@ from opi.utils.naming import (
     generate_gitops_argocd_application_path,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_folder_path,
+    generate_project_level_manifest_path,
     get_output_filename_from_template,
 )
+from opi.utils.project_utils import project_level_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -707,6 +709,49 @@ class DeleteProjectManager:
             deletion_results["errors"].append(f"Error deleting infrastructure: {e}")
             logger.exception(f"Error deleting infrastructure for project '{project_name}'")
 
+    async def _delete_project_level_folder(
+        self,
+        project_name: str,
+        cluster: str,
+        project_data: dict[str, Any],
+        deployments: list[dict[str, Any]],
+        deletion_results: dict[str, Any],
+    ) -> None:
+        """Verwijder ``<cluster>/<project>/_project`` uit de deployments-repo.
+
+        Het projectniveau hangt aan het project, dus de per-deployment opruiming raakt het
+        nooit. Welke repository de map draagt beslist ``project_level_deployment``,
+        dezelfde functie als de schrijver en de ArgoCD-applicatie gebruiken.
+        """
+        owner = project_level_deployment(deployments)
+        repository_name = owner.get("repository") if owner else None
+        repo_config = next(
+            (r for r in project_data.get("repositories", []) or [] if r.get("name") == repository_name), None
+        )
+        if not repo_config:
+            logger.debug(f"Geen repository voor het projectniveau van '{project_name}'; niets te verwijderen")
+            return
+
+        try:
+            connector = await self.project_manager.get_git_connector_for_deployment(str(repository_name), repo_config)
+            await connector.ensure_repo_cloned()
+            folder = generate_project_level_manifest_path(cluster, project_name, repo_config.get("path", ""))
+            full_path = os.path.join(await connector.get_working_dir(), folder)
+            if not os.path.exists(full_path):
+                deletion_results["operations"].append(
+                    {"type": "project_level_folder_deletion", "target": folder, "status": "not_found"}
+                )
+                return
+            shutil.rmtree(full_path)
+            await connector.commit_and_push_changes(f"Delete project level of project '{project_name}'")
+            deletion_results["operations"].append(
+                {"type": "project_level_folder_deletion", "target": folder, "status": "success"}
+            )
+            logger.info(f"Deleted project level folder: {folder}")
+        except Exception as e:
+            deletion_results["errors"].append(f"Error deleting project level folder: {e}")
+            logger.exception("Error deleting project level folder")
+
     async def delete_project(self, project_name: str, force: bool = False) -> dict[str, Any]:
         """
         Delete a project by first deleting all deployments, then cleaning up project-level resources.
@@ -883,8 +928,16 @@ class DeleteProjectManager:
                         only_if_present=True,
                     )
 
+            # Step 4.65: Delete the project level of the deployments repo
+            if deletion_results["success"] or force:
+                await self._delete_project_level_folder(
+                    project_name, current_cluster, project_data, current_cluster_deployments, deletion_results
+                )
+
             # Step 4.7: Delete the project's ArgoCD folder (AppProject, repository secret, kustomization)
-            # from the GitOps repo, so the root application prunes these resources
+            # from the GitOps repo, so the root application prunes these resources.
+            # This folder also holds the project-level application ({project}-project), so
+            # removing the folder removes it with the AppProject.
             if deletion_results["success"] or force:
                 await self._delete_project_argocd_folder(
                     project_name,
