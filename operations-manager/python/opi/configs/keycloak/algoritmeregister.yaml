@@ -88,9 +88,9 @@ realms:
     # over, maar sinds RC-159 draagt elke realm een minimale smtpServer met alleen een
     # afzenderadres en gaat de post via de eigen verzender uit de omgeving van de pod.
     #
-    # Wie wordt hierdoor geraakt: iedereen die zijn adres wijzigt. Wie nieuw binnenkomt
-    # bevestigt hoe dan ook (create_user). SSO-gebruikers niet, die komen via trustEmail al
-    # geverifieerd binnen.
+    # Wie wordt hierdoor geraakt: iedereen die zijn adres wijzigt. Wie via create_user nieuw
+    # binnenkomt bevestigt los van deze vlag. SSO-gebruikers niet, die komen via trustEmail
+    # al geverifieerd binnen.
     registrationAllowed: false
     loginWithEmailAllowed: false
     resetPasswordAllowed: false
