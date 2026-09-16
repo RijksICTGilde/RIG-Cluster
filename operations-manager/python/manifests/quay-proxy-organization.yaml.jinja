@@ -1,0 +1,30 @@
+apiVersion: {{ api_version }}
+kind: Organization
+metadata:
+  name: "{{ name }}"
+  namespace: "{{ namespace }}"
+  labels:
+    app.kubernetes.io/name: "{{ name }}"
+    app.kubernetes.io/component: image-registry
+    created-by: operations-manager
+spec:
+  friendlyName: "{{ friendly_name }}"
+  suffix: "{{ suffix }}"
+  proxyCache:
+    # yaml_scalar: de enige waarde hier die rechtstreeks van de afnemer komt. Zonder de
+    # filter breekt een aanhalingsteken plus regeleinde uit de scalar.
+    upstreamRegistry: {{ upstream | yaml_scalar }}
+    {% if credentials_secret %}
+    credentialsSecret:
+      name: "{{ credentials_secret }}"
+    {% endif %}
+  robot:
+    imagePullSecret:
+      # Expliciet gezet: de operator leidt deze naam af zonder spec.suffix, en dan botsen
+      # twee projecten met dezelfde upstream tenantbreed op een naam.
+      name: "{{ pull_secret_name }}"
+    rotation:
+      # Altijd aan: bij false krijgt het token alsnog retentionDays en verloopt het,
+      # zonder dat iemand het ververst.
+      enabled: true
+      retentionDays: {{ rotation_days }}

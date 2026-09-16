@@ -34,7 +34,6 @@ The Pydantic models are the canonical typed view:
 
 In addition to the schema-modeled fields, project files contain OPI-managed sections that are not user-editable through forms:
 - `config` - project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
-- `registries` - container registry credentials
 - `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/core/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
 
 ### Key Sections
@@ -44,8 +43,7 @@ In addition to the schema-modeled fields, project files contain OPI-managed sect
 | `name` / `display-name` / `description` | Project identity |
 | `users` | Team members and roles (`admin` or `developer`) |
 | `clusters` | Which clusters this project targets (e.g. `odcn-production`) |
-| `services` | Platform services the project uses - can be plain strings (`publish-on-web`) or dicts with config (`keycloak: {config: {template: ...}}`) |
-| `registries` | Container registries with encrypted credentials |
+| `services` | Platform services the project uses - can be plain strings (`publish-on-web`) or dicts with config (`keycloak: {config: {template: ...}}`). Private container registries with encrypted credentials live in the config of `image-registries` |
 | `repositories` | Git repositories containing application source code |
 | `components` | Application components - each defines ports, resource limits, path routing, service bindings, and environment variables |
 | `deployments` | Concrete deployments of components to a cluster - ties components to container images and a namespace |
@@ -56,7 +54,7 @@ In addition to the schema-modeled fields, project files contain OPI-managed sect
 Based on a real production project with three components (backend, frontend, admin frontend) and Keycloak + PostgreSQL services. AGE-encrypted values are replaced with `<AGE-encrypted>`.
 
 ```yaml
-schema-version: 2.8
+schema-version: 2.9
 name: algor-odc
 display-name: Algoritmeregister (eigen database)
 description: Project created via self-service portal
@@ -84,12 +82,13 @@ services:
         storage: 1Gi
         privileges:
           - SUPERUSER
-
-registries:
-  - name: github-registry
-    url: ghcr.io
-    username: someuser
-    password: <AGE-encrypted>
+  - name: image-registries
+    config:
+      registries:
+        - name: github-registry
+          upstream: ghcr.io
+          username: someuser
+          password: <AGE-encrypted>
 
 repositories:
   - name: main-repo
@@ -181,7 +180,10 @@ deployments:
     components:
       - reference: component-1
         image: ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24-fixed
-        registry: github-registry
+        services:
+          image-registries:
+            config:
+              registry: github-registry
         resources:
           requests:
             memory: 649Mi
@@ -189,7 +191,10 @@ deployments:
             memory: 649Mi
       - reference: component-2
         image: ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21
-        registry: github-registry
+        services:
+          image-registries:
+            config:
+              registry: github-registry
         resources:
           requests:
             memory: 158Mi

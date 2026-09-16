@@ -23,6 +23,11 @@ metadata:
 {% endfor %}
 {% endif %}
 spec:
+{% if service_account_name %}
+  # De eigen serviceaccount van het project, zonder pull-secrets; de registrypas hangt
+  # het benodigde secret onder deze pod.
+  serviceAccountName: {{ service_account_name }}
+{% endif %}
   restartPolicy: Never
   # Hard backstop: the pod self-terminates after the TTL even if the reaper is down.
   activeDeadlineSeconds: {{ ttl_seconds | default(3600) }}

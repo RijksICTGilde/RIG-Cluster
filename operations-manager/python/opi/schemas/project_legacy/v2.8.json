@@ -1,0 +1,28 @@
+{
+  "$comment": "v2.8 -> v2.9 verhuisde de lijst 'registries:' van de projectwortel naar de config van de dienst image-registries, en de sleutel 'registry:' op een deployment-component naar de dienstvermelding op dat component. Een v2.8-bestand mag die twee dus nog dragen; deze patch zet ze terug.",
+  "properties": {
+    "registries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/registry" }
+    }
+  },
+  "$defs": {
+    "registry": {
+      "type": "object",
+      "required": ["name", "url"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "url": { "type": "string", "pattern": "^(?:(?:https?|ssh|git)://)?[^\\s\\u0000\"]+\\Z" },
+        "username": { "type": "string" },
+        "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
+        "secretName": { "type": "string" }
+      }
+    },
+    "deployment-component": {
+      "properties": {
+        "registry": { "type": "string" }
+      }
+    }
+  }
+}

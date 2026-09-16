@@ -32,9 +32,10 @@ from opi.manager.run_support import (
     parse_expires,
     resolve_image,
 )
+from opi.services.catalog.image_registries.ownership import foreign_proxy_organization_owner
 from opi.services.project_store import get_project_store
 from opi.services.runs_service import RunKind, RunStatus, get_runs_service
-from opi.utils.naming import generate_job_name
+from opi.utils.naming import generate_job_name, generate_project_service_account_name
 from opi.utils.secrets import DatabaseSecret
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,15 @@ class JobManager:
         if cluster != settings.CLUSTER_MANAGER:
             raise JobError(
                 f"Deployment '{deployment_name}' draait op cluster '{cluster}', niet beheerd door deze instance."
+            )
+
+        # Deze image komt uit een formulierveld en ziet dus geen van de validators die bij
+        # het opslaan draaien, terwijl apply_bundle er wel een pull-secret aan hangt.
+        owner = foreign_proxy_organization_owner(image, cluster, project_name)
+        if owner is not None:
+            raise JobError(
+                f"Image '{image}' hoort bij de registry-organisatie van project '{owner}'. "
+                f"Gebruik een image uit je eigen registry."
             )
 
         namespace = f"{get_namespace_prefix(cluster)}{project_name}"
@@ -210,6 +220,7 @@ class JobManager:
                 "cluster": cluster,
                 "extra_labels": extra_labels,
                 "extra_annotations": extra_annotations,
+                "service_account_name": generate_project_service_account_name(project_name),
             }
             pod = render_template(
                 "job-pod.yaml.jinja",
@@ -223,7 +234,9 @@ class JobManager:
                     "db_secret_name": db_secret_name,
                 },
             )
-            ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster)
+            # Met project_data tellen ook de eigen private registries mee in de regels.
+            project_data = await get_project_store().get_decrypted(project_name)
+            ok, stderr = await apply_bundle(self._kubectl, namespace, [pod], cluster, project_data)
             if not ok:
                 raise JobError(f"Kon de job niet starten: {stderr.strip() or 'onbekende fout'}")
             logger.info("Started job '%s' for %s/%s by %s", name, project_name, deployment_name, started_by)

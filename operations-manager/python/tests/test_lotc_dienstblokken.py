@@ -65,6 +65,23 @@ BLOKKEN: dict[str, dict[str, Any]] = {
         # interessant, en die moet in beide vormgevingen dezelfde bestemming opleveren.
         "url_for": lambda naam, **kw: f"https://zad.example/invite/{kw['key']}",
     },
+    "image_registries/section-detail.html.j2": {
+        "section": _section(
+            {
+                "project_name": "voorbeeld",
+                "registries": [
+                    {
+                        "name": "code-overheid",
+                        "upstream": "code.overheid.nl/voorbeeld",
+                        "username": "voorbeeld",
+                        "password": "-----BEGIN AGE ENCRYPTED FILE-----",
+                    },
+                    {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"},
+                    {"name": "publiek", "upstream": "ghcr.io/open"},
+                ],
+            }
+        ),
+    },
     "vlam/section-detail.html.j2": {
         "section": _section(
             {
@@ -105,7 +122,32 @@ _VERZOEK = SimpleNamespace(state=SimpleNamespace(csrf_token="VOORBEELD-CSRF-TOKE
 #: "Toon code" met htmx in het Keycloak-blok zette. De OTP is daar een gewoon veld
 #: geworden, met de code in de paginarender, dus het fragment en zijn endpoint zijn weg.
 #: De lijst blijft staan omdat het volgende fragment hem weer nodig heeft.
-FRAGMENTEN: dict[str, dict[str, Any]] = {}
+FRAGMENTEN: dict[str, dict[str, Any]] = {
+    # De toestand komt uit het cluster, dus dit fragment krijgt geen ``section`` maar zijn
+    # eigen context. De drie takken die het kent staan er alle drie in.
+    "image_registries/status-fragment.html.j2": {
+        "applicable": True,
+        "statuses": [
+            {
+                "registry": "code-overheid",
+                "organization": "codeoverheid-rig-voorbeeld",
+                "state": "ready",
+                "message": "De proxy is klaar.",
+                "expires_at": "2026-12-06T00:00:00Z",
+                "expires_soon": False,
+            },
+            {
+                "registry": "tweede",
+                "organization": "ghcr-rig-voorbeeld",
+                "state": "pending",
+                "message": "De proxy wordt klaargezet.",
+                # De dringende tak tekent een alert in plaats van een alinea.
+                "expires_at": "2026-09-20T00:00:00Z",
+                "expires_soon": True,
+            },
+        ],
+    },
+}
 
 #: De dialogen, per toestand. Aparte lijst omdat een naam hier meer dan een keer voorkomt
 #: en een dict dat niet kan; de sjabloonnaam blijft de sleutel voor de tegenhanger.

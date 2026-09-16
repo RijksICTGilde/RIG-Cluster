@@ -1167,6 +1167,88 @@ class WakerComponentOptionsProvider:
         return options
 
 
+class ImageRegistryOptionsProvider:
+    """De registries die dit project zelf heeft opgegeven, om er bij een component naar te verwijzen.
+
+    Via ``smart_get_value``, want in de wizard staat de config onder de virtuele
+    ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
+    gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
+    """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description="De registries uit de projectconfig van de dienst image-registries.",
+        endpoint="GET /api/v2/projects/{project_name}/services/image-registries/config",
+        path="[target=project].config.registries[].name",
+    )
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        row_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: Any = None,
+    ) -> None:
+        self._yaml_data = yaml_data or {}
+        self._row_data = row_data or {}
+        self._yaml_path = yaml_path
+        self._current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        from opi.forms.editables.service_path import smart_get_value
+        from opi.services.catalog.base import ConfigLayer, config_path
+        from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
+        from opi.services.services_enums import ServiceType
+
+        registries = (
+            smart_get_value(
+                self._yaml_data,
+                config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES, "config", "registries"),
+            )
+            or []
+        )
+        entries = [r for r in registries if isinstance(r, dict) and r.get("name")]
+
+        # Vooruit invullen zodra de image-prefix bij precies EEN registry past; passen er
+        # twee, dan is de keuze juist het punt.
+        image = self._component_image()
+        if image:
+            normalized = normalize_image(image)
+            passend = [
+                entry
+                for entry in entries
+                if (prefix := normalize_prefix(str(entry.get("upstream", ""))))
+                and (normalized == prefix or normalized.startswith(prefix + "/"))
+            ]
+            if len(passend) == 1:
+                entries = [passend[0], *(e for e in entries if e is not passend[0])]
+
+        names = [entry["name"] for entry in entries]
+        options = [{"value": name, "label": name} for name in names]
+        if self._current_value and self._current_value not in names:
+            options.append({"value": self._current_value, "label": f"{self._current_value} (bestaat niet meer)"})
+        if not options:
+            return [{"value": "", "label": "Nog geen registries: vul ze eerst in bij de dienst"}]
+        return options
+
+    def _component_image(self) -> str:
+        """De image van het component waar dit veld bij staat, of "".
+
+        Uit ``row_data``, anders via de index in ``yaml_path``.
+        """
+        image = self._row_data.get("image")
+        if isinstance(image, str) and image:
+            return image
+        match = re.search(r"components\[(\d+)\]", self._yaml_path or "")
+        if not match:
+            return ""
+        components = self._yaml_data.get("components") or []
+        index = int(match.group(1))
+        if index >= len(components) or not isinstance(components[index], dict):
+            return ""
+        found = components[index].get("image")
+        return found if isinstance(found, str) else ""
+
+
 def _cross_domain_peer_side(yaml_path: str | None) -> str:
     """Which side of the rule (``from``/``to``) the field being rendered sits on.
 
@@ -1959,6 +2041,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "SleepAfterDeployOptionsProvider": SleepAfterDeployOptionsProvider,
     "SleepAfterWakeOptionsProvider": SleepAfterWakeOptionsProvider,
     "WakerComponentOptionsProvider": WakerComponentOptionsProvider,
+    "ImageRegistryOptionsProvider": ImageRegistryOptionsProvider,
     "HealthCheckSchemeOptionsProvider": HealthCheckSchemeOptionsProvider,
     "InviteLanguageOptionsProvider": InviteLanguageOptionsProvider,
     "InviteAuthMethodOptionsProvider": InviteAuthMethodOptionsProvider,

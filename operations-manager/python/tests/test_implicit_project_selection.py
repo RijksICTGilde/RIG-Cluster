@@ -56,6 +56,10 @@ IMPLICIT_SERVICES = {
     #: niets te beslissen. Of het cluster de dienst uberhaupt kan leveren is een aparte
     #: vraag, en die wordt beantwoord door available_on_cluster.
     ServiceType.VLAM,
+    #: RC-177: de selectie van image-registries is afgeleid uit de data, en een component
+    #: dat de dienst aanvinkt moet een bestaande registry aanwijzen (values_must_exist),
+    #: dus "aangevinkt maar leeg" wordt bij het opslaan geweigerd.
+    ServiceType.IMAGE_REGISTRIES,
 }
 
 

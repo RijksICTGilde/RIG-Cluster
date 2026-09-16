@@ -37,6 +37,9 @@ spec:
         component: application
         network-policy: allow-db-access
     spec:
+      # De eigen serviceaccount van het project, zonder pull-secrets; deze pod draagt
+      # hieronder alleen wat hij zelf nodig heeft.
+      serviceAccountName: myproject-sa
       # Pod-level security context (OpenShift compatible)
       securityContext:
         # For OpenShift, let SCCs assign user/group IDs automatically.

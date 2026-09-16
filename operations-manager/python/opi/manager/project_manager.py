@@ -59,7 +59,6 @@ from opi.core.cluster_config import (
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
-from opi.extensions import load_extensions
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
     CONFIG_HASH_IGNORE_LABEL_KEY,
@@ -97,8 +96,15 @@ from opi.services.catalog.base import (
     DeploymentManifestContext,
     ManifestContext,
     ManifestContribution,
+    ProjectManifestContext,
     ProvisionContext,
     SecretFileSpec,
+)
+from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_directory
+from opi.services.catalog.image_registries.resolution import (
+    build_rules,
+    resolve_deployment_component_image,
+    set_deployment_component_registry,
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
@@ -122,6 +128,7 @@ from opi.services.registry import (
     deployment_runtime_keys,
     generate_missing_values,
     manifest_services,
+    project_manifest_services,
     provisioning_services,
 )
 from opi.services.services import service_entry_name
@@ -146,6 +153,7 @@ from opi.utils.env_vars import (
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
     generate_argocd_application_name,
+    generate_argocd_project_application_name,
     generate_bare_domain_hostname,
     generate_external_hostname,
     generate_helm_values_filename,
@@ -157,10 +165,11 @@ from opi.utils.naming import (
     generate_network_policy_manifest_name,
     generate_network_policy_name,
     generate_nice_url_root_hostname,
+    generate_project_level_manifest_path,
     generate_project_realm_name,
+    generate_project_service_account_name,
     generate_public_url,
     generate_pvc_name,
-    generate_registry_secret_name,
     generate_storage_name,
     generate_tls_secret_name,
     generate_unique_name,
@@ -170,6 +179,7 @@ from opi.utils.project_utils import (
     ComponentValidationError,
     build_component_config,
     normalize_container_image,
+    project_level_deployment,
     validate_root_component,
 )
 from opi.utils.secrets import (
@@ -179,7 +189,6 @@ from opi.utils.secrets import (
     MinIOSecret,
     PlatformSecret,
     RedisSecret,
-    RegistrySecret,
     UserSecret,
 )
 from opi.utils.sops import encrypt_to_sops_files_or_fail
@@ -193,6 +202,7 @@ if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
+    from opi.services.catalog.image_registries.rules import ResolvedImage
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -2562,7 +2572,7 @@ class ProjectManager:
                 # Decrypt registry credentials (reuse existing logic)
                 from opi.utils.secrets import RegistrySecret
 
-                registry_url = registry_config.get("url", "")
+                registry_url = registry_config.get("upstream", "")
                 username = registry_config.get("username", "")
                 password_encrypted = registry_config.get("password", "")
 
@@ -3228,6 +3238,17 @@ class ProjectManager:
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
 
+                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments,
+                # dus zonder deze regel werd de umbrella niet ververst zolang de
+                # deployment-applicaties al bestonden, en kreeg een Deployment zijn
+                # serviceAccountName voordat de ServiceAccount er was.
+                project_app_name = generate_argocd_project_application_name(project_name)
+                project_app_exists = await self._kubectl_connector.argocd_application_exists(
+                    project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
+                )
+                if project_app_exists is not True:
+                    apps_to_create.append(project_app_name)
+
                 # Wait for not-yet-present applications to be created (ArgoCD needs to
                 # sync user-applications first). All waits run concurrently: read-only polls.
                 if apps_to_create:
@@ -3269,6 +3290,21 @@ class ProjectManager:
                 else:
                     logger.info(
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
+                    )
+
+                # Wachten tot het projectniveau GESYNCT is, want de ServiceAccount komt pas
+                # dan en de deployments hieronder zetten hun podspec erop. De sync-wave
+                # dekt dit niet: OPI ververst de deployment-applicatie ook rechtstreeks.
+                # Mislukken is geen reden om af te breken, een te vroege pod herstelt zelf.
+                try:
+                    await self._argo_manager.wait_for_application_synced(
+                        app_name=project_app_name, timeout=180, poll_interval=2
+                    )
+                    logger.info(f"Project-level application '{project_app_name}' is synced")
+                except (TimeoutError, RuntimeError) as e:
+                    logger.warning(
+                        f"Project-level application '{project_app_name}' not synced yet ({e}); "
+                        f"deployments may briefly wait for its ServiceAccount"
                     )
 
                 # Refresh each application that was created, then wait for sync+healthy.
@@ -3803,6 +3839,19 @@ class ProjectManager:
             await self._process_deployment_manifests(deployment, project_repo_connector)
             await project_repo_connector.commit_changes(f"Update manifests for {project_name}/{deployment['name']}")
 
+        # Het PROJECTniveau: namespace-breed, dus in precies EEN repository, ook als het
+        # project deployments over twee repo's heeft. Welke, beslist
+        # project_level_deployment, dezelfde functie die de applicatie gebruikt.
+        owner = project_level_deployment(await self.get_deployments(cluster_filter=True))
+        if owner is not None and owner.get("repository") == repo_config.get("name"):
+            await self._process_project_manifests(
+                repo_config,
+                str(owner["cluster"]),
+                get_prefixed_namespace(str(owner["cluster"]), str(owner["namespace"])),
+                project_repo_connector,
+            )
+            await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")
+
         await project_repo_connector.push_changes()
 
         logger.info(f"Successfully processed repository: {repo_config['name']}")
@@ -3896,6 +3945,84 @@ class ProjectManager:
         for basename in obsolete:
             os.remove(os.path.join(target_path, basename))
 
+    def _prune_obsolete_project_manifests(self, target_path: str, generated_files: list[str]) -> None:
+        """Verwijder projectbrede dienstbestanden die deze run niet opnieuw heeft gemaakt.
+
+        Dezelfde vorm als de prune op deploymentniveau, een laag hoger.
+        """
+        service_prefixes = {f"{service.value}-" for service in ServiceType}
+        obsolete = _select_obsolete_service_manifests(target_path, service_prefixes, set(generated_files))
+        if not obsolete:
+            return
+        logger.info(f"Pruning {len(obsolete)} obsolete project manifest(s): {', '.join(obsolete)}")
+        for basename in obsolete:
+            os.remove(os.path.join(target_path, basename))
+
+    async def _process_project_manifests(
+        self,
+        repo_config: dict[str, Any],
+        cluster_name: str,
+        namespace: str,
+        git_connector: GitConnector,
+    ) -> None:
+        """Schrijf het PROJECTniveau van de deployments-repo: ``<cluster>/<project>/_project/``.
+
+        De generieke emitter: wat er komt te staan bepalen de diensten met
+        ``contribute_project_manifests``.
+        """
+        project_data = await self.get_contents()
+        project_name = await self.get_name()
+
+        # Dezelfde functie als de ArgoCD-applicatie die naar deze map wijst, zodat de map
+        # en de verwijzing ernaar niet uit elkaar kunnen lopen.
+        project_dir = generate_project_level_manifest_path(cluster_name, project_name, repo_config.get("path", ""))
+        target_path = os.path.join(await git_connector.get_working_dir(), project_dir)
+        os.makedirs(target_path, exist_ok=True)
+
+        ctx = ProjectManifestContext(
+            project_name=project_name,
+            project_data=project_data,
+            cluster=cluster_name,
+            namespace=namespace,
+        )
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+
+        created_files: list[str] = []
+        for service in project_manifest_services():
+            for spec in service.contribute_project_manifests(ctx):
+                self._manifest_generator.create_manifest_file(
+                    template_path=os.path.join(template_dir, spec.template_path),
+                    values=spec.values,
+                    output_dir=target_path,
+                    output_filename=spec.filename,
+                    use_sops=spec.encrypt,
+                )
+                if spec.encrypt:
+                    # Beide namen in de gewenste toestand: zag de prune de .sops.yaml van de
+                    # vorige run als overbodig, dan verdwijnt hij vlak voor de encryptie en
+                    # heeft de skip-if-unchanged niets om tegen te vergelijken.
+                    created_files.extend([f"{spec.filename}.to-sops.yaml", f"{spec.filename}.sops.yaml"])
+                else:
+                    created_files.append(f"{spec.filename}.yaml")
+                logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
+
+        self._prune_obsolete_project_manifests(target_path, created_files)
+
+        sops_files, regular_files = self._manifest_generator.collect_manifest_files(
+            target_path, include_subfolders=False
+        )
+        await self.create_kustomization_file(git_connector, namespace, sops_files, regular_files, project_dir)
+
+        public_key = get_project_public_key(project_data)
+        if not public_key:
+            raise RuntimeError(f"Geen SOPS public key voor het projectniveau van '{project_name}'")
+        encrypt_to_sops_files_or_fail(
+            target_path,
+            public_key,
+            f"projectbrede secrets van '{project_name}' (namespace '{namespace}')",
+            private_key=await self._sops_private_key_for(project_data),
+        )
+
     async def _process_deployment_manifests(
         self,
         deployment: dict[str, Any],
@@ -3976,11 +4103,9 @@ class ProjectManager:
         # files carry no component prefix).
         self._prune_obsolete_service_manifests(deployment, target_path, created_files)
 
-        # Run manifest extensions (e.g. registry rewrite for ODCN)
-        extension_pipeline = load_extensions(cluster_name)
-        if extension_pipeline.has_extensions:
-            logger.info(f"Running manifest extensions for deployment: {deployment_name}")
-            extension_pipeline.process_directory(target_path)
+        # De registrypas voor de images die niet door de componentlus lopen, zoals een
+        # sidecar met een vaste waarde in zijn sjabloon. Idempotent op de rest.
+        apply_rules_to_directory(target_path, build_rules(project_data, cluster_name))
 
         # Create a kustomization file BEFORE encrypting .to-sops.yaml files
         # This ensures kustomization and decrypt-sops.yaml can see all .to-sops.yaml files
@@ -5552,82 +5677,29 @@ class ProjectManager:
             else None
         )
 
-        # Collect registry configurations for all components in this deployment
-        registry_configs_map: dict[str, dict[str, Any]] = {}  # registry_name -> registry_config
-        image_to_registry_map: dict[str, str] = {}  # image_url -> registry_name
+        # Waar komt de image van elk component vandaan, en welk pull-secret hoort erbij.
+        # Het secret zelf is namespace-scoped en staat op het projectniveau.
+        component_definitions = {
+            c.get("name"): c for c in project_data.get("components", []) or [] if isinstance(c, dict)
+        }
+        resolved_images: dict[str, ResolvedImage] = {}
+        image_pull_secrets_map: dict[str, str] = {}  # image_url (opgelost) -> secret_name
 
         for component in components:
             component_reference = component.get("reference")
-            image_url = component.get("image")
-
-            if not component_reference or not image_url:
+            if not component_reference or not component.get("image"):
                 continue
-
-            # Check if component has a registry configured at deployment level
-            # Registry reference is specified in deployments[].components[].registry
-            registry_ref = component.get("registry")
-
-            if registry_ref:
-                # Find registry by name in registries list
-                registries = self._project_file_handler.extract_registries(project_data)
-                registry_config = None
-
-                for registry in registries:
-                    if registry.get("name") == registry_ref:
-                        registry_config = registry
-                        logger.info(f"Deployment component '{component_reference}' uses registry '{registry_ref}'")
-                        break
-
-                if not registry_config:
-                    logger.warning(
-                        f"Deployment component '{component_reference}' references registry '{registry_ref}' which does not exist"
-                    )
-                    continue
-
-                registry_name = registry_config.get("name")
-                if registry_name:
-                    # Store unique registry configs
-                    if registry_name not in registry_configs_map:
-                        registry_configs_map[registry_name] = registry_config
-
-                    # Map this image to its registry
-                    image_to_registry_map[image_url] = registry_name
-
-        # Create registry secrets and build imagePullSecretsMap
-        image_pull_secrets_map: dict[str, str] = {}  # image_url -> secret_name
-
-        for registry_name, registry_config in registry_configs_map.items():
-            registry_url = registry_config.get("url", "")
-            secret_name_ref = registry_config.get("secretName")
-
-            if secret_name_ref:
-                # Pre-existing secret: use directly, skip creation
-                secret_name = secret_name_ref
-                logger.info(f"Registry '{registry_name}' uses pre-existing secret '{secret_name}' ({registry_url})")
-            else:
-                # Credential-based: decrypt and create RegistrySecret
-                username = registry_config.get("username", "")
-                password_encrypted = registry_config.get("password", "")
-
-                # Decrypt password (should be AGE-encrypted)
-                private_key = await get_decoded_project_private_key(project_data)
-                password = await decrypt_password_smart(password_encrypted, private_key)
-
-                # Generate secret name using naming utility
-                secret_name = generate_registry_secret_name(deployment_name, registry_name)
-
-                # Create RegistrySecret instance
-                registry_secret = RegistrySecret(registry_url=registry_url, username=username, password=password)
-
-                # Add to secrets to be created (using generic secret template with dockerconfigjson type)
-                self._add_secret_to_create(deployment_name, registry_name, registry_secret)
-
-                logger.info(f"Created registry secret '{secret_name}' for registry '{registry_name}' ({registry_url})")
-
-            # Map all images using this registry to the secret name
-            for image_url, img_registry_name in image_to_registry_map.items():
-                if img_registry_name == registry_name:
-                    image_pull_secrets_map[image_url] = secret_name
+            resolved = resolve_deployment_component_image(
+                project_data, component, component_definitions.get(component_reference), cluster
+            )
+            resolved_images[component_reference] = resolved
+            if resolved.secret:
+                image_pull_secrets_map[resolved.image] = resolved.secret
+            if resolved.image != component.get("image"):
+                logger.info(
+                    f"Component '{component_reference}' image '{component.get('image')}' opgelost naar "
+                    f"'{resolved.image}' met pull-secret '{resolved.secret}'"
+                )
 
         # Track created issuers to avoid duplicates (per base-domain/issuer combination)
         created_issuers: set[str] = set()
@@ -5645,6 +5717,10 @@ class ProjectManager:
             if not image_url:
                 logger.info(f"Component '{component_reference}' has no image in deployment {deployment_name}, skipping")
                 continue
+
+            # Vanaf hier de opgeloste verwijzing: die komt in het manifest en is de sleutel
+            # van imagePullSecretsMap.
+            image_url = resolved_images[component_reference].image
 
             component_name = component_reference
 
@@ -6034,6 +6110,9 @@ class ProjectManager:
                 "ip_whitelist": get_ingress_ip_whitelist(cluster),
                 # Registry authentication
                 "imagePullSecretsMap": image_pull_secrets_map,  # Map of image URLs to registry secret names
+                # De eigen serviceaccount van het project; elke podspec draagt daarnaast zijn
+                # eigen pull-secret, dus de erfenis van de default serviceaccount vervalt.
+                "service_account_name": generate_project_service_account_name(project_name),
                 # Timestamp to force pod restart when secrets are regenerated
                 "generated_at": generated_at,
                 # CA certificate configuration for SSL/TLS
@@ -6687,42 +6766,6 @@ class ProjectManager:
                     if attachment_sops_filename not in created_files:
                         created_files.append(attachment_sops_filename)
                     logger.info(f"Created attachment secret manifest: {secret_name}")
-
-            # Create registry secrets for private container registries (deployment-level, created once)
-            if component == components[0]:  # Only create registry secrets once per deployment
-                for registry_name in registry_configs_map:
-                    registry_secret = self._get_secret_from_map(deployment_name, registry_name, RegistrySecret)
-                    if registry_secret:
-                        logger.debug(f"Creating registry secret for registry '{registry_name}'")
-
-                        # Registry secrets use kubernetes.io/dockerconfigjson type
-                        registry_secret_vars = {
-                            "name": generate_registry_secret_name(deployment_name, registry_name),
-                            "namespace": namespace,
-                            "secret_type": "registry",
-                            "secret_k8s_type": "kubernetes.io/dockerconfigjson",
-                            "secret_pairs": registry_secret.to_k8s_secret_data(),  # Contains .dockerconfigjson
-                        }
-
-                        # Create registry secret manifest
-                        registry_manifest_name = generate_manifest_name(
-                            deployment_name, f"{registry_name}-registry-secret"
-                        )
-                        use_sops_for_registry = True  # Always use SOPS encryption for registry credentials
-
-                        registry_secret_path = self._manifest_generator.create_manifest_file(
-                            template_path=secret_template_path,
-                            values=registry_secret_vars,
-                            output_dir=full_output_dir,
-                            output_filename=registry_manifest_name,
-                            use_sops=use_sops_for_registry,
-                        )
-
-                        # All secrets are SOPS encrypted for security
-                        sops_filename = f"{registry_manifest_name}.to-sops.yaml"
-                        created_files.append(sops_filename)
-                        logger.info(f"Registry secret will be SOPS encrypted: {sops_filename}")
-                        logger.info(f"Successfully created registry secret manifest: {registry_secret_path}")
 
             # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
             if base_domain and issuer_config and issuer_config.startswith("letsencrypt"):
@@ -8780,6 +8823,28 @@ class ProjectManager:
             logger.exception(error_msg)
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
+    def _upsert_registry_entry(self, project_data: dict[str, Any], entry: dict[str, Any]) -> bool:
+        """Schrijf een registry in de config van de dienst image-registries. True als nieuw."""
+        service_name = ServiceType.IMAGE_REGISTRIES.value
+        project = Project(project_data)
+        config = project.service_config(service_name)
+        registries = list(config.get("registries", [])) if isinstance(config, dict) else []
+
+        created = True
+        for index, existing in enumerate(registries):
+            if isinstance(existing, dict) and existing.get("name") == entry["name"]:
+                registries[index] = entry
+                created = False
+                break
+        else:
+            registries.append(entry)
+
+        project.set(
+            f"services/{service_name}/config",
+            {**(config if isinstance(config, dict) else {}), "registries": registries},
+        )
+        return created
+
     async def upsert_registry_by_secret(
         self,
         name: str,
@@ -8800,19 +8865,8 @@ class ProjectManager:
         project_data = await self.get_contents()
         project_name = await self.get_name()
 
-        registries = project_data.get("registries", [])
-        registry_entry = {"name": name, "url": url, "secretName": secret_name}
-
-        created = True
-        for i, reg in enumerate(registries):
-            if reg.get("name") == name:
-                registries[i] = registry_entry
-                created = False
-                break
-        else:
-            registries.append(registry_entry)
-
-        project_data["registries"] = registries
+        registry_entry = {"name": name, "upstream": url, "secretName": secret_name}
+        created = self._upsert_registry_entry(project_data, registry_entry)
 
         action = "Add" if created else "Update"
         await self.save_and_commit_project(
@@ -8856,19 +8910,8 @@ class ProjectManager:
 
         encrypted_password = LiteralScalarString(await encrypt_age_content(password, public_key))
 
-        registries = project_data.get("registries", [])
-        registry_entry = {"name": name, "url": url, "username": username, "password": encrypted_password}
-
-        created = True
-        for i, reg in enumerate(registries):
-            if reg.get("name") == name:
-                registries[i] = registry_entry
-                created = False
-                break
-        else:
-            registries.append(registry_entry)
-
-        project_data["registries"] = registries
+        registry_entry = {"name": name, "upstream": url, "username": username, "password": encrypted_password}
+        created = self._upsert_registry_entry(project_data, registry_entry)
 
         action = "Add" if created else "Update"
         await self.save_and_commit_project(
@@ -8876,7 +8919,7 @@ class ProjectManager:
         )
 
         logger.info(f"Successfully {'added' if created else 'updated'} registry '{name}' in project '{project_name}'")
-        return {"success": True, "created": created, "registry": {"name": name, "url": url, "username": username}}
+        return {"success": True, "created": created, "registry": {"name": name, "upstream": url, "username": username}}
 
     async def update_image_and_regenerate(
         self,
@@ -8972,7 +9015,7 @@ class ProjectManager:
                 old_image = comp.get("image")
                 comp["image"] = new_image_url
                 if registry:
-                    comp["registry"] = registry
+                    set_deployment_component_registry(comp, registry)
                     logger.info(f"Set registry '{registry}' on component '{component_name}'")
                 break
 

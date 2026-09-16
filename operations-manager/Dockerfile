@@ -129,7 +129,6 @@ RUN chmod +x /app/entrypoint.sh
 # hoort het in een van deze regels; tests/test_image_layer_guard.py meet dat.
 # Achtergrond en metingen: features/image-lagen.md.
 COPY --chown=appuser:appuser operations-manager/python/static/promo.mp4 operations-manager/python/static/*.jpg operations-manager/python/static/favicon.ico ./static/
-COPY --chown=appuser:appuser operations-manager/python/extensions ./extensions
 COPY --chown=appuser:appuser operations-manager/python/manifests ./manifests
 COPY --chown=appuser:appuser operations-manager/python/static/css ./static/css
 COPY --chown=appuser:appuser operations-manager/python/static/js ./static/js

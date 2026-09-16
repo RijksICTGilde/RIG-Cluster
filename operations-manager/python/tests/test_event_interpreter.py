@@ -1,3 +1,7 @@
+from unittest.mock import patch
+
+import pytest
+from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.event_interpreter import (
     EventSeverity,
     condense_render_error,
@@ -94,6 +98,51 @@ class TestInterpretEvents:
         assert result[0].severity == EventSeverity.INFORMATIONAL
         assert "registry zelf geen antwoord gaf" in result[0].suggestion
         assert "naam en tag kloppen" not in result[0].suggestion
+
+    @pytest.mark.parametrize(
+        "reden",
+        ["manifest unknown", "received unexpected HTTP status: 500 Internal Server Error"],
+        ids=["image-afwezig", "registry-gaf-geen-antwoord"],
+    )
+    def test_the_message_names_the_private_registry_the_consumer_typed(self, reden):
+        """Het gemelde pad is het RCR-pad van de eigen proxy-organisatie. De eigen
+        organisaties van een project staan alleen in de regellijst als het PROJECTBESTAND
+        erbij zit, dus zonder dat bestand leest hij hier de kale URL terug, in precies
+        de melding die over zijn image gaat. Beide takken van de melding, want elk
+        geeft het projectbestand apart door."""
+        project_data = {
+            "name": "demo",
+            "services": [
+                {
+                    "name": "image-registries",
+                    "config": {
+                        "registries": [
+                            {
+                                "name": "code-overheid",
+                                "upstream": "code.overheid.nl/robbert.uittenbroek",
+                                "username": "robbert.uittenbroek",
+                                "password": "een-token",
+                            }
+                        ]
+                    },
+                }
+            ],
+        }
+        destination = registry_destination("code.overheid.nl/robbert.uittenbroek", "rcr.rijksapps.nl", "rig", "demo")
+        rcr = f"{destination}/zad-deployment-demo:0a611d9d"
+        errors = [
+            {
+                "resource": "Event/demo-web-abc-xyz",
+                "message": f'[ErrImagePull] Failed to pull image "{rcr}": {reden}',
+            }
+        ]
+        with patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"):
+            met = interpret_argocd_errors(errors, project_data=project_data)
+            zonder = interpret_argocd_errors(errors)
+
+        assert "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo:0a611d9d" in met[0]["suggestion"]
+        assert rcr not in met[0]["suggestion"]
+        assert rcr in zonder[0]["suggestion"]
 
     def test_missing_image_keeps_the_actionable_suggestion(self):
         events = [

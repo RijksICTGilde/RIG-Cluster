@@ -1,5 +1,14 @@
 # Wizard: Registry Configuration Step
 
+> **ACHTERHAALD (RC-177).** Dit voorstel is ingehaald: de dienst `image-registries` levert
+> het formulier nu zelf, langs de gewone diensthaken (`config_editables`,
+> `config_component_visualizers`, `config_component_layout`) in plaats van een eigen
+> wizardstap plus een hardgecodeerd veld in het componentformulier. Ook de twee vormen die
+> hieronder staan bestaan niet meer: het root-blok `registries:` met `url:` is verhuisd naar
+> `services/image-registries/config/registries` met `upstream:`, en de sleutel `registry:`
+> naast `image:` (`yaml_path='components[*].registry'`) is uit het schema gehaald ten
+> gunste van een dienstvermelding op de component. Zie `features/image-registries.md`.
+
 **Status**: Planned
 **Priority**: Medium
 **Created**: 2026-02-10

@@ -126,6 +126,9 @@ class TestParticipationIsDerived:
             ServiceType.KEYCLOAK,
             ServiceType.ATTACHMENTS,
             ServiceType.INVITE,
+            # RC-177: image-registries toont wat de afnemer heeft ingevuld; de toestand
+            # van de proxy wordt door het blok zelf lazy opgehaald.
+            ServiceType.IMAGE_REGISTRIES,
             ServiceType.VLAM,
         }
         # LEEG, en dat is geen vergissing. Twee bewoners zijn hier vertrokken, allebei naar

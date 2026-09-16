@@ -139,7 +139,7 @@ Verandert de registry ooit van scheme of standaardpoort, dan hoort die vorm hier
 
 En de leescontrole blijft diepteverdediging, geen slot: om een image uit de gedeelde
 registry ook echt te pullen heeft de namespace pull-credentials nodig, en die krijgt een
-project alleen uit zijn eigen `registries`-blok. De kritieke helft van bevinding A is de
+project alleen uit zijn eigen registries in de dienst `image-registries`. De kritieke helft van bevinding A is de
 schrijfkant, en die is gepind.
 
 ## Waar het staat

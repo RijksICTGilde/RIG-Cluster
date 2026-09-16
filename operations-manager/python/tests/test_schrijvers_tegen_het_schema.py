@@ -436,6 +436,55 @@ async def test_een_bijlage_blijft_geldig() -> None:
     poorten(_aangeboden(save))
 
 
+@pytest.mark.asyncio
+async def test_een_image_update_met_registry_blijft_geldig() -> None:
+    """``update_image_and_regenerate`` schreef de sleutel die v2.9 juist WEGHAALT.
+
+    Het API-veld ``UpdateImageRequest.registry`` (router.py, met eigen curl-voorbeeld) komt
+    hier binnen, en de schrijver zette hem als ``registry:`` naast ``image:`` op het
+    deployment-component. Sinds v2.9 kent ``$defs/deployment-component`` die sleutel niet
+    meer en staat hij geen onbekende sleutels toe, dus de save keurde precies de GELDIGE
+    aanroep af: stap 2 weigert een registry die niet bestaat, en wie een bestaande
+    meestuurde kreeg het schema over zich heen en dus GEEN image-update.
+
+    Deze test meet het PROJECTBESTAND dat de schrijver aanbiedt, niet de HTTP-status.
+    """
+    project = _basis_project()
+    project["services"] = [
+        "publish-on-web",
+        {
+            "name": ServiceType.IMAGE_REGISTRIES.value,
+            "config": {
+                "registries": [
+                    {
+                        "name": "code-overheid",
+                        "upstream": "code.overheid.nl/robbert",
+                        "username": "robbert",
+                        "password": AGE_BLOCK,
+                    }
+                ]
+            },
+        },
+    ]
+    manager, save = _bedraad(project)
+
+    with patch("opi.manager.project_manager.settings.CLUSTER_MANAGER", "odcn-production"):
+        result = await manager.update_image_and_regenerate(
+            deployment_name="productie",
+            component_name="api",
+            new_image_url="code.overheid.nl/robbert/demo:0a611d9d",
+            registry="code-overheid",
+            rollout=False,
+        )
+
+    assert result["status"] == "success", result
+    aangeboden = _aangeboden(save)
+    component = aangeboden["deployments"][0]["components"][0]
+    assert "registry" not in component, "de losse sleutel is in v2.9 uit het schema gehaald"
+    assert component["services"][ServiceType.IMAGE_REGISTRIES.value]["config"]["registry"] == "code-overheid"
+    poorten(aangeboden)
+
+
 # ---------------------------------------------------------------------------
 # De schema-migratie: de schrijver die elk bestand aanraakt
 # ---------------------------------------------------------------------------
