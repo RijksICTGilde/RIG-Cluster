@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import TypeAdapter, ValidationError
 
 from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
+from opi.services.catalog.config_settings import ConfigSetting, SettingError
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
 
 if TYPE_CHECKING:
@@ -570,4 +571,29 @@ class CommandLineValidator:
             return ['Er staat een dubbele quote open. Sluit hem, of typ "" als je er letterlijk een bedoelt.']
         if not split_command_line(text):
             return ["Dit commando levert geen argumenten op."]
+        return []
+
+
+class ConfigSettingValidator:
+    """Put a service's DECLARED room on the form field, from that same declaration.
+
+    The rule lives with the service (``Service.config_settings()``), which is also what
+    the project-file validation reads. This wrapper is the form's view of it, for the
+    same reason ``StorageSizeValidator`` exists: a dropdown or a ``max=`` attribute is
+    not a check, and the screen must not be able to promise something the save then
+    refuses. There is one declaration, so there is one answer.
+    """
+
+    def __init__(self, setting: ConfigSetting) -> None:
+        self.setting = setting
+
+    def validate(self, value: Any) -> list[str]:
+        # Emptiness is ``required``'s business; an empty field falls back to the
+        # service default, which the declaration already vouched for.
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return []
+        try:
+            self.setting.check(value)
+        except SettingError as e:
+            return [str(e)]
         return []

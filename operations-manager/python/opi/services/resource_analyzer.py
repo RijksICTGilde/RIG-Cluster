@@ -73,6 +73,32 @@ def parse_k8s_memory_to_mi(value: str) -> float:
     return num * multipliers[unit]
 
 
+def parse_k8s_cpu_to_m(value: str) -> float:
+    """Convert a Kubernetes CPU quantity to millicores.
+
+    Supports millicores (`78m`), whole/fractional cores (`1`, `0.5`),
+    nanocores (`n`) and microcores (`u`) as emitted by the VPA recommender.
+
+    Sits next to :func:`parse_k8s_memory_to_mi` rather than in the VPA connector it
+    was written for: a Kubernetes quantity is turned into a number in one module, so
+    "is 2 more than 100m" has a single answer. `opi.connectors.vpa` re-exports it, so
+    every existing import keeps working.
+
+    Raises:
+        ValueError: If the value cannot be parsed.
+    """
+    value = value.strip()
+    if not value:
+        raise ValueError("Empty CPU value")
+    if value.endswith("m"):
+        return float(value[:-1])
+    if value.endswith("n"):
+        return float(value[:-1]) / 1_000_000
+    if value.endswith("u"):
+        return float(value[:-1]) / 1000
+    return float(value) * 1000
+
+
 def _k8s_memory_to_mb(value: str) -> float:
     """Convert a Kubernetes memory string to megabytes.
 
