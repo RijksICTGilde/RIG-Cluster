@@ -315,7 +315,7 @@ def test_a_tag_without_build_moment_stays(registry: Registry) -> None:
 
 
 def test_a_registry_nobody_pushed_to_is_nothing_to_prune(registry: Registry) -> None:
-    """Zo staat hij na sandbox:setup, en het opruimen is de laatste stap van elke deploy."""
+    """Zo staat hij na sandbox:setup."""
     result = _prune(registry)
 
     assert result.returncode == 0, result.stderr

@@ -10,8 +10,8 @@
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001)
 #
-# Exitcodes: 0 = klaar, ook als er geen registry draait of hij geen deletes toestaat
-# (dan valt er niets op te ruimen), 2 = fout gebruik. Anders: de code van het mislukte commando.
+# Exitcodes: 0 = klaar of overgeslagen (geen registry, geen deletes), 2 = fout gebruik.
+# Anders: de code van het mislukte commando.
 
 set -euo pipefail
 

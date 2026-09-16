@@ -466,7 +466,6 @@ class TestPruneScriptRefusals:
 
     @pytest.mark.parametrize("state", ["", "false"], ids=["ontbreekt", "gestopt"])
     def test_skips_a_registry_that_does_not_run(self, tmp_path: Path, state: str) -> None:
-        """De deploy draait deze stap als laatste; zonder registry hoort hij niet rood te eindigen."""
         run = _prune(tmp_path, STUB_REG_STATE=state)
 
         assert run.returncode == 0
