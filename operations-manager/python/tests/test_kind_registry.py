@@ -465,19 +465,20 @@ class TestPruneScriptRefusals:
         assert "curl" not in run.log
 
     @pytest.mark.parametrize("state", ["", "false"], ids=["ontbreekt", "gestopt"])
-    def test_refuses_a_registry_that_does_not_run(self, tmp_path: Path, state: str) -> None:
+    def test_skips_a_registry_that_does_not_run(self, tmp_path: Path, state: str) -> None:
+        """De deploy draait deze stap als laatste; zonder registry hoort hij niet rood te eindigen."""
         run = _prune(tmp_path, STUB_REG_STATE=state)
 
-        assert run.returncode == 3
+        assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
 
     @pytest.mark.parametrize("env", ["", "REGISTRY_STORAGE_DELETE_ENABLED=false"])
-    def test_refuses_a_registry_without_deletes(self, tmp_path: Path, env: str) -> None:
+    def test_skips_a_registry_without_deletes(self, tmp_path: Path, env: str) -> None:
         """Dat is de container van voor deze wijziging; setup-registry maakt hem opnieuw aan."""
         run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV=env)
 
-        assert run.returncode == 4
+        assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
 

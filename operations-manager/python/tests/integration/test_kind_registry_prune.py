@@ -337,12 +337,12 @@ def test_two_tags_on_one_digest_are_deleted_once(registry: Registry) -> None:
     assert registry.tags() == ["nieuw"]
 
 
-def test_refuses_a_registry_without_delete(registry_without_delete: Registry) -> None:
+def test_skips_a_registry_without_delete(registry_without_delete: Registry) -> None:
     registry_without_delete.push_image("oud", NOW - timedelta(days=5), [BASE_LAYER], with_attestation=False)
 
     result = _prune(registry_without_delete)
 
-    assert result.returncode == 4
+    assert result.returncode == 0
     assert "sandbox:setup-registry" in result.stderr
     assert registry_without_delete.tags() == ["oud"]
 

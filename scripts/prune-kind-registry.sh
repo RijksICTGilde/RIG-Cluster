@@ -10,8 +10,8 @@
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001)
 #
-# Exitcodes: 0 = klaar, 2 = fout gebruik, 3 = de registry draait niet,
-# 4 = de registry staat geen deletes toe. Anders: de code van het mislukte commando.
+# Exitcodes: 0 = klaar, ook als er geen registry draait of hij geen deletes toestaat
+# (dan valt er niets op te ruimen), 2 = fout gebruik. Anders: de code van het mislukte commando.
 
 set -euo pipefail
 
@@ -31,14 +31,14 @@ if ! [[ "$RETENTIE_DAGEN" =~ ^[0-9]+$ ]]; then
 fi
 
 if [ "$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)" != "true" ]; then
-    echo "[registry-prune] registry $REG_NAME draait niet; zet hem neer met task sandbox:setup-registry" >&2
-    exit 3
+    echo "[registry-prune] registry $REG_NAME draait niet, niets op te ruimen; zet hem neer met task sandbox:setup-registry" >&2
+    exit 0
 fi
 if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$REG_NAME" |
     grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'; then
-    echo "[registry-prune] registry $REG_NAME staat geen deletes toe." >&2
+    echo "[registry-prune] registry $REG_NAME staat geen deletes toe, opruimen overgeslagen." >&2
     echo "[registry-prune] task sandbox:setup-registry maakt hem opnieuw aan, met behoud van de lagen." >&2
-    exit 4
+    exit 0
 fi
 
 cutoff=$(($(date +%s) - RETENTIE_DAGEN * 86400))
