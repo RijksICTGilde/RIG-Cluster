@@ -849,11 +849,15 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         if _realm_roles_unassigned(result_data["assigned"]):
             return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
 
-        # Store success info in session
+        # Store success info in session. ``verify_email`` staat alleen op deze tak: de
+        # SSO-weg levert via ``trustEmail`` een al geverifieerde gebruiker en mag de tekst
+        # over bevestigen niet tonen.
         request.session["invite_success"] = {
             "email": result_data["email"],
             "created": result_data["created"],
             "assigned": result_data["assigned"],
+            "verify_email": True,
+            "verification_mail_sent": result_data["verification_mail_sent"],
         }
 
         return RedirectResponse(url=f"/invite/{key}/success", status_code=302)
@@ -974,6 +978,9 @@ async def invite_success(request: Request, key: str) -> Response:
             "email": success_info.get("email"),
             "created": success_info.get("created"),
             "assigned": success_info.get("assigned", {}),
+            "verify_email": success_info.get("verify_email", False),
+            "verification_mail_sent": success_info.get("verification_mail_sent", False),
+            "contact_email": invite.get("contact_email", ""),
         },
     )
 

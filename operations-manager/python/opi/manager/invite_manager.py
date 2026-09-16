@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any, cast
 
+from keycloak.exceptions import KeycloakError
+
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
 from opi.handlers.project_file_handler import ProjectFileHandler
 
@@ -433,6 +435,18 @@ class InviteManager:
         user_id = created_user["id"]
         logger.info(f"Created new local user {email} in realm {realm_name}")
 
+        # De mail hoort NU te komen en niet pas bij de eerste login: de gebruiker heeft
+        # zojuist zijn adres en wachtwoord opgegeven en leest op de volgende pagina dat hij
+        # moet bevestigen. Mislukt de verzending, dan is de registratie niet stuk: het
+        # account draagt de required action, dus Keycloak probeert het bij de eerste login
+        # alsnog.
+        verification_mail_sent = True
+        try:
+            await keycloak.send_verify_email(realm_name, user_id)
+        except KeycloakError as e:
+            logger.warning(f"Could not send the verification mail to {email} in realm {realm_name}: {e}")
+            verification_mail_sent = False
+
         # Assign permissions
         assigned = await self.assign_invite_permissions(keycloak, realm_name, user_id, invite)
 
@@ -441,6 +455,7 @@ class InviteManager:
             "email": email,
             "created": True,
             "assigned": assigned,
+            "verification_mail_sent": verification_mail_sent,
         }
 
     def _validate_password(self, password: str) -> None:
