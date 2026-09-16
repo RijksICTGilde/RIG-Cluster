@@ -24,10 +24,12 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
+import conftest
 from conftest import ZAD_TEST_DB_MAX_LEEFTIJD_S, ZAD_TEST_DB_PREFIX, _is_wees, _maker_leeft, _pid_namespace
 
 
@@ -133,3 +135,109 @@ def test_de_fixture_zet_de_namespace_in_de_databasenaam() -> None:
     bron = inspect.getsource(conftest._orm_db_url.__wrapped__)
 
     assert "_pid_namespace()" in bron, "de databasenaam draagt de namespace niet"
+
+
+class _NagebootsteServer:
+    """Een ``_psql`` die de databases onthoudt in plaats van ze te hebben.
+
+    De veeg praat alleen via ``_psql`` met Postgres, dus hiermee is te meten WELKE
+    databases hij weggooit zonder dat er een server hoeft te draaien.
+    """
+
+    def __init__(self, namen: list[str]) -> None:
+        self.namen = list(namen)
+        self.gedropt: list[str] = []
+
+    def __call__(self, sql: str) -> str:
+        if sql.startswith("SELECT datname"):
+            return "\n".join(self.namen)
+        if sql.startswith("DROP DATABASE"):
+            self.gedropt.append(sql.split('"')[1])
+        return ""
+
+
+class TestDeVeeg:
+    """Niet de beslissing, maar wat er werkelijk wordt weggegooid."""
+
+    def test_de_veeg_haalt_de_wezen_weg_en_laat_de_rest_staan(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        nu = time.time()
+        levende_buurman = _naam(_dode_pid(), nu, namespace=VREEMDE_NAMESPACE)
+        eigen_wees = _naam(_dode_pid(), nu)
+        oude_vreemde = _naam(_dode_pid(), nu - ZAD_TEST_DB_MAX_LEEFTIJD_S - 60, namespace=VREEMDE_NAMESPACE)
+        server = _NagebootsteServer(
+            [
+                _naam(os.getpid(), nu),
+                levende_buurman,
+                eigen_wees,
+                oude_vreemde,
+                f"{ZAD_TEST_DB_PREFIX}4867",
+            ]
+        )
+        monkeypatch.setattr(conftest, "_psql", server)
+
+        conftest._ruim_verweesde_databases_op()
+
+        assert sorted(server.gedropt) == sorted([eigen_wees, oude_vreemde])
+
+    def test_de_veeg_raakt_de_database_van_de_levende_buurman_niet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """De storing van 16 september: zijn pid bestaat hier niet, zijn suite draait wel."""
+        buurman = _naam(_dode_pid(), time.time(), namespace=VREEMDE_NAMESPACE)
+        server = _NagebootsteServer([buurman])
+        monkeypatch.setattr(conftest, "_psql", server)
+
+        conftest._ruim_verweesde_databases_op()
+
+        assert server.gedropt == []
+
+    @pytest.mark.parametrize("uitvoer", ["", "\n", "   \n\n  "], ids=["leeg", "enkele-regel", "witruimte"])
+    def test_zonder_databases_gooit_de_veeg_niets_weg(self, monkeypatch: pytest.MonkeyPatch, uitvoer: str) -> None:
+        server = _NagebootsteServer([])
+        monkeypatch.setattr(conftest, "_psql", lambda sql: uitvoer if sql.startswith("SELECT") else server(sql))
+
+        conftest._ruim_verweesde_databases_op()
+
+        assert server.gedropt == []
+
+
+#: Draait de fixture met een nagebootste psql en schrijft de databasenaam naar stdout.
+_KIND = """
+import sys
+sys.path.insert(0, {testmap!r})
+import conftest
+
+conftest._zorg_voor_container = lambda: "55432"
+gemaakt = []
+
+
+def nep_psql(sql):
+    if sql.startswith("CREATE DATABASE"):
+        gemaakt.append(sql.split('"')[1])
+    return ""
+
+
+conftest._psql = nep_psql
+next(conftest._orm_db_url.__wrapped__())
+print(gemaakt[0])
+"""
+
+
+def test_een_naam_van_een_gestorven_run_wordt_als_wees_herkend() -> None:
+    """De naamvorm van de fixture moet de veeg ook echt iets zeggen.
+
+    Een kindproces maakt de naam met de fixture zelf en sterft. Die naam is VERS, dus
+    alleen de pid kan hem als wees aanwijzen, en dat lukt alleen als de veeg de
+    namespace erin herkent als de zijne. Draait de volgorde van de velden om, dan leest
+    de veeg de naam als die van een vreemde namespace en blijft een dode run staan --
+    en andersom verdwijnt de levende buurman weer.
+    """
+    testmap = os.path.dirname(__file__)
+    kind = subprocess.run(
+        [sys.executable, "-c", _KIND.format(testmap=testmap)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    naam = kind.stdout.strip()
+    assert naam.startswith(ZAD_TEST_DB_PREFIX), f"de fixture maakte geen testdatabase: {naam!r}"
+
+    assert _is_wees(naam, time.time()) is True, f"de veeg herkent {naam!r} niet als wees van een dode run"
