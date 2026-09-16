@@ -121,8 +121,26 @@ class TestWeesOfNiet:
         assert _is_wees(naam, NU) is False
 
 
-def test_de_namespace_is_die_van_dit_proces() -> None:
-    assert _pid_namespace() == str(os.stat("/proc/self/ns/pid").st_ino)
+def test_de_namespace_is_het_inode_nummer_van_dit_proces(monkeypatch: pytest.MonkeyPatch) -> None:
+    gelezen: list[str | os.PathLike[str]] = []
+
+    def stat(pad: str | os.PathLike[str], *args: object, **kwargs: object) -> os.stat_result:
+        gelezen.append(pad)
+        return os.stat_result((0, 4026531836, 0, 0, 0, 0, 0, 0, 0, 0))
+
+    monkeypatch.setattr(conftest.os, "stat", stat)
+
+    assert _pid_namespace() == "4026531836"
+    assert gelezen == ["/proc/self/ns/pid"]
+
+
+def test_zonder_proc_is_er_een_vlakke_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    def stat(pad: str | os.PathLike[str], *args: object, **kwargs: object) -> os.stat_result:
+        raise FileNotFoundError(2, "No such file or directory", pad)
+
+    monkeypatch.setattr(conftest.os, "stat", stat)
+
+    assert _pid_namespace() == "0"
 
 
 def test_de_fixture_zet_de_namespace_in_de_databasenaam() -> None:
