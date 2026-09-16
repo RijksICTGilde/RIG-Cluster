@@ -338,15 +338,28 @@ class TestBuildPushes:
 
 
 class TestGenericUpdateOnSandbox:
+    # Als eigen regel: `task -v` drukt ook de opdrachttekst af, en daar staat de melding al in.
+    STOPPED = re.compile(rf"(?m)^Dit is een sandbox: gebruik task {re.escape(UPDATE_TASK)}\.$")
+
     @staticmethod
     def _run(repo: Path, cluster_type: str, *flags: str) -> str:
-        """Echte `task` met de clusterkeuze uit .env-taskfile-current, zoals na sandbox:setup."""
+        """Echte `task` met de clusterkeuze uit .env-taskfile-current, zoals na sandbox:setup.
+
+        De clustertools op het PATH zijn nepversies die falen, zodat een run die te ver
+        komt nooit een echt cluster raakt.
+        """
         task = shutil.which("task")
         if task is None:
             pytest.skip("task ontbreekt")
         shutil.copy(TASKFILE, repo / "Taskfile.yaml")
         (repo / ".env-taskfile-current").write_text(f"CLUSTER_TYPE={cluster_type}\nKIND_CLUSTER_NAME=rig-sandbox\n")
+        stubs = repo / "stubs"
+        stubs.mkdir()
+        for tool in ("docker", "kind", "kubectl", "kustomize", "sops"):
+            (stubs / tool).write_text(f"#!/bin/sh\necho 'nep-{tool} aangeroepen' >&2\nexit 97\n")
+            (stubs / tool).chmod(0o755)
         env = {k: v for k, v in os.environ.items() if k not in ("CLUSTER_TYPE", "KIND_CLUSTER_NAME")}
+        env["PATH"] = f"{stubs}{os.pathsep}{env['PATH']}"
         result = subprocess.run(
             [task, "-v", *flags, GENERIC_UPDATE_TASK], cwd=repo, env=env, capture_output=True, text=True
         )
@@ -359,7 +372,7 @@ class TestGenericUpdateOnSandbox:
     def test_sandbox_stops_before_anything_runs(self, repo: Path) -> None:
         output = self._run(repo, "sandboxed-local")
 
-        assert f"gebruik task {UPDATE_TASK}" in output
+        assert self.STOPPED.search(output), output
         assert "generate-env-secrets" not in output
         assert "kind load" not in output
 
@@ -367,6 +380,13 @@ class TestGenericUpdateOnSandbox:
         output = self._run(repo, "local", "--dry")
 
         assert "kind load docker-image operations-manager:latest --name rig-sandbox" in output
+
+    def test_local_is_not_stopped(self, repo: Path) -> None:
+        """De stop draait alleen echt, niet onder --dry; zonder sleutelbestand strandt local pas bij de secrets."""
+        output = self._run(repo, "local")
+
+        assert not self.STOPPED.search(output), output
+        assert "Generating SOPS-encrypted secret for cluster: local" in output
 
 
 class TestSkaffold:
