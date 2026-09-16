@@ -14,8 +14,7 @@ de database, en alleen wat een DODE maker heeft is een wees.
 Een pid alleen was niet genoeg. Sessies draaien in eigen containers tegen dezelfde
 Postgres, en ``os.kill`` kijkt in de EIGEN pid-namespace: de levende run van de buurman
 zag er dood uit en werd weggegooid (16 september 2026, 62 ERRORs aan beide kanten). De
-naam draagt daarom ook de namespace en het tijdstip: ``zad_test_<namespace>_<pid>_<epoch>``.
-Wat we niet kunnen beoordelen blijft staan.
+naam draagt daarom ook de namespace en het tijdstip.
 
 Deze tests draaien zonder Docker; ze toetsen de beslislogica, niet de dockeraanroep.
 """
