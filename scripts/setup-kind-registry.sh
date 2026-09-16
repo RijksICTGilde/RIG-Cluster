@@ -15,7 +15,8 @@
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001, 5000 is bezet op de dev-server)
 #   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2)
 #
-# Exitcodes: 0 = klaar, 1 = de kind-config mist containerdConfigPatches, 2 = fout gebruik.
+# Exitcodes: 0 = klaar, 1 = de kind-config mist containerdConfigPatches, 2 = fout gebruik,
+# 3 = het cluster heeft geen nodes. Anders: de code van het mislukte commando.
 
 set -euo pipefail
 
@@ -42,6 +43,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# kind get nodes geeft ook exit 0 voor een cluster dat niet bestaat.
+nodes="$(kind get nodes --name "$CLUSTER")"
+if [ -z "$nodes" ]; then
+    echo "[kind-registry] cluster $CLUSTER heeft geen nodes, bestaat het wel?" >&2
+    exit 3
+fi
+
 # 1. Bestaat de container maar staat hij stil, dan starten we hem: een `docker run` met
 # dezelfde naam zou daarop stuklopen.
 reg_state="$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
@@ -59,7 +67,7 @@ fi
 # 2. De hostnaam in hosts.toml is de containernaam op het kind-netwerk, niet localhost:
 # de node zoekt de registry daar, niet op de host.
 REGISTRY_DIR="/etc/containerd/certs.d/localhost:${REG_PORT}"
-for node in $(kind get nodes --name "$CLUSTER"); do
+for node in $nodes; do
     if ! docker exec "$node" grep -qE '^[[:space:]]*config_path[[:space:]]*=' /etc/containerd/config.toml; then
         echo "[kind-registry] node $node leest geen /etc/containerd/certs.d." >&2
         echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches." >&2
