@@ -1906,8 +1906,16 @@ class InviteApplicationUrlOptionsProvider:
                 label = f"{label} ({entry.get('path') or '/'})"
             options.append({"value": entry["url"], "label": label})
 
-        if self.current_value and self.current_value not in seen:
-            options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})
+        # Alleen een ADRES kan hier nog bij. De opgeslagen waarde is sinds RC-136 de KEUZE
+        # ("frontend:production"), en het formulier geeft de RAUWE opslag als huidige waarde
+        # door: die kwam zo als "frontend:production (niet meer afleidbaar)" in de lijst
+        # terecht -- een regel die niets betekent en die je ook nog kon kiezen. Een keuze die
+        # nog wel oplost staat sowieso al in de lijst hierboven; een die dat niet meer doet
+        # heeft geen adres om te tonen, en dan is "geen knop" het eerlijke antwoord, want dat
+        # is ook precies wat de succespagina doet.
+        huidig = self.current_value if isinstance(self.current_value, str) else None
+        if huidig and huidig.startswith(("http://", "https://")) and huidig not in seen:
+            options.append({"value": huidig, "label": f"{huidig} (niet meer afleidbaar)"})
         return options
 
 

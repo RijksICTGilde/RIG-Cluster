@@ -25,6 +25,7 @@ from opi.manager.invite_manager import (
     InviteManager,
     UserExistsError,
 )
+from opi.services.catalog.invite.destination import resolve_invite_url
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_project_realm_name
 from opi.web.lotc_switch import render
@@ -961,7 +962,7 @@ async def invite_success(request: Request, key: str) -> Response:
     # Get localized content
     success_title = invite_manager.project_file_handler.get_invite_success_title(invite, language)
     success_button = invite_manager.project_file_handler.get_invite_success_button(invite, language)
-    application_url = invite.get("application_url", "")
+    application_url = resolve_invite_url(invite, project_data)
     display_name = project_data.get("display-name", project_name)
 
     return render(
