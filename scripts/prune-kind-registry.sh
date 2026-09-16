@@ -64,6 +64,8 @@ size() { docker exec "$REG_NAME" du -sh /var/lib/registry | cut -f1; }
 echo "[registry-prune] $REG_NAME: tags ouder dan $RETENTIE_DAGEN dag(en) weg, omvang voor: $(size)"
 
 repos="$(curl -fsS "$REG_URL/v2/_catalog?n=1000" | jq -r '.repositories // [] | .[]')"
+# garbage-collect faalt op een registry waar nooit naar gepusht is.
+[ -n "$repos" ] || { echo "[registry-prune] klaar, de registry is leeg"; exit 0; }
 for repo in $repos; do
     tags="$(curl -fsS "$REG_URL/v2/$repo/tags/list" | jq -r '.tags // [] | .[]')"
     # Per tag: moment, digest, en de digests eronder (bij een index).

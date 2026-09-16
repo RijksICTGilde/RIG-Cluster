@@ -51,6 +51,7 @@ class Registry:
         self.name = name
         self.port = port
         self.url = f"http://127.0.0.1:{port}"
+        self.repo = REPO
 
     def _request(
         self, method: str, path: str, data: bytes | None = None, headers: dict | None = None
@@ -64,7 +65,7 @@ class Registry:
 
     def push_blob(self, content: bytes) -> dict:
         digest = "sha256:" + hashlib.sha256(content).hexdigest()
-        _, headers, _ = self._request("POST", f"/v2/{REPO}/blobs/uploads/")
+        _, headers, _ = self._request("POST", f"/v2/{self.repo}/blobs/uploads/")
         location = headers["Location"]
         separator = "&" if "?" in location else "?"
         path = location.removeprefix(self.url) + f"{separator}digest={digest}"
@@ -75,7 +76,7 @@ class Registry:
     def push_manifest(self, reference: str, media_type: str, manifest: dict) -> dict:
         content = json.dumps(manifest).encode()
         status, headers, body = self._request(
-            "PUT", f"/v2/{REPO}/manifests/{reference}", data=content, headers={"Content-Type": media_type}
+            "PUT", f"/v2/{self.repo}/manifests/{reference}", data=content, headers={"Content-Type": media_type}
         )
         assert status == 201, body
         return {"mediaType": media_type, "digest": headers["Docker-Content-Digest"], "size": len(content)}
@@ -117,7 +118,7 @@ class Registry:
         }
 
     def tags(self) -> list[str]:
-        _, _, body = self._request("GET", f"/v2/{REPO}/tags/list")
+        _, _, body = self._request("GET", f"/v2/{self.repo}/tags/list")
         return sorted(json.loads(body).get("tags") or [])
 
     def stored(self, digest: str) -> bool:
@@ -132,12 +133,12 @@ class Registry:
 
     def pullable(self, digest: str) -> bool:
         accept = f"{OCI_INDEX},{OCI_MANIFEST}"
-        status, _, body = self._request("GET", f"/v2/{REPO}/manifests/{digest}", headers={"Accept": accept})
+        status, _, body = self._request("GET", f"/v2/{self.repo}/manifests/{digest}", headers={"Accept": accept})
         if status != 200:
             return False
         manifest = json.loads(body)
         blobs = [manifest["config"], *manifest["layers"]] if "config" in manifest else []
-        return all(self._request("GET", f"/v2/{REPO}/blobs/{blob['digest']}")[0] == 200 for blob in blobs)
+        return all(self._request("GET", f"/v2/{self.repo}/blobs/{blob['digest']}")[0] == 200 for blob in blobs)
 
 
 def image_digest_ref(manifest: dict) -> str:
@@ -222,6 +223,8 @@ class TestPrune:
 
         assert result.returncode == 0, result.stderr
         assert registry.tags() == ["nieuw"]
+        assert "omvang voor: " in result.stdout
+        assert "omvang na: " in result.stdout
 
     def test_the_app_layers_of_old_builds_are_collected(self, registry: Registry, with_attestation: bool) -> None:
         images = _push_history(registry, with_attestation)
@@ -277,12 +280,53 @@ class TestPrune:
         assert registry.tags() == ["b"]
 
 
+def test_each_repository_keeps_its_own_newest(registry: Registry) -> None:
+    """De nieuwste van de ene repository mag de nieuwste van de andere niet overschaduwen."""
+    for repo, tags in (("operations-manager", (("a", 9), ("b", 8))), ("ander", (("c", 6), ("d", 5)))):
+        registry.repo = repo
+        for tag, days in tags:
+            registry.push_image(tag, NOW - timedelta(days=days), [BASE_LAYER, os.urandom(1024)], with_attestation=True)
+
+    result = _prune(registry)
+
+    assert result.returncode == 0, result.stderr
+    registry.repo = "operations-manager"
+    assert registry.tags() == ["b"]
+    registry.repo = "ander"
+    assert registry.tags() == ["d"]
+
+
+def test_a_tag_without_build_moment_stays(registry: Registry) -> None:
+    """Zonder `created` is de leeftijd onbekend; weggooien zou op een gok gebeuren."""
+    config = registry.push_blob(json.dumps({"architecture": "amd64", "os": "linux"}).encode())
+    registry.push_manifest(
+        "zonder-moment",
+        OCI_MANIFEST,
+        {"schemaVersion": 2, "mediaType": OCI_MANIFEST, "config": config | {"mediaType": OCI_CONFIG}, "layers": []},
+    )
+    registry.push_image("oud", NOW - timedelta(days=5), [BASE_LAYER], with_attestation=False)
+    registry.push_image("nieuw", NOW - timedelta(hours=1), [BASE_LAYER], with_attestation=False)
+
+    result = _prune(registry)
+
+    assert result.returncode == 0, result.stderr
+    assert registry.tags() == ["nieuw", "zonder-moment"]
+    assert "zonder-moment heeft geen leesbaar bouwmoment" in result.stdout
+
+
+def test_a_registry_nobody_pushed_to_is_nothing_to_prune(registry: Registry) -> None:
+    """Zo staat hij na sandbox:setup, en het opruimen is de laatste stap van elke deploy."""
+    result = _prune(registry)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_two_tags_on_one_digest_are_deleted_once(registry: Registry) -> None:
     """Een delete op digest haalt alle tags ervan weg; een tweede delete gaf 404 en stopte het script."""
     registry.push_image("oud", NOW - timedelta(days=5), [BASE_LAYER], with_attestation=True)
-    _, _, body = registry._request("GET", f"/v2/{REPO}/manifests/oud", headers={"Accept": OCI_INDEX})
+    _, _, body = registry._request("GET", f"/v2/{registry.repo}/manifests/oud", headers={"Accept": OCI_INDEX})
     status, _, _ = registry._request(
-        "PUT", f"/v2/{REPO}/manifests/oud-alias", data=body, headers={"Content-Type": OCI_INDEX}
+        "PUT", f"/v2/{registry.repo}/manifests/oud-alias", data=body, headers={"Content-Type": OCI_INDEX}
     )
     assert status == 201
     registry.push_image("nieuw", NOW, [BASE_LAYER], with_attestation=True)

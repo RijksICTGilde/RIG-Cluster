@@ -65,6 +65,9 @@ case "$1" in
       *"cp /dev/stdin"*)
         cat >> "$STUB_HOSTS_TOML"
         ;;
+      *garbage-collect*)
+        [ -z "${STUB_GC_FAILS:-}" ] || { echo "failed to garbage collect: disk full" >&2; exit "$STUB_GC_FAILS"; }
+        ;;
     esac
     ;;
 esac
@@ -416,10 +419,18 @@ class TestSetupScript:
         assert hosts_index < kubectl_index
 
 
+CURL_STUB = """echo "curl $*" >> "$STUB_LOG"
+case "$*" in
+  *_catalog*) echo '{"repositories": ["proef"]}' ;;
+  *tags/list*) echo '{"name": "proef", "tags": null}' ;;
+esac
+"""
+
+
 def _prune(tmp_path: Path, *args: str, **env_extra: str) -> Run:
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    for name, body in (("docker", DOCKER_STUB), ("curl", 'echo "curl $*" >> "$STUB_LOG"\n')):
+    for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB)):
         stub = bindir / name
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
@@ -474,6 +485,14 @@ class TestPruneScriptRefusals:
         run = _prune(tmp_path, STUB_REG_STATE="false")
 
         assert "docker inspect -f {{.State.Running}} kind-registry" in run.log
+
+    def test_a_failing_garbage_collect_fails_the_run_and_says_why(self, tmp_path: Path) -> None:
+        """Anders meldt de deploy een geslaagde opruiming terwijl de lagen er nog staan."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_GC_FAILS="7")
+
+        assert run.returncode == 7
+        assert "failed to garbage collect: disk full" in run.stderr
+        assert "klaar" not in run.stdout
 
     def test_never_touches_the_builder(self) -> None:
         """De buildcache van de builder hoort niet in de registry en mag hier niet weg."""
