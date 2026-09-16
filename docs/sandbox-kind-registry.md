@@ -83,14 +83,15 @@ uitrol. Dat is de enige plek:
 
 - Een garbage collect naast een lopende push kan lagen weggooien die net geupload zijn en
   nog aan geen manifest hangen (de garbage-collect-doc van distribution waarschuwt
-  hiervoor). In het deploy-pad is de push klaar en houdt de sandbox-lock andere deploys
-  buiten. Een cron op de server weet van geen van beide.
+  hiervoor). In het deploy-pad is de eigen push klaar; een cron op de server weet dat niet.
+  De taak neemt zelf geen lock, dus twee gelijktijdige deploys op dezelfde registry blijven
+  een risico.
 - Wie pusht, ruimt op: de registry groeit alleen door deploys, dus zonder deploys hoeft er
   ook niets weg.
 
-Een registry van voor deze stap (zonder deletes) laat het script weigeren met exit 4;
-`task sandbox:setup-registry` zet dat recht. Draait er geen registry, dan faalt de laatste
-stap van de deploy met exit 3; de uitrol is dan al gebeurd.
+Draait er geen registry, of is het een registry van voor deze stap (zonder deletes), dan
+slaat het script het opruimen over met een melding en exit 0: de deploy gebruikt de
+registry nog niet en mag daar niet op falen. `task sandbox:setup-registry` zet het recht.
 
 ## Gebruik
 
