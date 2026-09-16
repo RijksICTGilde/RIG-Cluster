@@ -52,8 +52,7 @@ case "$1" in
     case "$*" in
       *config.toml*)
         [ -z "${STUB_EXEC_FAILS:-}" ] || { echo "Error response from daemon: container is not running" >&2; exit "$STUB_EXEC_FAILS"; }
-        [ "${STUB_CONFIG_PATH:-yes}" = "yes" ] || { echo "version = 2"; exit 0; }
-        printf '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"\n'
+        cat "$STUB_CONFIGS/${STUB_CONFIG_PATH:-yes}.toml"
         ;;
       *"cp /dev/stdin"*)
         cat >> "$STUB_HOSTS_TOML"
@@ -72,6 +71,35 @@ if [ "$1" = "get" ] && [ "$2" = "nodes" ]; then
 fi
 exit 0
 """
+
+# Uitsnede van /etc/containerd/config.toml op een ongepatchte kind-node (rig-sandbox,
+# kindest/node v1.32.0). Het woord registry staat er al in, via sandbox_image.
+UNPATCHED_CONFIG = """# explicitly use v2 config format
+version = 2
+
+[plugins."io.containerd.grpc.v1.cri".containerd]
+  snapshotter = "overlayfs"
+  default_runtime_name = "runc"
+
+[plugins."io.containerd.grpc.v1.cri"]
+  # use fixed sandbox image
+  sandbox_image = "registry.k8s.io/pause:3.10"
+  restrict_oom_score_adj = false
+"""
+
+CONTAINERD_CONFIGS = {
+    "yes": UNPATCHED_CONFIG
+    + """
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+""",
+    "no": UNPATCHED_CONFIG,
+    "commented": UNPATCHED_CONFIG
+    + """
+[plugins."io.containerd.grpc.v1.cri".registry]
+  # config_path = "/etc/containerd/certs.d"
+""",
+}
 
 KUBECTL_STUB = """#!/usr/bin/env bash
 echo "kubectl $*" >> "$STUB_LOG"
@@ -105,12 +133,17 @@ def _run(tmp_path: Path, *args: str, **env_extra: str) -> Run:
         stub = bindir / name
         stub.write_text(body)
         stub.chmod(0o755)
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    for name, body in CONTAINERD_CONFIGS.items():
+        (configs / f"{name}.toml").write_text(body)
 
     env = {
         "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
         "STUB_LOG": str(tmp_path / "calls.log"),
         "STUB_HOSTS_TOML": str(tmp_path / "hosts.toml"),
         "STUB_KUBECTL_STDIN": str(tmp_path / "kubectl-stdin"),
+        "STUB_CONFIGS": str(configs),
         **env_extra,
     }
     proc = subprocess.run(
@@ -188,11 +221,21 @@ class TestSetupScript:
         assert "containerdConfigPatches" in run.stderr
         assert "kind-config" in run.stderr
 
-    def test_a_node_that_cannot_be_read_is_no_missing_patch(self, tmp_path: Path) -> None:
-        """Een gestopte node gaf eerst het advies de gedeelde sandbox te herbouwen."""
-        run = _run(tmp_path, "--cluster", "proef", STUB_EXEC_FAILS="1")
+    def test_refuses_a_config_path_that_is_commented_out(self, tmp_path: Path) -> None:
+        run = _run(tmp_path, "--cluster", "proef", STUB_CONFIG_PATH="commented")
 
-        assert run.returncode == 1
+        assert run.returncode == 4
+        assert run.hosts_toml == ""
+
+    @pytest.mark.parametrize("exec_code", ["1", "125"])
+    def test_a_node_that_cannot_be_read_is_no_missing_patch(self, tmp_path: Path, exec_code: str) -> None:
+        """Een gestopte node gaf eerst het advies de gedeelde sandbox te herbouwen.
+
+        125 naast 1: de kop belooft de code van docker, niet een vaste code.
+        """
+        run = _run(tmp_path, "--cluster", "proef", STUB_EXEC_FAILS=exec_code)
+
+        assert run.returncode == int(exec_code)
         assert "not running" in run.stderr
         assert "containerdConfigPatches" not in run.stderr
         assert run.hosts_toml == ""
