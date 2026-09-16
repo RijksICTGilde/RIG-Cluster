@@ -3597,24 +3597,6 @@ class KeycloakConnector:
 
     # ==================== User Operations ====================
 
-    async def _realm_verifies_email(self, realm_name: str) -> bool:
-        """Whether this realm makes a user confirm their e-mail address.
-
-        Falls back to False when the realm cannot be read, which keeps a new user
-        pre-verified exactly as before. That direction is deliberate: the other one would
-        turn one unreadable moment into a user who has to click a confirmation mail that
-        may not have been sent, and being locked out is worse than being let in the way
-        yesterday's code let everyone in.
-        """
-        try:
-            realm = self.admin.get_realm(realm_name=realm_name)
-        except KeycloakError as e:
-            logger.warning(
-                f"Could not read realm '{realm_name}' to decide emailVerified, assuming no verification: {e}"
-            )
-            return False
-        return bool((realm or {}).get("verifyEmail"))
-
     async def create_user(
         self,
         realm_name: str,
@@ -3625,6 +3607,7 @@ class KeycloakConnector:
         last_name: str | None = None,
         enabled: bool = True,
         totp_secret: str | None = None,
+        skip_email_verification: bool = False,
     ) -> dict[str, Any]:
         """
         Create a user in the specified realm.
@@ -3642,6 +3625,8 @@ class KeycloakConnector:
                 browser step requires it at login. Note: Keycloak only imports
                 credentials on user creation - if the user already exists (409
                 below) the OTP credential is not added.
+            skip_email_verification: Let this user in without confirming their address.
+                Only for an account whose address does not exist, see the callers.
 
         Returns:
             User information dictionary including user ID
@@ -3660,26 +3645,22 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            # EMAILVERIFIED VOLGT DE REALM, en dat is de hele reden dat verifyEmail iets doet.
-            #
-            # Hier stond onvoorwaardelijk True. Elke gebruiker die via de invite-weg werd
-            # aangemaakt was daarmee vooraf geverifieerd zonder dat er ooit iets bevestigd
-            # was, en omdat SSO-gebruikers via ``trustEmail`` al geverifieerd binnenkomen
-            # bleef er als aanleiding voor een bevestigingsmail alleen het WIJZIGEN van een
-            # adres over. Dat is bijna nooit, dus verifyEmail zou een keten opleveren die
-            # in de praktijk stil blijft.
-            #
-            # Verifieert de realm, dan komt een nieuwe gebruiker binnen met False en
-            # bevestigt hij zijn adres bij zijn eerste login. Verifieert de realm niet, dan
-            # blijft het gedrag zoals het was: emailVerified heeft dan geen betekenis voor
-            # het inloggen.
-            user_data["emailVerified"] = not await self._realm_verifies_email(realm_name)
+            # Wie een adres heeft, bevestigt het, ongeacht ``verifyEmail`` op de realm.
+            # Waarom: features/keycloak-mail.md.
+            user_data["emailVerified"] = skip_email_verification
+            if not skip_email_verification:
+                user_data["requiredActions"] = ["VERIFY_EMAIL"]
 
         if first_name:
             user_data["firstName"] = first_name
 
         if last_name:
             user_data["lastName"] = last_name
+
+        # Staat de provider uit, dan slaat de browserflow de opgeslagen actie stil over.
+        # Gemeten, zie features/invites.md.
+        if "requiredActions" in user_data:
+            await self.set_required_action_enabled(realm_name, "VERIFY_EMAIL", True)
 
         try:
             # Switch to target realm
@@ -3711,6 +3692,17 @@ class KeycloakConnector:
             # Switch back to master
             self.admin.change_current_realm("master")
             raise
+
+    async def send_verify_email(self, realm_name: str, user_id: str) -> None:
+        """Without ``redirect_uri`` the link lands on Keycloak's own confirmation page, so
+        there is no redirect-URI validation to trip over.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            self.admin.send_verify_email(user_id=user_id)
+            logger.info(f"Sent verification mail to user {user_id} in realm '{realm_name}'")
+        finally:
+            self.admin.change_current_realm("master")
 
     async def get_user_by_username(self, realm_name: str, username: str) -> dict[str, Any] | None:
         """
