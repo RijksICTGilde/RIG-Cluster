@@ -278,11 +278,15 @@ ZAD_TEST_PG_PASSWORD = "zadtest"
 #: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
 #: poort waar niets luistert.
 ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
-#: Prefix van de database per run: ``zad_test_<namespace>_<pid>_<epoch>``. De pid maakt een
+#: Prefix van de database per run: ``zadtest_<namespace>_<pid>_<epoch>``. De pid maakt een
 #: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
-ZAD_TEST_DB_PREFIX = "zad_test_"
+#: Bewust niet meer ``zad_test_``: de veeg van oudere takken leest alles onder
+#: ``LIKE 'zad_test_%'`` als ``zad_test_<pid>``, en ``int()`` slikt de underscores in deze
+#: vorm, waarna ``os.kill`` op een te groot getal crasht en alle ORM-tests van die run
+#: een ERROR geven.
+ZAD_TEST_DB_PREFIX = "zadtest_"
 #: Een database uit een VREEMDE pid-namespace mag pas weg als geen enkele run nog zo lang
-#: kan draaien. De volledige suite doet een kwartier.
+#: kan draaien. De volledige suite doet zo'n 27 minuten.
 ZAD_TEST_DB_MAX_LEEFTIJD_S = 12 * 3600
 
 
@@ -426,7 +430,8 @@ def _pid_namespace() -> str:
 def _is_wees(naam: str, nu: float) -> bool:
     """Bij twijfel nee: een wees kost niets, een weggehaalde levende database alle ORM-tests.
 
-    Een naam in de oude vorm is niet te beoordelen; die haalt ``task test-db-reset`` weg.
+    Databases met het oude prefix ``zad_test_`` ziet de veeg niet; die haalt
+    ``task test-db-reset`` weg.
     """
     namespace, _, rest = naam.removeprefix(ZAD_TEST_DB_PREFIX).partition("_")
     pid, _, gemaakt = rest.partition("_")
