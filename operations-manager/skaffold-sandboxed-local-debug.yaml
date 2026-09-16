@@ -41,6 +41,9 @@ deploy:
   kubeContext: kind-rig-sandbox
   statusCheckDeadlineSeconds: 0
   kustomize:
+    # Net als kubeContext hierboven: zonder dit neemt skaffold de namespace van de
+    # ACTIEVE kubectl-context, en die staat hier geregeld op een productienamespace.
+    defaultNamespace: rig-system
     flags:
       apply:
       - --force-conflicts

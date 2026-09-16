@@ -32,8 +32,21 @@ build:
         strip: 'operations-manager/python/static/'
 
 deploy:
+  # VASTGEPIND op het kind-cluster, net als in skaffold-sandboxed-local.yaml. Zonder
+  # dit volgt skaffold de ACTIEVE kubectl-context, en die staat hier geregeld op
+  # productie. De taak geeft --kube-context al mee, maar dat helpt niet als dit bestand
+  # vanuit de IDE of met een kale `skaffold dev -f` wordt gestart.
+  #
+  # Let op: het cluster `gitops-fluxcd` bestaat niet meer, alleen zijn kubeconfig-context
+  # staat er nog. Deze pin laat dit bestand daarom falen op een onbereikbaar cluster in
+  # plaats van ergens anders te landen. Dat is de bedoeling zolang deze local-opstelling
+  # niet opgeruimd is.
+  kubeContext: kind-gitops-fluxcd
   statusCheckDeadlineSeconds: 0
   kustomize:
+    # Net als kubeContext hierboven: zonder dit neemt skaffold de namespace van de
+    # ACTIEVE kubectl-context, en die staat hier geregeld op een productienamespace.
+    defaultNamespace: rig-system
     flags:
       apply:
       - --force-conflicts
