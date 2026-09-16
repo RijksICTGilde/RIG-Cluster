@@ -972,10 +972,9 @@ tasks:
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
     cmds:
-      # Na sandbox:setup is .env-taskfile-current de sandbox-env. Deze taak laadt met
-      # kind load, maar de sandbox-overlay wijst naar het image in de registry, dus hier
-      # zou stil de vorige build uitrollen. Als eerste stap, omdat deps al vóór een
-      # precondition draaien.
+      # Na sandbox:setup leest deze taak de sandbox-env, waarvan de overlay naar de
+      # registry wijst: kind load zou stil de vorige build uitrollen. Eerste stap, want
+      # deps draaien al vóór een precondition.
       - |
         if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
           echo "Dit is een sandbox: gebruik task sandbox:update-operations-manager." >&2
