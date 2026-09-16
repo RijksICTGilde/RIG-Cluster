@@ -24,11 +24,17 @@ vars:
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
   # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
   # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
+  # Ongetrackte bestanden tellen mee, want docker neemt ze op in de build-context.
   SANDBOX_OM_TAG:
     sh: |
       tag="$(git rev-parse --short HEAD)"
-      if ! git diff --quiet HEAD -- operations-manager; then
-        tag="$tag-dirty-$(git diff HEAD -- operations-manager | sha1sum | cut -c1-7)"
+      if [ -n "$(git status --porcelain -- operations-manager)" ]; then
+        tag="$tag-dirty-$( {
+          git diff HEAD -- operations-manager
+          git ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
+            echo "$f"; cat "$f"
+          done
+        } | sha1sum | cut -c1-7)"
       fi
       echo "$tag"
   SANDBOX_OM_IMAGE: '{{.SANDBOX_OM_REPO}}:{{.SANDBOX_OM_TAG}}'
