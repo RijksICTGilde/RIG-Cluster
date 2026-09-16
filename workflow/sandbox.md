@@ -80,10 +80,11 @@ of any GitHub CI/CD - GitHub does not run the sandbox.
 task sandbox:update-operations-manager
 ```
 
-This builds the OPI image from the current tree (`--target application`), `kind load`s
-it into the cluster, redeploys, and stamps the deployment with
-`ZAD_VERSION=$(git describe --tags --always)` + `ZAD_BUILD_DATE`. Wait for the rollout
-to finish (`kubectl -n rig-system rollout status deployment/operations-manager`).
+This builds the OPI image from the current tree (`--target application`), pushes it as
+`localhost:5001/operations-manager:<commit>` to the registry next to the cluster
+(`docs/sandbox-kind-registry.md`), points the overlay at that tag, redeploys, stamps the
+deployment with `ZAD_VERSION=$(git describe --tags --always)` + `ZAD_BUILD_DATE`, and
+waits for the rollout.
 
 ### 2. Verify the running version matches your commit
 
