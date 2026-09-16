@@ -9,8 +9,8 @@
 >
 > **Do NOT run `task sandbox:update-operations-manager` (or `sandbox:setup`) in a session.**
 > Those are for a *full local dev* setup: they need `kustomize`, the SOPS `security/sandbox-key.txt`,
-> and they kustomize-apply an overlay that points at a **registry** image (`ghcr.io/...`) - none
-> of which apply to a session-based local-build deploy, so they will fail or deploy the wrong image.
+> and a cluster that knows the registry next to Kind (`docs/sandbox-kind-registry.md`) - none
+> of which apply to a session-based local-build deploy, so they will fail.
 > `sandbox-deploy` is the one blessed path here. The rest of this doc describes the full local
 > dev setup (for context), not the session flow.
 
