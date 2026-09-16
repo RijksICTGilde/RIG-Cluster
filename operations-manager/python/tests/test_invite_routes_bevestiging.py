@@ -12,7 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.invite_routes import invite_register_submit, invite_success
+from opi.api.invite_routes import invite_register_submit, invite_sso_callback, invite_success
 
 PROJECT = ("demo", {"display-name": "Demo-applicatie"}, {"contact_email": "beheer@example.org"}, "sandbox")
 
@@ -110,8 +110,47 @@ async def test_de_succespagina_krijgt_de_vlag_en_het_contactadres() -> None:
 
 
 @pytest.mark.asyncio
-async def test_de_sso_weg_krijgt_de_bevestigingstekst_niet() -> None:
-    """De SSO-callback zet de vlag niet, dus de pagina valt terug op de oude tekst."""
+async def test_de_sso_callback_vraagt_geen_bevestigingstekst() -> None:
+    """Die gebruiker komt via ``trustEmail`` al geverifieerd binnen."""
+    request = _request(
+        {
+            "invite_flow": {
+                "key": "sleutel",
+                "state": "s1",
+                "keycloak_url": "https://kc.example.org",
+                "realm_name": "rig-demo",
+                "code_verifier": "v",
+                "redirect_uri": "https://x/cb",
+            }
+        }
+    )
+    request.query_params = {"state": "s1", "code": "c1"}
+    manager = _invite_manager({})
+    manager.complete_sso_invite = AsyncMock(
+        return_value={
+            "user_id": "u1",
+            "email": "iemand@example.org",
+            "created": False,
+            "assigned": {"roles": [], "errors": []},
+        }
+    )
+    with (
+        patch("opi.api.invite_routes._find_project_by_invite_key", AsyncMock(return_value=PROJECT)),
+        patch("opi.api.invite_routes.InviteManager", return_value=manager),
+        patch("opi.api.invite_routes._exchange_code_for_token", AsyncMock(return_value={"access_token": "t"})),
+        patch("opi.api.invite_routes._get_userinfo", AsyncMock(return_value={"email": "iemand@example.org"})),
+    ):
+        response = await invite_sso_callback(request, "sleutel")
+
+    assert response.headers["location"] == "/invite/sleutel/success"
+    opgeslagen = request.session["invite_success"]
+    assert "verify_email" not in opgeslagen
+    assert "verification_mail_sent" not in opgeslagen
+
+
+@pytest.mark.asyncio
+async def test_zonder_vlag_krijgt_de_succespagina_de_oude_tekst() -> None:
+    """Wat de SSO-callback opslaat, geeft ``verify_email=False`` aan het sjabloon."""
     context = await _success_context({"email": "iemand@example.org", "created": True, "assigned": {}})
 
     assert context["verify_email"] is False

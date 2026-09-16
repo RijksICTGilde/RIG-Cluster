@@ -98,10 +98,34 @@ def test_de_mislukte_mail_wijst_naar_het_contactadres_van_de_uitnodiging() -> No
     assert "beheer@example.org" in html
 
 
-def test_zonder_contactadres_blijft_de_regel_leesbaar() -> None:
-    html = _render(verify_email=True, verification_mail_sent=False, contact_email="")
+@pytest.mark.parametrize(
+    ("language", "verwacht"), [("nl", "contact op met de beheerder."), ("en", "contact the administrator.")]
+)
+def test_zonder_contactadres_blijft_de_regel_leesbaar(language: str, verwacht: str) -> None:
+    html = _render(language=language, verify_email=True, verification_mail_sent=False, contact_email="")
 
-    assert "de beheerder" in html
+    assert verwacht in html
+
+
+@pytest.mark.parametrize("verification_mail_sent", [True, False])
+def test_de_projectnaam_en_het_contactadres_worden_een_keer_ge_escaped(verification_mail_sent: bool) -> None:
+    """De nieuwe teksten worden in een ``{% set %}``-blok opgebouwd en dan doorgegeven. Rauw
+    zou een weergavenaam uit het projectbestand HTML op de pagina zetten; dubbel zou
+    ``&amp;lt;`` tonen."""
+    html = _render(
+        verify_email=True,
+        verification_mail_sent=verification_mail_sent,
+        display_name="<b>Demo</b> & co",
+        contact_email="<i>beheer</i>",
+    )
+
+    body = html.split("</title>", 1)[1]
+    assert "<b>Demo</b>" not in body
+    assert "bij &lt;b&gt;Demo&lt;/b&gt; &amp; co" in body
+    assert "&amp;lt;" not in body
+    if not verification_mail_sent:
+        assert "<i>beheer</i>" not in body
+        assert "contact op met &lt;i&gt;beheer&lt;/i&gt;" in body
 
 
 @pytest.mark.parametrize(
