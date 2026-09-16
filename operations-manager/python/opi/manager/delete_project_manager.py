@@ -929,8 +929,6 @@ class DeleteProjectManager:
                     )
 
             # Step 4.65: Delete the project level of the deployments repo
-            # (<cluster>/<project>/_project). It hangs off the project, so the
-            # per-deployment cleanup above never touches it.
             if deletion_results["success"] or force:
                 await self._delete_project_level_folder(
                     project_name, current_cluster, project_data, current_cluster_deployments, deletion_results

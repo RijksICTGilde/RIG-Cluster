@@ -59,11 +59,7 @@ def apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> dict
 
 
 def _apply_rules(manifest: dict[str, Any], rules: Sequence[RegistryRule]) -> bool:
-    """De pas zelf. True als er aan dit manifest iets is veranderd.
-
-    De schrijvers hieronder hebben dat antwoord nodig: alleen een manifest dat echt is
-    opgelost wordt opnieuw geschreven, de rest komt letterlijk terug zoals hij binnenkwam.
-    """
+    """De pas zelf. True als er aan dit manifest iets is veranderd."""
     pod_spec = pod_spec_of(manifest)
     if pod_spec is None or not rules:
         return False
@@ -128,8 +124,7 @@ def apply_rules_to_directory(target_path: str, rules: Sequence[RegistryRule]) ->
 def apply_rules_to_document(document: str, rules: Sequence[RegistryRule]) -> str:
     """Draai de pas over een YAML-tekst, voor een kale pod die los wordt toegepast.
 
-    Een tekst met meer dan een document telt mee, en wat niet is opgelost komt letterlijk
-    terug: er wordt alleen opnieuw geschreven als er ook echt iets is veranderd.
+    Een tekst met meer dan een document telt mee.
     """
     if not rules or not document.strip():
         return document

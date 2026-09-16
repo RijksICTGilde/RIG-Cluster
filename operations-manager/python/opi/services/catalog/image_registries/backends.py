@@ -28,12 +28,8 @@ logger = logging.getLogger(__name__)
 #: Elk bestand van deze dienst op het projectniveau begint hiermee, voor de prune.
 FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 
-#: Terugval als de clusterconfig geen ``organization_api_version`` noemt.
-#: De waarde komt van het cluster, niet uit de operator-documentatie: gemeten op
-#: odcn-production met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl`
-#: (organizations, org, quay.k8s.rijksapps.nl/v1alpha1, namespaced, Organization), en op
-#: 2026-09-07 bevestigd door er een echte Organization mee aan te maken die reconcileerde
-#: (OrganizationReady, ProxyCacheReady) en daarna weer is verwijderd.
+#: Terugval als de clusterconfig geen ``organization_api_version`` noemt: de gemeten
+#: ODCN-waarde, zie features/image-registries.md.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
 
 
@@ -155,17 +151,8 @@ def backend_for_cluster(cluster: str) -> RegistryBackend:
 def _plain_password(registry: dict[str, Any], ctx: ProjectManifestContext) -> str | None:
     """Het token in leesbare vorm, of None als er geen token is opgegeven.
 
-    Dit is de bestaande AGE-gereedschapskist voor een projectbestand en niets nieuws:
-    ``carries_encrypted_value`` herkent de vorm, ``get_decoded_project_private_key_sync``
-    haalt de projectsleutel uit ``config`` en ``decrypt_password_smart_sync`` kent alle
-    drie de opslagvormen (armored AGE, ``base64+age:``, ``plain:``).
-
-    Wat de dienst zelf kiest is welke van de twee sleutelzoekers erbij hoort, en dat is
-    de fail-closed: dit is de SCHRIJFkant, dus een ontbrekende sleutel blaast op in
-    plaats van stil een onbruikbaar credential naar git te schrijven. De leeskant
-    (``ProjectAgeSecretConverter``) en de tokentoets (``enforcers._plain_token``) nemen
-    dezelfde helpers met ``resolve_project_private_key``, die None teruggeeft: daar is
-    "niet uit te pakken" een reden om te zwijgen, niet om te weigeren.
+    Met de fail-closed sleutelzoeker: dit is de SCHRIJFkant, dus een ontbrekende sleutel
+    blaast op in plaats van stil een onbruikbaar credential naar git te schrijven.
     """
     stored = registry.get("password")
     if not isinstance(stored, str) or not stored:

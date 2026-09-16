@@ -123,11 +123,8 @@ class ArgoManager:
     def _write_manifest_file(target_dir: str, filename: str, content: str) -> str:
         """Schrijf een gerenderd manifest in de uitgecheckte repo en geef het pad terug.
 
-        De vijf schrijfplekken in dit bestand deden hier dezelfde drie regels voor. Voor
-        een manifest dat nog uit een template moet komen is ``ManifestGenerator`` de weg;
-        deze schrijft wat ``generate_*_manifest`` al gerenderd heeft. Committen doet de
-        aanroeper niet: alles van een ronde gaat in de ene commit van
-        ``create_argocd_resources``.
+        Voor wat nog uit een template moet komen is ``ManifestGenerator`` de weg. Niet
+        committen: alles van een ronde gaat in de ene commit van ``create_argocd_resources``.
         """
         os.makedirs(target_dir, exist_ok=True)
         path = os.path.join(target_dir, filename)
@@ -671,8 +668,8 @@ class ArgoManager:
             logger.debug(f"Geen deployments op dit cluster voor '{project_name}'; geen projectapplicatie")
             return True
 
-        # Dezelfde regel als de schrijver, zodat de applicatie naar dezelfde repository
-        # wijst als waar de map geschreven is.
+        # Repository en pad komen uit dezelfde functies als bij de schrijver van de map
+        # (``_process_project_manifests``), zodat de applicatie niet ernaast kan wijzen.
         deployment = project_level_deployment(deployments)
         if deployment is None:
             return True
@@ -686,8 +683,6 @@ class ArgoManager:
             logger.error(f"Repository not found for project application: {deployment.get('repository')}")
             return False
 
-        # Dezelfde functie als de schrijver van die map (``_process_project_manifests``),
-        # zodat de applicatie niet naar een pad kan wijzen dat er niet staat.
         project_path = generate_project_level_manifest_path(cluster_name, project_name, repo_info.get("path", ""))
 
         app_name = generate_argocd_project_application_name(project_name)

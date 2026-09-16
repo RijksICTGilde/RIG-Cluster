@@ -68,11 +68,8 @@ spec:
       {% endfor %}
       {% endif %}
       {% if imagePullSecretsMap and imageURL in imagePullSecretsMap %}
-      # yaml_scalar: de secretnaam is de enige waarde hier die van de afnemer komt.
-      # Het patroon op RegistryEntry.secretName weigert een regeleinde al; dit is het
-      # tweede slot voor een waarde die binnendoor reist (een bestaand projectbestand,
-      # de migratie 2.8 -> 2.9). Zonder de quotes zet een '---' er een tweede DOCUMENT
-      # achteraan.
+      # yaml_scalar: tweede slot naast SECRET_NAME_PATTERN, voor een secretnaam die
+      # binnendoor reist (een bestaand projectbestand, de migratie 2.8 -> 2.9).
       imagePullSecrets:
         - name: {{ imagePullSecretsMap[imageURL] | yaml_scalar }}
       {% endif %}

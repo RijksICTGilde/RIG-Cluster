@@ -1196,10 +1196,6 @@ def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
     return changed
 
 
-#: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
-#: runs every step whose version is newer than the file's. Declaring it here rather than
-#: as a run of ``if version < X`` lines is what lets the schema check compare the chain
-#: against the schemas on disk, so a migration without a schema cannot slip through.
 def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
     """Verhuis de registries naar de dienst ``image-registries`` (v2.8 -> v2.9, RC-177).
 
@@ -1278,6 +1274,10 @@ def _set_service_config(project_data: dict[str, Any], service_name: str, config:
     Project(project_data).set(f"services/{service_name}/config", config)
 
 
+#: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
+#: runs every step whose version is newer than the file's. Declaring it here rather than
+#: as a run of ``if version < X`` lines is what lets the schema check compare the chain
+#: against the schemas on disk, so a migration without a schema cannot slip through.
 MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...] = (
     (2.1, _migrate_v2_to_v2_1),
     (2.2, _migrate_v2_1_to_v2_2),

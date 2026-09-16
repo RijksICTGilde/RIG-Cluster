@@ -10,14 +10,11 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 #: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
-#: Ook een veiligheidsgrendel: zonder patroon komt een waarde met een aanhalingsteken en
-#: een regeleinde in ``upstreamRegistry`` van het Organization-manifest terecht.
+#: Ook een veiligheidsgrendel, zie features/image-registries.md.
 #:
 #: ``$`` en niet ``\Z``, want de rust-engine (waar pydantic op draait) kent ``\Z`` niet.
-#: Het gecommitte fragment ``image-registries.v1.0.json`` draagt hetzelfde patroon naar de
-#: Python-engine, waar ``$`` een afsluitende newline wel doorlaat; dat fragment is vandaag
-#: drift-lock en geen poort, maar wie het wel als poort gebruikt hoort er ``\Z`` bij te
-#: zetten.
+#: In de Python-engine laat ``$`` een afsluitende newline door: wie het fragment
+#: ``image-registries.v1.0.json`` als poort gaat gebruiken, zet er ``\Z`` bij.
 _HOST_LABEL = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
 _PORT = r"[0-9]{1,5}"
 UPSTREAM_PATTERN = (
@@ -38,8 +35,7 @@ AGE_ENCRYPTED_OR_PLAIN_PATTERN = r"(-----BEGIN AGE ENCRYPTED FILE-----|^base64\+
 
 
 #: Een DNS-1123-achtige naam die met een kleine LETTER begint, zodat hij nooit als
-#: YAML-getal gelezen wordt. In het model en niet in het formulier, zodat de API dezelfde
-#: regel draagt.
+#: YAML-getal gelezen wordt.
 REGISTRY_NAME_PATTERN = r"^[a-z]([-a-z0-9]*[a-z0-9])?$"
 
 #: De uitleg bij dat patroon.
@@ -48,12 +44,8 @@ REGISTRY_NAME_MESSAGE = (
     "cijfers en streepjes bevatten, geen spaties of hoofdletters"
 )
 
-#: Een RFC-1123-subdomeinnaam: precies wat kubernetes een secret laat heten. Net als bij
-#: ``upstream`` is dit ook een veiligheidsgrendel: de waarde komt in
-#: ``deployment.yaml.jinja`` achter ``- name:`` te staan, dus zonder patroon zet een
-#: regeleinde er podvelden bij en een ``---`` een tweede DOCUMENT achteraan.
-#:
-#: ``$`` en niet ``\Z``, om dezelfde reden als bij ``UPSTREAM_PATTERN`` hierboven.
+#: Een RFC-1123-subdomeinnaam: precies wat kubernetes een secret laat heten. Net als
+#: ``UPSTREAM_PATTERN`` een veiligheidsgrendel, en met ``$`` om dezelfde reden.
 SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 
 

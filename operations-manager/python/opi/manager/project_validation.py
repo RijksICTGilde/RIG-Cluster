@@ -1000,10 +1000,7 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     if registry_errors:
         raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(registry_errors)}")
 
-    # Every service's own rules on the whole project (``Service.validate_project``): a rule
-    # that needs the other deployments, the other projects or the cluster config cannot be
-    # judged per config block, so it lives with the service and is collected here. This
-    # loop is the only thing the chokepoint knows about it.
+    # Every service's own rules on the whole project (``Service.validate_project``).
     service_errors: list[str] = []
     for service in project_validating_services():
         service_errors.extend(service.validate_project(project_data))

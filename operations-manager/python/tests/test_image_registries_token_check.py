@@ -1,4 +1,4 @@
-"""De tokentoets bij het opslaan (D5)."""
+"""De tokentoets bij het opslaan."""
 
 from __future__ import annotations
 

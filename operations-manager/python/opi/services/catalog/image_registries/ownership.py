@@ -1,15 +1,7 @@
 """Wie welke proxy-organisatie mag noemen.
 
-De regels van deze dienst die niet naar EEN configblok kijken maar naar het hele
-project en naar de andere projecten op het cluster: een organisatienaam is tenantbreed
-en het pull-secret dat eraan hangt wordt door ODCN naar elke namespace gerepliceerd, dus
-"van wie is deze organisatie" is een vraag die alleen buiten het configblok te
-beantwoorden is. Ze hangen aan ``ImageRegistriesService.validate_project`` en draaien
-daarmee op elke schrijfroute langs ``validate_project_structure``.
-
-De toetsen draaien ook op een project dat de dienst NIET aanvinkt: een image die naar de
-organisatie van een ander project wijst is geen dienstconfig, en juist wie de dienst
-weglaat zou anders vrij spel hebben.
+Een organisatienaam is tenantbreed en ODCN repliceert het pull-secret naar elke
+namespace, dus deze regels kijken naar de andere projecten op het cluster.
 """
 
 from __future__ import annotations
@@ -31,8 +23,7 @@ def validate_proxy_organization_ownership(project_data: dict[str, Any]) -> list[
     projectnamen komen uit de projectenlijst, want een friendlyName mag zelf koppeltekens
     bevatten.
     """
-    # Lazy: de store leest ``project_validation``, en dat leest de dienstenlijst waar
-    # deze module in zit.
+    # Lazy: importcyclus via project_validation en de dienstenlijst.
     from opi.services.project_store import get_project_store
 
     project_name = project_data.get("name", "")
@@ -103,8 +94,7 @@ def _foreign_owner_of_organization(organization: str, cluster: str, project_name
 
     Een gedeelde proxy draagt geen projectnaam en levert dus None op.
     """
-    # Lazy: de store leest ``project_validation``, en dat leest de dienstenlijst waar
-    # deze module in zit.
+    # Lazy: importcyclus via project_validation en de dienstenlijst.
     from opi.services.project_store import get_project_store
 
     customer_name = get_image_registries_config(cluster).get("customer_name")
@@ -174,8 +164,7 @@ def validate_proxy_organization_claims(project_data: dict[str, Any]) -> list[str
     naam wordt op 63 tekens afgekapt, dus dit meet de UITKOMST. Binnen het project zelf
     geldt hetzelfde: twee entries op één naam is één bestand op het projectniveau.
     """
-    # Lazy: de store leest ``project_validation``, en dat leest de dienstenlijst waar
-    # deze module in zit.
+    # Lazy: importcyclus via project_validation en de dienstenlijst.
     from opi.services.project_store import get_project_store
 
     project_name = project_data.get("name", "")

@@ -422,9 +422,9 @@ class TestHetSecretNameKanNietUitZijnRegelBreken:
                 AddRegistryBySecretRequest(name="eigen", url="ghcr.io", secretName=kwaad)
 
     def test_het_gerenderde_manifest_blijft_een_document(self) -> None:
-        """Het tweede, onafhankelijke slot: ook een waarde die BINNENDOOR reist -- een
+        """Het tweede, onafhankelijke slot: ook een waarde die BINNENDOOR reist (een
         bestaand projectbestand, de migratie 2.8 -> 2.9, die ``secretName`` allebei
-        ongetoetst overzetten -- blijft binnen zijn scalar.
+        ongetoetst overzetten) blijft binnen zijn scalar.
 
         Zonder ``| yaml_scalar`` gaf deze render drie documenten, waarvan het tweede de
         RoleBinding naar ``cluster-admin`` was.
