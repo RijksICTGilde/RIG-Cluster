@@ -34,7 +34,9 @@ Er is dus geen ruimte voor een build die pakt wat hij wil. De schijf is niet het
    Dit schrijft eerst `opi/version.json` uit git, controleert het vrije geheugen, zorgt
    voor een builder met een geheugengrens, bouwt met cache en pusht
    `localhost:5001/operations-manager:<commit>` naar de registry naast het cluster. Het
-   cluster moet die registry kennen, zie `docs/sandbox-kind-registry.md`.
+   cluster moet die registry kennen, zie `docs/sandbox-kind-registry.md`. Met een
+   ongecommitte wijziging in `operations-manager/` krijgt de tag `-dirty-<hash>` erachter;
+   neem dan in stap 4 de naam die de build meldt.
 4. **Rol uit** (in een sessie zonder `kustomize` en de SOPS-sleutel gaat dit met de hand,
    anders `task sandbox:update-operations-manager`):
    ```bash

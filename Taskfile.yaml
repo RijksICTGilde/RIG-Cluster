@@ -22,10 +22,8 @@ vars:
   SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
   # De registry naast het kind-cluster, zie docs/sandbox-kind-registry.md.
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
-  # Een tag per commit, zodat elke deploy de podspec echt verandert en Kubernetes zelf
-  # uitrolt. Een ongecommitte wijziging krijgt een hash van de diff erachter: met
-  # dezelfde tag houdt IfNotPresent het vorige image vast. Alleen operations-manager/
-  # telt, want configure-operations-manager-image schrijft zelf in bootstrap/.
+  # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
+  # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
   SANDBOX_OM_TAG:
     sh: |
       tag="$(git rev-parse --short HEAD)"
@@ -2612,8 +2610,7 @@ tasks:
         echo "Overlays configured for local images"
     silent: true
 
-  # Schrijft in de werkboom, niet in git. Daarom draait update-operations-manager dit bij
-  # elke deploy: een overlay van een eerdere checkout wijst anders naar een ander image.
+  # Draait bij elke deploy, zie docs/sandbox-kind-registry.md.
   sandbox:configure-operations-manager-image:
     desc: "Zet de operations-manager-overlay op het image van deze commit in de registry"
     cmds:
@@ -3377,9 +3374,8 @@ tasks:
         echo "Building operations-manager Docker image..."
         # --cache-from: dezelfde vorm als publish-operations-manager (docker-build-and-push).
         # Leeg gelaten pakt hij alleen de cache van de builder zelf; met SANDBOX_CACHE_IMAGE
-        # kun je er een registry-cache naast zetten. Geen --cache-to naar de registry van
-        # de sandbox: een garbage collect daar kan lagen weggooien die de cache nog nodig
-        # heeft. De cache blijft in de builder.
+        # kun je er een registry-cache naast zetten. Geen --cache-to naar de sandboxregistry:
+        # een garbage collect daar kan lagen weggooien die de cache nog nodig heeft.
         CACHE_FLAGS=""
         if [ -n "{{.SANDBOX_CACHE_IMAGE}}" ]; then
           CACHE_FLAGS="--cache-from type=registry,ref={{.SANDBOX_CACHE_IMAGE}}"
@@ -3397,8 +3393,7 @@ tasks:
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
     cmds:
-      # Idempotent. Mist het cluster de containerd-patch, dan faalt dit hier en niet
-      # pas als de pod het image niet kan pullen.
+      # Idempotent; faalt vroeg als het cluster de containerd-patch mist.
       - task: sandbox:setup-registry
       # Bouwen en pushen staat in één taak, zodat de preflight, de geheugengrens
       # en de cache hier niet uit de pas kunnen lopen met de bouwtaak.

@@ -7,9 +7,8 @@ eruitziet zoals hij eruitziet.
 
 Een sandboxdeploy pusht het image naar de registry naast het cluster en de node pullt
 het, allebei per laag (`docs/sandbox-kind-registry.md`). Wat al in de registry of op de
-node staat gaat niet opnieuw over de leiding. Daarvoor serialiseerden `buildx --load` en
-`kind load` het volledige image van ongeveer 971 MB twee keer per deploy. Wat dit bestand
-regelt is hoeveel er per codewijziging OPNIEUW gebouwd en dus verstuurd wordt.
+node staat gaat niet opnieuw over de leiding. Wat dit bestand regelt is hoeveel er per
+codewijziging OPNIEUW gebouwd en dus verstuurd wordt.
 
 ## De vorm
 

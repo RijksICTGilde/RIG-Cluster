@@ -4,9 +4,7 @@ kind: Kustomization
 resources:
   - ../sandboxed-local
 
-# Skaffold pusht naar localhost:5001/operations-manager en vervangt alleen image-
-# verwijzingen met die naam. Zonder deze regel blijft de gepubliceerde ghcr-image staan
-# zolang configure-operations-manager-image niet gedraaid heeft.
+# Skaffold vervangt alleen verwijzingen met de naam van zijn artifact.
 images:
   - name: ghcr.io/minbzk/base-images/operations-manager/operations-manager
     newName: localhost:5001/operations-manager

@@ -66,7 +66,6 @@ lagen die hij mist.
 2. `sandbox:build-operations-manager-image` pusht `localhost:5001/operations-manager:<tag>`.
    De tag is de korte commit. Staat er een ongecommitte wijziging in `operations-manager/`,
    dan komt er `-dirty-<hash van de diff>` achter: met dezelfde tag zou er niets uitrollen.
-   De buildcache blijft in de builder, niet in de registry.
 3. `sandbox:configure-operations-manager-image` zet de overlay in de werkboom op die tag.
    Dat gebeurt bij elke deploy, zodat een overlay uit een eerdere checkout niet stil een
    ander image uitrolt.
