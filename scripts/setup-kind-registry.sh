@@ -9,8 +9,12 @@
 # cluster en houdt zijn lagen, ook als het cluster verdwijnt.
 #
 # Dit is de officiele kind-recipe (https://kind.sigs.k8s.io/docs/user/local-registry/):
-# registry-container op 127.0.0.1:5000, een hosts.toml per node, de registry aan het
+# registry-container op 127.0.0.1:5001, een hosts.toml per node, de registry aan het
 # kind-netwerk, en de local-registry-hosting configmap in kube-public.
+#
+# De poort is 5001 en niet 5000, want op de gedeelde dev-server bindt claude-dashboard
+# al op 127.0.0.1:5000 en loopt `docker run` daarop stuk. De kind-docs stapten om
+# dezelfde reden over (op macOS zit AirPlay op 5000).
 #
 # VEREIST in de kind-config van het cluster:
 #
@@ -29,7 +33,7 @@
 # Omgevingsvariabelen:
 #   KIND_CLUSTER_NAME    clusternaam (standaard rig-sandbox, --cluster gaat voor)
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
-#   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5000)
+#   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001)
 #   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2)
 #
 # Exitcodes: 0 = klaar, 1 = de kind-config mist containerdConfigPatches, 2 = fout gebruik.
@@ -38,7 +42,7 @@ set -euo pipefail
 
 CLUSTER="${KIND_CLUSTER_NAME:-rig-sandbox}"
 REG_NAME="${KIND_REGISTRY_NAME:-kind-registry}"
-REG_PORT="${KIND_REGISTRY_PORT:-5000}"
+REG_PORT="${KIND_REGISTRY_PORT:-5001}"
 REG_IMAGE="${KIND_REGISTRY_IMAGE:-registry:2}"
 
 while [ $# -gt 0 ]; do

@@ -1,7 +1,7 @@
 # De registry naast het sandbox-cluster
 
 De sandbox heeft een image-registry die **naast** het kind-cluster draait, niet erin: een
-losse docker-container `kind-registry` op `127.0.0.1:5000`. Dat is niet af te leiden uit de
+losse docker-container `kind-registry` op `127.0.0.1:5001`. Dat is niet af te leiden uit de
 manifesten in deze repo, want er staat geen manifest van. `scripts/setup-kind-registry.sh`
 zet hem neer, en `task sandbox:setup` roept dat script aan direct na `sandbox:create-cluster`.
 
@@ -19,9 +19,10 @@ registry blijft waar hij voor is, images van projecten; zie
 
 ## Wat het script doet
 
-1. Start de container `kind-registry` (`registry:2`) op `127.0.0.1:5000`, met
-   `--restart=always`, als hij nog niet draait.
-2. Schrijft op elke node `/etc/containerd/certs.d/localhost:5000/hosts.toml` die naar
+1. Start de container `kind-registry` (`registry:2`) op `127.0.0.1:5001`, met
+   `--restart=always`, als hij nog niet draait. Poort 5001 en niet 5000: op de gedeelde
+   dev-server bindt `claude-dashboard` al op `127.0.0.1:5000`.
+2. Schrijft op elke node `/etc/containerd/certs.d/localhost:5001/hosts.toml` die naar
    `http://kind-registry:5000` wijst.
 3. Hangt de registry aan het docker-netwerk `kind`, anders kan de node hem niet bereiken.
 4. Zet de configmap `local-registry-hosting` in `kube-public` (KEP-1755), waar gereedschap
@@ -50,9 +51,9 @@ mist, moet opnieuw gebouwd worden; wijzigen achteraf werkt niet.
 ## Gebruik
 
 ```bash
-docker tag mijn-image:dev localhost:5000/mijn-image:dev
-docker push localhost:5000/mijn-image:dev
-kubectl run proef --image=localhost:5000/mijn-image:dev --restart=Never
+docker tag mijn-image:dev localhost:5001/mijn-image:dev
+docker push localhost:5001/mijn-image:dev
+kubectl run proef --image=localhost:5001/mijn-image:dev --restart=Never
 ```
 
 Geen `kind load` en geen pull-secret. De node haalt het image zelf op en pullt alleen de
