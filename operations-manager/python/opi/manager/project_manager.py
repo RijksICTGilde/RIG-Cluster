@@ -5678,8 +5678,7 @@ class ProjectManager:
         )
 
         # Waar komt de image van elk component vandaan, en welk pull-secret hoort erbij.
-        # Het secret zelf wordt hier niet meer geschreven: dat is namespace-scoped en staat
-        # op het projectniveau (contribute_project_manifests op de dienst).
+        # Het secret zelf is namespace-scoped en staat op het projectniveau.
         component_definitions = {
             c.get("name"): c for c in project_data.get("components", []) or [] if isinstance(c, dict)
         }
@@ -6767,9 +6766,6 @@ class ProjectManager:
                     if attachment_sops_filename not in created_files:
                         created_files.append(attachment_sops_filename)
                     logger.info(f"Created attachment secret manifest: {secret_name}")
-
-            # Het registry-secret staat niet meer hier maar op het projectniveau: het is
-            # namespace-scoped en elke deployment van dit project deelt die namespace.
 
             # Create Let's Encrypt Issuer manifest if configured (once per unique base-domain/issuer combination)
             if base_domain and issuer_config and issuer_config.startswith("letsencrypt"):
@@ -8828,11 +8824,7 @@ class ProjectManager:
             return {"success": False, "error": "An internal error occurred", "error_type": "internal_error"}
 
     def _upsert_registry_entry(self, project_data: dict[str, Any], entry: dict[str, Any]) -> bool:
-        """Schrijf een registry in de config van de dienst image-registries. True als nieuw.
-
-        Sinds schemaversie 2.9 staat de lijst niet meer op de projectwortel maar bij zijn
-        eigenaar. Dit is de ene schrijfplek; beide upsert-routes hieronder gaan erlangs.
-        """
+        """Schrijf een registry in de config van de dienst image-registries. True als nieuw."""
         service_name = ServiceType.IMAGE_REGISTRIES.value
         project = Project(project_data)
         config = project.service_config(service_name)

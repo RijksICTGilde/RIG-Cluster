@@ -21,12 +21,10 @@ hetzelfde.
 Dan vink je deze dienst bij dat component niet aan en vul je niets in. Publieke images
 werken vanzelf.
 
-Let op wat de keuze bij een component wel en niet doet: hij bepaalt WELKE van je registries
-voorgaat, niet OF er een geldt. Zet je hierboven `ghcr.io/mijnorg` neer, dan is die hele
-registry van jou, en dan haalt elk component dat een image onder `ghcr.io/mijnorg` draait
-hem daar op, met jouw token, ook als je bij dat component niets hebt aangevinkt. Dat is
-zoals het hoort: zonder jouw token zou zo'n image helemaal niet op te halen zijn. Kiezen
-hoef je dus alleen als er meer dan een van je registries bij dezelfde image past.
+De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt.
+Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder
+`ghcr.io/mijnorg` die met jouw token op, ook zonder vinkje bij dat component. Kiezen hoef je
+alleen als meer dan een van je registries bij dezelfde image past.
 
 ## Wat je van het token moet weten
 
@@ -40,5 +38,5 @@ hoef je dus alleen als er meer dan een van je registries bij dezelfde image past
 
 Zet je de dienst uit, dan wordt de kopie die het platform van je images bewaart opgeruimd,
 inclusief de organisatie die daarvoor is aangemaakt. Bovenstrooms, in je eigen registry,
-verandert er niets: je images staan er gewoon nog. De eerste keer dat een pod daarna start
+verandert er niets: je images staan er nog. De eerste keer dat een pod daarna start
 duurt het pullen iets langer, want de kopie moet opnieuw worden opgehaald.

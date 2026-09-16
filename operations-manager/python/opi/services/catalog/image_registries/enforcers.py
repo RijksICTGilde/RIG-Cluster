@@ -1,4 +1,4 @@
-"""De tokentoets bij het opslaan (D5).
+"""De tokentoets bij het opslaan.
 
 Bij het pullen levert een te smal token ``ImagePullBackOff`` met "repository not found",
 een melding die de verkeerde kant op wijst. Getoetst wordt het tag-overzicht van een

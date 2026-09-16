@@ -311,11 +311,8 @@ CLUSTER_CONFIG = {
             "backend": "quay-proxy-organization",
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
-            # Hier en niet in het sjabloon: een platformfeit dat per cluster kan afwijken.
-            # Gemeten op odcn-production met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl`
-            # (organizations, org, quay.k8s.rijksapps.nl/v1alpha1, namespaced, Organization). Op
-            # 2026-09-07 is met precies deze apiVersion een Organization aangemaakt die
-            # reconcileerde (OrganizationReady, ProxyCacheReady) en daarna weer verwijderd.
+            # Gemeten op het cluster, niet uit de operator-documentatie; zie
+            # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
             "rules": [
@@ -1423,9 +1420,7 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
 def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
     """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
 
-    Keys: ``backend``, en voor de Quay-variant ``registry_host`` / ``customer_name`` /
-    ``rotation_days`` plus ``rules``. Een cluster zonder de sleutel krijgt
-    ``direct-secret`` zonder tabel.
+    Een cluster zonder de sleutel krijgt ``direct-secret`` zonder tabel.
     """
     try:
         config = get_cluster_config(cluster_name).get("image_registries")

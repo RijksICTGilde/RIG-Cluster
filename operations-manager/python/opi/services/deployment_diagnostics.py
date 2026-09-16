@@ -394,8 +394,6 @@ def summarize_component_pods(
     replicas are the intended end state, the card already names them and their reason, and
     a red "nothing is running" next to that would contradict it.
     """
-    # Met ``project_data`` worden ook de eigen proxy-organisaties van dit project
-    # teruggerekend, niet alleen de gedeelde clustertabel.
     cluster = settings.CLUSTER_MANAGER
     deployment_name = deployment.get("name") or ""
 

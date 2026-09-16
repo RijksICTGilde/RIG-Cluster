@@ -162,7 +162,6 @@ class ImageRegistriesService(Service):
                 post_save_action="process_project",
                 editables=[REGISTRIES_SEQUENCE],
                 layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")],
-                # D5: het token wordt bij het opslaan getoetst.
                 enforcer=RegistryTokenEnforcer(),
             )
             self._config_section_cache = cached

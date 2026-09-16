@@ -1,6 +1,3 @@
-{# De toestand van de proxy-organisaties, met htmx opgehaald: dit leest het CLUSTER, en
-   een blok dat rendert mag geen connector aanroepen. Wachten is hier normaal, de pod
-   herstelt vanzelf zodra de proxy werkt. #}
 {% if not applicable %}
     <c-paragraph size="sm">Op dit cluster halen de nodes je images rechtstreeks op; er is geen proxy die klaar moet staan.</c-paragraph>
 {% elif not statuses %}
@@ -11,7 +8,7 @@
             <c-stack gap="xs">
                 <c-cluster gap="sm" align="center">
                     <c-icon :icon="('check-mark-circle' if status.state == 'ready' else 'timer') | nldd_icon" size="md" />
-                    <c-span><strong>{{ status.registry }}</strong> - {{ status.message }}</c-span>
+                    <c-span><strong>{{ status.registry }}</strong>: {{ status.message }}</c-span>
                 </c-cluster>
                 {# De datum als variabele en niet in het attribuut afgesneden: de
                    LOTC-voorbewerker struikelt over de plak in een :attribuut. #}

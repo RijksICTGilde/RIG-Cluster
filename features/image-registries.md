@@ -1,8 +1,8 @@
 # Eigen container registries (`image-registries`)
 
-Een afnemer die een image draait uit zijn eigen private registry vult in wat hij van
-zichzelf weet: de registry en een token. Wat er technisch onder gebeurt verschilt per
-cluster, en dat verschil hoort hij niet te merken.
+Wie een image draait uit een eigen private registry, vult in wat alleen de afnemer weet:
+de registry en een token. Wat er technisch onder gebeurt verschilt per cluster, en dat
+verschil merkt de afnemer niet.
 
 ```
 afnemer geeft:  upstream + gebruikersnaam + token          (eenmalig, projectniveau)
@@ -67,18 +67,17 @@ Bewust zo, en om twee redenen:
 
 - Een registry-entry zegt "deze upstream is van mij, en dit is het token". Een image onder
   die prefix bij de GEDEELDE proxy laten uitkomen betekent een pull zonder credentials, en
-  dus een `ImagePullBackOff` met de melding dat de image niet bestaat -- precies de fout
+  dus een `ImagePullBackOff` met de melding dat de image niet bestaat: precies de fout
   die de verkeerde kant op wijst.
 - De manifestpas loopt over de hele deployment-map met dezelfde `build_rules()` en weet
   niet welk component welke container is. Zou de componentlus een andere lijst gebruiken,
   dan gaven de twee wegen een ander antwoord op dezelfde vraag, en herschreef de pas het
   daarna alsnog.
 
-Het overwogen alternatief -- voor een component met een keuze alleen die ene regel plus de
-clustertabel, en voor een component zonder keuze alleen de clustertabel -- is daarop
-afgewezen.
+Het overwogen alternatief (voor een component met een keuze alleen die ene regel plus de
+clustertabel, en zonder keuze alleen de clustertabel) is daarop afgewezen.
 
-De consequentie hoort de afnemer wel te horen, en `help.md` zegt hem: niet aanvinken is
+De afnemer hoort de consequentie wel te kennen, en `help.md` noemt haar: niet aanvinken is
 geen keuze voor de publieke weg. Publiek is wat een image is als hij buiten al je eigen
 registries valt. `TestEenEigenRegistryGeldtVoorHetHeleProject` in
 `tests/test_image_registries_rules.py` pint het vast.
@@ -169,7 +168,7 @@ image-normalisatie op een prefix loslaat, laat een upstream zonder pad (de vorm 
 vergelijken zijn de tokentoets (`enforcers.py`) en het vooruit invullen van het keuzeveld
 (`providers.py`).
 
-`display_image()` is de weg terug, voor de schermen: een gebruiker ziet zijn eigen registry
+`display_image()` is de weg terug, voor de schermen: een gebruiker ziet de eigen registry
 in plaats van de kale RCR-URL.
 
 ## De provisioning-backend
@@ -188,8 +187,8 @@ De groep en versie van de `Organization`-CRD staan in de clusterconfig
 cluster kan afwijken. Op `odcn-production` is het `quay.k8s.rijksapps.nl/v1alpha1`, gemeten
 met `kubectl api-resources --api-group=quay.k8s.rijksapps.nl` en bevestigd door er op
 2026-09-07 een `Organization` mee aan te maken die reconcileerde (`OrganizationReady`,
-`ProxyCacheReady`). Die herkomst staat bij allebei de plekken waar de waarde staat: de
-clusterconfig (`cluster_config.py`) en de terugval in `backends.py`.
+`ProxyCacheReady`). De waarde staat in de clusterconfig (`cluster_config.py`) en als terugval
+in `backends.py`.
 
 Neem hem niet over uit de operator-documentatie: die noemt `quay.redhat.com/v1`, en met die
 waarde weigert de API-server elk gegenereerd manifest met `no matches for kind Organization in
@@ -211,7 +210,7 @@ deze map kan nooit botsen met een deployment. De applicatie heet `{project}-proj
 daarom is `project` de eerste gereserveerde deploymentnaam
 (`RESERVED_DEPLOYMENT_NAMES` in `opi/utils/naming.py`).
 
-Wat er komt te staan bepalen de DIENSTEN, via de haak `contribute_project_manifests` --
+Wat er komt te staan bepalen de DIENSTEN, via de haak `contribute_project_manifests`,
 dezelfde vorm als `contribute_deployment_manifests` een laag lager. De bestandsnaam begint
 verplicht met de dienstnaam, zodat de symmetrische prune hem weer weghaalt zodra de dienst
 uitgaat. De ACME-issuers, de tenant-baseline netwerkpolicy en de namespace zelf horen daar
@@ -497,7 +496,7 @@ proxy er met een htmx-lazyload bij (`web.py`): `proxyCache.ready`,
 projectbestand maar in het cluster, en een blok dat rendert mag geen connector aanroepen.
 
 Een organisatie die er nog niet is, is geen fout: de proef mat 20 tot 25 seconden. Het blok
-is er zodat een wachtende afnemer ziet wáárom hij wacht.
+laat een wachtende afnemer zien wáárom er gewacht wordt.
 
 Het statusendpoint is een eigen route en draagt dus zijn eigen eigendomscontrole: wie geen
 lid van het project is krijgt 403, dezelfde vorm als bij de backups.
