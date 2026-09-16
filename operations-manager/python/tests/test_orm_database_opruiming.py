@@ -76,7 +76,6 @@ VREEMDE_NAMESPACE = "4026534473"
 
 
 def _dode_pid() -> int:
-    """Een pid die gegarandeerd bestond en nu gegarandeerd weg is."""
     kind = subprocess.Popen([sys.executable, "-c", "pass"])
     kind.wait()
     return kind.pid
@@ -123,7 +122,6 @@ class TestWeesOfNiet:
 
 
 def test_de_namespace_is_die_van_dit_proces() -> None:
-    """Zonder dit getal is de pid in de naam niets waard."""
     assert _pid_namespace() == str(os.stat("/proc/self/ns/pid").st_ino)
 
 
