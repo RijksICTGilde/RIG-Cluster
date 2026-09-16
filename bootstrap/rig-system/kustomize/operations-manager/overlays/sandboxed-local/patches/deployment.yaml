@@ -16,8 +16,7 @@ spec:
       - name: operations-manager
         image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest
         # task sandbox:configure-operations-manager-image zet dit op
-        # localhost:5001/operations-manager:<commit>, een tag per commit in de registry
-        # naast het cluster.
+        # localhost:5001/operations-manager:<commit>.
         #
         # IfNotPresent en niet Always. Met Always haalde kubelet de REMOTE :latest uit ghcr
         # op en overschreef daarmee de build van de branch. Op 14 augustus 2026 kostte dat
