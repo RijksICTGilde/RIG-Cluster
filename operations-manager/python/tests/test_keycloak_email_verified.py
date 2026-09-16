@@ -70,7 +70,14 @@ async def test_de_realm_wordt_er_niet_meer_over_bevraagd() -> None:
 
 @pytest.mark.asyncio
 async def test_de_required_action_wordt_aangezet_voordat_hij_wordt_toegekend() -> None:
-    """Staat hij uit op de realm, dan negeert Keycloak hem zonder een woord."""
+    """Zonder dit is de grendel weg, en stil.
+
+    Gemeten op Keycloak 25.0.6 (sandbox, realm jc-77j-sandboxed-local): met de provider UIT
+    wordt ``VERIFY_EMAIL`` wel gewoon op de gebruiker opgeslagen, maar slaat de browserflow
+    hem over en logt de gebruiker door naar de applicatie. Met de provider AAN komt het
+    scherm "E-mailadres-verificatie". Het verschil zit in het INLOGGEN, niet in het
+    aanmaken.
+    """
     admin = _admin()
     admin.get_required_action_by_alias.return_value = {"alias": "VERIFY_EMAIL", "enabled": False}
 

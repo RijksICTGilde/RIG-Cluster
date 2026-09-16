@@ -3663,8 +3663,15 @@ class KeycloakConnector:
         if last_name:
             user_data["lastName"] = last_name
 
-        # Staat de required action op de realm uit, dan negeert Keycloak hem bij het
-        # aanmaken zonder een woord en is de grendel hierboven weg.
+        # Zonder dit is de grendel hierboven weg. Gemeten op Keycloak 25.0.6, sandbox: staat
+        # de provider UIT op de realm, dan wordt de required action wel gewoon OPGESLAGEN op
+        # de gebruiker, maar slaat de browserflow hem over en logt hij door naar de
+        # applicatie. Staat hij AAN, dan komt het scherm "E-mailadres-verificatie".
+        #
+        # Het verschil zit dus in het INLOGGEN en niet in het aanmaken, en het is stil: de
+        # gebruiker draagt de actie zichtbaar en komt er toch langs. (De directe
+        # wachtwoordgrant weigert in beide gevallen met "Account is not fully set up", dus
+        # daar is het verschil niet te zien.)
         if "requiredActions" in user_data:
             await self.set_required_action_enabled(realm_name, "VERIFY_EMAIL", True)
 

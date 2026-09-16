@@ -116,6 +116,13 @@ was. Zie `features/keycloak-mail.md` voor wat `verifyEmail` nog wel doet.
 De SSO-weg raakt dit niet: die gebruiker komt via `trustEmail` al geverifieerd binnen en
 krijgt de oude succespagina.
 
+**De required action moet AAN staan op de realm, en dat borgt `create_user()` zelf.** Gemeten
+op Keycloak 25.0.6: staat de provider `VERIFY_EMAIL` uit, dan wordt de actie wel gewoon op de
+gebruiker opgeslagen, maar slaat de browserflow hem over en logt de gebruiker door naar de
+applicatie. Hij draagt de grendel dus zichtbaar en komt er toch langs. De directe
+wachtwoordgrant weigert in beide gevallen met "Account is not fully set up", dus daar is het
+verschil niet te zien.
+
 Drie dingen om te weten als een uitgenodigde meldt dat hij niet binnenkomt:
 
 - **De post gaat via de mailrelay van het platform**, met één account voor heel Keycloak. Er
