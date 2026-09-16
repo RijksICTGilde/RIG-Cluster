@@ -7,11 +7,14 @@ Drie dingen worden hier bewaakt:
      Valt die weg, dan negeert containerd de hosts.toml en pullt de node stilletjes niets.
   3. Taskfile - sandbox:setup moet het script aanroepen na het cluster en voor alles wat
      een image nodig heeft.
+  4. De verwijzingen naar docs/sandbox-kind-registry.md. Het script en de kind-config
+     leggen niets meer zelf uit, dus een hernoemde doc laat de weigering naar niets wijzen.
 
 De shell-stappen worden gemeten met stubs voor docker, kind en kubectl die hun aanroepen
 wegschrijven. Zo is de volgorde en de inhoud toetsbaar zonder een echt cluster.
 """
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
 KIND_CONFIG = REPO_ROOT / "sandboxed-local" / "kind-config.yaml"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
+DOC = REPO_ROOT / "docs" / "sandbox-kind-registry.md"
 
 REGISTRY_TASK = "sandbox:setup-registry"
 CREATE_CLUSTER_TASK = "sandbox:create-cluster"
@@ -30,6 +34,9 @@ CREATE_CLUSTER_TASK = "sandbox:create-cluster"
 DOCKER_STUB = """#!/usr/bin/env bash
 echo "docker $*" >> "$STUB_LOG"
 case "$1" in
+  run)
+    [ -z "${STUB_RUN_FAILS:-}" ] || { echo "docker: port is already allocated" >&2; exit 125; }
+    ;;
   inspect)
     case "$*" in
       *State.Running*)
@@ -213,6 +220,40 @@ class TestSetupScript:
 
         assert "kind get nodes --name rig-sandbox" in run.log
 
+    def test_cluster_name_comes_from_the_environment(self, tmp_path: Path) -> None:
+        run = _run(tmp_path, KIND_CLUSTER_NAME="uit-de-omgeving")
+
+        assert "kind get nodes --name uit-de-omgeving" in run.log
+        assert "kubectl --context kind-uit-de-omgeving" in run.log
+
+    def test_cluster_flag_beats_the_environment(self, tmp_path: Path) -> None:
+        """De kop belooft dat --cluster voorgaat; sandbox:setup geeft hem altijd mee."""
+        run = _run(tmp_path, "--cluster", "van-de-vlag", KIND_CLUSTER_NAME="uit-de-omgeving")
+
+        assert "kind get nodes --name van-de-vlag" in run.log
+        assert "uit-de-omgeving" not in run.log
+
+    def test_cluster_flag_without_a_name_is_refused(self, tmp_path: Path) -> None:
+        """Zonder deze weigering zou --cluster als laatste woord het cluster leegmaken."""
+        run = _run(tmp_path, "--cluster")
+
+        assert run.returncode == 2
+        assert "docker run" not in run.log
+        assert "kind get nodes" not in run.log
+
+    def test_registry_name_is_configurable(self, tmp_path: Path) -> None:
+        """De naam draagt ook de hostnaam in hosts.toml; een vaste waarde daar wijst mis."""
+        run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_NAME="proef-registry")
+
+        assert "--name proef-registry registry:2" in run.log
+        assert run.hosts_toml.strip() == '[host."http://proef-registry:5000"]'
+        assert "docker network connect kind proef-registry" in run.log
+
+    def test_registry_image_is_configurable(self, tmp_path: Path) -> None:
+        run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_IMAGE="registry:3")
+
+        assert "--name kind-registry registry:3" in run.log
+
     def test_port_is_configurable(self, tmp_path: Path) -> None:
         """De poort komt op drie plekken terug; ze moeten meebewegen."""
         run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_PORT="5002")
@@ -232,6 +273,14 @@ class TestSetupScript:
 
         assert run.returncode == 2
         assert "docker run" not in run.log
+
+    def test_stops_when_the_registry_cannot_start(self, tmp_path: Path) -> None:
+        """Doorgaan zou een cluster opleveren dat naar een registry wijst die er niet is."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_RUN_FAILS="1")
+
+        assert run.returncode != 0
+        assert run.hosts_toml == ""
+        assert "kubectl" not in run.log
 
     def test_registry_is_configured_before_the_configmap(self, tmp_path: Path) -> None:
         """De nodes eerst, dan pas melden dat de registry er is."""
@@ -261,6 +310,37 @@ class TestKindConfig:
 
         assert "/etc/containerd/certs.d" in SCRIPT.read_text()
         assert "/etc/containerd/certs.d" in patches
+
+
+class TestDocumentation:
+    """De weigering en de commentaren verwijzen naar de doc in plaats van zelf uit te leggen.
+
+    Hernoemt of verplaatst iemand die, dan wijst de foutmelding op het cluster naar niets.
+    """
+
+    REFERRING_FILES = (SCRIPT, KIND_CONFIG, DOC, REPO_ROOT / "docs" / "sandbox-image-deploy-via-registry.md")
+
+    @staticmethod
+    def _referenced_paths(text: str) -> set[str]:
+        without_urls = re.sub(r"https?://\S+", "", text)
+        return {
+            match.rstrip(".,;:`)") for match in re.findall(r"(?:docs|scripts|sandboxed-local)/[\w./-]+", without_urls)
+        }
+
+    @pytest.mark.parametrize("source", REFERRING_FILES, ids=lambda path: path.name)
+    def test_every_referenced_repo_path_exists(self, source: Path) -> None:
+        missing = [ref for ref in self._referenced_paths(source.read_text()) if not (REPO_ROOT / ref).exists()]
+
+        assert not missing, f"{source.name} verwijst naar {missing}"
+
+    @pytest.mark.usefixtures("bash_available")
+    def test_the_refusal_points_at_a_document_that_exists(self, tmp_path: Path) -> None:
+        run = _run(tmp_path, "--cluster", "proef", STUB_CONFIG_PATH="no")
+
+        referenced = self._referenced_paths(run.stderr)
+        assert referenced, run.stderr
+        for ref in referenced:
+            assert (REPO_ROOT / ref).exists(), f"de weigering wijst naar {ref}"
 
 
 class TestTaskfile:
