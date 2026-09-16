@@ -280,10 +280,8 @@ ZAD_TEST_PG_PASSWORD = "zadtest"
 ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
 #: Prefix van de database per run: ``zadtest_<namespace>_<pid>_<epoch>``. De pid maakt een
 #: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
-#: Bewust niet meer ``zad_test_``: de veeg van oudere takken leest alles onder
-#: ``LIKE 'zad_test_%'`` als ``zad_test_<pid>``, en ``int()`` slikt de underscores in deze
-#: vorm, waarna ``os.kill`` op een te groot getal crasht en alle ORM-tests van die run
-#: een ERROR geven.
+#: Bewust niet ``zad_test_``: de veeg van oudere takken leest die naam als ``zad_test_<pid>``,
+#: crasht op deze vorm in ``os.kill`` en geeft alle ORM-tests van die run een ERROR.
 ZAD_TEST_DB_PREFIX = "zadtest_"
 #: Een database uit een VREEMDE pid-namespace mag pas weg als geen enkele run nog zo lang
 #: kan draaien. De volledige suite doet zo'n 27 minuten.
