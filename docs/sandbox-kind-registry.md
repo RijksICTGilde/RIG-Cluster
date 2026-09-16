@@ -18,8 +18,11 @@ dus een reset wist ze. Hij blijft waar hij voor is, images van projecten; zie
 ## Wat het script doet
 
 1. Start de container `kind-registry` (`registry:2`) op `127.0.0.1:5001`, met
-   `--restart=always`, als hij nog niet draait. Poort 5001 en niet 5000: op de gedeelde
-   dev-server bindt `claude-dashboard` al op `127.0.0.1:5000`.
+   `--restart=always` en `REGISTRY_STORAGE_DELETE_ENABLED=true`, als hij nog niet draait.
+   Poort 5001 en niet 5000: op de gedeelde dev-server bindt `claude-dashboard` al op
+   `127.0.0.1:5000`. Staat er een container zonder die variabele (neergezet voor het
+   opruimen bestond), dan maakt het script hem opnieuw aan met `--volumes-from` de oude,
+   zodat de lagen blijven. Lukt dat niet, dan zet het de oude terug.
 2. Schrijft op elke node `/etc/containerd/certs.d/localhost:5001/hosts.toml` die naar
    `http://kind-registry:5000` wijst.
 3. Hangt de registry aan het docker-netwerk `kind`, anders kan de node hem niet bereiken.
@@ -45,6 +48,50 @@ een `config_path` kent, en weigert als dat niet zo is.
 
 Een kind-config geldt alleen bij `kind create cluster`, dus een bestaand cluster dat de
 regel mist moet opnieuw gebouwd worden.
+
+## Opruimen
+
+Pusht de deploy naar deze registry, dan zet elke deploy een nieuwe tag neer.
+`task sandbox:prune-registry` (script `scripts/prune-kind-registry.sh`) houdt dat klein:
+
+1. Per repository gaan de tags weg waarvan de image ouder is dan `RETENTIE_DAGEN`
+   (standaard 2). Het moment komt uit het `created`-veld van de image-config; de registry
+   houdt zelf geen tagdatum bij. De nieuwste image per repository blijft altijd staan, ook
+   bij `RETENTIE_DAGEN=0`.
+2. Een index van buildx (image plus attestation) gaat met zijn kinderen weg, anders
+   houden die hun lagen vast.
+3. Daarna draait `registry garbage-collect` in de container. Die verwijdert alleen blobs
+   waar geen manifest meer naar verwijst.
+
+Omdat elke build dezelfde base-, tooling- en dependencylagen deelt, blijven die aan de
+nieuwste tag hangen. Het opruimen wist dus alleen de applagen van oude builds. Krimpt de
+registry fors, dan klopt er iets niet en is de volgende deploy weer een volle push. Het
+script meldt de omvang voor en na.
+
+De buildcache van de buildx-builder (`sandbox:build-builder`) leeft in het volume van die
+builder, niet in de registry, en het script spreekt alleen de registry-container aan.
+
+```bash
+task sandbox:prune-registry                    # standaard: 2 dagen
+task sandbox:prune-registry RETENTIE_DAGEN=0   # alles behalve de nieuwste
+```
+
+### Waarom in het deploy-pad en niet in een cron
+
+`sandbox:update-operations-manager` roept het opruimen aan als laatste stap, na de
+uitrol. Dat is de enige plek:
+
+- Een garbage collect naast een lopende push kan lagen weggooien die net geupload zijn en
+  nog aan geen manifest hangen (de garbage-collect-doc van distribution waarschuwt
+  hiervoor). In het deploy-pad is de eigen push klaar; een cron op de server weet dat niet.
+  De taak neemt zelf geen lock, dus twee gelijktijdige deploys op dezelfde registry blijven
+  een risico.
+- Wie pusht, ruimt op: de registry groeit alleen door deploys, dus zonder deploys hoeft er
+  ook niets weg.
+
+Draait er geen registry, of is het een registry van voor deze stap (zonder deletes), dan
+slaat het script het opruimen over met een melding en exit 0: de deploy gebruikt de
+registry nog niet en mag daar niet op falen. `task sandbox:setup-registry` zet het recht.
 
 ## Gebruik
 

@@ -52,17 +52,38 @@ if [ -z "$nodes" ]; then
 fi
 
 # 1. Bestaat de container maar staat hij stil, dan starten we hem: een `docker run` met
-# dezelfde naam zou daarop stuklopen.
+# dezelfde naam zou daarop stuklopen. Een container zonder deletes maken we opnieuw aan
+# op het volume van de oude (docs/sandbox-kind-registry.md).
+reg_run() {
+    docker run -d --restart=always -p "127.0.0.1:${REG_PORT}:5000" \
+        -e REGISTRY_STORAGE_DELETE_ENABLED=true \
+        --network bridge --name "$REG_NAME" "$@" "$REG_IMAGE"
+}
 reg_state="$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
-if [ "$reg_state" = "true" ]; then
+if [ -n "$reg_state" ] && ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$REG_NAME" |
+    grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'; then
+    echo "[kind-registry] registry $REG_NAME staat geen deletes toe, opnieuw aanmaken met behoud van het volume"
+    docker rename "$REG_NAME" "${REG_NAME}-oud"
+    docker stop "${REG_NAME}-oud" >/dev/null
+    reg_run --volumes-from "${REG_NAME}-oud" || {
+        rc=$?
+        # Anders maakt de volgende run een lege registry aan naast het volume met de lagen.
+        docker rm -f "$REG_NAME" >/dev/null 2>&1 || true
+        docker rename "${REG_NAME}-oud" "$REG_NAME"
+        docker start "$REG_NAME" >/dev/null
+        echo "[kind-registry] opnieuw aanmaken mislukt, de oude registry staat er weer" >&2
+        exit "$rc"
+    }
+    # Zonder -v: het volume hangt nu aan de nieuwe container.
+    docker rm "${REG_NAME}-oud" >/dev/null
+elif [ "$reg_state" = "true" ]; then
     echo "[kind-registry] registry $REG_NAME draait al"
 elif [ -n "$reg_state" ]; then
     echo "[kind-registry] registry $REG_NAME bestaat maar staat stil, starten"
     docker start "$REG_NAME"
 else
     echo "[kind-registry] registry $REG_NAME starten op 127.0.0.1:${REG_PORT}"
-    docker run -d --restart=always -p "127.0.0.1:${REG_PORT}:5000" \
-        --network bridge --name "$REG_NAME" "$REG_IMAGE"
+    reg_run
 fi
 
 # 2. De hostnaam in hosts.toml is de containernaam op het kind-netwerk, niet localhost:
