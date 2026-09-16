@@ -169,9 +169,12 @@ class TestImageTag:
         assert second.startswith(f"{head}-dirty-")
         assert first != second
 
-    def test_untracked_new_file_gets_its_own_tag(self, taskfile: dict, repo: Path) -> None:
+    @pytest.mark.parametrize("name", ["nieuw.py", "nieuwpakket/module.py", "café.py", "met spatie.py"])
+    def test_untracked_new_file_gets_its_own_tag(self, taskfile: dict, repo: Path, name: str) -> None:
+        """Ook in een nieuwe map en met een naam die git quote: de INHOUD moet de tag bepalen."""
         head = _git(repo, "rev-parse", "--short", "HEAD")
-        new = repo / "operations-manager/python/opi/nieuw.py"
+        new = repo / "operations-manager/python/opi" / name
+        new.parent.mkdir(exist_ok=True)
 
         new.write_text("y = 1\n")
         first = _tag(taskfile, repo)
@@ -180,6 +183,17 @@ class TestImageTag:
 
         assert first.startswith(f"{head}-dirty-"), first
         assert first != second
+
+    def test_ignored_file_keeps_the_commit_tag(self, taskfile: dict, repo: Path) -> None:
+        """Bytecode van een testrun staat in .gitignore en mag de tag niet vuil maken."""
+        (repo / ".gitignore").write_text("__pycache__/\n")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "ignore")
+        cache = repo / "operations-manager/python/opi/__pycache__"
+        cache.mkdir()
+        (cache / "app.cpython-314.pyc").write_bytes(b"\x00pyc")
+
+        assert _tag(taskfile, repo) == _git(repo, "rev-parse", "--short", "HEAD")
 
     def test_staged_change_gets_its_own_tag(self, taskfile: dict, repo: Path) -> None:
         head = _git(repo, "rev-parse", "--short", "HEAD")
@@ -226,13 +240,16 @@ class TestConfigureOverlay:
 
         assert list((repo / OM_PATCH_REL).parent.glob("*.bak")) == []
 
-    def test_task_fills_in_repo_override_and_tag(self, repo: Path) -> None:
-        """Via de echte `task`, dus ook de doorgifte SANDBOX_OM_REPO -> SANDBOX_OM_IMAGE -> sed."""
+    @pytest.mark.parametrize("changed", ["app.py", "nieuwpakket/module.py"], ids=["gewijzigd", "ongetrackt"])
+    def test_task_fills_in_repo_override_and_tag(self, repo: Path, changed: str) -> None:
+        """Via de echte `task` (eigen shell), dus ook de doorgifte SANDBOX_OM_REPO -> SANDBOX_OM_IMAGE -> sed."""
         task = shutil.which("task")
         if task is None:
             pytest.skip("task ontbreekt")
         shutil.copy(TASKFILE, repo / "Taskfile.yaml")
-        (repo / "operations-manager/python/opi/app.py").write_text("x = 2\n")
+        target = repo / "operations-manager/python/opi" / changed
+        target.parent.mkdir(exist_ok=True)
+        target.write_text("x = 2\n")
         expected = f"localhost:5098/proef:{_tag(yaml.safe_load(TASKFILE.read_text()), repo)}"
 
         result = subprocess.run(
