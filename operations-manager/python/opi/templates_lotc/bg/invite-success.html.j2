@@ -11,6 +11,12 @@
   Wat de route niet meelevert wordt niet getoond: geen e-mailadres, geen regel; geen
   applicatie-URL, geen knop. Dat was zo en dat blijft zo.
 
+  Het middelste blok heeft twee vormen. ``verify_email`` staat alleen op de LOKALE
+  registratie: die gebruiker moet eerst zijn adres bevestigen, dus daar gaat de tekst over
+  bevestigen en niet over toegang. De SSO-weg zet de vlag niet, want die gebruiker komt via
+  ``trustEmail`` al geverifieerd binnen, en houdt de bevestiging met de per-project
+  instelbare ``success_title``.
+
   De kaart met de toegangsgegevens is panel() uit bg/_patterns.html.j2, dezelfde vorm als
   op de andere pagina's, en het e-mailadres staat in een c-detail-list in plaats van in
   een alinea met een vet stukje ervoor.
@@ -27,6 +33,23 @@
 {% set email_label = "E-mailadres" if is_nl else "Email address" %}
 {% set app_button_label = "Ga naar applicatie" if is_nl else "Go to application" %}
 
+{% set verify_heading = "Bevestig eerst je e-mailadres" if is_nl else "Confirm your email address first" %}
+{% set verify_text %}
+    {%- if is_nl -%}
+        Je account is aangemaakt. We hebben een bevestigingsmail gestuurd naar {{ email }}. Klik op de link in die mail; pas daarna kun je inloggen bij {{ display_name }}.
+    {%- else -%}
+        Your account has been created. We sent a confirmation email to {{ email }}. Follow the link in that email; you can only log in to {{ display_name }} afterwards.
+    {%- endif -%}
+{% endset %}
+{% set mail_failed_heading = "De bevestigingsmail is niet verstuurd" if is_nl else "The confirmation email was not sent" %}
+{% set mail_failed_text %}
+    {%- if is_nl -%}
+        Je account is aangemaakt, maar de bevestigingsmail kon niet worden verstuurd. Probeer in te loggen bij {{ display_name }}: dan stuurt het inlogscherm de mail alsnog. Lukt dat niet, neem dan contact op met {{ contact_email if contact_email else "de beheerder" }}.
+    {%- else -%}
+        Your account has been created, but the confirmation email could not be sent. Try to log in to {{ display_name }}: the login screen will then send the email after all. If that fails, contact {{ contact_email if contact_email else "the administrator" }}.
+    {%- endif -%}
+{% endset %}
+
 <c-page title="{{ page_title }}" lang="{{ language }}">
     <c-header
         text="RIG Cluster"
@@ -39,7 +62,15 @@
                 <c-alert type="warning" heading="{{ warning_heading }}">{{ warning_text }}</c-alert>
             {% endif %}
 
-            <c-alert type="success" heading="{{ success_title }}">{{ success_text }}</c-alert>
+            {% if verify_email %}
+                {% if verification_mail_sent %}
+                    <c-alert type="info" heading="{{ verify_heading }}">{{ verify_text }}</c-alert>
+                {% else %}
+                    <c-alert type="warning" heading="{{ mail_failed_heading }}">{{ mail_failed_text }}</c-alert>
+                {% endif %}
+            {% else %}
+                <c-alert type="success" heading="{{ success_title }}">{{ success_text }}</c-alert>
+            {% endif %}
 
             {% call panel(access_heading, "key") %}
                 {% if email %}
