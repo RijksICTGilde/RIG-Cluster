@@ -2304,8 +2304,7 @@ tasks:
       - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
-      # De registry moet er zijn voordat er iets een image nodig heeft: hij leeft naast
-      # het cluster en houdt zijn lagen over een herbouw heen. Zie docs/sandbox-kind-registry.md.
+      # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox-kind-registry.md.
       - task: sandbox:setup-registry
       # De images moeten in de cluster staan vóórdat de deployments ze proberen te
       # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
