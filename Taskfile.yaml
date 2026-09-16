@@ -31,7 +31,7 @@ vars:
       if [ -n "$(git status --porcelain -- operations-manager)" ]; then
         tag="$tag-dirty-$( {
           git diff HEAD -- operations-manager
-          git ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
+          git -c core.quotePath=false ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
             echo "$f"; cat "$f"
           done
         } | sha1sum | cut -c1-7)"
