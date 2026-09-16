@@ -499,7 +499,10 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
       replacing them. That is why they are a field of their own rather than a
       ``template_vars`` entry -- as an override, one service handing out one variable
       would wipe every variable the component itself declared.
-    * ``sidecars`` are additive too.
+    * ``sidecars`` and ``secret_mounts`` are additive too. The mounts join the
+      component's own attachment mounts in ``attachment_secret_mounts`` rather than
+      replacing them -- a component that both uploads an attachment and takes a service
+      that mounts a file must keep both files.
     """
     for contribution in contributions:
         variables.update(contribution.template_vars)
@@ -507,6 +510,8 @@ def apply_manifest_contributions(variables: dict[str, Any], contributions: list[
             variables["env_vars"] = {**variables.get("env_vars", {}), **contribution.env_vars}
         if contribution.sidecars:
             variables.setdefault("sidecars", []).extend(contribution.sidecars)
+        if contribution.secret_mounts:
+            variables.setdefault("attachment_secret_mounts", []).extend(contribution.secret_mounts)
 
 
 class ProjectManager:

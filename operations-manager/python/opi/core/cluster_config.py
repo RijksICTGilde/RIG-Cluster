@@ -148,6 +148,14 @@ CLUSTER_CONFIG = {
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
             "port": 8081,
+            # Het doorlus-pad is hier net zo goed een PLAATSHOUDER als de rest van dit blok:
+            # de stub luistert alleen op 8081 en spreekt geen TLS, en het adres hieronder is
+            # niet vastgezet op de Service die de stub aanmaakt. Het staat er zodat het blok
+            # dezelfde vorm heeft als dat van productie.
+            "passthrough_port": 8443,
+            "api_host": "vlam-api.rijksweb.nl",
+            "cluster_ip": "10.96.144.8",
+            "ca_bundle": "rijksdienst-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -236,6 +244,31 @@ CLUSTER_CONFIG = {
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
             "port": 8081,
+            # HET DOORLUS-PAD (RC-167). Poort 8443 van dezelfde proxy lust de TLS-sessie
+            # door zonder te termineren: de afnemer praat dan zelf met VLAM en verifieert
+            # zelf. Drie waarden maken dat bruikbaar, en ze horen bij elkaar:
+            #
+            #   passthrough_port  waar de doorlus luistert;
+            #   api_host          de naam die in de URL staat, want TLS vergelijkt de
+            #                     hostnaam uit de URL met het certificaat. `rijksweb.nl` is
+            #                     de naam waar de proxy zelf op uitkomt (SNI-ACL, cert), en
+            #                     daarmee de naam waar deze keten op gebouwd is;
+            #   cluster_ip        waar die naam heen moet wijzen. hostAliases neemt een
+            #                     ADRES, geen servicenaam, en de Service-template van ZAD
+            #                     zet geen clusterIP, dus dit is het dynamisch toegewezen
+            #                     adres van `productie-vlam-proxy-intern`. Bewust NIET
+            #                     vastgezet: een ClusterIP is onveranderlijk zolang de
+            #                     Service bestaat, en verschuift hij toch, dan faalt het
+            #                     veilig op een certificaatfout in plaats van verkeerd te
+            #                     bezorgen. Dit is de ene plek om hem te wijzigen.
+            #
+            # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
+            # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
+            # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
+            "passthrough_port": 8443,
+            "api_host": "vlam-api.rijksweb.nl",
+            "cluster_ip": "172.30.254.144",
+            "ca_bundle": "rijksdienst-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -1362,5 +1395,11 @@ def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
     Keys: ``project`` / ``deployment`` / ``component`` / ``namespace`` (unprefixed) of the
     proxy, plus its ``port``. The address a consumer gets and the NetworkPolicy peer it is
     allowed to reach are BOTH derived from these, so they cannot drift apart.
+
+    Since RC-167 the same entry also carries the doorlus half -- ``passthrough_port``,
+    ``api_host``, ``cluster_ip`` and ``ca_bundle``. Those four are one unit: an address
+    without the name it must be reached under, or the name without the issuer to verify
+    against, is not a usable path but three quarters of one. ``vlam_endpoint()`` derives
+    them together for that reason.
     """
     return get_cluster_config(cluster_name).get("vlam")
