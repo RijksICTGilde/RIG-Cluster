@@ -1,6 +1,6 @@
 """Tests voor de registry die naast het kind-cluster staat.
 
-Vier dingen worden hier bewaakt:
+Vijf dingen worden hier bewaakt:
   1. scripts/setup-kind-registry.sh - de stappen van de kind-recipe, en de weigering als
      containerd de certs.d-map niet leest.
   2. sandboxed-local/kind-config.yaml - de containerdConfigPatches die dat mogelijk maken.
@@ -9,6 +9,8 @@ Vier dingen worden hier bewaakt:
      een image nodig heeft.
   4. De verwijzingen naar docs/sandbox-kind-registry.md. Het script en de kind-config
      leggen niets meer zelf uit, dus een hernoemde doc laat de weigering naar niets wijzen.
+  5. scripts/prune-kind-registry.sh - de weigeringen voor het iets aanraakt, en de plek in
+     het deploy-pad. Wat het opruimen echt doet meet tests/integration/test_kind_registry_prune.py.
 
 De shell-stappen worden gemeten met stubs voor docker, kind en kubectl die hun aanroepen
 wegschrijven. Zo is de volgorde en de inhoud toetsbaar zonder een echt cluster.
@@ -24,11 +26,13 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
+PRUNE_SCRIPT = REPO_ROOT / "scripts" / "prune-kind-registry.sh"
 KIND_CONFIG = REPO_ROOT / "sandboxed-local" / "kind-config.yaml"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 DOC = REPO_ROOT / "docs" / "sandbox-kind-registry.md"
 
 REGISTRY_TASK = "sandbox:setup-registry"
+PRUNE_TASK = "sandbox:prune-registry"
 CREATE_CLUSTER_TASK = "sandbox:create-cluster"
 
 DOCKER_STUB = """#!/usr/bin/env bash
@@ -39,6 +43,10 @@ case "$1" in
     ;;
   inspect)
     case "$*" in
+      *Config.Env*)
+        echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
+        echo "PATH=/usr/bin"
+        ;;
       *State.Running*)
         [ -n "${STUB_REG_STATE:-}" ] || exit 1
         echo "$STUB_REG_STATE"
@@ -56,6 +64,9 @@ case "$1" in
         ;;
       *"cp /dev/stdin"*)
         cat >> "$STUB_HOSTS_TOML"
+        ;;
+      *garbage-collect*)
+        [ -z "${STUB_GC_FAILS:-}" ] || { echo "failed to garbage collect: disk full" >&2; exit "$STUB_GC_FAILS"; }
         ;;
     esac
     ;;
@@ -190,6 +201,50 @@ class TestSetupScript:
         assert run.returncode == 0, run.stderr
         assert "docker run" not in run.log
         assert "docker start" not in run.log
+
+    def test_a_new_registry_accepts_deletes(self, tmp_path: Path) -> None:
+        """Zonder deletes doet scripts/prune-kind-registry.sh niets."""
+        run = _run(tmp_path, "--cluster", "proef")
+
+        assert "-e REGISTRY_STORAGE_DELETE_ENABLED=true" in run.log
+
+    @pytest.mark.parametrize("state", ["true", "false"])
+    @pytest.mark.parametrize("env", ["", "REGISTRY_STORAGE_DELETE_ENABLED=false"])
+    def test_recreates_a_registry_without_deletes_on_its_own_volume(self, tmp_path: Path, state: str, env: str) -> None:
+        """Een bestaande container krijgt geen nieuwe env; een verse zou de lagen kwijt zijn."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE=state, STUB_REG_ENV=env)
+
+        assert run.returncode == 0, run.stderr
+        calls = run.calls()
+        rename = calls.index("docker rename kind-registry kind-registry-oud")
+        stop = calls.index("docker stop kind-registry-oud")
+        create = next(i for i, c in enumerate(calls) if c.startswith("docker run"))
+        remove = calls.index("docker rm kind-registry-oud")
+        assert rename < stop < create < remove
+        assert "--volumes-from kind-registry-oud" in calls[create]
+        assert "-e REGISTRY_STORAGE_DELETE_ENABLED=true" in calls[create]
+        assert "--name kind-registry " in calls[create]
+        assert "docker start" not in run.log
+
+    def test_the_old_registry_comes_back_when_recreating_fails(self, tmp_path: Path) -> None:
+        """Hernoemd en gestopt achterlaten zou de volgende run een lege registry laten maken."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_REG_ENV="", STUB_RUN_FAILS="1")
+
+        assert run.returncode == 125
+        calls = run.calls()
+        create = next(i for i, c in enumerate(calls) if c.startswith("docker run"))
+        assert calls[create + 1 :] == [
+            "docker rm -f kind-registry",
+            "docker rename kind-registry-oud kind-registry",
+            "docker start kind-registry",
+        ]
+        assert "oude registry staat er weer" in run.stderr
+
+    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path) -> None:
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
+
+        assert "docker rename" not in run.log
+        assert "docker rm" not in run.log
 
     def test_starts_a_registry_that_exists_but_is_stopped(self, tmp_path: Path) -> None:
         """`docker run` met dezelfde naam loopt stuk op de bestaande container."""
@@ -364,6 +419,95 @@ class TestSetupScript:
         assert hosts_index < kubectl_index
 
 
+CURL_STUB = """echo "curl $*" >> "$STUB_LOG"
+case "$*" in
+  *_catalog*) echo '{"repositories": ["proef"]}' ;;
+  *tags/list*) echo '{"name": "proef", "tags": null}' ;;
+esac
+"""
+
+
+def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_extra: str) -> Run:
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB)):
+        stub = bindir / name
+        stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
+        stub.chmod(0o755)
+    extra_path = f":{Path(shutil.which('task') or '').parent}" if command else ""
+    proc = subprocess.run(
+        command or ["bash", str(PRUNE_SCRIPT), *args],
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin{extra_path}",
+            "HOME": str(tmp_path),
+            "STUB_LOG": str(tmp_path / "calls.log"),
+            **env_extra,
+        },
+        timeout=60,
+    )
+    return Run(proc, tmp_path)
+
+
+@pytest.mark.usefixtures("bash_available")
+class TestPruneScriptRefusals:
+    def test_script_is_executable(self) -> None:
+        assert PRUNE_SCRIPT.stat().st_mode & 0o111
+
+    @pytest.mark.parametrize("days", ["-1", "twee", "1.5", " 2"])
+    def test_refuses_a_retention_that_is_no_whole_number(self, tmp_path: Path, days: str) -> None:
+        """Een lege of rare waarde rekent anders een grens uit die alles wegveegt."""
+        run = _prune(tmp_path, RETENTIE_DAGEN=days, STUB_REG_STATE="true")
+
+        assert run.returncode == 2
+        assert "RETENTIE_DAGEN" in run.stderr
+        assert "curl" not in run.log
+
+    def test_refuses_arguments(self, tmp_path: Path) -> None:
+        run = _prune(tmp_path, "--dagen", "0", STUB_REG_STATE="true")
+
+        assert run.returncode == 2
+        assert "curl" not in run.log
+
+    @pytest.mark.parametrize("state", ["", "false"], ids=["ontbreekt", "gestopt"])
+    def test_skips_a_registry_that_does_not_run(self, tmp_path: Path, state: str) -> None:
+        run = _prune(tmp_path, STUB_REG_STATE=state)
+
+        assert run.returncode == 0
+        assert "sandbox:setup-registry" in run.stderr
+        assert "curl" not in run.log
+
+    @pytest.mark.parametrize("env", ["", "REGISTRY_STORAGE_DELETE_ENABLED=false"])
+    def test_skips_a_registry_without_deletes(self, tmp_path: Path, env: str) -> None:
+        """Dat is de container van voor deze wijziging; setup-registry maakt hem opnieuw aan."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV=env)
+
+        assert run.returncode == 0
+        assert "sandbox:setup-registry" in run.stderr
+        assert "curl" not in run.log
+
+    def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
+        run = _prune(tmp_path, STUB_REG_STATE="false")
+
+        assert "docker inspect -f {{.State.Running}} kind-registry" in run.log
+
+    def test_a_failing_garbage_collect_fails_the_run_and_says_why(self, tmp_path: Path) -> None:
+        """Anders meldt de deploy een geslaagde opruiming terwijl de lagen er nog staan."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_GC_FAILS="7")
+
+        assert run.returncode == 7
+        assert "failed to garbage collect: disk full" in run.stderr
+        assert "klaar" not in run.stdout
+
+    def test_never_touches_the_builder(self) -> None:
+        """De buildcache van de builder hoort niet in de registry en mag hier niet weg."""
+        code = "\n".join(line for line in PRUNE_SCRIPT.read_text().splitlines() if not line.lstrip().startswith("#"))
+
+        assert set(re.findall(r"\bdocker\s+(\w+)", code)) == {"inspect", "exec"}
+        assert "buildx" not in code
+
+
 class TestKindConfig:
     def test_containerd_reads_the_certs_directory(self, kind_config: dict) -> None:
         patches = "\n".join(kind_config["containerdConfigPatches"])
@@ -391,7 +535,13 @@ class TestDocumentation:
     Hernoemt of verplaatst iemand die, dan wijst de foutmelding op het cluster naar niets.
     """
 
-    REFERRING_FILES = (SCRIPT, KIND_CONFIG, DOC, REPO_ROOT / "docs" / "sandbox-image-deploy-via-registry.md")
+    REFERRING_FILES = (
+        SCRIPT,
+        PRUNE_SCRIPT,
+        KIND_CONFIG,
+        DOC,
+        REPO_ROOT / "docs" / "sandbox-image-deploy-via-registry.md",
+    )
 
     @staticmethod
     def _referenced_paths(text: str) -> set[str]:
@@ -436,3 +586,40 @@ class TestTaskfile:
 
         for later in ("sandbox:build-local-images-if-dev", "install-ingress-nginx", "sandbox:sync"):
             assert cmds.index({"task": later}) > registry_index
+
+    def test_prune_task_calls_the_script_with_two_days_by_default(self, taskfile: dict) -> None:
+        task = taskfile["tasks"][PRUNE_TASK]
+        cmds = yaml.safe_dump(task["cmds"], width=10**6)
+
+        assert "scripts/prune-kind-registry.sh" in cmds
+        assert "RETENTIE_DAGEN={{.RETENTIE_DAGEN}}" in cmds
+        assert task["vars"]["RETENTIE_DAGEN"] == '{{.RETENTIE_DAGEN | default "2"}}'
+
+    def test_the_deploy_prunes_after_it_rolled_out(self, taskfile: dict) -> None:
+        """Opruimen hoort bij wie pusht, en pas als de nieuwe tag er staat."""
+        cmds = taskfile["tasks"]["sandbox:update-operations-manager"]["cmds"]
+
+        assert cmds[-1] == {"task": PRUNE_TASK}
+        assert {"task": "sandbox:build-operations-manager-image"} in cmds
+
+    @pytest.mark.usefixtures("bash_available")
+    def test_the_deploy_step_ends_green_on_a_server_without_a_registry(self, tmp_path: Path) -> None:
+        """Zo staat de gedeelde server: rig-sandbox draait, kind-registry niet."""
+        if shutil.which("task") is None:
+            pytest.skip("task is niet geinstalleerd")
+        run = _prune(tmp_path, command=["task", "--taskfile", str(TASKFILE), PRUNE_TASK])
+
+        assert run.returncode == 0, run.stderr
+        assert "draait niet" in run.stderr
+        assert "curl" not in run.log
+
+    def test_pruning_runs_on_one_path_only(self, taskfile: dict) -> None:
+        """Twee plekken die allebei opruimen maakt onduidelijk wie de registry leegt."""
+        callers = [
+            name
+            for name, task in taskfile["tasks"].items()
+            if (name != PRUNE_TASK and "prune-kind-registry" in yaml.safe_dump(task))
+            or {"task": PRUNE_TASK} in (task.get("cmds") or [])
+        ]
+
+        assert callers == ["sandbox:update-operations-manager"]
