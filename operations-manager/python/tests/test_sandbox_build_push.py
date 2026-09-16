@@ -10,6 +10,7 @@ zie docs/sandbox-kind-registry.md. Bewaakt wordt:
 De shell uit de Taskfile wordt echt gedraaid in een tijdelijke git-repo.
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -108,6 +109,34 @@ def _configure(taskfile: dict, repo: Path) -> str:
     return image
 
 
+def _overlay_copy(tmp_path: Path) -> Path:
+    """Kopie van de operations-manager-overlays onder hun repopad, zonder de SOPS-generator (die vraagt een sleutel)."""
+    if shutil.which("kustomize") is None:
+        pytest.skip("kustomize ontbreekt")
+    copy = tmp_path / OVERLAYS.parent.relative_to(REPO_ROOT)
+    shutil.copytree(OVERLAYS.parent, copy)
+    base = copy / "overlays" / "sandboxed-local" / "kustomization.yaml"
+    data = yaml.safe_load(base.read_text())
+    data.pop("generators")
+    base.write_text(yaml.safe_dump(data))
+    return copy
+
+
+def _render(copy: Path, overlay: str) -> dict:
+    out = subprocess.run(
+        ["kustomize", "build", str(copy / "overlays" / overlay), "--load-restrictor", "LoadRestrictionsNone"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    deployment = next(
+        doc
+        for doc in yaml.safe_load_all(out)
+        if doc and doc["kind"] == "Deployment" and doc["metadata"]["name"] == "operations-manager"
+    )
+    return deployment["spec"]["template"]["spec"]["containers"][0]
+
+
 def _patched_container(repo: Path) -> dict:
     return yaml.safe_load((repo / OM_PATCH_REL).read_text())["spec"]["template"]["spec"]["containers"][0]
 
@@ -139,6 +168,26 @@ class TestImageTag:
         assert first.startswith(f"{head}-dirty-")
         assert second.startswith(f"{head}-dirty-")
         assert first != second
+
+    def test_untracked_new_file_gets_its_own_tag(self, taskfile: dict, repo: Path) -> None:
+        """Een nieuw, nog niet toegevoegd bestand gaat wel mee in de build-context van docker."""
+        head = _git(repo, "rev-parse", "--short", "HEAD")
+        new = repo / "operations-manager/python/opi/nieuw.py"
+
+        new.write_text("y = 1\n")
+        first = _tag(taskfile, repo)
+        new.write_text("y = 2\n")
+        second = _tag(taskfile, repo)
+
+        assert first.startswith(f"{head}-dirty-"), first
+        assert first != second
+
+    def test_staged_change_gets_its_own_tag(self, taskfile: dict, repo: Path) -> None:
+        head = _git(repo, "rev-parse", "--short", "HEAD")
+        (repo / "operations-manager/python/opi/app.py").write_text("x = 2\n")
+        _git(repo, "add", ".")
+
+        assert _tag(taskfile, repo).startswith(f"{head}-dirty-")
 
     def test_patched_overlay_does_not_change_the_tag(self, taskfile: dict, repo: Path) -> None:
         """De configure-taak schrijft zelf in bootstrap/; dat mag de tag van de build niet verschuiven."""
@@ -177,6 +226,41 @@ class TestConfigureOverlay:
         _configure(taskfile, repo)
 
         assert list((repo / OM_PATCH_REL).parent.glob("*.bak")) == []
+
+    def test_task_fills_in_repo_override_and_tag(self, repo: Path) -> None:
+        """Via de echte `task`, dus ook de doorgifte SANDBOX_OM_REPO -> SANDBOX_OM_IMAGE -> sed."""
+        task = shutil.which("task")
+        if task is None:
+            pytest.skip("task ontbreekt")
+        shutil.copy(TASKFILE, repo / "Taskfile.yaml")
+        (repo / "operations-manager/python/opi/app.py").write_text("x = 2\n")
+        expected = f"localhost:5098/proef:{_tag(yaml.safe_load(TASKFILE.read_text()), repo)}"
+
+        result = subprocess.run(
+            [task, CONFIGURE_TASK],
+            cwd=repo,
+            env={**os.environ, "SANDBOX_OM_REPO": "localhost:5098/proef"},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert "-dirty-" in expected
+        assert _patched_container(repo)["image"] == expected
+        assert expected in result.stdout
+
+    def test_deploy_overlay_renders_the_configured_image(self, taskfile: dict, tmp_path: Path) -> None:
+        """De overlay die update-operations-manager toepast, mag de gezette tag niet overschrijven."""
+        copy = _overlay_copy(tmp_path)
+        image = f"{REPO}:abc1234-dirty-0123456"
+        script = _cmds(taskfile, CONFIGURE_TASK).replace("{{.SANDBOX_OM_IMAGE}}", image)
+        subprocess.run(["bash", "-c", script], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+        container = _render(copy, "sandboxed-local")
+
+        assert container["image"] == image
+        assert container["imagePullPolicy"] == "IfNotPresent"
+        assert "overlays/sandboxed-local " in _cmds(taskfile, UPDATE_TASK)
 
     def test_overlay_pulls_if_not_present(self) -> None:
         """Never kan niet meer: de node moet het image uit de registry halen."""
@@ -264,28 +348,7 @@ class TestSkaffold:
 
     @pytest.mark.parametrize("overlay", SKAFFOLD_OVERLAYS)
     def test_rendered_overlay_carries_the_artifact_name(self, overlay: str, tmp_path: Path) -> None:
-        """Gerenderd zonder de SOPS-generator, die een sleutel vraagt."""
-        if shutil.which("kustomize") is None:
-            pytest.skip("kustomize ontbreekt")
-        copy = tmp_path / "operations-manager"
-        shutil.copytree(OVERLAYS.parent, copy)
-        base = copy / "overlays" / "sandboxed-local" / "kustomization.yaml"
-        data = yaml.safe_load(base.read_text())
-        data.pop("generators")
-        base.write_text(yaml.safe_dump(data))
-
-        out = subprocess.run(
-            ["kustomize", "build", str(copy / "overlays" / overlay), "--load-restrictor", "LoadRestrictionsNone"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout
-        deployment = next(
-            doc
-            for doc in yaml.safe_load_all(out)
-            if doc and doc["kind"] == "Deployment" and doc["metadata"]["name"] == "operations-manager"
-        )
-        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        container = _render(_overlay_copy(tmp_path), overlay)
 
         assert container["image"].rsplit(":", 1)[0] == REPO
         assert container["imagePullPolicy"] == "IfNotPresent"
