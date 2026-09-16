@@ -310,10 +310,11 @@ class PendingRolloutResponse(BaseModel):
     rollout_in_progress: bool = Field(
         default=False,
         description=(
-            "True when a rollout that reconciles the WHOLE project is queued or running right "
-            "now. 'count' only drops once that task completes, so a non-zero count with this "
-            "flag set means the changes are being rolled out at this moment, not that they are "
-            "sitting untouched. Defaults to false, so an older caller reads it as before."
+            "True when a task that will process the project, for every deployment the waiting "
+            "changes touch, is queued or running right now. 'count' only drops once that "
+            "processing has run, so a non-zero count with this flag set means the changes are "
+            "being rolled out at this moment, not that they are sitting untouched. Defaults to "
+            "false, so an older caller reads it as before."
         ),
     )
 
