@@ -413,10 +413,11 @@ Stap 2 is sterker dan hij lijkt: een provider-id dat Keycloak niet vindt laat de
 op te komen (gemeten als canarie in `docs/rc159-uitrolmeting.md`). Een pod die `Ready` is en
 de vlag in zijn `args` draagt, heeft zijn verzender dus aantoonbaar geladen.
 
-Wie de blast radius wil weten: alleen **nieuwe lokale gebruikers** die in dat venster
-aangemaakt worden komen binnen met `emailVerified: false` en krijgen geen bericht. De terugweg
-is dat veld handmatig omzetten in de admin-console, of de gebruiker opnieuw laten aanmelden
-zodra de pod er is. Bestaande gebruikers en SSO-gebruikers merken er niets van.
+Wie de blast radius wil weten: **nieuwe lokale gebruikers** die in dat venster aangemaakt
+worden krijgen geen bevestigingsmail. Ze staan op `emailVerified: false` met `VERIFY_EMAIL`,
+net als buiten het venster, dus zodra de pod er is stuurt hun eerste login de mail alsnog.
+Opnieuw aanmelden kan niet, want het account bestaat al. Bestaande gebruikers en
+SSO-gebruikers merken er niets van.
 
 Dit is een **uitrol**-volgorde en geen rotatie. De rotatievolgorde van het geheim staat
 hierboven onder "Rotatie: de volgorde, en wat er tussendoor faalt".
@@ -451,5 +452,5 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |
 | De minimale `smtpServer` en `verifyEmail` | `KeycloakYamlHandler._apply_realm_self_service()` |
-| `emailVerified` volgt de realm | `KeycloakConnector.create_user()` |
+| Elke nieuwe gebruiker met een adres bevestigt het (master-admins uitgezonderd) | `KeycloakConnector.create_user()` |
 | De meting waaruit dit alles volgt | `docs/rc158-emailsender-spi-meting.md` |

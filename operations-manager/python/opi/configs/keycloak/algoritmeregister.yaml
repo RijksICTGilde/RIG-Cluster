@@ -77,7 +77,7 @@ realms:
     # met deze drie velden en klopt dus niet meer met wat hier staat.
     #
     # verifyEmail is de UITZONDERING en gaat wel om. Een realm die verifieert en niet kan
-    # mailen sluit nieuwe gebruikers buiten, dus deze regel is een VERZOEK en geen bevel:
+    # mailen sluit wie zijn adres wijzigt buiten, dus deze regel is een VERZOEK en geen bevel:
     # OPI zet verifyEmail alleen AAN als het PLATFORM een mailrelay heeft
     # (MAIL_RELAY_API_URL gevuld, zie _apply_realm_fields). Heeft het die niet - clustertype
     # 'local', of productie tijdens de crashlus van de relay op 21-08-2026 - dan blijft
