@@ -2304,6 +2304,9 @@ tasks:
       - task: sandbox:configure-local-images
       # Phase 1: Create cluster and install operators/CRDs
       - task: sandbox:create-cluster
+      # De registry moet er zijn voordat er iets een image nodig heeft: hij leeft naast
+      # het cluster en houdt zijn lagen over een herbouw heen. Zie docs/sandbox-kind-registry.md.
+      - task: sandbox:setup-registry
       # De images moeten in de cluster staan vóórdat de deployments ze proberen te
       # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
       - task: sandbox:build-local-images-if-dev
@@ -2364,6 +2367,12 @@ tasks:
         fi
         envsubst < sandboxed-local/kind-config.yaml | kind create cluster --name rig-sandbox --config -
         echo "Cluster rig-sandbox created successfully (HTTP port: ${KIND_HTTP_PORT}, HTTPS port: ${KIND_HTTPS_PORT})"
+    silent: true
+
+  sandbox:setup-registry:
+    desc: "Zet de image-registry naast het kind-cluster en sluit de nodes erop aan"
+    cmds:
+      - scripts/setup-kind-registry.sh --cluster rig-sandbox
     silent: true
 
   sandbox:install-csi-snapshot:
