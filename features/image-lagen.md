@@ -13,10 +13,11 @@ bestand regelt is hoeveel er per codewijziging OPNIEUW gebouwd en verstuurd word
 
 ## De vorm
 
-Drie stages, van zelden naar vaak wijzigend:
+Vier stages, van zelden naar vaak wijzigend:
 
 | Stage | Wat erin zit | Wanneer hij opnieuw bouwt |
 |---|---|---|
+| `uv` | het gepinde uv-image, alleen als bron voor de uv-binary | `UV_VERSION` verandert |
 | `base-system` | apt-pakketten, kubectl, sops, mc, kopia, skopeo, chisel, uv | een van de gepinde `ARG *_VERSION` verandert |
 | `dependencies` | `uv sync` van de productie-dependencies | `pyproject.toml` of `uv.lock` verandert |
 | `application` | alembic.ini, entrypoint, `opi`, `manifests`, `extensions`, `static` | de broncode verandert |
@@ -40,7 +41,8 @@ wordt.
 runtime heeft alleen die bundel nodig. In `.dockerignore` staat daarom `**/node_modules/`
 en niet `node_modules/`: een patroon zonder `**/` wordt alleen tegen de WORTEL van de
 buildcontext gelegd, en de boom die bestaat staat op
-`operations-manager/python/static/js/node_modules`. Zelfde valkuil als bij `**/tests/`.
+`operations-manager/python/static/js/node_modules`. Zelfde valkuil als bij `**/tests/` en
+`**/__pycache__/`.
 
 **Elk image van buiten is gepind.** `ghcr.io/astral-sh/uv:${UV_VERSION}`, niet `:latest`.
 Met `latest` invalideert een uv-release die laag en alles erna, inclusief de `uv sync`
