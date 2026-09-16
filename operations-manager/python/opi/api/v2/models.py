@@ -58,6 +58,11 @@ class ErrorCategory(StrEnum):
     # was wrong". Distinct from ``InvalidTarget``, which stays what it was: the restore
     # destination the caller supplied.
     InvalidInput = "InvalidInput"
+    # Het platform zelf struikelde: een database die niet antwoordt, een connector die
+    # afbreekt, een sjabloon dat niet rendert. Bewust apart van ``Unknown``, want dat zegt
+    # "niet toe te wijzen" terwijl dit juist wel is toegewezen -- aan ons. Voor de aanroeper
+    # is dat het verschil tussen "corrigeer je verzoek" en "wacht even en probeer opnieuw".
+    InternalError = "InternalError"
     OutOfMemory = "OutOfMemory"
     HealthCheck = "HealthCheck"
     SyncFailed = "SyncFailed"
@@ -70,10 +75,15 @@ class ErrorCategory(StrEnum):
 #: closed set a client can switch on. Everything not in here stays ``Unknown``: a category
 #: is a promise about attribution, and guessing one is worse than admitting we do not know.
 #: Deliberately absent: ``conflict`` (two writers raced, which is nobody's mistake and may
-#: well succeed on a retry), ``internal_error`` (ours, but there is no member that says so
-#: yet) and ``processing_failed`` (the rollout itself did not come up healthy, which can be
-#: the user's image or the cluster; ``component_failures`` carries which one, so a category
-#: here would be a guess).
+#: well succeed on a retry), ``processing_failed`` (the rollout itself did not come up
+#: healthy, which can be the user's image or the cluster; ``component_failures`` carries
+#: which one, so a category here would be a guess) and ``internal_error``.
+#:
+#: ``internal_error`` is not a caller mistake, so it does not belong in this set. There is
+#: now an ``InternalError`` member that names it -- but it is used by the HTTP error envelope
+#: (:class:`ProblemDetail`) only. Moving a task's ``internal_error`` onto it would change an
+#: ``error_category`` value that clients already switch on, and that is an API change of its
+#: own, not a side effect of rewriting error pages.
 _CALLER_ERROR_TYPES: frozenset[str] = frozenset(
     {
         "already_exists",
@@ -108,6 +118,54 @@ def error_category_for(error_type: str | None) -> ErrorCategory:
     if error_type == "invalid_target":
         return ErrorCategory.InvalidTarget
     return ErrorCategory.InvalidInput if error_type in _CALLER_ERROR_TYPES else ErrorCategory.Unknown
+
+
+def category_for_status(status_code: int) -> ErrorCategory:
+    """De categorie van een gefaald HTTP-antwoord, afgeleid uit de status.
+
+    Alleen 5xx krijgt de envelop, en 5xx betekent precies een ding voor de aanroeper:
+    het lag niet aan zijn verzoek en opnieuw proberen kan helpen. Alles daarbuiten is
+    geen belofte die we kunnen waarmaken, dus ``Unknown``.
+    """
+    return ErrorCategory.InternalError if status_code >= 500 else ErrorCategory.Unknown
+
+
+#: Drie keuzes in :class:`ProblemDetail` die het vermelden waard zijn, en die in de
+#: veldbeschrijvingen niet passen omdat ze in het OPENAPI-document terechtkomen:
+#:
+#: * ``detail`` blijft staan en blijft een gewone zin. Dat is het veld dat elke bestaande
+#:   client vandaag afdrukt (zad-cli voorop) en het is ook het veld waar RFC 7807 de
+#:   menselijke uitleg wil hebben, dus de envelop is een uitbreiding en geen breuk. Wat er
+#:   NIET in staat is de onbewerkte uitzondering: die reisde tot nu toe mee naar buiten en
+#:   nam het interne IP-adres en de databasepoort mee.
+#: * ``reference`` is het kenmerk uit :mod:`opi.core.flow_id`, hetzelfde dat op het scherm
+#:   staat en op elke logregel van dit verzoek. Dat is wat een melding bruikbaar maakt
+#:   zonder iets prijs te geven.
+#: * er is GEEN ``explanation`` naast ``detail``, zoals :class:`StatusError` die wel heeft.
+#:   Daar staat in ``message`` de ruwe clustertekst en in ``explanation`` de uitleg; hier is
+#:   er geen ruwe tekst -- dat is de hele reparatie -- dus zou ``explanation`` een tweede
+#:   kopie van ``detail`` zijn.
+class ProblemDetail(BaseModel):
+    """Wat een gefaald HTTP-antwoord meestuurt: RFC 7807, plus een categorie en een kenmerk.
+
+    Alleen bij een 5xx. Een 4xx houdt het kale ``{"detail": ...}`` dat clients vandaag lezen.
+    """
+
+    type: str = Field(
+        default="about:blank",
+        description="URI die het fouttype benoemt; 'about:blank' als er geen specifieker type is",
+    )
+    title: str = Field(..., description="Korte samenvatting van het fouttype (de HTTP-statusomschrijving)")
+    status: int = Field(..., description="HTTP-statuscode, herhaald in de body zoals RFC 7807 voorschrijft")
+    detail: str = Field(..., description="Wat er misging en wat de aanroeper eraan kan doen, in gewone taal")
+    instance: str | None = Field(default=None, description="Het pad waarop de fout optrad")
+    category: ErrorCategory = Field(
+        ..., description="Categorie waarop een client kan sturen; 5xx is altijd InternalError"
+    )
+    reference: str | None = Field(
+        default=None,
+        description="Het kenmerk waarmee een beheerder deze fout in de log terugvindt (op het scherm: 'kenmerk')",
+    )
 
 
 class AsyncTaskAcceptedResponse(BaseModel):

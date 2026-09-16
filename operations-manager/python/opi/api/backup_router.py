@@ -32,6 +32,10 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
+#: Twee takken lopen op hetzelfde uit -- een vergrendeling die geen vergrendeling was,
+#: en alles wat de back-up verder kan breken -- dus zeggen ze de lezer hetzelfde.
+BACKUP_MISLUKT = "De back-up van deze deployment is niet gelukt. Probeer het over een minuut opnieuw."
+
 
 # Request/Response Models
 
@@ -333,7 +337,9 @@ async def get_backup_status(request: Request) -> BackupStatusResponse:
 
     except Exception as e:
         logger.exception("Error getting backup status")
-        raise HTTPException(status_code=500, detail=f"Error getting backup status: {e}") from e
+        raise HTTPException(
+            status_code=500, detail="De back-upstatus kon niet worden opgehaald. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 @backup_router.post("/project/{project_name}/deployment/{deployment_name}", response_model=DeploymentBackupResponse)
@@ -637,11 +643,12 @@ async def backup_project_deployment(
         if "lock" in str(e).lower():
             logger.warning(f"Backup lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Back-up van %s/%s mislukt", project_name, deployment_name)
+        raise HTTPException(status_code=500, detail=BACKUP_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error backing up project %s deployment %s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=f"Error backing up deployment: {e}") from e
+        raise HTTPException(status_code=500, detail=BACKUP_MISLUKT) from e
 
 
 @backup_router.get("/runs/{project_name}/{deployment_name}", response_model=BackupRunsResponse)
@@ -764,7 +771,10 @@ async def list_backup_runs(request: Request, project_name: ProjectNamePath, depl
 
     except Exception as e:
         logger.exception("Error listing backup runs for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=f"Error listing backup runs: {e}") from e
+        raise HTTPException(
+            status_code=500,
+            detail="De lijst met back-ups kon niet worden opgehaald. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 # Database Backup Endpoints
@@ -939,4 +949,6 @@ async def delete_snapshot(
 
     except Exception as e:
         logger.exception("Error deleting snapshot %s", snapshot_id)
-        raise HTTPException(status_code=500, detail=f"Error deleting snapshot: {e}") from e
+        raise HTTPException(
+            status_code=500, detail="De snapshot kon niet worden verwijderd. Probeer het over een minuut opnieuw."
+        ) from e
