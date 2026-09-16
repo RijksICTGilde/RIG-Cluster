@@ -1,17 +1,8 @@
 """Tests for the layer layout of operations-manager/Dockerfile.
 
-The image is ~971 MB and travels through two full serialisations per sandbox deploy, so
-what matters is not the total but how much of it is rebuilt by an ordinary code change.
-Four things kept that number at 148 MB on the published image, and none of them show up
-in a failing test unless they are guarded here:
-
-  1. `node_modules/` in .dockerignore without `**/`, so the 28 MB esbuild tree under
-     static/js/ went into the image.
-  2. A `chown -R appuser:appuser /app` layer, which rewrites every file and therefore is a
-     second copy of every COPY above it.
-  3. promo.mp4 (28 MB, never changes) in the same layer as the css and js that do.
-  4. `ghcr.io/astral-sh/uv:latest`, which invalidates the 189 MB `uv sync` whenever uv
-     releases.
+What matters is not the total size but how much of it an ordinary code change rebuilds.
+The four regressions guarded here are silent: they cost size, never a failing test.
+Background and measurements: features/image-lagen.md.
 """
 
 import re
@@ -72,12 +63,7 @@ def _copy_sources(instruction: str) -> list[str]:
 
 class TestDockerignore:
     def test_node_modules_is_excluded_at_every_depth(self) -> None:
-        """Without `**/` the pattern is only matched against the root of the build context.
-
-        `node_modules/` matched ./node_modules, which does not exist; the tree that does
-        exist is operations-manager/python/static/js/node_modules and it went straight into
-        the image. Same cause as the `**/tests/` line above it.
-        """
+        """Without `**/` the pattern is only matched against the root of the build context."""
         lines = [line.strip() for line in DOCKERIGNORE.read_text().splitlines()]
 
         assert "**/node_modules/" in lines
@@ -126,10 +112,7 @@ class TestStaticLayers:
         return copies
 
     def test_media_is_copied_before_the_files_that_change(self, app_stage: list[str]) -> None:
-        """promo.mp4 is 28 MB and never changes; css and js change every week.
-
-        In one layer a single changed stylesheet rebuilds the video with it.
-        """
+        """In one layer a changed stylesheet rebuilds the media that never changes with it."""
         copies = self._static_copies(app_stage)
         assert len(copies) > 1, "static is still copied in a single layer"
 
@@ -141,11 +124,7 @@ class TestStaticLayers:
         assert max(media) < min(changing)
 
     def test_the_application_code_is_copied_last(self, app_stage: list[str]) -> None:
-        """A rebuilt layer drags every layer below it along, unchanged content and all.
-
-        Splitting `static` buys nothing while `COPY opi` sits above the 29 MB media layer:
-        a one-line change in opi/ then rebuilt the video anyway.
-        """
+        """A rebuilt layer drags every layer below it along, so COPY opi must sit below the media."""
         copies = [index for index, line in enumerate(app_stage) if line.upper().startswith("COPY ")]
         opi_copy = [index for index, line in enumerate(app_stage) if line.endswith("./opi")]
         assert len(opi_copy) == 1
@@ -153,10 +132,7 @@ class TestStaticLayers:
         assert opi_copy[0] == max(copies)
 
     def test_every_static_entry_is_copied(self, app_stage: list[str]) -> None:
-        """Splitting the COPY means naming the parts, so a new one can be forgotten.
-
-        This is the check that makes that loud instead of a 404 on the running portal.
-        """
+        """Splitting the COPY means naming the parts, so a forgotten one is a 404 on the portal."""
         covered: set[Path] = set()
         for _, sources in self._static_copies(app_stage):
             for source in sources:
@@ -169,7 +145,7 @@ class TestStaticLayers:
 
 class TestPinnedTools:
     def test_uv_is_pinned(self, instructions: list[tuple[str, str]]) -> None:
-        """`uv:latest` invalidates its own 46 MB layer and the 189 MB `uv sync` after it."""
+        """`uv:latest` invalidates its own layer and the `uv sync` after it."""
         uv_refs = [line for _, line in instructions if "astral-sh/uv" in line]
         assert uv_refs
 

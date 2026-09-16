@@ -7,9 +7,9 @@ eruitziet zoals hij eruitziet.
 
 Een sandboxdeploy serialiseert het image twee keer volledig: `buildx --load` exporteert
 het naar de docker-daemon, en `kind load` doet daar `docker save` overheen om het in
-containerd op de node te importeren. Het image is ongeveer 971 MB, dus dat is circa 2 GB
-tar-verkeer per deploy. Die twee serialisaties staan hier los van; wat dit bestand
-regelt is hoeveel er per codewijziging OPNIEUW gebouwd en verstuurd wordt.
+containerd op de node te importeren. Het gepubliceerde image is ongeveer 971 MB, dus dat
+is circa 2 GB tar-verkeer per deploy. Die twee serialisaties staan hier los van; wat dit
+bestand regelt is hoeveel er per codewijziging OPNIEUW gebouwd en verstuurd wordt.
 
 ## De vorm
 
@@ -20,9 +20,6 @@ Drie stages, van zelden naar vaak wijzigend:
 | `base-system` | apt-pakketten, kubectl, sops, mc, kopia, skopeo, chisel, uv | een van de gepinde `ARG *_VERSION` verandert |
 | `dependencies` | `uv sync` van de productie-dependencies | `pyproject.toml` of `uv.lock` verandert |
 | `application` | alembic.ini, entrypoint, `opi`, `manifests`, `extensions`, `static` | de broncode verandert |
-
-Binnen `application` staat hetzelfde principe nog een keer: media eerst, wisselende
-bestanden achteraan.
 
 ## Vier regels die makkelijk stilletjes sneuvelen
 
