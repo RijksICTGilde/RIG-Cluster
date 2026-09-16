@@ -134,9 +134,14 @@ def test_de_namespace_is_het_inode_nummer_van_dit_proces(monkeypatch: pytest.Mon
     assert gelezen == ["/proc/self/ns/pid"]
 
 
-def test_zonder_proc_is_er_een_vlakke_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "fout",
+    [FileNotFoundError(2, "No such file or directory"), PermissionError(13, "Permission denied")],
+    ids=["geen-proc", "proc-afgeschermd"],
+)
+def test_zonder_leesbaar_proc_is_er_een_vlakke_namespace(monkeypatch: pytest.MonkeyPatch, fout: OSError) -> None:
     def stat(pad: str | os.PathLike[str], *args: object, **kwargs: object) -> os.stat_result:
-        raise FileNotFoundError(2, "No such file or directory", pad)
+        raise fout
 
     monkeypatch.setattr(conftest.os, "stat", stat)
 
