@@ -25,6 +25,7 @@ from opi.manager.invite_manager import (
     InviteManager,
     UserExistsError,
 )
+from opi.services.catalog.invite.destination import resolve_invite_url
 from opi.services.project_store import get_project_store
 from opi.utils.naming import generate_project_realm_name
 from opi.web.lotc_switch import render
@@ -849,11 +850,15 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         if _realm_roles_unassigned(result_data["assigned"]):
             return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
 
-        # Store success info in session
+        # Store success info in session. ``verify_email`` staat alleen op deze tak: de
+        # SSO-weg levert via ``trustEmail`` een al geverifieerde gebruiker en mag de tekst
+        # over bevestigen niet tonen.
         request.session["invite_success"] = {
             "email": result_data["email"],
             "created": result_data["created"],
             "assigned": result_data["assigned"],
+            "verify_email": True,
+            "verification_mail_sent": result_data["verification_mail_sent"],
         }
 
         return RedirectResponse(url=f"/invite/{key}/success", status_code=302)
@@ -957,7 +962,7 @@ async def invite_success(request: Request, key: str) -> Response:
     # Get localized content
     success_title = invite_manager.project_file_handler.get_invite_success_title(invite, language)
     success_button = invite_manager.project_file_handler.get_invite_success_button(invite, language)
-    application_url = invite.get("application_url", "")
+    application_url = resolve_invite_url(invite, project_data)
     display_name = project_data.get("display-name", project_name)
 
     return render(
@@ -974,6 +979,9 @@ async def invite_success(request: Request, key: str) -> Response:
             "email": success_info.get("email"),
             "created": success_info.get("created"),
             "assigned": success_info.get("assigned", {}),
+            "verify_email": success_info.get("verify_email", False),
+            "verification_mail_sent": success_info.get("verification_mail_sent", False),
+            "contact_email": invite.get("contact_email", ""),
         },
     )
 

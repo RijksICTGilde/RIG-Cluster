@@ -14,16 +14,20 @@ grenswaarden, of de lijst van welke platformdiensten niet gemeten worden, horen 
 ``require_platform_admin`` en niet hier.
 """
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
+from opi.core.errors import log_render_failure
 from opi.core.templates_lotc import TEMPLATES_LOTC_DIR, templates_lotc
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.web.lotc_fixtures import page_data
 from opi.web.lotc_form_preview import EXAMPLE_FIELDS
 from opi.web.navigation_lotc import get_navigation
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lotc", tags=["lotc"])
 
@@ -100,9 +104,10 @@ async def lotc_page(request: Request, slug: str) -> HTMLResponse:
     try:
         return templates_lotc.TemplateResponse(request, template_name, _context(request))
     except Exception as error:
+        log_render_failure(logger, f"voorbeeldpagina {template_name}", error)
         raise HTTPException(
             status_code=422,
-            detail=f"{template_name} rendert nog niet zonder paginadata: {error}",
+            detail=f"{template_name} rendert nog niet zonder paginadata. De reden staat in de log.",
         ) from error
 
 

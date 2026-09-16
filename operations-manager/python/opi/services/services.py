@@ -326,6 +326,19 @@ class VariableDefinition:
     source: str = "direct"  # "secret" or "direct" - how the value is provided
     aliases: list[str] = field(default_factory=list)  # Alternative names (e.g., APP_ prefixed versions)
     secret_key: str | None = None  # If source="secret", which secret class field maps to this variable
+    conditional: bool = False
+    """Whether the service may inject this variable on one cluster and not on another.
+
+    Default False: a bound service injects every variable it declares, and the
+    e2e-allservices probe asserts exactly that -- a missing variable is a provisioning
+    bug. A variable that depends on something the CLUSTER offers rather than on the
+    service being bound breaks that assertion while nothing is wrong, so it says so here
+    and the probe spec leaves it out of its presence check (RC-167, the vlam doorlus:
+    a cluster without a CA bundle offers no direct path and injects neither of its two
+    variables). Whether such a variable exists at all is still visible everywhere else --
+    the services page, the API description -- because that is a question about the
+    service, not about one cluster.
+    """
 
     def get_all_names(self) -> list[str]:
         """Get all possible names (primary name + aliases) for this variable."""

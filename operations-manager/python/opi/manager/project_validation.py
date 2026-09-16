@@ -24,6 +24,7 @@ from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
+from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.postgres_scope import get_postgres_schemas
@@ -119,21 +120,65 @@ def _validate_one_config(
         return  # unknown service name -- other validation handles it
     provider = get_service(service_type)
     model = provider.config_model_for(layer)
-    if model is None:
-        return  # service takes no typed config at this layer
+    if model is not None:
+        try:
+            if model is provider.config_model:
+                provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
+            else:
+                # A layer-specific model (per-mount clone state). OPI writes it, so there is no
+                # stamped version to migrate from; validate the shape directly.
+                model.model_validate(raw)
+        except ValidationError as e:
+            accepted = _accepted_config_fields(provider, layer)
+            hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+                f"{validation_reasons(e)}.{hint}"
+            ) from e
+
+    _check_declared_settings(provider, raw, layer, where, project_name)
+
+
+def _check_declared_settings(
+    provider: Service, raw: Any, layer: ConfigLayer, where: str, project_name: str, *, name_value: bool = True
+) -> None:
+    """The service's declared latitude (RC-168) for one config block.
+
+    A value the service opened up has to stay inside the bounds the SERVICE set, and may
+    only sit on a layer the service opened it up on. Here rather than in the model, so the
+    bound is stated once and the wizard, the API and a hand-edited file are judged by the
+    same declaration. A service that declares nothing -- the whole catalog today -- does
+    no extra work here.
+
+    Called for every block in the walk, including the ones whose config is a component
+    PROPERTY (``user-env-vars``, ``aliases``): a setting on such a service is judged on
+    its bounds and on its change, not on one of the two.
+
+    ``name_value=False`` for exactly those property blocks, and the reason is the one
+    ``_validate_owned_property`` next door already acts on: the surrounding property holds
+    the component's own environment, and ``UserEnvVarsConfig`` accepts a plain
+    ``dict[str, str]``, so a value read at a declared path there can be a pasted secret --
+    which this message both logs at WARNING and returns to the caller. The refusal is then
+    rendered from the DECLARATION (the field and its room) instead, which says the same
+    thing without repeating what was read. For a block in a ``services:`` list the value is
+    named, as it is the bound itself that is being quoted back.
+
+    Raises:
+        ProjectIntegrityError: with the sentence the user reads.
+    """
     try:
-        if model is provider.config_model:
-            provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
-        else:
-            # A layer-specific model (per-mount clone state). OPI writes it, so there is no
-            # stamped version to migrate from; validate the shape directly.
-            model.model_validate(raw)
-    except ValidationError as e:
-        accepted = _accepted_config_fields(provider, layer)
-        hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
+        check_settings(provider.config_settings(), raw, layer)
+    except SettingError as e:
+        # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
+        # names none and reads the same either way.
+        reason = (
+            f"'{e.setting.path}' valt buiten zijn speelruimte. {e.setting.latitude()}"
+            if not name_value and e.setting is not None
+            else str(e)
+        )
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
-            f"{validation_reasons(e)}.{hint}"
+            f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {where} "
+            f"is ongeldig: {reason}"
         ) from e
 
 
@@ -164,42 +209,63 @@ def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str
 
 @dataclass(frozen=True)
 class ServiceConfigBlock:
-    """One service config block found in a project file, and where it sits.
+    """One place in a project file where a service's configuration lives.
 
-    The walk is shared by ``validate_service_configs`` and
-    ``find_plaintext_service_config_violations``, so neither can miss a layer.
+    ``location`` identifies the block ACROSS two versions of the same file -- the
+    project itself, a named component, a named deployment, a named component inside a
+    named deployment, and inside that a named mount where the service keeps a record per
+    mount -- so a rule about a CHANGE can line the same block up in the old file and the
+    new one. Without that key a reduction would be compared against an unrelated
+    component's, or an unrelated mount's, value. ``where`` is that same place phrased for
+    a user, and ``from_version`` is the entry's stamped schema version; both are for the
+    value check.
+
+    ``config`` is None for a service that is referenced without configuration, which is
+    not the same as a service that is not referenced at all. That difference is the
+    point: a service still selected with its config block deleted has fallen back to the
+    service defaults, and that is a change worth judging.
     """
 
-    name: str
-    config: Any
-    layer: ConfigLayer
+    location: str
     where: str
+    name: str
+    layer: ConfigLayer
+    config: Any
     from_version: str | None
+    #: Where the block sits by POSITION (``components/0/services/1/config``), for a
+    #: message that points into the file. ``location`` cannot give that: it keys on names
+    #: so it survives a reorder, and drops the indexes a path needs.
     path: str
+    #: Set for the SYSTEM services whose config is a plain component property
+    #: (``user-env-vars``, ``aliases``) instead of an entry in a ``services:`` list.
+    owned_property: str | None = None
 
 
-def _service_config_blocks(project_data: dict[str, Any]) -> Iterator[ServiceConfigBlock]:
-    """Every service config block in a project file, at every layer it can live at.
+def iter_service_config_blocks(project_data: dict[str, Any]) -> Iterator[ServiceConfigBlock]:
+    """Every place a service's configuration lives in a project file.
 
-    Project-level service definitions (keycloak, namespace-postgres, auth-wall),
-    component-level references (storage mounts, metrics port/path), deployment-level
-    entries and deployment-component entries. A bare service reference and a service
-    without a config block yield nothing.
+    One walk with two readers: the value check (``validate_service_configs``) uses
+    ``where`` and ``from_version``, the change check
+    (``validate_service_setting_changes``) uses ``location``. It used to be two walks
+    over the same four layers, and they had already drifted apart -- the owned-property
+    blocks were in only one of them, so a setting declared on such a service would have
+    been judged on its bounds and never on its change.
+
+    Covers every layer a config can live at: project-level service definitions
+    (keycloak, namespace-postgres, auth-wall), component-level references
+    (persistent-storage / temp-storage mounts, metrics-scraper port/path),
+    deployment-level entries (clone state today), both shapes on the
+    deployment-component layer, and the component properties that SYSTEM services own.
     """
     view = Project(project_data)
-
-    # Project-level service definitions.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
-        entry = view.service_entry(name)
-        raw = view.service_config(name)
-        if raw is None:
-            continue  # bare service / no project-level config to validate
         yield ServiceConfigBlock(
-            name=name,
-            config=raw,
-            layer=ConfigLayer.PROJECT,
+            location="project",
             where="op projectniveau",
-            from_version=service_entry_schema_version(entry),
+            name=name,
+            layer=ConfigLayer.PROJECT,
+            config=view.service_config(name),
+            from_version=service_entry_schema_version(view.service_entry(name)),
             path=f"services/{name}/config",
         )
 
@@ -210,113 +276,159 @@ def _service_config_blocks(project_data: dict[str, Any]) -> Iterator[ServiceConf
         if not isinstance(component, dict):
             continue
         comp_name = component.get("name", "(onbekend)")
+        location = f"component:{component.get('name')}"
         for entry_index, entry in enumerate(component.get("services", []) or []):
             name = service_entry_name(entry)
-            config = service_entry_config(entry)
-            if name is None or config is None:
-                continue  # bare reference / no config to validate
+            if name is None:
+                continue
             yield ServiceConfigBlock(
-                name=name,
-                config=config,
-                layer=ConfigLayer.COMPONENT,
+                location=location,
                 where=f"in component '{comp_name}'",
+                name=name,
+                layer=ConfigLayer.COMPONENT,
+                config=service_entry_config(entry),
                 from_version=service_entry_schema_version(entry),
                 path=f"components/{comp_index}/services/{entry_index}/config",
             )
+        yield from _owned_property_blocks(
+            component, location, ConfigLayer.COMPONENT, f"van component '{comp_name}'", f"components/{comp_index}"
+        )
 
-    # Deployment-level service entries (clone state today, anything a service declares
-    # tomorrow). ``$defs/deployment-service-config`` in the global schema is deliberately
-    # open, so this walk is the only thing between a typo and a silently ignored setting.
     for dep_index, deployment in enumerate(project_data.get("deployments", []) or []):
         if not isinstance(deployment, dict):
             continue
         dep_name = deployment.get("name", "(onbekend)")
+        dep_location = f"deployment:{deployment.get('name')}"
+        # Deployment-level service entries (clone state today, anything a service
+        # declares tomorrow). ``$defs/deployment-service-config`` in the global schema is
+        # deliberately open, so this walk is the only thing between a typo and a silently
+        # ignored setting.
         for entry_index, entry in enumerate(deployment.get("services", []) or []):
             name = service_entry_name(entry)
-            config = service_entry_config(entry)
-            if name is None or config is None:
-                continue  # bare reference / no config to validate
+            if name is None:
+                continue
             yield ServiceConfigBlock(
-                name=name,
-                config=config,
-                layer=ConfigLayer.DEPLOYMENT,
+                location=dep_location,
                 where=f"in deployment '{dep_name}'",
+                name=name,
+                layer=ConfigLayer.DEPLOYMENT,
+                config=service_entry_config(entry),
                 from_version=service_entry_schema_version(entry),
                 path=f"deployments/{dep_index}/services/{entry_index}/config",
             )
 
-    # Deployment-component service entries. Two shapes live here: a dict keyed by service
-    # name (``{publish-on-web: {config: ...}}``) and, for the storage services, a list of
-    # per-mount records under that key. Both are walked, because the global schema no longer
-    # guards this layer: opening up the deployment envelope moved that job here.
-    for dep_index, deployment in enumerate(project_data.get("deployments", []) or []):
-        if not isinstance(deployment, dict):
-            continue
-        dep_name = deployment.get("name", "(onbekend)")
+        # Deployment-component service entries. Two shapes live here: a dict keyed by
+        # service name (``{publish-on-web: {config: ...}}``) and, for the storage
+        # services, a list of per-mount records under that key. Both are walked, because
+        # the global schema no longer guards this layer: opening up the deployment
+        # envelope moved that job here.
+        #
+        # In that list shape one place carries MORE THAN ONE block of the same service,
+        # one per mount, so the mount belongs in the location: the change rule pairs a
+        # block with its previous version by (location, name), and without the mount two
+        # mounts of the same service would share that key -- comparing one mount's size
+        # with another's.
         for comp_index, component in enumerate(deployment.get("components", []) or []):
             if not isinstance(component, dict):
                 continue
             comp_name = component.get("reference") or component.get("name", "(onbekend)")
+            location = f"{dep_location}/component:{comp_name}"
             where = f"in component '{comp_name}' van deployment '{dep_name}'"
-            base = f"deployments/{dep_index}/components/{comp_index}/services"
+            base = f"deployments/{dep_index}/components/{comp_index}"
             services = component.get("services")
             if isinstance(services, dict):
                 for name, body in services.items():
-                    for body_index, entry in enumerate(body if isinstance(body, list) else [body]):
-                        config = entry.get("config") if isinstance(entry, dict) else None
-                        if config is None:
-                            continue
-                        suffix = f"{name}/{body_index}" if isinstance(body, list) else name
+                    per_mount = isinstance(body, list)
+                    for body_index, entry in enumerate(body if per_mount else [body]):
+                        suffix = f"{name}/{body_index}" if per_mount else name
+                        mount = entry.get("reference") if per_mount and isinstance(entry, dict) else None
                         yield ServiceConfigBlock(
-                            name=name,
-                            config=config,
-                            layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                            location=location if mount is None else f"{location}/mount:{mount}",
                             where=where,
+                            name=name,
+                            layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                            config=entry.get("config") if isinstance(entry, dict) else None,
                             from_version=service_entry_schema_version(entry),
-                            path=f"{base}/{suffix}/config",
+                            path=f"{base}/services/{suffix}/config",
                         )
             elif isinstance(services, list):
                 for entry_index, entry in enumerate(services):
                     name = service_entry_name(entry)
-                    config = service_entry_config(entry)
-                    if name is None or config is None:
+                    if name is None:
                         continue
                     yield ServiceConfigBlock(
-                        name=name,
-                        config=config,
-                        layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                        location=location,
                         where=where,
+                        name=name,
+                        layer=ConfigLayer.DEPLOYMENT_COMPONENT,
+                        config=service_entry_config(entry),
                         from_version=service_entry_schema_version(entry),
-                        path=f"{base}/{entry_index}/config",
+                        path=f"{base}/services/{entry_index}/config",
                     )
+            yield from _owned_property_blocks(
+                component,
+                location,
+                ConfigLayer.DEPLOYMENT_COMPONENT,
+                f"van component '{comp_name}' in deployment '{dep_name}'",
+                base,
+            )
+
+
+def _owned_property_blocks(
+    component: dict[str, Any], location: str, layer: ConfigLayer, where: str, path: str
+) -> Iterator[ServiceConfigBlock]:
+    """The blocks of the SYSTEM services that own a plain component property (RC-25).
+
+    ``user-env-vars`` and ``aliases`` are services whose config is a property of the
+    component rather than a block in a ``services:`` list, so the walk above never sees
+    them -- which is exactly why they went unvalidated until they were declared. The
+    services name the property (``owned_property``) and the layers they carry it on
+    (``config_editables``), so this loop names neither service.
+    """
+    for service in property_owning_services():
+        key = service.owned_property
+        if key is None or not service.config_editables(layer):
+            continue
+        yield ServiceConfigBlock(
+            location=location,
+            where=where,
+            name=service.service_type.value,
+            layer=layer,
+            config=component.get(key),
+            from_version=None,
+            path=f"{path}/{key}",
+            owned_property=key,
+        )
 
 
 def validate_service_configs(project_data: dict[str, Any]) -> None:
     """Validate every service's config against its provider's typed model (RC-5 A:
     the per-service config-validation chokepoint).
 
-    Covers all three layers a config can live at: project-level service definitions
-    (keycloak, namespace-postgres, auth-wall), component-level service references
-    (persistent-storage / temp-storage mounts, metrics-scraper port/path) and
-    deployment-level entries (clone state today). Services without a config block, or
-    without a typed model, are skipped. Fails closed: raises ProjectIntegrityError on the
-    first invalid service config.
+    Walks ``iter_service_config_blocks``, so it covers every layer a config can live at
+    plus the component properties that SYSTEM services own. Services without a config
+    block, or without a typed model, are skipped. Fails closed: raises
+    ProjectIntegrityError on the first invalid service config.
     """
     view = Project(project_data)
     project_name = project_data.get("name", "(onbekend)")
 
     # The DEFINE side first: what a service stores under ``data`` (the attachments
-    # catalog today). The config walk only ever looked at ``config``, so a catalog entry
-    # with a missing filename was committed and failed at deploy time.
+    # catalog today). It was validated by nothing at all -- the config walk only ever
+    # looked at ``config`` -- so a catalog entry with a missing filename or an id that
+    # cannot become a volume name was committed and failed at deploy time.
     for name in ServiceAdapter.extract_service_names_from_project_services(project_data.get("services", [])):
         data = service_entry_data(view.service_entry(name))
         if data is not None:
             _validate_one_data_block(name, data, ConfigLayer.PROJECT, "op projectniveau", project_name)
 
-    for block in _service_config_blocks(project_data):
-        _validate_one_config(block.name, block.config, block.layer, block.where, project_name, block.from_version)
-
-    _validate_owned_properties(project_data, project_name)
+    for block in iter_service_config_blocks(project_data):
+        if block.config is None:
+            continue  # bare reference / no config to validate
+        if block.owned_property is not None:
+            _validate_owned_property_block(block, project_name)
+        else:
+            _validate_one_config(block.name, block.config, block.layer, block.where, project_name, block.from_version)
 
 
 def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> list[str]:
@@ -325,10 +437,13 @@ def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> li
     The counterpart of ``find_plaintext_secret_violations`` for the half of a project file
     that ``project_v2.json`` does not describe, because a service's config shape is owned
     by that service's model. Detection comes from the schema (a ``pattern`` carrying the
-    AGE marker), never from a field list, and judges the block as it is STORED.
+    AGE marker), never from a field list, and judges the block as it is STORED. The
+    owned-property blocks are component properties, which ``project_v2.json`` does describe.
     """
     violations: list[str] = []
-    for block in _service_config_blocks(project_data):
+    for block in iter_service_config_blocks(project_data):
+        if block.config is None or block.owned_property is not None:
+            continue
         try:
             service_type = ServiceType(block.name)
         except ValueError:
@@ -346,49 +461,23 @@ def _model_validator(model: type[BaseModel]) -> Draft202012Validator:
     return Draft202012Validator(model.model_json_schema())
 
 
-def _validate_owned_properties(project_data: dict[str, Any], project_name: str) -> None:
-    """Validate the plain component properties that SYSTEM services own (RC-25).
+def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str) -> None:
+    """Validate one owned-property block from the walk: its model AND its latitude.
 
-    ``user-env-vars`` and ``aliases`` are services whose config is a property of the
-    component rather than a block in a ``services:`` list, so the walks above never see
-    them -- which is exactly why they went unvalidated until now. The services declare
-    the property (``owned_property``) and the layers they carry it on
-    (``config_editables``), so this loop names neither service.
+    Both, because the walk hands these blocks to the change check as well; judging them
+    on their change but not on their bounds is the same divergence the shared walk closed,
+    only the other way around. Neither of the two names the value: see
+    ``_check_declared_settings`` for why the latitude check is asked not to either.
     """
-    for service in property_owning_services():
-        key, model = service.owned_property, service.config_model
-        if key is None or model is None:
-            # property_owning_services() filters on owned_property, and a service that owns
-            # one is always modelled -- but this walk is a fail-closed validation path, so
-            # it narrows explicitly instead of leaning on an assert (which `python -O`
-            # strips, turning the guarantee into a silent skip).
-            continue
-        if service.config_editables(ConfigLayer.COMPONENT):
-            for component in project_data.get("components", []) or []:
-                if isinstance(component, dict) and component.get(key) is not None:
-                    _validate_owned_property(
-                        service,
-                        model,
-                        component[key],
-                        f"van component '{component.get('name', '(onbekend)')}'",
-                        project_name,
-                    )
-        if not service.config_editables(ConfigLayer.DEPLOYMENT_COMPONENT):
-            continue
-        for deployment in project_data.get("deployments", []) or []:
-            if not isinstance(deployment, dict):
-                continue
-            dep_name = deployment.get("name", "(onbekend)")
-            for component in deployment.get("components", []) or []:
-                if isinstance(component, dict) and component.get(key) is not None:
-                    comp_name = component.get("reference") or component.get("name", "(onbekend)")
-                    _validate_owned_property(
-                        service,
-                        model,
-                        component[key],
-                        f"van component '{comp_name}' in deployment '{dep_name}'",
-                        project_name,
-                    )
+    service = get_service(ServiceType(block.name))
+    model = service.config_model
+    # property_owning_services() filters on owned_property, and a service that owns one is
+    # always modelled -- but this is a fail-closed validation path, so it narrows
+    # explicitly instead of leaning on an assert (which `python -O` strips, turning the
+    # guarantee into a silent skip). The latitude check below does not depend on a model.
+    if model is not None:
+        _validate_owned_property(service, model, block.config, block.where, project_name)
+    _check_declared_settings(service, block.config, block.layer, block.where, project_name, name_value=False)
 
 
 def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
@@ -711,12 +800,71 @@ def validate_service_availability(project_data: dict[str, Any]) -> list[str]:
     return errors
 
 
-async def validate_project_structure(project_data: dict[str, Any]) -> None:
+def validate_service_setting_changes(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
+    """Judge what this save CHANGES about a service's declared settings (RC-168).
+
+    Some fields cannot move both ways: a PVC cannot shrink, so accepting a smaller
+    ``storage`` because it happens to sit between the declared bounds means a value that
+    then silently does nothing or wedges the rollout. That is a rule about a change, not
+    about a value, so it needs the version being replaced -- which is why it lives here
+    and not in the per-block walk.
+
+    Blocks are matched by location, so a newly added component or deployment has nothing
+    to be compared against and is only judged on its bounds. Comparing per block is the
+    same as comparing the EFFECTIVE value because a setting that judges a change may name
+    only one layer -- ``ConfigSetting.__post_init__`` refuses the declaration otherwise --
+    so the block at that PLACE is the only one ``resolve_setting`` would read for that
+    field. Which is why the location goes down to the mount where a service keeps a
+    record per mount: there one layer still carries several blocks under one component,
+    each with its own effective value, and one key for all of them would both let a
+    shrink through and refuse a file in which nothing changed at all.
+
+    A field a version does not mention was standing on the service default, and that is
+    what it is compared with -- on both sides, so a reduction cannot be smuggled in by
+    leaving the field, or the whole config block, out. That reading holds all the way up: the previous version is
+    looked up by its KEY, so a service referenced BARE there (no config block at all) is
+    a version standing on the defaults, not an absence.
+
+    A service that is no longer referenced at that place is not in the walk and so is
+    judged on nothing: dropping a service is a removal, not a reduction of its fields.
+
+    Fails closed: raises ProjectIntegrityError on the first refused change.
+    """
+    project_name = project_data.get("name", "(onbekend)")
+    before = {(block.location, block.name): block.config for block in iter_service_config_blocks(previous)}
+    for block in iter_service_config_blocks(project_data):
+        key = (block.location, block.name)
+        if key not in before:
+            continue  # the service was not there before: an addition, no change to judge
+        # Asked of the KEY, not of the value. A service referenced bare (config None) is
+        # standing on the service defaults, which is exactly the version a reduction has
+        # to be measured against -- reading the value here would make "bare" and "not
+        # there" the same answer again, and leaving the config block out the way around
+        # the rule.
+        old_config = before[key]
+        try:
+            service_type = ServiceType(block.name)
+        except ValueError:
+            continue  # unknown service name -- other validation handles it
+        try:
+            check_setting_changes(get_service(service_type).config_settings(), old_config, block.config, block.layer)
+        except SettingError as e:
+            raise ProjectIntegrityError(
+                f"Project '{project_name}': configuratie van service '{block.name}' kan niet zo worden gewijzigd: {e}"
+            ) from e
+
+
+async def validate_project_structure(project_data: dict[str, Any], *, previous: dict[str, Any] | None = None) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
     Runs the reference/uniqueness/path/root/domain checks against the final merged
     dict so they hold no matter which caller produced it. Raises
     ProjectIntegrityError on the first violation; fails closed.
+
+    ``previous`` is the version this one replaces, when the caller has it. Only the
+    rules that judge a CHANGE rather than a value need it (see
+    ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
+    so a caller without a previous version -- a create, a replay -- loses nothing else.
     """
     project_name = project_data.get("name", "(onbekend)")
     components = project_data.get("components", []) or []
@@ -873,3 +1021,8 @@ async def validate_project_structure(project_data: dict[str, Any]) -> None:
     # Per-service typed config validation (RC-5 A). Runs last: the envelope and
     # cross-field structure are valid by here, so this only judges the config values.
     validate_service_configs(project_data)
+
+    # And what the save CHANGES about those values, for the fields a service declared
+    # can only move one way. Only when the caller handed over the version being replaced.
+    if previous is not None:
+        validate_service_setting_changes(previous, project_data)

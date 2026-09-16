@@ -453,9 +453,11 @@ class GitProjectStore(ProjectStore):
                         connector, relative_path, name=name, base=base, data=data, actor=actor
                     )
 
-                await self._validate(attempt_data, enforce=enforce_validation)
-
+                # Read before validating, not after: the committed version is what this
+                # write replaces, and a rule about a change needs both halves.
                 before = await self._read_committed(connector, relative_path)
+                await self._validate(attempt_data, enforce=enforce_validation, previous=before)
+
                 try:
                     ref = await self._persist(connector, relative_path, attempt_data, message, actor)
                 except GitPushConflictError as e:
@@ -523,7 +525,7 @@ class GitProjectStore(ProjectStore):
                     ref = await connector.get_local_commit_hash()
                     return MutationResult(before=current, after=current, ref=ref, committed=False)
 
-                await self._validate(mutated, enforce=enforce_validation)
+                await self._validate(mutated, enforce=enforce_validation, previous=current)
 
                 try:
                     ref = await self._persist(connector, relative_path, mutated, message, actor)
@@ -658,7 +660,7 @@ class GitProjectStore(ProjectStore):
         # the grounds that both inputs were.
         try:
             validate_project_schema(merged)
-            await validate_project_structure(merged)
+            await validate_project_structure(merged, previous=current)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             raise ConflictError(
                 f"Project '{name}' is gewijzigd sinds je begon met bewerken en de samengevoegde "
@@ -668,17 +670,22 @@ class GitProjectStore(ProjectStore):
         logger.info("Three-way merge for '%s' applied and validated; both changes preserved", name)
         return merged
 
-    async def _validate(self, data: dict[str, Any], *, enforce: bool) -> None:
+    async def _validate(self, data: dict[str, Any], *, enforce: bool, previous: dict[str, Any] | None = None) -> None:
         """Schema + structural validation of the FINAL state, before any write.
 
         ``enforce=False`` is for trusted, narrow programmatic mutators (auto-tune,
         oom_watcher, restore, keycloak config): the same checks still run and any
         violation is logged, but pre-existing unrelated drift does not block a
         recovery write. It is not a less-validated path -- the checks are identical.
+
+        ``previous`` is the committed version this write replaces. A rule that judges a
+        CHANGE (a volume that cannot shrink) can only run here, where both versions are
+        in hand; without it the rule would be decoration. A create has no previous
+        version and is judged on its values alone.
         """
         try:
             validate_project_schema(data)
-            await validate_project_structure(data)
+            await validate_project_structure(data, previous=previous)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             if enforce:
                 raise
