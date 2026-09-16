@@ -1,6 +1,6 @@
 """Tests voor de registry die naast het kind-cluster staat.
 
-Vier dingen worden hier bewaakt:
+Vijf dingen worden hier bewaakt:
   1. scripts/setup-kind-registry.sh - de stappen van de kind-recipe, en de weigering als
      containerd de certs.d-map niet leest.
   2. sandboxed-local/kind-config.yaml - de containerdConfigPatches die dat mogelijk maken.

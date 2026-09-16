@@ -2377,9 +2377,6 @@ tasks:
   sandbox:prune-registry:
     desc: "Verwijder oude tags uit de registry naast het kind-cluster, de gedeelde lagen blijven"
     summary: |
-      Tags met een image ouder dan RETENTIE_DAGEN (standaard 2) gaan weg, de nieuwste per
-      repository blijft altijd. Daarna ruimt `registry garbage-collect` de lagen op waar
-      niets meer naar verwijst. De buildcache van de builder blijft buiten schot.
       Zie docs/sandbox-kind-registry.md.
 
         task sandbox:prune-registry RETENTIE_DAGEN=0
@@ -3401,8 +3398,7 @@ tasks:
           ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo "Operations manager updated successfully"
-      # Wie pusht, ruimt op: hier houdt niemand anders de registry bezig, en een garbage
-      # collect naast een lopende push gooit lagen weg (docs/sandbox-kind-registry.md).
+      # Waarom hier en niet in een cron: docs/sandbox-kind-registry.md.
       - task: sandbox:prune-registry
     silent: true
 
