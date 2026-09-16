@@ -1,10 +1,14 @@
 """Real-Postgres tests for the ORM-backed AsyncTaskService (RC-5 persistence)."""
 
 import uuid
+from datetime import datetime, timedelta
 
+import pytest
 from opi.core.async_task_service import MAX_ERROR_MESSAGE_CHARS, AsyncTaskService
 from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
+from opi.services.persistence.project_reconciliation import ProjectReconciliation
+from opi.services.project_reconciliation_service import record_reconciliation
 from sqlalchemy import func, update
 
 
@@ -307,13 +311,20 @@ async def test_cleanup_old_tasks(orm_db):
 
 # ---------------------------------------------------------------------------
 # Deferred rollouts (RC-46): the drift the UI shows must be measured, not guessed.
+# What clears it is what a processing run recorded as reconciled (RC-188).
 # ---------------------------------------------------------------------------
 
 
-async def _completed(svc, *, project, task_type, payload):
-    row = await _create(svc, project=project, deployment=None, task_type=task_type, payload=payload)
+async def _completed(svc, *, project, task_type, payload, deployment=None):
+    row = await _create(svc, project=project, deployment=deployment, task_type=task_type, payload=payload)
     await svc.complete_task(row["task_id"])
     return row
+
+
+async def _deferred_image(svc, deployment: str, project: str = "p1"):
+    return await _completed(
+        svc, project=project, deployment=deployment, task_type="update_image", payload={"rollout": False}
+    )
 
 
 async def test_no_deferred_rollouts_when_nothing_was_deferred(orm_db):
@@ -342,17 +353,31 @@ async def test_deferred_rollouts_are_scoped_to_one_project(orm_db):
     assert (await svc.get_deferred_rollouts("p2"))["count"] == 0
 
 
-async def test_a_refresh_clears_everything_before_it(orm_db):
+async def test_a_project_wide_reconciliation_clears_everything_before_it(orm_db):
     svc = _svc()
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
-    await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    await _deferred_image(svc, "d1")
+    await record_reconciliation("p1", [], project_wide=True, read_seconds_ago=0)
 
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
 
 
-async def test_a_change_deferred_after_the_refresh_still_counts(orm_db):
+async def test_it_does_not_matter_which_task_type_processed(orm_db):
+    """The mpfm-w3h case: eight full runs by tasks that were not refresh_project cleared nothing."""
     svc = _svc()
+    await _deferred_image(svc, "d1")
     await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+    await record_reconciliation("p1", ["d1"], project_wide=True, read_seconds_ago=0)
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
+
+
+async def test_a_change_deferred_after_the_reconciliation_still_counts(orm_db):
+    svc = _svc()
+    await record_reconciliation("p1", [], project_wide=True, read_seconds_ago=0)
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
 
     pending = await svc.get_deferred_rollouts("p1")
@@ -360,11 +385,79 @@ async def test_a_change_deferred_after_the_refresh_still_counts(orm_db):
     assert pending["task_types"] == ["add_component"]
 
 
-async def test_a_partial_rollout_does_not_clear_the_drift(orm_db):
-    """refresh_deployment reconciles ONE deployment, so the rest of the file stays ahead."""
+async def test_a_scoped_reconciliation_clears_only_its_own_deployment(orm_db):
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    other = await _deferred_image(svc, "d2")
+    await record_reconciliation("p1", ["d1"], project_wide=False, read_seconds_ago=0)
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == 1
+    assert pending["since"] == (await svc.get_task(other["task_id"]))["completed_at"]
+
+
+async def test_a_scoped_reconciliation_does_not_clear_a_project_wide_change(orm_db):
+    """Only the project-wide row covers a project-wide scope, as in covers()."""
     svc = _svc()
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
-    await _completed(svc, project="p1", task_type="refresh_deployment", payload={"deployment_name": "dev"})
+    await record_reconciliation("p1", ["d1", "d2"], project_wide=False, read_seconds_ago=0)
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+
+async def test_a_change_to_two_deployments_waits_until_both_are_reconciled(orm_db):
+    svc = _svc()
+    await _completed(
+        svc,
+        project="p1",
+        task_type="add_component",
+        payload={"name": "web", "deployment_names": ["d1", "d2"], "rollout": False},
+    )
+    await record_reconciliation("p1", ["d1"], project_wide=False, read_seconds_ago=0)
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
+
+    await record_reconciliation("p1", ["d2"], project_wide=False, read_seconds_ago=0)
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("deployment_name", "offset_us", "waiting"),
+    [
+        (None, 0, 0),
+        (None, -1, 1),
+        ("d1", 0, 0),
+        ("d1", -1, 1),
+    ],
+    ids=[
+        "project-wide-at-completion",
+        "project-wide-just-before",
+        "deployment-at-completion",
+        "deployment-just-before",
+    ],
+)
+async def test_a_run_that_read_the_file_at_the_moment_the_change_completed_saw_it(
+    orm_db, deployment_name, offset_us, waiting
+):
+    """The read rule's boundary: waiting means reconciled strictly BEFORE completion."""
+    svc = _svc()
+    row = await _deferred_image(svc, "d1")
+    completed_at = datetime.fromisoformat((await svc.get_task(row["task_id"]))["completed_at"])
+    async with session_scope() as session:
+        session.add(
+            ProjectReconciliation(
+                project_name="p1",
+                deployment_name=deployment_name,
+                reconciled_at=completed_at + timedelta(microseconds=offset_us),
+            )
+        )
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == waiting
+
+
+async def test_a_reconciliation_of_another_project_clears_nothing(orm_db):
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    await record_reconciliation("p2", ["d1"], project_wide=True, read_seconds_ago=0)
 
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
 
@@ -390,10 +483,88 @@ async def test_a_queued_rollout_already_counts_as_in_progress(orm_db):
     assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
 
 
+async def test_any_processing_task_that_covers_the_drift_is_a_rollout_in_progress(orm_db):
+    """Not only a refresh: update_component processes the whole project too."""
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _create(svc, project="p1", deployment=None, task_type="update_component", payload={"name": "web"})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
+async def test_a_restore_is_a_rollout_in_progress_on_its_deployment(orm_db):
+    """A restore processes its target deployment again, so it clears drift there."""
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    await _create(svc, project="p1", deployment="d1", task_type="restore", payload={"target_deployment": "d1"})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
+async def test_a_scoped_processing_task_does_not_cover_project_wide_drift(orm_db):
+    svc = _svc()
+    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _create(svc, project="p1", deployment="d1", task_type="refresh_deployment", payload={"f": 1})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
+
+
+async def test_a_scoped_processing_task_covers_drift_on_its_own_deployment(orm_db):
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    await _create(svc, project="p1", deployment="d1", task_type="refresh_deployment", payload={"f": 1})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is True
+
+
+@pytest.mark.parametrize(
+    ("waiting_scopes", "open_scope", "in_progress"),
+    [
+        ([["d1"], ["d2"]], ["d2"], False),
+        ([["d1"], ["d2"]], ["d1", "d2"], True),
+        ([None, ["d1"]], ["d1"], False),
+        ([["d1"], None], ["d1"], False),
+        ([None, ["d1"]], None, True),
+    ],
+    ids=[
+        "covers-only-the-newest-change",
+        "covers-the-union",
+        "project-wide-change-then-scoped",
+        "scoped-change-then-project-wide",
+        "project-wide-covers-all",
+    ],
+)
+async def test_an_open_task_is_in_progress_only_when_it_covers_every_waiting_change(
+    orm_db, waiting_scopes, open_scope, in_progress
+):
+    """The open scope must cover the union of all waiting scopes, whatever their order."""
+
+    def payload(scope: list[str] | None, **extra: object) -> dict:
+        return {"name": "web", **({"deployment_names": scope} if scope else {}), **extra}
+
+    svc = _svc()
+    for scope in waiting_scopes:
+        await _completed(svc, project="p1", task_type="add_component", payload=payload(scope, rollout=False))
+    await _create(svc, project="p1", deployment=None, task_type="add_component", payload=payload(open_scope))
+
+    pending = await svc.get_deferred_rollouts("p1")
+    assert pending["count"] == len(waiting_scopes)
+    assert pending["rollout_in_progress"] is in_progress
+
+
+async def test_an_open_task_that_defers_its_own_rollout_is_not_in_progress(orm_db):
+    svc = _svc()
+    await _deferred_image(svc, "d1")
+    await _create(svc, project="p1", deployment=None, task_type="update_component", payload={"rollout": False})
+
+    assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
+
+
 async def test_no_rollout_in_progress_once_it_finished(orm_db):
     svc = _svc()
     await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
     await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
+    await record_reconciliation("p1", [], project_wide=True, read_seconds_ago=0)
 
     pending = await svc.get_deferred_rollouts("p1")
     assert pending["count"] == 0
@@ -403,7 +574,8 @@ async def test_no_rollout_in_progress_once_it_finished(orm_db):
 async def test_a_running_task_that_rolls_nothing_out_is_not_reported(orm_db):
     """Anders zou een slaapstand of een kloon een uitrol aankondigen die niet gebeurt."""
     svc = _svc()
-    await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    # Drift op dezelfde deployment: dan dekt de scope hem, en zegt alleen het taaktype nee.
+    await _deferred_image(svc, "d1")
     other = await _create(svc, project="p1", deployment="d1", task_type="sleep_deployment", payload={"a": 1})
     await svc.start_task(other["task_id"])
 
@@ -419,36 +591,41 @@ async def test_a_running_rollout_in_another_project_is_not_reported(orm_db):
     assert (await svc.get_deferred_rollouts("p1"))["rollout_in_progress"] is False
 
 
+async def _age(task_id: str, hours: int) -> None:
+    async with session_scope() as session:
+        await session.execute(
+            update(AsyncTask)
+            .where(AsyncTask.id == uuid.UUID(task_id))
+            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, hours))
+        )
+
+
 async def test_cleanup_keeps_a_deferred_rollout_that_was_never_rolled_out(orm_db):
     """Drift that disappears after a week is exactly the silent drift this must surface."""
     svc = _svc()
     row = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
-    async with session_scope() as session:
-        await session.execute(
-            update(AsyncTask)
-            .where(AsyncTask.id == uuid.UUID(row["task_id"]))
-            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
-        )
+    await _age(row["task_id"], 200)
 
     assert await svc.cleanup_old_tasks(retention_hours=168) == 0
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
 
 
-async def test_cleanup_removes_a_deferred_rollout_once_it_was_rolled_out(orm_db):
+async def test_cleanup_removes_a_deferred_rollout_once_it_was_reconciled(orm_db):
     svc = _svc()
     deferred = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
-    rolled = await _completed(svc, project="p1", task_type="refresh_project", payload={"force_clone": False})
-    # Both beyond the retention window, but the refresh strictly after the deferred change.
-    async with session_scope() as session:
-        await session.execute(
-            update(AsyncTask)
-            .where(AsyncTask.id == uuid.UUID(deferred["task_id"]))
-            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
-        )
-        await session.execute(
-            update(AsyncTask)
-            .where(AsyncTask.id == uuid.UUID(rolled["task_id"]))
-            .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 190))
-        )
+    await _age(deferred["task_id"], 200)
+    await record_reconciliation("p1", [], project_wide=True, read_seconds_ago=0)
 
-    assert await svc.cleanup_old_tasks(retention_hours=168) == 2
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 1
+
+
+async def test_cleanup_keeps_a_deferred_rollout_whose_deployment_was_not_reconciled(orm_db):
+    svc = _svc()
+    kept = await _deferred_image(svc, "d2")
+    cleared = await _deferred_image(svc, "d1")
+    await _age(kept["task_id"], 200)
+    await _age(cleared["task_id"], 200)
+    await record_reconciliation("p1", ["d1"], project_wide=False, read_seconds_ago=0)
+
+    assert await svc.cleanup_old_tasks(retention_hours=168) == 1
+    assert await svc.get_task(kept["task_id"]) is not None

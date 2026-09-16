@@ -947,37 +947,86 @@ class ServiceAdapter:
     ) -> dict[str, Any]:
         """Return the dict that owns the ``services`` list for ``layer``."""
         lv = layer.value
+        project_name = project_data.get("name")
         if lv == "project":
             return project_data
         if lv == "component":
             return cls._require_named(
-                project_data.get("components", []), component_name, kind="component", param="component_name"
+                project_data.get("components", []),
+                component_name,
+                kind="component",
+                param="component_name",
+                project_name=project_name,
             )
         if lv == "deployment":
             return cls._require_named(
-                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+                project_data.get("deployments", []),
+                deployment_name,
+                kind="deployment",
+                param="deployment_name",
+                project_name=project_name,
             )
         if lv == "deployment-component":
             deployment = cls._require_named(
-                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+                project_data.get("deployments", []),
+                deployment_name,
+                kind="deployment",
+                param="deployment_name",
+                project_name=project_name,
             )
             return cls._require_named(
                 deployment.get("components", []),
                 component_name,
                 kind="deployment component",
                 param="component_name",
+                project_name=project_name,
             )
         raise ServiceValidationError(f"Unknown config target layer: {layer!r}")
 
     @classmethod
-    def _require_named(cls, items: list[dict[str, Any]], name: str | None, *, kind: str, param: str) -> dict[str, Any]:
-        """Find an item by name/reference or raise a clear ServiceValidationError."""
+    def _require_named(
+        cls,
+        items: list[dict[str, Any]],
+        name: str | None,
+        *,
+        kind: str,
+        param: str,
+        project_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Find an item by name/reference or raise a clear ServiceValidationError.
+
+        The project is named in the miss: this walk is pure data manipulation, so the
+        message is all the reader gets. Without it a failed task read "Deployment
+        'pr-268' not found in project", which is the same sentence for every project a
+        CI pipeline touches (three of them at once, measured 3 September 2026).
+        """
         if not name:
             raise ServiceValidationError(f"A '{param}' is required to target the {kind} layer")
         for item in items:
             if service_entry_name(item) == name:
                 return item
-        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project")
+        where = f" '{project_name}'" if project_name else ""
+        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project{where}")
+
+    @classmethod
+    def require_config_target(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> None:
+        """Raise ``ServiceValidationError`` when ``layer``'s target is not in the project.
+
+        For a caller that wants the answer BEFORE it starts a write: the config
+        endpoints ask this so a deployment that is not there is a 404 on the request
+        instead of a task that fails a second later. It is the same walk the write
+        itself does, so the two cannot disagree about what exists.
+        """
+        cls._resolve_target_container(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name
+        )
 
     @classmethod
     def set_service_config(

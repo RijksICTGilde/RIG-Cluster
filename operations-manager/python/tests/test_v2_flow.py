@@ -42,12 +42,30 @@ def mock_task_service() -> AsyncMock:
 
 @pytest.fixture
 def mock_auth_project_service() -> Any:
+    """The store, standing in for authentication AND for the existence check the
+    config-write routes do before they enqueue: without ``data`` every write below is
+    a 404 for a component that the project supposedly does not have."""
     mock_service = MagicMock(spec=GitProjectStore)
     test_project = ProjectSummary(
         name="test-project",
         api_key=API_KEY,
         filename="test-project.yaml",
         users=[ProjectUser(email="user@example.com", role="Developer")],
+        data={
+            "name": "test-project",
+            "components": [
+                {"name": "backend", "type": "single"},
+                {"name": "api", "type": "single"},
+                {"name": "web", "type": "single"},
+            ],
+            "deployments": [
+                {
+                    "name": "main",
+                    "cluster": "local",
+                    "components": [{"reference": "backend"}, {"reference": "api"}, {"reference": "web"}],
+                }
+            ],
+        },
     )
 
     def get_project(name: str) -> ProjectSummary | None:
@@ -58,6 +76,7 @@ def mock_auth_project_service() -> Any:
     with (
         patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
+        patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

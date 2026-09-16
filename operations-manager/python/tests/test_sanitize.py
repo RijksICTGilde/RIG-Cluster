@@ -288,7 +288,7 @@ class TestSanitizeUnhealthyPods:
                 "type": "Warning",
                 "reason": "ImagePullBackOff",
                 "object": "production-api-abc123",
-                "message": 'Back-off pulling image "ghcr.io/org/app:bad-tag"',
+                "message": 'Back-off pulling image "ghcr.io/org/app:bad-tag": ErrImagePull: manifest unknown',
                 "time": "2026-03-31T10:00:00Z",
             }
         ]
@@ -311,6 +311,75 @@ class TestSanitizeUnhealthyPods:
         assert len(result["disabled"]) == 1
         assert result["disabled"][0]["component"] == "api"
         assert "ImagePullBackOff" in result["disabled"][0]["reason"]
+
+    @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
+    async def test_unreachable_registry_does_not_disable_component(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess
+    ):
+        """This path had no guard at all, so a mirror that stopped answering disabled
+        every component on it. Only the registry saying "absent" may disable."""
+        project_data = {
+            "name": "my-project",
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "local",
+                    "components": [{"reference": "api", "image": "ghcr.io/org/app:pr-307"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.return_value = [{"ready": "0/1", "replicas": "1"}]
+        mock_kubectl.get_namespace_events.return_value = [
+            {
+                "type": "Warning",
+                "reason": "ImagePullBackOff",
+                "object": "production-api-abc123",
+                "message": (
+                    'Back-off pulling image "rcr.rijksapps.nl/ghcr-rig/org/app:pr-307": ErrImagePull: '
+                    'pinging container registry rcr.rijksapps.nl: Get "https://rcr.rijksapps.nl/v2/": EOF'
+                ),
+                "time": "2026-09-10T08:54:00Z",
+            }
+        ]
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        mock_connector = AsyncMock()
+        mock_connector.get_pod_restarts.return_value = []
+        mock_connector.custom_query.return_value = []
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        response = await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert result["disabled"] == []
+        mock_pm.save_and_commit_project.assert_not_called()
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")

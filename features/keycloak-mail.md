@@ -89,7 +89,7 @@ te testen overblijft.
 Elke door OPI beheerde realm krijgt een `smtpServer` met **precies één sleutel**:
 
 ```json
-{"from": "noreply-inloggen@rijksoverheid.nl"}
+{"from": "noreply-rijksapp@rijksoverheid.nl"}
 ```
 
 Geen host, geen gebruiker, geen wachtwoord.
@@ -200,7 +200,7 @@ De keten:
 | 1. De generatie zet een willekeurig wachtwoord in het Secret | `infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-mail-secret.yaml` |
 | 2. De Keycloak-pod leest het als `ZAD_MAIL_RELAY_PASSWORD` | `secretKeyRef` in `.../keycloak/controller/base/deployment.yaml`, `optional: true` |
 | 3. OPI leest hetzelfde Secret en zorgt dat de relay het account draagt | `MailManager.ensure_keycloak_account()`, fase 3b van het opstarten |
-| 4. Het account krijgt een eigen `From:` in het gegenereerde sieve-script | `MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py` |
+| 4. Het account krijgt zijn `From:` (het kale adres plus de weergavenaam) in het gegenereerde sieve-script | `MAIL_SENDER_ADDRESS_PREFIX` in `opi/connectors/mail.py` |
 
 **`optional: true` op stap 2 is een afweging.** Zonder die vlag start Keycloak niet zolang het
 Secret er niet is, en dan blokkeert een mailgeheim de hele identiteitsvoorziening van het
@@ -209,21 +209,46 @@ omgeving`, en faalt elke verzending luid.
 
 ### Het afzenderadres
 
-`noreply-inloggen@<domein>`, met een eigen lokaal deel naast dat van de portal
-(`noreply-rijksapp@<domein>`), zodat een ontvanger - en een bounce - inlogpost van de post van
-de portal kan onderscheiden. Het **domein** is dat van het cluster en is niet instelbaar:
-envelope en `From:` moeten in één domein blijven of DMARC valt om, want wij ondertekenen niet
-met DKIM.
+`noreply-rijksapp@<domein>`: het **kale basisadres** van het cluster, zonder eigen lokaal deel
+en zonder plusdeel. Dat is het adres dat we overal willen, dus vertrekt inlogpost er ook onder,
+en niet onder een eigen `noreply-inloggen@...` zoals tot RC-175. Het **domein** is dat van het
+cluster en is niet instelbaar: envelope en `From:` moeten in één domein blijven of DMARC valt
+om, want wij ondertekenen niet met DKIM.
 
-Bijzonderheid: de **envelope houdt het afgeleide adres** (`noreply-rijksapp@...`), alleen de
-`From:` wordt overschreven. Dat ziet eruit als een vergissing en is het niet: DMARC vergelijkt
-de domeinen, die blijven gelijk, en het plusdeel in de envelope blijft de bounce dragen. Het
-staat in `config.toml` van de relay en in `opi/connectors/mail.py` allebei opgeschreven, want
-wie de twee regels naast elkaar leest ziet er anders een fout in.
+Een plusdeel kan hier sowieso niet: `zad-keycloak` verstuurt voor alle realms tegelijk, dus er
+is geen project om te noemen. Dat is precies de beperking die deze opzet zou beëindigen als er
+ooit branding per realm gewenst is.
 
-Anders dan een projectadres draagt dit geen plusdeel: `zad-keycloak` verstuurt voor alle
-realms tegelijk, dus er is geen project om te noemen. Dat is precies de beperking die deze
-opzet zou beëindigen als er ooit branding per realm gewenst is.
+**Wat we hiermee opgeven, bewust.** `zad-platform` en `zad-keycloak` versturen nu onder
+hetzelfde adres en verschillen alleen in weergavenaam, dus een bounce is niet meer te herleiden
+tot inlogpost in plaats van portalpost. Dat is vandaag theoretisch - er is nog geen
+bounce-postbus, een openstaand punt in `plans/mail-vervolgpunten.md` - en het is de prijs voor
+één herkenbaar afzenderadres.
+
+Dit adres staat op **drie plekken** die hetzelfde moeten noemen: de afzender die OPI voor
+`zad-keycloak` op de relay zet (`MailManager.ensure_keycloak_account`), de
+`ZAD_MAIL_RELAY_FROM` in de Keycloak-deployment, en de `smtpServer.from` die OPI op elke realm
+schrijft. Beweegt er één niet mee, dan vertrekt post onder een ander adres dan een realm
+claimt, en dat ziet niemand: de relay stelt de `From:` zelf vast en de realm liegt alleen in
+zijn eigen configuratie. Daarom ligt het vast in een toets
+(`test_de_drie_plekken_noemen_hetzelfde_afzenderadres`) en niet in zorgvuldigheid.
+
+### De weergavenaam
+
+`Rijksapps`, en dat blijft zo. De naam in de `From:` beantwoordt de vraag **van wie** een
+bericht komt; het onderwerp beantwoordt waar het over gaat. `Rijksapps` sluit aan bij het adres
+en bij wat de ontvanger ziet op de plek waar hij zojuist inlogde. Nu het adres samenvalt met dat
+van de portal, is deze naam ook het enige dat inlogpost nog van portalpost onderscheidt.
+
+Afgewezen, met de reden:
+
+- **`Keycloak`** - onze productnaam. Zegt een ontvanger niets en lekt onnodig welke techniek
+  eronder ligt.
+- **`Toegangsbeheer`** - beschrijft wat wij doen, in beheerdersjargon, niet wat de ontvanger
+  herkent.
+
+En de beperking die elke naamkeuze stuurt: dit is één account voor alle realms, dus de naam kan
+nooit een project noemen. Zou dat ooit moeten, dan eindigt daarmee de eenaccountopzet.
 
 ### Rotatie: de volgorde, en wat er tussendoor faalt
 
@@ -252,32 +277,91 @@ kubectl -n rig-system rollout restart deployment/keycloak
 
 Andersom (eerst Keycloak) is het venster juist zo lang als het duurt voordat OPI weer draait.
 
+## De taal: Nederlands, met Engels ernaast
+
+Tot RC-175 kwam er **Engelse standaardtekst** uit Keycloak, ongeacht welk thema er geladen
+was. De reden is prozaisch: internationalisatie stond nergens aan. De drie velden die dat
+bepalen kwamen in de hele codebase niet voor, en zonder die velden rendert Keycloak zijn
+ingebouwde Engelse berichten.
+
+Elke blauwdruk zet ze nu:
+
+```yaml
+internationalizationEnabled: true
+supportedLocales: ["nl", "en"]
+defaultLocale: "nl"
+```
+
+Ze gaan mee in `_BLUEPRINT_REALM_FIELDS`, dus ze landen op de aanmaakweg **en** bij elke
+verwerking - anders zou geen enkele bestaande realm ze ooit krijgen. De glob-toets die eist
+dat elke blauwdruk elk gelezen realmveld noemt, leest diezelfde lijst, dus een nieuwe
+blauwdruk die de taalvelden vergeet is rood in plaats van stil Engels.
+
+Drie dingen om te weten:
+
+- **Dit raakt meer dan de post.** Het **inlogscherm** van deze realms wordt er ook Nederlands
+  van. Dat is gewenst, maar het is een zichtbare wijziging voor bestaande gebruikers en hoort
+  geen verrassing te zijn.
+- **De Nederlandse vertaling van Keycloak is onvolledig** - op het moment van schrijven 406
+  regels tegen 534 Engelse - dus een enkele zin valt terug op het Engels. Dat is geen defect
+  van ons. `en` blijft naast `nl` in `supportedLocales` staan, zodat een gebruiker kan
+  omschakelen.
+- **Een taal is pas beschikbaar als login-, account- EN emailthema hem ondersteunen.** Voor
+  `nl` is dat het geval: Keycloak levert `messages_nl.properties` mee in zijn base/email-thema.
+
+**`emailTheme` blijft leeg.** Het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
+kale Engelse tekst met dat thema geladen). Eigen mailsjablonen zijn een eigen taak, met een
+echte ontwerpvraag eronder - zie `plans/mail-vervolgpunten.md`.
+
+### Wanneer het landt
+
+De relay krijgt de nieuwe afzender wanneer OPI zijn afzendertabel wegschrijft, dus bij een
+start. Een realm krijgt de taalvelden en de nieuwe `smtpServer.from` bij zijn eerstvolgende
+verwerking. Die twee lopen dus niet gelijk op, en in dat venster kan een realm een
+`smtpServer.from` claimen die de relay nog niet kent. Dat is onschuldig - de relay bepaalt de
+`From:` zelf en negeert de `smtpServer` van een realm volledig - maar wie de twee naast elkaar
+leest ziet er anders een fout in.
+
 ## `verifyEmail`: wie wordt geraakt
 
-Sinds deze taak staat `verifyEmail: true` op de blauwdrukken `sso-support` en
-`algoritmeregister`. Een nieuwe gebruiker moet dan zijn adres bevestigen voordat hij binnen
-is.
+`verifyEmail: true` staat op de blauwdrukken `sso-support` en `algoritmeregister`. Het veld
+regelt of iemand die zijn adres WIJZIGT dat nieuwe adres moet bevestigen.
 
-**De blast radius is klein maar niet nul:**
+**Het regelt sinds RC-191 niet meer wie er bij AANMAAK moet bevestigen.** Dat besluit ligt in
+`create_user()` en is voor elke realm gelijk: wie een e-mailadres meekrijgt komt binnen met
+`emailVerified: false` en de required action `VERIFY_EMAIL`, ongeacht wat de blauwdruk zegt.
+
+De reden dat het daar weg moest, is dat de blauwdruk er niet over gaat. Een `sso-only`-project
+kreeg `verifyEmail: false` maar kan via `get_invite_auth_methods()` wel lokale invite-accounts
+aanmaken, en op een cluster zonder mailrelay haalde de grendel hieronder het veld stil weg. In
+beide gevallen kwam een uitgenodigde vooraf geverifieerd binnen zonder dat er ooit iets
+bevestigd was.
+
+**De blast radius:**
 
 - **SSO-gebruikers niet.** Die komen via `trustEmail: True` op de identity providers al
   geverifieerd binnen.
 - **Bestaande lokale gebruikers niet.** Die zijn bij aanmaak op geverifieerd gezet.
-- **Wel geraakt:** nieuwe lokale gebruikers, en iedereen die zijn adres wijzigt.
+- **Wel geraakt:** elke nieuw aangemaakte gebruiker met een adres, en, via `verifyEmail`,
+  iedereen die zijn adres wijzigt op een realm die verifieert.
 
-Dat laatste is nieuw en het is de bedoeling. `create_user()` zette `emailVerified`
-onvoorwaardelijk op `True` zodra er een adres was, dus elke via de uitnodigingsweg aangemaakte
-gebruiker was vooraf geverifieerd zonder dat er ooit iets bevestigd was. De waarde volgt nu de
-realm.
+**Eén uitzondering, en die staat zichtbaar bij de aanroeper**: de realm-admins in de
+master-realm (`keycloak_manager.py`, `keycloak_setup.py`) geven `skip_email_verification=True`
+mee. Hun adres is `{admin}@local.invalid` of `{username}@localhost` en bestaat niet, dus
+verificatie afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
 
-**Voor de uitnodigingsweg betekent dat: wie een account krijgt, bevestigt voortaan eerst zijn
-adres.** Hij kiest zijn wachtwoord in het uitnodigingsformulier van OPI zoals altijd, en
-loopt bij zijn eerste login tegen het bevestigingsscherm aan. Zie `features/invites.md`.
+Wat dat voor de uitnodigingsweg betekent staat in `features/invites.md`.
+
+**Op een cluster zonder mailrelay betekent het ook: dat account komt er niet in.** Dat is de
+prijs van de verhuizing en hij is bewust betaald. Clustertype
+`local` is de vaste toestand zonder relay; `sandboxed-local` (Mailpit-sink) en productie
+hebben er een. Wie een lokale invite-gebruiker moet binnenlaten op een cluster zonder post,
+zet `emailVerified` met de hand in de beheerconsole.
 
 ### De grendel: `verifyEmail` mag nooit voor de post uit lopen
 
-Een realm die verifieert en niet kan mailen **sluit nieuwe gebruikers buiten**: die komen
-binnen met `emailVerified: false` en wachten op een bericht dat niemand kan versturen.
+Een realm die verifieert en niet kan mailen **sluit gebruikers die hun adres wijzigen buiten**:
+die komen op `emailVerified: false` en wachten op een bericht dat niemand kan versturen.
 
 OPI zet `verifyEmail` daarom alleen AAN als het **platform een relay heeft**
 (`MAIL_RELAY_API_URL` gevuld). Heeft het die niet, dan blijft het veld uit, met een
@@ -329,10 +413,10 @@ Stap 2 is sterker dan hij lijkt: een provider-id dat Keycloak niet vindt laat de
 op te komen (gemeten als canarie in `docs/rc159-uitrolmeting.md`). Een pod die `Ready` is en
 de vlag in zijn `args` draagt, heeft zijn verzender dus aantoonbaar geladen.
 
-Wie de blast radius wil weten: alleen **nieuwe lokale gebruikers** die in dat venster
-aangemaakt worden komen binnen met `emailVerified: false` en krijgen geen bericht. De terugweg
-is dat veld handmatig omzetten in de admin-console, of de gebruiker opnieuw laten aanmelden
-zodra de pod er is. Bestaande gebruikers en SSO-gebruikers merken er niets van.
+Wie de blast radius wil weten: **nieuwe lokale gebruikers** die in dat venster aangemaakt
+worden krijgen geen bevestigingsmail. Ze staan op `emailVerified: false` met `VERIFY_EMAIL`,
+net als buiten het venster, dus zodra de pod er is stuurt hun eerste login de mail alsnog.
+Bestaande gebruikers en SSO-gebruikers merken er niets van.
 
 Dit is een **uitrol**-volgorde en geen rotatie. De rotatievolgorde van het geheim staat
 hierboven onder "Rotatie: de volgorde, en wat er tussendoor faalt".
@@ -367,5 +451,5 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |
 | De minimale `smtpServer` en `verifyEmail` | `KeycloakYamlHandler._apply_realm_self_service()` |
-| `emailVerified` volgt de realm | `KeycloakConnector.create_user()` |
+| Elke nieuwe gebruiker met een adres bevestigt het (master-admins uitgezonderd) | `KeycloakConnector.create_user()` |
 | De meting waaruit dit alles volgt | `docs/rc158-emailsender-spi-meting.md` |

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from tests.e2e.helpers.tekst import veld
-from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, kies_verplichte_keuzelijsten, unique_project_name
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -234,7 +234,8 @@ class TestWizardServiceSelection:
         wizard.fill_services(["keycloak"])
         wizard.click_next()
 
-        # Step 3: Keycloak config - accept defaults
+        # Step 3: Keycloak config - de template heeft geen default, dus hier valt te kiezen
+        kies_verplichte_keuzelijsten(auth_page)
         wizard.click_next()
 
         # Step 4: Team

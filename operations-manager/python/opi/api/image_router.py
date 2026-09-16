@@ -127,7 +127,10 @@ async def push_image(
         raise HTTPException(status_code=400, detail=str(e))
     except SkopeoExecutionError as e:
         logger.error(f"Push failed for {project_name}/{image_name}:{tag}: {e}")
-        raise HTTPException(status_code=502, detail=f"Failed to push image: {e}")
+        raise HTTPException(
+            status_code=502,
+            detail="Het image kon niet naar het register worden gepusht. Probeer het over een minuut opnieuw.",
+        ) from e
     finally:
         # Always clean up the tarball
         if os.path.exists(tarball_path):

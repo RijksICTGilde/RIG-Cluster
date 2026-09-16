@@ -11,7 +11,7 @@ Coexistence is deliberate and safe: ``migrations/env.py`` points autogenerate at
 ORM models here. Any table not (yet) declared as an ORM model stays off this metadata and
 is left untouched by autogenerate. Services can be migrated to the ORM one table at a time
 without a big-bang rewrite; today all of the platform's tables (async_tasks, users, runs,
-marked_for_deletion, subdomain_registry) are modeled.
+marked_for_deletion, subdomain_registry, project_reconciliation) are modeled.
 """
 
 from __future__ import annotations

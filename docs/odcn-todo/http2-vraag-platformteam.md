@@ -1,10 +1,10 @@
 # Overleg met het platformteam: HTTP/2 op de ingress
 
-**Datum**: 2026-08-03, bijgewerkt 2026-08-05
+**Datum**: 2026-08-03, bijgewerkt 2026-09-04
 **Van**: RIG / ZAD
 **Betreft**: IngressController `rig` op `prd1.gn2.quattro.rijksapps.nl`
 **Onderbouwing**: [http2-ingress.md](http2-ingress.md)
-**Status**: platformteam heeft gereageerd, wacht op afspraak over een testmoment
+**Status**: doorgevoerd op 2026-09-04, geverifieerd, geen vervolgactie
 
 Dit document houdt de uitwisseling bij. Het onderste blok is het antwoord dat verstuurd kan worden.
 
@@ -48,19 +48,47 @@ Wij hebben de aanleidinggevende applicatie doorgemeten en willen het volgende ni
 
 Wij vragen HTTP/2 daarom niet als redding van één project, maar omdat het de juiste default is voor de controller en omdat elk asset-zwaar project op dit platform er baat bij heeft.
 
-## Openstaande vragen aan het platformteam
+## Doorgevoerd op 4 september 2026
 
-1. Staat HTTP/2 uit op de IngressController `rig` of clusterbreed op `ingresses.config/cluster`? Wij kunnen dat zelf niet zien, beide geven ons `Forbidden`.
-2. Is het eerder overwogen en bewust afgewezen? Zo ja, om welke reden, dan adresseren wij die.
-3. Kan er een testmoment worden afgesproken, samen met de rolling restart van de router? Let op dat dit niet op de PR-preview-hostnames te testen is: die draaien op het default certificaat en krijgen daarom sowieso geen ALPN. Verificatie vereist een hostname met een eigen certificaat, bijvoorbeeld onder `*.regelrecht.rijks.app`.
+Het platformteam meldde om 08:30 uur: "doorgevoerd, en ik zie dat de ingresscontrollers opnieuw aan het starten zijn". Wij hebben dat op hetzelfde moment aan de buitenkant zien gebeuren: de eerste metingen wisselden nog tussen h2 en HTTP/1.1, afhankelijk van welke router-pod de verbinding kreeg, en binnen enkele minuten was het overal h2.
+
+Onze dank daarvoor. Wij hebben het meteen doorgemeten, aan de buitenkant en vanuit de cluster.
+
+### Wat wij hebben gemeten
+
+Alle 263 routes op controller `rig` zijn ingedeeld naar certificaat en steekproefsgewijs getest. Het beeld is precies de voorspelling uit onze onderbouwing:
+
+| Categorie | Routes | Gemeten |
+|---|---|---|
+| Eigen en uniek certificaat | 60 | HTTP/2 |
+| Gedeeld certificaat (8x `docs.rijksapp.nl`) | 8 | HTTP/1.1 |
+| Default wildcard-certificaat, waaronder de PR-previews | 195 | HTTP/1.1 |
+
+Vijftien van de vijftien geteste hosts met een eigen certificaat doen h2, zes willekeurige preview-routes blijven HTTP/1.1, en zestig opeenvolgende requests op `zad.rijksapp.nl` gaven zestig keer h2.
+
+### Werkt alles nog
+
+Ja. Geen enkele pod is na de wijziging herstart, de logs van Keycloak en van onze operations manager tonen geen protocolgerelateerde fouten, en de volledige OIDC-redirectketen van `zad.rijksapp.nl` naar Keycloak en terug loopt over h2 met een 200. Ook het verkeer vanuit de cluster naar `keycloak.rijksapp.nl` werkt: discovery, JWKS en een POST op het token-endpoint komen alle drie over h2 correct aan, en de `X-Forwarded-For` blijft intact, want Keycloak logt nog steeds het pod-adres van de aanroeper.
+
+Op het punt van de websockets uit onze eigen risico-afweging: de router adverteert `SETTINGS_ENABLE_CONNECT_PROTOCOL=1`, dus extended CONNECT (RFC 8441) staat aan en websockets over h2 zijn ondersteund. Dat is gecontroleerd op de hosts van Grafana, Grist en OpenProject.
+
+`SETTINGS_MAX_CONCURRENT_STREAMS` staat op 100. Dat is exact punt 2 uit onze afweging: waar een browser eerst zes verbindingen per host opende, kan hij nu tot honderd streams over één verbinding openen. Wij hebben nog geen backend gezien die daar last van heeft en houden dat aan onze kant in de gaten. Mocht er ooit een applicatie omvallen onder die burst, dan is de rem `haproxy.router.openshift.io/pod-concurrent-connections` per route beschikbaar en hoeft de controller-instelling niet terug.
+
+### Beantwoorde vragen
+
+1. Op welk niveau het uit stond, hebben wij niet zelf kunnen vaststellen; wij houden het erop dat de annotatie op de IngressController `rig` staat, aangezien alleen die controller opnieuw startte en de routes op de controller `apps`, zoals de OpenShift-console, onveranderd HTTP/1.1 blijven.
+2. Van een eerdere bewuste afwijzing is niets gebleken.
+3. Het testmoment is samengevallen met het doorvoeren zelf. Verificatie is gelukt op de hostnames met een eigen certificaat, zoals verwacht niet op de preview-hostnames.
 
 ## Verificatie achteraf
 
 ```bash
-curl -sS -o /dev/null -w "%{http_version}\n" https://editor.regelrecht.rijks.app
+curl -sS -o /dev/null -w "%{http_version}\n" https://editor.regelrecht.rijks.app   # 2
+curl -sS -o /dev/null -w "%{http_version}\n" https://zad.rijksapp.nl               # 2
+curl -sS -o /dev/null -w "%{http_version}\n" https://docs.rijksapp.nl              # 1.1, gedeeld cert
 ```
 
-Verwacht `2` op routes met een eigen certificaat, en ongewijzigd `1.1` op de preview-routes.
+Uitgevoerd op 4 september 2026, uitkomst zoals aangegeven. De volledige meting staat in [http2-ingress.md](http2-ingress.md).
 
 ## Contact
 

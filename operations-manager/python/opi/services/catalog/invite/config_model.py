@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from opi.services.catalog.invite.target_format import split_target
 
 #: The two authentication methods an invite can offer. A closed set, so it is typed as a
 #: Literal in the model (the guardrail) rather than relying on the form widget's options.
@@ -89,7 +91,23 @@ class InviteEntry(BaseModel):
         default=None, alias="contact-email", description="Address shown to a user who needs help redeeming."
     )
     application_url: str | None = Field(
-        default=None, alias="application-url", description="Where the user is sent after redeeming."
+        default=None,
+        alias="application-url",
+        description=(
+            "Where the user is sent after redeeming, as a fixed address. Use this for a destination "
+            "OUTSIDE this project; for one of the project's own addresses use 'application-target', "
+            "which keeps following it when the subdomain or the domain format changes."
+        ),
+    )
+    application_target: str | None = Field(
+        default=None,
+        alias="application-target",
+        description=(
+            "Where the user is sent after redeeming, as the CHOICE behind the address: "
+            "'component:deployment', or 'component:deployment:/path' where the component publishes "
+            "more than one path. The address is worked out when the page is rendered, so it follows a "
+            "subdomain or domain-format change. Mutually exclusive with 'application-url'."
+        ),
     )
     message: I18nText | None = Field(default=None, description="Text shown on the invitation page.")
     success_title: I18nText | None = Field(
@@ -98,6 +116,49 @@ class InviteEntry(BaseModel):
     success_button: I18nText | None = Field(
         default=None, alias="success-button", description="Label of the button leading to the application."
     )
+
+    @model_validator(mode="after")
+    def _the_target_names_a_component_and_a_deployment(self) -> InviteEntry:
+        """The composite value has to split into two names, or it names nothing.
+
+        Without this a typo is accepted and turns into "no button" at render time, which
+        looks exactly like a destination someone deliberately left empty. Rejecting it here
+        means the API and the CLI say so at write time, where the typo can still be fixed.
+        The PATH is not checked: it is free-form and only has to match what the component
+        publishes, which this model cannot see.
+
+        The rejected value is NOT echoed. This message reaches a user through
+        ``validation_reasons``, and a value someone got wrong may be one they pasted from
+        somewhere else -- the same reason the config-validation chokepoint stopped quoting
+        pydantic's ``input_value``.
+        """
+        if self.application_target is None:
+            return self
+        component, deployment, _path = split_target(self.application_target)
+        if not component or not deployment:
+            msg = (
+                "'application-target' noemt een component en een deployment, gescheiden door een "
+                "dubbele punt: 'component:deployment', of 'component:deployment:/pad' als de "
+                "component meer dan een pad publiceert"
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _one_destination_at_most(self) -> InviteEntry:
+        """At most one destination: a fixed address OR a deployment/component choice.
+
+        Neither is also fine -- an invitation without a destination simply shows no button,
+        and that is a valid thing to want. Both is not: they can point at two different
+        places and nothing decides which one wins, so the reader would have to guess.
+        """
+        if self.application_url and self.application_target:
+            msg = (
+                "een uitnodiging heeft één bestemming: kies 'application-target' (een deployment "
+                "en component van dit project) of 'application-url' (een vast adres), niet allebei"
+            )
+            raise ValueError(msg)
+        return self
 
 
 class InviteConfig(BaseModel):
