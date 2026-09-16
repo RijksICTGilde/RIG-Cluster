@@ -73,6 +73,9 @@ lagen die hij mist.
 4. Apply en `rollout status`. Een `rollout restart` is niet meer nodig: de tag verandert,
    dus de podspec ook.
 
+De algemene `task update-operations-manager` laadt met `kind load`. Na `sandbox:setup` leest
+hij de sandbox-env, dus hij stopt dan meteen met een verwijzing naar deze taak.
+
 `task sandbox:skaffold-dev` pusht naar dezelfde registry (`build.local.push`). De dev- en
 debug-overlay hernoemen de ghcr-image naar `localhost:5001/operations-manager`, want
 skaffold vervangt alleen verwijzingen met de naam van zijn artifact.

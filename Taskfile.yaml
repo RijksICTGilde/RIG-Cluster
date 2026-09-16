@@ -971,9 +971,17 @@ tasks:
     desc: "Build and deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
-    deps: [generate-env-secrets-for-operations-manager]
     cmds:
+      # Na sandbox:setup is .env-taskfile-current de sandbox-env. Deze taak laadt met
+      # kind load, maar de sandbox-overlay wijst naar het image in de registry, dus hier
+      # zou stil de vorige build uitrollen. Als eerste stap, omdat deps al vóór een
+      # precondition draaien.
+      - |
+        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
+          echo "Dit is een sandbox: gebruik task sandbox:update-operations-manager." >&2
+          exit 1
+        fi
+      - task: generate-env-secrets-for-operations-manager
       # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
       # version.json in die er toevallig lag, en meldt de pod een andere commit.
       - task: version:generate
@@ -992,7 +1000,7 @@ tasks:
         kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
       - |
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1030,9 +1038,9 @@ tasks:
         # On odcn-production the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where the tag does NOT change: local and
-        # sandbox load the image into kind under a fixed `:latest`, so apply sees nothing
-        # new and the restart is what actually picks up the rebuilt image.
+        # briefly see three pods. Only restart where apply may see nothing new: local loads
+        # the image into kind under a fixed `:latest`, and the sandbox overlay keeps the
+        # tag of its last configure.
         if [ "{{.CLUSTER}}" = "odcn-production" ]; then
           echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         else
@@ -2324,8 +2332,9 @@ tasks:
       - task: sandbox:create-cluster
       # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox-kind-registry.md.
       - task: sandbox:setup-registry
-      # De images moeten in de cluster staan vóórdat de deployments ze proberen te
-      # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
+      # De images moeten klaarstaan vóórdat de deployments ze proberen te halen: de
+      # CMP-sidecar geladen in kind (Never), operations-manager in de registry.
+      # No-op in demo-mode.
       - task: sandbox:build-local-images-if-dev
       - task: install-ingress-nginx
       - task: install-cnpg-operator
@@ -3296,7 +3305,7 @@ tasks:
     silent: true
 
   sandbox:build-local-images-if-dev:
-    desc: "Build+load de images die dev-mode lokaal verwacht (no-op in demo-mode)"
+    desc: "Bouw de images die dev-mode lokaal verwacht (no-op in demo-mode)"
     internal: true
     cmds:
       - |
@@ -3307,7 +3316,7 @@ tasks:
           echo "Demo-mode: images komen uit de registry, niet lokaal gebouwd."
           exit 0
         fi
-        # Beide, niet alleen operations-manager: configure-local-images zet ook de
+        # Beide, niet alleen operations-manager: configure-local-images zet de
         # CMP-sidecar op een lokale tag met imagePullPolicy Never. Ontbreekt die, dan
         # blijft argocd-repo-server op ErrImageNeverPull staan en komt ArgoCD niet op.
         task sandbox:build-cmp-image
