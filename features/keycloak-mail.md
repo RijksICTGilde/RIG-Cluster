@@ -416,8 +416,7 @@ de vlag in zijn `args` draagt, heeft zijn verzender dus aantoonbaar geladen.
 Wie de blast radius wil weten: **nieuwe lokale gebruikers** die in dat venster aangemaakt
 worden krijgen geen bevestigingsmail. Ze staan op `emailVerified: false` met `VERIFY_EMAIL`,
 net als buiten het venster, dus zodra de pod er is stuurt hun eerste login de mail alsnog.
-Opnieuw aanmelden kan niet, want het account bestaat al. Bestaande gebruikers en
-SSO-gebruikers merken er niets van.
+Bestaande gebruikers en SSO-gebruikers merken er niets van.
 
 Dit is een **uitrol**-volgorde en geen rotatie. De rotatievolgorde van het geheim staat
 hierboven onder "Rotatie: de volgorde, en wat er tussendoor faalt".
