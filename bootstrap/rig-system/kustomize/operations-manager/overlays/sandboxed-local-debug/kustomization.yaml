@@ -4,14 +4,12 @@ kind: Kustomization
 resources:
   - ../sandboxed-local
 
+# Skaffold vervangt alleen verwijzingen met de naam van zijn artifact.
+images:
+  - name: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+    newName: localhost:5001/operations-manager
+
 patches:
-  - target:
-      kind: Deployment
-      name: operations-manager
-    patch: |
-      - op: replace
-        path: /spec/template/spec/containers/0/imagePullPolicy
-        value: Never
   - path: ../sandboxed-local/patches/enable-debug.yaml
     target:
       kind: Deployment

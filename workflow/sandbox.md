@@ -9,8 +9,8 @@
 >
 > **Do NOT run `task sandbox:update-operations-manager` (or `sandbox:setup`) in a session.**
 > Those are for a *full local dev* setup: they need `kustomize`, the SOPS `security/sandbox-key.txt`,
-> and they kustomize-apply an overlay that points at a **registry** image (`ghcr.io/...`) - none
-> of which apply to a session-based local-build deploy, so they will fail or deploy the wrong image.
+> and a cluster that knows the registry next to Kind (`docs/sandbox-kind-registry.md`) - none
+> of which apply to a session-based local-build deploy, so they will fail.
 > `sandbox-deploy` is the one blessed path here. The rest of this doc describes the full local
 > dev setup (for context), not the session flow.
 
@@ -80,10 +80,11 @@ of any GitHub CI/CD - GitHub does not run the sandbox.
 task sandbox:update-operations-manager
 ```
 
-This builds the OPI image from the current tree (`--target application`), `kind load`s
-it into the cluster, redeploys, and stamps the deployment with
-`ZAD_VERSION=$(git describe --tags --always)` + `ZAD_BUILD_DATE`. Wait for the rollout
-to finish (`kubectl -n rig-system rollout status deployment/operations-manager`).
+This builds the OPI image from the current tree (`--target application`), pushes it as
+`localhost:5001/operations-manager:<commit>` to the registry next to the cluster
+(`docs/sandbox-kind-registry.md`), points the overlay at that tag, redeploys, stamps the
+deployment with `ZAD_VERSION=$(git describe --tags --always)` + `ZAD_BUILD_DATE`, and
+waits for the rollout.
 
 ### 2. Verify the running version matches your commit
 

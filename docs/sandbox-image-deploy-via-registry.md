@@ -64,9 +64,9 @@ kleine `COPY opi/manifests`-laag.
 Dit patroon hoort op meer plekken thuis dan een handmatige sessie-deploy; vanaf dit document
 kunnen die worden bijgewerkt:
 
-- **`sandbox-deploy`** (de baked dclaude-command) en `task sandbox:update-operations-manager`:
-  laat die pushen naar `rig-registry` en de deployment naar de registry-tag zetten in plaats
-  van `kind load`.
+- **`sandbox-deploy`** (de baked dclaude-command): laat die pushen en de deployment naar
+  de registry-tag zetten in plaats van `kind load`. `task sandbox:update-operations-manager`
+  doet dat al, via de registry naast het cluster (`docs/sandbox-kind-registry.md`).
 - **De operations-manager overlay** (`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local`):
   de `imagePullSecrets: [rig-registry-pull]` daar vastleggen, zodat de kubelet standaard uit
   `rig-registry` kan pullen en de patch bij stap 3 niet meer per sessie nodig is.
