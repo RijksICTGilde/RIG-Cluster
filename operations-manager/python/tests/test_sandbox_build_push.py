@@ -170,7 +170,6 @@ class TestImageTag:
         assert first != second
 
     def test_untracked_new_file_gets_its_own_tag(self, taskfile: dict, repo: Path) -> None:
-        """Een nieuw, nog niet toegevoegd bestand gaat wel mee in de build-context van docker."""
         head = _git(repo, "rev-parse", "--short", "HEAD")
         new = repo / "operations-manager/python/opi/nieuw.py"
 
