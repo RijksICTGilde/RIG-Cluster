@@ -55,8 +55,8 @@ def test_de_fixture_zet_de_eigen_pid_in_de_databasenaam() -> None:
     """De opruiming werkt alleen als de maker zijn pid ook echt achterlaat.
 
     Niet met een draaiende Postgres gemeten (dat kost Docker en seconden), maar op de
-    bron: de fixture moet de naam uit de prefix en de eigen pid opbouwen, want dat is het
-    enige waaraan een volgende run een wees herkent.
+    bron: de fixture moet de eigen pid in de naam zetten, want daaraan herkent een volgende
+    run in dezelfde namespace een wees.
     """
     import inspect
 
