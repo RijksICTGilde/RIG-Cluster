@@ -544,8 +544,8 @@ class KeycloakYamlHandler:
 
         ``verifyEmail`` is the one exception to "the blueprint decides": turning it ON is
         held back while the platform has no relay, because that realm would lock out every
-        user who changes their address. Turning it OFF is never held back -- that direction only ever
-        un-blocks people.
+        user who changes their address. Turning it OFF is never held back: that direction
+        only ever un-blocks people.
 
         A blueprint is not wrong for asking; the CLUSTER is not ready. So this warns and
         carries on, and the next reconcile after the relay is configured completes it.
