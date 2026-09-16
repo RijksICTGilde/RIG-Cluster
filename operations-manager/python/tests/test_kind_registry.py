@@ -64,6 +64,7 @@ exit 0
 
 KIND_STUB = """#!/usr/bin/env bash
 echo "kind $*" >> "$STUB_LOG"
+[ -z "${STUB_KIND_FAILS:-}" ] || { echo "ERROR: failed to list nodes" >&2; exit "$STUB_KIND_FAILS"; }
 if [ "$1" = "get" ] && [ "$2" = "nodes" ]; then
   for node in ${STUB_NODES-proef-control-plane}; do echo "$node"; done
 fi
@@ -198,6 +199,14 @@ class TestSetupScript:
         assert "bestaat-niet" in run.stderr
         assert "docker run" not in run.log
         assert "kubectl" not in run.log
+
+    def test_stops_with_the_code_of_kind_when_listing_nodes_fails(self, tmp_path: Path) -> None:
+        """In een for-lijst slikte bash de fout van kind in; als toewijzing geeft set -e hem door."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_KIND_FAILS="7")
+
+        assert run.returncode == 7
+        assert "failed to list nodes" in run.stderr
+        assert "docker run" not in run.log
 
     def test_connects_the_registry_to_the_kind_network(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster", "proef")
