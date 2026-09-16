@@ -51,7 +51,8 @@ regel mist moet opnieuw gebouwd worden.
 
 ## Opruimen
 
-Elke deploy zet een nieuwe tag neer. `task sandbox:prune-registry` (script
+Pusht de deploy naar deze registry, dan zet elke deploy een nieuwe tag neer.
+`task sandbox:prune-registry` (script
 `scripts/prune-kind-registry.sh`) houdt dat klein:
 
 1. Per repository gaan de tags weg waarvan de image ouder is dan `RETENTIE_DAGEN`
@@ -89,8 +90,8 @@ uitrol. Dat is de enige plek:
   ook niets weg.
 
 Een registry van voor deze stap (zonder deletes) laat het script weigeren met exit 4;
-`task sandbox:setup-registry` zet dat recht. Een deploy zonder draaiende registry stopt
-op exit 3.
+`task sandbox:setup-registry` zet dat recht. Draait er geen registry, dan faalt de laatste
+stap van de deploy met exit 3; de uitrol is dan al gebeurd.
 
 ## Gebruik
 
