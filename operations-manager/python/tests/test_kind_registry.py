@@ -1,6 +1,6 @@
 """Tests voor de registry die naast het kind-cluster staat.
 
-Drie dingen worden hier bewaakt:
+Vier dingen worden hier bewaakt:
   1. scripts/setup-kind-registry.sh - de stappen van de kind-recipe, en de weigering als
      containerd de certs.d-map niet leest.
   2. sandboxed-local/kind-config.yaml - de containerdConfigPatches die dat mogelijk maken.
@@ -65,7 +65,7 @@ exit 0
 KIND_STUB = """#!/usr/bin/env bash
 echo "kind $*" >> "$STUB_LOG"
 if [ "$1" = "get" ] && [ "$2" = "nodes" ]; then
-  for node in ${STUB_NODES:-proef-control-plane}; do echo "$node"; done
+  for node in ${STUB_NODES-proef-control-plane}; do echo "$node"; done
 fi
 exit 0
 """
@@ -189,6 +189,15 @@ class TestSetupScript:
         run = _run(tmp_path, "--cluster", "proef", STUB_CONFIG_PATH="no")
 
         assert run.hosts_toml == ""
+
+    def test_refuses_a_cluster_without_nodes(self, tmp_path: Path) -> None:
+        """kind get nodes geeft exit 0 voor een onbekend cluster; zonder weigering viel het script pas op kubectl om."""
+        run = _run(tmp_path, "--cluster", "bestaat-niet", STUB_NODES="")
+
+        assert run.returncode == 3
+        assert "bestaat-niet" in run.stderr
+        assert "docker run" not in run.log
+        assert "kubectl" not in run.log
 
     def test_connects_the_registry_to_the_kind_network(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster", "proef")
