@@ -15,8 +15,9 @@
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001, 5000 is bezet op de dev-server)
 #   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2)
 #
-# Exitcodes: 0 = klaar, 1 = de kind-config mist containerdConfigPatches, 2 = fout gebruik,
-# 3 = het cluster heeft geen nodes. Anders: de code van het mislukte commando.
+# Exitcodes: 0 = klaar, 2 = fout gebruik, 3 = het cluster heeft geen nodes,
+# 4 = de kind-config mist containerdConfigPatches. Anders: de code van het mislukte commando
+# (docker exec op een gestopte node geeft zelf 1, vandaar geen 1 voor de weigering).
 
 set -euo pipefail
 
@@ -68,11 +69,13 @@ fi
 # de node zoekt de registry daar, niet op de host.
 REGISTRY_DIR="/etc/containerd/certs.d/localhost:${REG_PORT}"
 for node in $nodes; do
-    if ! docker exec "$node" grep -qE '^[[:space:]]*config_path[[:space:]]*=' /etc/containerd/config.toml; then
+    # Eerst ophalen, dan toetsen: een gestopte node mag niet lezen als een ontbrekende patch.
+    config="$(docker exec "$node" cat /etc/containerd/config.toml)"
+    if ! grep -qE '^[[:space:]]*config_path[[:space:]]*=' <<<"$config"; then
         echo "[kind-registry] node $node leest geen /etc/containerd/certs.d." >&2
         echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches." >&2
         echo "[kind-registry] Voeg ze toe (docs/sandbox-kind-registry.md) en bouw het cluster opnieuw." >&2
-        exit 1
+        exit 4
     fi
     docker exec "$node" mkdir -p "$REGISTRY_DIR"
     printf '[host."http://%s:5000"]\n' "$REG_NAME" |

@@ -51,7 +51,9 @@ case "$1" in
   exec)
     case "$*" in
       *config.toml*)
-        [ "${STUB_CONFIG_PATH:-yes}" = "yes" ] || exit 1
+        [ -z "${STUB_EXEC_FAILS:-}" ] || { echo "Error response from daemon: container is not running" >&2; exit "$STUB_EXEC_FAILS"; }
+        [ "${STUB_CONFIG_PATH:-yes}" = "yes" ] || { echo "version = 2"; exit 0; }
+        printf '[plugins."io.containerd.grpc.v1.cri".registry]\n  config_path = "/etc/containerd/certs.d"\n'
         ;;
       *"cp /dev/stdin"*)
         cat >> "$STUB_HOSTS_TOML"
@@ -182,9 +184,19 @@ class TestSetupScript:
         """De stille fout: zonder config_path leest containerd de hosts.toml nooit."""
         run = _run(tmp_path, "--cluster", "proef", STUB_CONFIG_PATH="no")
 
-        assert run.returncode == 1
+        assert run.returncode == 4
         assert "containerdConfigPatches" in run.stderr
         assert "kind-config" in run.stderr
+
+    def test_a_node_that_cannot_be_read_is_no_missing_patch(self, tmp_path: Path) -> None:
+        """Een gestopte node gaf eerst het advies de gedeelde sandbox te herbouwen."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_EXEC_FAILS="1")
+
+        assert run.returncode == 1
+        assert "not running" in run.stderr
+        assert "containerdConfigPatches" not in run.stderr
+        assert run.hosts_toml == ""
+        assert "kubectl" not in run.log
 
     def test_refusal_writes_no_hosts_toml(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster", "proef", STUB_CONFIG_PATH="no")
