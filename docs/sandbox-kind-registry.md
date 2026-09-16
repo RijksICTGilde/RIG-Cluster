@@ -57,5 +57,25 @@ kubectl run proef --image=localhost:5001/mijn-image:dev --restart=Never
 Geen `kind load` en geen pull-secret. De node haalt het image zelf op en pullt alleen de
 lagen die hij mist.
 
-Het omzetten van de buildtaken (`sandbox-deploy`, `task sandbox:update-operations-manager`)
-naar deze weg is een aparte stap; die gebruiken nog `kind load`.
+## De operations-manager
+
+`task sandbox:update-operations-manager` loopt zo:
+
+1. `sandbox:setup-registry`, zodat een cluster zonder de containerd-patch hier al faalt en
+   niet pas bij het pullen.
+2. `sandbox:build-operations-manager-image` pusht `localhost:5001/operations-manager:<tag>`.
+   De tag is de korte commit. Staat er een ongecommitte wijziging in `operations-manager/`,
+   dan komt er `-dirty-<hash van de diff>` achter: met dezelfde tag zou er niets uitrollen.
+   De buildcache blijft in de builder, niet in de registry.
+3. `sandbox:configure-operations-manager-image` zet de overlay in de werkboom op die tag.
+   Dat gebeurt bij elke deploy, zodat een overlay uit een eerdere checkout niet stil een
+   ander image uitrolt.
+4. Apply en `rollout status`. Een `rollout restart` is niet meer nodig: de tag verandert,
+   dus de podspec ook.
+
+`task sandbox:skaffold-dev` pusht naar dezelfde registry (`build.local.push`). De dev- en
+debug-overlay hernoemen de ghcr-image naar `localhost:5001/operations-manager`, want
+skaffold vervangt alleen verwijzingen met de naam van zijn artifact.
+
+`sandbox-deploy` (de dclaude-helper, niet in deze repo) en de CMP-image
+(`sandbox:build-cmp-image`) gebruiken nog `kind load`.
