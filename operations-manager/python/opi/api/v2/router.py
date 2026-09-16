@@ -1259,7 +1259,10 @@ async def create_project_v2(
         )
     except ProjectApiKeyError as exc:
         logger.error("Could not build the project file for '%s': %s", project_name, exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Het projectbestand kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from exc
 
     task = await create_async_task(
         request=request,
