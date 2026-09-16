@@ -77,6 +77,21 @@ class TestDockerignore:
         assert "**/node_modules/" in lines
         assert "node_modules/" not in lines
 
+    @pytest.mark.parametrize("pattern", ["__pycache__/", "*.pyc", "*.pyo", "*.pyd"])
+    def test_python_bytecode_is_excluded_at_every_depth(self, pattern: str) -> None:
+        """Bytecode under opi/ changes on every test run and would rebuild the opi layer."""
+        lines = [line.strip() for line in DOCKERIGNORE.read_text().splitlines()]
+
+        assert f"**/{pattern}" in lines
+        assert pattern not in lines
+
+    def test_yaml_is_excluded_at_the_root_only(self) -> None:
+        """opi/configs/*.yaml must reach the image, so this one must NOT get `**/`."""
+        lines = [line.strip() for line in DOCKERIGNORE.read_text().splitlines()]
+
+        assert "*.yaml" in lines
+        assert "**/*.yaml" not in lines
+
 
 class TestApplicationStage:
     def test_no_recursive_chown_or_chmod(self, app_stage: list[str]) -> None:
