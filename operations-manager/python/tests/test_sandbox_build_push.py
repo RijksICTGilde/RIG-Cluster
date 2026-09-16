@@ -4,7 +4,8 @@ De build pusht `localhost:5001/operations-manager:<commit>` en het cluster pullt
 zie docs/sandbox-kind-registry.md. Bewaakt wordt:
   1. de tag per commit, ook voor een ongecommitte wijziging (anders rolt er niets uit);
   2. dat de overlay bij elke deploy op die tag gezet wordt, ook vanuit een oude checkout;
-  3. dat er op het pad van de deploy geen `kind load` meer zit;
+  3. dat er op het pad van de deploy geen `kind load` meer zit, ook niet via de algemene
+     deploytaak die op een sandbox de sandbox-env leest;
   4. dat skaffold naar dezelfde registry pusht en de overlay die naam ook draagt.
 
 De shell uit de Taskfile wordt echt gedraaid in een tijdelijke git-repo.
@@ -34,6 +35,7 @@ BUILD_TASK = "sandbox:build-operations-manager-image"
 UPDATE_TASK = "sandbox:update-operations-manager"
 CONFIGURE_TASK = "sandbox:configure-operations-manager-image"
 CONFIGURE_ALL_TASK = "sandbox:configure-local-images"
+GENERIC_UPDATE_TASK = "update-operations-manager"
 REGISTRY_TASK = "sandbox:setup-registry"
 
 REPO = "localhost:5001/operations-manager"
@@ -333,6 +335,38 @@ class TestBuildPushes:
         assert {REGISTRY_TASK, BUILD_TASK, CONFIGURE_TASK} <= reachable
         for name in reachable:
             assert "kind load" not in _cmds(taskfile, name), name
+
+
+class TestGenericUpdateOnSandbox:
+    @staticmethod
+    def _run(repo: Path, cluster_type: str, *flags: str) -> str:
+        """Echte `task` met de clusterkeuze uit .env-taskfile-current, zoals na sandbox:setup."""
+        task = shutil.which("task")
+        if task is None:
+            pytest.skip("task ontbreekt")
+        shutil.copy(TASKFILE, repo / "Taskfile.yaml")
+        (repo / ".env-taskfile-current").write_text(f"CLUSTER_TYPE={cluster_type}\nKIND_CLUSTER_NAME=rig-sandbox\n")
+        env = {k: v for k, v in os.environ.items() if k not in ("CLUSTER_TYPE", "KIND_CLUSTER_NAME")}
+        result = subprocess.run(
+            [task, "-v", *flags, GENERIC_UPDATE_TASK], cwd=repo, env=env, capture_output=True, text=True
+        )
+        if flags:
+            assert result.returncode == 0, result.stderr
+        else:
+            assert result.returncode != 0
+        return result.stdout + result.stderr
+
+    def test_sandbox_stops_before_anything_runs(self, repo: Path) -> None:
+        output = self._run(repo, "sandboxed-local")
+
+        assert f"gebruik task {UPDATE_TASK}" in output
+        assert "generate-env-secrets" not in output
+        assert "kind load" not in output
+
+    def test_local_still_loads_into_kind(self, repo: Path) -> None:
+        output = self._run(repo, "local", "--dry")
+
+        assert "kind load docker-image operations-manager:latest --name rig-sandbox" in output
 
 
 class TestSkaffold:
