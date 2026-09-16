@@ -52,9 +52,8 @@ if [ -z "$nodes" ]; then
 fi
 
 # 1. Bestaat de container maar staat hij stil, dan starten we hem: een `docker run` met
-# dezelfde naam zou daarop stuklopen. Zonder deletes kan het opruimen niets
-# (scripts/prune-kind-registry.sh), en een bestaande container krijgt geen nieuwe env.
-# Dan maken we hem opnieuw aan op het volume van de oude, zodat de lagen blijven.
+# dezelfde naam zou daarop stuklopen. Een container zonder deletes maken we opnieuw aan
+# op het volume van de oude (docs/sandbox-kind-registry.md).
 reg_run() {
     docker run -d --restart=always -p "127.0.0.1:${REG_PORT}:5000" \
         -e REGISTRY_STORAGE_DELETE_ENABLED=true \

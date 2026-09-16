@@ -52,8 +52,7 @@ regel mist moet opnieuw gebouwd worden.
 ## Opruimen
 
 Pusht de deploy naar deze registry, dan zet elke deploy een nieuwe tag neer.
-`task sandbox:prune-registry` (script
-`scripts/prune-kind-registry.sh`) houdt dat klein:
+`task sandbox:prune-registry` (script `scripts/prune-kind-registry.sh`) houdt dat klein:
 
 1. Per repository gaan de tags weg waarvan de image ouder is dan `RETENTIE_DAGEN`
    (standaard 2). Het moment komt uit het `created`-veld van de image-config; de registry
@@ -84,8 +83,8 @@ uitrol. Dat is de enige plek:
 
 - Een garbage collect naast een lopende push kan lagen weggooien die net geupload zijn en
   nog aan geen manifest hangen (de garbage-collect-doc van distribution waarschuwt
-  hiervoor). In het deploy-pad is de push klaar en houdt de
-  sandbox-lock andere deploys buiten. Een cron op de server weet van geen van beide.
+  hiervoor). In het deploy-pad is de push klaar en houdt de sandbox-lock andere deploys
+  buiten. Een cron op de server weet van geen van beide.
 - Wie pusht, ruimt op: de registry groeit alleen door deploys, dus zonder deploys hoeft er
   ook niets weg.
 

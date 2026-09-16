@@ -3,17 +3,12 @@
 # prune-kind-registry.sh - verwijdert oude tags uit de registry naast het kind-cluster en
 # ruimt daarna de lagen op waar geen manifest meer naar verwijst.
 #
-# Waarom de gedeelde lagen blijven staan en waarom dit in het deploy-pad draait:
-# docs/sandbox-kind-registry.md.
-#
-# Gebruik: scripts/prune-kind-registry.sh
+# Wat blijft staan en waarom dit in het deploy-pad draait: docs/sandbox-kind-registry.md.
 #
 # Omgevingsvariabelen:
 #   RETENTIE_DAGEN       tags met een image ouder dan dit aantal dagen gaan weg (standaard 2)
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001)
-#
-# De nieuwste image per repository blijft altijd staan, ook bij RETENTIE_DAGEN=0.
 #
 # Exitcodes: 0 = klaar, 2 = fout gebruik, 3 = de registry draait niet,
 # 4 = de registry staat geen deletes toe. Anders: de code van het mislukte commando.
@@ -50,9 +45,7 @@ cutoff=$(($(date +%s) - RETENTIE_DAGEN * 86400))
 
 manifest() { curl -fsS -H "Accept: $ACCEPT" "$REG_URL/v2/$1/manifests/$2"; }
 
-# Het image-config draagt het bouwmoment; de registry zelf houdt geen tagdatum bij. Een
-# index (buildx zet er een attestation naast) heeft geen config, dan telt het eerste
-# platform-image erin.
+# Een index heeft geen config; dan telt het eerste image erin dat geen attestation is.
 created_of() {
     local repo="$1" body="$2" config
     config="$(jq -r '.config.digest // empty' <<<"$body")"
