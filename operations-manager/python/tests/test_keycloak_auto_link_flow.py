@@ -110,6 +110,17 @@ class FakeAdmin:
                 if execution["id"] == execution_id:
                     execution["authenticationConfig"] = config_id
 
+    def get_authenticator_config(self, config_id: str) -> dict[str, Any]:
+        return self.configs[config_id]
+
+    def delete_authenticator_config(self, config_id: str) -> None:
+        # Keycloak laat de verwijzing niet achter op de execution, dus dit model ook niet.
+        self.configs.pop(config_id, None)
+        for executions in self.flows.values():
+            for execution in executions:
+                if execution.get("authenticationConfig") == config_id:
+                    del execution["authenticationConfig"]
+
     def update_authenticator_config(self, payload: dict[str, Any], config_id: str) -> None:
         self.configs[config_id] = payload
 

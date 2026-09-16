@@ -51,15 +51,28 @@ def _stap(admin: FakeAdmin, alias: str, naam: str) -> dict[str, Any]:
     return next(e for e in admin.get_authentication_flow_executions(alias) if e["displayName"] == naam)
 
 
-async def _bouw(connector: KeycloakConnector, *, client_id: str | None = None) -> None:
+async def _bouw(
+    connector: KeycloakConnector, *, client_id: str | None = None, redirect_to_idp: str | None = None
+) -> None:
     if client_id:
         await connector.create_restricted_browser_flow(
-            realm_name="realm-a", flow_alias=FLOW, client_id=client_id, role_name="allowed-user"
+            realm_name="realm-a",
+            flow_alias=FLOW,
+            client_id=client_id,
+            role_name="allowed-user",
+            redirect_to_idp=redirect_to_idp,
         )
     else:
         await connector.create_restricted_browser_flow_realm_role(
-            realm_name="realm-a", flow_alias=FLOW, role_name="allowed-user"
+            realm_name="realm-a", flow_alias=FLOW, role_name="allowed-user", redirect_to_idp=redirect_to_idp
         )
+
+
+def _redirector_config(admin: FakeAdmin) -> dict[str, Any] | None:
+    """De config van de identity-provider-redirector, of None als hij er geen heeft."""
+    redirector = _stap(admin, AUTHENTICATE, "identity-provider-redirector")
+    config_id = redirector.get("authenticationConfig")
+    return admin.configs.get(config_id) if config_id else None
 
 
 @pytest.mark.asyncio
@@ -212,3 +225,116 @@ async def test_de_oude_flow_gaat_pas_weg_nadat_de_client_is_omgehangen() -> None
         "bind:proj-app-public",
         f"delete:{legacy_restricted_flow_alias('proj-app')}",
     ]
+
+
+# ---------------------------------------------------------------------------
+# De omleiding naar SSO Rijk hoort in de poort
+# ---------------------------------------------------------------------------
+#
+# Deze flow hangt als browserFlowOverride op de client, en een clientoverride wint van de
+# browser flow van de realm. Alles wat de blauwdruk sso-only op de REALM zet - de flow
+# "External IDP Redirector" met een defaultProvider - geldt voor deze client dus niet. De
+# identity-provider-redirector stond hier zonder config, en zonder defaultProvider doet die
+# stap niets: de flow viel door naar het wachtwoordformulier. Een project met sso-only EN
+# restrict-access kreeg daardoor het gewone inlogscherm van Keycloak (regel-k4c, 2 september
+# 2026: het projectbestand zei sso-only sinds de dienst er stond, en toch verscheen er een
+# inlogformulier).
+
+
+@pytest.mark.asyncio
+async def test_sso_only_stuurt_ook_vanuit_de_poort_door_naar_de_idp() -> None:
+    connector, admin = _connector()
+
+    await _bouw(connector, redirect_to_idp="rig-platform-oidc")
+
+    config = _redirector_config(admin)
+    assert config is not None, "de redirector in de poort heeft geen config, dus hij stuurt niemand door"
+    assert config["config"] == {"defaultProvider": "rig-platform-oidc"}
+
+
+@pytest.mark.asyncio
+async def test_zonder_alias_blijft_het_inlogscherm_staan() -> None:
+    """sso-support HOORT het scherm van Keycloak te tonen; daar mag geen omleiding op."""
+    connector, admin = _connector()
+
+    await _bouw(connector)
+
+    assert _redirector_config(admin) is None
+
+
+@pytest.mark.asyncio
+async def test_de_omleiding_overleeft_opnieuw_toepassen() -> None:
+    """Elke reprocess bouwt deze flow opnieuw op; de config mag niet verdubbelen of wijken."""
+    connector, admin = _connector()
+
+    await _bouw(connector, redirect_to_idp="rig-platform-oidc")
+    await _bouw(connector, redirect_to_idp="rig-platform-oidc")
+
+    configs = [c for c in admin.configs.values() if "defaultProvider" in c.get("config", {})]
+    assert len(configs) == 1
+    assert configs[0]["config"] == {"defaultProvider": "rig-platform-oidc"}
+
+
+@pytest.mark.asyncio
+async def test_de_template_bepaalt_of_de_poort_doorstuurt() -> None:
+    """De manager leest de blauwdruk van het project en geeft hem door aan de poort."""
+    for template, verwacht in (("sso-only", "rig-platform-oidc"), ("sso-support", None)):
+        keycloak = _connector_mock()
+
+        await KeycloakManager(project_manager=AsyncMock())._apply_access_restriction(
+            keycloak=keycloak,
+            realm_name="realm-a",
+            client_id="proj-app",
+            restrict_access={"enabled": True, "realm_role": "allowed-user"},
+            template=template,
+        )
+
+        aanroep = keycloak.create_restricted_browser_flow_realm_role.await_args
+        assert aanroep.kwargs["redirect_to_idp"] == verwacht, template
+
+
+@pytest.mark.asyncio
+async def test_omschakelen_naar_sso_support_haalt_de_omleiding_er_weer_af() -> None:
+    """Van sso-only naar sso-support hoort het inlogscherm terug te komen.
+
+    Een config die alleen bijgezet wordt en nooit weggehaald, stuurt door tot in de
+    eeuwigheid: dan verandert de template in het projectbestand wel en het scherm niet.
+    """
+    connector, admin = _connector()
+
+    await _bouw(connector, redirect_to_idp="rig-platform-oidc")
+    await _bouw(connector)
+
+    assert _redirector_config(admin) is None
+    assert not [c for c in admin.configs.values() if "defaultProvider" in c.get("config", {})], (
+        "de config hangt nergens meer aan de flow, dus hij hoort ook weg te zijn"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ook_de_clientrolpoort_stuurt_door() -> None:
+    """Dezelfde poort, andere rolsoort: de omleiding hangt aan de flow en niet aan de rol."""
+    connector, admin = _connector()
+
+    await _bouw(connector, client_id="proj-app", redirect_to_idp="rig-platform-oidc")
+
+    config = _redirector_config(admin)
+    assert config is not None
+    assert config["config"] == {"defaultProvider": "rig-platform-oidc"}
+
+
+@pytest.mark.asyncio
+async def test_een_clientrol_geeft_de_template_net_zo_goed_door() -> None:
+    """De manager kent twee wegen naar de poort; ze horen allebei de blauwdruk te dragen."""
+    keycloak = _connector_mock()
+
+    await KeycloakManager(project_manager=AsyncMock())._apply_access_restriction(
+        keycloak=keycloak,
+        realm_name="realm-a",
+        client_id="proj-app",
+        restrict_access={"enabled": True, "role": "app-beheerder"},
+        template="sso-only",
+    )
+
+    aanroep = keycloak.create_restricted_browser_flow.await_args
+    assert aanroep.kwargs["redirect_to_idp"] == "rig-platform-oidc"

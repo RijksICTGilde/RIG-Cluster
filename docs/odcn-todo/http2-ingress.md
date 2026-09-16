@@ -1,9 +1,15 @@
 # Wijzigingsverzoek: HTTP/2 aanzetten op de ingress-controller
 
-**Status**: In gesprek met het platformteam
-**Datum**: 2026-08-03, bijgewerkt 2026-08-05
+**Status**: Doorgevoerd en geverifieerd op 2026-09-04
+**Datum**: 2026-08-03, bijgewerkt 2026-09-04
 **Prioriteit**: Middel, raakt laadtijd van asset-zware applicaties, geen functionele blokkade
 **Aanvrager**: RIG / ZAD, namens project regelrecht (`rig-prd-regel-k4c`)
+
+## Uitkomst
+
+Het platformteam heeft de annotatie op 4 september 2026 gezet. De ingress-controllers zijn opnieuw gestart en HTTP/2 is daarna bevestigd in productie.
+
+De gemeten werkelijkheid komt overeen met wat in dit document werd voorspeld: routes met een eigen en uniek certificaat spreken h2, de rest blijft HTTP/1.1. De metingen staan onderaan onder [Verificatie na doorvoeren](#verificatie-na-doorvoeren). De rest van het document blijft ongewijzigd staan als onderbouwing en als vastlegging van de afweging.
 
 ## Probleem
 
@@ -196,12 +202,102 @@ Drie van de vier liggen bij het project zelf en zijn inmiddels bij hen belegd. W
 
 ## Verificatie na doorvoeren
 
+Gemeten op 4 september 2026, kort na de rolling restart van de router-pods.
+
+### Protocol per categorie
+
+De routelijst van controller `rig` is opnieuw opgehaald en per route ingedeeld naar certificaat. Het cluster is sinds de oorspronkelijke meting gegroeid van 187 naar 263 routes.
+
+| Categorie | Routes | Gemeten |
+|---|---|---|
+| Eigen en uniek certificaat | 60 | HTTP/2 |
+| Gedeeld certificaat (8x `docs.rijksapp.nl`) | 8 | HTTP/1.1 |
+| Default wildcard-certificaat, waaronder de PR-previews | 195 | HTTP/1.1 |
+
+Steekproeven bevestigen alle drie de categorieën. Vijftien van de vijftien geteste hosts met een eigen certificaat antwoorden h2, waaronder `zad.rijksapp.nl`, `keycloak.rijksapp.nl`, `bouwmeester.rijks.app`, `openproject.rijksapp.nl`, `grist.rijksapp.nl`, `wies.rijksapp.nl`, `digitaledienst.overheid.nl` en alle zeven hosts onder `*.regelrecht.rijks.app`. Zes willekeurig gekozen preview-routes op het wildcard-certificaat blijven HTTP/1.1, en de acht routes op het gedeelde `docs.rijksapp.nl`-certificaat blijven dat ook. Zestig opeenvolgende requests op `zad.rijksapp.nl` gaven zestig keer h2.
+
+Tijdens de rolling restart zelf wisselde het antwoord nog tussen h2 en HTTP/1.1, afhankelijk van welke router-pod de verbinding kreeg. Dat trok binnen enkele minuten vanzelf recht.
+
+De OpenShift-console valt hier buiten: die hangt aan de controller `apps` en blijft HTTP/1.1. De zes passthrough-routes gaan sowieso niet via ALPN op de router maar via de pod zelf.
+
+### Werkt alles nog
+
+| Controle | Uitkomst |
+|---|---|
+| Pods die herstartten na de wijziging | geen, op één bestaande CrashLoopBackOff van 17 uur oud na |
+| Keycloak-log op fouten | alleen bestaande ruis uit de realm-sync, niets protocolgerelateerds |
+| OIDC-redirectketen `zad.rijksapp.nl` naar `/introductie` | HTTP/2 200 |
+| Discovery en JWKS op `keycloak.rijksapp.nl` | HTTP/2 200 |
+| POST op het token-endpoint | HTTP/2 401 met `client_not_found`, dus het formulier komt correct aan |
+| `SETTINGS_ENABLE_CONNECT_PROTOCOL` | 1, dus de router accepteert websockets over h2 (RFC 8441) |
+| `SETTINGS_MAX_CONCURRENT_STREAMS` | 100, het getal uit punt 2 van de risico-afweging |
+
+De verwachting uit punt 2 blijft daarmee staan: een browser kan nu tot honderd gelijktijdige streams over één verbinding openen waar dat er eerst zes waren. Er is nog geen backend gezien die daar last van heeft, maar het blijft het punt om op te letten bij een klacht over een trage of overbelaste applicatie.
+
+### Wat het oplevert
+
+Gemeten op de echte assetset van de editor van regelrecht, 29 bestanden, opgehaald zoals een browser dat doet:
+
+| Manier van ophalen | Tijd |
+|---|---|
+| HTTP/1.1, maximaal 6 verbindingen | 0,35 s |
+| HTTP/2, 1 gemultiplexte verbinding | 0,23 s |
+
+Ongeveer 35% sneller, zo'n 120 ms. Zonder compressie, dus puur bandbreedtegebonden over 3,49 MB, is het 0,42 s tegen 0,34 s en dus een kleinere winst. Dat is de verwachte vorm: hoe minder bytes en hoe hoger de latency, hoe groter het aandeel van HTTP/2. Voor een gebruiker op een mobiele of tragere verbinding is de winst dus groter dan wat hier vanaf een kantoorlijn gemeten is.
+
+Dat de winst op het externe stuk zit en niet op het interne, is te zien aan de latency aan beide kanten. Vanaf een werkplek naar de router is de TCP-connect 21 ms en is de TLS-handshake na 43 ms rond. Binnen de cluster is dat 3,8 ms naar de router-VIP en ongeveer 3 ms van pod naar pod. De limiet van zes verbindingen per host is bovendien een browserregel en geldt alleen op dat externe stuk; HAProxy kent richting de pod geen zes-verbindingenlimiet en houdt gewoon een pool van keep-alive-verbindingen aan.
+
+Ter aanvulling op de tabel onder "Verhouding tot de andere maatregelen": regelrecht heeft zijn eigen drie maatregelen inmiddels doorgevoerd. Compressie staat aan (de hoofdbundel is 1,62 MB kaal, 417 KB met gzip en 326 KB met brotli), de assets dragen `cache-control: public, max-age=31536000, immutable`, en het aantal `modulepreload`-regels in de HTML is van 20 naar 4 gegaan. De initiële payload van de editor is daarmee 559 KiB gecomprimeerd, waar het in augustus nog 2626 KiB kaal was.
+
+### Het pad vanuit de cluster
+
+Applicaties in de cluster benaderen elkaar deels via de publieke hostname, bijvoorbeeld de operations manager die met `keycloak.rijksapp.nl` praat. Dat verkeer gaat nu ook over h2. Gemeten vanuit de pod `operations-manager` in `rig-prd-operations`:
+
+- De cluster-DNS lost `keycloak.rijksapp.nl` op naar `router.rijksapp.nl`, dus naar 147.181.48.71 en `2a04:9a00:1007:4000:0:2:0:8`. Bij dual-stack wint IPv6 en landt de verbinding op het IPv6-adres.
+- Het verkeer blijft binnen het clusternetwerk. Een TTL-meting geeft de router-VIP op 2 hops, een keycloak-pod rechtstreeks op 6 hops en een echt externe host (`rcr.rijksapps.nl`) op 8 hops. Er is dus geen lus langs een externe load balancer.
+- TLS termineert op HAProxy. Richting de keycloak-pod blijft het cleartext HTTP/1.1, want de route is `edge`.
+- Keycloak logt het pod-IPv6-adres van de aanroeper als client-IP, dus de `X-Forwarded-For` blijft over h2 intact.
+- De operations manager zelf spreekt nog gewoon HTTP/1.1, omdat httpx alleen h2 doet met `http2=True`. Er verandert dus feitelijk niets aan dat verkeer, ook al staat h2 aan.
+- De kortere weg `http://keycloak:8080` binnen de namespace bestaat en werkt, maar wordt niet gebruikt omdat de issuer-URL publiek moet zijn.
+
+### Commando's om het te herhalen
+
 ```bash
-curl -sS -o /dev/null -w "%{http_version}\n" https://editor.regelrecht.rijks.app   # verwacht: 2
-curl -sS -o /dev/null -w "%{http_version}\n" https://zad.rijksapp.nl               # verwacht: 2
+curl -sS -o /dev/null -w "%{http_version}\n" https://zad.rijksapp.nl               # 2
+curl -sS -o /dev/null -w "%{http_version}\n" https://editor.regelrecht.rijks.app   # 2
+curl -sS -o /dev/null -w "%{http_version}\n" https://docs.rijksapp.nl              # 1.1, gedeeld cert
 curl -sS -o /dev/null -w "%{http_version}\n" \
-  https://editor-pr1077-regel-k4c.rig.prd1.gn2.quattro.rijksapps.nl                # verwacht: 1.1, default cert
+  https://profiel-test-mpfpsm-lcl.rig.prd1.gn2.quattro.rijksapps.nl                 # 1.1, wildcard cert
 ```
+
+## HTTP/2 helemaal tot aan de pod
+
+Terecht opgemerkt bij het lezen hiervan: met de default eindigt HTTP/2 op de router. Bij `edge` termineert HAProxy de TLS en gaat het verkeer als cleartext HTTP/1.1 verder naar de pod. Wie h2 tot in de pod wil, moet dus iets anders doen. Er zijn drie manieren, en passthrough is er daar één van.
+
+**1. `reencrypt`.** De serverregel naar de backend krijgt `ssl` en, zolang HTTP/2 aanstaat, `alpn h2,http/1.1`. Uit `openshift/router`, `release-4.20`, `images/router/haproxy/conf/haproxy-config.template` regel 795:
+
+```
+server {{ $endpoint.ID }} {{ $endpoint.IP }}:{{ $endpoint.Port }} cookie ...
+  {{- if (eq $cfg.TLSTermination "reencrypt") }} ssl
+    {{- if not (isTrue $router_disable_http2) }} alpn h2,http/1.1
+```
+
+De pod moet dan zelf TLS aanbieden met een certificaat dat de router accepteert. De router blijft wel gewoon zijn werk doen: headers, sticky cookies, health checks.
+
+**2. `edge` met `appProtocol: kubernetes.io/h2c` op de service-poort.** Dan zet de router `proto h2` op de serverregel en spreekt hij cleartext HTTP/2 tegen de pod. Regel 807 van dezelfde template:
+
+```
+{{- else if or (eq $cfg.TLSTermination "") (eq $cfg.TLSTermination "edge") }}
+  {{- if or (eq $endpoint.AppProtocol "h2c") (eq $endpoint.AppProtocol "kubernetes.io/h2c") }} proto h2
+```
+
+Dit is de lichtste optie: geen extra certificaat, alleen een veld op de Service. De voorwaarde is dat de applicatieserver h2c spreekt. Uvicorn doet dat niet, hypercorn wel.
+
+**3. `passthrough`.** De router raakt de TLS niet aan en de pod onderhandelt zelf met de browser, dus h2 van begin tot eind. De prijs is dat de pod een eigen geldig certificaat moet dragen en dat de router niets meer kan doen: geen `X-Forwarded-For`, geen padrouting, geen sticky cookies, geen health check op HTTP-niveau.
+
+Voor ZAD is geen van de drie op dit moment nodig. De winst zit op het externe stuk tussen browser en router, en dat stuk spreekt nu h2. Het interne stuk heeft een RTT van enkele milliseconden en geen verbindingslimiet, dus daar valt met multiplexing vrijwel niets te winnen. De stand in productie op 4 september 2026 is 255 `edge`-routes, 6 `passthrough`, 2 zonder TLS en geen enkele `reencrypt`.
+
+Wat het HTTP/1.1-stuk naar de pod wél betekent, is het spiegelbeeld van het risico uit punt 2 hierboven: de tot honderd streams die een browser over één h2-verbinding kan openen, waaiert HAProxy uit naar meer parallelle HTTP/1.1-verbindingen richting de pod. Dat is de plek om te kijken als een applicatie het na deze wijziging zwaarder krijgt.
 
 ## Bronnen
 
@@ -209,3 +305,4 @@ curl -sS -o /dev/null -w "%{http_version}\n" \
 - [Is it possible to enable HTTP/2 for only individual routes, Red Hat solution 7124213](https://access.redhat.com/solutions/7124213)
 - [cluster-ingress-operator, release-4.20](https://github.com/openshift/cluster-ingress-operator/blob/release-4.20/pkg/operator/controller/ingress/deployment.go)
 - [openshift/router, release-4.20](https://github.com/openshift/router/blob/release-4.20/pkg/router/template/template_helper.go)
+- [haproxy-config.template, release-4.20](https://github.com/openshift/router/blob/release-4.20/images/router/haproxy/conf/haproxy-config.template)

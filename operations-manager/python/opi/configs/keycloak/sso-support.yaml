@@ -46,7 +46,7 @@ realms:
     # met deze drie velden en klopt dus niet meer met wat hier staat.
     #
     # verifyEmail is de UITZONDERING en gaat wel om. Een realm die verifieert en niet kan
-    # mailen sluit nieuwe gebruikers buiten, dus deze regel is een VERZOEK en geen bevel:
+    # mailen sluit wie zijn adres wijzigt buiten, dus deze regel is een VERZOEK en geen bevel:
     # OPI zet verifyEmail alleen AAN als het PLATFORM een mailrelay heeft
     # (MAIL_RELAY_API_URL gevuld, zie _apply_realm_fields). Heeft het die niet - clustertype
     # 'local', of productie tijdens de crashlus van de relay op 21-08-2026 - dan blijft
@@ -57,13 +57,32 @@ realms:
     # over, maar sinds RC-159 draagt elke realm een minimale smtpServer met alleen een
     # afzenderadres en gaat de post via de eigen verzender uit de omgeving van de pod.
     #
-    # Wie wordt hierdoor geraakt: nieuwe LOKALE gebruikers, en iedereen die zijn adres
-    # wijzigt. SSO-gebruikers niet - die komen via trustEmail al geverifieerd binnen.
+    # Wie wordt hierdoor geraakt: iedereen die zijn adres wijzigt. Wie via create_user nieuw
+    # binnenkomt bevestigt los van deze vlag. SSO-gebruikers niet, die komen via trustEmail
+    # al geverifieerd binnen.
     registrationAllowed: false
     loginWithEmailAllowed: false
     resetPasswordAllowed: false
     editUsernameAllowed: false
     verifyEmail: true
+    # De TAAL van wat deze realm toont en verstuurt. Zonder deze drie velden staat
+    # internationalisatie uit en komt er Engelse standaardtekst uit Keycloak, ongeacht
+    # welk thema er staat - dat was de staat tot RC-175, en het gold ook voor de
+    # bevestigingsmail bij het inloggen.
+    #
+    # LET OP: dit raakt meer dan de post. Het INLOGSCHERM van deze realm wordt er ook
+    # Nederlands van. Dat is gewenst, maar het is een zichtbare wijziging voor bestaande
+    # gebruikers. `en` blijft in de lijst staan zodat een gebruiker kan omschakelen, en de
+    # Nederlandse vertaling van Keycloak zelf is onvolledig (406 regels tegen 534 Engelse),
+    # dus een enkele zin valt terug op het Engels. Dat is geen defect van ons.
+    #
+    # emailTheme blijft leeg: het MinBZK-thema levert geen bruikbaar mailthema (waargenomen:
+    # kale Engelse tekst met dat thema geladen). Keycloak levert messages_nl.properties mee
+    # in zijn base/email-thema, en dat is wat `nl` hier bruikbaar maakt. Eigen mailsjablonen
+    # zijn een eigen taak.
+    internationalizationEnabled: true
+    supportedLocales: ["nl", "en"]
+    defaultLocale: "nl"
     bruteForceProtected: true
     loginTheme: "nl-design-system"
     # Audit events: persist user events (incl. UPDATE_PROFILE/UPDATE_EMAIL) and admin

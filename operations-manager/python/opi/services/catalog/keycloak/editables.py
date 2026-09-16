@@ -10,10 +10,22 @@ from opi.forms.editables.converters import EmptyToNoneConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
 from opi.forms.editables.validators import RealmRoleValidator, UrlValidator
 
+#: GEEN default, en dat is de hele reparatie.
+#:
+#: Hier stond ``default="sso-support"``, terwijl het configmodel, het API-schema en
+#: ``KeycloakManager.DEFAULT_CONFIG`` alle drie ``sso-only`` gebruiken. Een projectbestand
+#: zonder ``template`` liet het scherm dus "SSO Rijk of een lokaal account" zien terwijl het
+#: platform de realm uit "Alleen SSO Rijk" bouwde: het formulier verzon een waarde die
+#: nergens anders gold, en opslaan schreef die verzinsels ook nog het bestand in.
+#:
+#: Een van de twee kanten laten winnen was niet de keuze: welke blauwdruk een project krijgt
+#: is een beslissing van de projectbeheerder en niet iets om stilzwijgend voor hem in te
+#: vullen. Zonder default toont het veld wat er in het bestand staat, en anders niets - en
+#: ``required`` dwingt dan een keuze af in plaats van er een te verzinnen.
 KEYCLOAK_TEMPLATE_EDITABLE = Editable(
     yaml_path="services/keycloak/config/template",
     values_provider="KeycloakTemplateOptionsProvider",
-    default="sso-support",
+    required=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
 

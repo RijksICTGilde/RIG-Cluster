@@ -205,6 +205,55 @@ carries one derived line ("Geen projectbrede instellingen; u stelt deze dienst p
 component, bij Componenten in."). A new service needs no template change to get it: the
 sentence is built from the layers the service declares.
 
+### How far may a project go: the declared latitude
+
+A bound on a user-settable field belongs to the *service*, not to whoever writes the
+project file. `config_settings()` is where a service says it, per field: the minimum, the
+maximum (or the allowed set), the default, and the layers a project may set it on.
+
+```python
+def config_settings(self):
+    return (
+        IntegerSetting(path="connection-limit", layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+                       default=20, minimum=1, maximum=100, label="Connectielimiet"),
+        QuantitySetting(path="storage", layers=(ConfigLayer.PROJECT,), default="1Gi",
+                        minimum="1Gi", maximum="100Gi", kind=QuantityKind.MEMORY,
+                        grow_only=True, label="Opslag"),
+    )
+```
+
+Three consumers read that one declaration, which is the whole reason it exists: the merge
+across layers (`resolve_setting`, "more specific wins" -- deployment over project over the
+service default), the project-file validation (`project_validation`, so the wizard, the
+API and a hand-edited file are judged alike), and the wizard field
+(`setting_field(...)`, which takes its yaml path, its input check, its help text and its
+prefill from here). A bound restated as `le=100` next to it is a second rule that drifts.
+
+Three kinds and no fourth: `IntegerSetting`, `QuantitySetting` (parsed and compared as a
+number -- `1Gi` is larger than `512Mi`, `2` larger than `100m`) and `ChoiceSetting`.
+`grow_only=True` marks a field that can only move up; that is a rule about a *change*, so
+it runs where both versions are in hand (`ProjectStore` hands the previous one to
+`validate_project_structure`). Both versions are read the same way -- the value if it is
+there, the service default if it is not -- so leaving the field, or the whole config block,
+out is the same reduction as writing a smaller number.
+
+A `grow_only` field may name **exactly one layer**, and any other declaration is refused
+at import time. The change is compared per config block, while the effective value comes
+from the most specific layer that says something: spread the same field over two layers
+and a reduction can be written on the layer that wins without any block getting smaller.
+One layer makes "this block did not shrink" and "this value did not shrink" the same
+sentence. Which layer it is does not matter.
+
+That pairing is per *place*, and a place goes finer than a layer: where a service keeps a
+record per mount (the storage services, on the deployment-component layer), each mount is
+its own effective value, so the walk names the mount in the location. Give a place more
+than one block of the same service without saying which is which and the comparison runs
+between unrelated values.
+
+What a service does not declare is not settable, and a layer it does not name is refused.
+A service that declares nothing -- the whole catalog today -- behaves exactly as before.
+See `features/speelruimte-van-een-dienst.md`.
+
 ## Forms and wizard screens
 
 **Registering a service gives it no UI at all.** The enum, the `ServiceDefinition` and the
@@ -215,6 +264,17 @@ hand. Skipping this is the most common way a new service lands "finished" but un
 for a user: sleep-mode shipped that way, fully working, with no wizard presence whatsoever.
 
 A service therefore has two independent UI questions, and you must answer both.
+
+**One path for the form and the API.** Whatever a user can configure, the form and the REST
+API reach through the *same* declarations: the editables define the yaml path and the
+validators, the `config_model` defines the shape, and `validate_service_configs` is the one
+gate both go through. So: no endpoint written by hand for a service that has a config model,
+no validator that only the form runs, no second place where a value is normalised, and no
+field the API accepts that the form silently drops. Where the two genuinely differ, that
+difference is declared and lives with the service (`api_actions()`, see "When editables are
+not enough"), never improvised on one side. The two failure modes this rules out are a form
+that writes a shape the API rejects, and an API that writes a shape the form cannot show.
+Start from the editables; the rest follows from them.
 
 ### 1. Does the user pick the service? The selection card
 
@@ -942,7 +1002,7 @@ approver UI needs no change to pick up a new one.
 | `notices_for` | What does an ungranted approval mean for this deployment? | `collect_deployment_approval_notices` → the project page |
 
 Each item `list_items` returns carries a `subject`: WHAT is being asked for, in words the
-approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it — the
+approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it. The
 service is the only thing that knows how to say it. Without one, generic code has to
 assemble the sentence from the fields it happens to know, and that is exactly how a service
 request ended up on the approver page as an empty domain column. `collect_approval_items`
@@ -990,7 +1050,7 @@ APPROVAL = service_use_approval(
 
 It returns three things: `spec` for `config_approvals()`, `is_approved(project_data)` and
 `ensure_requested(project_data)`. Hang **everything** the service switches on off that one
-`is_approved`, so the parts can never disagree — send-email gates its account, its network
+`is_approved`, so the parts can never disagree: send-email gates its account, its network
 policy, its envFrom secret and its secret file on it. And keep the `consequence`: a service
 that is switched on and silently does nothing is the fault this shape exists to prevent.
 
@@ -1004,7 +1064,9 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 2. `catalog/<name>/__init__.py` with a `Service` subclass carrying its own `definition`, and
    one line in `SERVICES`. Variables it exposes go in `variables.py` in the same package.
 3. Config? Add `config_model.py`, set `config_model` + `config_schema_version`, run
-   `uv run python -m opi.services.config_schema`, commit the fragment.
+   `uv run python -m opi.services.config_schema`, commit the fragment. That model plus the
+   editables are what BOTH the form and the API use; you write no endpoint and no second
+   validator. See "One path for the form and the API".
 4. **Decide the UI, explicitly, and write down the decision.** Two questions:
    - *May a user switch this on?* Then `hidden` stays `False` and the service gets a card in
      the services step. If not, set `hidden=True` **and say in the definition why**, so the
@@ -1057,6 +1119,11 @@ its four wiring points are listed under "Forms and wizard screens".
   automatically. A project-level section also needs registering in `wizard_sections.py`, adding
   to the flows in `flows.py`, a modal `FormFlow` when you declared `modal_flow_id`, and a
   regenerated flow snapshot.
+- **The form and the API are one path, and it is easy to fork by accident.** Writing a
+  small endpoint "just for this service", or a check that only the form runs, gives two
+  behaviours that drift silently: a form that writes what the API rejects, or an API that
+  writes what the form cannot show. The declarations (editables + `config_model`) are the
+  single source; a deliberate difference is declared with `api_actions()`.
 - **Identity via `service_entry_name`, always.** See the entry forms above.
 - **A services list is a selection set.** A name may appear at most once, at every level.
   `validate_project_structure` rejects a duplicate; the wizard merge folds entries so one

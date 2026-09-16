@@ -139,7 +139,12 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
-from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
+from opi.services.services import (
+    ServiceAdapter,
+    ServiceValidationError,
+    service_entry_config,
+    service_entry_name,
+)
 from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.naming import (
@@ -1254,7 +1259,10 @@ async def create_project_v2(
         )
     except ProjectApiKeyError as exc:
         logger.error("Could not build the project file for '%s': %s", project_name, exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Het projectbestand kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from exc
 
     task = await create_async_task(
         request=request,
@@ -2457,12 +2465,25 @@ async def _enqueue_config_write(
     Shared by the per-target upsert (PUT), patch (PATCH) and clear (DELETE) routes so
     the target lives in the path while the guards stay in one place. An unknown service
     is 404 and a target the service does not support is 422, both before enqueue.
+
+    A deployment or component the target names but the project does not have is a 404
+    here too, like ``_enqueue_values_write`` next door: the caller asked about a thing
+    that does not exist, and this request can say so. It stayed a 202 followed by a
+    failed task until a CI teardown patched cross-domain-access on a ``pr-`` deployment
+    that was already gone, three projects at a time (3 September 2026). The same check
+    runs again inside the mutation, against the freshest file.
     """
     logger.info("V2 %s service config '%s' at %s in project: %s", operation, service_name, target, project_name)
     if not validate_project_name(project_name):
         raise HTTPException(status_code=400, detail="Invalid project name format.")
     service = _service_or_404(service_name)
-    _resolve_supported_layer(service, service_name, target)
+    layer = _resolve_supported_layer(service, service_name, target)
+    try:
+        ServiceAdapter.require_config_target(
+            _project_data_or_404(project_name), layer, component_name=component, deployment_name=deployment
+        )
+    except ServiceValidationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     payload: dict[str, Any] = {
         "project_name": project_name,
