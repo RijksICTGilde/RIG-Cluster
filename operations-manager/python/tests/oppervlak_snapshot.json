@@ -1071,7 +1071,7 @@
     "ids": [
       "_services-config/invite/config/active-container",
       "_services-config/invite/config/active-items",
-      "_services-config/invite/config/active[0]/application-url",
+      "_services-config/invite/config/active[0]/application-target",
       "_services-config/invite/config/active[0]/contact-email",
       "_services-config/invite/config/active[0]/key",
       "_services-config/invite/config/active[0]/message/en",
@@ -1091,7 +1091,7 @@
     ],
     "velden": [
       "_gerenderde-reeksen[]",
-      "_services-config/invite/config/active[0]/application-url",
+      "_services-config/invite/config/active[0]/application-target",
       "_services-config/invite/config/active[0]/contact-email",
       "_services-config/invite/config/active[0]/key",
       "_services-config/invite/config/active[0]/message/en",
