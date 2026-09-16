@@ -154,7 +154,9 @@ class _NagebootsteServer:
 
     def __call__(self, sql: str) -> str:
         if sql.startswith("SELECT datname"):
-            return "\n".join(self.namen)
+            patroon = re.search(r"LIKE '(.*)'", sql)
+            assert patroon, f"de veeg filtert niet op naam: {sql}"
+            return "\n".join(naam for naam in self.namen if _like(patroon[1], naam))
         if sql.startswith("DROP DATABASE"):
             self.gedropt.append(sql.split('"')[1])
         return ""
@@ -175,6 +177,8 @@ class TestDeVeeg:
                 eigen_wees,
                 oude_vreemde,
                 f"{ZAD_TEST_DB_PREFIX}4867",
+                # Een levende run van een oudere tak; _is_wees zou hem weggooien.
+                "zad_test_4867",
             ]
         )
         monkeypatch.setattr(conftest, "_psql", server)
