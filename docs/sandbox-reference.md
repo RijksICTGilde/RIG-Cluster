@@ -19,8 +19,16 @@ EERSTE LOGIN OP ZAD: EEN KEER BEVESTIGEN
   onbevestigd binnen met de required action VERIFY_EMAIL. Zijn eerste login toont
   daarom eenmalig het bevestigingsscherm.
 
-  De mail landt in de Mailpit-sink: https://mailsink.sandbox.rijksapp.dev
-  Klik de link daarin aan, daarna logt hij gewoon in.
+  De mail landt in de Mailpit-sink. Klik de link daarin aan, daarna logt hij
+  gewoon in.
+
+    https://mailsink.sandbox.rijksapp.dev
+
+  Geeft die URL 404, dan draait dit cluster nog zonder de mailsink-ingress
+  (gemeten: de Service rig-mail-sink in rig-ron staat er wel, de Ingress niet).
+  Haal hem binnen met 'task sandbox:sync', of kijk erlangs:
+
+    kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025
 
 COMMON TASK COMMANDS
 
