@@ -109,7 +109,7 @@ Dit hoeft alleen beantwoord te worden voor fundament; de code leest het al via e
 | `supports_vpa` | `:169` | `true` | een draaiende VPA-recommender, waar de resource-tuner op leunt |
 | `letsencrypt.contact_email` | `:170`-`:172` | `rig-platform@rijksoverheid.nl` | contactadres voor de ACME-account |
 | `nice_url.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
-| `image_registries` | `:277`-`:313` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
+| `image_registries` | `:310`-`:343` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
 | `create_wizard_clusters` | alleen in `local` (`:16`) | — | ontbreekt bewust in productie: de wizard biedt dan alleen het eigen cluster |
 
 Oordeel voor alle regels in deze tabel: **staat al goed** — het is een invulopgave, geen
