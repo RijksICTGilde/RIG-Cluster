@@ -9,8 +9,11 @@ build:
       template: "latest"
   local:
     useBuildkit: true
+    # Naar de registry naast het cluster (docs/sandbox-kind-registry.md). Zonder push
+    # doet skaffold op een kind-context zelf een `kind load`.
+    push: true
   artifacts:
-  - image: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+  - image: localhost:5001/operations-manager
     context: .
     docker:
       dockerfile: operations-manager/Dockerfile
