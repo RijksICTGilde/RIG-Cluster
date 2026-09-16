@@ -71,7 +71,7 @@ curl -X POST "https://operations-manager/api/projects/my-project/:upsert-deploym
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `deploymentName` | string | yes | Name of the deployment (lowercase, hyphens allowed) |
+| `deploymentName` | string | yes | Name of the deployment (lowercase, hyphens allowed; `project` is reserved) |
 | `components` | list | yes | Components with their image references |
 | `cloneFrom` | string | null | Source deployment to clone config from (only on create, or if `forceClone` is true) |
 | `forceClone` | boolean | false | Re-clone even if the deployment already exists |
