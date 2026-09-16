@@ -152,6 +152,17 @@ class TestApplicationStage:
         }
         assert required - sources == set()
 
+    def test_every_copied_source_exists(self, app_stage: list[str]) -> None:
+        """A COPY of a directory that is gone only fails at docker build, long after the merge."""
+        missing = [
+            source
+            for _, line in _copies(app_stage)
+            if "--from=" not in line
+            for source in _copy_sources(line)
+            if not any(REPO_ROOT.glob(source))
+        ]
+        assert missing == []
+
 
 class TestStaticLayers:
     def _static_copies(self, app_stage: list[str]) -> list[tuple[int, list[str]]]:

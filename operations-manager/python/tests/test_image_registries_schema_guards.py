@@ -61,6 +61,7 @@ YAML_INJECTIE_UPSTREAM = (
 )
 
 AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE ENCRYPTED FILE-----"
+AGE_ENTRY = {"name": "versleuteld", "upstream": "ghcr.io", "username": "u", "password": AGE_BLOCK}
 
 
 def _project(registry: dict[str, Any]) -> dict[str, Any]:
@@ -212,6 +213,28 @@ class TestHetTokenValtNietUitDeFailClosedControle:
         project = _project({"name": "eigen", "upstream": "ghcr.io", "username": "u", "password": "ghp_KLARTEKST"})
         assert find_plaintext_service_config_violations(project) == [
             "services/image-registries/config/registries/0/password"
+        ]
+
+    def test_platte_tekst_op_de_deploymentlaag_wordt_ook_gevonden(self) -> None:
+        """Het model geldt ook op de deploymentlaag, dus daar kan het token ook leesbaar staan.
+
+        De melding wijst het blok op positie aan; tweede deployment, derde dienst.
+        """
+        project = _project({"name": "eigen", "upstream": "ghcr.io"})
+        lek = {"name": "eigen", "upstream": "ghcr.io", "username": "u", "password": "ghp_KLARTEKST"}
+        project["deployments"] = [
+            {"name": "acc"},
+            {
+                "name": "prod",
+                "services": [
+                    "clone",
+                    {"name": "clone", "config": {"generation": 1}},
+                    {"name": "image-registries", "config": {"registries": [AGE_ENTRY, lek]}},
+                ],
+            },
+        ]
+        assert find_plaintext_service_config_violations(project) == [
+            "deployments/1/services/2/config/registries/1/password"
         ]
 
     async def test_de_store_weigert_het_token_ook_zonder_enforce(self) -> None:
