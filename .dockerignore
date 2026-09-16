@@ -21,10 +21,8 @@ Thumbs.db
 
 # Cache and temporary files
 #
-# De Python-bytecode MET **/, zelfde oorzaak als bij de tests hieronder: zonder raakt het
-# patroon alleen de wortel, en kwam een geneste __pycache__ via COPY opi in het image.
-# Elke testrun schrijft die bytes opnieuw, en dan bouwde de opi-laag opnieuw zonder
-# codewijziging. *.yaml verderop blijft juist zonder **/: opi/configs/*.yaml moeten mee.
+# Bytecode MET **/, zelfde oorzaak als bij de tests hieronder. Anders kwam een geneste
+# __pycache__ via COPY opi mee en bouwde de opi-laag na elke testrun opnieuw.
 **/__pycache__/
 **/*.pyc
 **/*.pyo

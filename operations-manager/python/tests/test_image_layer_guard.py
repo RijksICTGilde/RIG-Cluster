@@ -212,7 +212,7 @@ class TestPinnedTools:
         assert args[0] != "ARG UV_VERSION="
 
     def test_no_image_from_outside_floats_on_latest(self, instructions: list[tuple[str, str]]) -> None:
-        """A floating base rebuilds its own stage and every stage after it, uv was one of several."""
+        """A floating base rebuilds its own stage and every stage after it."""
         stages = {stage for stage, _ in instructions if stage}
         bases = [line.split()[1] for _, line in instructions if line.upper().startswith("FROM ")]
 
