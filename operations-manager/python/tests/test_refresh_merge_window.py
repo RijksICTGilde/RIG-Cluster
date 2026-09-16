@@ -19,25 +19,28 @@ This file is the measurement, not a reading of the code. Three things are pinned
 3. **That window used to make ``pending`` lie.** ``get_deferred_rollouts`` cleared every
    deferred change older than the last rollout's COMPLETION. A change saved with
    ``rollout=false`` while a refresh was running completes before that refresh does, so it
-   was cleared by a refresh that never saw it: ``pending`` said 0 while the change was not
-   on the cluster -- exactly the invisible failure the CLI described. The cutoff is now the
-   rollout's START, which can only ever over-report, never under-report.
+   was cleared by a refresh that never saw it (RC-82). The run now records the moment it
+   READ the project file in ``project_reconciliation`` (RC-188), which can only ever
+   over-report, never under-report.
 
 The task types that carry no deployment name (add_component, update_component, add_service)
 are serialised behind a project refresh by the in-flight check in ``claim_next_task``, so
 they cannot land inside the window. The ones that DO carry a deployment name (update_image,
 upsert_deployment) run concurrently with a project-wide refresh, and those are the ones the
-third test uses.
+third part uses.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.core.async_task_service import AsyncTaskService
 from opi.core.task_handlers_operations import handle_refresh_project
+from opi.services.project_reconciliation_service import record_reconciliation
 
 REFRESH_PAYLOAD = {"project_name": "p1", "force_clone": False}
 
@@ -205,18 +208,32 @@ async def _deferred_change(svc: AsyncTaskService, *, deployment: str | None, tas
     return row
 
 
-async def test_a_change_deferred_while_a_refresh_ran_is_still_pending(orm_db) -> None:
-    """The window: saved after the refresh read the file, completed before the refresh did.
+async def _run_reads_the_project_file() -> float:
+    """The moment a processing run reads its snapshot; returned so the run can record it."""
+    read = time.monotonic()
+    # Genoeg afstand tussen het lezen en wat daarna gebeurt dat de databaseklok het ziet.
+    await asyncio.sleep(0.05)
+    return read
 
-    Measured against the refresh's completion this counted as rolled out, and `pending`
+
+async def _run_records_what_it_read(read: float) -> None:
+    await record_reconciliation("p1", ["d1"], project_wide=True, read_seconds_ago=time.monotonic() - read)
+
+
+async def test_a_change_deferred_while_a_refresh_ran_is_still_pending(orm_db) -> None:
+    """The window: saved after the run read the file, completed before the run did.
+
+    Measured against the run's completion this counted as rolled out, and `pending`
     said 0 for a change that is not on the cluster. It must stay visible.
     """
     svc = _svc()
     refresh = await _refresh_task(svc)
     await svc.start_task(refresh["task_id"])
+    read = await _run_reads_the_project_file()
 
     await _deferred_change(svc, deployment="d1", task_type="update_image")
 
+    await _run_records_what_it_read(read)
     await svc.complete_task(refresh["task_id"])
 
     pending = await svc.get_deferred_rollouts("p1")
@@ -224,8 +241,23 @@ async def test_a_change_deferred_while_a_refresh_ran_is_still_pending(orm_db) ->
     assert pending["task_types"] == ["update_image"]
 
 
-async def test_a_change_deferred_before_the_refresh_started_is_cleared_by_it(orm_db) -> None:
-    """The contrast: this one WAS in the snapshot the refresh read, so it is not pending."""
+async def test_a_change_deferred_before_the_refresh_read_the_file_is_cleared_by_it(orm_db) -> None:
+    """The contrast: this one WAS in the snapshot the run read, so it is not pending."""
+    svc = _svc()
+    await _deferred_change(svc, deployment="d1", task_type="update_image")
+    await asyncio.sleep(0.05)
+
+    refresh = await _refresh_task(svc)
+    await svc.start_task(refresh["task_id"])
+    read = await _run_reads_the_project_file()
+    await _run_records_what_it_read(read)
+    await svc.complete_task(refresh["task_id"])
+
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
+
+
+async def test_a_completed_refresh_task_that_recorded_nothing_clears_nothing(orm_db) -> None:
+    """The task row is an intention; only what the run recorded counts (RC-188)."""
     svc = _svc()
     await _deferred_change(svc, deployment="d1", task_type="update_image")
 
@@ -233,15 +265,4 @@ async def test_a_change_deferred_before_the_refresh_started_is_cleared_by_it(orm
     await svc.start_task(refresh["task_id"])
     await svc.complete_task(refresh["task_id"])
 
-    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
-
-
-async def test_a_refresh_that_never_recorded_a_start_still_clears_what_came_before(orm_db) -> None:
-    """Falling back to completed_at keeps older rows, without a start, behaving as before."""
-    svc = _svc()
-    await _deferred_change(svc, deployment="d1", task_type="update_image")
-
-    refresh = await _refresh_task(svc)
-    await svc.complete_task(refresh["task_id"])
-
-    assert (await svc.get_deferred_rollouts("p1"))["count"] == 0
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1

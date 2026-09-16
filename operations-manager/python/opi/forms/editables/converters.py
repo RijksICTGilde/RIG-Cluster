@@ -955,3 +955,54 @@ class NonEmptyListConverter:
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
         return value
+
+
+class InviteTargetConverter:
+    """Adres (formulier) <-> ``component:deployment[:/pad]`` (projectbestand).
+
+    De bestemmingskeuzelijst van een uitnodiging toont ADRESSEN, want die herkent een mens,
+    en bewaart de KEUZE, want die overleeft een wijziging van het subdomein, het
+    domeinformaat of het cluster. Deze converter is het scharnier daartussen. De afleiding
+    zelf staat niet hier maar in ``opi/services/catalog/invite/destination.py``, zodat het
+    formulier en de publieke uitnodigingspagina dezelfde bron delen.
+
+    Een adres dat niet van dit project is levert geen keuze op, en er wordt dus niets
+    weggeschreven. Dat dekt zowel de lege optie ("geen knop tonen") als een optie die
+    inmiddels niet meer af te leiden valt; voor het bestand betekenen die hetzelfde,
+    namelijk dat hier geen keuze vastligt. Een vast ``application-url`` naar een bestemming
+    BUITEN het project is een eigen veld en niet de zaak van deze keuzelijst.
+
+    Let op de reikwijdte: dit is de FORMULIERkant. De publieke pagina is geen formulier en
+    heeft zijn eigen ingang (``resolve_invite_url``) op dezelfde bron.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Opgeslagen keuze -> het adres dat in de lijst voorgeselecteerd moet staan.
+
+        Een keuze die niet meer oplost selecteert niets, precies zoals de succespagina er
+        geen knop voor toont. De lijst leest dan als "geen bestemming", en dat is het ook:
+        de opgeslagen bestemming wijst nergens meer heen.
+        """
+        from opi.services.catalog.invite.destination import url_for_target
+
+        if not value or not isinstance(value, str) or not context_data:
+            return ""
+        return url_for_target(value, context_data) or ""
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> str | None:
+        """Gekozen adres -> de keuze erachter, of None om niets weg te schrijven."""
+        from opi.services.catalog.invite.destination import target_for_url
+
+        if not value or not isinstance(value, str) or not context_data:
+            return None
+        return target_for_url(value, context_data)
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        """Alleen-lezen weergave: het adres waar het vandaag heen wijst."""
+        from opi.services.catalog.invite.destination import url_for_target
+
+        if not value or not isinstance(value, str):
+            return "Geen knop tonen"
+        if not context_data:
+            return value
+        return url_for_target(value, context_data) or "Bestemming bestaat niet meer"

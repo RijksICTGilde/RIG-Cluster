@@ -12,14 +12,15 @@ import uuid
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select, tuple_, update
+from sqlalchemy import delete, func, literal, or_, select, tuple_, update
 from sqlalchemy.orm import aliased
 
 from opi.core.db import session_scope
 from opi.core.task_rollout import PAYLOAD_KEY as ROLLOUT_PAYLOAD_KEY
-from opi.core.task_rollout import ROLLOUT_CLEARING_TASK_TYPES
-from opi.core.task_supersede import scope_of
+from opi.core.task_rollout import PROCESSING_TASK_TYPES
+from opi.core.task_supersede import Scope, covers, scope_of
 from opi.services.persistence.async_tasks import AsyncTask
+from opi.services.persistence.project_reconciliation import ProjectReconciliation
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +40,24 @@ def _deferred(task=AsyncTask):
     return task.payload[ROLLOUT_PAYLOAD_KEY].astext.is_not_distinct_from("false")
 
 
-def _rolled_out(task=AsyncTask):
-    """Rows that reconciled the whole project, clearing every deferred change before them."""
-    return task.task_type.in_(tuple(ROLLOUT_CLEARING_TASK_TYPES)) & (
-        task.payload[ROLLOUT_PAYLOAD_KEY].astext.is_distinct_from("false")
+def _not_yet_reconciled(task=AsyncTask):
+    """Rows whose change no processing run has read since they completed (RC-188).
+
+    The read rule is in ``features/opslaan-zonder-verwerken.md``.
+    """
+    reconciled_since = ProjectReconciliation.project_name == task.project_name
+    reconciled_since &= ProjectReconciliation.reconciled_at >= task.completed_at
+    project_wide_since = select(literal(1)).where(reconciled_since, ProjectReconciliation.deployment_name.is_(None))
+    deployments = func.unnest(task.affects_deployments).table_valued("name").render_derived()
+    # correlate_except: de binnenste subquery ligt twee niveaus onder de taak, en zonder
+    # dit zet SQLAlchemy async_tasks opnieuw in zijn eigen FROM.
+    deployment_since = (
+        select(literal(1))
+        .where(reconciled_since, ProjectReconciliation.deployment_name == deployments.c.name)
+        .correlate_except(ProjectReconciliation)
     )
+    deployment_not_since = select(literal(1)).select_from(deployments).where(~deployment_since.exists())
+    return ~project_wide_since.exists() & (task.affects_deployments.is_(None) | deployment_not_since.exists())
 
 
 # Statuses that count as "in flight" for concurrency / dedup purposes.
@@ -682,54 +696,33 @@ class AsyncTaskService:
     async def get_deferred_rollouts(self, project_name: str) -> dict[str, Any]:
         """Changes saved with ``rollout=false`` that have not been rolled out since (RC-46).
 
-        Drift is measured from the tasks themselves, because they are the record of the
-        writes: a completed task whose payload said ``rollout: false`` wrote to the project
-        file and deliberately did not process. Any later task that DID roll out reconciles
-        the whole file, so it clears everything before it -- one refresh is enough, the
-        deferred changes do not have to be replayed one by one.
+        A completed task whose payload said ``rollout: false`` wrote to the project file and
+        deliberately did not process. It stays waiting until a processing run has read the
+        project file after it, for the deployments it touched; see ``_not_yet_reconciled``.
 
         Returns ``{"count": int, "since": str | None, "task_types": list[str],
         "rollout_in_progress": bool}``. ``since`` is the ISO timestamp of the oldest change
         still waiting, so the UI can say how long the project has been running ahead of the
         cluster rather than only that it is.
 
-        ``rollout_in_progress`` covers the gap the count itself cannot: the cutoff above only
-        looks at COMPLETED tasks, so a rollout that is running right now clears nothing yet
-        and ``count`` keeps standing until it finishes. Reporting only the count then makes
-        the UI claim that nothing reached the cluster while a refresh is doing exactly that.
-        It is deliberately the same predicate as the cutoff: only a task that will clear this
-        drift when it completes counts, otherwise an unrelated running task (a sleep, a
-        clone) would announce a rollout that is not happening.
-
-        The cutoff is when the rolling-out task STARTED, not when it completed (RC-82). A
-        refresh reads the project file once, at the beginning of its own run, and processes
-        that snapshot for the rest of its duration. A change committed while it was still
-        running is therefore not in it -- and measuring against ``completed_at`` cleared
-        exactly those changes, so ``pending`` reported 0 for a change that never reached the
-        cluster. Falling back to ``completed_at`` keeps tasks that recorded no start (older
-        rows, and anything completed without going through the worker) behaving as before.
+        ``rollout_in_progress``: an open processing task covers the scope of everything
+        waiting. A queued or running run has recorded nothing yet, so the count cannot say
+        this. Where it under-reports: ``features/opslaan-zonder-verwerken.md``.
         """
         async with session_scope() as session:
-            last_rollout_at = (
-                await session.execute(
-                    select(func.max(func.coalesce(AsyncTask.started_at, AsyncTask.completed_at))).where(
-                        AsyncTask.project_name == project_name,
-                        AsyncTask.status == "completed",
-                        _rolled_out(),
+            rows = (
+                (
+                    await session.execute(
+                        select(AsyncTask)
+                        .where(
+                            AsyncTask.project_name == project_name,
+                            AsyncTask.status == "completed",
+                            _deferred(),
+                            _not_yet_reconciled(),
+                        )
+                        .order_by(AsyncTask.completed_at.asc())
                     )
                 )
-            ).scalar_one_or_none()
-
-            conds = [
-                AsyncTask.project_name == project_name,
-                AsyncTask.status == "completed",
-                _deferred(),
-            ]
-            if last_rollout_at is not None:
-                conds.append(AsyncTask.completed_at > last_rollout_at)
-
-            rows = (
-                (await session.execute(select(AsyncTask).where(*conds).order_by(AsyncTask.completed_at.asc())))
                 .scalars()
                 .all()
             )
@@ -737,24 +730,36 @@ class AsyncTaskService:
             # _OPEN_STATES en niet _ACTIVE_STATES: een uitrol die nog in de wachtrij staat is
             # voor wie de pagina leest net zo goed onderweg, en "er is niets naar het cluster
             # gegaan" is dan al misleidend.
-            running_rollout = (
-                await session.execute(
-                    select(AsyncTask.id)
-                    .where(
-                        AsyncTask.project_name == project_name,
-                        AsyncTask.status.in_(_OPEN_STATES),
-                        _rolled_out(),
+            open_scopes = (
+                (
+                    await session.execute(
+                        select(AsyncTask.affects_deployments).where(
+                            AsyncTask.project_name == project_name,
+                            AsyncTask.status.in_(_OPEN_STATES),
+                            AsyncTask.task_type.in_(tuple(PROCESSING_TASK_TYPES)),
+                            AsyncTask.payload[ROLLOUT_PAYLOAD_KEY].astext.is_distinct_from("false"),
+                        )
                     )
-                    .limit(1)
                 )
-            ).scalar_one_or_none()
+                .scalars()
+                .all()
+            )
+
+        waiting: Scope = frozenset()
+        for row in rows:
+            if row.affects_deployments is None or waiting is None:
+                waiting = None
+            else:
+                waiting = waiting | frozenset(row.affects_deployments)
 
         oldest = rows[0].completed_at if rows else None
         return {
             "count": len(rows),
             "since": oldest.isoformat() if oldest else None,
             "task_types": sorted({row.task_type for row in rows}),
-            "rollout_in_progress": running_rollout is not None,
+            "rollout_in_progress": any(
+                covers(None if scope is None else frozenset(scope), waiting) for scope in open_scopes
+            ),
         }
 
     async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
@@ -769,23 +774,12 @@ class AsyncTaskService:
         """
         # make_interval positional args: (years, months, weeks, days, hours, ...).
         cutoff = func.now() - func.make_interval(0, 0, 0, 0, retention_hours)
-        later = aliased(AsyncTask)
-        still_pending_rollout = _deferred() & ~(
-            select(later.id)
-            .where(
-                later.project_name == AsyncTask.project_name,
-                later.status == "completed",
-                _rolled_out(later),
-                later.completed_at > AsyncTask.completed_at,
-            )
-            .exists()
-        )
         async with session_scope() as session:
             result = await session.execute(
                 delete(AsyncTask).where(
                     AsyncTask.status.in_(_TERMINAL_STATES),
                     AsyncTask.completed_at < cutoff,
-                    ~still_pending_rollout,
+                    ~(_deferred() & _not_yet_reconciled()),
                 )
             )
             deleted_count = result.rowcount

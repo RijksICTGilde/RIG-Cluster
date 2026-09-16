@@ -7,6 +7,14 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 
+# Laat containerd de per-registry hosts.toml lezen die scripts/setup-kind-registry.sh
+# wegschrijft. Zonder deze regel negeert containerd die bestanden en pullt de node niets.
+# Geldt alleen bij `kind create`, dus wijzigen kost een clusterherbouw.
+containerdConfigPatches:
+- |-
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    config_path = "/etc/containerd/certs.d"
+
 # Kubernetes version
 # Note: Update this version as needed
 kubeadmConfigPatches:

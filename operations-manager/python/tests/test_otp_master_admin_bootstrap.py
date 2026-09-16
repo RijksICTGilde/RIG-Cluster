@@ -47,6 +47,9 @@ async def test_the_admin_is_created_with_its_otp_credential() -> None:
     kwargs = keycloak.create_user.await_args.kwargs
     assert kwargs["realm_name"] == "master"
     assert kwargs["totp_secret"] == "SEED", "the seed must go in at creation; it cannot be added later"
+    assert kwargs["skip_email_verification"] is True, (
+        "@localhost is no mailbox: requiring verification locks the break-glass admin out"
+    )
 
 
 async def test_it_gets_the_admin_role() -> None:

@@ -126,8 +126,11 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
             }
         )
     except Exception as e:
-        logger.error(f"Error checking subdomain availability: {e}")
-        raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")
+        logger.exception("Controleren van subdomein '%s' mislukt", subdomain)
+        raise HTTPException(
+            status_code=500,
+            detail="Er kon niet worden gecontroleerd of dit subdomein vrij is. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 def _get_validation_error_code(error_message: str | None) -> str:
