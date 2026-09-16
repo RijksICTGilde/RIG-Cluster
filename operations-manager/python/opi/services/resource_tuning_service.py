@@ -204,6 +204,62 @@ def _floor_is_expired(floor: ResourceFloor, max_observed_mb: float, has_oom_kill
     return 0 < max_observed_mb < stable_threshold_mb
 
 
+def _unanswered_oom_window_minutes(
+    project_data: dict[str, Any],
+    deployment_name: str,
+    component_reference: str,
+    window_hours: int,
+) -> int:
+    """Hoe ver de OOM-query terug mag kijken: tot aan de vorige OOM die al beantwoord is.
+
+    Het bereik zelf is nodig omdat kube-state-metrics
+    ``kube_pod_container_status_last_terminated_reason`` alleen exporteert zolang de
+    gestopte pod BESTAAT. Een container die door de OOM-killer wordt geveld herstart
+    binnen dezelfde pod, dus daar ziet een momentopname hem nog; zodra er een uitrol
+    overheen gaat -- en dat is precies wat de tuner zelf veroorzaakt -- is hij weg.
+
+    Maar terugkijken zonder grens maakt de tuner geheugenloos op de verkeerde manier:
+    ``has_oom_kills`` slaat de deadband over EN dwingt een verhoging van minstens
+    ``current_limit x factor``, ongeacht het gemeten gebruik. Een OOM die de tuner
+    gisteravond al beantwoord heeft zou dus elke volgende ronde opnieuw een verhoging
+    afdwingen. Nagerekend op de vorm van dd-mco (verklaard 64Mi, override 192Mi, feitelijk
+    gebruik 40Mi): 192 -> 384 -> 576 -> 864Mi, tot het groeiplafond van 8x. Dat is de
+    escalatie van asses-k2n/pr-494 in een nieuw jasje.
+
+    De grens is daarom het moment waarop de watcher voor het laatst iets aan DIT component
+    in DEZE deployment gedaan heeft. Alles daarvoor is beantwoord; alles daarna is nieuw.
+    Zonder zo'n moment geldt het volledige venster, want dan is er niets beantwoord.
+    """
+    full_window = window_hours * 60
+
+    newest: datetime | None = None
+    for dep in project_data.get("deployments", []):
+        if dep.get("name") != deployment_name:
+            continue
+        for comp in dep.get("components", []):
+            if comp.get("reference") != component_reference:
+                continue
+            for entry in (comp.get("resources") or {}).get("history") or []:
+                if entry.get("source") != "oom-watcher":
+                    continue
+                try:
+                    moment = datetime.fromisoformat(entry.get("timestamp") or "")
+                except ValueError:
+                    continue
+                if moment.tzinfo is None:
+                    moment = moment.replace(tzinfo=UTC)
+                if newest is None or moment > newest:
+                    newest = moment
+
+    if newest is None:
+        return full_window
+
+    # Minstens een minuut: een bereik van nul is geen geldige PromQL-duur, en vlak na een
+    # tune is "sindsdien" terecht bijna niets.
+    since = int((datetime.now(UTC) - newest).total_seconds() // 60)
+    return max(1, min(full_window, since))
+
+
 def _entry_is_old_enough(set_at: str | None, min_age_days: int) -> bool:
     """Whether *set_at* is at least *min_age_days* old. Unusable timestamps say no.
 
@@ -478,13 +534,21 @@ async def _analyze_component_resources(
     # data -- the faster something OOMs, the emptier the backend (asses-k2n/pr-469,
     # 21 August: 45Mi, no scrape interval reached, tune skipped entirely).
     # Initialising here rather than after the query keeps it true when the query throws.
+    #
+    # De query eronder kijkt over een BEREIK en niet naar een moment, want de metric
+    # bestaat alleen zolang de gestopte pod bestaat. Hoe ver dat bereik terugkijkt is
+    # niet vrij: het loopt tot de vorige OOM die de watcher al beantwoord heeft, anders
+    # dwingt een oude OOM elke ronde opnieuw een verhoging af. Die afweging staat
+    # uitgeschreven bij _unanswered_oom_window_minutes.
     has_oom_kills = oom_triggered
     try:
+        oom_window_minutes = _unanswered_oom_window_minutes(project_data, dep_name, component_ref, window_hours)
         oom_query = (
-            f"kube_pod_container_status_last_terminated_reason{{"
+            f"max_over_time(kube_pod_container_status_last_terminated_reason{{"
             f'reason="OOMKilled", '
             f'namespace="{namespace}", '
             f'pod=~"{unique_name}.*"}}'
+            f"[{oom_window_minutes}m])"
         )
         oom_results = await connector.custom_query(oom_query)
         has_oom_kills = has_oom_kills or bool(oom_results)
@@ -772,6 +836,101 @@ async def _analyze_component_resources(
         new_cpu_request=new_cpu_request,
         cpu_reason=cpu_reason,
     )
+
+
+#: Hoe ver de leescontrole terugkijkt. Een etmaal dekt "het is vannacht omgevallen en de
+#: tuner heeft het al rechtgezet", en dat is precies het venster waarin de gebruiker het
+#: langs geen enkele andere weg te weten komt.
+OOM_OBSERVATION_WINDOW_HOURS = 24
+
+
+@dataclass(frozen=True)
+class OomObservation:
+    """Een component dat binnen het venster wegens geheugengebrek is gestopt."""
+
+    component: str
+    pod: str
+
+
+async def observe_recent_oom_kills(
+    project_data: dict[str, Any],
+    deployment_name: str,
+    window_hours: int = OOM_OBSERVATION_WINDOW_HOURS,
+) -> list[OomObservation]:
+    """Welke componenten van deze deployment zijn recent door geheugengebrek gestopt?
+
+    Leest alleen, tunet nooit. Deze functie bestaat omdat geen enkel ander scherm het
+    feit vasthoudt. De ArgoCD-badge toont een OOM alleen zolang de deployment ongezond
+    is, en de auto-tuner heeft als hele taak om hem zo snel mogelijk weer gezond te
+    maken -- de badge wist dus het signaal uit dat de gebruiker nodig heeft. Kubernetes
+    Events verlopen na ongeveer een uur, en de lastState van de pod verdwijnt met de pod.
+    Dit was er tot 30 juni 2026 wel (commit 2df6b507 haalde het weg).
+
+    OVER EEN BEREIK, NIET OP EEN MOMENT, en daar hangt het op. De kale selector
+    ``kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`` wordt alleen
+    geexporteerd zolang de gestopte pod nog bestaat, dus hij leest leeg juist NADAT de
+    tuner de pod heeft vervangen. Gemeten op rig-prd-dd-mco, 1 september 2026: de
+    momentopname gaf niets terug, terwijl max_over_time over 24 uur de twee pods gaf die
+    die avond waren gestopt.
+
+    Namen van deployments en componenten zijn DNS-1123-labels (a-z, 0-9, koppelteken),
+    dus ze kunnen de selector hieronder niet oprekken.
+    """
+    deployment = next(
+        (d for d in project_data.get("deployments", []) if d.get("name") == deployment_name),
+        None,
+    )
+    if not deployment:
+        return []
+
+    base_namespace = deployment.get("namespace")
+    cluster = deployment.get("cluster")
+    if not base_namespace or not cluster:
+        return []
+
+    component_refs = [c.get("reference") for c in deployment.get("components") or [] if c.get("reference")]
+    if not component_refs:
+        return []
+
+    try:
+        connector = await get_metrics_connector()
+    except Exception as e:
+        logger.warning(f"No metrics connector for the OOM check on {deployment_name}: {e}")
+        return []
+    if not connector.is_connected:
+        return []
+
+    namespace = get_prefixed_namespace(cluster, base_namespace)
+    query = (
+        f"max_over_time(kube_pod_container_status_last_terminated_reason{{"
+        f'reason="OOMKilled", '
+        f'namespace="{namespace}", '
+        f'pod=~"{deployment_name}-.*"}}'
+        f"[{window_hours}h])"
+    )
+    try:
+        results = await connector.custom_query(query)
+    except Exception as e:
+        logger.warning(f"OOM check failed for {deployment_name}: {e}, reporting nothing")
+        return []
+
+    # Pod terug naar component. Een podnaam is "{deployment}-{component}-{rs}-{pod}", dus
+    # het langste passende voorvoegsel wint: een project met zowel "web" als "web-api"
+    # zou op het kortste anders beide op "web" laten uitkomen.
+    observed: dict[str, str] = {}
+    for result in results:
+        pod = (result.get("metric") or {}).get("pod", "")
+        if not pod:
+            continue
+        match = max(
+            (ref for ref in component_refs if pod.startswith(f"{generate_unique_name(deployment_name, ref)}-")),
+            key=len,
+            default=None,
+        )
+        if match and match not in observed:
+            observed[match] = pod
+
+    return [OomObservation(component=ref, pod=observed[ref]) for ref in sorted(observed)]
 
 
 def describe_growth_ceiling_block(

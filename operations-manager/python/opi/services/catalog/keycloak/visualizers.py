@@ -35,6 +35,11 @@ KEYCLOAK_TEMPLATE = EditableVisualizer(
     editable=KEYCLOAK_TEMPLATE_EDITABLE,
     widget=WidgetType.SELECT,
     label="Keycloak template",
+    placeholder="Kies een template",
+    help_text=(
+        "Bepaalt wat iemand ziet als hij moet inloggen. Staat er nog niets in het "
+        "projectbestand, dan bouwt het platform de realm uit 'Alleen SSO Rijk'."
+    ),
 )
 
 KEYCLOAK_REDIRECT_URI_ITEM = EditableVisualizer(

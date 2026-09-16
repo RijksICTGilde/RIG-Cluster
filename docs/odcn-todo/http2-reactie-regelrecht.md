@@ -1,3 +1,23 @@
+**Update 4 september 2026: HTTP/2 staat aan.**
+
+Het platformteam heeft het vanochtend doorgevoerd op de ingress-controller. Alle zeven hostnames onder `*.regelrecht.rijks.app` spreken nu h2, de editor voorop. Jullie hoeven daar zelf niets voor te doen.
+
+Wij hebben de winst meteen gemeten op de assets van de editor, 29 bestanden, opgehaald zoals een browser dat doet: 0,35 seconde over HTTP/1.1 met zes verbindingen, tegen 0,23 seconde over één gemultiplexte HTTP/2-verbinding. Ongeveer 35% sneller. Op een mobiele of tragere verbinding is dat verschil groter, want hoe hoger de latency hoe zwaarder die wachtrij van zes weegt.
+
+En complimenten: alle drie de dingen uit het bericht hieronder zijn inmiddels geregeld, en dat is aan de buitenkant goed te zien.
+
+- Compressie staat aan, en zelfs brotli. De hoofdbundel is 1,62 MB kaal, 417 KB met gzip en 326 KB met brotli.
+- De assets dragen `cache-control: public, max-age=31536000, immutable`, met een `etag` erbij.
+- Het aantal `modulepreload`-regels in de HTML is van 20 naar 4 gegaan.
+
+Bij elkaar is de initiële payload van de editor nu 559 KiB gecomprimeerd, waar het in augustus nog 2626 KiB kaal was. Dat is een factor waar HTTP/2 niet aan kan tippen, dus die volgorde uit ons vorige bericht klopte: het meeste zat bij jullie zelf, en dat is nu binnen.
+
+Eén ding om te weten nu h2 aanstaat: waar een browser eerst zes verbindingen per host opende, kan hij nu tot honderd gelijktijdige streams over één verbinding sturen. Onze router zet die om naar meer parallelle verbindingen richting jullie pods. Mocht de backend daar ooit last van krijgen, laat het weten, dan zetten wij er per route een rem op.
+
+---
+
+*Hieronder het oorspronkelijke bericht van augustus 2026.*
+
 Jullie waarneming klopt: op `*.regelrecht.rijks.app` komt ALPN niet tot een afspraak en valt de verbinding terug op HTTP/1.1. Dat ligt niet aan jullie routes of certificaten, HTTP/2 staat uit op de ingress-controller.
 
 Wij zijn dat aan het uitzoeken met het platformteam. Het is een instelling op de ingress-controller die alle RIG-routes bedient, dus niet iets dat per route of per project aan te zetten is. Voordat dat gebeurt willen we zeker weten dat er geen onverwachte of vervelende neveneffecten zijn, onder andere voor applicaties met WebSockets en voor backends die plots meer gelijktijdige requests krijgen.

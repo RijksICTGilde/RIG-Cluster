@@ -395,12 +395,18 @@ def _mock_prometheus_with_usage(max_mb, avg_mb, has_oom=False):
     avg_bytes = avg_mb * 1024 * 1024
 
     async def custom_query(query):
+        # OOMKilled EERST. De OOM-query is sinds RC-163 zelf ook een max_over_time
+        # (hij moet over een bereik kijken, want de metric bestaat alleen zolang de
+        # gestopte pod bestaat), dus "max_over_time in query" onderscheidt de twee
+        # niet meer. Op die volgorde gaf deze dubbel de geheugenwaarde terug voor de
+        # OOM-vraag, en las de tuner has_oom_kills=True in vijf tests die dat niet
+        # bedoelden. De metricnaam is het onderscheid, niet de functie eromheen.
+        if "OOMKilled" in query:
+            return [{"value": [0, "1"]}] if has_oom else []
         if "max_over_time" in query:
             return [{"value": [0, str(max_bytes)]}] if max_mb > 0 else []
         if "avg_over_time" in query:
             return [{"value": [0, str(avg_bytes)]}] if avg_mb > 0 else []
-        if "OOMKilled" in query:
-            return [{"value": [0, "1"]}] if has_oom else []
         return []
 
     mock.custom_query.side_effect = custom_query

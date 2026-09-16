@@ -91,26 +91,36 @@ def _visualizer_for(path_suffix: str) -> Any:
     raise AssertionError(f"no invite field writes {path_suffix!r}")
 
 
-def test_the_application_url_is_not_required() -> None:
+def test_the_destination_is_not_required() -> None:
     """A project without publish-on-web has no address to offer, and an invitation
     without a destination simply shows no button."""
-    assert _visualizer_for("application-url").editable.required is False
+    assert _visualizer_for("application-target").editable.required is False
 
 
-def test_the_application_url_is_picked_not_typed() -> None:
+def test_the_destination_is_picked_not_typed() -> None:
     """Someone setting up an invitation knows which deployment and component people
     should land on, not the hostname: that is derived from the domain format, the
     subdomain and the cluster, so typing it means looking it up and getting it wrong."""
-    visualizer = _visualizer_for("application-url")
+    visualizer = _visualizer_for("application-target")
 
     assert visualizer.widget == WidgetType.SELECT
     assert visualizer.editable.values_provider == "InviteApplicationUrlOptionsProvider"
 
 
+def test_the_destination_is_stored_as_the_choice_not_as_the_address() -> None:
+    """The hostname is derived from three things that can all change; the choice behind it
+    is not. So the field writes the component/deployment pick and the address is worked
+    out again at render time (RC-136)."""
+    editable = _visualizer_for("application-target").editable
+
+    assert editable.yaml_path.endswith("application-target")
+    assert type(editable.converter).__name__ == "InviteTargetConverter"
+
+
 def test_every_required_field_has_a_default() -> None:
     """Required without a default is just an obstacle: nothing offers a value, so the form
     refuses to advance on a field the user was never shown a starting point for. This is
-    the rule that pushed application-url back to optional rather than leaving it stuck."""
+    the rule that pushed the destination back to optional rather than leaving it stuck."""
     for child in INVITE_ACTIVE.children or []:
         if child.editable.required:
             assert child.editable.default is not None, child.label

@@ -17,10 +17,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+import asyncpg
 from fastapi import HTTPException
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
+from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
 from opi.connectors.chisel_connector import ChiselConnector
@@ -75,7 +77,7 @@ from opi.handlers.project_file_handler import (
     extract_component_attachment_uses,
     extract_service_names_from_component,
     find_attachment_data_list,
-    is_transient_registry_error,
+    image_is_confirmed_absent,
     remove_attachment_references,
     remove_component_references,
 )
@@ -112,6 +114,7 @@ from opi.services.deployment_order import order_deployments_by_clone_dependency
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.postgres_scope import project_uses_dedicated_postgres, schema_is_marked
 from opi.services.project import Project
+from opi.services.project_reconciliation_service import record_reconciliation
 from opi.services.project_store import ConcurrencyError, ConflictError, get_project_store
 from opi.services.redeploy import run_redeploy_hooks
 from opi.services.registry import (
@@ -3518,18 +3521,15 @@ class ProjectManager:
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
                     # Split the image-pull failures on what the registry actually told
-                    # us. A 5xx or a rate limit means the registry could not answer, so
-                    # whether the image exists is unknown -- those must never disable the
-                    # component: disabling scales it to 0, which removes the very pod
-                    # that would have retried, so a registry hiccup becomes a permanent
-                    # outage that no refresh undoes. Kubelet retries the pull with its
-                    # own backoff and recovers by itself once the registry does.
+                    # us. Only an explicit "absent" disables; anything we could not
+                    # diagnose leaves the component alone, because disabling scales it
+                    # to 0, which removes the very pod that would have retried, so an
+                    # outage becomes permanent and no refresh undoes it. Kubelet retries
+                    # the pull with its own backoff and recovers once the registry does.
                     all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
+                    image_pull_failures = [f for f in all_image_pull_failures if image_is_confirmed_absent(f.message)]
                     registry_down_failures = [
-                        f for f in all_image_pull_failures if is_transient_registry_error(f.message)
-                    ]
-                    image_pull_failures = [
-                        f for f in all_image_pull_failures if not is_transient_registry_error(f.message)
+                        f for f in all_image_pull_failures if not image_is_confirmed_absent(f.message)
                     ]
 
                     task_service = (
@@ -5131,6 +5131,8 @@ class ProjectManager:
         targets = _resolve_deployment_filter(deployment_name, deployment_names)
 
         try:
+            # The snapshot this run works from; its moment is what the reconciliation rows store.
+            read_started = time.monotonic()
             project_data = await self.get_contents()
             project_name = await self.get_name()
             logger.info(
@@ -5148,6 +5150,8 @@ class ProjectManager:
                 logger.info(
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
+                # Zonder rij blijft een uitgestelde wijziging aan zo'n project eeuwig wachten.
+                await self._record_reconciliation(project_name, [], targets, read_started)
                 self._processing_error = None
                 self._component_failures = None
                 return True
@@ -5317,6 +5321,8 @@ class ProjectManager:
 
             await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
+            await self._record_reconciliation(project_name, deployments, targets, read_started)
+
             # Execute bootstrap actions for deployments
             for deployment in deployments:
                 if deployment.get("cluster") == settings.CLUSTER_MANAGER:
@@ -5346,6 +5352,34 @@ class ProjectManager:
             pass
             # TODO: we may need to close it here, but the project manager is still used in a flow which should change
             # await self.close()
+
+    async def _record_reconciliation(
+        self,
+        project_name: str,
+        deployments: list[dict[str, Any]],
+        targets: list[str] | None,
+        read_started: float,
+    ) -> None:
+        """Write what this run reconciled (RC-188).
+
+        A failing write is logged and not raised: the rollout itself succeeded, and a
+        missing row only makes the drift count over-report.
+        """
+        processed = [d["name"] for d in deployments if d.get("cluster") == settings.CLUSTER_MANAGER]
+        failed = {
+            name
+            for name in processed
+            if (result := self._deployment_results.get(name)) is not None and result.status == "failed"
+        }
+        try:
+            await record_reconciliation(
+                project_name,
+                [name for name in processed if name not in failed],
+                project_wide=targets is None and not failed,
+                read_seconds_ago=time.monotonic() - read_started,
+            )
+        except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:
+            logger.warning("Could not record the reconciliation of project %s: %s", project_name, e)
 
     async def create_application_manifests(
         self,

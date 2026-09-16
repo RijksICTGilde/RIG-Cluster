@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 # confirm-link + verify-by-email/re-authentication steps. See features/keycloak-auto-link.md.
 AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
 
+#: De identity provider waarlangs een projectrealm bij SSO Rijk uitkomt. Elke blauwdruk voor
+#: een projectrealm maakt hem onder deze alias aan (``sso-only.yaml``, ``sso-support.yaml``),
+#: en de flow die er automatisch naartoe stuurt noemt hem als ``defaultProvider``.
+PLATFORM_IDP_ALIAS = "rig-platform-oidc"
+
 
 def role_gate_flow_alias(client_id: str) -> str:
     """Alias van de browser flow die alleen rolhouders binnenlaat, voor deze client.
@@ -2400,6 +2405,29 @@ class KeycloakConnector:
             self.admin.create_execution_config(payload=config_data, execution_id=execution_id)
             logger.info("Created Identity Provider Redirector config")
 
+    async def _clear_redirector_execution(self, flow_alias: str) -> None:
+        """Haal de ``defaultProvider`` van de Identity Provider Redirector af, als hij er een heeft.
+
+        De tegenrichting van ``_configure_redirector_execution``, en nodig om dezelfde reden:
+        een project dat van ``sso-only`` naar ``sso-support`` gaat hoort zijn inlogscherm terug
+        te krijgen. Zonder deze kant blijft de rolpoort doorsturen naar SSO Rijk, want niets
+        haalt zo'n config ooit weg.
+
+        Doet niets als er geen redirector of geen config staat: dat is de normale toestand van
+        een poort die altijd al bij ``sso-support`` hoorde.
+        """
+        executions = self.admin.get_authentication_flow_executions(flow_alias=flow_alias)
+        redirector = next((e for e in executions if e.get("providerId") == "identity-provider-redirector"), None)
+        if redirector is None:
+            return
+
+        config_id = redirector.get("authenticationConfig")
+        if not config_id:
+            return
+
+        self.admin.delete_authenticator_config(config_id=config_id)
+        logger.info(f"Removed Identity Provider Redirector config from flow '{flow_alias}': the login screen returns")
+
     async def create_restricted_browser_flow(
         self,
         realm_name: str,
@@ -2407,6 +2435,7 @@ class KeycloakConnector:
         client_id: str,
         role_name: str,
         error_message: str = "${accessDeniedNoPermission}",
+        redirect_to_idp: str | None = None,
     ) -> None:
         """
         Create a browser flow that restricts access to users with a specific client role.
@@ -2417,6 +2446,8 @@ class KeycloakConnector:
             client_id: Client ID for the role check
             role_name: Client role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
+            redirect_to_idp: Identity provider alias to send the user straight to, or None to
+                show Keycloak's own login screen (see ``_build_role_gate_flow``)
         """
         await self._build_role_gate_flow(
             realm_name=realm_name,
@@ -2424,6 +2455,7 @@ class KeycloakConnector:
             role_name=role_name,
             error_message=error_message,
             client_id=client_id,
+            redirect_to_idp=redirect_to_idp,
         )
 
     async def _build_role_gate_flow(
@@ -2433,6 +2465,7 @@ class KeycloakConnector:
         role_name: str,
         error_message: str,
         client_id: str | None = None,
+        redirect_to_idp: str | None = None,
     ) -> None:
         """Bouw een browser flow waarin de rolcontrole NAAST de authenticators staat.
 
@@ -2470,6 +2503,21 @@ class KeycloakConnector:
 
         Elke stap wordt apart opgezocht voor hij wordt aangemaakt, zodat herhaald
         toepassen (elke reprocess doet dit) niets verdubbelt.
+
+        ``redirect_to_idp`` IS DE TEMPLATE VAN HET PROJECT, EN HIJ MOET MEE
+
+        Deze flow hangt als ``browserFlowOverride`` op de client, en een clientoverride wint
+        van de browser flow van de realm. Alles wat ``sso-only`` op de REALM zet - de flow
+        "External IDP Redirector", met ``defaultProvider`` op de identity provider - geldt
+        voor deze clients dus niet. De ``identity-provider-redirector`` hierboven stond
+        daarbij zonder config, en zo'n redirector doet niets: de flow viel door naar het
+        wachtwoordformulier. Een project met ``template: sso-only`` EN ``restrict-access``
+        kreeg daardoor het gewone inlogscherm van Keycloak, precies het beeld dat de
+        blauwdruk belooft weg te nemen (gemeten op regel-k4c, 2 september 2026).
+
+        Met een alias erin krijgt de redirector dezelfde ``defaultProvider`` als de
+        realmflow, en stuurt de poort net zo goed door. Zonder alias (``sso-support``) blijft
+        hij bewust onbeschreven: daar HOORT het inlogscherm te verschijnen.
         """
         role_desc = f"{client_id}.{role_name}" if client_id else role_name
         logger.info(f"Building role gate browser flow '{flow_alias}' for role '{role_desc}' in realm '{realm_name}'")
@@ -2508,6 +2556,15 @@ class KeycloakConnector:
             await self._ensure_execution_in_flow(
                 authenticate, "identity-provider-redirector", "ALTERNATIVE", priority=20
             )
+            # Op de SUBFLOW en niet op de poort zelf: daar staat de execution, en beide
+            # helpers zoeken hem op onder het alias dat ze meekrijgen. De realm staat hier al
+            # ingesteld. BEIDE richtingen, want een config die alleen bijgezet wordt en nooit
+            # weggehaald blijft doorsturen: een project dat van sso-only naar sso-support gaat
+            # zou dan nooit meer een inlogscherm te zien krijgen.
+            if redirect_to_idp:
+                await self._configure_redirector_execution(realm_name, authenticate, redirect_to_idp)
+            else:
+                await self._clear_redirector_execution(authenticate)
             await self._ensure_subflow(authenticate, forms, "ALTERNATIVE", "Username, password, otp")
             await self._ensure_execution_in_flow(forms, "auth-username-password-form", "REQUIRED", priority=10)
             await self._ensure_subflow(forms, otp, "CONDITIONAL", "Browser - conditional OTP")
@@ -2726,6 +2783,7 @@ class KeycloakConnector:
         flow_alias: str,
         role_name: str,
         error_message: str = "${accessDeniedNoPermission}",
+        redirect_to_idp: str | None = None,
     ) -> None:
         """
         Create a browser flow that restricts access to users with a specific realm role.
@@ -2737,12 +2795,15 @@ class KeycloakConnector:
             flow_alias: Alias for the new flow (see ``role_gate_flow_alias``)
             role_name: Realm role name that grants access
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
+            redirect_to_idp: Identity provider alias to send the user straight to, or None to
+                show Keycloak's own login screen (see ``_build_role_gate_flow``)
         """
         await self._build_role_gate_flow(
             realm_name=realm_name,
             flow_alias=flow_alias,
             role_name=role_name,
             error_message=error_message,
+            redirect_to_idp=redirect_to_idp,
         )
 
     async def set_client_authentication_flow_override(
@@ -3536,24 +3597,6 @@ class KeycloakConnector:
 
     # ==================== User Operations ====================
 
-    async def _realm_verifies_email(self, realm_name: str) -> bool:
-        """Whether this realm makes a user confirm their e-mail address.
-
-        Falls back to False when the realm cannot be read, which keeps a new user
-        pre-verified exactly as before. That direction is deliberate: the other one would
-        turn one unreadable moment into a user who has to click a confirmation mail that
-        may not have been sent, and being locked out is worse than being let in the way
-        yesterday's code let everyone in.
-        """
-        try:
-            realm = self.admin.get_realm(realm_name=realm_name)
-        except KeycloakError as e:
-            logger.warning(
-                f"Could not read realm '{realm_name}' to decide emailVerified, assuming no verification: {e}"
-            )
-            return False
-        return bool((realm or {}).get("verifyEmail"))
-
     async def create_user(
         self,
         realm_name: str,
@@ -3564,6 +3607,7 @@ class KeycloakConnector:
         last_name: str | None = None,
         enabled: bool = True,
         totp_secret: str | None = None,
+        skip_email_verification: bool = False,
     ) -> dict[str, Any]:
         """
         Create a user in the specified realm.
@@ -3581,6 +3625,8 @@ class KeycloakConnector:
                 browser step requires it at login. Note: Keycloak only imports
                 credentials on user creation - if the user already exists (409
                 below) the OTP credential is not added.
+            skip_email_verification: Let this user in without confirming their address.
+                Only for an account whose address does not exist, see the callers.
 
         Returns:
             User information dictionary including user ID
@@ -3599,26 +3645,22 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            # EMAILVERIFIED VOLGT DE REALM, en dat is de hele reden dat verifyEmail iets doet.
-            #
-            # Hier stond onvoorwaardelijk True. Elke gebruiker die via de invite-weg werd
-            # aangemaakt was daarmee vooraf geverifieerd zonder dat er ooit iets bevestigd
-            # was, en omdat SSO-gebruikers via ``trustEmail`` al geverifieerd binnenkomen
-            # bleef er als aanleiding voor een bevestigingsmail alleen het WIJZIGEN van een
-            # adres over. Dat is bijna nooit, dus verifyEmail zou een keten opleveren die
-            # in de praktijk stil blijft.
-            #
-            # Verifieert de realm, dan komt een nieuwe gebruiker binnen met False en
-            # bevestigt hij zijn adres bij zijn eerste login. Verifieert de realm niet, dan
-            # blijft het gedrag zoals het was: emailVerified heeft dan geen betekenis voor
-            # het inloggen.
-            user_data["emailVerified"] = not await self._realm_verifies_email(realm_name)
+            # Wie een adres heeft, bevestigt het, ongeacht ``verifyEmail`` op de realm.
+            # Waarom: features/keycloak-mail.md.
+            user_data["emailVerified"] = skip_email_verification
+            if not skip_email_verification:
+                user_data["requiredActions"] = ["VERIFY_EMAIL"]
 
         if first_name:
             user_data["firstName"] = first_name
 
         if last_name:
             user_data["lastName"] = last_name
+
+        # Staat de provider uit, dan slaat de browserflow de opgeslagen actie stil over.
+        # Gemeten, zie features/invites.md.
+        if "requiredActions" in user_data:
+            await self.set_required_action_enabled(realm_name, "VERIFY_EMAIL", True)
 
         try:
             # Switch to target realm
@@ -3650,6 +3692,17 @@ class KeycloakConnector:
             # Switch back to master
             self.admin.change_current_realm("master")
             raise
+
+    async def send_verify_email(self, realm_name: str, user_id: str) -> None:
+        """Without ``redirect_uri`` the link lands on Keycloak's own confirmation page, so
+        there is no redirect-URI validation to trip over.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            self.admin.send_verify_email(user_id=user_id)
+            logger.info(f"Sent verification mail to user {user_id} in realm '{realm_name}'")
+        finally:
+            self.admin.change_current_realm("master")
 
     async def get_user_by_username(self, realm_name: str, username: str) -> dict[str, Any] | None:
         """
