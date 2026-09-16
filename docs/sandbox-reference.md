@@ -12,6 +12,16 @@ SERVICE URLS AND CREDENTIALS
   MinIO                https://minio.sandbox.rijksapp.dev               admin        admin1234
   ZAD                  https://zad.sandbox.rijksapp.dev                 admin        admin1234
 
+EERSTE LOGIN OP ZAD: EEN KEER BEVESTIGEN
+
+  De bootstrapbeheerder admin / admin1234 wordt aangemaakt op
+  admin@sandbox.rijksapp.dev, en sinds RC-191 komt elke gebruiker met een adres
+  onbevestigd binnen met de required action VERIFY_EMAIL. Zijn eerste login toont
+  daarom eenmalig het bevestigingsscherm.
+
+  De mail landt in de Mailpit-sink: https://mailsink.sandbox.rijksapp.dev
+  Klik de link daarin aan, daarna logt hij gewoon in.
+
 COMMON TASK COMMANDS
 
   Sync infrastructure changes to Forgejo:

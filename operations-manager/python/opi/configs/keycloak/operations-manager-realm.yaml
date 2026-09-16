@@ -17,15 +17,14 @@ extends: sso-support
 #   - Op productie draagt deze realm geen lokale accounts. Iedereen komt binnen via SSO
 #     Rijk en is via trustEmail al geverifieerd, dus verifieren zou daar niets doen.
 #   - Op de sandbox draagt hij er precies EEN: de beheerder uit
-#     opi/configs/projects/operations-manager-local.yaml, aangemaakt bij het opstarten van
-#     OPI met een vast wachtwoord. Sinds RC-159 volgt emailVerified de realm, dus met
-#     verifyEmail: true komt dat account op emailVerified: false binnen en blokkeert de
-#     login die docs/sandbox-reference.md documenteert (ZAD / admin / admin1234). Er is
-#     geen postbus voor admin@sandbox.rijksapp.dev; de bevestigingsmail landt in de
-#     Mailpit-sink en niemand klikt hem aan.
+#     opi/configs/projects/operations-manager-local.yaml. Het veld gaat sinds RC-191 niet
+#     meer over de AANMAAK van die beheerder (create_user zet emailVerified: false plus
+#     VERIFY_EMAIL voor iedereen met een adres, en hij bevestigt dus eenmalig via de
+#     Mailpit-sink - zie docs/sandbox-reference.md), maar over wie zijn adres LATER wijzigt.
+#     Daar is op deze realm geen aanleiding voor.
 #
-# De winst is dus nul en de kosten zijn een kapotte sandboxopstelling. Wie dit ooit
-# omzet, moet eerst de bootstrapbeheerder een weg naar binnen geven.
+# De winst is dus nul. Wie dit ooit omzet, moet weten dat het de bevestigingsketen voor een
+# adreswijziging aanzet en verder niets.
 realms:
   - name: "{{ project_realm_name }}"
     registrationAllowed: false

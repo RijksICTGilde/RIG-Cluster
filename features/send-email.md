@@ -286,7 +286,7 @@ wachtwoord komt uit de BOOTSTRAP en OPI is daar de reconciler in plaats van de b
 die de twee uit elkaar houdt staat in `mail-relay-secret.yaml` zelf.
 
 De hele keten - het geheim, de eigen verzender in de Keycloak-pod, de minimale `smtpServer`
-op elke realm, het eigen afzenderadres en wat `verifyEmail` betekent voor de invite-weg -
+op elke realm, het eigen afzenderadres en wat `verifyEmail` nog wel en niet meer bepaalt -
 staat in **`features/keycloak-mail.md`**.
 
 ### Als de relay er bij het opstarten nog niet is
