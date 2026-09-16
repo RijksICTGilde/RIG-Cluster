@@ -14,19 +14,13 @@ SERVICE URLS AND CREDENTIALS
 
 EERSTE LOGIN OP ZAD: EEN KEER BEVESTIGEN
 
-  De bootstrapbeheerder admin / admin1234 wordt aangemaakt op
-  admin@sandbox.rijksapp.dev, en sinds RC-191 komt elke gebruiker met een adres
-  onbevestigd binnen met de required action VERIFY_EMAIL. Zijn eerste login toont
-  daarom eenmalig het bevestigingsscherm.
-
-  De mail landt in de Mailpit-sink. Klik de link daarin aan, daarna logt hij
-  gewoon in.
+  De bootstrapbeheerder admin / admin1234 (admin@sandbox.rijksapp.dev) bevestigt
+  bij de eerste login eenmalig zijn adres. De mail landt in de Mailpit-sink:
 
     https://mailsink.sandbox.rijksapp.dev
 
-  Geeft die URL 404, dan draait dit cluster nog zonder de mailsink-ingress
-  (gemeten: de Service rig-mail-sink in rig-ron staat er wel, de Ingress niet).
-  Haal hem binnen met 'task sandbox:sync', of kijk erlangs:
+  Geeft die URL 404, dan mist dit cluster de mailsink-ingress. Haal hem binnen met
+  'task sandbox:sync', of kijk erlangs:
 
     kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025
 

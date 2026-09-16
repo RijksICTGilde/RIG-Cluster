@@ -3625,7 +3625,7 @@ class KeycloakConnector:
                 browser step requires it at login. Note: Keycloak only imports
                 credentials on user creation - if the user already exists (409
                 below) the OTP credential is not added.
-            skip_email_verification: Let this user in without confirming his address.
+            skip_email_verification: Let this user in without confirming their address.
                 Only for an account whose address does not exist, see the callers.
 
         Returns:
@@ -3645,14 +3645,8 @@ class KeycloakConnector:
 
         if email:
             user_data["email"] = email
-            # WIE EEN ADRES HEEFT, BEVESTIGT HET. Dat besluit lag eerst bij de realm
-            # (``verifyEmail``), en daarmee bij de blauwdruk: een sso-only-project kreeg
-            # ``false`` en liet lokale invite-accounts vooraf geverifieerd binnen, en op een
-            # cluster zonder mailrelay haalde de grendel in ``_apply_realm_self_service`` het
-            # veld stil weg. Hier staat het besluit voor elke realm gelijk.
-            #
-            # ``verifyEmail`` op de realm blijft doen wat het deed voor wie zijn adres LATER
-            # wijzigt; alleen de aanmaak hangt er niet meer aan.
+            # Wie een adres heeft, bevestigt het, ongeacht ``verifyEmail`` op de realm.
+            # Waarom: features/keycloak-mail.md.
             user_data["emailVerified"] = skip_email_verification
             if not skip_email_verification:
                 user_data["requiredActions"] = ["VERIFY_EMAIL"]
@@ -3663,15 +3657,8 @@ class KeycloakConnector:
         if last_name:
             user_data["lastName"] = last_name
 
-        # Zonder dit is de grendel hierboven weg. Gemeten op Keycloak 25.0.6, sandbox: staat
-        # de provider UIT op de realm, dan wordt de required action wel gewoon OPGESLAGEN op
-        # de gebruiker, maar slaat de browserflow hem over en logt hij door naar de
-        # applicatie. Staat hij AAN, dan komt het scherm "E-mailadres-verificatie".
-        #
-        # Het verschil zit dus in het INLOGGEN en niet in het aanmaken, en het is stil: de
-        # gebruiker draagt de actie zichtbaar en komt er toch langs. (De directe
-        # wachtwoordgrant weigert in beide gevallen met "Account is not fully set up", dus
-        # daar is het verschil niet te zien.)
+        # Staat de provider uit, dan slaat de browserflow de opgeslagen actie stil over.
+        # Gemeten, zie features/invites.md.
         if "requiredActions" in user_data:
             await self.set_required_action_enabled(realm_name, "VERIFY_EMAIL", True)
 
@@ -3707,9 +3694,7 @@ class KeycloakConnector:
             raise
 
     async def send_verify_email(self, realm_name: str, user_id: str) -> None:
-        """Ask Keycloak to send this user the mail that confirms his address.
-
-        Without ``redirect_uri`` the link lands on Keycloak's own confirmation page, so
+        """Without ``redirect_uri`` the link lands on Keycloak's own confirmation page, so
         there is no redirect-URI validation to trip over.
         """
         try:

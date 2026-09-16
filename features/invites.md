@@ -107,11 +107,7 @@ succespagina: "Bevestig eerst je e-mailadres", met het adres waar de mail heen g
 gebruiker klikt de link, en kan daarna pas inloggen
 ```
 
-Dat is nieuw sinds RC-191. Het besluit hing aan `verifyEmail` op de blauwdruk, en die gaat er
-niet over: een `sso-only`-project kreeg `false` maar kan wel lokale invite-accounts aanmaken,
-en op een cluster zonder mailrelay haalde de grendel in OPI het veld stil weg. In beide
-gevallen kwam een uitgenodigde vooraf geverifieerd binnen zonder dat er ooit iets bevestigd
-was. Zie `features/keycloak-mail.md` voor wat `verifyEmail` nog wel doet.
+Waarom dit niet meer aan `verifyEmail` hangt: zie `features/keycloak-mail.md`.
 
 De SSO-weg raakt dit niet: die gebruiker komt via `trustEmail` al geverifieerd binnen en
 krijgt de oude succespagina.

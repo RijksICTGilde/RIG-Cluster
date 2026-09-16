@@ -17,14 +17,11 @@ extends: sso-support
 #   - Op productie draagt deze realm geen lokale accounts. Iedereen komt binnen via SSO
 #     Rijk en is via trustEmail al geverifieerd, dus verifieren zou daar niets doen.
 #   - Op de sandbox draagt hij er precies EEN: de beheerder uit
-#     opi/configs/projects/operations-manager-local.yaml. Het veld gaat sinds RC-191 niet
-#     meer over de AANMAAK van die beheerder (create_user zet emailVerified: false plus
-#     VERIFY_EMAIL voor iedereen met een adres, en hij bevestigt dus eenmalig via de
-#     Mailpit-sink - zie docs/sandbox-reference.md), maar over wie zijn adres LATER wijzigt.
-#     Daar is op deze realm geen aanleiding voor.
+#     opi/configs/projects/operations-manager-local.yaml. Die bevestigt bij aanmaak hoe dan
+#     ook (create_user); dit veld gaat alleen over wie zijn adres LATER wijzigt, en daar is
+#     op deze realm geen aanleiding voor.
 #
-# De winst is dus nul. Wie dit ooit omzet, moet weten dat het de bevestigingsketen voor een
-# adreswijziging aanzet en verder niets.
+# De winst is dus nul. Wie dit omzet, zet alleen de bevestiging bij een adreswijziging aan.
 realms:
   - name: "{{ project_realm_name }}"
     registrationAllowed: false
