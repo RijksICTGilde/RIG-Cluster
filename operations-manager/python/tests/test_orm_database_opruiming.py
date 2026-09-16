@@ -21,7 +21,9 @@ Deze tests draaien zonder Docker; ze toetsen de beslislogica, niet de dockeraanr
 
 from __future__ import annotations
 
+import inspect
 import os
+import re
 import subprocess
 import sys
 import time
@@ -60,10 +62,6 @@ def test_de_fixture_zet_de_eigen_pid_in_de_databasenaam() -> None:
     bron: de fixture moet de eigen pid in de naam zetten, want daaraan herkent een volgende
     run in dezelfde namespace een wees.
     """
-    import inspect
-
-    import conftest
-
     bron = inspect.getsource(conftest._orm_db_url.__wrapped__)
     assert "ZAD_TEST_DB_PREFIX" in bron, "de fixture gebruikt de prefix niet meer"
     assert "os.getpid()" in bron, "de databasenaam wordt niet met de eigen pid gevuld"
@@ -117,7 +115,7 @@ class TestWeesOfNiet:
             f"{ZAD_TEST_DB_PREFIX}",
             f"{ZAD_TEST_DB_PREFIX}{VREEMDE_NAMESPACE}_4867_gisteren",
         ],
-        ids=["oude-vorm", "zonder-tijd", "leeg", "rommel-in-de-tijd"],
+        ids=["alleen-pid", "zonder-tijd", "leeg", "rommel-in-de-tijd"],
     )
     def test_wat_niet_te_beoordelen_is_blijft_staan(self, naam: str) -> None:
         assert _is_wees(naam, NU) is False
@@ -128,13 +126,24 @@ def test_de_namespace_is_die_van_dit_proces() -> None:
 
 
 def test_de_fixture_zet_de_namespace_in_de_databasenaam() -> None:
-    import inspect
-
-    import conftest
-
     bron = inspect.getsource(conftest._orm_db_url.__wrapped__)
 
     assert "_pid_namespace()" in bron, "de databasenaam draagt de namespace niet"
+
+
+def _like(patroon: str, naam: str) -> bool:
+    """``naam LIKE patroon`` zoals Postgres hem leest: ``_`` is een teken, ``%`` een reeks."""
+    regex = "".join({"_": ".", "%": ".*"}.get(teken, re.escape(teken)) for teken in patroon)
+    return re.fullmatch(regex, naam, flags=re.DOTALL) is not None
+
+
+def test_de_veeg_van_oudere_takken_ziet_de_nieuwe_naam_niet() -> None:
+    """Die veeg leest alles onder ``zad_test_%`` als ``zad_test_<pid>`` en crasht op deze vorm."""
+    naam = _naam(os.getpid(), NU)
+
+    assert _like("zad_test_%", "zad_test_4867"), "de LIKE-nabootsing klopt niet"
+    assert not _like("zad_test_%", naam), f"{naam!r} valt onder de veeg van oudere takken"
+    assert _like(f"{ZAD_TEST_DB_PREFIX}%", naam), f"{naam!r} valt niet onder de eigen veeg"
 
 
 class _NagebootsteServer:
