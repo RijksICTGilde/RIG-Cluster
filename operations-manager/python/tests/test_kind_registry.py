@@ -427,18 +427,24 @@ esac
 """
 
 
-def _prune(tmp_path: Path, *args: str, **env_extra: str) -> Run:
+def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_extra: str) -> Run:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     for name, body in (("docker", DOCKER_STUB), ("curl", CURL_STUB)):
         stub = bindir / name
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
+    extra_path = f":{Path(shutil.which('task') or '').parent}" if command else ""
     proc = subprocess.run(
-        ["bash", str(PRUNE_SCRIPT), *args],
+        command or ["bash", str(PRUNE_SCRIPT), *args],
         capture_output=True,
         text=True,
-        env={"PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin", "STUB_LOG": str(tmp_path / "calls.log"), **env_extra},
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin{extra_path}",
+            "HOME": str(tmp_path),
+            "STUB_LOG": str(tmp_path / "calls.log"),
+            **env_extra,
+        },
         timeout=60,
     )
     return Run(proc, tmp_path)
@@ -595,6 +601,17 @@ class TestTaskfile:
 
         assert cmds[-1] == {"task": PRUNE_TASK}
         assert {"task": "sandbox:build-operations-manager-image"} in cmds
+
+    @pytest.mark.usefixtures("bash_available")
+    def test_the_deploy_step_ends_green_on_a_server_without_a_registry(self, tmp_path: Path) -> None:
+        """Zo staat de gedeelde server: rig-sandbox draait, kind-registry niet."""
+        if shutil.which("task") is None:
+            pytest.skip("task is niet geinstalleerd")
+        run = _prune(tmp_path, command=["task", "--taskfile", str(TASKFILE), PRUNE_TASK])
+
+        assert run.returncode == 0, run.stderr
+        assert "draait niet" in run.stderr
+        assert "curl" not in run.log
 
     def test_pruning_runs_on_one_path_only(self, taskfile: dict) -> None:
         """Twee plekken die allebei opruimen maakt onduidelijk wie de registry leegt."""
