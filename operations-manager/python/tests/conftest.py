@@ -417,13 +417,7 @@ def _maker_leeft(pid_tekst: str) -> bool:
 
 
 def _pid_namespace() -> str:
-    """De pid-namespace van dit proces. Alleen daarbinnen zegt ``os.kill`` iets.
-
-    Sessies draaien in eigen containers tegen dezelfde Postgres. De pid van een LEVENDE run
-    in een andere namespace bestaat hier niet, dus zonder dit onderscheid haalde de veeg een
-    database weg die in gebruik was: op 16 september 2026 gaven twee suites naast elkaar zo
-    62 ERRORs, aan beide kanten alleen ``orm_db``-tests.
-    """
+    """Alleen binnen deze namespace zegt ``os.kill`` iets over een pid."""
     try:
         return str(os.stat("/proc/self/ns/pid").st_ino)
     except OSError:
@@ -431,12 +425,9 @@ def _pid_namespace() -> str:
 
 
 def _is_wees(naam: str, nu: float) -> bool:
-    """Is deze database van niemand meer?
+    """Bij twijfel nee: een wees kost niets, een weggehaalde levende database alle ORM-tests.
 
-    Bij twijfel blijft hij staan. Een wees kost niets, maar een database die onder een
-    levende run vandaan verdwijnt kost die run al zijn ORM-tests. Een naam van voor deze
-    vorm draagt geen namespace en is dus niet te beoordelen; die haalt ``task
-    test-db-reset`` weg.
+    Een naam in de oude vorm is niet te beoordelen; die haalt ``task test-db-reset`` weg.
     """
     namespace, _, rest = naam.removeprefix(ZAD_TEST_DB_PREFIX).partition("_")
     pid, _, gemaakt = rest.partition("_")
