@@ -138,7 +138,7 @@ class TestSetupScript:
         run = _run(tmp_path, "--cluster", "proef")
 
         assert run.returncode == 0, run.stderr
-        assert "docker run -d --restart=always -p 127.0.0.1:5000:5000" in run.log
+        assert "docker run -d --restart=always -p 127.0.0.1:5001:5000" in run.log
         assert "--name kind-registry registry:2" in run.log
 
     def test_does_not_start_a_registry_that_already_runs(self, tmp_path: Path) -> None:
@@ -161,8 +161,8 @@ class TestSetupScript:
 
         assert run.returncode == 0, run.stderr
         for node in ("proef-control-plane", "proef-worker"):
-            assert f"docker exec {node} mkdir -p /etc/containerd/certs.d/localhost:5000" in run.log
-            assert f"docker exec -i {node} cp /dev/stdin /etc/containerd/certs.d/localhost:5000/hosts.toml" in run.log
+            assert f"docker exec {node} mkdir -p /etc/containerd/certs.d/localhost:5001" in run.log
+            assert f"docker exec -i {node} cp /dev/stdin /etc/containerd/certs.d/localhost:5001/hosts.toml" in run.log
 
     def test_hosts_toml_points_at_the_container_name(self, tmp_path: Path) -> None:
         """De node bereikt de registry over het kind-netwerk, niet op zijn eigen localhost."""
@@ -200,7 +200,7 @@ class TestSetupScript:
         manifest = yaml.safe_load(run.kubectl_stdin)
         assert manifest["metadata"]["name"] == "local-registry-hosting"
         assert manifest["metadata"]["namespace"] == "kube-public"
-        assert 'host: "localhost:5000"' in manifest["data"]["localRegistryHosting.v1"]
+        assert 'host: "localhost:5001"' in manifest["data"]["localRegistryHosting.v1"]
 
     def test_cluster_flag_selects_the_cluster(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster=anders")
@@ -215,11 +215,17 @@ class TestSetupScript:
 
     def test_port_is_configurable(self, tmp_path: Path) -> None:
         """De poort komt op drie plekken terug; ze moeten meebewegen."""
-        run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_PORT="5001")
+        run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_PORT="5002")
 
-        assert "-p 127.0.0.1:5001:5000" in run.log
-        assert "/etc/containerd/certs.d/localhost:5001/hosts.toml" in run.log
-        assert 'host: "localhost:5001"' in run.kubectl_stdin
+        assert "-p 127.0.0.1:5002:5000" in run.log
+        assert "/etc/containerd/certs.d/localhost:5002/hosts.toml" in run.log
+        assert 'host: "localhost:5002"' in run.kubectl_stdin
+
+    def test_default_port_avoids_the_dashboard_on_the_dev_server(self, tmp_path: Path) -> None:
+        """claude-dashboard bindt op 127.0.0.1:5000; daar loopt `docker run` op stuk."""
+        run = _run(tmp_path, "--cluster", "proef")
+
+        assert "127.0.0.1:5000:5000" not in run.log
 
     def test_unknown_option_is_refused(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--kluster", "proef")
