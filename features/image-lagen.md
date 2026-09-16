@@ -44,7 +44,7 @@ buildcontext gelegd, en de boom die bestaat staat op
 `operations-manager/python/static/js/node_modules`. Zelfde valkuil als bij `**/tests/` en
 `**/__pycache__/`.
 
-**Elk image van buiten is gepind.** `ghcr.io/astral-sh/uv:${UV_VERSION}`, niet `:latest`.
+**uv is gepind.** `ghcr.io/astral-sh/uv:${UV_VERSION}`, niet `:latest`.
 Met `latest` invalideert een uv-release die laag en alles erna, inclusief de `uv sync`
 van 189 MB: een build die normaal stage 1 en 2 oversloeg bouwt dan ineens alles.
 
