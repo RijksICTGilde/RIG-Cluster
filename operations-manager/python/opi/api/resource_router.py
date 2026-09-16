@@ -16,7 +16,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.handlers.project_file_handler import ProjectFileHandler, image_is_confirmed_absent
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
@@ -84,7 +84,13 @@ async def tune_resources(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
+        # De meting komt van Prometheus, en de melding daarvan draagt het adres van die
+        # dienst. Die hoort in de log, niet in het antwoord.
+        logger.exception("Afstemmen van de resources van '%s' mislukt", project_name)
+        raise HTTPException(
+            status_code=503,
+            detail="De metingen zijn nu niet beschikbaar, dus de resources konden niet worden afgestemd. Probeer het over een minuut opnieuw.",
+        ) from e
 
     return JSONResponse(
         content={
@@ -222,16 +228,35 @@ async def _run_sanitize(
             # the resource tuner, which raises the memory; disabling the component takes
             # away the pods that produce the very metric the tuner reads.
 
-            # Check for image pull errors
+            # Check for image pull errors. Only an explicit "the image is absent" from
+            # the registry may disable: anything else means we never got an answer, and
+            # disabling on that scales the component to 0, removing the pod that would
+            # have retried the pull. See ``image_is_confirmed_absent``.
+            registry_never_answered = False
             try:
                 events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)
                 image_pull_reasons = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
                 for event in events:
                     if event.get("reason") in image_pull_reasons and event.get("object", "").startswith(unique_name):
-                        reasons.append(f"ImagePullBackOff: {event.get('message', 'image pull failed')}")
+                        message = event.get("message", "image pull failed")
+                        if image_is_confirmed_absent(message):
+                            reasons.append(f"ImagePullBackOff: {message}")
+                        else:
+                            registry_never_answered = True
+                            logger.info(
+                                f"Registry did not confirm the image is absent for {unique_name}; "
+                                f"leaving it enabled so kubelet retries the pull: {message}"
+                            )
                         break
             except Exception as e:
                 logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
+
+            # A pull we could not diagnose also explains every other reason gathered
+            # above: no pod is ready and the container restarts precisely because the
+            # image never arrived. Disabling on those symptoms removes the pod that
+            # would have retried, so leave the component alone entirely.
+            if registry_never_answered:
+                continue
 
             if reasons:
                 reason_str = "; ".join(reasons)

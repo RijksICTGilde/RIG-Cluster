@@ -20,10 +20,13 @@ README*
 Thumbs.db
 
 # Cache and temporary files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+#
+# Bytecode MET **/, zelfde oorzaak als bij de tests hieronder. Anders kwam een geneste
+# __pycache__ via COPY opi mee en bouwde de opi-laag na elke testrun opnieuw.
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
 .Python
 *.so
 .pytest_cache/
@@ -113,8 +116,10 @@ test-*
 # map in de context ongemerkt de bouwlus opat.
 .claude/
 
-# Node.js (if any)
-node_modules/
+# Node.js. MET **/, zelfde oorzaak als bij de tests hierboven: een patroon zonder **/
+# wordt alleen tegen de wortel van de context gelegd, en de boom die bestaat staat op
+# operations-manager/python/static/js/node_modules.
+**/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

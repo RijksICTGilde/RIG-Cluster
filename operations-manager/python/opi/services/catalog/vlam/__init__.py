@@ -2,9 +2,13 @@
 
 VLAM is the language-model API SSC-ICT offers over the RON. Since RC-142 the vlam project
 runs a second, INTERNAL proxy next to the VPN gateway: it accepts plain HTTP and sets up
-the verified TLS session towards ``vlam-api.rijksweb.nl`` itself. This service is the thin
-ZAD side of that: it hands a consumer the address of that proxy and opens the network path
-to it. The VPN (headscale + the passthrough proxy on 8080) is for laptops and is untouched
+the verified TLS session towards ``vlam-api.rijksweb.nl`` itself. Since RC-167 that same proxy also
+offers a DOORLUS on a second port: it passes the TLS session through instead of
+terminating it, so the consumer speaks to VLAM itself. This service is the thin ZAD side
+of both: it hands a consumer the addresses of that proxy, opens the network path to them,
+and for the doorlus adds the two things that path needs to work at all -- a hosts entry
+that points the VLAM name at our proxy, and the CA bundle to verify the certificate
+against. The VPN (headscale + the passthrough proxy on 8080) is for laptops and is untouched
 by any of this; see ``vlam.md`` and ``features/vlam-service.md``.
 
 Three things are deliberately the way they are:
@@ -26,9 +30,11 @@ Deliberately absent, so the next reader does not go looking:
 
 * ``provision`` / ``cleanup_manager_key`` -- nothing is created outside the manifests. The
   generic service-manifest prune removes the policy file when the service is switched off.
-* ``manifest_secret_class`` / ``build_secret_files`` -- the address is not a secret, so it
-  is a plain env var. Encrypting a public cluster address would only hide from its owner
-  what their pod was told.
+* ``manifest_secret_class`` -- neither address is a secret, so both are plain env vars.
+  Encrypting a public cluster address would only hide from its owner what their pod was
+  told. ``build_secret_files`` IS used, but for a file rather than a credential: the CA
+  bundle of the doorlus travels the same Secret-to-volume road an attachment file takes,
+  because that is the one existing way to get a file into a pod.
 * ``config_approvals`` -- there is nothing per project to judge: the VLAM side is open to
   the cluster and VLAM authorizes its own callers. An approval here would gate reachability
   while the thing that actually protects VLAM is its API key.
@@ -39,17 +45,22 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from opi.core.config import settings
 from opi.services.catalog.base import (
     DeploymentManifestContext,
     DeploymentManifestSpec,
+    DetailPageSection,
     ManifestContext,
     ManifestContribution,
+    ProjectPageContext,
+    SecretFileSpec,
     Service,
 )
-from opi.services.catalog.vlam.endpoint import vlam_endpoint
+from opi.services.catalog.events import on
+from opi.services.catalog.vlam.endpoint import CA_BUNDLE_URL, vlam_endpoint
 from opi.services.catalog.vlam.variables import VlamVariables
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType, UIEvent
 from opi.utils.naming import generate_network_policy_name
 
 logger = logging.getLogger(__name__)
@@ -87,19 +98,75 @@ class VlamService(Service):
         """
         return vlam_endpoint(cluster) is not None
 
+    def web_routers(self) -> list[Any]:
+        """The endpoints its page block needs. Imported here, not at module scope: a
+        route module reaches into the app, which the catalog itself must not do."""
+        from opi.services.catalog.vlam.routes import vlam_router
+
+        return [*super().web_routers(), vlam_router]
+
+    @on(UIEvent.PROJECT_SECTIONS)
+    def vlam_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:
+        """The two paths to VLAM side by side, with the CA bundle to download.
+
+        Only on a cluster that offers the doorlus: without it there is no second address,
+        no bundle and nothing to download, and a block that shows one address the user
+        already has in an env var would be a page telling them nothing.
+        """
+        endpoint = vlam_endpoint(settings.CLUSTER_MANAGER)
+        if endpoint is None or endpoint.passthrough is None:
+            return []
+        passthrough = endpoint.passthrough
+        return [
+            DetailPageSection(
+                template="vlam/section-detail.html.j2",
+                context={
+                    "api_url": endpoint.api_url,
+                    "direct_url": passthrough.api_url,
+                    "ca_path": passthrough.container_path,
+                    "ca_filename": passthrough.ca_bundle_filename,
+                    "ca_download_url": CA_BUNDLE_URL,
+                },
+            )
+        ]
+
     def _selected(self, project_data: dict[str, Any]) -> bool:
         """Whether this project has the service in its project-level services list."""
         return self.service_type.value in [
             service_entry_name(entry) for entry in project_data.get("services", []) or []
         ]
 
-    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
-        """``VLAM_API_URL`` for every component of a project that took the service.
+    @staticmethod
+    def ca_secret_name(deployment_name: str) -> str:
+        """The Secret holding the CA bundle for one deployment.
 
-        A plain env var, not an envFrom secret: the value is an in-cluster address that
-        the reader of the manifest should be able to see. When the cluster has no VLAM
-        endpoint nothing is contributed -- the save-time validation refuses that
-        combination, and generation must not fail on a project that slipped through.
+        One per deployment rather than one per component: every component of the
+        deployment mounts the same platform file, and a Secret per component would be the
+        same bytes written N times under N names.
+        """
+        return f"{deployment_name}-vlam-ca"
+
+    def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
+        """What every component of a project that took the service is given.
+
+        Always ``VLAM_API_URL``, the TERMINATED path: a plain env var and not an envFrom
+        secret, because the value is an in-cluster address that the reader of the manifest
+        should be able to see. When the cluster has no VLAM endpoint nothing is
+        contributed -- the save-time validation refuses that combination, and generation
+        must not fail on a project that slipped through.
+
+        On a cluster that also offers the DOORLUS (RC-167), three more things, and they go
+        together or not at all:
+
+        * ``VLAM_API_URL_DIRECT`` -- the address of the passthrough port;
+        * a ``hostAliases`` entry -- because that address carries the VLAM hostname (TLS
+          compares it against the certificate) while the traffic must reach our proxy;
+        * the CA bundle as a mounted file plus ``VLAM_CA_BUNDLE_PATH`` -- because on this
+          path the consumer verifies the certificate itself and does not know the issuer.
+
+        Each on its own is useless: an address without the name fails on every connection,
+        the name without the issuer fails on an unknown CA. ``VlamEndpoint.passthrough``
+        is one object for exactly that reason.
         """
         endpoint = vlam_endpoint(ctx.cluster)
         if endpoint is None:
@@ -109,7 +176,51 @@ class VlamService(Service):
                 ctx.cluster,
             )
             return ManifestContribution()
-        return ManifestContribution(env_vars={VlamVariables.API_URL.value.name: endpoint.api_url})
+
+        contribution = ManifestContribution(env_vars={VlamVariables.API_URL.value.name: endpoint.api_url})
+        passthrough = endpoint.passthrough
+        if passthrough is None:
+            logger.info(
+                "Cluster '%s' biedt geen VLAM-doorlus aan; component '%s' krijgt alleen VLAM_API_URL",
+                ctx.cluster,
+                ctx.unique_name,
+            )
+            return contribution
+
+        contribution.env_vars[VlamVariables.API_URL_DIRECT.value.name] = passthrough.api_url
+        contribution.env_vars[VlamVariables.CA_BUNDLE_PATH.value.name] = passthrough.container_path
+        contribution.template_vars["host_aliases"] = [{"ip": passthrough.cluster_ip, "hostnames": [passthrough.host]}]
+        contribution.secret_mounts = [
+            {
+                "name": "vlam-ca",
+                "secret_name": self.ca_secret_name(ctx.deployment_name),
+                "mount_path": passthrough.container_path,
+                "sub_path": passthrough.ca_bundle_filename,
+            }
+        ]
+        contribution.secret_files = self.build_secret_files(ctx)
+        return contribution
+
+    def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
+        """The CA bundle as a Secret, along the same road an attachment file takes.
+
+        The bundle is a PLATFORM datum, not a project one: identical for every consumer
+        and changing only when VLAM changes issuer. As an attachment the same public file
+        would land AGE-encrypted in every project file, and rotating it would mean every
+        project re-uploading it; delivered by the service, rotating is one file in one
+        place. What it does reuse is the attachment MACHINERY (Secret -> volume ->
+        volumeMount), so there is no second way to get a file into a pod.
+        """
+        endpoint = vlam_endpoint(ctx.cluster)
+        if endpoint is None or endpoint.passthrough is None:
+            return []
+        passthrough = endpoint.passthrough
+        return [
+            SecretFileSpec(
+                secret_name=self.ca_secret_name(ctx.deployment_name),
+                secret_pairs={passthrough.ca_bundle_filename: passthrough.ca_bundle_path.read_text()},
+            )
+        ]
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """One egress NetworkPolicy per deployment, towards the VLAM proxy pod.
@@ -138,7 +249,11 @@ class VlamService(Service):
                     "egress": [
                         {
                             "peer": {"namespace": endpoint.namespace, "pod_labels": endpoint.pod_labels},
-                            "ports": [endpoint.port],
+                            # Every port of the proxy the consumer was given an address
+                            # for. The doorlus sits on a second port of the SAME pod, so
+                            # opening only the terminated one hands out an address that
+                            # times out.
+                            "ports": endpoint.ports,
                         }
                     ],
                 },

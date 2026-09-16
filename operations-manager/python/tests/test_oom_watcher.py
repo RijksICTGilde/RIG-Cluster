@@ -1004,16 +1004,51 @@ class TestRunOomCheck:
             },
             "myproject.yaml",
         )
+        # The registry answered that the image is not there, so disabling is correct.
+        pull_error = "ImagePullBackOff: Back-off pulling image: ErrImagePull: manifest unknown"
+        mock_check.return_value = PodHealthResult("production-api", image_pull_error=pull_error)
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_disable.assert_called_once_with("myproject", "production", [("api", pull_error)])
+        mock_queue.assert_called_once_with("myproject", "production")
+
+    @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.disable_components_for_image_pull", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @pytest.mark.asyncio
+    async def test_unreachable_registry_leaves_the_component_alone(
+        self, mock_prefix, mock_get_data, mock_check, mock_disable, mock_queue
+    ):
+        """The 2026-09-10 mirror outage: the pull never reached a registry that could
+        answer, so nothing is known about the image and nothing may be written."""
+        mock_get_data.return_value = (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
         mock_check.return_value = PodHealthResult(
-            "production-api", image_pull_error="ImagePullBackOff: Back-off pulling image"
+            "production-api",
+            image_pull_error=(
+                "ErrImagePull: unable to pull image or OCI artifact: pull image err: pinging "
+                'container registry rcr.rijksapps.nl: Get "https://rcr.rijksapps.nl/v2/": EOF'
+            ),
         )
 
         await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_disable.assert_called_once_with(
-            "myproject", "production", [("api", "ImagePullBackOff: Back-off pulling image")]
-        )
-        mock_queue.assert_called_once_with("myproject", "production")
+        mock_disable.assert_not_called()
+        mock_queue.assert_not_called()
 
     @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)

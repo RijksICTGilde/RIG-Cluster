@@ -15,6 +15,7 @@ its happy path and pin the read-mutate-save wiring:
 * the persisted dict carries the bumped generation.
 """
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -394,3 +395,106 @@ class TestRefreshFailureIsReported:
         body = response.json()
         assert body["status"] == "partial"
         assert body["refresh_succeeded"] is False
+
+
+class TestEenMislukteTerugzetActieGeeftNietsPrijs:
+    """Wat er in het antwoord op een mislukt terugzetten staat.
+
+    Twee wegen, allebei met de infrastructuur erin. De ene: de hulpfunctie voor een
+    database ving alles af en gaf ``f"Database restore error: {e}"`` terug, die de
+    aanroeper als ``message`` in een 500 kreeg. De andere: een terugzetpod die niet
+    aankwam leverde ``f"Restore pod failed. Logs: {logs[-500:]}"`` op -- vijfhonderd
+    tekens podlog, langs dezelfde weg naar buiten.
+
+    Wat er nu uitkomt is de lezerszin met het kenmerk; het hele verhaal staat in de log.
+    """
+
+    #: De storing uit de melding, in de vorm waarin de laag eronder hem doorgaf.
+    STORING = "[Errno 111] Connect call failed ('172.30.19.11', 5432)"
+
+    LEKT = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}|\b5432\b|Errno|Restore pod failed")
+
+    def test_de_podlog_komt_niet_in_de_500(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        mock_backup_manager.restore_to_project_pvc = AsyncMock(
+            return_value=RestoreResult(
+                namespace=PROJECT,
+                pvc_name="pvc-main-web-data-0",
+                success=False,
+                error=f"Restore pod failed. Logs: {self.STORING}",
+            )
+        )
+
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "resource_type": "pvc",
+                "component_name": "web",
+                "reference_name": "data",
+                "snapshot_id": "snap-1",
+                "update_deployment": False,
+            },
+        )
+
+        assert response.status_code == 500, response.text
+        assert response.json()["message"].startswith("Het terugzetten is niet gelukt")
+        assert not self.LEKT.search(response.text), "de terugzetpod staat in het antwoord"
+
+    def test_een_uitzondering_komt_niet_in_de_500(
+        self,
+        client: TestClient,
+        mock_store: Any,
+        mock_manager: Any,
+        mock_backup_manager: Any,
+        mock_cluster_functions: Any,
+    ) -> None:
+        """De brede vangst van het eindpunt zelf: wat de keten ook opgooit."""
+        mock_backup_manager.restore_to_project_pvc = AsyncMock(side_effect=OSError(self.STORING))
+
+        response = client.post(
+            f"/api/v1/restore/project/{PROJECT}/deployment/main",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "resource_type": "pvc",
+                "component_name": "web",
+                "reference_name": "data",
+                "snapshot_id": "snap-1",
+                "update_deployment": False,
+            },
+        )
+
+        assert response.status_code == 500, response.text
+        assert not self.LEKT.search(response.text), "de uitzondering staat in het antwoord"
+
+    async def test_de_hulpfunctie_voor_een_database_geeft_de_lezerszin_terug(self) -> None:
+        """De deur die de grendel niet kende: een dict die verderop een antwoord wordt."""
+        from opi.api import restore_router as module
+
+        handler = MagicMock()
+        handler.get_database_generation.return_value = 0
+
+        with (
+            patch("opi.core.cluster_config.get_database_server", return_value="db.intern"),
+            patch("opi.connectors.postgres.create_postgres_connector", side_effect=OSError(self.STORING)),
+        ):
+            result = await module._restore_database_with_versioning(
+                project_name=PROJECT,
+                deployment_name="main",
+                component_name="web",
+                reference_name="data",
+                snapshot_id="snap-1",
+                deployment_cluster="local",
+                namespace=PROJECT,
+                project_data=_project_file(),
+                project_file_handler=handler,
+            )
+
+        assert result["success"] is False
+        assert not self.LEKT.search(result["error"]), result["error"]

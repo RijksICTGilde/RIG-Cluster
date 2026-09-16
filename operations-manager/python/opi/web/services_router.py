@@ -4,10 +4,11 @@ Services web route for displaying service information.
 
 import logging
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.errors import log_render_failure
 from opi.services.services import ServiceAdapter
 from opi.web.menu import get_menu_items
 
@@ -69,23 +70,8 @@ async def services_overview(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving services overview: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        from fastapi import HTTPException
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "het dienstenoverzicht", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Het dienstenoverzicht kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e

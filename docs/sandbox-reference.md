@@ -12,6 +12,18 @@ SERVICE URLS AND CREDENTIALS
   MinIO                https://minio.sandbox.rijksapp.dev               admin        admin1234
   ZAD                  https://zad.sandbox.rijksapp.dev                 admin        admin1234
 
+EERSTE LOGIN OP ZAD: EEN KEER BEVESTIGEN
+
+  De bootstrapbeheerder admin / admin1234 (admin@sandbox.rijksapp.dev) bevestigt
+  bij de eerste login eenmalig zijn adres. De mail landt in de Mailpit-sink:
+
+    https://mailsink.sandbox.rijksapp.dev
+
+  Geeft die URL 404, dan mist dit cluster de mailsink-ingress. Haal hem binnen met
+  'task sandbox:sync', of kijk erlangs:
+
+    kubectl -n rig-ron port-forward svc/rig-mail-sink 8025:8025
+
 COMMON TASK COMMANDS
 
   Sync infrastructure changes to Forgejo:

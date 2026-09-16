@@ -1,14 +1,13 @@
-"""emailVerified volgt de realm (RC-159).
+"""Wie een adres heeft, bevestigt het (RC-191).
 
-``create_user`` zette ``emailVerified`` onvoorwaardelijk op True zodra er een adres was
-meegegeven. Elke via de invite-weg aangemaakte gebruiker was daarmee vooraf geverifieerd
-zonder dat er ooit iets bevestigd was.
+``create_user`` liet het besluit over aan de realm (``verifyEmail``), en daarmee aan de
+blauwdruk. Een ``sso-only``-project kreeg ``false`` en liet lokale invite-accounts vooraf
+geverifieerd binnen, en op een cluster zonder mailrelay haalde de grendel in
+``_apply_realm_self_service`` het veld stil weg. Het besluit ligt nu hier en is voor elke
+realm gelijk.
 
-Dat maakt ``verifyEmail`` LOOS, en dat is de reden dat deze stap bestaat: SSO-gebruikers
-komen via ``trustEmail`` al geverifieerd binnen, dus als lokale gebruikers dat bij aanmaak
-ook zijn, blijft alleen het WIJZIGEN van een adres over als aanleiding voor een
-bevestigingsmail. Dat gebeurt bijna nooit, en dan levert de hele mailketen een functie op
-die in de praktijk stil blijft.
+De uitzondering staat bij de aanroeper: een realm-admin in master draagt een adres dat niet
+bestaat (``@local.invalid`` / ``@localhost``), dus daar zou verificatie hem buitensluiten.
 """
 
 from unittest.mock import MagicMock
@@ -25,47 +24,86 @@ def _connector_with_admin(admin: MagicMock) -> KeycloakConnector:
     return connector
 
 
-def _admin(realm: dict | KeycloakError) -> MagicMock:
+def _admin(realm: dict | None = None) -> MagicMock:
     admin = MagicMock()
-    if isinstance(realm, KeycloakError):
-        admin.get_realm.side_effect = realm
-    else:
-        admin.get_realm.return_value = realm
+    admin.get_realm.return_value = realm if realm is not None else {"verifyEmail": False}
     admin.get_users.return_value = [{"id": "u1", "username": "iemand"}]
+    admin.get_required_action_by_alias.return_value = {"alias": "VERIFY_EMAIL", "enabled": True}
     return admin
 
 
-async def _created_payload(admin: MagicMock) -> dict:
+async def _created_payload(admin: MagicMock, **kwargs: object) -> dict:
     connector = _connector_with_admin(admin)
     await connector.create_user(
         realm_name="rig-demo",
         username="iemand",
         password="geheim",
         email="iemand@example.org",
+        **kwargs,  # type: ignore[arg-type]
     )
     return admin.create_user.call_args.kwargs["payload"]
 
 
 @pytest.mark.asyncio
-async def test_in_een_verifierende_realm_komt_een_gebruiker_onbevestigd_binnen() -> None:
-    """Het punt van de functie: hij bevestigt zijn adres bij zijn eerste login."""
-    payload = await _created_payload(_admin({"verifyEmail": True}))
+async def test_een_niet_verifierende_realm_levert_toch_een_onbevestigde_gebruiker() -> None:
+    """De kern van de taak.
+
+    Dit is de realm waar het vandaag misging: ``sso-only`` zet ``verifyEmail`` niet, en
+    ``get_invite_auth_methods`` laat zo'n project wel lokale invite-accounts aanmaken. Die
+    kwamen vooraf geverifieerd binnen zonder dat er ooit iets bevestigd was.
+    """
+    payload = await _created_payload(_admin({"verifyEmail": False}))
 
     assert payload["emailVerified"] is False
+    assert payload["requiredActions"] == ["VERIFY_EMAIL"]
 
 
 @pytest.mark.asyncio
-async def test_in_een_niet_verifierende_realm_verandert_er_niets() -> None:
-    """Het gedrag van vandaag blijft staan waar het geen kwaad kan: zonder verifyEmail heeft
-    ``emailVerified`` geen betekenis voor het inloggen."""
-    payload = await _created_payload(_admin({"verifyEmail": False}))
+async def test_de_realm_wordt_er_niet_meer_over_bevraagd() -> None:
+    """Het besluit ligt niet meer bij de realm, en dat scheelt een API-call per gebruiker."""
+    admin = _admin({"verifyEmail": True})
+
+    await _created_payload(admin)
+
+    admin.get_realm.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_de_required_action_wordt_aangezet_voordat_hij_wordt_toegekend() -> None:
+    """Zonder dit is de grendel weg, en stil.
+
+    Gemeten op Keycloak 25.0.6 (sandbox, realm jc-77j-sandboxed-local): met de provider UIT
+    wordt ``VERIFY_EMAIL`` wel gewoon op de gebruiker opgeslagen, maar slaat de browserflow
+    hem over en logt de gebruiker door naar de applicatie. Met de provider AAN komt het
+    scherm "E-mailadres-verificatie". Het verschil zit in het INLOGGEN, niet in het
+    aanmaken.
+    """
+    admin = _admin()
+    admin.get_required_action_by_alias.return_value = {"alias": "VERIFY_EMAIL", "enabled": False}
+
+    await _created_payload(admin)
+
+    geschreven = admin.update_required_action.call_args
+    assert geschreven.args[0] == "VERIFY_EMAIL"
+    assert geschreven.kwargs["payload"]["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_een_realm_admin_in_master_komt_geverifieerd_binnen() -> None:
+    """Zijn adres bestaat niet, dus er valt niets te bevestigen en de actie zou hem
+    buitensluiten uit zijn eigen realm."""
+    admin = _admin()
+
+    payload = await _created_payload(admin, skip_email_verification=True)
 
     assert payload["emailVerified"] is True
+    assert "requiredActions" not in payload
+    admin.get_required_action_by_alias.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_zonder_adres_valt_er_niets_te_verifieren() -> None:
-    admin = _admin({"verifyEmail": True})
+    admin = _admin()
     connector = _connector_with_admin(admin)
 
     await connector.create_user(realm_name="rig-demo", username="iemand", password="geheim")
@@ -73,19 +111,52 @@ async def test_zonder_adres_valt_er_niets_te_verifieren() -> None:
     payload = admin.create_user.call_args.kwargs["payload"]
     assert payload["emailVerified"] is False
     assert "email" not in payload
+    assert "requiredActions" not in payload
+    admin.get_required_action_by_alias.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_een_onleesbare_realm_sluit_niemand_buiten() -> None:
-    """De terugval gaat bewust de kant van gisteren op.
+async def test_een_onbereikbare_required_action_laat_geen_halve_gebruiker_achter() -> None:
+    """Faalt het aanzetten, dan wordt er geen gebruiker aangemaakt die zonder de actie
+    binnen zou komen. Fail closed, zoals ``set_required_action_enabled`` zelf."""
+    admin = _admin()
+    admin.get_required_action_by_alias.side_effect = KeycloakError("realm weg")
+    connector = _connector_with_admin(admin)
 
-    De andere kant zou van een onleesbaar moment een gebruiker maken die op een
-    bevestigingsmail moet klikken die misschien nooit verstuurd is. Buitengesloten worden is
-    erger dan binnengelaten worden zoals de code van gisteren iedereen binnenliet.
-    """
-    payload = await _created_payload(_admin(KeycloakError("realm weg")))
+    with pytest.raises(KeycloakError):
+        await connector.create_user(
+            realm_name="rig-demo",
+            username="iemand",
+            password="geheim",
+            email="iemand@example.org",
+        )
 
-    assert payload["emailVerified"] is True
+    admin.create_user.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_de_bevestigingsmail_gaat_naar_de_juiste_realm() -> None:
+    """En zonder redirect_uri, zodat er geen redirect-URI-validatie meespeelt."""
+    admin = _admin()
+    connector = _connector_with_admin(admin)
+
+    await connector.send_verify_email("rig-demo", "u1")
+
+    admin.send_verify_email.assert_called_once_with(user_id="u1")
+    assert admin.change_current_realm.call_args_list[-2].args[0] == "rig-demo"
+    assert admin.change_current_realm.call_args_list[-1].args[0] == "master"
+
+
+@pytest.mark.asyncio
+async def test_een_mislukte_mail_laat_de_verbinding_op_master_achter() -> None:
+    admin = _admin()
+    admin.send_verify_email.side_effect = KeycloakError("relay weg")
+    connector = _connector_with_admin(admin)
+
+    with pytest.raises(KeycloakError):
+        await connector.send_verify_email("rig-demo", "u1")
+
+    assert admin.change_current_realm.call_args_list[-1].args[0] == "master"
 
 
 def test_sso_gebruikers_blijven_vertrouwd() -> None:
