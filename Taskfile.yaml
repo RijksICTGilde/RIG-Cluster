@@ -20,6 +20,24 @@ vars:
   # Optionele registry-cache, dezelfde vorm als publish-operations-manager. Leeg = alleen
   # de cache van de builder zelf, wat op een dev-server het geval is.
   SANDBOX_CACHE_IMAGE: '{{default "" .SANDBOX_CACHE_IMAGE}}'
+  # De registry naast het kind-cluster, zie docs/sandbox-kind-registry.md.
+  SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
+  # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
+  # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
+  # Ongetrackte bestanden tellen mee, want docker neemt ze op in de build-context.
+  SANDBOX_OM_TAG:
+    sh: |
+      tag="$(git rev-parse --short HEAD)"
+      if [ -n "$(git status --porcelain -- operations-manager)" ]; then
+        tag="$tag-dirty-$( {
+          git diff HEAD -- operations-manager
+          git -c core.quotePath=false ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
+            echo "$f"; cat "$f"
+          done
+        } | sha1sum | cut -c1-7)"
+      fi
+      echo "$tag"
+  SANDBOX_OM_IMAGE: '{{.SANDBOX_OM_REPO}}:{{.SANDBOX_OM_TAG}}'
 
 #set: ['e', 'x']  # equivalent to set -ex
 
@@ -953,9 +971,16 @@ tasks:
     desc: "Build and deploy the operations-manager to the current cluster"
     vars:
       CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
-    deps: [generate-env-secrets-for-operations-manager]
     cmds:
+      # Na sandbox:setup leest deze taak de sandbox-env, waarvan de overlay naar de
+      # registry wijst: kind load zou stil de vorige build uitrollen. Eerste stap, want
+      # deps draaien al vóór een precondition.
+      - |
+        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
+          echo "Dit is een sandbox: gebruik task sandbox:update-operations-manager." >&2
+          exit 1
+        fi
+      - task: generate-env-secrets-for-operations-manager
       # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
       # version.json in die er toevallig lag, en meldt de pod een andere commit.
       - task: version:generate
@@ -974,7 +999,7 @@ tasks:
         kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
       - |
         echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
         kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1012,9 +1037,9 @@ tasks:
         # On odcn-production the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where the tag does NOT change: local and
-        # sandbox load the image into kind under a fixed `:latest`, so apply sees nothing
-        # new and the restart is what actually picks up the rebuilt image.
+        # briefly see three pods. Only restart where apply may see nothing new: local loads
+        # the image into kind under a fixed `:latest`, and the sandbox overlay keeps the
+        # tag of its last configure.
         if [ "{{.CLUSTER}}" = "odcn-production" ]; then
           echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         else
@@ -2306,8 +2331,9 @@ tasks:
       - task: sandbox:create-cluster
       # Moet vóór alles wat een image nodig heeft. Zie docs/sandbox-kind-registry.md.
       - task: sandbox:setup-registry
-      # De images moeten in de cluster staan vóórdat de deployments ze proberen te
-      # pullen (imagePullPolicy: Never in dev-mode). No-op in demo-mode.
+      # De images moeten klaarstaan vóórdat de deployments ze proberen te halen: de
+      # CMP-sidecar geladen in kind (Never), operations-manager in de registry.
+      # No-op in demo-mode.
       - task: sandbox:build-local-images-if-dev
       - task: install-ingress-nginx
       - task: install-cnpg-operator
@@ -2564,7 +2590,7 @@ tasks:
   # dev-mode daar stil niets deed en de sandbox alsnog de gepubliceerde images pakte.
   # `sed -i.bak` werkt op allebei; de .bak-bestanden ruimen we onderaan op.
   sandbox:configure-local-images:
-    desc: "Patch overlay files to use locally built images with imagePullPolicy: Never"
+    desc: "Patch overlay files to use locally built images"
     cmds:
       - |
         # SANDBOX_MODE uit de omgeving wint, zodat een onbewaakte installatie dev-mode
@@ -2576,10 +2602,7 @@ tasks:
 
         echo "Configuring overlays for local images..."
 
-        # Operations Manager: use local image + Never
-        OM_PATCH="bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
-        sed -i.bak 's|image: ghcr.io/minbzk/base-images/operations-manager/operations-manager:latest|image: operations-manager:latest|' "$OM_PATCH"
-        sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$OM_PATCH"
+        task sandbox:configure-operations-manager-image
 
         # CMP sidecar in ArgoCD deployment: use local image + Never
         ARGO_DEPLOY="bootstrap/rig-system/kustomize/overlays/sandboxed-local/argocd-deployment.yaml"
@@ -2599,6 +2622,17 @@ tasks:
         find bootstrap infrastructure -name "*.yaml.bak" -delete 2>/dev/null || true
 
         echo "Overlays configured for local images"
+    silent: true
+
+  # Draait bij elke deploy, zie docs/sandbox-kind-registry.md.
+  sandbox:configure-operations-manager-image:
+    desc: "Zet de operations-manager-overlay op het image van deze commit in de registry"
+    cmds:
+      - |
+        OM_PATCH="bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
+        sed -i.bak -E 's|^( *)image: .*operations-manager.*$|\1image: {{.SANDBOX_OM_IMAGE}}|' "$OM_PATCH"
+        rm -f "$OM_PATCH.bak"
+        echo "Overlay wijst naar {{.SANDBOX_OM_IMAGE}}"
     silent: true
 
   sandbox:renew-wildcard-cert:
@@ -3270,7 +3304,7 @@ tasks:
     silent: true
 
   sandbox:build-local-images-if-dev:
-    desc: "Build+load de images die dev-mode lokaal verwacht (no-op in demo-mode)"
+    desc: "Bouw de images die dev-mode lokaal verwacht (no-op in demo-mode)"
     internal: true
     cmds:
       - |
@@ -3281,7 +3315,7 @@ tasks:
           echo "Demo-mode: images komen uit de registry, niet lokaal gebouwd."
           exit 0
         fi
-        # Beide, niet alleen operations-manager: configure-local-images zet ook de
+        # Beide, niet alleen operations-manager: configure-local-images zet de
         # CMP-sidecar op een lokale tag met imagePullPolicy Never. Ontbreekt die, dan
         # blijft argocd-repo-server op ErrImageNeverPull staan en komt ArgoCD niet op.
         task sandbox:build-cmp-image
@@ -3339,7 +3373,7 @@ tasks:
     silent: true
 
   sandbox:build-operations-manager-image:
-    desc: "Build operations-manager image and load into Kind (no deploy)"
+    desc: "Build operations-manager image and push it to the registry next to Kind (no deploy)"
     cmds:
       # Niet beginnen als er te weinig vrij is: dat was vooraf te zien toen een build de
       # server bijna omver trok. Zie docs/uitrol-op-de-dev-server.md.
@@ -3354,7 +3388,8 @@ tasks:
         echo "Building operations-manager Docker image..."
         # --cache-from: dezelfde vorm als publish-operations-manager (docker-build-and-push).
         # Leeg gelaten pakt hij alleen de cache van de builder zelf; met SANDBOX_CACHE_IMAGE
-        # kun je er een registry-cache naast zetten.
+        # kun je er een registry-cache naast zetten. Geen --cache-to naar de sandboxregistry:
+        # een garbage collect daar kan lagen weggooien die de cache nog nodig heeft.
         CACHE_FLAGS=""
         if [ -n "{{.SANDBOX_CACHE_IMAGE}}" ]; then
           CACHE_FLAGS="--cache-from type=registry,ref={{.SANDBOX_CACHE_IMAGE}}"
@@ -3363,28 +3398,28 @@ tasks:
           --builder {{.SANDBOX_BUILDER_NAME}} \
           $CACHE_FLAGS \
           --target application \
-          --load \
-          -t operations-manager \
+          --push \
+          -t {{.SANDBOX_OM_IMAGE}} \
           -f operations-manager/Dockerfile .
-      - |
-        echo "Loading image into Kind cluster..."
-        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
-        echo "Operations manager image loaded"
+        echo "Operations manager image pushed: {{.SANDBOX_OM_IMAGE}}"
     silent: true
 
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
     cmds:
-      # Bouwen en in Kind laden staat in één taak, zodat de preflight, de geheugengrens
+      # Idempotent; faalt vroeg als het cluster de containerd-patch mist.
+      - task: sandbox:setup-registry
+      # Bouwen en pushen staat in één taak, zodat de preflight, de geheugengrens
       # en de cache hier niet uit de pas kunnen lopen met de bouwtaak.
       - task: sandbox:build-operations-manager-image
+      - task: sandbox:configure-operations-manager-image
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local --load-restrictor LoadRestrictionsNone | kubectl apply -f -
         kubectl set env deployment/operations-manager -n {{.RIG_NAMESPACE}} \
           ZAD_VERSION="$(git describe --tags --always)" \
           ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        kubectl rollout status deployment/operations-manager -n {{.RIG_NAMESPACE}} --timeout=300s
       - echo "Operations manager updated successfully"
     silent: true
 
