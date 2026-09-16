@@ -279,8 +279,7 @@ ZAD_TEST_PG_PASSWORD = "zadtest"
 #: poort waar niets luistert.
 ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
 #: Prefix van de database per run: ``zad_test_<namespace>_<pid>_<epoch>``. De pid maakt een
-#: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven, en de tijd
-#: is het enige houvast bij een run die we niet kunnen bevragen.
+#: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
 ZAD_TEST_DB_PREFIX = "zad_test_"
 #: Een database uit een VREEMDE pid-namespace mag pas weg als geen enkele run nog zo lang
 #: kan draaien. De volledige suite doet een kwartier.
