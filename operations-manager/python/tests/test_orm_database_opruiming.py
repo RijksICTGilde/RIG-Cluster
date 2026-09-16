@@ -138,7 +138,6 @@ def _like(patroon: str, naam: str) -> bool:
 
 
 def test_de_veeg_van_oudere_takken_ziet_de_nieuwe_naam_niet() -> None:
-    """Die veeg leest alles onder ``zad_test_%`` als ``zad_test_<pid>`` en crasht op deze vorm."""
     naam = _naam(os.getpid(), NU)
 
     assert _like("zad_test_%", "zad_test_4867"), "de LIKE-nabootsing klopt niet"
@@ -147,11 +146,7 @@ def test_de_veeg_van_oudere_takken_ziet_de_nieuwe_naam_niet() -> None:
 
 
 class _NagebootsteServer:
-    """Een ``_psql`` die de databases onthoudt in plaats van ze te hebben.
-
-    De veeg praat alleen via ``_psql`` met Postgres, dus hiermee is te meten WELKE
-    databases hij weggooit zonder dat er een server hoeft te draaien.
-    """
+    """Een ``_psql`` die databases onthoudt: meet wat de veeg weggooit zonder server."""
 
     def __init__(self, namen: list[str]) -> None:
         self.namen = list(namen)
@@ -231,13 +226,10 @@ print(gemaakt[0])
 
 
 def test_een_naam_van_een_gestorven_run_wordt_als_wees_herkend() -> None:
-    """De naamvorm van de fixture moet de veeg ook echt iets zeggen.
+    """De naam is vers, dus alleen pid plus eigen namespace kan hem als wees aanwijzen.
 
-    Een kindproces maakt de naam met de fixture zelf en sterft. Die naam is VERS, dus
-    alleen de pid kan hem als wees aanwijzen, en dat lukt alleen als de veeg de
-    namespace erin herkent als de zijne. Draait de volgorde van de velden om, dan leest
-    de veeg de naam als die van een vreemde namespace en blijft een dode run staan --
-    en andersom verdwijnt de levende buurman weer.
+    Een kindproces maakt de naam met de fixture zelf en sterft. Leest de veeg de velden
+    in een andere volgorde dan de fixture ze schrijft, dan faalt dit.
     """
     testmap = os.path.dirname(__file__)
     kind = subprocess.run(
