@@ -1,4 +1,10 @@
 # Multi-stage Docker build for operations-manager with optimized caching
+
+# uv als eigen stage in plaats van een ARG naast de andere tools: buildkit doet geen
+# variabele-expansie in `COPY --from=`, alleen in een FROM met een globale ARG.
+ARG UV_VERSION=0.12.15
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
 
@@ -32,7 +38,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     postgresql-client
 
 # Install kubectl - cached unless kubectl version changes
-RUN curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg \
     && echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /" | tee /etc/apt/sources.list.d/kubernetes.list \
     && apt-get update && apt-get install -y kubectl
 
@@ -70,7 +78,7 @@ RUN curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VER
     && mv "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" /usr/local/bin/chisel
 
 # Install uv - cached unless uv version changes
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+COPY --from=uv /uv /usr/local/bin/uv
 
 # Stage 2: Dependencies (changes when lock file changes)
 FROM base-system AS dependencies
@@ -104,25 +112,31 @@ ENV ZAD_VERSION=${ZAD_VERSION} \
     ZAD_GIT_BRANCH=${ZAD_GIT_BRANCH} \
     ZAD_BUILD_DATE=${ZAD_BUILD_DATE}
 
-# Create non-root user for OpenShift compatibility
+# Create non-root user for OpenShift compatibility. /app zelf hoort hier ook bij: de
+# COPY's hieronder zetten de eigenaar van wat ze schrijven, niet van de map die
+# WORKDIR in de vorige stage als root aanmaakte.
 RUN groupadd -g 1001 appuser && \
-    useradd -r -u 1001 -g appuser appuser
+    useradd -r -u 1001 -g appuser appuser && \
+    chown appuser:appuser /app
 
 # Copy Alembic configuration (for database migrations)
-COPY operations-manager/python/alembic.ini /app/
+COPY --chown=appuser:appuser operations-manager/python/alembic.ini /app/
 
 # Copy entrypoint script
-COPY operations-manager/docker-entrypoint.sh /app/entrypoint.sh
+COPY --chown=appuser:appuser operations-manager/docker-entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Copy application code and resources (change frequently - put last for optimal caching)
-COPY operations-manager/python/opi ./opi
-COPY operations-manager/python/manifests ./manifests
-COPY operations-manager/python/extensions ./extensions
-COPY operations-manager/python/static ./static
-
-RUN chown -R appuser:appuser /app && \
-    chmod -R 755 /app
+# Copy application code and resources, van zelden naar vaak wijzigend: een laag die
+# opnieuw gebouwd wordt sleept elke laag eronder mee, ook als die inhoud gelijk bleef.
+# De media op de static-wortel verandert vrijwel nooit (promo.mp4 alleen al is 28 MB),
+# opi elke dag. Zet je iets nieuws in static/, dan hoort het in een van deze regels;
+# tests/test_image_layer_guard.py meet dat.
+COPY --chown=appuser:appuser operations-manager/python/static/promo.mp4 operations-manager/python/static/*.jpg operations-manager/python/static/favicon.ico ./static/
+COPY --chown=appuser:appuser operations-manager/python/extensions ./extensions
+COPY --chown=appuser:appuser operations-manager/python/manifests ./manifests
+COPY --chown=appuser:appuser operations-manager/python/static/css ./static/css
+COPY --chown=appuser:appuser operations-manager/python/static/js ./static/js
+COPY --chown=appuser:appuser operations-manager/python/opi ./opi
 
 # Switch to non-root user
 USER appuser

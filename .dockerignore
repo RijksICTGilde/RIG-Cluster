@@ -113,8 +113,12 @@ test-*
 # map in de context ongemerkt de bouwlus opat.
 .claude/
 
-# Node.js (if any)
-node_modules/
+# Node.js. MET **/, om dezelfde reden als bij de tests hierboven: esbuild bouwt
+# codemirror-bundle.js uit operations-manager/python/static/js/node_modules, en dat
+# pad matchte niet op een patroon dat alleen tegen de wortel van de context wordt
+# gelegd. De boom ging dus mee de image in (28 MB) terwijl de runtime alleen de
+# gebouwde bundel nodig heeft.
+**/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
