@@ -350,15 +350,10 @@ master-realm (`keycloak_manager.py`, `keycloak_setup.py`) geven `skip_email_veri
 mee. Hun adres is `{admin}@local.invalid` of `{username}@localhost` en bestaat niet, dus
 verificatie afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
 
-**Voor de uitnodigingsweg betekent dat: wie een account krijgt, bevestigt eerst zijn adres.**
-Hij kiest zijn wachtwoord in het uitnodigingsformulier van OPI zoals altijd, OPI vraagt
-Keycloak meteen om de bevestigingsmail, en de succespagina vertelt hem dat inloggen pas na de
-bevestiging werkt. Zie `features/invites.md`.
+Wat dat voor de uitnodigingsweg betekent staat in `features/invites.md`.
 
 **Op een cluster zonder mailrelay betekent het ook: dat account komt er niet in.** Dat is de
-prijs van de verhuizing en hij is bewust betaald. De grendel hieronder haalde `verifyEmail`
-op zo'n cluster stil weg, en het gevolg was dat elke uitgenodigde daar vooraf geverifieerd
-binnenkwam - een grendel die precies daar zwijgt waar hij het meest betekent. Clustertype
+prijs van de verhuizing en hij is bewust betaald. Clustertype
 `local` is de vaste toestand zonder relay; `sandboxed-local` (Mailpit-sink) en productie
 hebben er een. Wie een lokale invite-gebruiker moet binnenlaten op een cluster zonder post,
 zet `emailVerified` met de hand in de beheerconsole.

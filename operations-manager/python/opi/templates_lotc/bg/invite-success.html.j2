@@ -11,11 +11,8 @@
   Wat de route niet meelevert wordt niet getoond: geen e-mailadres, geen regel; geen
   applicatie-URL, geen knop. Dat was zo en dat blijft zo.
 
-  Het middelste blok heeft twee vormen. ``verify_email`` staat alleen op de LOKALE
-  registratie: die gebruiker moet eerst zijn adres bevestigen, dus daar gaat de tekst over
-  bevestigen en niet over toegang. De SSO-weg zet de vlag niet, want die gebruiker komt via
-  ``trustEmail`` al geverifieerd binnen, en houdt de bevestiging met de per-project
-  instelbare ``success_title``.
+  ``verify_email`` zet alleen de lokale registratie (zie invite_routes); de SSO-weg houdt
+  ``success_title``.
 
   De kaart met de toegangsgegevens is panel() uit bg/_patterns.html.j2, dezelfde vorm als
   op de andere pagina's, en het e-mailadres staat in een c-detail-list in plaats van in

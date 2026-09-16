@@ -1994,8 +1994,7 @@ class KeycloakManager:
             last_name="Administrator",
             enabled=True,
             totp_secret=totp_secret,
-            # Dit adres bestaat niet, dus er kan niets bevestigd worden. Verificatie
-            # afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
+            # Het adres bestaat niet; verificatie afdwingen sluit de projectbeheerder buiten.
             skip_email_verification=True,
         )
         logger.info(f"Created admin user {admin_username} in master realm")

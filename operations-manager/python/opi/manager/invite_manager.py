@@ -435,11 +435,8 @@ class InviteManager:
         user_id = created_user["id"]
         logger.info(f"Created new local user {email} in realm {realm_name}")
 
-        # De mail hoort NU te komen en niet pas bij de eerste login: de gebruiker heeft
-        # zojuist zijn adres en wachtwoord opgegeven en leest op de volgende pagina dat hij
-        # moet bevestigen. Mislukt de verzending, dan is de registratie niet stuk: het
-        # account draagt de required action, dus Keycloak probeert het bij de eerste login
-        # alsnog.
+        # Nu, want de succespagina vraagt om te bevestigen. Mislukt het, dan stuurt Keycloak
+        # de mail bij de eerste login alsnog: het account draagt de required action.
         verification_mail_sent = True
         try:
             await keycloak.send_verify_email(realm_name, user_id)
