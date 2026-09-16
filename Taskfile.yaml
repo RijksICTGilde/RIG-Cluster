@@ -2400,6 +2400,18 @@ tasks:
       - scripts/setup-kind-registry.sh --cluster rig-sandbox
     silent: true
 
+  sandbox:prune-registry:
+    desc: "Verwijder oude tags uit de registry naast het kind-cluster, de gedeelde lagen blijven"
+    summary: |
+      Zie docs/sandbox-kind-registry.md.
+
+        task sandbox:prune-registry RETENTIE_DAGEN=0
+    vars:
+      RETENTIE_DAGEN: '{{.RETENTIE_DAGEN | default "2"}}'
+    cmds:
+      - RETENTIE_DAGEN={{.RETENTIE_DAGEN}} scripts/prune-kind-registry.sh
+    silent: true
+
   sandbox:install-csi-snapshot:
     desc: "Install CSI VolumeSnapshot CRDs for sandboxed-local cluster"
     cmds:
@@ -3421,6 +3433,8 @@ tasks:
           ZAD_BUILD_DATE="$(date +%Y-%m-%d)"
         kubectl rollout status deployment/operations-manager -n {{.RIG_NAMESPACE}} --timeout=300s
       - echo "Operations manager updated successfully"
+      # Waarom hier en niet in een cron: docs/sandbox-kind-registry.md.
+      - task: sandbox:prune-registry
     silent: true
 
   version:generate:
