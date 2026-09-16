@@ -1585,17 +1585,13 @@ class Service(ABC):
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
         """This service's rules on a WHOLE project, as messages (default none).
 
-        ``validate_config`` judges one config block in isolation; a service whose rule
-        needs more than that -- the other deployments in the file, the other projects on
-        the cluster, the cluster config -- puts it here, next to the rest of the service,
-        instead of in the shared validator. ``validate_project_structure`` collects the
-        messages of every service and refuses the write when there are any, so this runs
-        on every save, reprocess and replay, whichever caller produced the dict.
+        For a rule ``validate_config`` cannot judge from one block (the other deployments,
+        the other projects on the cluster, the cluster config). ``validate_project_structure``
+        refuses the write on any message, so this runs on every save, reprocess and replay.
 
         Called for EVERY project, not only for projects that declare this service: a rule
         about what a project may point AT would otherwise be dodged by leaving the service
-        out. Judge the project as it stands and return [] when the service has nothing to
-        say about it.
+        out. Return [] when the service has nothing to say.
         """
         return []
 

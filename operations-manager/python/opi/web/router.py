@@ -2010,10 +2010,8 @@ async def _fetch_argocd_deployment_status(
     asking for: a deployment whose pods are MEANT to be absent -- asleep, switched off --
     would otherwise be told "nothing is running", which is true and not a problem.
 
-    ``project_data`` is the project file, and it is what turns an image back into the
-    registry the CONSUMER knows: his own private registries are only in the rule list of
-    the image-registries service when the project file is at hand, so without it he reads
-    the bare RCR URL in exactly the card that is about his image.
+    ``project_data`` lets the card name an image in the project's own private registry
+    instead of its bare RCR URL.
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,

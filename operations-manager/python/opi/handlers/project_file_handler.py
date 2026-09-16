@@ -2853,8 +2853,6 @@ class ProjectFileHandler:
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
         """De private registries van dit project, uit de config van de dienst image-registries.
 
-        Tot schemaversie 2.9 stond deze lijst als ``registries:`` op de projectwortel.
-
         Returns:
             Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
             ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
@@ -2880,7 +2878,6 @@ class ProjectFileHandler:
             Registry config dict with keys: name, upstream, username, password
             or None if the component points at no registry
         """
-        # Sinds v2.9 een dienstvermelding op het component, geen losse sleutel ernaast.
         from opi.services.catalog.image_registries.resolution import component_registry_name
 
         component = next(

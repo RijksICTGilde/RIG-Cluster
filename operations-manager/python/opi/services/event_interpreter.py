@@ -638,9 +638,8 @@ def interpret_argocd_errors(
     ArgoCD errors are passed through but enriched with pattern matching.
     Resource names are simplified to component names when deployment_name is provided.
 
-    ``project_data`` is the project file, and only the image-pull messages use it: an
-    image is named back to the consumer in the registry HE knows, and his own private
-    registries are only in the rule list when the project file is at hand.
+    ``project_data`` is only used by the image-pull messages, to name an image in the
+    project's own private registry instead of its RCR address.
 
     ``serving_components`` names the component REFERENCES for which a pod is currently
     serving traffic (see ``summarize_component_pods``). Only the crash message uses it, and
