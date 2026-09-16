@@ -61,6 +61,14 @@ def _copy_sources(instruction: str) -> list[str]:
     return parts[:-1]
 
 
+def _copy_dest(instruction: str) -> str:
+    return instruction.split()[-1]
+
+
+def _copies(app_stage: list[str]) -> list[tuple[int, str]]:
+    return [(index, line) for index, line in enumerate(app_stage) if line.upper().startswith("COPY ")]
+
+
 class TestDockerignore:
     def test_node_modules_is_excluded_at_every_depth(self) -> None:
         """Without `**/` the pattern is only matched against the root of the build context."""
@@ -73,6 +81,7 @@ class TestDockerignore:
 class TestApplicationStage:
     def test_no_recursive_chown_or_chmod(self, app_stage: list[str]) -> None:
         """A recursive rewrite of /app duplicates every layer above it in a new layer."""
+        assert app_stage, f"stage {APP_STAGE} not found"
         offenders = [line for line in app_stage if re.search(r"(chown|chmod)\s+-R", line)]
 
         assert offenders == []
@@ -92,12 +101,42 @@ class TestApplicationStage:
 
         assert any("chown appuser:appuser /app" in line for line in user_setup)
 
-    def test_entrypoint_stays_executable(self, app_stage: list[str]) -> None:
-        """The dropped `chmod -R 755 /app` also made entrypoint.sh executable."""
-        assert any("chmod +x /app/entrypoint.sh" in line for line in app_stage)
+    def test_entrypoint_is_made_executable_after_it_is_copied(self, app_stage: list[str]) -> None:
+        """The dropped `chmod -R 755 /app` ran last, so the order used to be free. It is not."""
+        copied = [index for index, line in _copies(app_stage) if line.endswith("/app/entrypoint.sh")]
+        made_executable = [index for index, line in enumerate(app_stage) if "chmod +x /app/entrypoint.sh" in line]
+        assert len(copied) == 1
+        assert len(made_executable) == 1
 
-    def test_runs_as_the_non_root_user(self, app_stage: list[str]) -> None:
+        assert copied[0] < made_executable[0]
+
+    def test_runs_as_uid_1001(self, app_stage: list[str]) -> None:
+        """OpenShift compatibility hangs on the number; the name says nothing about the uid."""
         assert "USER appuser" in app_stage
+
+        assert any("groupadd -g 1001 appuser" in line for line in app_stage)
+        assert any("useradd" in line and "-u 1001" in line for line in app_stage)
+
+    def test_a_copied_directory_keeps_its_own_name(self, app_stage: list[str]) -> None:
+        """COPY writes the CONTENTS of a directory, so a dest of ./static drops css a level up."""
+        for _, line in _copies(app_stage):
+            dest = _copy_dest(line).rstrip("/")
+            for source in _copy_sources(line):
+                if (REPO_ROOT / source).is_dir():
+                    assert dest.endswith("/" + Path(source).name), line
+
+    def test_every_application_directory_is_copied(self, app_stage: list[str]) -> None:
+        """Splitting the block means naming the parts, and a dropped part only fails at runtime."""
+        sources = {source for _, line in _copies(app_stage) for source in _copy_sources(line)}
+
+        required = {
+            "operations-manager/python/alembic.ini",
+            "operations-manager/docker-entrypoint.sh",
+            "operations-manager/python/extensions",
+            "operations-manager/python/manifests",
+            "operations-manager/python/opi",
+        }
+        assert required - sources == set()
 
 
 class TestStaticLayers:
@@ -156,6 +195,19 @@ class TestPinnedTools:
         args = [line for _, line in instructions if line.startswith("ARG UV_VERSION=")]
         assert len(args) == 1
         assert args[0] != "ARG UV_VERSION="
+
+    def test_no_image_from_outside_floats_on_latest(self, instructions: list[tuple[str, str]]) -> None:
+        """A floating base rebuilds its own stage and every stage after it, uv was one of several."""
+        stages = {stage for stage, _ in instructions if stage}
+        bases = [line.split()[1] for _, line in instructions if line.upper().startswith("FROM ")]
+
+        external = [base for base in bases if base not in stages]
+        assert external
+
+        for base in external:
+            image, _, tag = base.rpartition(":")
+            assert image, f"{base} carries no tag, which means latest"
+            assert tag != "latest", base
 
 
 class TestAptLayers:
