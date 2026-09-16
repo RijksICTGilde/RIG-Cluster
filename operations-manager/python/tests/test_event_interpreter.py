@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import pytest
 from opi.services.catalog.image_registries.naming import registry_destination
 from opi.services.event_interpreter import (
     EventSeverity,
@@ -98,11 +99,17 @@ class TestInterpretEvents:
         assert "registry zelf geen antwoord gaf" in result[0].suggestion
         assert "naam en tag kloppen" not in result[0].suggestion
 
-    def test_the_message_names_the_private_registry_the_consumer_typed(self):
+    @pytest.mark.parametrize(
+        "reden",
+        ["manifest unknown", "received unexpected HTTP status: 500 Internal Server Error"],
+        ids=["image-afwezig", "registry-gaf-geen-antwoord"],
+    )
+    def test_the_message_names_the_private_registry_the_consumer_typed(self, reden):
         """Het gemelde pad is het RCR-pad van de eigen proxy-organisatie. De eigen
         organisaties van een project staan alleen in de regellijst als het PROJECTBESTAND
         erbij zit, dus zonder dat bestand leest hij hier de kale URL terug, in precies
-        de melding die over zijn image gaat."""
+        de melding die over zijn image gaat. Beide takken van de melding, want elk
+        geeft het projectbestand apart door."""
         project_data = {
             "name": "demo",
             "services": [
@@ -126,7 +133,7 @@ class TestInterpretEvents:
         errors = [
             {
                 "resource": "Event/demo-web-abc-xyz",
-                "message": f'[ErrImagePull] Failed to pull image "{rcr}": manifest unknown',
+                "message": f'[ErrImagePull] Failed to pull image "{rcr}": {reden}',
             }
         ]
         with patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"):

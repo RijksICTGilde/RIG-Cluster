@@ -891,6 +891,81 @@ def test_de_wandeling_ziet_ook_de_blokken_die_een_component_eigenschap_zijn() ->
     assert env.where == "van component 'backend'"
 
 
+def _elke_laag_op_een_andere_index() -> dict[str, Any]:
+    """Een blok op elke laag en in elke vorm, telkens op een andere index.
+
+    Geen twee indexen zijn gelijk, zodat een verwisselde teller een ander pad oplevert.
+    """
+    data = _project({"storage": "1Gi"})
+    data["components"] = [
+        {"name": "frontend", "type": "single"},
+        {
+            "name": "backend",
+            "type": "single",
+            "services": ["publish-on-web", _DATABASE.value, {"name": _REDIS.value, "config": {"storage": "1Gi"}}],
+            "user-env-vars": "API_KEY=x",
+            "aliases": {"DB": "$DATABASE_DB"},
+        },
+    ]
+    data["deployments"] = [
+        {"name": "deployment-1", "components": [{"reference": "frontend"}]},
+        {
+            "name": "deployment-2",
+            "services": ["clone", _DATABASE.value, {"name": _REDIS.value, "config": {"generation": 3}}],
+            "components": [
+                {"reference": "frontend"},
+                {"reference": "extra", "services": ["publish-on-web", {"name": _REDIS.value, "config": {"x": 1}}]},
+                {
+                    "reference": "backend",
+                    "services": {
+                        "publish-on-web": {"config": {"subdomain": "api"}},
+                        _REDIS.value: [
+                            {"reference": "data", "config": {"storage": "8Gi"}},
+                            {"reference": "logs", "config": {"storage": "2Gi"}},
+                        ],
+                    },
+                    "user-env-vars": "LOG_LEVEL=debug",
+                },
+            ],
+        },
+    ]
+    return data
+
+
+def _volg_pad(data: Any, pad: str) -> Any:
+    """Loop een ``/``-pad af: een getal is een index, een naam zoekt een dienst of sleutel."""
+    for deel in pad.split("/"):
+        if isinstance(data, list) and deel.isdigit():
+            data = data[int(deel)]
+        elif isinstance(data, list):
+            (data,) = [e for e in data if isinstance(e, dict) and e.get("name") == deel]
+        else:
+            data = data[deel]
+    return data
+
+
+def test_het_pad_van_een_blok_wijst_naar_dat_blok_in_het_bestand() -> None:
+    """``path`` staat in de melding over een leesbaar geheim en moet dus ergens heen wijzen.
+
+    ``location`` herkent een blok bij naam, ``path`` wijst het aan op positie. Een
+    verwisselde of vergeten teller wijst naar een ander blok of naar niets.
+    """
+    data = _elke_laag_op_een_andere_index()
+    blokken = [b for b in iter_service_config_blocks(data) if b.config is not None]
+
+    assert {(b.layer, b.owned_property is not None) for b in blokken} == {
+        (ConfigLayer.PROJECT, False),
+        (ConfigLayer.COMPONENT, False),
+        (ConfigLayer.COMPONENT, True),
+        (ConfigLayer.DEPLOYMENT, False),
+        (ConfigLayer.DEPLOYMENT_COMPONENT, False),
+        (ConfigLayer.DEPLOYMENT_COMPONENT, True),
+    }
+    assert len(blokken) == 10
+    for blok in blokken:
+        assert _volg_pad(data, blok.path) is blok.config, f"{blok.path} wijst niet naar {blok.location}"
+
+
 def test_een_dienst_op_een_eigenschap_wordt_ook_op_zijn_grenzen_getoetst(monkeypatch: pytest.MonkeyPatch) -> None:
     """En niet alleen op zijn wijziging -- anders staat dezelfde scheefte omgekeerd terug.
 
