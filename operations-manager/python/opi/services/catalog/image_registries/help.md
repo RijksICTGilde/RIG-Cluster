@@ -17,7 +17,7 @@ Dan laat je het keuzeveld bij dat component op **Automatisch** staan. Dat is de 
 
 Heeft je project nog geen registry, dan staat dat keuzeveld er niet. Je eerste registry voeg je dus hier toe.
 
-Automatisch is dus niet altijd publiek: de keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt. Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder `ghcr.io/mijnorg` die met jouw token op, ook als het op Automatisch staat. Kiezen hoef je alleen als meer dan een van je registries bij dezelfde image past.
+De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt. Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder `ghcr.io/mijnorg` die met jouw token op, ook als het op Automatisch staat. Kiezen hoef je alleen als meer dan een van je registries bij dezelfde image past.
 
 ## Wat je van het token moet weten
 
