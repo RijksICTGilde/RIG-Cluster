@@ -8,8 +8,6 @@ from tests.programma import echt_programma
 if TYPE_CHECKING:
     from pathlib import Path
 
-# De twee gezichten uit RC-204: de shim vindt zijn motor niet op een kale PATH, of vindt
-# buiten de repo geen .tool-versions.
 SHIM_ZONDER_MOTOR = 'exec asdf exec proefprog "$@"\n'
 SHIM_ZONDER_VERSIE = """d=$PWD
 while [ "$d" != / ]; do
