@@ -5295,10 +5295,8 @@ class ProjectManager:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
                 await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
 
-            # A clone runs long before the end-of-run save records it as completed. The
-            # flag tells the next run that this attempt happened, so a failure in between
-            # does not make it clone again next to the database that is already there.
-            # It is on disk before provisioning starts, or it is lost with that failure.
+            # Committed before provisioning, so the flag survives a failure later in this
+            # run (features/kloonpoging.md).
             interrupted_clones: set[str] = set()
             started_clones: list[str] = []
             for deployment in project_data.get("deployments", []):

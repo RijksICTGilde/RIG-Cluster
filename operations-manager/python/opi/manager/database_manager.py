@@ -553,9 +553,7 @@ class DatabaseManager:
             db_password: Password for the owner
             project_data: Project configuration data (needed for remote-source clones)
             force_clone_override: Runtime override for force_clone (from API)
-            clone_interrupted: A previous run started this clone and did not record it as completed.
-                The existing target database then belongs to that attempt instead of triggering a
-                generational failover, and a target schema that is already there is a finished clone.
+            clone_interrupted: A previous run started this clone and did not record it as completed
 
         Returns:
             DatabaseStateResult with the final database, schema, and password.
@@ -807,9 +805,7 @@ class DatabaseManager:
                 # - force_clone=True: explicit user request
                 # - generation is None: database exists but no generation was ever recorded,
                 #   indicating a previous clone failed before recording its generation.
-                #   Not when that previous attempt is known (clone_interrupted): its
-                #   database is ours, and the cap below is only the fallback for when
-                #   writing that flag failed.
+                #   Not with clone_interrupted: that database belongs to the interrupted attempt.
                 new_generation = (generation or 0) + 1
 
                 # Find an available generation - previous failed attempts may have left
@@ -1813,8 +1809,7 @@ class DatabaseManager:
                 - username: Chisel auth username
                 - password: Chisel auth password (may be encrypted)
             project_data: Optional project data for password decryption context
-            clone_interrupted: A previous run started this clone and did not record it as completed;
-                a target schema that is already there is then a finished clone
+            clone_interrupted: A previous run started this clone and did not record it as completed
 
         Returns:
             Dictionary containing operation results with status and operations list
