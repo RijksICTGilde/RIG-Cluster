@@ -6,14 +6,25 @@ registries using the skopeo CLI, following the same singleton pattern as minio_m
 """
 
 import asyncio
+import contextlib
+import ipaddress
 import logging
+import os
 import re
+import socket
 import subprocess
+import tempfile
 import threading
+from typing import TYPE_CHECKING
 
 from opi.core.config import settings
+from opi.services.catalog.image_registries.naming import upstream_host
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag
+from opi.utils.secrets import RegistrySecret
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +44,47 @@ class SkopeoValidationError(Exception):
 # Regex for validating image names and tags
 _IMAGE_NAME_RE = re.compile(r"^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$")
 _TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
+
+#: Eén melding voor elke geweigerde bestemming, anders is de weigering zelf een orakel.
+REFUSED_DESTINATION_REASON = "het platform mag deze registry niet benaderen"
+
+
+@contextlib.contextmanager
+def _authfile(registry: str, username: str, password: str) -> Iterator[str]:
+    """Een authfile (0600, in een eigen tijdelijke map) zodat het wachtwoord niet in de argv staat."""
+    with tempfile.TemporaryDirectory(prefix="skopeo-auth-") as directory:
+        path = os.path.join(directory, "auth.json")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
+            handle.write(
+                RegistrySecret(registry_url=registry, username=username, password=password).to_dockerconfigjson()
+            )
+        yield path
+
+
+def _is_sandbox_registry(authority: str) -> bool:
+    """De platformregistry in de sandbox: die resolvet in de pod naar de ingress, een privaat adres."""
+    return (
+        settings.CLUSTER_MANAGER == "sandboxed-local"
+        and bool(settings.REGISTRY_URL)
+        and authority == upstream_host(settings.REGISTRY_URL)
+    )
+
+
+async def _destination_refused(repository: str) -> bool:
+    """Valt de host van ``repository`` in private of bijzondere adresruimte, of resolvet hij niet?
+
+    ``is_global`` en niet alleen ``is_private``: die laatste laat ``0.0.0.0`` (op Linux de
+    eigen pod) en ``100.64.0.0/10`` door.
+    """
+    authority = upstream_host(repository)
+    if _is_sandbox_registry(authority):
+        return False
+    host = authority.partition(":")[0]
+    try:
+        addresses = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except socket.gaierror, UnicodeError:
+        return True
+    return not addresses or any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses)
 
 
 class SkopeoConnector:
@@ -161,28 +213,18 @@ class SkopeoConnector:
         combined_tag = build_registry_tag(project_name, image_name, tag)
         return f"docker://{settings.REGISTRY_URL}/{settings.REGISTRY_ORG}:{combined_tag}"
 
-    def _build_command(self, tarball_path: str, destination: str) -> list[str]:
+    def _build_command(self, tarball_path: str, destination: str, authfile: str | None) -> list[str]:
         """Build the skopeo copy command."""
         cmd = ["skopeo", "copy"]
 
-        if self._registry_password and settings.REGISTRY_USERNAME:
-            cmd.extend(["--dest-creds", f"{settings.REGISTRY_USERNAME}:{self._registry_password}"])
+        if authfile:
+            cmd.extend(["--dest-authfile", authfile])
 
         if not settings.REGISTRY_VERIFY_TLS:
             cmd.append("--dest-tls-verify=false")
 
         cmd.extend([f"docker-archive:{tarball_path}", destination])
         return cmd
-
-    @staticmethod
-    def _mask_credentials(cmd: list[str]) -> list[str]:
-        """Return a copy of the command with credentials masked for logging."""
-        masked = list(cmd)
-        for i, arg in enumerate(masked):
-            if arg == "--dest-creds" and i + 1 < len(masked):
-                parts = masked[i + 1].split(":", 1)
-                masked[i + 1] = f"{parts[0]}:***" if len(parts) == 2 else "***"
-        return masked
 
     async def check_repository_access(
         self, repository: str, username: str, password: str, timeout_seconds: int = 20
@@ -197,18 +239,23 @@ class SkopeoConnector:
             logger.info("Skopeo CLI not available; registry credentials not verified")
             return True, ""
 
-        cmd = ["skopeo", "list-tags", "--creds", f"{username}:{password}", f"docker://{repository}"]
-        logger.info(f"Verifying registry access: {' '.join(self._mask_list_tags_credentials(cmd))}")
-        try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
-        except TimeoutError:
-            logger.warning(f"Registry access check timed out for {repository}")
-            return True, ""
-        except FileNotFoundError:
-            return True, ""
+        if await _destination_refused(repository):
+            logger.warning(f"Registry access check refused: {repository} is not a public destination")
+            return False, REFUSED_DESTINATION_REASON
+
+        with _authfile(upstream_host(repository), username, password) as authfile:
+            cmd = ["skopeo", "list-tags", "--authfile", authfile, f"docker://{repository}"]
+            logger.info(f"Verifying registry access: {' '.join(cmd)}")
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+            except TimeoutError:
+                logger.warning(f"Registry access check timed out for {repository}")
+                return True, ""
+            except FileNotFoundError:
+                return True, ""
 
         if process.returncode == 0:
             return True, ""
@@ -216,16 +263,6 @@ class SkopeoConnector:
         # tried, so strip anything that looks like a userinfo part.
         reason = stderr_bytes.decode(errors="replace").strip().splitlines()
         return False, self._mask_userinfo(reason[0]) if reason else "de registry gaf geen reden"
-
-    @staticmethod
-    def _mask_list_tags_credentials(cmd: list[str]) -> list[str]:
-        """A copy of the command with ``--creds`` masked, for logging."""
-        masked = list(cmd)
-        for index, argument in enumerate(masked):
-            if argument == "--creds" and index + 1 < len(masked):
-                user, _, _password = masked[index + 1].partition(":")
-                masked[index + 1] = f"{user}:***"
-        return masked
 
     @staticmethod
     def _mask_userinfo(text: str) -> str:
@@ -264,18 +301,23 @@ class SkopeoConnector:
         combined_tag = self.validate_push_target(project_name, image_name, tag)
 
         destination = self._build_destination(project_name, image_name, tag)
-        cmd = self._build_command(tarball_path, destination)
-
-        masked_cmd = self._mask_credentials(cmd)
-        logger.info(f"Pushing image: {' '.join(masked_cmd)}")
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        credentials = (
+            _authfile(settings.REGISTRY_URL, settings.REGISTRY_USERNAME, self._registry_password)
+            if self._registry_password and settings.REGISTRY_USERNAME
+            else contextlib.nullcontext(None)
         )
 
-        stdout_bytes, stderr_bytes = await process.communicate()
+        with credentials as authfile:
+            cmd = self._build_command(tarball_path, destination, authfile)
+            logger.info(f"Pushing image: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+
+            stdout_bytes, stderr_bytes = await process.communicate()
         stdout = stdout_bytes.decode() if stdout_bytes else ""
         stderr = stderr_bytes.decode() if stderr_bytes else ""
 
