@@ -61,7 +61,7 @@ reg_run() {
 }
 reg_state="$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
 if [ -n "$reg_state" ] && ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$REG_NAME" |
-    grep -x 'REGISTRY_STORAGE_DELETE_ENABLED=true' >/dev/null; then
+    grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'; then
     echo "[kind-registry] registry $REG_NAME staat geen deletes toe, opnieuw aanmaken met behoud van het volume"
     docker rename "$REG_NAME" "${REG_NAME}-oud"
     docker stop "${REG_NAME}-oud" >/dev/null
