@@ -183,6 +183,24 @@ async def test_without_the_flag_an_existing_database_still_fails_over(monkeypatc
     assert pg.clone_calls == [f"{TARGET_DB}_v1"]
 
 
+async def test_the_flag_is_on_disk_before_the_clone_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een run die tijdens de kloon sterft, ruimt niets op; de volgende run moet de poging dan al zien."""
+    store = FakeStore(_project())
+    pg = FakePostgres()
+    status_at_clone: list[dict[str, Any]] = []
+    clone_schema = pg.clone_schema
+
+    async def clone_and_note_the_status(**kwargs: Any) -> dict:
+        status_at_clone.append(copy.deepcopy(_status(store.committed)))
+        return await clone_schema(**kwargs)
+
+    pg.clone_schema = clone_and_note_the_status  # type: ignore[method-assign]
+
+    assert await _manager(monkeypatch, store, pg).process_project() is True
+
+    assert status_at_clone == [{"in-progress": True}]
+
+
 async def test_the_final_save_compares_against_the_state_after_the_flag_save(monkeypatch: pytest.MonkeyPatch) -> None:
     """De save halverwege verzet de basis; de save aan het eind moet tegen precies die staat vergelijken."""
     store = FakeStore(_project())
@@ -246,13 +264,21 @@ async def test_outside_a_run_the_flag_is_not_written(monkeypatch: pytest.MonkeyP
     assert store.saves == []
 
 
-async def test_an_interrupted_run_does_not_save_the_flag_again(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("target_schemas", "clones"),
+    [({"public", TARGET_DB}, []), ({"public"}, [TARGET_DB])],
+    ids=["kloon-af", "schema-weg"],
+)
+async def test_an_interrupted_run_does_not_save_the_flag_again(
+    monkeypatch: pytest.MonkeyPatch, target_schemas: set[str], clones: list[str]
+) -> None:
     store = FakeStore(_project(**{"in-progress": True}))
-    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: target_schemas})
 
     assert await _manager(monkeypatch, store, pg).process_project() is True
 
-    assert len(store.saves) == 1
+    assert pg.clone_calls == clones
+    assert len(store.saves) == 1, "alleen de save aan het eind, de vlag stond al"
     assert store.saves[0]["base"] == _project(**{"in-progress": True})
 
 
@@ -410,6 +436,18 @@ async def test_a_failed_clone_into_a_fresh_database_still_drops_the_database() -
     assert TARGET_DB not in pg.schemas
 
 
+async def test_a_failed_flag_save_drops_the_fresh_database() -> None:
+    pg = FakePostgres()
+    manager, pm = _db_manager(pg)
+    pm.mark_clone_started.side_effect = RuntimeError("git weg")
+
+    with pytest.raises(RuntimeError, match="git weg"):
+        await _ensure(manager, interrupted=False)
+
+    assert pg.clone_calls == []
+    assert TARGET_DB not in pg.schemas, "een verse database zonder vlag telt later als zombie"
+
+
 # --- Remote source ------------------------------------------------------------
 
 
@@ -453,11 +491,26 @@ async def test_an_interrupted_remote_clone_with_its_schema_is_not_cloned_again()
 async def test_a_remote_clone_without_the_flag_still_clones() -> None:
     pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
     manager = _remote_manager(pg)
+    clones_at_flag: list[list[str]] = []
+    manager.project_manager.mark_clone_started.side_effect = lambda _: clones_at_flag.append(list(pg.clone_calls))
 
     await _remote(manager, interrupted=False)
 
     assert pg.clone_calls == [TARGET_DB]
     manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
+    assert clones_at_flag == [[]], "de vlag moet op schijf staan voordat de kloon begint"
+
+
+async def test_a_failed_remote_flag_save_is_reported_as_a_failed_clone() -> None:
+    pg = FakePostgres({TARGET_DB: {"public"}})
+    manager = _remote_manager(pg)
+    manager.project_manager.mark_clone_started.side_effect = RuntimeError("git weg")
+
+    result = await _remote(manager, interrupted=False)
+
+    assert result["success"] is False
+    assert any("git weg" in error for error in result["errors"])
+    assert pg.clone_calls == []
 
 
 async def test_a_failed_remote_clone_leaves_no_schema_behind() -> None:
