@@ -16,6 +16,11 @@ from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
+from opi.services.catalog.postgresql_database.connection_limit import (
+    CONNECTION_LIMIT,
+    CONNECTION_LIMIT_STEPS,
+    project_connection_limit,
+)
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -459,6 +464,38 @@ class StorageSizeOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
         return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
+
+
+class ConnectionLimitOptionsProvider:
+    """The connection-limit steps, plus the stored value when it is not one of them.
+    The empty choice stores nothing."""
+
+    options_source: ClassVar[OptionsSource | None] = None
+
+    def __init__(self, current_value: str | None = None, yaml_data: dict[str, Any] | None = None) -> None:
+        self.current_value = current_value
+        self.yaml_data = yaml_data or {}
+
+    def empty_label(self) -> str:
+        return f"Standaard van het platform ({CONNECTION_LIMIT.default})"
+
+    def get_options(self) -> list[dict[str, Any]]:
+        steps = list(CONNECTION_LIMIT_STEPS)
+        custom = int(self.current_value) if self.current_value and self.current_value.isdigit() else None
+        if custom is not None and custom not in steps:
+            steps = sorted([*steps, custom])
+        options = [{"value": "", "label": self.empty_label()}]
+        for step in steps:
+            label = str(step) if step in CONNECTION_LIMIT_STEPS else f"{step} (eigen waarde)"
+            options.append({"value": str(step), "label": label})
+        return options
+
+
+class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
+    """The same list on a deployment, where the empty choice follows the project."""
+
+    def empty_label(self) -> str:
+        return f"Volg het project ({project_connection_limit(self.yaml_data)})"
 
 
 class KeycloakTemplateOptionsProvider:
@@ -2036,6 +2073,8 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
+    "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
+    "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,

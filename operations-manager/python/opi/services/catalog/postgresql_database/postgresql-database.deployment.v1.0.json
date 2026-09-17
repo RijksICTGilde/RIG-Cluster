@@ -88,6 +88,19 @@
   "additionalProperties": false,
   "description": "Clone state for a PostgreSQL database, carried on the deployment layer.\n\nThe shape is shared with ``minio-storage`` (see ``catalog/shared/revisions.py``);\nthis service only decides that it uses it. The generation lives in the *database\nname*, not the schema name, which is exactly why extra schemas (RC-17) can share a\ndatabase without disturbing generations, clones or backups.",
   "properties": {
+    "connection-limit": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Maximum simultaneous connections per database role of this deployment (the _ro role gets the same value). Absent means the project's value. Between 1 and 500, platform default 20.",
+      "title": "Connection-Limit"
+    },
     "generation": {
       "anyOf": [
         {

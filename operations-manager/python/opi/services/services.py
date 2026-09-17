@@ -70,6 +70,40 @@ class DeploymentAction:
 ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
 
 
+def deployment_index(project_data: dict[str, Any], deployment_name: str) -> int | None:
+    deployments = project_data.get("deployments") or []
+    return next(
+        (i for i, d in enumerate(deployments) if isinstance(d, dict) and d.get("name") == deployment_name),
+        None,
+    )
+
+
+def deployment_modal_action(
+    project_data: dict[str, Any],
+    deployment_name: str,
+    *,
+    service: ServiceType,
+    modal_prefix: str,
+    label: str,
+    icon: str,
+) -> DeploymentAction | None:
+    """De knop die ``modal-wizard/<modal_prefix><index>`` in de gedeelde modal laadt, of
+    None als het project ``service`` niet gebruikt of de deployment niet kent."""
+    names = [service_entry_name(entry) for entry in project_data.get("services") or []]
+    if service.value not in names:
+        return None
+    index = deployment_index(project_data, deployment_name)
+    if index is None:
+        return None
+    return DeploymentAction(
+        label=label,
+        icon=icon,
+        kind="secondary",
+        modal_endpoint=f"/projects/{project_data.get('name', '')}/modal-wizard/{modal_prefix}{index}",
+        modal_title=f"{label} - {deployment_name}",
+    )
+
+
 def service_entry_name(entry: Any) -> str | None:
     """Return the service name from a ``services``-list entry, format-agnostic.
 

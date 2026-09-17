@@ -983,9 +983,9 @@ class Service(ABC):
         wizard field all read this, instead of a ``le=`` in the model, a number in a
         connector and a dropdown each carrying their own copy.
 
-        The default is no settings at all, which is what every service in the catalog
-        answers today and is exactly the behaviour it had before this hook existed:
-        nothing declared means nothing extra is checked and nothing extra is settable.
+        The default is no settings at all, which is exactly the behaviour a service had
+        before this hook existed: nothing declared means nothing extra is checked and
+        nothing extra is settable.
         See ``opi/services/catalog/config_settings.py`` for the three kinds of bound.
         """
         return ()
