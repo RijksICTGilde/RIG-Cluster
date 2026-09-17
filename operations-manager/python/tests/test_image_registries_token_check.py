@@ -9,7 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.skopeo import SkopeoConnector
+from opi.connectors.skopeo import UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
 from opi.utils.age import encrypt_age_content_sync
@@ -81,6 +81,7 @@ class TestDeToets:
         ):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         assert exc.value.field_path == "services/image-registries/config/registries[0]/password"
+        assert UNREADABLE_REASON in str(exc.value)
         assert "leesrecht op packages" in str(exc.value)
         assert "reqPackageAccess" not in str(exc.value)
 
