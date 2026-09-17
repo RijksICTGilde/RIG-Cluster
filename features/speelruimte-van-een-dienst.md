@@ -167,15 +167,14 @@ zo'n blok: op zijn grenzen (`_check_declared_settings`, naast het pydantic-model
 op stond) en op zijn wijziging. Niet het een zonder het ander -- dan staat dezelfde
 scheefte er weer, alleen omgekeerd.
 
-Op zo'n eigenschapsblok **noemt de weigering de waarde niet**, niet bij de grenzen en niet
-bij de wijziging, om dezelfde reden waarom de modelfout ernaast dat ook niet doet: `user-env-vars` is de eigen omgeving van een component
+Op zo'n eigenschapsblok **noemt de weigering de waarde niet**, om dezelfde reden waarom de
+modelfout ernaast dat ook niet doet: `user-env-vars` is de eigen omgeving van een component
 en accepteert een platte `dict[str, str]`, dus een waarde op een gedeclareerd pad kan daar
 een geplakt geheim zijn -- en die zin gaat zowel het centrale log in als het antwoord aan de
 aanroeper. Bij een wijziging geldt dat ook voor de VORIGE waarde, die geen toets opnieuw op
 zijn vorm beoordeelt. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten
-zijn speelruimte", plus de speelruimte), door een helper die beide toetsen delen
-(`_setting_refusal`); of een blok een eigenschapsblok is, leest die van het blok zelf
-(`owned_property`). Voor een blok in een `services:`-lijst blijft de waarde
+zijn speelruimte", plus de speelruimte), door `_setting_refusal`, die beide toetsen delen en
+die `owned_property` van het blok leest. Voor een blok in een `services:`-lijst blijft de waarde
 er wel in staan: daar is het de grens zelf die wordt teruggeciteerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +

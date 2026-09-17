@@ -1040,8 +1040,6 @@ def _met_eigenschap(eigenschap: str, waarde: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("oud", "nieuw", "geheim"),
     [
-        # De nieuwe versie is geldig; de vorige draagt de ongeldige waarde. Die wordt nergens
-        # opnieuw op zijn vorm beoordeeld, dus alleen de wijzigingstoets ziet hem.
         pytest.param("hunter2", "5Gi", "hunter2", id="vorige-versie-ongeldig"),
         pytest.param("8Gi", "2Gi", "8Gi", id="verlaging"),
     ],

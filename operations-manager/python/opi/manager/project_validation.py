@@ -163,16 +163,10 @@ def _check_declared_settings(provider: Service, block: ServiceConfigBlock, proje
 
 
 def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
-    """The reason for a refused setting, as the value check and the change check both give it.
+    """The reason for a refused setting, shared by the value check and the change check.
 
-    On an owned-property block (``user-env-vars``, ``aliases``) the value is not repeated,
-    for the reason ``_validate_owned_property`` next door already acts on: the property
-    holds the component's own environment, and ``UserEnvVarsConfig`` accepts a plain
-    ``dict[str, str]``, so a value read at a declared path there can be a pasted secret,
-    and this message is both logged at WARNING and returned to the caller. For a change
-    that holds for the PREVIOUS value too, which no check judges on its form again. The
-    refusal is then rendered from the DECLARATION (the field and its room). For a block in
-    a ``services:`` list the value is named, as it is the bound itself being quoted back.
+    On an owned-property block it names the declaration instead of the value, old or new:
+    that property can hold a pasted secret (see features/speelruimte-van-een-dienst.md).
     """
     # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
     # names none and reads the same either way.
