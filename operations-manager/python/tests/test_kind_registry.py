@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
@@ -46,6 +47,7 @@ case "$1" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
         echo "PATH=/usr/bin"
+        for _ in $(seq "${STUB_REG_ENV_TAIL:-0}"); do echo "OPVULLING=$RANDOM$RANDOM$RANDOM"; done
         ;;
       *State.Running*)
         [ -n "${STUB_REG_STATE:-}" ] || exit 1
@@ -240,8 +242,11 @@ class TestSetupScript:
         ]
         assert "oude registry staat er weer" in run.stderr
 
-    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path) -> None:
-        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
+    @pytest.mark.parametrize("state", ["true", "false"])
+    @pytest.mark.parametrize("tail", ["0", "20000"], ids=["kort", "langer-dan-pipebuffer"])
+    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path, state: str, tail: str) -> None:
+        """De lange env breekt zeker een grep die bij de treffer stopt."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE=state, STUB_REG_ENV_TAIL=tail)
 
         assert "docker rename" not in run.log
         assert "docker rm" not in run.log
@@ -434,13 +439,12 @@ def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_e
         stub = bindir / name
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
-    extra_path = f":{Path(shutil.which('task') or '').parent}" if command else ""
     proc = subprocess.run(
         command or ["bash", str(PRUNE_SCRIPT), *args],
         capture_output=True,
         text=True,
         env={
-            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin{extra_path}",
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
             "HOME": str(tmp_path),
             "STUB_LOG": str(tmp_path / "calls.log"),
             **env_extra,
@@ -486,6 +490,13 @@ class TestPruneScriptRefusals:
         assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
+
+    def test_env_after_the_delete_setting_does_not_skip_the_prune(self, tmp_path: Path) -> None:
+        """Meer uitvoer dan een pipebuffer na de treffer: zo breekt een grep die vroeg stopt zeker."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV_TAIL="20000")
+
+        assert "staat geen deletes toe" not in run.stderr
+        assert "garbage-collect" in run.log
 
     def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
         run = _prune(tmp_path, STUB_REG_STATE="false")
@@ -605,9 +616,7 @@ class TestTaskfile:
     @pytest.mark.usefixtures("bash_available")
     def test_the_deploy_step_ends_green_on_a_server_without_a_registry(self, tmp_path: Path) -> None:
         """Zo staat de gedeelde server: rig-sandbox draait, kind-registry niet."""
-        if shutil.which("task") is None:
-            pytest.skip("task is niet geinstalleerd")
-        run = _prune(tmp_path, command=["task", "--taskfile", str(TASKFILE), PRUNE_TASK])
+        run = _prune(tmp_path, command=[echt_programma("task"), "--taskfile", str(TASKFILE), PRUNE_TASK])
 
         assert run.returncode == 0, run.stderr
         assert "draait niet" in run.stderr
