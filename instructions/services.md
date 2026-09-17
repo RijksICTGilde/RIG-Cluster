@@ -968,8 +968,10 @@ Two shortcuts for the common cases:
   switch you on, so exactly one provider contributes per manager.
 
 `SecretFileSpec` declares *what* secret is needed; `ProjectManager._write_secret_file`
-(`project_manager.py:1159`) does the writing, alias resolution and prune bookkeeping. Keep
-that writer service-agnostic.
+(`project_manager.py:1584`) does the writing, alias resolution and prune bookkeeping. A
+random value that must survive a deploy sets `keep_existing_values=True`: the writer then
+takes it from the previous ciphertext (auth-wall's cookie secret, see
+`features/sops-skip-unchanged-reencryption.md`). Keep that writer service-agnostic.
 
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
