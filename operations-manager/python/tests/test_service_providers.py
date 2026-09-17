@@ -367,7 +367,6 @@ def test_auth_wall_contributes_sidecar_and_port_override():
         "banner": "Restricted",
     }
     assert resolved == [("mydep", "keycloak")]
-    # Een nieuwe cookie-waarde per run logde na elke deploy iedereen uit.
     [cookie_spec] = contribution.secret_files
     assert cookie_spec.secret_name == "mydep-web-oauth2-cookie"
     assert cookie_spec.keep_existing_values is True
