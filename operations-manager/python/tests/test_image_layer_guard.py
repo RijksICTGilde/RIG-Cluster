@@ -242,7 +242,9 @@ class TestPinnedTools:
         assert not [line for line in lines if "dl.min.io" in line]
         assert "FROM quay.io/minio/mc:${MC_VERSION} AS mc" in lines
         assert "COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc" in lines
-        assert [line for line in lines if re.fullmatch(r"ARG MC_VERSION=RELEASE\.\S+", line)]
+        # An ARG used in FROM only has a value when it is declared before the first FROM.
+        first_from = next(i for i, line in enumerate(lines) if line.upper().startswith("FROM "))
+        assert [line for line in lines[:first_from] if re.fullmatch(r"ARG MC_VERSION=RELEASE\.\S+", line)]
 
 
 class TestAptLayers:
