@@ -458,9 +458,7 @@ async def test_a_finished_clone_is_recorded_like_a_fresh_one() -> None:
 
 
 async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking() -> None:
-    """Deel van de doelschema's aanwezig: verder klonen in die database wordt geweigerd
-    (postgres.py:1842) en een doelschema droppen is niet veilig. Dan liever een generatie erbij
-    dan een deployment die elke run op dezelfde weigering stilstaat."""
+    """Deel van de doelschema's aanwezig: dan houdt de failover, zie features/kloonpoging.md."""
     pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
     manager, pm = _db_manager(pg)
 
@@ -484,8 +482,7 @@ async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking() -> None:
 async def test_an_interrupted_clone_drops_a_leftover_source_schema_and_clones_again(
     leftovers: set[str], extra: list[dict] | None
 ) -> None:
-    """Een harde stop tijdens de kloon laat het BRONschema liggen, want hernoemen is de laatste
-    stap (postgres.py:2046). Zonder opruimen weigert elke volgende kloon (postgres.py:1809)."""
+    """Een achtergebleven BRONschema weigert elke volgende kloon (postgres.py:1809)."""
     pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", *leftovers}})
     manager, pm = _db_manager(pg)
 

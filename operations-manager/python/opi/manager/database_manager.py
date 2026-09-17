@@ -780,10 +780,8 @@ class DatabaseManager:
             # Track the final generation used for this clone
             final_generation = generation
 
-            # Wat een onderbroken poging achterliet bepaalt wat deze run kan: staan alle
-            # doelschema's er, dan is de kloon af; staat er geen enkele, dan kan hij opnieuw in
-            # dezelfde database. Daartussen weigert de kloon het bestaande doelschema
-            # (postgres.py:1842) en is droppen niet veilig, dus houdt die staat de failover.
+            # De halve staat (een deel van de doelschema's) houdt de failover: verder klonen
+            # weigert op het bestaande doelschema (postgres.py:1842) en droppen is niet veilig.
             clone_finished = False
             resume_in_place = False
             leftover_source_schemas: set[str] = set()
@@ -793,10 +791,9 @@ class DatabaseManager:
                 clone_finished = target_schemas <= schemas_present
                 resume_in_place = target_schemas.isdisjoint(schemas_present)
                 if resume_in_place:
-                    # pg_dump hernoemt pas aan het eind (postgres.py:2046), dus een harde stop
-                    # laat het bronschema liggen en dat weigert de volgende kloon
-                    # (postgres.py:1809). Zo'n naam hoort bij een andere deployment en kan hier
-                    # nooit live data zijn.
+                    # Een harde stop laat het bronschema liggen (pg_dump hernoemt pas aan het
+                    # eind, postgres.py:2046) en dat weigert de volgende kloon (:1809). Droppen
+                    # mag: zo'n naam hoort bij de brondeployment, hier nooit live data.
                     source_names = {source_schema, *(source for source, _ in extra_clone_pairs)}
                     leftover_source_schemas = (source_names - target_schemas) & schemas_present
 
@@ -1003,10 +1000,7 @@ class DatabaseManager:
         resource_name: str,
         source: str,
     ) -> None:
-        """Leg de kloon vast in het projectbestand en meld hem aan de lopende run.
-
-        Een kloon die een vorige run al afmaakte meldt zich zo precies als een verse.
-        """
+        """Een kloon die een vorige run al afmaakte meldt zich zo precies als een verse."""
         if project_data:
             self.project_manager._revision_manager.record_clone(
                 project_data=project_data,
