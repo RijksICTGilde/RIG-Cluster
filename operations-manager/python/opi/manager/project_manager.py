@@ -1606,6 +1606,10 @@ class ProjectManager:
             self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
 
         secret_data = dict(spec.secret_pairs)
+        manifest_name = f"{spec.secret_name}-secret"
+        if spec.keep_existing_values:
+            existing = _existing_secret_pairs(os.path.join(output_dir, f"{manifest_name}.sops.yaml"), private_key)
+            secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
         if spec.resolve_aliases and spec.secret_type:
             aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
             if aliases:
@@ -1614,10 +1618,6 @@ class ProjectManager:
                 secret_data.update(resolved_aliases)
                 logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
 
-        manifest_name = f"{spec.secret_name}-secret"
-        if spec.keep_existing_values:
-            existing = _existing_secret_pairs(os.path.join(output_dir, f"{manifest_name}.sops.yaml"), private_key)
-            secret_data.update({key: existing[key] for key in secret_data if key in existing})
         secret_path = self._manifest_generator.create_manifest_file(
             template_path=template_path,
             values={
