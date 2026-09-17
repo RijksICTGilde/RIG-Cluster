@@ -155,8 +155,10 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
+    generate_deployment_manifest_path,
     generate_external_hostname,
     generate_helm_values_filename,
+    generate_infrastructure_manifest_path,
     generate_ingress_name_from_path,
     generate_issuer_manifest_name,
     generate_issuer_name,
@@ -2499,13 +2501,10 @@ class ProjectManager:
             # Create infrastructure resources directory in deployment repo
             # Path: {cluster}/{project_name}/infrastructure/
             # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
-            repo_path = infra_repo_config.get("path", "")
-            if repo_path:
-                infra_resources_dir = os.path.join(
-                    deployment_working_dir, repo_path, cluster_name, project_name, "infrastructure"
-                )
-            else:
-                infra_resources_dir = os.path.join(deployment_working_dir, cluster_name, project_name, "infrastructure")
+            infra_resources_dir = os.path.join(
+                deployment_working_dir,
+                generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
+            )
             os.makedirs(infra_resources_dir, exist_ok=True)
 
             # Write manifests - secret as .to-sops.yaml for encryption
@@ -4047,11 +4046,8 @@ class ProjectManager:
         deployment_name = deployment["name"]
         cluster_name = deployment["cluster"]
 
-        repo_path = await self.get_repository_path(deployment["repository"])
-        if repo_path:
-            deployment_path = f"{repo_path}/{cluster_name}/{project_name}/{deployment_name}"
-        else:
-            deployment_path = f"{cluster_name}/{project_name}/{deployment_name}"
+        repo_path = await self.get_repository_path(deployment["repository"]) or ""
+        deployment_path = generate_deployment_manifest_path(cluster_name, project_name, deployment_name, repo_path)
 
         prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
         target_path = os.path.join(await git_connector.get_working_dir(), deployment_path)
