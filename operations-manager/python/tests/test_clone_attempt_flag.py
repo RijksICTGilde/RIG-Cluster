@@ -53,6 +53,7 @@ class FakePostgres:
     def __init__(self, schemas: dict[str, set[str]] | None = None) -> None:
         self.schemas: dict[str, set[str]] = schemas if schemas is not None else {"demo_production": {"public"}}
         self.clone_calls: list[str] = []
+        self.init_sql_calls: list[tuple[str, list[str]]] = []
         self.clone_error: Exception | None = None
         # Het bronschema waarvan de restore faalt; None is het eerste (het doelschema).
         self.clone_error_at: str | None = None
@@ -115,14 +116,21 @@ class FakePostgres:
         **_: Any,
     ) -> dict:
         self.clone_calls.append(target_database)
-        # Zoals _execute_pgdump_clone: een bestaand doelschema wordt zonder force_clone geweigerd.
+        # Zoals _execute_pgdump_clone: een bestaand doelschema wordt zonder force_clone geweigerd
+        # (postgres.py:1842), en een bestaand BRONschema altijd (postgres.py:1359 en :1809).
         if target_schema in self.schemas[target_database] and not force_clone:
             raise RuntimeError(f"Target schema '{target_schema}' already exists in database '{target_database}'")
+        if source_schema != target_schema and source_schema in self.schemas[target_database]:
+            raise RuntimeError(f"Source schema '{source_schema}' already exists in database '{target_database}'")
         self.schemas[target_database].add(source_schema)
         if self.clone_error is not None:
             raise self.clone_error
         self.schemas[target_database].discard(source_schema)
         self.schemas[target_database].add(target_schema)
+        return {"status": "success"}
+
+    async def execute_init_sql(self, database_name: str, sql_statements: list[str]) -> dict[str, str]:
+        self.init_sql_calls.append((database_name, list(sql_statements)))
         return {"status": "success"}
 
     async def set_role_search_path(self, **_: Any) -> None:
@@ -387,10 +395,18 @@ async def _ensure(
     force: bool = False,
     extra: list[dict] | None = None,
     generation: int | None = None,
+    post_init: list[str] | None = None,
 ) -> Any:
     project = _project()
+    config: dict[str, Any] = {}
     if extra:
-        project["services"] = [{"postgresql-database": {"config": {"schemas": extra}}}]
+        config["schemas"] = extra
+    if post_init:
+        # postInitSQL hoort bij een eigen cluster (scope: project), niet bij een gedeelde database.
+        config["scope"] = "project"
+        config["postInitSQL"] = post_init
+    if config:
+        project["services"] = [{"postgresql-database": {"config": config}}]
     with patch.object(manager, "_validate_clone_source", new_callable=AsyncMock):
         return await manager._ensure_database_state(
             project_name="demo",
@@ -441,16 +457,55 @@ async def test_a_finished_clone_is_recorded_like_a_fresh_one() -> None:
     pm.report_clone_performed.assert_called_once_with("staging", "postgresql-database", None)
 
 
-async def test_a_clone_missing_an_extra_schema_is_not_finished() -> None:
-    """Een ontbrekend extra doelschema betekent geen afgeronde kloon, dus een nieuwe poging."""
+async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking() -> None:
+    """Deel van de doelschema's aanwezig: verder klonen in die database wordt geweigerd
+    (postgres.py:1842) en een doelschema droppen is niet veilig. Dan liever een generatie erbij
+    dan een deployment die elke run op dezelfde weigering stilstaat."""
     pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
     manager, pm = _db_manager(pg)
 
-    with pytest.raises(RuntimeError, match="already exists"):
-        await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}])
+    result = await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}])
 
-    assert pg.clone_calls == [TARGET_DB], "de kloon is geprobeerd, en loopt luid op het bestaande doelschema stuk"
+    assert result.database == f"{TARGET_DB}_v1"
+    assert pg.clone_calls == [f"{TARGET_DB}_v1"]
+    pm.report_clone_performed.assert_called_once_with("staging", "postgresql-database", 1)
     pm.mark_clone_started.assert_not_awaited()
+    assert pg.schemas[TARGET_DB] == {"public", TARGET_DB}, "wat er stond blijft staan"
+
+
+@pytest.mark.parametrize(
+    ("leftovers", "extra"),
+    [
+        ({"demo_production"}, None),
+        ({"demo_production", "demo_production_audit"}, [{"postfix": "audit"}]),
+    ],
+    ids=["bronschema", "ook-extra-bronschema"],
+)
+async def test_an_interrupted_clone_drops_a_leftover_source_schema_and_clones_again(
+    leftovers: set[str], extra: list[dict] | None
+) -> None:
+    """Een harde stop tijdens de kloon laat het BRONschema liggen, want hernoemen is de laatste
+    stap (postgres.py:2046). Zonder opruimen weigert elke volgende kloon (postgres.py:1809)."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", *leftovers}})
+    manager, pm = _db_manager(pg)
+
+    result = await _ensure(manager, interrupted=True, extra=extra)
+
+    assert result.database == TARGET_DB, "geen nieuwe generatie"
+    assert pg.clone_calls == [TARGET_DB]
+    assert leftovers.isdisjoint(pg.schemas[TARGET_DB]), "de bronnamen zijn opgeruimd"
+    pm.mark_clone_started.assert_awaited_once_with("staging")
+
+
+async def test_a_finished_clone_still_gets_its_extensions() -> None:
+    """De overslaande weg loopt na postInitSQL, anders wachten nieuwe extensies een run."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+    manager, _ = _db_manager(pg)
+
+    await _ensure(manager, interrupted=True, post_init=["CREATE EXTENSION IF NOT EXISTS postgis"])
+
+    assert pg.clone_calls == []
+    assert pg.init_sql_calls == [(TARGET_DB, ["CREATE EXTENSION IF NOT EXISTS postgis"])]
 
 
 async def test_a_failed_clone_into_an_existing_database_leaves_no_schema_behind() -> None:
@@ -681,6 +736,18 @@ async def test_an_interrupted_remote_clone_without_its_schema_clones_again() -> 
 
     assert result["success"] is True
     assert pg.clone_calls == [TARGET_DB]
+
+
+async def test_an_interrupted_remote_clone_drops_a_leftover_source_schema() -> None:
+    """Ook hier weigert de kloon een achtergebleven bronschema (postgres.py:1359 en :1809)."""
+    pg = FakePostgres({TARGET_DB: {"public", "bron"}})
+    manager = _remote_manager(pg)
+
+    result = await _remote(manager, interrupted=True)
+
+    assert result["success"] is True
+    assert pg.clone_calls == [TARGET_DB]
+    assert pg.schemas[TARGET_DB] == {"public", TARGET_DB}
 
 
 async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrupted_attempt() -> None:
