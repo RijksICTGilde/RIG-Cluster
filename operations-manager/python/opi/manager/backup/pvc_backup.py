@@ -698,8 +698,8 @@ class PVCBackupManager(BaseBackupManager):
             target_pvc_name: Name for restored PVC (defaults to {pvc_name}-restored-{timestamp})
             storage_size: Size for new PVC (required if creating new)
             storage_class: Storage class for new PVC (optional)
-            project_name: Project that owns the namespace
             overwrite: If True, allows restoring to existing PVC
+            project_name: Project that owns the namespace
 
         Returns:
             RestoreResult with operation details

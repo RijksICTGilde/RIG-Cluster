@@ -576,10 +576,7 @@ class BaseBackupManager:
 
     @staticmethod
     def _pod_service_account_name(project_name: str | None) -> str:
-        """De serviceaccount van het project, waar een backup- of restorepod op draait.
-
-        Zonder project bleef het veld leeg en draaide de pod stil op ``default``.
-        """
+        """Weigert zonder project, want een leeg ``serviceAccountName`` is stil ``default``."""
         if not project_name:
             raise ValueError("A backup or restore pod needs a project to run under its service account")
         return generate_project_service_account_name(project_name)
