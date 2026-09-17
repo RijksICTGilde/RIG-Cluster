@@ -123,13 +123,13 @@ waar een dienst per mount iets bijhoudt -- zodat een verkleining niet met een an
 component, of een andere mount, wordt vergeleken.
 
 Beide versies worden **hetzelfde gelezen**, en dat begint bij het opzoeken van de vorige:
-een blok wordt op zijn SLEUTEL (plek, dienst, en of het een eigenschap is) gepakt, niet op zijn waarde. Een dienst
-die er kaal in stond -- geselecteerd, zonder configblok -- is daarmee een versie die op de
-standaard staat, en geen afwezigheid. Daarna leest elke kant hetzelfde: de waarde als het
-veld er staat, anders de standaard van de dienst. Een veld weglaten is dus dezelfde
-verlaging als het veld expliciet verlagen, en dat is precies de bedoeling -- anders was de
-regel te omzeilen door het veld (of het hele configblok) gewoon weg te laten, en een leeg
-wizardveld doet dat.
+een blok wordt op zijn SLEUTEL (plek, dienst, en of het een eigenschap is) gepakt, niet
+op zijn waarde. Een dienst die er kaal in stond -- geselecteerd, zonder configblok -- is
+daarmee een versie die op de standaard staat, en geen afwezigheid. Daarna leest elke kant
+hetzelfde: de waarde als het veld er staat, anders de standaard van de dienst. Een veld
+weglaten is dus dezelfde verlaging als het veld expliciet verlagen, en dat is precies de
+bedoeling -- anders was de regel te omzeilen door het veld (of het hele configblok)
+gewoon weg te laten, en een leeg wizardveld doet dat.
 
 De regel geldt in beide richtingen: het maakt niet uit aan WELKE kant het veld of het blok
 ontbreekt. Deze drie wegen leveren dus dezelfde weigering op (en spiegelen ze de vorige
