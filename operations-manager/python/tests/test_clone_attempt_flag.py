@@ -54,6 +54,8 @@ class FakePostgres:
         self.schemas: dict[str, set[str]] = schemas if schemas is not None else {"demo_production": {"public"}}
         self.clone_calls: list[str] = []
         self.clone_error: Exception | None = None
+        # Het bronschema waarvan de restore faalt; None is het eerste (het doelschema).
+        self.clone_error_at: str | None = None
 
     async def create_database(self, database_name: str, owner: str) -> dict[str, str]:
         if database_name in self.schemas:
@@ -77,14 +79,30 @@ class FakePostgres:
         self.schemas[database].discard(schema_name)
         return {"status": "deleted"}
 
-    async def clone_schema(self, *, source_schema: str, target_database: str, target_schema: str, **_: Any) -> dict:
+    async def clone_schema(
+        self,
+        *,
+        source_schema: str,
+        target_database: str,
+        target_schema: str,
+        additional_schemas: list[tuple[str, str]] | None = None,
+        **_: Any,
+    ) -> dict:
         self.clone_calls.append(target_database)
-        # Zoals _execute_pgdump_clone: eerst onder de bronnaam, pas aan het eind hernoemd.
-        self.schemas.setdefault(target_database, {"public"}).add(source_schema)
-        if self.clone_error is not None:
-            raise self.clone_error
-        self.schemas[target_database].discard(source_schema)
-        self.schemas[target_database].add(target_schema)
+        # Zoals _execute_pgdump_clone: elk schema komt onder de bronnaam binnen en wordt
+        # pas daarna hernoemd, de extra schema's door dezelfde pijplijn (postgres.py:1486).
+        for source, target in [(source_schema, target_schema), *(additional_schemas or [])]:
+            present = self.schemas.setdefault(target_database, {"public"})
+            # Een bestaand schema wordt geweigerd, onder de bronnaam (postgres.py:1809,
+            # 'public' uitgezonderd) en onder de doelnaam (:1842). Zonder die weigering
+            # slaagt hier een kloon die in werkelijkheid elke run stukloopt.
+            if (source in present and source != "public") or (source != target and target in present):
+                raise RuntimeError(f"Schema for '{source}' -> '{target}' already exists in '{target_database}'")
+            present.add(source)
+            if self.clone_error is not None and self.clone_error_at in (None, source):
+                raise self.clone_error
+            self.schemas[target_database].discard(source)
+            self.schemas[target_database].add(target)
         return {"status": "success"}
 
     async def clone_schema_from_external(
@@ -424,12 +442,15 @@ async def test_a_finished_clone_is_recorded_like_a_fresh_one() -> None:
 
 
 async def test_a_clone_missing_an_extra_schema_is_not_finished() -> None:
+    """Een ontbrekend extra doelschema betekent geen afgeronde kloon, dus een nieuwe poging."""
     pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
     manager, pm = _db_manager(pg)
 
-    await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}])
+    with pytest.raises(RuntimeError, match="already exists"):
+        await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}])
 
-    assert pg.clone_calls == [TARGET_DB]
+    assert pg.clone_calls == [TARGET_DB], "de kloon is geprobeerd, en loopt luid op het bestaande doelschema stuk"
+    pm.mark_clone_started.assert_not_awaited()
 
 
 async def test_a_failed_clone_into_an_existing_database_leaves_no_schema_behind() -> None:
@@ -454,9 +475,27 @@ async def test_no_flag_above_a_target_schema_from_before_the_clone_from(present:
     manager, pm = _db_manager(pg)
 
     # Een vastgelegde generatie, want anders neemt een bestaande database eerst de failover.
-    await _ensure(manager, interrupted=False, generation=0, extra=[{"postfix": "audit"}])
+    with pytest.raises(RuntimeError, match="already exists"):
+        await _ensure(manager, interrupted=False, generation=0, extra=[{"postfix": "audit"}])
 
     pm.mark_clone_started.assert_not_awaited()
+    assert pg.schemas[TARGET_DB] == {"public", present}, (
+        "zonder vlag faalt de run luid en laat niets van zichzelf achter"
+    )
+
+
+async def test_a_failed_clone_leaves_neither_name_of_an_extra_schema_behind() -> None:
+    """Een achtergebleven extra-schemanaam laat elke volgende kloon stuklopen (postgres.py:1360 en :1842)."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", "eigen"}})
+    pg.clone_error = RuntimeError("verbinding weg")
+    # Het eerste extra paar is dan hernoemd en het tweede staat nog onder zijn bronnaam.
+    pg.clone_error_at = "demo_production_logs"
+    manager, _ = _db_manager(pg)
+
+    with pytest.raises(RuntimeError, match="verbinding weg"):
+        await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}, {"postfix": "logs"}])
+
+    assert pg.schemas[TARGET_DB] == {"public", "eigen"}, "ook beide namen van een extra schema moeten weg"
 
 
 async def test_the_cleanup_leaves_a_schema_from_another_session_alone() -> None:
