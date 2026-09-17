@@ -31,7 +31,7 @@ from opi.services.catalog.postgresql_database.visualizers import (
     DEPLOYMENT_CONNECTION_LIMIT_FIELD,
 )
 from opi.services.registry import get_service
-from opi.services.services import service_entry_name
+from opi.services.services import deployment_index, service_entry_name
 from opi.services.services_enums import ServiceType
 
 from forms.test_modal_noop_roundtrip import _project as _sweep_project  # type: ignore[import-not-found]
@@ -404,6 +404,20 @@ def test_de_deploymentkaart_krijgt_een_knop_naar_de_limiet() -> None:
     project = _project({}, test=None, productie=None)
     (knop,) = [a for a in postgresql_database_actions(project, "productie") if a.label == "Connectielimiet"]
     assert knop.modal_endpoint == "/projects/proj/modal-wizard/modal-edit-postgresql-deployment-1"
+    assert knop.modal_title == "Connectielimiet - productie"
+
+
+@pytest.mark.parametrize(
+    ("project", "expected"),
+    [
+        ({"deployments": ["kapot", {"name": "a"}, {"name": "b"}]}, 2),
+        ({"deployments": [{"name": "a"}]}, None),
+        ({"deployments": None}, None),
+        ({}, None),
+    ],
+)
+def test_deployment_index(project: dict[str, Any], expected: int | None) -> None:
+    assert deployment_index(project, "b") == expected
 
 
 @pytest.mark.parametrize(

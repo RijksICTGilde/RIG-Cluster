@@ -82,6 +82,22 @@ permission check, and `max_connections` of the shared server is 250: one deploym
 500 can claim 1000 connections (two roles). Raising `max_connections` is a separate change
 with a restart.
 
+**Uitrol:** the first processing run after the rollout brings every existing role to the
+computed value, usually 20. That includes roles that are unlimited today (`-1`, e.g.
+`amt_odc_prd_productie`) and roles with a value set by hand (e.g. the 60 on
+`mpfm_w3h_pr_250`). Roles of `namespace-postgresql-database` go the same way and always get
+20, because only the `postgresql-database` block is read; superusers are not subject to the
+limit. Before rolling out:
+
+1. List the roles that will change:
+   ```sql
+   SELECT rolname, rolconnlimit FROM pg_roles
+   WHERE rolcanlogin AND NOT rolsuper AND rolconnlimit <> 20;
+   ```
+2. Put every value that must stay into the project file of that project (`connection-limit`
+   on the project or the deployment). A `namespace-postgresql-database` role cannot keep a
+   value other than 20.
+
 ### 5. Shutdown timeouts (cluster.yaml)
 
 ```yaml
