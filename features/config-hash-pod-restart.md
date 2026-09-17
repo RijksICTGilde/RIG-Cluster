@@ -40,7 +40,7 @@ CONFIG_HASH="${CONFIG_HASH:0:16}"
 export CONFIG_HASH
 yq eval-all '
   with(select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet");
-    .spec.template.metadata.annotations["checksum/config"] = env(CONFIG_HASH)
+    .spec.template.metadata.annotations["checksum/config"] = strenv(CONFIG_HASH)
   )
 ' "$TEMP_OUTPUT"
 ```
