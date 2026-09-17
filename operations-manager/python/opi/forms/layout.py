@@ -24,13 +24,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
-#: De benoemde plek in het componentformulier, direct achter het image-veld.
-#:
-#: Het FORMULIER bepaalt WAAR de plek zit, een dienst bepaalt WAT erin komt: een
-#: layoutknoop met ``slot=COMPONENT_IMAGE_SLOT`` landt daar in plaats van onderaan de
-#: componentvorm. Andersom -- een dienst die zelf een anker kiest ("na image") -- zou
-#: betekenen dat een dienst de volgorde bepaalt van een formulier dat hij niet bezit, en
-#: dat twee diensten die hetzelfde anker kiezen om dezelfde plek vechten.
+#: De benoemde plek in het componentformulier, direct achter het image-veld. Waarom een
+#: slot en geen anker op de knoop: zie ``instructions/services.md``.
 COMPONENT_IMAGE_SLOT = "component-image"
 
 

@@ -25,23 +25,18 @@ def _project(*parts: str) -> str:
     return config_path(ConfigLayer.PROJECT, _SVC, "config", *parts)
 
 
-# Het LABEL is wat de afnemer typt: vrije tekst. De slug eronder leidt het platform
-# af (``ImageRegistriesService.generate_missing_values``).
-#
-# Niet ``required``, en dat is geen slordigheid: een registry van voor RC-187 heeft alleen
-# een slug, en die mag niet met een lege labelmelding onopslaanbaar worden. Wat er echt moet
-# gelden -- een entry moet ergens naar te verwijzen zijn -- is een regel over de twee velden
-# SAMEN en staat daarom in ``RegistryEntry``, waar de API hem ook krijgt.
+# Niet ``required``: een registry van voor RC-187 heeft alleen een slug en mag niet
+# onopslaanbaar worden. Naam of label is een regel over de twee velden samen, in
+# ``RegistryEntry``.
 REGISTRY_DISPLAY_NAME_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "display-name"),
     remove_when_none=True,
 )
 
-# De slug zelf staat wel in het formulier maar niet op het scherm. Hij moet meekomen in de
-# inzending: de rijen van een reeks worden op ``name`` aan hun oorspronkelijke rij gekoppeld
+# De slug moet meekomen in de inzending, ook al staat hij niet op het scherm: de rijen van
+# een reeks worden op ``name`` aan hun oorspronkelijke rij gekoppeld
 # (``_match_original_item``), en zonder die sleutel schuift bij het weghalen van een rij de
-# slug van de ene registry onder de andere. Bevroren zodra hij bestaat, dus geen validator
-# die de afnemer iets over DNS-labels vertelt; ``generate_missing_values`` vult hem.
+# slug van de ene registry onder de andere.
 REGISTRY_NAME_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "name"),
     validator=ModelFieldValidator(RegistryEntry, "name", REGISTRY_NAME_MESSAGE),
@@ -82,13 +77,8 @@ REGISTRIES_SEQUENCE_EDITABLE = Editable(
     ],
 )
 
-# De keuze IS de selectie (RC-187). Het veld staat er zodra het project een registry
-# heeft, met "publiek" als standaard; een gekozen registry materialiseert de
-# dienstvermelding op dit component, de standaardwaarde haalt hem juist weg. Daarom geen
-# ``required`` en geen ``depends_on`` op de dienstenlijst: het veld bepaalt die lijst, niet
-# andersom. Of het veld verschijnt volgt uit zijn eigen keuzelijst
-# (``ImageRegistryOptionsProvider``), zodat er een bron is en geen tweede voorwaarde die
-# eruit kan lopen.
+# Geen ``required`` en geen ``depends_on`` op de dienstenlijst: de keuze IS de selectie,
+# dus het veld bepaalt die lijst en niet andersom.
 #
 # ``values_must_exist``: een verwijzing naar een registry die niet bestaat sneuvelt bij
 # het opslaan in plaats van pas bij het pullen.

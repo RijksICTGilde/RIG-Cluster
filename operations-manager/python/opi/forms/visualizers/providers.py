@@ -610,9 +610,7 @@ class FilteredServiceOptionsProvider:
             if service_type.value not in self.project_services:
                 continue
             if get_service(service_type).component_selection_follows_config:
-                # Deze dienst heeft geen aan/uit op een component: zijn eigen keuzeveld
-                # met een expliciete "geen"-optie IS de selectie (RC-187). Twee knoppen
-                # voor dezelfde beslissing laten de regels uit elkaar lopen.
+                # Geen aan/uit op een component: het eigen keuzeveld IS de selectie.
                 continue
             definition = ServiceAdapter.get_service_definition(service_type)
             options.append(
@@ -1194,10 +1192,7 @@ class ImageRegistryOptionsProvider:
     ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
     gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
 
-    Deze lijst is OOK de zichtbaarheid van het veld: heeft het project geen enkele
-    registry, dan valt er niets te kiezen en komt er een lege lijst uit, waarmee het veld
-    verdwijnt. Geen tweede voorwaarde ernaast die uit de pas kan lopen met de lijst -- een
-    bron, en de zichtbaarheid volgt eruit.
+    Een lege lijst laat het veld verdwijnen (``hidden_without_options``).
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1247,12 +1242,8 @@ class ImageRegistryOptionsProvider:
         labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
         names = [entry["name"] for entry in entries]
         if not names and not self._current_value:
-            # Niets te kiezen, dus geen veld. Dat is de toestand van 47 van de 49
-            # projecten en daar hoort de componentvorm precies te blijven zoals hij was.
             return []
 
-        # De standaardwaarde staat vooraan en schrijft niets weg: afwezig BETEKENT
-        # publiek, en de keuze ernaast is de selectie van de dienst op dit component.
         options = [{"value": "", "label": self._empty_label()}]
         options.extend({"value": name, "label": labels[name]} for name in names)
         if self._current_value and self._current_value not in names:
@@ -1260,12 +1251,7 @@ class ImageRegistryOptionsProvider:
         return options
 
     def _empty_label(self) -> str:
-        """Wat "niets gekozen" hier betekent, en dat verschilt per laag.
-
-        Bij een component is leeg de publieke weg; bij een deployment-component is het
-        "geen afwijking van het component". Afgeleid uit het pad dat gerenderd wordt,
-        zodat er een provider blijft in plaats van twee die uit elkaar lopen.
-        """
+        """Wat "niets gekozen" op deze laag betekent, afgeleid uit het gerenderde pad."""
         return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else PUBLIC_REGISTRY_LABEL
 
     def _component_image(self) -> str:

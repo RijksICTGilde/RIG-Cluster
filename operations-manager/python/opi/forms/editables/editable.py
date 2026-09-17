@@ -267,14 +267,9 @@ class Editable:
     hidden_without_options: bool = False
     """Whether this field disappears when its ``values_provider`` offers nothing.
 
-    Off by default: an empty list usually means "the options are not known here yet" and a
-    field that vanishes would be worse than an empty dropdown. On, it says the list IS the
-    field's reason to exist -- the registry picker on a component appears exactly when the
-    project has a registry to pick, and 47 of the 49 projects have none.
-
-    The point is that there is ONE source. The alternative, a ``depends_on`` next to the
-    provider, states the same condition twice and lets the two drift: a field showing while
-    its own list is empty, or hiding while it has something to offer.
+    Off by default: an empty list usually means "the options are not known here yet", and
+    a field that vanishes would be worse than an empty dropdown. See
+    ``instructions/services.md`` for why this beats a ``depends_on``.
     """
     required: bool = False
     default: Any = None

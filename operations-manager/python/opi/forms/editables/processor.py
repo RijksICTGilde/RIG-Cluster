@@ -135,9 +135,8 @@ def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
     Walks up the path removing each dict key whose value became an empty dict, stopping
     at the first non-empty container or a list-item segment (``...[N]``). Skipped for
     service-config paths. A service-map (``{...}``) path is normally skipped too, because
-    an empty entry is meaningful there -- it marks a selected service in the base-component
-    services list -- unless the service says its config IS that selection, in which case
-    the entry goes with it.
+    an empty entry there marks a selected service, unless the service says its config IS
+    that selection (``_prune_service_map_entry``).
     """
     if is_service_config_path(path):
         return
@@ -160,14 +159,9 @@ def _prune_empty_ancestors(data: dict[str, Any], path: str) -> None:
 def _prune_service_map_entry(data: dict[str, Any], path: str) -> None:
     """Remove the service entry *path* points into when nothing but its name is left.
 
-    Only for a service that declares ``component_selection_follows_config`` (RC-187):
-    there the chosen value IS the selection, so an entry whose config has just been
-    emptied says nothing at all -- not "public", not "chosen", nothing a reader could put
-    a meaning on. Emptying the field therefore also deselects the service on that
-    component, which is the whole point of having one control instead of two.
-
-    For every other service the entry stays: ticking the box and leaving the settings
-    blank is a state a user deliberately arrives at.
+    Only for a service that declares ``component_selection_follows_config``. For every
+    other service the entry stays: ticking the box and leaving the settings blank is a
+    state a user deliberately arrives at.
     """
     segments = path.split("/")
     index = next((i for i in reversed(range(len(segments))) if "{" in segments[i]), None)

@@ -78,7 +78,7 @@
             }
           ],
           "default": null,
-          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel, want wat hij betekent verschilt per registry: bij GitHub (ghcr.io) doet de waarde er niet toe zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het platform een neutrale plaatshouder in het pull-secret. Eist de registry een echte naam, dan mislukt het ophalen van de images. De tokentoets vangt dat alleen in een formulier met het registryblok (de wizards, de dienstenmodal en de modal van het blok), en alleen tegen images uit deze registry in de samengevoegde data van dat formulier: in de edit-wizard en de modals staan de bestaande componenten daar altijd in, alleen bij de eerste stap vooruit in de create-wizard nog niet. In het componentformulier en via de API wordt er niet getoetst.",
+          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel: bij GitHub (ghcr.io) doet de waarde er niet toe, bij Docker Hub is het de accountnaam en bij Quay de naam van het robotaccount. Leeg blijft leeg in het projectbestand; het pull-secret krijgt dan een plaatshouder. Eist de registry een echte naam, dan mislukt het ophalen van de images. Via de API wordt het token niet getoetst.",
           "title": "Username"
         }
       },
