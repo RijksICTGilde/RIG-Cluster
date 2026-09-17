@@ -78,9 +78,9 @@ deployments:
 - A value outside 1 to 500, or `true`, is refused on save with the message of the setting.
 
 **Let op:** nothing but the bound limits this. There is no quota per project and no
-permission check, and `max_connections` of the shared server is 250: one deployment asking
-500 can claim 1000 connections (two roles). Raising `max_connections` is a separate change
-with a restart.
+permission check. `max_connections` is 250 in base and 500 on production
+(`overlays/odcn`, applied only with a restart): one deployment asking 500 can claim 1000
+connections (two roles), twice the production server.
 
 **Uitrol:** the first processing run after the rollout brings every existing role to the
 computed value, usually 20. That includes roles that are unlimited today (`-1`, e.g.
@@ -127,9 +127,9 @@ Previously `min_size=2` meant the pool always held 2 open connections. When Post
 |------|-------|-------|
 | Superuser reserved | 3 | PostgreSQL default |
 | Infrastructure reserved | 10 | Keycloak, Forgejo via `pg_use_reserved_connections` |
-| General (project workloads) | 187 | Available to all roles |
+| General (project workloads) | 237 | Available to all roles (487 on production) |
 | **Per-role cap** | **20** | Default; configurable per project and deployment (1-500) |
-| **Total** | **200** | |
+| **Total** | **250** | `max_connections` in base; 500 in `overlays/odcn` |
 
 ## Limitations
 
