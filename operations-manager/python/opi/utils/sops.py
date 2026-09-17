@@ -116,7 +116,7 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
     if not os.path.exists(encrypted_path):
         return False
 
-    decrypted = _decrypt_sops_with_key(encrypted_path, private_key)
+    decrypted = decrypt_sops_with_key(encrypted_path, private_key)
     if decrypted is None:
         return False
 
@@ -129,7 +129,7 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
     return new_doc == old_doc
 
 
-def _decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
+def decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
     """Decrypt a SOPS file with an explicit AGE private key. None on failure."""
     process = subprocess.run(
         ["sops", "--decrypt", file_path],
@@ -139,7 +139,7 @@ def _decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
         env={**os.environ, "SOPS_AGE_KEY": private_key},
     )
     if process.returncode != 0:
-        logger.info(f"Could not decrypt {os.path.basename(file_path)} for unchanged-check: {process.stderr.strip()}")
+        logger.info(f"Could not decrypt {os.path.basename(file_path)}: {process.stderr.strip()}")
         return None
     return process.stdout
 

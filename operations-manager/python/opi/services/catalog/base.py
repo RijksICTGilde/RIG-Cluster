@@ -306,6 +306,9 @@ class SecretFileSpec:
     #: application a second time right after it came back up -- while nothing the
     #: application reads had changed at all.
     include_in_config_hash: bool = True
+    #: When True, a value already in this secret's previous ciphertext wins over the one
+    #: in ``secret_pairs``, which is then only the value for the first write.
+    keep_existing_values: bool = False
 
 
 @dataclass
