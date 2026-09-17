@@ -46,7 +46,7 @@ Following `minio_mc.py` singleton pattern:
 - Async subprocess for `skopeo copy docker-archive:/path docker://destination`
 - Credential masking in logs
 - Password decrypted once at init via `decrypt_password_smart_auto_sync()` (same as git connector)
-- `--dest-creds` for auth, `--dest-tls-verify=false` when configured
+- `--dest-authfile` for auth (a 0600 temp file, so the token stays out of the argv), `--dest-tls-verify=false` when configured
 - Custom exceptions: `SkopeoConnectionError`, `SkopeoExecutionError`, `SkopeoValidationError`
 
 ### 4. Image upload API router
