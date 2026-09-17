@@ -41,7 +41,7 @@ def component_registry_name(component: dict[str, Any] | None) -> str | None:
     """De registry die dit component aanwijst, uit zijn eigen dienstvermelding.
 
     Werkt op allebei de vormen die het schema kent: ``services`` als lijst op een gewoon
-    component, als dict op een deployment-component. Geen vermelding betekent publiek.
+    component, als dict op een deployment-component. Geen vermelding geeft None: geen keuze, dus automatisch.
     """
     if not isinstance(component, dict):
         return None

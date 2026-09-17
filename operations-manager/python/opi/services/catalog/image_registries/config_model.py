@@ -183,7 +183,8 @@ class ComponentRegistryConfig(BaseModel):
         min_length=1,
         description=(
             "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt. "
-            "Er is geen lege waarde: een component zonder deze dienstvermelding haalt zijn image publiek op. "
+            "Er is geen lege waarde: een component zonder deze dienstvermelding gebruikt de registry van dit project "
+            "waar zijn image onder valt, en anders de publieke weg. "
             "Gebruik DELETE om die keuze terug te draaien; dat haalt de vermelding weg."
         ),
     )

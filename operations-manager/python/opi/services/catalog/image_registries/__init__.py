@@ -70,7 +70,7 @@ class ImageRegistriesService(Service):
     config_schema_version = "1.0"
     config_section_id = "image-registries-config"
     modal_flow_id = "modal-edit-image-registries-config"
-    # De registries staan op projectniveau, dus een component dat de dienst aanvinkt mag
+    # De registries staan op projectniveau, dus een component dat een registry kiest mag
     # zichzelf daar bijschrijven.
     allows_implicit_project_selection = True
     config_component_order = 8

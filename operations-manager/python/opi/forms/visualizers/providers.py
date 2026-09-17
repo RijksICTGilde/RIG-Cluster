@@ -1177,8 +1177,9 @@ class WakerComponentOptionsProvider:
         return options
 
 
-#: De niet-waarde bij een component: publiek, geen token, en niets in het bestand.
-PUBLIC_REGISTRY_LABEL = "Publieke registry, geen token nodig"
+#: De niet-waarde bij een component: niets in het bestand. Geen belofte van "publiek", want een
+#: image onder een eigen upstream gaat ook zonder keuze langs die registry (``build_rules``).
+PUBLIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
 
 #: Dezelfde niet-waarde bij een DEPLOYMENT-component, waar leeg iets anders betekent:
 #: niet "publiek" maar "wat het component zelf koos".

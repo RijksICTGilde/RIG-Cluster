@@ -1,8 +1,8 @@
 """De keuzelijst bij een component, en het vooruit invullen.
 
 De afnemer kiest bij het image-veld waar die image vandaan komt; de keuze IS de selectie
-van de dienst op dat component (RC-187). Vandaar de standaardwaarde vooraan: publiek,
-geen token, en niets in het bestand. Past de image-prefix bij PRECIES EEN registry, dan
+van de dienst op dat component (RC-187). Vandaar de standaardwaarde vooraan: automatisch,
+en niets in het bestand. Past de image-prefix bij PRECIES EEN registry, dan
 zetten we die vooruit, zodat hij in het gewone geval alleen bevestigt. Passen er twee
 (dezelfde upstream met verschillende tokens), dan IS de keuze het punt en zetten we niets
 voorop.
@@ -50,10 +50,15 @@ class TestDeLijstZelf:
             "ghcr",
         ]
 
-    def test_de_standaardwaarde_staat_vooraan_en_is_de_publieke_weg(self) -> None:
-        """Afwezig BETEKENT publiek, dus die optie schrijft niets weg."""
+    def test_de_standaardwaarde_staat_vooraan_en_schrijft_niets_weg(self) -> None:
         options = ImageRegistryOptionsProvider(yaml_data=_yaml([CODE])).get_options()
         assert options[0] == {"value": "", "label": PUBLIC_REGISTRY_LABEL}
+
+    def test_het_label_belooft_geen_publieke_weg(self) -> None:
+        """Zonder keuze gaat een image onder een eigen upstream toch langs die registry
+        (``TestEenEigenRegistryGeldtVoorHetHeleProject``), dus het label moet dat zeggen."""
+        assert "eigen registry" in PUBLIC_REGISTRY_LABEL
+        assert "geen token" not in PUBLIC_REGISTRY_LABEL
 
     def test_bij_een_deployment_component_betekent_leeg_iets_anders(self) -> None:
         """Daar is de niet-waarde geen "publiek" maar "geen afwijking van het component"."""
