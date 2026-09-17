@@ -2,10 +2,10 @@
 
 # uv krijgt een eigen stage, want buildkit expandeert geen variabele in `COPY --from=`.
 ARG UV_VERSION=0.12.15
+ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 # dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
-ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM quay.io/minio/mc:${MC_VERSION} AS mc
 
 # Stage 1: Base system with dependencies (rarely changes)
