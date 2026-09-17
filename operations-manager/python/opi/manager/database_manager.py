@@ -780,32 +780,36 @@ class DatabaseManager:
             # Track the final generation used for this clone
             final_generation = generation
 
+            # Wat een onderbroken poging achterliet bepaalt wat deze run kan: staan alle
+            # doelschema's er, dan is de kloon af; staat er geen enkele, dan kan hij opnieuw in
+            # dezelfde database. Daartussen weigert de kloon het bestaande doelschema
+            # (postgres.py:1842) en is droppen niet veilig, dus houdt die staat de failover.
+            clone_finished = False
+            resume_in_place = False
+            leftover_source_schemas: set[str] = set()
             if target_db_exists and clone_interrupted and not force_clone:
                 target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
-                if target_schemas <= await self._schema_names(db_database):
-                    logger.info(
-                        f"Clone into {db_database} was finished by an interrupted run, recording it instead of cloning again"
-                    )
-                    if project_data:
-                        self.project_manager._revision_manager.record_clone(
-                            project_data=project_data,
-                            deployment_name=deployment_name,
-                            service_type=service_type,
-                            generation=final_generation,
-                            resource_name=db_database,
-                            source=f"deployment:{clone_source_ref}",
-                        )
-                    self.project_manager.report_clone_performed(deployment_name, service_type, final_generation)
-                    return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
+                schemas_present = await self._schema_names(db_database)
+                clone_finished = target_schemas <= schemas_present
+                resume_in_place = target_schemas.isdisjoint(schemas_present)
+                if resume_in_place:
+                    # pg_dump hernoemt pas aan het eind (postgres.py:2046), dus een harde stop
+                    # laat het bronschema liggen en dat weigert de volgende kloon
+                    # (postgres.py:1809). Zo'n naam hoort bij een andere deployment en kan hier
+                    # nooit live data zijn.
+                    source_names = {source_schema, *(source for source, _ in extra_clone_pairs)}
+                    leftover_source_schemas = (source_names - target_schemas) & schemas_present
 
-            if target_db_exists and (force_clone or (generation is None and not clone_interrupted)):
+            if target_db_exists and (
+                force_clone or (generation is None and not clone_finished and not resume_in_place)
+            ):
                 # Generational failover: create a new versioned database instead of
                 # cloning into an existing (potentially broken/limbo) one.
                 # Triggers when:
                 # - force_clone=True: explicit user request
                 # - generation is None: database exists but no generation was ever recorded,
                 #   indicating a previous clone failed before recording its generation.
-                #   Not with clone_interrupted: that database belongs to the interrupted attempt.
+                #   Not when an interrupted attempt left a state this run can continue.
                 new_generation = (generation or 0) + 1
 
                 # Find an available generation - previous failed attempts may have left
@@ -865,6 +869,25 @@ class DatabaseManager:
                     else:
                         logger.warning(f"PostInitSQL execution issue: {init_result}")
 
+            # Na postInitSQL, zodat een tweede poging de extensies alsnog bijwerkt.
+            if clone_finished:
+                logger.info(
+                    f"Clone into {db_database} was finished by an interrupted run, recording it instead of cloning again"
+                )
+                self._record_and_report_clone(
+                    project_data=project_data,
+                    deployment_name=deployment_name,
+                    service_type=service_type,
+                    generation=final_generation,
+                    resource_name=db_database,
+                    source=f"deployment:{clone_source_ref}",
+                )
+                return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
+
+            for leftover in sorted(leftover_source_schemas):
+                logger.info(f"Dropping schema {leftover} in {db_database}, left by an interrupted clone")
+                await self.postgres_connector.delete_schema(leftover, db_database, cascade=True)
+
             # STEP 2: Perform the clone operation
             # If clone fails and we created the database in this operation, clean it up
             # to prevent a limbo state with a partially-created database
@@ -910,19 +933,14 @@ class DatabaseManager:
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
             logger.info(f"Schema cloned with target name '{db_schema}' - no additional rename needed")
 
-            # Record revision in project file (handles both generation and revision tracking)
-            if project_data:
-                self.project_manager._revision_manager.record_clone(
-                    project_data=project_data,
-                    deployment_name=deployment_name,
-                    service_type=service_type,
-                    generation=final_generation,
-                    resource_name=db_database,
-                    source=f"deployment:{clone_source_ref}",
-                )
-
-            # Report clone to project_manager for status tracking
-            self.project_manager.report_clone_performed(deployment_name, service_type, final_generation)
+            self._record_and_report_clone(
+                project_data=project_data,
+                deployment_name=deployment_name,
+                service_type=service_type,
+                generation=final_generation,
+                resource_name=db_database,
+                source=f"deployment:{clone_source_ref}",
+            )
         else:
             # Normal flow: ensure database and schema exist
             database_result = await self.postgres_connector.create_database(
@@ -974,6 +992,31 @@ class DatabaseManager:
                 logger.info(f"Database schema already exists: {db_schema}")
 
         return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
+
+    def _record_and_report_clone(
+        self,
+        *,
+        project_data: dict[str, Any] | None,
+        deployment_name: str,
+        service_type: str,
+        generation: int | None,
+        resource_name: str,
+        source: str,
+    ) -> None:
+        """Leg de kloon vast in het projectbestand en meld hem aan de lopende run.
+
+        Een kloon die een vorige run al afmaakte meldt zich zo precies als een verse.
+        """
+        if project_data:
+            self.project_manager._revision_manager.record_clone(
+                project_data=project_data,
+                deployment_name=deployment_name,
+                service_type=service_type,
+                generation=generation,
+                resource_name=resource_name,
+                source=source,
+            )
+        self.project_manager.report_clone_performed(deployment_name, service_type, generation)
 
     async def _schema_names(self, database: str) -> set[str]:
         return {row["schema_name"] for row in await self.postgres_connector.list_schemas(database)}
@@ -2000,6 +2043,7 @@ class DatabaseManager:
             # STEP 5: Prepare target database (generational approach for force_clone)
             clone_already_finished = False
             new_generation_created = False
+            leftover_source_schemas: set[str] = set()
             try:
                 # Check if target database exists by attempting to create it
                 create_result = await self.postgres_connector.create_database(
@@ -2089,11 +2133,13 @@ class DatabaseManager:
                 else:
                     logger.info(f"Database already exists for cloning: {target_database}")
                     result["operations"].append({"type": "database_prepared", "status": "exists"})
-                    clone_already_finished = (
-                        clone_interrupted
-                        and not force_clone
-                        and target_schema in await self._schema_names(target_database)
-                    )
+                    if clone_interrupted and not force_clone:
+                        schemas_present = await self._schema_names(target_database)
+                        clone_already_finished = target_schema in schemas_present
+                        # Zoals bij _ensure_database_state: het bronschema kan na een harde stop
+                        # zijn blijven liggen en weigert de volgende kloon (postgres.py:1809).
+                        if not clone_already_finished and source_schema != target_schema:
+                            leftover_source_schemas = {source_schema} & schemas_present
             except Exception as e:
                 result["errors"].append(f"Database preparation failed: {e!s}")
                 result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
@@ -2105,6 +2151,9 @@ class DatabaseManager:
                 logger.info(f"Clone into {target_database} was finished by an interrupted run, not cloning again")
                 result["operations"].append({"type": "database_cloned", "status": "already_finished"})
             else:
+                for leftover in sorted(leftover_source_schemas):
+                    logger.info(f"Dropping schema {leftover} in {target_database}, left by an interrupted clone")
+                    await self.postgres_connector.delete_schema(leftover, target_database, cascade=True)
                 schemas_before = await self._schema_names(target_database)
                 try:
                     # Geen vlag boven een doelschema dat er al stond, zie _ensure_database_state.
