@@ -40,15 +40,30 @@ poging". Dan geldt voor de database, zowel bij `type: deployment` als bij `remot
 | Doeldatabase | Doelschema's | Wat er gebeurt |
 |---|---|---|
 | bestaat | alle aanwezig | niet opnieuw klonen; de kloon wordt gemeld zoals een geslaagde, dus de save aan het eind zet `completed` |
-| bestaat | niet (allemaal) aanwezig | klonen in diezelfde database, geen `_v1` |
+| bestaat | geen enkele aanwezig | klonen in diezelfde database, geen `_v1` |
+| bestaat | een deel aanwezig | een nieuwe generatie (`_v1`), net als zonder de vlag |
 | bestaat niet | - | gewoon klonen |
+
+Die middelste twee rijen zijn niet hetzelfde geval. Is er geen enkel doelschema, dan is de
+staat eenduidig en kan de kloon gewoon overnieuw. Staat er een deel van de doelschema's
+(bijvoorbeeld doordat er na de afgebroken run een extra schema aan de config is toegevoegd),
+dan kan deze run geen kant op: klonen over een bestaand doelschema wordt geweigerd
+(`postgres.py:1842`) en zo'n schema droppen is niet veilig, want het kan de enige kopie van de
+data zijn. Dan blijft de failover staan. Dat kost een generatie, maar het alternatief is een
+deployment die elke run op dezelfde weigering stilstaat.
+
+Bij het opnieuw klonen in dezelfde database gaat een schema onder de BRONnaam eerst weg. Zo'n
+naam hoort bij de brondeployment en kan in deze database nooit live data zijn; hij komt er
+alleen doordat de kloon pas aan het eind hernoemt (zie hieronder). Zonder dat opruimen weigert
+de volgende kloon op die naam (`postgres.py:1359` en `:1809`).
 
 `force-clone` (of `mode: always`) krijgt nog steeds een nieuwe generatie. De vlag onderdrukt
 alleen de failover die afging op "database bestaat, maar er is geen generatie vastgelegd".
-De grens van vijf generaties blijft staan voor het geval het schrijven van de vlag zelf faalt.
+De grens van vijf generaties blijft staan voor het geval het schrijven van de vlag zelf faalt,
+en voor de halve staat hierboven.
 
-Bij `remote-source` telt alleen het doelschema, en wordt de kloon alleen via
-`report_clone_performed` gemeld, zonder `record_clone`.
+Bij `remote-source` telt alleen het doelschema, dus de rij "een deel aanwezig" kan daar niet
+voorkomen. De kloon wordt er alleen via `report_clone_performed` gemeld, zonder `record_clone`.
 
 ## Een half schema blijft niet liggen
 
@@ -63,8 +78,10 @@ afgeronde kloon.
 
 Een proces dat halverwege hard stopt (OOM, pod weg) ruimt niets op. Heet het bronschema anders
 dan het doelschema, dan krijgt het doelschema zijn naam pas bij de laatste stap van de kloon en
-wordt een half gekopieerd schema ook dan niet voor afgerond aangezien. Heten ze hetzelfde (een
-`remote-source` met een bronschema met de doelnaam), dan is dat na een harde stop niet uit te sluiten.
+wordt een half gekopieerd schema ook dan niet voor afgerond aangezien; wat er onder de bronnaam
+bleef liggen gooit de volgende poging weg voordat hij kloont. Heten ze hetzelfde (een
+`remote-source` met een bronschema met de doelnaam), dan is dat na een harde stop niet uit te
+sluiten: dan telt het schema als afgerond.
 
 ## Wat niet verandert
 
