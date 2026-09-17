@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
@@ -434,13 +435,12 @@ def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_e
         stub = bindir / name
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
-    extra_path = f":{Path(shutil.which('task') or '').parent}" if command else ""
     proc = subprocess.run(
         command or ["bash", str(PRUNE_SCRIPT), *args],
         capture_output=True,
         text=True,
         env={
-            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin{extra_path}",
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
             "HOME": str(tmp_path),
             "STUB_LOG": str(tmp_path / "calls.log"),
             **env_extra,
@@ -605,9 +605,7 @@ class TestTaskfile:
     @pytest.mark.usefixtures("bash_available")
     def test_the_deploy_step_ends_green_on_a_server_without_a_registry(self, tmp_path: Path) -> None:
         """Zo staat de gedeelde server: rig-sandbox draait, kind-registry niet."""
-        if shutil.which("task") is None:
-            pytest.skip("task is niet geinstalleerd")
-        run = _prune(tmp_path, command=["task", "--taskfile", str(TASKFILE), PRUNE_TASK])
+        run = _prune(tmp_path, command=[echt_programma("task"), "--taskfile", str(TASKFILE), PRUNE_TASK])
 
         assert run.returncode == 0, run.stderr
         assert "draait niet" in run.stderr
