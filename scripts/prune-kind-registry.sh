@@ -35,7 +35,7 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
     exit 0
 fi
 if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$REG_NAME" |
-    grep -x 'REGISTRY_STORAGE_DELETE_ENABLED=true' >/dev/null; then
+    grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'; then
     echo "[registry-prune] registry $REG_NAME staat geen deletes toe, opruimen overgeslagen." >&2
     echo "[registry-prune] task sandbox:setup-registry maakt hem opnieuw aan, met behoud van de lagen." >&2
     exit 0
