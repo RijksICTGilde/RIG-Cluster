@@ -16,17 +16,15 @@ clone-from:
     in-progress: true
 ```
 
-- **Aan**: binnen `process_project`, op het moment dat de databasekloon echt begint, dus na het
-  kiezen en aanmaken van de doeldatabase. Alleen bij `mode: once` waarvan `completed` nog niet
-  true is. Hij gaat met een eigen commit naar git (`Clone attempt started for ...`), zodat hij
-  een fout later in de run overleeft. Staat hij er al, dan wordt er niets opnieuw geschreven.
-  Zo betekent "vlag aan" altijd: er is een kloon gestart. Een run die eerder stukgaat laat geen
-  vlag achter, en een database die er al stond voordat er `clone-from` bij kwam telt dan niet
-  als afgeronde kloon.
+- **Aan**: binnen `process_project` (niet bij een kloon via de API), vlak voordat de
+  databasekloon begint, bij `mode: once` waarvan `completed` nog niet true is. Hij gaat met een
+  eigen commit naar git (`Clone attempt started for ...`), zodat hij een fout later in de run
+  overleeft. Staat hij er al, dan wordt er niets opnieuw geschreven. Een run die eerder
+  stukgaat laat dus geen vlag achter, en een database van voor de `clone-from` telt niet als
+  afgeronde kloon.
 - **Niet bij een nieuwe generatie** (failover of `force-clone`): de volgende run zoekt de
   database onder de vastgelegde generatie, en die gaat pas bij de save aan het eind naar schijf.
   Met de vlag zou hij de oude database voor de kloon aanzien. Zo'n run gedraagt zich als voorheen.
-- Buiten `process_project` (een kloon via de API) wordt de vlag niet gezet.
 - **Uit**: zodra de kloon als afgerond wordt vastgelegd (`set_clone_status`).
 - `mode: always` krijgt de vlag nooit: die kloont elke run in een nieuwe generatie.
 - Een bestand zonder de vlag gedraagt zich als voorheen. Er is geen migratie.
@@ -72,7 +70,7 @@ wordt een half gekopieerd schema ook dan niet voor afgerond aangezien. Heten ze 
 ## Code en tests
 
 - `ProjectFileHandler.mark_clone_in_progress` / `is_clone_in_progress`
-- `ProjectManager.mark_clone_started` zet de vlag en verschuift de basis voor de save aan het eind mee
+- `ProjectManager.mark_clone_started` zet de vlag
 - `ProjectManager.process_project` geeft `clone_interrupted` door via `ProvisionContext`
 - `DatabaseManager._ensure_database_state` en `_execute_external_clone`
 - `tests/test_clone_attempt_flag.py`, `tests/test_schrijvers_tegen_het_schema.py::test_de_kloonpoging_blijft_geldig_na_migratie`
