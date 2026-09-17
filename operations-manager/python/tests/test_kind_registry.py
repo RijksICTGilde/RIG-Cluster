@@ -119,6 +119,10 @@ exit 0
 """
 
 
+#: De treffer eerst, daarna meer dan een pipebuffer (64 KiB) zodat ``grep -q`` stopt terwijl docker nog schrijft.
+LONG_ENV_WITH_DELETES = "\n".join(["REGISTRY_STORAGE_DELETE_ENABLED=true", *(["P=x"] * 25000)])
+
+
 class Run:
     """Uitkomst van een scriptrun plus wat de stubs opvingen."""
 
@@ -225,6 +229,13 @@ class TestSetupScript:
         assert "-e REGISTRY_STORAGE_DELETE_ENABLED=true" in calls[create]
         assert "--name kind-registry " in calls[create]
         assert "docker start" not in run.log
+
+    def test_a_long_env_after_the_match_still_counts_as_deletes(self, tmp_path: Path) -> None:
+        """Onder pipefail telt de SIGPIPE van een vroeg stoppende grep als ontbrekende treffer."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_REG_ENV=LONG_ENV_WITH_DELETES)
+
+        assert run.returncode == 0, run.stderr
+        assert "docker rename" not in run.log
 
     def test_the_old_registry_comes_back_when_recreating_fails(self, tmp_path: Path) -> None:
         """Hernoemd en gestopt achterlaten zou de volgende run een lege registry laten maken."""
@@ -486,6 +497,12 @@ class TestPruneScriptRefusals:
         assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
+
+    def test_a_long_env_after_the_match_still_counts_as_deletes(self, tmp_path: Path) -> None:
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV=LONG_ENV_WITH_DELETES)
+
+        assert "staat geen deletes toe" not in run.stderr
+        assert "curl" in run.log
 
     def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
         run = _prune(tmp_path, STUB_REG_STATE="false")
