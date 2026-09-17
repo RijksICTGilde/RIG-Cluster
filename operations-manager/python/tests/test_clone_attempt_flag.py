@@ -773,11 +773,8 @@ async def test_an_interrupted_remote_clone_without_its_schema_clones_again() -> 
 
 @pytest.mark.parametrize("source_schema", ["bron", f"{TARGET_DB}_audit"])
 async def test_an_interrupted_remote_clone_leaves_a_schema_with_the_source_name_alone(source_schema: str) -> None:
-    """De bronnaam komt uit remote-sources, dus een schema met die naam kan levende data zijn.
-
-    Twee runs achter elkaar: de eerste zet de vlag en loopt op de weigering van
-    postgres.py:1809, de tweede mag aan die vlag geen droprecht ontlenen. Ook een naam die
-    op een eigen kloonnaam lijkt blijft staan.
+    """Run 1 zet de vlag en loopt op de weigering van postgres.py:1809; run 2 mag daar geen
+    droprecht aan ontlenen, ook niet bij een bronnaam die op een eigen kloonnaam lijkt.
     """
     pg = FakePostgres({TARGET_DB: {"public", source_schema}})
     manager = _remote_manager(pg)
