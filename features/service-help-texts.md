@@ -90,7 +90,7 @@ bewaakt dat, want beide fouten falen stil in de UI:
 | Een sjabloon dat niet rendert | Idem, pas zichtbaar bij het klikken |
 | Een sjabloon zonder het icoon van de service | Modal en kaart horen zichtbaar niet bij elkaar |
 | Nog een `help.html.j2` naast de `help.md` | Twee bronnen; de niet-gerenderde veroudert stil |
-| Markdown buiten `#`, `##`, alinea's, `- ` en `**vet**` (tabel, codeblok, `###`, `*`) | Letterlijke markdown als tekst in de uitleg; `test_service_help_markdown.py` noemt de vorm en het alternatief |
+| Markdown buiten de omzettabel hierboven (tabel, codeblok, `###`, `*`) | Letterlijke markdown in de uitleg; `test_service_help_markdown.py` noemt de vorm en het alternatief |
 
 De test controleert ook dat de servicekeuze en het overzicht de macro blijven gebruiken en
 niet opnieuw hun eigen kaart bouwen.

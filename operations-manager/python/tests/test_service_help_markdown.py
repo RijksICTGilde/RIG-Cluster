@@ -257,7 +257,6 @@ _HELP_DOCUMENTS = sorted(
 
 
 def _letterlijke_markdown(markdown: str) -> list[str]:
-    """Per alinea die als letterlijke markdown op het scherm komt: welke vorm en wat dan wel."""
     meldingen = []
     for alinea in _PARAGRAPH.findall(markdown_to_components(markdown)):
         for past, vorm, alternatief in _BUITEN_SUBSET:
