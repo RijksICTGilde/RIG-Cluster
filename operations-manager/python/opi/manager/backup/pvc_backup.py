@@ -783,6 +783,7 @@ class PVCBackupManager(BaseBackupManager):
                 backup_prefix=backup_prefix,
                 snapshot_id=snapshot_id,
                 project_name=project_name,
+                cluster=cluster,
             )
 
             # 5. Wait for pod completion
