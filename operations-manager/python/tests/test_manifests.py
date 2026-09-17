@@ -5,6 +5,7 @@ file categorization logic, namespace prefix resolution, and kustomization
 file assembly with correct resources/generators/namespace.
 """
 
+import glob
 import os
 from unittest.mock import patch
 
@@ -1101,6 +1102,17 @@ class TestCollectManifestFiles:
         assert "notes.yml" in regular_names
         assert len(sops) == 2
         assert len(regular) == 2
+
+    def test_order_does_not_follow_the_directory(self, generator, tmp_path, monkeypatch):
+        for name in ("a.yaml", "b.yaml", "c.yaml", "a.sops.yaml", "b.sops.yaml"):
+            (tmp_path / name).write_text("kind: ConfigMap")
+        real_glob = glob.glob
+        monkeypatch.setattr(glob, "glob", lambda pattern, **kw: sorted(real_glob(pattern, **kw), reverse=True))
+
+        sops, regular = generator.collect_manifest_files(str(tmp_path))
+
+        assert sops == ["a.sops.yaml", "b.sops.yaml"]
+        assert regular == ["a.yaml", "b.yaml", "c.yaml"]
 
     def test_subfolder_recursion(self, generator, tmp_path):
         sub = tmp_path / "subdir"
