@@ -177,10 +177,12 @@ class AuthorizationWallService(Service):
             sidecars=["authorization-wall"],
             # The oauth2-proxy needs a random cookie-signing secret; the shared writer
             # SOPS-encrypts it. Its <deployment>-<component>- prefix survives the prune.
+            # A new value on every run logged every user out after each deploy.
             secret_files=[
                 SecretFileSpec(
                     secret_name=cookie_secret_name,
                     secret_pairs={"cookie-secret": secrets.token_urlsafe(32)},
+                    keep_existing_values=True,
                 )
             ],
         )
