@@ -44,18 +44,15 @@ poging". Dan geldt voor de database, zowel bij `type: deployment` als bij `remot
 | bestaat | een deel aanwezig | een nieuwe generatie (`_v1`), net als zonder de vlag |
 | bestaat niet | - | gewoon klonen |
 
-Die middelste twee rijen zijn niet hetzelfde geval. Is er geen enkel doelschema, dan is de
-staat eenduidig en kan de kloon gewoon overnieuw. Staat er een deel van de doelschema's
-(bijvoorbeeld doordat er na de afgebroken run een extra schema aan de config is toegevoegd),
-dan kan deze run geen kant op: klonen over een bestaand doelschema wordt geweigerd
-(`postgres.py:1842`) en zo'n schema droppen is niet veilig, want het kan de enige kopie van de
-data zijn. Dan blijft de failover staan. Dat kost een generatie, maar het alternatief is een
-deployment die elke run op dezelfde weigering stilstaat.
+Staat er een deel van de doelschema's (bijvoorbeeld doordat er na de afgebroken run een extra
+schema aan de config is toegevoegd), dan kan deze run geen kant op: klonen over een bestaand
+doelschema wordt geweigerd (`postgres.py:1842`) en zo'n schema droppen is niet veilig, want het
+kan de enige kopie van de data zijn. Daarom houdt die staat de failover: dat kost een generatie,
+maar het alternatief is een deployment die elke run op dezelfde weigering stilstaat.
 
-Bij het opnieuw klonen in dezelfde database gaat een schema onder de BRONnaam eerst weg. Zo'n
-naam hoort bij de brondeployment en kan in deze database nooit live data zijn; hij komt er
-alleen doordat de kloon pas aan het eind hernoemt (zie hieronder). Zonder dat opruimen weigert
-de volgende kloon op die naam (`postgres.py:1359` en `:1809`).
+Bij het opnieuw klonen in dezelfde database gaat een schema onder de BRONnaam eerst weg (zonder
+dat weigert de volgende kloon op die naam, `postgres.py:1359` en `:1809`). Zo'n naam hoort bij
+de brondeployment en kan in deze database nooit live data zijn.
 
 `force-clone` (of `mode: always`) krijgt nog steeds een nieuwe generatie. De vlag onderdrukt
 alleen de failover die afging op "database bestaat, maar er is geen generatie vastgelegd".
@@ -78,8 +75,7 @@ afgeronde kloon.
 
 Een proces dat halverwege hard stopt (OOM, pod weg) ruimt niets op. Heet het bronschema anders
 dan het doelschema, dan krijgt het doelschema zijn naam pas bij de laatste stap van de kloon en
-wordt een half gekopieerd schema ook dan niet voor afgerond aangezien; wat er onder de bronnaam
-bleef liggen gooit de volgende poging weg voordat hij kloont. Heten ze hetzelfde (een
+wordt een half gekopieerd schema ook dan niet voor afgerond aangezien. Heten ze hetzelfde (een
 `remote-source` met een bronschema met de doelnaam), dan is dat na een harde stop niet uit te
 sluiten: dan telt het schema als afgerond.
 
