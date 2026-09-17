@@ -50,9 +50,12 @@ doelschema wordt geweigerd (`postgres.py:1842`) en zo'n schema droppen is niet v
 kan de enige kopie van de data zijn. Daarom houdt die staat de failover: dat kost een generatie,
 maar het alternatief is een deployment die elke run op dezelfde weigering stilstaat.
 
-Bij het opnieuw klonen in dezelfde database gaat een schema onder de BRONnaam eerst weg (zonder
-dat weigert de volgende kloon op die naam, `postgres.py:1359` en `:1809`). Zo'n naam hoort bij
-de brondeployment en kan in deze database nooit live data zijn.
+Bij `type: deployment` gaat een schema onder de BRONnaam eerst weg bij het opnieuw klonen in
+dezelfde database (zonder dat weigert de volgende kloon op die naam, `postgres.py:1359` en
+`:1809`). Zo'n naam is afgeleid van een brondeployment en kan in deze database nooit live data
+zijn. Bij `remote-source` gebeurt dat niet: de bronnaam komt daar uit het projectbestand en een
+schema met die naam kan net zo goed data van de tenant zijn. Daar blijft de weigering staan en
+is een handmatige `DROP SCHEMA` de uitweg, zoals voorheen.
 
 `force-clone` (of `mode: always`) krijgt nog steeds een nieuwe generatie. De vlag onderdrukt
 alleen de failover die afging op "database bestaat, maar er is geen generatie vastgelegd".
