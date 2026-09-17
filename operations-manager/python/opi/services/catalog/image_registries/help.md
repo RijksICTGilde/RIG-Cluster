@@ -9,7 +9,9 @@ welke registry bij de image van dat component hoort.
 - **Naam** - waarmee je bij een component naar deze registry verwijst.
 - **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol,
   bijvoorbeeld `code.overheid.nl/jouw-naam`. In kleine letters, en zonder tag: die hoort
-  bij de image en niet bij de registry.
+  bij de image en niet bij de registry. Wij moeten hem vanaf het internet kunnen bereiken:
+  een naam die we niet kunnen opzoeken, of die naar een intern adres wijst, wijzen we bij
+  het opslaan af.
 - **Gebruikersnaam** en **token** - waarmee wij bij je images mogen.
 
 Je schrijft altijd je eigen registry, nooit een adres van het platform. Wat er technisch
