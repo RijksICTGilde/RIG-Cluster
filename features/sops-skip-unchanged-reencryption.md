@@ -57,9 +57,9 @@ The skip only helps when the plaintext is stable. The authorization-wall cookie
 secret is random, so it sets `keep_existing_values=True` on its
 `SecretFileSpec`. The shared writer `_write_secret_file` then decrypts the
 previous `<name>-secret.sops.yaml` with the project key and keeps the value
-of each key the service supplies itself, before aliases are resolved, so an
-alias follows its current template. No file, no key, a failed decrypt or a missing entry gives the
-freshly generated value.
+of each key the service supplies itself. That happens before aliases are
+resolved, so an alias follows its current template. No file, no key, a failed
+decrypt or a missing entry gives the freshly generated value.
 
 The cookie secret therefore no longer rotates on every deploy (which logged
 every oauth2-proxy user out). To replace it, delete its `.sops.yaml` from
