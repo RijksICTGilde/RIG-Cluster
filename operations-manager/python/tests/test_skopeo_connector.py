@@ -5,7 +5,9 @@ Tests singleton pattern, validation, command construction, and push execution
 with mocked subprocess calls.
 """
 
+import base64
 import ipaddress
+import json
 import logging
 import os
 import socket
@@ -318,11 +320,15 @@ DNS = {
     "registry.voorbeeld.nl": ["10.0.0.5"],
     "half.voorbeeld.nl": ["140.82.112.34", "192.168.1.10"],
     "registry.sandbox.rijksapp.dev": ["10.96.12.34"],
+    "ula.voorbeeld.nl": ["fd00::1"],
+    "linklocal6.voorbeeld.nl": ["fe80::1%eth0"],
+    "mapped.voorbeeld.nl": ["::ffff:10.0.0.5"],
 }
 _REAL_GETADDRINFO = socket.getaddrinfo
 
 
 def _fake_getaddrinfo(host: str, port: object, *args: object, **kwargs: object) -> list:
+    host.encode("idna")  # zoals de echte: een label boven 63 tekens geeft UnicodeError
     try:
         ipaddress.ip_address(host)
     except ValueError:
@@ -384,6 +390,16 @@ class TestDestinationGuard:
         result = await connector.check_repository_access("half.voorbeeld.nl/app", "robbert", PASSWORD)
         assert result == (False, REFUSED_DESTINATION_REASON)
 
+    @pytest.mark.parametrize("host", ["ula.voorbeeld.nl", "linklocal6.voorbeeld.nl", "mapped.voorbeeld.nl"])
+    async def test_a_name_that_resolves_to_private_ipv6_is_refused(self, connector, resolver, fake_skopeo, host):
+        result = await connector.check_repository_access(f"{host}/app", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
+    async def test_a_host_the_resolver_cannot_encode_gets_the_same_message(self, connector, resolver, fake_skopeo):
+        """``UPSTREAM_PATTERN`` begrenst de labellengte niet."""
+        result = await connector.check_repository_access(f"{'a' * 64}.nl/app", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
     async def test_a_name_that_does_not_resolve_gets_the_same_message(self, connector, resolver, fake_skopeo):
         """Anders verklapt het verschil welke interne namen bestaan."""
         result = await connector.check_repository_access("bestaat.niet.intern/app", "robbert", PASSWORD)
@@ -412,13 +428,14 @@ class TestDestinationGuard:
 
 
 def _assert_authfile_used_and_gone(record: Path, registry: str, username: str) -> None:
+    """Skopeo zoekt de credentials op de host als sleutel."""
     cmdline = (record / "cmdline").read_text()
     assert PASSWORD not in cmdline
     assert username not in cmdline
     assert (record / "mode").read_text().strip() == "600"
     auth = (record / "auth.json").read_text()
-    assert registry in auth
-    assert PASSWORD not in auth  # base64, zoals een dockerconfigjson
+    assert PASSWORD not in auth
+    assert base64.b64decode(json.loads(auth)["auths"][registry]["auth"]).decode() == f"{username}:{PASSWORD}"
     path = Path((record / "path").read_text().strip())
     assert not path.exists()
     assert not path.parent.exists()
