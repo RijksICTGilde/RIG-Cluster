@@ -473,8 +473,8 @@ class PostgresConnector:
         Args:
             username: New username to create
             password: Password for new user
-            connection_limit: CONNECTION LIMIT of the role; the service decides the value
             database_privileges: List of database privileges to grant (e.g., ['CREATEDB', 'CREATEROLE'])
+            connection_limit: CONNECTION LIMIT of the role; the service decides the value
 
         Returns:
             Dictionary with operation status and details
