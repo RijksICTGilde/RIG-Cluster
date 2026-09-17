@@ -12,6 +12,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
+BACKUP_DOCKERFILE = REPO_ROOT / "operations-manager" / "backup-image" / "Dockerfile"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 STATIC_DIR = REPO_ROOT / "operations-manager" / "python" / "static"
 
@@ -233,6 +234,15 @@ class TestPinnedTools:
             image, _, tag = base.rpartition(":")
             assert image, f"{base} carries no tag, which means latest"
             assert tag != "latest", base
+
+    @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
+    def test_mc_comes_from_the_pinned_image(self, dockerfile: Path) -> None:
+        """dl.min.io answers 410 with a text body, which `curl -LO` saved as the binary."""
+        lines = [line for _, line in _instructions(dockerfile.read_text())]
+        assert not [line for line in lines if "dl.min.io" in line]
+        assert "FROM quay.io/minio/mc:${MC_VERSION} AS mc" in lines
+        assert "COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc" in lines
+        assert [line for line in lines if re.fullmatch(r"ARG MC_VERSION=RELEASE\.\S+", line)]
 
 
 class TestAptLayers:
