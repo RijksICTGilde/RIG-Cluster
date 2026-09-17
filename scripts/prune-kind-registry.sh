@@ -34,8 +34,9 @@ if [ "$(docker inspect -f '{{.State.Running}}' "$REG_NAME" 2>/dev/null || true)"
     echo "[registry-prune] registry $REG_NAME draait niet, niets op te ruimen; zet hem neer met task sandbox:setup-registry" >&2
     exit 0
 fi
+# Geen grep -q: die stopt bij de treffer, en docker faalt dan op SIGPIPE onder pipefail.
 if ! docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$REG_NAME" |
-    grep -qx 'REGISTRY_STORAGE_DELETE_ENABLED=true'; then
+    grep -x 'REGISTRY_STORAGE_DELETE_ENABLED=true' >/dev/null; then
     echo "[registry-prune] registry $REG_NAME staat geen deletes toe, opruimen overgeslagen." >&2
     echo "[registry-prune] task sandbox:setup-registry maakt hem opnieuw aan, met behoud van de lagen." >&2
     exit 0

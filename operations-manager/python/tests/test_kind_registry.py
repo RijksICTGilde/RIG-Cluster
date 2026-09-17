@@ -47,6 +47,7 @@ case "$1" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
         echo "PATH=/usr/bin"
+        for _ in $(seq "${STUB_REG_ENV_TAIL:-0}"); do echo "OPVULLING=$RANDOM$RANDOM$RANDOM"; done
         ;;
       *State.Running*)
         [ -n "${STUB_REG_STATE:-}" ] || exit 1
@@ -241,8 +242,11 @@ class TestSetupScript:
         ]
         assert "oude registry staat er weer" in run.stderr
 
-    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path) -> None:
-        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
+    @pytest.mark.parametrize("state", ["true", "false"])
+    @pytest.mark.parametrize("tail", ["0", "20000"], ids=["kort", "langer-dan-pipebuffer"])
+    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path, state: str, tail: str) -> None:
+        """De lange env breekt zeker een grep die bij de treffer stopt."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE=state, STUB_REG_ENV_TAIL=tail)
 
         assert "docker rename" not in run.log
         assert "docker rm" not in run.log
@@ -486,6 +490,13 @@ class TestPruneScriptRefusals:
         assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
+
+    def test_env_after_the_delete_setting_does_not_skip_the_prune(self, tmp_path: Path) -> None:
+        """Meer uitvoer dan een pipebuffer na de treffer: zo breekt een grep die vroeg stopt zeker."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV_TAIL="20000")
+
+        assert "staat geen deletes toe" not in run.stderr
+        assert "garbage-collect" in run.log
 
     def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
         run = _prune(tmp_path, STUB_REG_STATE="false")
