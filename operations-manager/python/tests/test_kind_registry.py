@@ -45,7 +45,9 @@ case "$1" in
     case "$*" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
-        echo "PATH=/usr/bin"
+        # Meer dan een pipebuffer na de treffer: een lezer die vroeg stopt (grep -q) geeft
+        # onder pipefail dan altijd SIGPIPE, niet alleen als de timing tegenzit.
+        printf 'PADDING_%s=x\n' {1..20000}
         ;;
       *State.Running*)
         [ -n "${STUB_REG_STATE:-}" ] || exit 1
