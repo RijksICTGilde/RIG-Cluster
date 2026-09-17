@@ -493,7 +493,8 @@ stderr-regel komt terug als veldfout. `UPSTREAM_PATTERN` is alleen een vormcontr
 de connector (`_destination_refused` in `skopeo.py`) resolvet de host eerst en weigert als
 een van de adressen niet publiek is (`ipaddress.is_global`: loopback, link-local en dus
 het metadata-adres, RFC1918, CGNAT, unique-local) of als de naam niet resolvet. Elke
-weigering krijgt dezelfde reden (`REFUSED_DESTINATION_REASON`). De enige uitzondering is
+weigering krijgt dezelfde reden (`REFUSED_DESTINATION_REASON`), en de enforcer zet die
+zonder tokenadvies op het `upstream`-veld. De enige uitzondering is
 de platformregistry (`REGISTRY_URL`) in de sandbox (`_is_sandbox_registry`).
 `localhost:5001` heeft geen uitzondering nodig: in de pod is `localhost` de pod zelf, dus
 die registry was via deze toets nooit bereikbaar.

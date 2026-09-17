@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opi.connectors.skopeo import SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
 from opi.utils.age import encrypt_age_content_sync
@@ -82,6 +83,21 @@ class TestDeToets:
         assert exc.value.field_path == "services/image-registries/config/registries[0]/password"
         assert "leesrecht op packages" in str(exc.value)
         assert "reqPackageAccess" in str(exc.value)
+
+    async def test_een_geweigerde_bestemming_geeft_alleen_de_vaste_melding_op_de_upstream(self) -> None:
+        registry = {**REGISTRY, "upstream": "10.43.0.1:8080"}
+        data = _data([registry], ["10.43.0.1:8080/app:1"])
+        connector = SkopeoConnector()
+        with (
+            patch.object(connector, "is_skopeo_available", True),
+            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector),
+            patch("asyncio.create_subprocess_exec") as mock_exec,
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        mock_exec.assert_not_called()
+        assert exc.value.field_path == "services/image-registries/config/registries[0]/upstream"
+        assert str(exc.value) == "Het platform mag deze registry niet benaderen"
 
     async def test_een_goed_token_gaat_door(self) -> None:
         data = _data([REGISTRY], [IMAGE])
