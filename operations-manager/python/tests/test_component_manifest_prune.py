@@ -106,6 +106,48 @@ class TestSelectObsoleteComponentManifests:
 
         assert selected == ["productie-fundament-oauth2-cookie-secret.to-sops.yaml"]
 
+    def test_keeps_previous_ciphertext_of_secret_generated_this_run(self, tmp_path):
+        # The prune runs before the encryption: dropping the .sops.yaml here left the
+        # skip-if-unchanged nothing to compare against, so SOPS rewrote it every run.
+        directory = str(tmp_path)
+        for name in (
+            "fundament-deployment.yaml",
+            "fundament-user-secret.sops.yaml",
+            "fundament-user-secret.to-sops.yaml",
+            "productie-fundament-oauth2-cookie-secret.sops.yaml",
+            "productie-fundament-oauth2-cookie-secret.to-sops.yaml",
+        ):
+            _write(directory, name)
+
+        selected = _select_obsolete_component_manifests(
+            directory,
+            component_names={"fundament"},
+            generated_files={
+                "fundament-deployment.yaml",
+                "fundament-user-secret.to-sops.yaml",
+                "productie-fundament-oauth2-cookie-secret.to-sops.yaml",
+            },
+            deployment_name="productie",
+        )
+
+        assert selected == []
+
+    def test_removed_component_loses_both_secret_forms(self, tmp_path):
+        directory = str(tmp_path)
+        _write(directory, "profiel-user-secret.sops.yaml")
+        _write(directory, "profiel-user-secret.to-sops.yaml")
+        _write(directory, "magazijna-user-secret.sops.yaml")
+        _write(directory, "magazijna-user-secret.to-sops.yaml")
+
+        selected = _select_obsolete_component_manifests(
+            directory,
+            component_names={"profiel", "magazijna"},
+            generated_files={"profiel-user-secret.to-sops.yaml"},
+            deployment_name="prod",
+        )
+
+        assert selected == ["magazijna-user-secret.sops.yaml", "magazijna-user-secret.to-sops.yaml"]
+
     def test_selects_renamed_file_of_surviving_component(self, tmp_path):
         # The key generalisation: component "backend" stays, but its ingress path
         # changed (/api -> /), so the old "backend-ingress-api.yaml" is no longer
