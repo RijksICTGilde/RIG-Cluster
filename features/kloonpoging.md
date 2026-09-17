@@ -31,7 +31,7 @@ poging". Dan geldt voor de database, zowel bij `type: deployment` als bij `remot
 
 | Doeldatabase | Doelschema's | Wat er gebeurt |
 |---|---|---|
-| bestaat | alle aanwezig (ook de extra schema's) | niet opnieuw klonen; de kloon wordt gemeld zoals een geslaagde (`record_clone`, `report_clone_performed`), dus de save aan het eind zet `completed` |
+| bestaat | alle aanwezig | niet opnieuw klonen; de kloon wordt gemeld zoals een geslaagde, dus de save aan het eind zet `completed` |
 | bestaat | niet (allemaal) aanwezig | klonen in diezelfde database, geen `_v1` |
 | bestaat niet | - | gewoon klonen |
 
@@ -39,12 +39,18 @@ poging". Dan geldt voor de database, zowel bij `type: deployment` als bij `remot
 alleen de failover die afging op "database bestaat, maar er is geen generatie vastgelegd".
 De grens van vijf generaties blijft staan voor het geval het schrijven van de vlag zelf faalt.
 
+Verschil tussen de twee: `type: deployment` kijkt naar het doelschema plus de extra schema's en
+roept `record_clone` en `report_clone_performed` aan; `remote-source` kijkt alleen naar het
+doelschema (de extra schema's maakt het daarna leeg aan) en meldt alleen `report_clone_performed`.
+
 ## Een half schema blijft niet liggen
 
 Faalt een kloon in een database die er al stond, dan worden de schema's die deze poging
 aanmaakte weer weggegooid (ook het tussenschema onder de bronnaam). Schema's die er voor de
-poging al waren blijven staan. Een database die de poging zelf aanmaakte wordt, zoals voorheen,
-in zijn geheel verwijderd. Zo betekent een overlevend doelschema altijd een afgeronde kloon.
+poging al waren blijven staan. Een database die de poging zelf aanmaakte wordt bij
+`type: deployment`, zoals voorheen, in zijn geheel verwijderd; bij `remote-source` blijft die
+staan en gaan alleen de nieuwe schema's weg. Zo betekent een overlevend doelschema altijd een
+afgeronde kloon.
 
 Een proces dat halverwege hard stopt (OOM, pod weg) ruimt niets op. Heet het bronschema anders
 dan het doelschema, dan krijgt het doelschema zijn naam pas bij de laatste stap van de kloon en
