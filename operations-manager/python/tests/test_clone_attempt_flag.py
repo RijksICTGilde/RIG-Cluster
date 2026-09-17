@@ -121,7 +121,10 @@ class FakePostgres:
         if target_schema in self.schemas[target_database] and not force_clone:
             raise RuntimeError(f"Target schema '{target_schema}' already exists in database '{target_database}'")
         if source_schema != target_schema and source_schema in self.schemas[target_database]:
-            raise RuntimeError(f"Source schema '{source_schema}' already exists in database '{target_database}'")
+            if source_schema != "public":
+                raise RuntimeError(f"Source schema '{source_schema}' already exists in database '{target_database}'")
+            # 'public' wordt niet geweigerd maar gedropt en opnieuw gevuld (postgres.py:1797).
+            self.schemas[target_database].discard("public")
         self.schemas[target_database].add(source_schema)
         if self.clone_error is not None:
             raise self.clone_error
@@ -681,7 +684,9 @@ def _remote_manager(pg: FakePostgres) -> DatabaseManager:
     return manager
 
 
-async def _remote(manager: DatabaseManager, *, interrupted: bool, force: bool = False) -> dict[str, Any]:
+async def _remote(
+    manager: DatabaseManager, *, interrupted: bool, force: bool = False, source_schema: str = "bron"
+) -> dict[str, Any]:
     return await manager.clone_database_from_external_source(
         project_name="demo",
         deployment_name="staging",
@@ -690,7 +695,7 @@ async def _remote(manager: DatabaseManager, *, interrupted: bool, force: bool = 
         source_username="lezer",
         source_password="pw",
         source_database="bron",
-        source_schema="bron",
+        source_schema=source_schema,
         force_clone=force,
         clone_interrupted=interrupted,
     )
@@ -766,16 +771,23 @@ async def test_an_interrupted_remote_clone_without_its_schema_clones_again() -> 
     assert pg.clone_calls == [TARGET_DB]
 
 
-async def test_an_interrupted_remote_clone_drops_a_leftover_source_schema() -> None:
-    """Ook hier weigert de kloon een achtergebleven bronschema (postgres.py:1359 en :1809)."""
-    pg = FakePostgres({TARGET_DB: {"public", "bron"}})
+@pytest.mark.parametrize("source_schema", ["bron", f"{TARGET_DB}_audit"])
+async def test_an_interrupted_remote_clone_leaves_a_schema_with_the_source_name_alone(source_schema: str) -> None:
+    """De bronnaam komt uit remote-sources, dus een schema met die naam kan levende data zijn.
+
+    Twee runs achter elkaar: de eerste zet de vlag en loopt op de weigering van
+    postgres.py:1809, de tweede mag aan die vlag geen droprecht ontlenen. Ook een naam die
+    op een eigen kloonnaam lijkt blijft staan.
+    """
+    pg = FakePostgres({TARGET_DB: {"public", source_schema}})
     manager = _remote_manager(pg)
 
-    result = await _remote(manager, interrupted=True)
+    first = await _remote(manager, interrupted=False, source_schema=source_schema)
+    second = await _remote(manager, interrupted=True, source_schema=source_schema)
 
-    assert result["success"] is True
-    assert pg.clone_calls == [TARGET_DB]
-    assert pg.schemas[TARGET_DB] == {"public", TARGET_DB}
+    assert first["success"] is False
+    assert second["success"] is False
+    assert pg.schemas[TARGET_DB] == {"public", source_schema}, "geen schema van de tenant weg"
 
 
 async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrupted_attempt() -> None:
