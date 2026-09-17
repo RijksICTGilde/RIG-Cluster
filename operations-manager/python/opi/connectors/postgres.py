@@ -224,6 +224,13 @@ class PostgresConnector:
         return identifier
 
     @staticmethod
+    def _validate_connection_limit(connection_limit: int) -> int:
+        """Guard the value that is formatted into DDL: a plain positive int, nothing else."""
+        if isinstance(connection_limit, bool) or not isinstance(connection_limit, int) or connection_limit < 1:
+            raise PostgresValidationError(f"Invalid connection limit: {connection_limit!r}")
+        return connection_limit
+
+    @staticmethod
     def _validate_privilege(privilege: str) -> str:
         """Validate database privilege against allowlist.
 
@@ -458,12 +465,15 @@ class PostgresConnector:
         username: str,
         password: str,
         database_privileges: list[str] | None = None,
+        *,
+        connection_limit: int,
     ) -> dict[str, Any]:
         """Create a new database user using the bound admin credentials.
 
         Args:
             username: New username to create
             password: Password for new user
+            connection_limit: CONNECTION LIMIT of the role; the service decides the value
             database_privileges: List of database privileges to grant (e.g., ['CREATEDB', 'CREATEROLE'])
 
         Returns:
@@ -477,6 +487,7 @@ class PostgresConnector:
             # Validate inputs
             validated_username = self._validate_identifier(username, "username")
             validated_password = self._validate_password(password)
+            validated_limit = self._validate_connection_limit(connection_limit)
 
             validated_privileges = []
             if database_privileges:
@@ -496,7 +507,9 @@ class PostgresConnector:
             quoted_username = self._quote_identifier(validated_username)
             # DDL statements like CREATE USER don't support parameters, so we need to escape the password as a literal
             escaped_password = validated_password.replace("'", "''")  # Escape single quotes
-            create_sql = f"CREATE USER {quoted_username} WITH PASSWORD '{escaped_password}' CONNECTION LIMIT 20"
+            create_sql = (
+                f"CREATE USER {quoted_username} WITH PASSWORD '{escaped_password}' CONNECTION LIMIT {validated_limit}"
+            )
             await conn.execute(create_sql)
 
             # Grant privileges if specified
@@ -514,6 +527,36 @@ class PostgresConnector:
         except Exception as e:
             logger.exception(f"Failed to create user {username} on {self._host}")
             raise PostgresExecutionError(f"User creation failed: {e}") from e
+
+    async def set_connection_limit(self, username: str, connection_limit: int) -> dict[str, Any]:
+        """Bring a role's CONNECTION LIMIT to ``connection_limit``, altering only on a difference.
+
+        Returns:
+            ``{"status": "unchanged" | "updated" | "not_found", "previous": int | None,
+            "connection_limit": int}``
+
+        Raises:
+            PostgresExecutionError: If reading or altering the role fails
+            PostgresValidationError: If input validation fails
+        """
+        validated_username = self._validate_identifier(username, "username")
+        validated_limit = self._validate_connection_limit(connection_limit)
+        try:
+            conn = await self._get_or_create_connection("postgres")
+            previous = await conn.fetchval("SELECT rolconnlimit FROM pg_roles WHERE rolname = $1", validated_username)
+            if previous is None:
+                return {"status": "not_found", "previous": None, "connection_limit": validated_limit}
+            if previous == validated_limit:
+                return {"status": "unchanged", "previous": previous, "connection_limit": validated_limit}
+            quoted_username = self._quote_identifier(validated_username)
+            await conn.execute(f"ALTER ROLE {quoted_username} CONNECTION LIMIT {validated_limit}")
+        except asyncpg.PostgresError as e:
+            logger.exception(f"Failed to set connection limit for {validated_username} on {self._host}")
+            raise PostgresExecutionError(f"Setting connection limit failed: {e}") from e
+        logger.info(
+            f"Connection limit of {validated_username} on {self._host} changed from {previous} to {validated_limit}"
+        )
+        return {"status": "updated", "previous": previous, "connection_limit": validated_limit}
 
     async def delete_user(self, username: str) -> dict[str, Any]:
         """Delete a database user using the bound admin credentials.

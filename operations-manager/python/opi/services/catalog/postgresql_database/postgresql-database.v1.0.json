@@ -67,6 +67,19 @@
       "additionalProperties": false,
       "description": "``scope: project`` -- one dedicated CNPG cluster per project, shared by all its\ndeployments. Carries the same CNPG-cluster fields as\n``namespace-postgresql-database``.",
       "properties": {
+        "connection-limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum simultaneous connections per database role of each deployment (the _ro role gets the same value). Absent means the platform default. Between 1 and 500, platform default 20.",
+          "title": "Connection-Limit"
+        },
         "image": {
           "default": "ghcr.io/cloudnative-pg/postgresql:17",
           "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
@@ -204,6 +217,19 @@
       "additionalProperties": false,
       "description": "``scope: shared`` -- a database on the shared cluster instance (the default).\n\nCarries no CNPG-cluster fields: ``extra=\"forbid\"`` means putting ``storage`` or\n``instances`` here fails validation with a message that names the offending key.",
       "properties": {
+        "connection-limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum simultaneous connections per database role of each deployment (the _ro role gets the same value). Absent means the platform default. Between 1 and 500, platform default 20.",
+          "title": "Connection-Limit"
+        },
         "schemas": {
           "description": "Extra schemas alongside the default one, shared by every deployment.",
           "items": {

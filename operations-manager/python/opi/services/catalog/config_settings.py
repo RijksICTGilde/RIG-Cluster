@@ -37,9 +37,8 @@ Three kinds of bound, and deliberately no fourth: whole numbers, Kubernetes quan
 (``100m`` and ``2`` are both CPU, ``512Mi`` and ``1Gi`` both memory, so they are parsed
 and compared as numbers rather than as text), and a value out of a closed set.
 
-Nothing in the catalog declares a setting yet; a service that declares none behaves
-exactly as it did. The two plans this one sits under (the connection limit, and a
-project's own database cluster) are what fill it in.
+The first declaration is the connection limit of ``postgresql-database`` (RC-201); a
+service that declares none behaves exactly as it did.
 """
 
 from __future__ import annotations

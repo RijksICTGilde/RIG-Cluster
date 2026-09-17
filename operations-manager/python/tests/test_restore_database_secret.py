@@ -54,7 +54,9 @@ class _FakePostgresConnector:
     def __init__(self, server: _FakePostgresServer) -> None:
         self.server = server
 
-    async def create_user(self, username: str, password: str, database_privileges: Any = None) -> dict[str, str]:
+    async def create_user(
+        self, username: str, password: str, database_privileges: Any = None, *, connection_limit: int
+    ) -> dict[str, str]:
         if username == self.server.username:
             return {"status": "exists"}
         self.server.username = username
@@ -242,6 +244,7 @@ class TestWijzigingNaDeRestore:
                 db_host=HOST,
                 admin_username="admin",
                 admin_password="admin",
+                connection_limit=20,
             )
 
         assert password == LIVE_PASSWORD
