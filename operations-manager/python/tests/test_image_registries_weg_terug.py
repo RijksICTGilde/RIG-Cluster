@@ -54,7 +54,7 @@ class TestDeGrendel:
         assert validate_registry_references(_project([_REGISTRY])) == []
 
     def test_een_component_zonder_keuze_houdt_niets_tegen(self) -> None:
-        """Publiek is de afwezigheid van een keuze, en die blokkeert nooit."""
+        """Automatisch is de afwezigheid van een keuze, en die blokkeert nooit."""
         assert validate_registry_references(_project([], component_registry=None)) == []
 
     def test_de_laatste_registry_weghalen_overleeft_de_save_route_ook(self) -> None:
