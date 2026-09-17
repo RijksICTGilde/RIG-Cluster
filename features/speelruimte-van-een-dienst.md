@@ -173,11 +173,9 @@ en accepteert een platte `dict[str, str]`, dus een waarde op een gedeclareerd pa
 een geplakt geheim zijn -- en die zin gaat zowel het centrale log in als het antwoord aan de
 aanroeper. Bij een wijziging geldt dat ook voor de VORIGE waarde, die geen toets opnieuw op
 zijn vorm beoordeelt. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten
-zijn speelruimte", plus de speelruimte), door `_setting_refusal`, die beide toetsen delen en
-die `owned_property` van het blok leest. Dat houdt alleen als een eigenschap nooit met een
-`services:`-entry van dezelfde dienst wordt vergeleken, en daarom zit `owned_property` in de
-sleutel. Voor een blok in een `services:`-lijst blijft de waarde
-er wel in staan: daar is het de grens zelf die wordt teruggeciteerd.
+zijn speelruimte", plus de speelruimte), door `_setting_refusal`, die beide toetsen delen.
+Voor een blok in een `services:`-lijst blijft de waarde er wel in staan: daar is het de grens
+zelf die wordt teruggeciteerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
 `EditableVisualizer` uit de declaratie: het yaml-pad via `config_path`, de invoercontrole
