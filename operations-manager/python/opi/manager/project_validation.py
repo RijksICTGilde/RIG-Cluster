@@ -147,7 +147,7 @@ def _check_declared_settings(
     A value the service opened up has to stay inside the bounds the SERVICE set, and may
     only sit on a layer the service opened it up on. Here rather than in the model, so the
     bound is stated once and the wizard, the API and a hand-edited file are judged by the
-    same declaration. A service that declares nothing -- the whole catalog today -- does
+    same declaration. A service that declares nothing -- all but postgresql-database today -- does
     no extra work here.
 
     Called for every block in the walk, including the ones whose config is a component

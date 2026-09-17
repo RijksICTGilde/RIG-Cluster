@@ -13,19 +13,23 @@ from opi.services.catalog.base import (
     Service,
     config_path,
 )
+from opi.services.catalog.postgresql_database.actions import postgresql_database_actions
 from opi.services.catalog.postgresql_database.config_model import (
     PostgresqlDatabaseConfig,
     PostgresqlDatabaseProjectConfig,
 )
+from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
-from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
+from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
+
+    from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         backup_label="database",
         # The console and job buttons; the collector keeps one of each when a project
         # happens to use both PostgreSQL variants.
-        actions_provider=database_actions,
+        actions_provider=postgresql_database_actions,
     )
     # The user-facing config is the project-layer scope decision; the deployment-layer
     # clone state is OPI-managed (see config_model_for below). config_model names the
@@ -76,6 +80,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             return PostgresqlDatabaseConfig
         return None
 
+    def config_settings(self) -> tuple[ConfigSetting, ...]:
+        return (CONNECTION_LIMIT,)
+
     def _config_selected(self, project_data: dict) -> bool:
         """Section visibility: shown when the project uses this service."""
         from opi.services.services import service_entry_name
@@ -85,13 +92,20 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         ]
 
     def config_editables(self, layer: ConfigLayer):
-        if layer is not ConfigLayer.PROJECT:
-            return []
-        from opi.services.catalog.postgresql_database.editables import POSTGRESQL_SCHEMAS_EDITABLES
+        if layer is ConfigLayer.PROJECT:
+            from opi.services.catalog.postgresql_database.editables import POSTGRESQL_SCHEMAS_EDITABLES
+            from opi.services.catalog.postgresql_database.visualizers import CONNECTION_LIMIT_FIELD
 
-        return POSTGRESQL_SCHEMAS_EDITABLES
+            return [*POSTGRESQL_SCHEMAS_EDITABLES, CONNECTION_LIMIT_FIELD.editable]
+        if layer is ConfigLayer.DEPLOYMENT:
+            from opi.services.catalog.postgresql_database.visualizers import DEPLOYMENT_CONNECTION_LIMIT_FIELD
+
+            return [DEPLOYMENT_CONNECTION_LIMIT_FIELD.editable]
+        return []
 
     def config_form_section(self, layer: ConfigLayer):
+        if layer is ConfigLayer.DEPLOYMENT:
+            return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
             return None
         cached = getattr(self, "_config_section_cache", None)
@@ -99,23 +113,30 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             from opi.forms.editables.enforcers import UniqueSchemaEnforcer
             from opi.forms.layout import Fieldset, Sequence
             from opi.forms.visualizers.sections import FormSection
-            from opi.services.catalog.postgresql_database.visualizers import POSTGRESQL_SCHEMAS_VISUALIZERS
+            from opi.services.catalog.postgresql_database.visualizers import (
+                CONNECTION_LIMIT_FIELD,
+                POSTGRESQL_SCHEMAS_VISUALIZERS,
+            )
 
             def cp(*segments: str) -> str:
                 return config_path(ConfigLayer.PROJECT, self.service_type, "config", *segments)
 
             cached = FormSection(
                 section_id="postgresql-schemas-config",
-                title="Database-schema's",
+                title="Database",
                 icon="database",
-                description="Extra schema's binnen de projectdatabase, project-breed voor elke deployment",
+                description="Connectielimiet en extra schema's van de projectdatabase, voor elke deployment",
                 visible=self._config_selected,
                 # Schemas are provisioned (created, granted, exposed as variables), so a
                 # change must trigger a reconcile.
                 post_save_action="process_project",
                 enforcer=UniqueSchemaEnforcer(),
-                editables=POSTGRESQL_SCHEMAS_VISUALIZERS,
+                editables=[CONNECTION_LIMIT_FIELD, *POSTGRESQL_SCHEMAS_VISUALIZERS],
                 layout=[
+                    Fieldset(
+                        legend="Verbindingen",
+                        children=[CONNECTION_LIMIT_FIELD.editable.yaml_path],
+                    ),
                     Fieldset(
                         legend="Extra schema's",
                         description=(
@@ -128,6 +149,29 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             )
             self._config_section_cache = cached
         return cached
+
+    def deployment_form_section(self, deployment_index: int | None = None):
+        """The per-deployment connection limit; without an index it describes the layer."""
+        from opi.forms.editables.reindex import materialize_wildcard_visualizer
+        from opi.forms.layout import Fieldset
+        from opi.forms.visualizers.sections import FormSection
+        from opi.services.catalog.postgresql_database.visualizers import DEPLOYMENT_CONNECTION_LIMIT_FIELD
+
+        index = 0 if deployment_index is None else deployment_index
+        field = materialize_wildcard_visualizer(DEPLOYMENT_CONNECTION_LIMIT_FIELD, index)
+        suffix = "" if deployment_index is None else f"-{deployment_index}"
+        return FormSection(
+            section_id=f"postgresql-deployment-config{suffix}",
+            title="Database per deployment",
+            icon="database",
+            description=(
+                "Kies je niets, dan volgt deze deployment de connectielimiet van het project. "
+                "De meelezende gebruiker krijgt dezelfde limiet."
+            ),
+            post_save_action="process_project",
+            editables=[field],
+            layout=[Fieldset(legend="Verbindingen", children=[field.editable.yaml_path])],
+        )
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in

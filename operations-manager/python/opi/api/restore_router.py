@@ -34,6 +34,7 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
+from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_bucket_name,
@@ -2460,7 +2461,11 @@ async def _restore_database_with_versioning(
             else generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
         )
 
-        user_result = await postgres_connector.create_user(username=db_username, password=db_password)
+        user_result = await postgres_connector.create_user(
+            username=db_username,
+            password=db_password,
+            connection_limit=deployment_connection_limit(project_data, deployment_name),
+        )
         if user_result["status"] == "exists" and not reuse_password:
             await postgres_connector.update_user_password(username=db_username, new_password=db_password)
 
