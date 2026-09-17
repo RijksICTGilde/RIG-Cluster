@@ -47,9 +47,8 @@ poging". Dan geldt voor de database, zowel bij `type: deployment` als bij `remot
 alleen de failover die afging op "database bestaat, maar er is geen generatie vastgelegd".
 De grens van vijf generaties blijft staan voor het geval het schrijven van de vlag zelf faalt.
 
-Verschil tussen de twee: `type: deployment` kijkt naar het doelschema plus de extra schema's en
-roept `record_clone` en `report_clone_performed` aan; `remote-source` kijkt alleen naar het
-doelschema (de extra schema's maakt het daarna leeg aan) en meldt alleen `report_clone_performed`.
+Bij `remote-source` telt alleen het doelschema, en wordt de kloon alleen via
+`report_clone_performed` gemeld, zonder `record_clone`.
 
 ## Een half schema blijft niet liggen
 
