@@ -101,13 +101,11 @@ def validation_reasons(error: ValidationError) -> str:
     return "; ".join(reasons) or "waarde voldoet niet aan het model"
 
 
-def _validate_one_config(
-    name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str, from_version: str | None = None
-) -> None:
+def _validate_one_config(block: ServiceConfigBlock, project_name: str) -> None:
     """Validate one service config block against its provider's typed model.
 
     Shared by the project-level and component-level walks. Skips services that are
-    unknown or take no typed config. ``from_version`` is the entry's stamped
+    unknown or take no typed config. The block's ``from_version`` is the entry's stamped
     ``schema-version``, threaded through so the provider migrates an older config
     block forward before validating (None = current version). Fails closed: raises
     ProjectIntegrityError, with the service's own accepted-field list
@@ -115,33 +113,31 @@ def _validate_one_config(
     which keys the service accepts.
     """
     try:
-        service_type = ServiceType(name)
+        service_type = ServiceType(block.name)
     except ValueError:
         return  # unknown service name -- other validation handles it
     provider = get_service(service_type)
-    model = provider.config_model_for(layer)
+    model = provider.config_model_for(block.layer)
     if model is not None:
         try:
             if model is provider.config_model:
-                provider.validate_config(raw, from_version=from_version, context=STORED_PROJECT_CONTEXT)
+                provider.validate_config(block.config, from_version=block.from_version, context=STORED_PROJECT_CONTEXT)
             else:
                 # A layer-specific model (per-mount clone state). OPI writes it, so there is no
                 # stamped version to migrate from; validate the shape directly.
-                model.model_validate(raw)
+                model.model_validate(block.config)
         except ValidationError as e:
-            accepted = _accepted_config_fields(provider, layer)
+            accepted = _accepted_config_fields(provider, block.layer)
             hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
             raise ProjectIntegrityError(
-                f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "
+                f"Project '{project_name}': configuratie van service '{block.name}' {block.where} is ongeldig: "
                 f"{validation_reasons(e)}.{hint}"
             ) from e
 
-    _check_declared_settings(provider, raw, layer, where, project_name)
+    _check_declared_settings(provider, block, project_name)
 
 
-def _check_declared_settings(
-    provider: Service, raw: Any, layer: ConfigLayer, where: str, project_name: str, *, name_value: bool = True
-) -> None:
+def _check_declared_settings(provider: Service, block: ServiceConfigBlock, project_name: str) -> None:
     """The service's declared latitude (RC-168) for one config block.
 
     A value the service opened up has to stay inside the bounds the SERVICE set, and may
@@ -151,34 +147,38 @@ def _check_declared_settings(
 
     Called for every block in the walk, including the ones whose config is a component
     PROPERTY (``user-env-vars``, ``aliases``): a setting on such a service is judged on
-    its bounds and on its change, not on one of the two.
-
-    ``name_value=False`` for exactly those property blocks, and the reason is the one
-    ``_validate_owned_property`` next door already acts on: the surrounding property holds
-    the component's own environment, and ``UserEnvVarsConfig`` accepts a plain
-    ``dict[str, str]``, so a value read at a declared path there can be a pasted secret --
-    which this message both logs at WARNING and returns to the caller. The refusal is then
-    rendered from the DECLARATION (the field and its room) instead, which says the same
-    thing without repeating what was read. For a block in a ``services:`` list the value is
-    named, as it is the bound itself that is being quoted back.
+    its bounds and on its change, not on one of the two. What the refusal may repeat is
+    ``_setting_refusal``'s call.
 
     Raises:
         ProjectIntegrityError: with the sentence the user reads.
     """
     try:
-        check_settings(provider.config_settings(), raw, layer)
+        check_settings(provider.config_settings(), block.config, block.layer)
     except SettingError as e:
-        # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
-        # names none and reads the same either way.
-        reason = (
-            f"'{e.setting.path}' valt buiten zijn speelruimte. {e.setting.latitude()}"
-            if not name_value and e.setting is not None
-            else str(e)
-        )
         raise ProjectIntegrityError(
-            f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {where} "
-            f"is ongeldig: {reason}"
+            f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {block.where} "
+            f"is ongeldig: {_setting_refusal(e, block)}"
         ) from e
+
+
+def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
+    """The reason for a refused setting, as the value check and the change check both give it.
+
+    On an owned-property block (``user-env-vars``, ``aliases``) the value is not repeated,
+    for the reason ``_validate_owned_property`` next door already acts on: the property
+    holds the component's own environment, and ``UserEnvVarsConfig`` accepts a plain
+    ``dict[str, str]``, so a value read at a declared path there can be a pasted secret,
+    and this message is both logged at WARNING and returned to the caller. For a change
+    that holds for the PREVIOUS value too, which no check judges on its form again. The
+    refusal is then rendered from the DECLARATION (the field and its room). For a block in
+    a ``services:`` list the value is named, as it is the bound itself being quoted back.
+    """
+    # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
+    # names none and reads the same either way.
+    if block.owned_property is not None and e.setting is not None:
+        return f"'{e.setting.path}' valt buiten zijn speelruimte. {e.setting.latitude()}"
+    return str(e)
 
 
 def _validate_one_data_block(name: str, raw: Any, layer: ConfigLayer, where: str, project_name: str) -> None:
@@ -427,7 +427,7 @@ def validate_service_configs(project_data: dict[str, Any]) -> None:
         if block.owned_property is not None:
             _validate_owned_property_block(block, project_name)
         else:
-            _validate_one_config(block.name, block.config, block.layer, block.where, project_name, block.from_version)
+            _validate_one_config(block, project_name)
 
 
 def find_plaintext_service_config_violations(project_data: dict[str, Any]) -> list[str]:
@@ -466,7 +466,7 @@ def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str)
     Both, because the walk hands these blocks to the change check as well; judging them
     on their change but not on their bounds is the same divergence the shared walk closed,
     only the other way around. Neither of the two names the value: see
-    ``_check_declared_settings`` for why the latitude check is asked not to either.
+    ``_setting_refusal`` for the latitude check.
     """
     service = get_service(ServiceType(block.name))
     model = service.config_model
@@ -476,7 +476,7 @@ def _validate_owned_property_block(block: ServiceConfigBlock, project_name: str)
     # guarantee into a silent skip). The latitude check below does not depend on a model.
     if model is not None:
         _validate_owned_property(service, model, block.config, block.where, project_name)
-    _check_declared_settings(service, block.config, block.layer, block.where, project_name, name_value=False)
+    _check_declared_settings(service, block, project_name)
 
 
 def _validate_owned_property(service: Service, model: type[BaseModel], raw: Any, where: str, project_name: str) -> None:
@@ -849,7 +849,8 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
             check_setting_changes(get_service(service_type).config_settings(), old_config, block.config, block.layer)
         except SettingError as e:
             raise ProjectIntegrityError(
-                f"Project '{project_name}': configuratie van service '{block.name}' kan niet zo worden gewijzigd: {e}"
+                f"Project '{project_name}': configuratie van service '{block.name}' kan niet zo worden gewijzigd: "
+                f"{_setting_refusal(e, block)}"
             ) from e
 
 

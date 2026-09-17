@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -27,10 +29,12 @@ from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.editable import WidgetType
 from opi.forms.editables.validators import ConfigSettingValidator
 from opi.forms.visualizers.config_setting_fields import setting_field
+from opi.manager import project_validation
 from opi.manager.project_validation import (
     iter_service_config_blocks,
     validate_project_structure,
     validate_service_configs,
+    validate_service_setting_changes,
 )
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.config_settings import (
@@ -1012,6 +1016,95 @@ def test_de_weigering_op_een_eigenschapsblok_noemt_de_waarde_niet(monkeypatch: p
     monkeypatch.setattr(declarerend, "config_settings", lambda: (VOLUME,))
     with pytest.raises(ProjectIntegrityError, match="je gaf 50Gi"):
         validate_service_configs(_project({"storage": "50Gi"}))
+
+
+#: Een grow_only-grens op een eigenschapsblok, zodat de WIJZIGINGStoets daar kan afgaan.
+EIGENSCHAP_VOLUME = QuantitySetting(
+    path="LIMIET",
+    layers=(ConfigLayer.COMPONENT,),
+    default="1Gi",
+    minimum="1Gi",
+    maximum="10Gi",
+    kind=QuantityKind.MEMORY,
+    grow_only=True,
+    label="Limiet",
+)
+
+
+def _met_eigenschap(eigenschap: str, waarde: str) -> dict[str, Any]:
+    data = _project({"storage": "1Gi"})
+    data["components"][0][eigenschap] = {"LIMIET": waarde}
+    return data
+
+
+@pytest.mark.parametrize(
+    ("oud", "nieuw", "geheim"),
+    [
+        # De nieuwe versie is geldig; de vorige draagt de ongeldige waarde. Die wordt nergens
+        # opnieuw op zijn vorm beoordeeld, dus alleen de wijzigingstoets ziet hem.
+        pytest.param("hunter2", "5Gi", "hunter2", id="vorige-versie-ongeldig"),
+        pytest.param("8Gi", "2Gi", "8Gi", id="verlaging"),
+    ],
+)
+@pytest.mark.parametrize("eigenschap", ["user-env-vars", "aliases"])
+def test_de_wijzigingstoets_op_een_eigenschapsblok_noemt_de_waarde_niet(
+    eigenschap: str, oud: str, nieuw: str, geheim: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    provider = get_service(ServiceType(eigenschap))
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
+    vorige = _met_eigenschap(eigenschap, oud)
+    huidige = _met_eigenschap(eigenschap, nieuw)
+    validate_service_configs(huidige)  # de nieuwe versie zelf is in orde
+
+    with pytest.raises(ProjectIntegrityError) as fout:
+        validate_service_setting_changes(vorige, huidige)
+
+    assert geheim not in str(fout.value)
+    assert nieuw not in str(fout.value)
+    assert "kan niet zo worden gewijzigd: 'LIMIET' valt buiten zijn speelruimte" in str(fout.value)
+    assert EIGENSCHAP_VOLUME.latitude() in str(fout.value)
+
+
+def test_de_wijzigingstoets_op_een_serviceslijst_noemt_de_waarde_wel(declaring: Any) -> None:
+    """Daar is het de grens zelf die wordt teruggeciteerd, net als bij de waardetoets."""
+    declaring(VOLUME)
+    with pytest.raises(ProjectIntegrityError, match="de waarde staat nu op 5Gi en 2Gi is kleiner"):
+        validate_service_setting_changes(_project({"storage": "5Gi"}), _project({"storage": "2Gi"}))
+    with pytest.raises(ProjectIntegrityError, match="geen geldige Kubernetes-hoeveelheid: 'veel'"):
+        validate_service_setting_changes(_project({"storage": "veel"}), _project({"storage": "5Gi"}))
+
+
+def test_een_wijzigingsweigering_draagt_de_declaratie() -> None:
+    with pytest.raises(SettingError) as fout:
+        check_setting_changes([VOLUME], {"storage": "5Gi"}, {"storage": "2Gi"}, ConfigLayer.PROJECT)
+    assert fout.value.setting is VOLUME
+
+
+def test_een_niet_afdwingende_schrijver_logt_de_vorige_waarde_niet(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``enforce_validation=False`` schrijft door en logt de weigering op WARNING."""
+    provider = get_service(ServiceType.ALIASES)
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
+    store = _store_op(_met_eigenschap("aliases", "hunter2"), monkeypatch, tmp_path)
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(
+            store.save(
+                "demo", _met_eigenschap("aliases", "5Gi"), message="herstel", actor="test", enforce_validation=False
+            )
+        )
+
+    gelogd = [r.getMessage() for r in caplog.records if "despite a validation failure" in r.getMessage()]
+    assert gelogd, "de weigering had gelogd moeten worden"
+    assert "'LIMIET' valt buiten zijn speelruimte" in gelogd[0]
+    assert all("hunter2" not in r.getMessage() for r in caplog.records)
+
+
+def test_de_zin_uit_de_declaratie_staat_op_een_plek() -> None:
+    """Beide toetsen delen de opbouw, dus de formulering kan niet uit elkaar lopen."""
+    bron = Path(project_validation.__file__).read_text()
+    assert bron.count("valt buiten zijn speelruimte") == 1
 
 
 # --- 8. de wizard leest dezelfde declaratie ---------------------------------------
