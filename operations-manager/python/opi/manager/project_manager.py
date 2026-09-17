@@ -1837,11 +1837,9 @@ class ProjectManager:
         await validate_project_structure(project_data)
 
     async def mark_clone_started(self, deployment_name: str) -> None:
-        """Commit the clone-attempt flag the moment a database clone starts (features/kloonpoging.md).
+        """Commit the clone-attempt flag on the running process_project's data (features/kloonpoging.md).
 
-        Only inside process_project: the flag goes on the run's project_data, and the
-        base the end-of-run save compares against moves along with this save, because
-        that save drops the flag again.
+        The end-of-run save drops the flag again, so its base moves along with this save.
         """
         if self._process_run is None:
             return
