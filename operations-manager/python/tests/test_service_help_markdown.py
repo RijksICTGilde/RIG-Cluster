@@ -36,6 +36,7 @@ from opi.services.services_enums import ServiceType
 
 _CATALOG = pathlib.Path(opi.__file__).parent / "services" / "catalog"
 _SERVICES = sorted(ServiceType, key=lambda s: s.value)
+_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "help_markdown"
 
 
 def _render(markdown: str, **kwargs) -> str:
@@ -224,6 +225,88 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
     for bron in ("[x](javascript:alert(1))", "[x](data:text/html,y)", "[x](ftp://host/f)"):
         markup = markdown_to_components(bron)
         assert "c-link" not in markup, bron
+
+
+# ---------------------------------------------------------------------------
+# Markdown outside the subset: the renderer shows it as literal text
+# ---------------------------------------------------------------------------
+
+_PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
+_TABLE_SEPARATOR = re.compile(r"\|\s*:?-{3,}:?\s*\|")
+_BUITEN_SUBSET = (
+    (lambda a: a.startswith("|") or _TABLE_SEPARATOR.search(a), "een tabel", "gebruik een opsomming"),
+    (lambda a: "```" in a, "een codeblok (```)", "zet de opdracht als `inline code` in een alinea of opsomming"),
+    (
+        lambda a: a.startswith("#"),
+        "een kop met ### of zonder spatie",
+        "gebruik `# ` of `## `, of een alinea met **vet**",
+    ),
+    (lambda a: a.startswith("* "), "een opsomming met `*`", "begin elk punt met `- `"),
+)
+_HELP_DOCUMENTS = sorted(
+    {
+        template
+        for service in _SERVICES
+        for template in (
+            ServiceAdapter.get_service_definition(service).help_template,
+            ServiceAdapter.get_service_definition(service).guide_template,
+        )
+        if template
+    }
+)
+
+
+def _letterlijke_markdown(markdown: str) -> list[str]:
+    """Per alinea die als letterlijke markdown op het scherm komt: welke vorm en wat dan wel."""
+    meldingen = []
+    for alinea in _PARAGRAPH.findall(markdown_to_components(markdown)):
+        for past, vorm, alternatief in _BUITEN_SUBSET:
+            if past(alinea):
+                meldingen.append(f"{vorm} wordt letterlijke tekst, {alternatief}: {alinea[:60]!r}")
+                break
+    return meldingen
+
+
+@pytest.mark.parametrize("help_template", _HELP_DOCUMENTS)
+def test_the_explanation_stays_inside_the_supported_markdown(help_template: str) -> None:
+    """Op de uitkomst van de renderer en niet op de bron: wat telt is wat op het scherm komt."""
+    meldingen = _letterlijke_markdown(help_file(help_template).read_text(encoding="utf-8"))
+
+    assert meldingen == [], f"{help_template}:\n" + "\n".join(meldingen)
+
+
+def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
+    """De versie uit RC-167 die door een groene suite kwam.
+
+    14 en niet de 11 uit het plan: die telde alinea's die met de vorm beginnen, en drie
+    codeblokken lopen na een witregel door in een alinea die pas halverwege ``` bevat.
+    """
+    meldingen = _letterlijke_markdown((_FIXTURES / "vlam_help_79d77881.md").read_text(encoding="utf-8"))
+
+    assert len(meldingen) == 14
+    assert any(m.startswith("een tabel wordt letterlijke tekst, gebruik een opsomming") for m in meldingen)
+
+
+@pytest.mark.parametrize(
+    ("bron", "vorm"),
+    [
+        ("| a | b |\n|---|---|\n| 1 | 2 |", "een tabel"),
+        ("Tekst ervoor.\n| a | b |\n|---|---|", "een tabel"),
+        ("```python\nprint(1)\n```", "een codeblok"),
+        ("### Kop", "een kop met ###"),
+        ("* een\n* twee", "een opsomming met `*`"),
+    ],
+    ids=["tabel", "tabel-na-tekst", "codeblok", "kop-niveau-3", "sterretje"],
+)
+def test_each_shape_outside_the_subset_is_named(bron: str, vorm: str) -> None:
+    meldingen = _letterlijke_markdown(f"# Titel\n\n{bron}")
+
+    assert len(meldingen) == 1
+    assert meldingen[0].startswith(vorm)
+
+
+def test_bold_at_the_start_of_a_paragraph_is_not_a_bullet() -> None:
+    assert _letterlijke_markdown("**Kies dit**, tenzij je een reden hebt.\n\n- een punt") == []
 
 
 # ---------------------------------------------------------------------------
