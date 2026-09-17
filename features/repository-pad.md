@@ -32,6 +32,9 @@ Op twee plekken, omdat ze elk een ander geval vangen:
    een bestaand projectbestand dat nooit opnieuw langs het schema komt. Elke manager die een
    manifestpad bouwt, gaat via deze functies.
 
+De controle is lexicaal: ze kijkt naar de tekst van het pad en volgt geen symlinks. Een symlink
+in de gekloonde repository kan nog steeds naar een plek buiten de kloon wijzen.
+
 ## Bestaande projectbestanden
 
 Er is geen migratie. Een bestand met een pad dat de regel niet haalt, wordt bij de eerstvolgende
