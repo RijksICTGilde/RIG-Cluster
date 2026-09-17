@@ -398,7 +398,9 @@ class TestDeToetsLangsDeOpslagroute:
         assert section.enforcer is not None
         return section
 
-    async def _opslaan(self, project: dict[str, Any], connector: Any) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    async def _opslaan(
+        self, project: dict[str, Any], connector: Any, upstream: str = "code.overheid.nl/robbert.uittenbroek"
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """De vorm van ``router_detail_edit.py:995-1026``: verwerken, dan de sectie toetsen."""
         section = self._section()
         inzending = {
@@ -408,7 +410,7 @@ class TestDeToetsLangsDeOpslagroute:
                         "registries": [
                             {
                                 "name": "code-overheid",
-                                "upstream": "code.overheid.nl/robbert.uittenbroek",
+                                "upstream": upstream,
                                 "username": "robbert.uittenbroek",
                                 # Wat de gebruiker intypt: het token zelf.
                                 "password": self.TOKEN,
@@ -456,6 +458,21 @@ class TestDeToetsLangsDeOpslagroute:
         assert errors == {}
         connector.check_repository_access.assert_awaited_once_with(
             "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo", "robbert.uittenbroek", self.TOKEN
+        )
+
+    async def test_een_geplakte_browser_url_komt_als_upstream_in_het_bestand(self, project: dict[str, Any]) -> None:
+        """De invoerhulp langs het formulier: de converter van het veld zet hem om, niet alleen
+        de toets die hem goedkeurt. Anders slaat de portal de URL letterlijk op."""
+        connector = _connector(True)
+        submitted_yaml, errors = await self._opslaan(
+            project, connector, upstream="https://code.overheid.nl/robbert.uittenbroek/-/packages"
+        )
+
+        assert errors == {}
+        opgeslagen = submitted_yaml["services"][0]["config"]["registries"][0]["upstream"]
+        assert opgeslagen == "code.overheid.nl/robbert.uittenbroek"
+        assert connector.check_repository_access.await_args.args[0] == (
+            "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo"
         )
 
     async def test_een_te_smal_token_komt_langs_dezelfde_route_wel_op_het_veld(self, project: dict[str, Any]) -> None:

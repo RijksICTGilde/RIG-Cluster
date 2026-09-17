@@ -210,6 +210,14 @@ class TestEenBestaandeRegistryBlijftOpslaanbaar:
     def test_het_labelveld_is_niet_verplicht(self) -> None:
         assert REGISTRY_DISPLAY_NAME_EDITABLE.required is False
 
+    def test_een_leeggemaakt_label_verdwijnt_uit_het_bestand(self) -> None:
+        """Leeg laten betekent geen label, en dan hoort er ook geen lege sleutel te staan."""
+        project = _project([{"name": "code-overheid", "display-name": "Code Overheid", "upstream": "ghcr.io", **CREDS}])
+        EditableFormProcessor._write_field(
+            REGISTRY_DISPLAY_NAME_EDITABLE, "services/image-registries/config/registries[0]/display-name", "", project
+        )
+        assert "display-name" not in project["services"][0]["config"]["registries"][0]
+
     def test_de_regel_gaat_over_de_twee_velden_samen(self) -> None:
         """Niet "label verplicht" maar "ergens naar te verwijzen", en die regel staat in het
         model zodat de API hem ook draagt."""
