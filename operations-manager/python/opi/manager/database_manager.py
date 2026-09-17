@@ -14,6 +14,7 @@ from opi.connectors.postgres import PostgresConnector, create_postgres_connector
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.postgres_scope import (
     database_generation_service_type,
@@ -204,6 +205,7 @@ class DatabaseManager:
             db_username = generate_database_name(project_name, deployment_name, None)  # Username never versioned
             db_database = generate_database_name(project_name, deployment_name, generation)
             db_schema = db_database  # Schema matches database name
+            connection_limit = deployment_connection_limit(project_data, deployment_name)
 
             # PHASE 1: CREDENTIAL RESOLUTION - Determine working credentials
             logger.info(f"Phase 1: Resolving database credentials for {project_name}/{deployment_name}")
@@ -217,8 +219,12 @@ class DatabaseManager:
                 db_host=db_host,
                 admin_username=admin_username,
                 admin_password=admin_password,
+                connection_limit=connection_limit,
                 database_privileges=database_privileges,
             )
+            # Not in the password branch: an existing role with valid credentials never
+            # reaches it, and a limit change must not rotate credentials.
+            await self._reconcile_connection_limit(db_username, connection_limit)
 
             # PHASE 2: DATABASE STATE VERIFICATION - Ensure database exists with correct state
             logger.info(f"Phase 2: Verifying database state for {project_name}/{deployment_name}")
@@ -269,6 +275,7 @@ class DatabaseManager:
                 main_username=db_username,
                 database=db_database,
                 schemas=all_schemas,
+                connection_limit=connection_limit,
             )
 
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
@@ -297,13 +304,18 @@ class DatabaseManager:
                 progress_manager.complete_task(database_task)
 
     async def _create_or_update_user(
-        self, db_username: str, postgres_conn: PostgresConnector, database_privileges: list[str] | None = None
+        self,
+        db_username: str,
+        postgres_conn: PostgresConnector,
+        connection_limit: int,
+        database_privileges: list[str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """Create or update a database user using the bound connector.
 
         Args:
             db_username: Username to create or update
             postgres_conn: PostgresConnector instance (bound to server)
+            connection_limit: CONNECTION LIMIT for a newly created role
             database_privileges: List of PostgreSQL privileges to grant (e.g., ["SUPERUSER", "CREATEDB"])
 
         Returns:
@@ -315,6 +327,7 @@ class DatabaseManager:
             username=db_username,
             password=db_password,
             database_privileges=database_privileges,
+            connection_limit=connection_limit,
         )
 
         if create_result["status"] == "exists":
@@ -333,6 +346,20 @@ class DatabaseManager:
         else:
             # User was created (or error occurred)
             return db_password, create_result
+
+    async def _reconcile_connection_limit(self, username: str, connection_limit: int) -> None:
+        """Bring the role's connection limit to ``connection_limit`` and report the outcome."""
+        result = await self.postgres_connector.set_connection_limit(username, connection_limit)
+        if result["status"] == "not_found":
+            raise ValueError(f"Database role {username} does not exist, cannot set its connection limit")
+        if result["status"] == "updated":
+            outcome = f"{username}: van {result['previous']} naar {connection_limit}"
+        else:
+            outcome = f"{username}: {connection_limit}, ongewijzigd"
+        logger.info(f"Connection limit {outcome}")
+        progress_manager = self.project_manager.get_progress_manager()
+        if progress_manager:
+            progress_manager.complete_task(progress_manager.add_task("Connectielimiet", subject=outcome))
 
     def _resolve_extra_schemas(
         self, project_data: dict[str, Any], project_name: str, deployment_name: str
@@ -356,6 +383,7 @@ class DatabaseManager:
         main_username: str,
         database: str,
         schemas: list[str],
+        connection_limit: int,
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
 
@@ -382,9 +410,12 @@ class DatabaseManager:
         if not ro_password:
             ro_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
 
-        create_result = await self.postgres_connector.create_user(username=ro_username, password=ro_password)
+        create_result = await self.postgres_connector.create_user(
+            username=ro_username, password=ro_password, connection_limit=connection_limit
+        )
         if create_result["status"] == "exists":
             await self.postgres_connector.update_user_password(username=ro_username, new_password=ro_password)
+        await self._reconcile_connection_limit(ro_username, connection_limit)
 
         for schema in schemas:
             await self.postgres_connector.grant_readonly_on_schema(database, schema, ro_username)
@@ -403,6 +434,7 @@ class DatabaseManager:
         db_host: str,
         admin_username: str,
         admin_password: str,
+        connection_limit: int,
         database_privileges: list[str] | None = None,
     ) -> str:
         """
@@ -421,6 +453,7 @@ class DatabaseManager:
             db_host: Database host (shared or namespace-specific service endpoint)
             admin_username: Admin username for database operations
             admin_password: Admin password for database operations
+            connection_limit: CONNECTION LIMIT for a role this call creates
             database_privileges: List of PostgreSQL privileges to grant to created user
 
         Returns:
@@ -465,6 +498,7 @@ class DatabaseManager:
                     new_password, update_result = await self._create_or_update_user(
                         db_username=db_username,
                         postgres_conn=self.postgres_connector,
+                        connection_limit=connection_limit,
                         database_privileges=database_privileges,
                     )
                     if update_result["status"] not in ["updated", "created", "success"]:
@@ -484,6 +518,7 @@ class DatabaseManager:
             db_password, create_result = await self._create_or_update_user(
                 db_username=db_username,
                 postgres_conn=self.postgres_connector,
+                connection_limit=connection_limit,
                 database_privileges=database_privileges,
             )
 
@@ -1899,6 +1934,7 @@ class DatabaseManager:
             # Database/schema use current generation (may be updated in STEP 5 if force_clone)
             target_database = generate_database_name(project_name, deployment_name, generation)
             target_schema = target_database
+            connection_limit = deployment_connection_limit(project_data, deployment_name)
 
             try:
                 target_password = await self._resolve_database_credentials(
@@ -1911,8 +1947,10 @@ class DatabaseManager:
                     db_host=db_host,
                     admin_username=admin_username,
                     admin_password=admin_password,
+                    connection_limit=connection_limit,
                     database_privileges=database_privileges,
                 )
+                await self._reconcile_connection_limit(target_username, connection_limit)
                 result["target"] = {"database": target_database, "schema": target_schema, "username": target_username}
                 result["resolved_password"] = target_password  # For callers that need the resolved password
                 result["operations"].append({"type": "credentials_resolved", "status": "success"})
@@ -2064,6 +2102,7 @@ class DatabaseManager:
                     main_username=target_username,
                     database=target_database,
                     schemas=all_schemas,
+                    connection_limit=connection_limit,
                 )
                 database_secret = DatabaseSecret(
                     host=self._db_host,

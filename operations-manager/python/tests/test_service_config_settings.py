@@ -45,6 +45,7 @@ from opi.services.catalog.config_settings import (
     read_setting_value,
     resolve_setting,
 )
+from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES, get_service
@@ -202,23 +203,22 @@ def declaring(monkeypatch: pytest.MonkeyPatch) -> Any:
 # --- 1. er verandert vandaag niets ------------------------------------------------
 
 
-def test_geen_enkele_dienst_in_de_catalogus_declareert_iets() -> None:
+def test_alleen_de_connectielimiet_is_in_de_catalogus_gedeclareerd() -> None:
     """De regressietoets over de hele catalogus.
 
-    De waarde van dit mechanisme zit erin dat twee volgende taken erop kunnen bouwen,
-    niet in wat het zelf oplevert. Declareert een dienst hier wel iets, dan is er gedrag
-    veranderd dat niemand heeft gevraagd -- en dan hoort daar een test bij die dat gedrag
-    meet, niet deze.
+    Declareert een dienst hier iets bij, dan is er gedrag veranderd dat niemand heeft
+    gevraagd -- en dan hoort daar een test bij die dat gedrag meet, niet deze. De
+    connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``.
     """
     declarerend = {name: provider.config_settings() for name, provider in SERVICES.items()}
-    assert {name: settings for name, settings in declarerend.items() if settings} == {}
+    assert {name: settings for name, settings in declarerend.items() if settings} == {_DATABASE: (CONNECTION_LIMIT,)}
 
 
-def test_een_dienst_die_niets_declareert_krijgt_er_geen_laag_bij() -> None:
-    """``config_layers()`` telt een laag mee die een setting openzet; nul settings, nul lagen."""
+def test_elke_laag_die_een_setting_openzet_telt_mee() -> None:
+    """``config_layers()`` telt een laag mee die een setting openzet."""
     for provider in SERVICES.values():
         lagen = provider.config_layers()
-        assert all(not setting.allows(layer) for setting in provider.config_settings() for layer in lagen)
+        assert all(layer in lagen for setting in provider.config_settings() for layer in setting.layers)
 
 
 def test_een_projectbestand_zonder_declaraties_valideert_ongewijzigd() -> None:

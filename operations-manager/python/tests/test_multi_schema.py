@@ -81,9 +81,15 @@ def test_extra_schemas_join_into_search_path_default_first():
 
 
 def _manager() -> DatabaseManager:
-    mgr = DatabaseManager(project_manager=SimpleNamespace(), db_host="h", admin_username="a", admin_password="p")
+    mgr = DatabaseManager(
+        project_manager=SimpleNamespace(get_progress_manager=lambda: None),
+        db_host="h",
+        admin_username="a",
+        admin_password="p",
+    )
     mgr._postgres_connector = AsyncMock()
     mgr._postgres_connector.create_user.return_value = {"status": "created"}
+    mgr._postgres_connector.set_connection_limit.return_value = {"status": "unchanged", "previous": 20}
     return mgr
 
 
@@ -124,6 +130,7 @@ async def test_readonly_role_granted_on_every_schema():
         main_username="proj_dep",
         database="proj_dep",
         schemas=schemas,
+        connection_limit=20,
     )
 
     assert ro_username == "proj_dep_ro"
