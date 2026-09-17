@@ -41,9 +41,10 @@ De omzetting staat in `opi/services/help_text.py` en kent bewust weinig:
 |---|---|
 | `# Titel` | `<c-heading type="h2">` met het icoon van de service |
 | `## Kopje` | `<c-heading type="h3">` |
-| een alinea | `<c-p>` |
-| `- regel` | `<c-ul>` / `<c-li>` |
-| `**vet**` | `<c-strong>` |
+| een alinea | `<c-paragraph>` |
+| `- regel` | `<c-rich-text>` met `<ul>` / `<li>` |
+| `**vet**` | `<c-b>` |
+| `[label](/pad)` of `[label](https://...)` | `<c-link>` |
 | `\*` | een letterlijke asterisk naast de vet-tekens |
 
 Meer syntaxis zou een component vragen dat niet bestaat, en een vorm die in één van de twee
