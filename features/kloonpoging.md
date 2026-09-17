@@ -20,8 +20,7 @@ clone-from:
   deze cluster (binnen de gevraagde scope) met `mode: once` waarvan `completed` nog niet true
   is. Hij gaat met een eigen commit naar git (`Clone attempt started for ...`), zodat hij een
   fout later in de run overleeft. Staat hij er al, dan wordt er niets opnieuw geschreven.
-- **Uit**: zodra de kloon als afgerond wordt vastgelegd. `set_clone_status` vervangt het hele
-  statusblok door `completed` en `timestamp`.
+- **Uit**: zodra de kloon als afgerond wordt vastgelegd (`set_clone_status`).
 - `mode: always` krijgt de vlag nooit: die kloont elke run in een nieuwe generatie.
 - Een bestand zonder de vlag gedraagt zich als voorheen. Er is geen migratie.
 
