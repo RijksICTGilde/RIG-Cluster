@@ -1,8 +1,5 @@
-"""The connection limit of a deployment's database roles (RC-201).
-
-The room is a platform decision and lives here; a project picks a value on the project
-or the deployment layer. The read-write role and its ``_ro`` role get the same value.
-"""
+"""The connection limit of a deployment's database roles (RC-201). The bound is a
+platform decision, so it lives here and not in the project file."""
 
 from __future__ import annotations
 

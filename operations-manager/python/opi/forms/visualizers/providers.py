@@ -465,11 +465,7 @@ class StorageSizeOptionsProvider:
 
 class ConnectionLimitOptionsProvider:
     """The connection-limit steps, plus the stored value when it is not one of them.
-
-    The steps are a menu, not the bound: ``CONNECTION_LIMIT`` judges the value, so a
-    value set through the API (37) is shown as it is instead of snapping to a step.
-    The empty choice stores nothing, which is the service default.
-    """
+    The empty choice stores nothing."""
 
     options_source: ClassVar[OptionsSource | None] = None
 
