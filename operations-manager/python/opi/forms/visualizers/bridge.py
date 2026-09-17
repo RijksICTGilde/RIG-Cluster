@@ -304,7 +304,7 @@ def _has_options(editable: EditableVisualizer, yaml_data: dict[str, Any], index:
     """Whether this field's own options provider has anything to offer right now.
 
     ``yaml_path`` travels along because a provider may phrase itself differently per layer
-    (the registry picker's empty option means "public" on a component and "no override" on
+    (the registry picker's empty option means "automatic" on a component and "no override" on
     a deployment-component).
     """
     ed = editable.editable
