@@ -85,11 +85,12 @@
     },
     "postgresql-schemas-config": {
       "editables": [
+        "services/postgresql-database/config/connection-limit",
         "services/postgresql-database/config/schemas"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
-      "title": "Database-schema's"
+      "title": "Database"
     },
     "redis-config": {
       "editables": [
@@ -403,11 +404,12 @@
     },
     "postgresql-database": {
       "editables": [
+        "services/postgresql-database/config/connection-limit",
         "services/postgresql-database/config/schemas"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
-      "title": "Database-schema's"
+      "title": "Database"
     },
     "redis": {
       "editables": [

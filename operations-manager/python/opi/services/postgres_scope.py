@@ -113,8 +113,10 @@ def get_dedicated_postgres_config(project_data: dict[str, Any]) -> dict[str, Any
         raise ValueError("get_dedicated_postgres_config called for a project without a dedicated PostgreSQL database")
     # RootModel member is ProjectScopeConfig (the CNPG fields + scope + schemas); drop
     # the non-cluster fields so the result matches NamespacePostgresConfig's field set
-    # exactly (schemas are handled separately, not by the cluster generator).
+    # exactly (schemas and the role connection limit are handled separately, not by the
+    # cluster generator).
     config = model.root.model_dump(mode="json")  # type: ignore[attr-defined]
     config.pop("scope", None)
     config.pop("schemas", None)
+    config.pop("connection_limit", None)
     return config

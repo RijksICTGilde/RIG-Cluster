@@ -1050,7 +1050,7 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "namespace-redis": [],
     "persistent-storage": ["component"],
     "platform": [],
-    "postgresql-database": ["project"],
+    "postgresql-database": ["project", "deployment"],  # RC-201: connection-limit
     # RC-60: the web address is deployment-level config of this service. RC-78: the
     # certificate is overridable per component per deployment, so that layer is now an
     # API target too -- the model always accepted it, only the declaration was missing.
