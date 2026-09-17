@@ -349,8 +349,6 @@ def resolver():
 
 @pytest.mark.asyncio
 class TestDestinationGuard:
-    """De tokentoets is een uitgaand verzoek naar een host die de afnemer kiest."""
-
     @pytest.mark.parametrize(
         "repository",
         [
@@ -392,7 +390,6 @@ class TestDestinationGuard:
         assert result == (False, REFUSED_DESTINATION_REASON)
 
     async def test_the_platform_registry_is_allowed_in_the_sandbox(self, connector, resolver, fake_skopeo):
-        """In de pod resolvet ``*.sandbox.rijksapp.dev`` via CoreDNS naar de ingress."""
         with patch("opi.connectors.skopeo.settings") as mock_settings:
             mock_settings.CLUSTER_MANAGER = "sandboxed-local"
             mock_settings.REGISTRY_URL = "registry.sandbox.rijksapp.dev"
@@ -429,8 +426,6 @@ def _assert_authfile_used_and_gone(record: Path, registry: str, username: str) -
 
 @pytest.mark.asyncio
 class TestCredentialsStayOutOfArgv:
-    """Het wachtwoord staat in een authfile, niet in ``/proc/<pid>/cmdline``."""
-
     @pytest.mark.parametrize("exit_code", ["0", "1"])
     async def test_list_tags(self, connector, resolver, fake_skopeo, monkeypatch, exit_code):
         monkeypatch.setenv("SKOPEO_EXIT", exit_code)
@@ -467,7 +462,6 @@ class TestCredentialsStayOutOfArgv:
         assert not (fake_skopeo / "path").exists()
 
     async def test_the_authfile_is_removed_when_the_process_cannot_start(self, connector, resolver, tmp_path):
-        """Een uitzondering binnen het blok ruimt het bestand ook op."""
         seen: list[str] = []
 
         async def exploding_exec(*cmd: str, **kwargs: object) -> None:
