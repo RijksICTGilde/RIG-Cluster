@@ -83,7 +83,7 @@ COMPONENT_REGISTRY = EditableVisualizer(
     label="Registry",
     help_text=(
         "Waar de image hierboven vandaan komt. Kies je een eigen registry, dan gebruikt dit component "
-        "het token daarvan; laat je het op de publieke registry staan, dan wordt er niets opgeslagen. "
+        "het token daarvan; laat je het op Automatisch staan, dan wordt er niets opgeslagen. "
         "Voeg een registry toe bij de dienst Eigen container registries."
     ),
 )

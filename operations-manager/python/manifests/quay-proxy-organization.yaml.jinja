@@ -26,10 +26,8 @@ spec:
     friendlyName: "{{ friendly_name }}"
     # yaml_scalar: de enige waarde hier die rechtstreeks van de afnemer komt.
     upstreamRegistry: {{ upstream | yaml_scalar }}
-    {% if credentials_secret %}
     credentialsSecretRef:
       name: "{{ credentials_secret }}"
-    {% endif %}
   robot:
     enabled: true
     imagePullSecret:

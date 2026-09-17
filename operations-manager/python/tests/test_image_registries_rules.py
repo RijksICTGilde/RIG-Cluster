@@ -325,9 +325,8 @@ class TestEenEigenRegistryGeldtVoorHetHeleProject:
     """De keuze bij een component is een VOORRANGSregel, geen aan/uit-schakelaar.
 
     Een project dat ``ghcr.io/mijnorg`` als eigen registry opgeeft zegt daarmee dat die
-    upstream van hem is. Een component dat de dienst NIET aanvinkt maar wel een image onder
-    die prefix draait gaat dus ook langs de eigen proxy, met hetzelfde token. Bewust zo, en
-    om twee redenen:
+    upstream van hem is. Een component ZONDER keuze maar met een image onder die prefix
+    gaat dus ook langs de eigen proxy, met hetzelfde token. Bewust zo, en om twee redenen:
 
     - Het alternatief (alleen de gekozen regel plus de clustertabel) laat zo'n image bij de
       GEDEELDE proxy uitkomen, en die heeft geen credentials voor een prive-pakket. Dat is
@@ -336,7 +335,7 @@ class TestEenEigenRegistryGeldtVoorHetHeleProject:
       component welke container is. Twee antwoorden op dezelfde vraag zouden daar meteen
       uiteenlopen.
 
-    Wat de afnemer ervan moet weten staat in ``help.md``: niet-aanvinken is geen keuze voor
+    Wat de afnemer ervan moet weten staat in ``help.md``: "Automatisch" is geen keuze voor
     de publieke weg, het is alleen "hier valt niets te kiezen".
     """
 
