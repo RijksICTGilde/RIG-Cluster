@@ -45,6 +45,7 @@ from opi.services.catalog.sleep_mode import service as sleep_service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode import token as sleep_token
 from opi.services.resource_tuning_service import apply_resource_tuning
+from opi.services.schema_migration import migrate_to_latest
 from opi.services.services_enums import ServiceType
 
 #: Een AGE-blok in de vorm die het schema eist, zodat een schrijver die een versleutelde
@@ -293,6 +294,21 @@ def test_de_kloonstatus_blijft_geldig() -> None:
 
     ProjectFileHandler().set_clone_status(project, "productie", True, "2026-08-18T01:00:00+00:00")
 
+    poorten(project)
+
+
+def test_de_kloonpoging_blijft_geldig_na_migratie() -> None:
+    """``process_project`` zet ``in-progress`` voor het provisioneren; ``set_clone_status`` haalt hem weg."""
+    oud = _basis_project()
+    oud["deployments"][0]["clone-from"] = {"type": "deployment", "reference": "acceptatie", "mode": "once"}
+    project, _changed = migrate_to_latest(oud)
+    poorten(project)
+
+    handler = ProjectFileHandler()
+    assert handler.mark_clone_in_progress(project, "productie")
+    poorten(project)
+
+    handler.set_clone_status(project, "productie", True, "2026-09-17T01:00:00+00:00")
     poorten(project)
 
 

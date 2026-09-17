@@ -132,7 +132,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in
         # one call, so only this service provisions (namespace-postgres does not).
-        await ctx.database_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
+        await ctx.database_manager.create_resources_for_deployment(
+            ctx.project_data, ctx.deployment, ctx.force_clone, clone_interrupted=ctx.clone_interrupted
+        )
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
         creds = ctx.get_secret(ctx.deployment_name, "database", DatabaseSecret)

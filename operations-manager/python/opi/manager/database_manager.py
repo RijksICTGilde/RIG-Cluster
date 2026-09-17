@@ -10,7 +10,12 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-from opi.connectors.postgres import PostgresConnector, create_postgres_connector
+from opi.connectors.postgres import (
+    PostgresConnector,
+    PostgresExecutionError,
+    PostgresValidationError,
+    create_postgres_connector,
+)
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
@@ -113,6 +118,7 @@ class DatabaseManager:
         project_data: dict[str, Any],
         deployment: dict[str, Any],
         force_clone: bool = False,
+        clone_interrupted: bool = False,
     ) -> None:
         """
         Create database resources for a deployment that has PostgreSQL service enabled.
@@ -134,6 +140,7 @@ class DatabaseManager:
             project_data: The project configuration data
             deployment: The specific deployment configuration
             force_clone: If True, force clone even if target already exists (runtime override)
+            clone_interrupted: A previous run started this deployment's clone and did not record it as completed
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -233,6 +240,7 @@ class DatabaseManager:
                 project_data,
                 force_clone,
                 generation,
+                clone_interrupted=clone_interrupted,
             )
 
             # Use the final identifiers from _ensure_database_state, which may differ
@@ -520,6 +528,7 @@ class DatabaseManager:
         project_data: dict[str, Any] | None = None,
         force_clone_override: bool = False,
         generation: int | None = None,
+        clone_interrupted: bool = False,
     ) -> DatabaseStateResult:
         """
         Ensure the database exists in the correct state, handling clone-from and force-clone logic.
@@ -544,6 +553,9 @@ class DatabaseManager:
             db_password: Password for the owner
             project_data: Project configuration data (needed for remote-source clones)
             force_clone_override: Runtime override for force_clone (from API)
+            clone_interrupted: A previous run started this clone and did not record it as completed.
+                The existing target database then belongs to that attempt instead of triggering a
+                generational failover, and a target schema that is already there is a finished clone.
 
         Returns:
             DatabaseStateResult with the final database, schema, and password.
@@ -631,6 +643,7 @@ class DatabaseManager:
                     force_clone=force_clone,
                     chisel_config=chisel_config,
                     project_data=project_data,
+                    clone_interrupted=clone_interrupted,
                 )
 
                 if not result.get("success"):
@@ -769,13 +782,34 @@ class DatabaseManager:
             # Track the final generation used for this clone
             final_generation = generation
 
-            if target_db_exists and (force_clone or generation is None):
+            if target_db_exists and clone_interrupted and not force_clone:
+                target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
+                if target_schemas <= await self._schema_names(db_database):
+                    logger.info(
+                        f"Clone into {db_database} was finished by an interrupted run, recording it instead of cloning again"
+                    )
+                    if project_data:
+                        self.project_manager._revision_manager.record_clone(
+                            project_data=project_data,
+                            deployment_name=deployment_name,
+                            service_type=service_type,
+                            generation=final_generation,
+                            resource_name=db_database,
+                            source=f"deployment:{clone_source_ref}",
+                        )
+                    self.project_manager.report_clone_performed(deployment_name, service_type, final_generation)
+                    return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
+
+            if target_db_exists and (force_clone or (generation is None and not clone_interrupted)):
                 # Generational failover: create a new versioned database instead of
                 # cloning into an existing (potentially broken/limbo) one.
                 # Triggers when:
                 # - force_clone=True: explicit user request
                 # - generation is None: database exists but no generation was ever recorded,
-                #   indicating a previous clone failed before recording its generation
+                #   indicating a previous clone failed before recording its generation.
+                #   Not when that previous attempt is known (clone_interrupted): its
+                #   database is ours, and the cap below is only the fallback for when
+                #   writing that flag failed.
                 new_generation = (generation or 0) + 1
 
                 # Find an available generation - previous failed attempts may have left
@@ -838,6 +872,7 @@ class DatabaseManager:
             # STEP 2: Perform the clone operation
             # If clone fails and we created the database in this operation, clean it up
             # to prevent a limbo state with a partially-created database
+            schemas_before = set() if database_created_here else await self._schema_names(db_database)
             try:
                 clone_result = await self.postgres_connector.clone_schema(
                     source_database=source_database,
@@ -861,6 +896,8 @@ class DatabaseManager:
                         logger.info(f"Cleaned up database {db_database} after failed clone")
                     except Exception as cleanup_err:
                         logger.error(f"Failed to clean up database {db_database} after failed clone: {cleanup_err}")
+                else:
+                    await self._drop_schemas_created_since(db_database, schemas_before)
                 raise
 
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
@@ -930,6 +967,23 @@ class DatabaseManager:
                 logger.info(f"Database schema already exists: {db_schema}")
 
         return DatabaseStateResult(database=db_database, schema=db_schema, password=db_password)
+
+    async def _schema_names(self, database: str) -> set[str]:
+        return {row["schema_name"] for row in await self.postgres_connector.list_schemas(database)}
+
+    async def _drop_schemas_created_since(self, database: str, schemas_before: set[str]) -> None:
+        """Drop what a failed clone left in a database that already existed.
+
+        A clone into a database it did not create cannot drop the database, so without
+        this a half schema survives, and a retry would take it for a finished clone.
+        """
+        try:
+            leftovers = await self._schema_names(database) - schemas_before
+            for schema in sorted(leftovers):
+                await self.postgres_connector.delete_schema(schema, database, cascade=True)
+                logger.info(f"Dropped schema {schema} in {database} after failed clone")
+        except (PostgresExecutionError, PostgresValidationError) as cleanup_err:
+            logger.error(f"Failed to clean up schemas in {database} after failed clone: {cleanup_err}")
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
         """
@@ -1677,6 +1731,7 @@ class DatabaseManager:
         force_clone: bool,
         chisel_config: dict[str, Any],
         project_data: dict[str, Any] | None,
+        clone_interrupted: bool = False,
     ) -> dict[str, Any]:
         """
         Clone database from external source via Chisel tunnel.
@@ -1706,6 +1761,7 @@ class DatabaseManager:
                 source_database=source_database,
                 source_schema=source_schema,
                 force_clone=force_clone,
+                clone_interrupted=clone_interrupted,
             )
 
             # Add tunnel info to result
@@ -1731,6 +1787,7 @@ class DatabaseManager:
         force_clone: bool = False,
         chisel_config: dict[str, Any] | None = None,
         project_data: dict[str, Any] | None = None,
+        clone_interrupted: bool = False,
     ) -> dict[str, Any]:
         """
         Orchestrate cloning a database from an external source into a target deployment.
@@ -1756,6 +1813,8 @@ class DatabaseManager:
                 - username: Chisel auth username
                 - password: Chisel auth password (may be encrypted)
             project_data: Optional project data for password decryption context
+            clone_interrupted: A previous run started this clone and did not record it as completed;
+                a target schema that is already there is then a finished clone
 
         Returns:
             Dictionary containing operation results with status and operations list
@@ -1787,6 +1846,7 @@ class DatabaseManager:
                 force_clone=force_clone,
                 chisel_config=chisel_config,
                 project_data=project_data,
+                clone_interrupted=clone_interrupted,
             )
 
         # Direct connection (no tunnel)
@@ -1800,6 +1860,7 @@ class DatabaseManager:
             source_database=source_database,
             source_schema=source_schema,
             force_clone=force_clone,
+            clone_interrupted=clone_interrupted,
         )
 
     async def _execute_external_clone(
@@ -1813,6 +1874,7 @@ class DatabaseManager:
         source_database: str,
         source_schema: str,
         force_clone: bool,
+        clone_interrupted: bool = False,
     ) -> dict[str, Any]:
         """
         Execute the actual database clone operation.
@@ -1922,6 +1984,7 @@ class DatabaseManager:
                 return result
 
             # STEP 5: Prepare target database (generational approach for force_clone)
+            clone_already_finished = False
             try:
                 # Check if target database exists by attempting to create it
                 create_result = await self.postgres_connector.create_database(
@@ -2010,6 +2073,11 @@ class DatabaseManager:
                 else:
                     logger.info(f"Database already exists for cloning: {target_database}")
                     result["operations"].append({"type": "database_prepared", "status": "exists"})
+                    clone_already_finished = (
+                        clone_interrupted
+                        and not force_clone
+                        and target_schema in await self._schema_names(target_database)
+                    )
             except Exception as e:
                 result["errors"].append(f"Database preparation failed: {e!s}")
                 result["operations"].append({"type": "database_prepared", "status": "failed", "error": str(e)})
@@ -2017,29 +2085,35 @@ class DatabaseManager:
 
             # STEP 6: Execute clone (reuse existing connector method)
             # Source credentials passed as parameters, target uses bound connector
-            try:
-                clone_result = await self.postgres_connector.clone_schema_from_external(
-                    source_host=source_host,
-                    source_port=source_port,
-                    source_username=source_username,
-                    source_password=source_password,
-                    source_database=source_database,
-                    source_schema=source_schema,
-                    target_database=target_database,
-                    target_schema=target_schema,
-                    target_owner=target_username,
-                    target_owner_password=target_password,
-                    force_clone=force_clone,
-                )
+            if clone_already_finished:
+                logger.info(f"Clone into {target_database} was finished by an interrupted run, not cloning again")
+                result["operations"].append({"type": "database_cloned", "status": "already_finished"})
+            else:
+                schemas_before = await self._schema_names(target_database)
+                try:
+                    clone_result = await self.postgres_connector.clone_schema_from_external(
+                        source_host=source_host,
+                        source_port=source_port,
+                        source_username=source_username,
+                        source_password=source_password,
+                        source_database=source_database,
+                        source_schema=source_schema,
+                        target_database=target_database,
+                        target_schema=target_schema,
+                        target_owner=target_username,
+                        target_owner_password=target_password,
+                        force_clone=force_clone,
+                    )
 
-                if clone_result["status"] != "success":
-                    raise Exception(f"Clone failed: {clone_result.get('message')}")
+                    if clone_result["status"] != "success":
+                        raise Exception(f"Clone failed: {clone_result.get('message')}")
 
-                result["operations"].append({"type": "database_cloned", "status": "success"})
-            except Exception as e:
-                result["errors"].append(f"Database clone failed: {e!s}")
-                result["operations"].append({"type": "database_cloned", "status": "failed", "error": str(e)})
-                return result
+                    result["operations"].append({"type": "database_cloned", "status": "success"})
+                except Exception as e:
+                    await self._drop_schemas_created_since(target_database, schemas_before)
+                    result["errors"].append(f"Database clone failed: {e!s}")
+                    result["operations"].append({"type": "database_cloned", "status": "failed", "error": str(e)})
+                    return result
 
             # STEP 7: Store credentials in memory map
             try:
