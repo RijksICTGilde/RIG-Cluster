@@ -2,12 +2,13 @@
 
 import os
 import shutil
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_manager import ProjectManager
-from opi.services.catalog.base import SecretFileSpec
+from opi.manager.project_manager import ProjectManager, _existing_secret_pairs
+from opi.services.catalog.base import ManifestContribution, SecretFileSpec
 from opi.utils.sops import encrypt_to_sops_files
 from tests.test_sops_skip_unchanged import PRIVATE_KEY, PUBLIC_KEY
 
@@ -18,6 +19,18 @@ pytestmark = pytest.mark.skipif(
 
 TEMPLATE = os.path.join(os.path.dirname(__file__), "..", "manifests", "generic-secret.yaml.to-sops.jinja")
 NAME = "productie-fundament-oauth2-cookie"
+PROJECT: dict = {
+    "name": "demo",
+    "components": [{"name": "fundament", "type": "single", "ports": {"inbound": [8080]}, "services": []}],
+    "deployments": [
+        {
+            "name": "productie",
+            "cluster": "sandboxed-local",
+            "namespace": "demo",
+            "components": [{"reference": "fundament", "image": "nginx:1"}],
+        }
+    ],
+}
 WRONG_KEY = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
 
 
@@ -86,6 +99,19 @@ class TestKeepExistingValues:
 
         assert _write(d, "tweede") == "tweede"
 
+    def test_een_sleutel_die_de_dienst_niet_meer_levert_komt_niet_terug(self, tmp_path):
+        d = str(tmp_path)
+        with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml"), "w") as f:
+            f.write(
+                "apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\nstringData:\n  cookie-secret: oud\n  vervallen: x\n"
+            )
+        encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
+
+        _write(d, "tweede")
+
+        with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml")) as f:
+            assert yaml.safe_load(f)["stringData"] == {"cookie-secret": "oud"}
+
 
 class TestFaaltNaarDeNieuweWaarde:
     def test_onleesbare_ciphertext(self, tmp_path):
@@ -107,3 +133,53 @@ class TestFaaltNaarDeNieuweWaarde:
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
         assert _write(d, "tweede", private_key=None) == "tweede"
+
+    @pytest.mark.parametrize(
+        "decrypted",
+        ["dit is: [geen yaml", "- een\n- lijst\n", "kind: Secret\n", "stringData:\n  - een lijst\n"],
+    )
+    def test_onbruikbaar_ontsleuteld_document(self, tmp_path, decrypted):
+        path = tmp_path / "x.sops.yaml"
+        path.write_text("ciphertext")
+        with patch("opi.manager.project_manager.decrypt_sops_with_key", return_value=decrypted):
+            assert _existing_secret_pairs(str(path), PRIVATE_KEY) == {}
+
+    def test_alleen_tekstwaarden_worden_overgenomen(self, tmp_path):
+        path = tmp_path / "x.sops.yaml"
+        path.write_text("ciphertext")
+        decrypted = "stringData:\n  cookie-secret: oud\n  poort: 8080\n  leeg: null\n"
+        with patch("opi.manager.project_manager.decrypt_sops_with_key", return_value=decrypted):
+            assert _existing_secret_pairs(str(path), PRIVATE_KEY) == {"cookie-secret": "oud"}
+
+
+class TestDeployment:
+    """``create_application_manifests`` geeft de projectsleutel door aan de schrijver."""
+
+    async def _run(self, working_dir: str, value: str) -> str:
+        with patch("opi.manager.project_manager.KubectlConnector"):
+            pm = ProjectManager()
+        pm.get_contents = AsyncMock(return_value=PROJECT)
+        pm.get_name = AsyncMock(return_value="demo")
+        pm._project_file_handler.extract_component_user_env_vars = AsyncMock(return_value={})
+        pm._project_file_handler.extract_deployment_component_user_env_vars = AsyncMock(return_value={})
+        git = MagicMock()
+        git.get_working_dir = AsyncMock(return_value=working_dir)
+        spec = SecretFileSpec(secret_name=NAME, secret_pairs={"cookie-secret": value}, keep_existing_values=True)
+        with (
+            patch("opi.manager.project_manager.get_decoded_project_private_key", AsyncMock(return_value=PRIVATE_KEY)),
+            patch(
+                "opi.manager.project_manager.collect_manifest_contributions",
+                return_value=[ManifestContribution(secret_files=[spec])],
+            ),
+        ):
+            created = await pm.create_application_manifests(PROJECT["deployments"][0], git, "uit")
+        assert f"{NAME}-secret.to-sops.yaml" in created
+        with open(os.path.join(working_dir, "uit", f"{NAME}-secret.to-sops.yaml")) as f:
+            return yaml.safe_load(f)["stringData"]["cookie-secret"]
+
+    async def test_tweede_run_houdt_de_waarde_van_de_eerste(self, tmp_path):
+        d = str(tmp_path)
+        assert await self._run(d, "eerste") == "eerste"
+        encrypt_to_sops_files(os.path.join(d, "uit"), PUBLIC_KEY, PRIVATE_KEY)
+
+        assert await self._run(d, "tweede") == "eerste"
