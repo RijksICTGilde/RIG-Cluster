@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.skopeo import SkopeoConnector
+from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, SkopeoConnector
 from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
@@ -52,6 +52,8 @@ class RegistryTokenEnforcer:
                 )
                 continue
             ok, reason = await connector.check_repository_access(repository, str(username), str(password))
+            if not ok and reason == REFUSED_DESTINATION_REASON:
+                raise FieldError(f"{_REGISTRIES_PATH}[{index}]/upstream", REFUSED_DESTINATION_REASON.capitalize())
             if not ok:
                 raise FieldError(
                     f"{_REGISTRIES_PATH}[{index}]/password",
