@@ -73,8 +73,7 @@ def _is_sandbox_registry(authority: str) -> bool:
 async def _destination_refused(repository: str) -> bool:
     """Valt de host van ``repository`` in private of bijzondere adresruimte, of resolvet hij niet?
 
-    ``is_global`` en niet alleen ``is_private``: die laatste laat ``0.0.0.0`` (op Linux de
-    eigen pod) en ``100.64.0.0/10`` door.
+    ``is_global`` en niet ``is_private``: die laatste laat ``100.64.0.0/10`` door.
     """
     authority = upstream_host(repository)
     if _is_sandbox_registry(authority):
@@ -84,7 +83,7 @@ async def _destination_refused(repository: str) -> bool:
         addresses = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
     except socket.gaierror, UnicodeError:
         return True
-    return not addresses or any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses)
+    return any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses)
 
 
 class SkopeoConnector:
