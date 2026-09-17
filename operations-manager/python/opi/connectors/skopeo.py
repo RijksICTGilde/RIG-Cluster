@@ -48,6 +48,9 @@ _TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 #: Eén melding voor elke geweigerde bestemming, anders is de weigering zelf een orakel.
 REFUSED_DESTINATION_REASON = "het platform mag deze registry niet benaderen"
 
+#: Eén melding voor elke mislukte toets: skopeo volgt redirects en token-realms, dus stderr is een orakel.
+UNREADABLE_REASON = "de registry gaf met deze inloggegevens geen leesrecht, of was niet bereikbaar"
+
 
 @contextlib.contextmanager
 def _authfile(registry: str, username: str, password: str) -> Iterator[str]:
@@ -258,10 +261,9 @@ class SkopeoConnector:
 
         if process.returncode == 0:
             return True, ""
-        # The registry's own words say what went wrong, but skopeo echoes the URL it
-        # tried, so strip anything that looks like a userinfo part.
-        reason = stderr_bytes.decode(errors="replace").strip().splitlines()
-        return False, self._mask_userinfo(reason[0]) if reason else "de registry gaf geen reden"
+        stderr = self._mask_userinfo(stderr_bytes.decode(errors="replace").strip())
+        logger.warning(f"Registry access check failed for {repository}: {stderr}")
+        return False, UNREADABLE_REASON
 
     @staticmethod
     def _mask_userinfo(text: str) -> str:

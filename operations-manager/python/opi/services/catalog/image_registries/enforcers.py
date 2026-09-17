@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, SkopeoConnector
+from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
@@ -57,8 +57,8 @@ class RegistryTokenEnforcer:
             if not ok:
                 raise FieldError(
                     f"{_REGISTRIES_PATH}[{index}]/password",
-                    f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen. "
-                    f"Het token heeft leesrecht op packages nodig. De registry zei: {reason}",
+                    f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen: {UNREADABLE_REASON}. "
+                    f"Het token heeft leesrecht op packages nodig.",
                 )
         return value
 

@@ -10,18 +10,26 @@ import ipaddress
 import json
 import logging
 import os
+import shutil
 import socket
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.skopeo import (
     REFUSED_DESTINATION_REASON,
+    UNREADABLE_REASON,
     SkopeoConnectionError,
     SkopeoConnector,
     SkopeoExecutionError,
     SkopeoValidationError,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
 
 
 @pytest.fixture(autouse=True)
@@ -290,7 +298,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-echo "unauthorized: authentication required" >&2
+echo "${SKOPEO_STDERR:-unauthorized: authentication required}" >&2
 exit "$SKOPEO_EXIT"
 """
 
@@ -506,3 +514,146 @@ class TestCredentialsStayOutOfArgv:
         assert "Verifying registry access" in caplog.text
         assert "Pushing image" in caplog.text
         assert PASSWORD not in caplog.text
+
+
+#: Eerste stderr-regels van skopeo 1.18 uit het OPI-image. De eerste twee kwamen van een intern
+#: doel achter een token-realm of een redirect, de laatste twee van de registry zelf.
+MEASURED_STDERR = [
+    'level=fatal msg="Error listing repository tags: Requesting bearer token: invalid status code from registry 500"',
+    'level=fatal msg="Error listing repository tags: pinging container registry evil.example: Get '
+    '\\"http://10.43.0.1:8080/v2/\\": dial tcp 10.43.0.1:8080: connect: connection refused"',
+    'level=fatal msg="Error listing repository tags: unable to retrieve auth token: invalid username/password"',
+    'level=fatal msg="Error listing repository tags: fetching tags list: denied"',
+]
+
+
+@pytest.mark.asyncio
+class TestTheOutcomeGivesNothingAway:
+    @pytest.mark.parametrize("stderr", MEASURED_STDERR)
+    async def test_every_failure_gets_the_same_reason(
+        self, connector, resolver, fake_skopeo, monkeypatch, caplog, stderr
+    ):
+        monkeypatch.setenv("SKOPEO_EXIT", "1")
+        monkeypatch.setenv("SKOPEO_STDERR", stderr)
+        with caplog.at_level(logging.WARNING, logger="opi.connectors.skopeo"):
+            result = await connector.check_repository_access("ghcr.io/team/app", "robbert", PASSWORD)
+        assert result == (False, UNREADABLE_REASON)
+        assert stderr in caplog.text
+
+    async def test_the_logged_line_is_masked(self, connector, resolver, fake_skopeo, monkeypatch, caplog):
+        monkeypatch.setenv("SKOPEO_EXIT", "1")
+        monkeypatch.setenv("SKOPEO_STDERR", f"error pinging docker://robbert:{PASSWORD}@ghcr.io/v2/")
+        with caplog.at_level(logging.WARNING, logger="opi.connectors.skopeo"):
+            await connector.check_repository_access("ghcr.io/team/app", "robbert", PASSWORD)
+        assert "//***@ghcr.io" in caplog.text
+        assert PASSWORD not in caplog.text
+
+
+def _serve(handler: type[BaseHTTPRequestHandler]) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.hits = []  # type: ignore[attr-defined]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args: object) -> None:
+        # Skopeo probeert eerst https; die regel komt aan zonder pad.
+        self.server.hits.append(getattr(self, "path", ""))  # type: ignore[attr-defined]
+
+    def answer(self, status: int, headers: dict[str, str] | None = None, body: bytes = b"{}") -> None:
+        self.send_response(status)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _internal(status: int) -> type[BaseHTTPRequestHandler]:
+    class Internal(_Handler):
+        def do_GET(self) -> None:
+            self.answer(status, body=json.dumps({"errors": [{"code": "UNAUTHORIZED", "message": "x"}]}).encode())
+
+    return Internal
+
+
+def _registry(mode: str, target: str) -> type[BaseHTTPRequestHandler]:
+    class Registry(_Handler):
+        def do_GET(self) -> None:
+            port = self.server.server_address[1]
+            if mode == "realm":
+                self.answer(401, {"WWW-Authenticate": f'Bearer realm="http://{target}/token",service="x"'})
+            elif mode == "redirect":
+                self.answer(302, {"Location": f"http://{target}{self.path}"})
+            elif self.path.startswith("/token"):
+                self.answer(401)
+            else:
+                self.answer(401, {"WWW-Authenticate": f'Bearer realm="http://127.0.0.1:{port}/token",service="x"'})
+
+    return Registry
+
+
+@pytest.fixture
+def closed_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def public_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str, str], str]]:
+    """Start een registry als eerste hop die voor een publieke host met certificaat staat.
+
+    Skopeo leest geen registries.conf uit de omgeving, dus http via ``--tls-verify=false``.
+    """
+    wrapper = tmp_path / "bin" / "skopeo"
+    wrapper.parent.mkdir()
+    wrapper.write_text(f'#!/bin/sh\nsub=$1\nshift\nexec {shutil.which("skopeo")} "$sub" --tls-verify=false "$@"\n')
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{wrapper.parent}{os.pathsep}{os.environ['PATH']}")
+    servers: list[ThreadingHTTPServer] = []
+
+    def start(mode: str, target: str) -> str:
+        server = _serve(_registry(mode, target))
+        servers.append(server)
+        return f"127.0.0.1:{server.server_address[1]}"
+
+    with patch("opi.connectors.skopeo._destination_refused", AsyncMock(return_value=False)):
+        yield start
+    for server in servers:
+        server.shutdown()
+    assert all(server.hits for server in servers)  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which("skopeo") is None, reason="meet de echte skopeo")
+class TestARealSkopeoFollowsTheRegistryInward:
+    """De grendel ziet alleen de eerste hop; wat skopeo daarna volgt mag niet terugkomen."""
+
+    @pytest.mark.parametrize("mode", ["realm", "redirect"])
+    @pytest.mark.parametrize("status", [401, 403, 500])
+    async def test_an_answering_internal_target(self, connector, public_registry, mode, status):
+        internal = _serve(_internal(status))
+        registry = public_registry(mode, f"127.0.0.1:{internal.server_address[1]}")
+        try:
+            result = await connector.check_repository_access(f"{registry}/team/app", "robbert", PASSWORD)
+        finally:
+            internal.shutdown()
+        assert internal.hits  # type: ignore[attr-defined]
+        assert result == (False, UNREADABLE_REASON)
+
+    @pytest.mark.parametrize("mode", ["realm", "redirect"])
+    async def test_a_closed_internal_port(self, connector, public_registry, closed_port, caplog, mode):
+        registry = public_registry(mode, f"127.0.0.1:{closed_port}")
+        with caplog.at_level(logging.WARNING, logger="opi.connectors.skopeo"):
+            result = await connector.check_repository_access(f"{registry}/team/app", "robbert", PASSWORD)
+        assert f"127.0.0.1:{closed_port}" in caplog.text
+        assert result == (False, UNREADABLE_REASON)
+
+    async def test_the_registry_refusing_the_token_itself(self, connector, public_registry, caplog):
+        registry = public_registry("own-token-server", "")
+        with caplog.at_level(logging.WARNING, logger="opi.connectors.skopeo"):
+            result = await connector.check_repository_access(f"{registry}/team/app", "robbert", PASSWORD)
+        assert "unable to retrieve auth token" in caplog.text
+        assert result == (False, UNREADABLE_REASON)

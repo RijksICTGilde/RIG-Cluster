@@ -82,7 +82,7 @@ class TestDeToets:
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         assert exc.value.field_path == "services/image-registries/config/registries[0]/password"
         assert "leesrecht op packages" in str(exc.value)
-        assert "reqPackageAccess" in str(exc.value)
+        assert "reqPackageAccess" not in str(exc.value)
 
     async def test_een_geweigerde_bestemming_geeft_alleen_de_vaste_melding_op_de_upstream(self) -> None:
         registry = {**REGISTRY, "upstream": "10.43.0.1:8080"}
