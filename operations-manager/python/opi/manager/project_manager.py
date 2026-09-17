@@ -5332,7 +5332,8 @@ class ProjectManager:
             # even save through this same manager (Keycloak realm creation persists
             # its generated admin credentials mid-run), and each of those moves the
             # recorded base forward -- past project_data's lineage.
-            self._process_run = (project_data, self.__contents_as_read)
+            process_base = self.__contents_as_read
+            self._process_run = (project_data, process_base)
 
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
