@@ -5295,9 +5295,34 @@ class ProjectManager:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
                 await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
 
+            # A clone runs long before the end-of-run save records it as completed. The
+            # flag tells the next run that this attempt happened, so a failure in between
+            # does not make it clone again next to the database that is already there.
+            # It is on disk before provisioning starts, or it is lost with that failure.
+            interrupted_clones: set[str] = set()
+            started_clones: list[str] = []
+            for deployment in project_data.get("deployments", []):
+                dep_name = deployment.get("name")
+                if (
+                    not dep_name
+                    or deployment.get("cluster") != settings.CLUSTER_MANAGER
+                    or (targets is not None and dep_name not in targets)
+                ):
+                    continue
+                if self._project_file_handler.is_clone_in_progress(project_data, dep_name):
+                    interrupted_clones.add(dep_name)
+                elif self._project_file_handler.mark_clone_in_progress(project_data, dep_name):
+                    started_clones.append(dep_name)
+            if started_clones:
+                await self.save_and_commit_project(
+                    project_data,
+                    f"Clone attempt started for {', '.join(started_clones)}",
+                    enforce_validation=False,
+                )
+
             # Snapshot the compare-and-swap base for the end-of-run save. Right now it
             # is exactly the state project_data was built on: the read above, plus the
-            # reenable save when one happened. The provisioning steps below read and
+            # reenable and clone-attempt saves when they happened. The provisioning steps below read and
             # even save through this same manager (Keycloak realm creation persists
             # its generated admin credentials mid-run), and each of those moves the
             # recorded base forward -- past project_data's lineage.
@@ -5381,6 +5406,7 @@ class ProjectManager:
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
                         mail_manager=self._mail_manager,
+                        clone_interrupted=current_deployment_name in interrupted_clones,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)
