@@ -131,7 +131,7 @@ from opi.services.registry import (
     project_manifest_services,
     provisioning_services,
 )
-from opi.services.services import service_entry_name
+from opi.services.services import deployment_index, service_entry_name
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_password_smart,
@@ -7100,11 +7100,7 @@ class ProjectManager:
 
         Returns an error message on violation, or None when the config is valid.
         """
-        deployments = project_data.get("deployments", [])
-        index = next(
-            (i for i, d in enumerate(deployments) if isinstance(d, dict) and d.get("name") == deployment_name),
-            None,
-        )
+        index = deployment_index(project_data, deployment_name)
         if index is None:
             return None
         try:
