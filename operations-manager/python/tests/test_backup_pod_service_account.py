@@ -173,3 +173,149 @@ async def test_a_namespace_restore_passes_its_project_and_cluster_to_the_pod() -
     # Zonder cluster kreeg de pod de OpenShift-tak, en op kind weigert de kubelet dan de
     # niet-numerieke gebruiker van de backup-image.
     assert pod["spec"]["securityContext"]["runAsUser"] == 1001
+
+
+_STEPS_AROUND_THE_POD = (
+    "_ensure_backup_bucket_exists",
+    "_get_pvc_info",
+    "_create_snapshot",
+    "_wait_for_snapshot",
+    "_create_clone_pvc",
+    "_wait_for_pvc",
+    "_create_restore_pvc",
+    "_create_project_restore_pvc",
+    "_derive_backup_key",
+    "_resolve_source_database_name",
+    "_cleanup_pod",
+    "_cleanup",
+)
+
+_PROJECT_DATA = {
+    "name": PROJECT,
+    "components": [
+        {"name": "web", "services": [{"persistent-storage": {"config": [{"name": "data", "mount-path": "/data"}]}}]}
+    ],
+    "deployments": [{"name": "prod", "components": [{"reference": "web"}]}],
+}
+
+type EntryPoint = Callable[[Any], Awaitable[Any]]
+
+# Elke publieke weg naar een backup- of restorepod, zoals de routers en taken hem aanroepen.
+ENTRY_POINTS: dict[str, tuple[type[BaseBackupManager], EntryPoint]] = {
+    "pvc-backup-project": (
+        PVCBackupManager,
+        lambda m: m.backup_project_deployment(
+            project_name=PROJECT,
+            project_data=_PROJECT_DATA,
+            deployment_name="prod",
+            namespace="rig-amt",
+            cluster="sandboxed-local",
+            backup_run_id="r",
+        ),
+    ),
+    "pvc-restore": (
+        PVCBackupManager,
+        lambda m: m.restore_pvc(
+            cluster="sandboxed-local", namespace="rig-amt", pvc_name="data", overwrite=True, project_name=PROJECT
+        ),
+    ),
+    "pvc-restore-project": (
+        PVCBackupManager,
+        lambda m: m.restore_to_project_pvc(
+            cluster="sandboxed-local",
+            namespace="rig-amt",
+            source_pvc_name="data",
+            target_pvc_name="data-v1",
+            storage_size="1Gi",
+            project_name=PROJECT,
+        ),
+    ),
+    "database-backup": (
+        DatabaseBackupManager,
+        lambda m: m.backup_database(
+            namespace="rig-amt",
+            **_DB,
+            reference_name="db",
+            backup_run_id="r",
+            cluster="sandboxed-local",
+            project_name=PROJECT,
+        ),
+    ),
+    "database-restore": (
+        DatabaseBackupManager,
+        lambda m: m.restore_database(
+            cluster="sandboxed-local",
+            namespace="rig-amt",
+            reference_name="db",
+            target_database_host="pg",
+            target_database_port=5432,
+            target_database_name="amt_prod",
+            target_database_user="amt",
+            target_database_password="pw",
+            project_name=PROJECT,
+        ),
+    ),
+    "bucket-backup-kopia": (
+        BucketBackupManager,
+        lambda m: m.backup_bucket(
+            namespace="rig-amt",
+            **_BUCKET_SOURCE,
+            reference_name="bucket",
+            backup_run_id="r",
+            cluster="sandboxed-local",
+            project_name=PROJECT,
+        ),
+    ),
+    "bucket-backup-mirror": (
+        BucketBackupManager,
+        lambda m: m.backup_bucket(
+            namespace="rig-amt",
+            **_BUCKET_SOURCE,
+            reference_name="bucket",
+            backup_run_id="r",
+            use_kopia=False,
+            cluster="sandboxed-local",
+            project_name=PROJECT,
+        ),
+    ),
+    "bucket-restore": (
+        BucketBackupManager,
+        lambda m: m.restore_bucket(
+            cluster="sandboxed-local",
+            namespace="rig-amt",
+            reference_name="bucket",
+            **_BUCKET_TARGET,
+            project_name=PROJECT,
+        ),
+    ),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("entry", ENTRY_POINTS)
+async def test_every_entry_point_hands_its_project_to_the_pod(entry: str) -> None:
+    cls, run = ENTRY_POINTS[entry]
+    manager = _manager(cls)
+    manager.lock = MagicMock(update_progress=AsyncMock())
+    for step in _STEPS_AROUND_THE_POD:
+        if hasattr(manager, step):
+            setattr(manager, step, AsyncMock(return_value=None))
+    manager._derive_backup_key = AsyncMock(return_value="kp")  # type: ignore[method-assign]
+    manager._wait_for_pod = AsyncMock(return_value=True)  # type: ignore[method-assign]
+    if cls is PVCBackupManager:
+        manager._get_pvc_info = AsyncMock(return_value={"name": "data", "size": "1Gi", "storage_class": "standard"})  # type: ignore[method-assign]
+    if entry == "pvc-restore-project":
+        manager._get_pvc_info = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    result = await run(manager)
+
+    for outcome in result if isinstance(result, list) else [result]:
+        assert outcome.success, outcome.error
+    applied = [
+        yaml.safe_load(call.kwargs["stdin_input"])
+        for call in manager.kubectl.run_command.await_args_list
+        if call.kwargs.get("stdin_input")
+    ]
+    pods = [doc for doc in applied if doc["kind"] == "Pod"]
+    assert len(pods) == 1, applied
+    assert pods[0]["spec"]["serviceAccountName"] == SERVICE_ACCOUNT
