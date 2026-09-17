@@ -1063,16 +1063,17 @@ def test_de_wijzigingstoets_op_een_eigenschapsblok_noemt_de_waarde_niet(
     assert EIGENSCHAP_VOLUME.latitude() in str(fout.value)
 
 
+@pytest.mark.parametrize("eigenschap", ["user-env-vars", "aliases"])
 def test_een_eigenschap_wordt_niet_vergeleken_met_een_lijstentry_van_dezelfde_dienst(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, eigenschap: str
 ) -> None:
     """De vorige versie draagt de waarde als eigenschap, de nieuwe zet de dienst in ``services:``."""
-    provider = get_service(ServiceType.ALIASES)
+    provider = get_service(ServiceType(eigenschap))
     monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
-    vorige = _met_eigenschap("aliases", "hunter2")
+    vorige = _met_eigenschap(eigenschap, "hunter2")
     huidige = _project({"storage": "1Gi"})
-    huidige["services"].append("aliases")
-    huidige["components"][0]["services"].append({"name": "aliases", "config": {"LIMIET": "5Gi"}})
+    huidige["services"].append(eigenschap)
+    huidige["components"][0]["services"].append({"name": eigenschap, "config": {"LIMIET": "5Gi"}})
 
     with pytest.raises(ProjectIntegrityError) as fout:
         asyncio.run(validate_project_structure(huidige, previous=vorige))
