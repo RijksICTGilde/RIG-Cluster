@@ -232,16 +232,30 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
 # ---------------------------------------------------------------------------
 
 _PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
-_TABLE_SEPARATOR = re.compile(r"\|\s*:?-{3,}:?\s*\|")
+_TABLE_SEPARATOR = re.compile(r"\|\s*:?-+:?\s*\|")
+# The renderer joins the lines of a paragraph with a space, so a heading or a `*` list
+# written straight under a line of text shows up halfway the paragraph, after a space.
+# Inline code is left out of that search: `a * b` in backticks is not a list.
+_INLINE_CODE = re.compile(r"`[^`]*`")
+_HEADING_IN_TEXT = re.compile(r"(?:^| )#{3,}(?: |$)")
+_STAR_BULLET = re.compile(r"(?:^| )\* ")
 _BUITEN_SUBSET = (
     (lambda a: a.startswith("|") or _TABLE_SEPARATOR.search(a), "een tabel", "gebruik een opsomming"),
-    (lambda a: "```" in a, "een codeblok (```)", "zet de opdracht als `inline code` in een alinea of opsomming"),
     (
-        lambda a: a.startswith("#"),
+        lambda a: "```" in a or "~~~" in a,
+        "een codeblok (```)",
+        "zet de opdracht als `inline code` in een alinea of opsomming",
+    ),
+    (
+        lambda a: a.startswith("#") or _HEADING_IN_TEXT.search(_INLINE_CODE.sub("", a)),
         "een kop met ### of zonder spatie",
         "gebruik `# ` of `## `, of een alinea met **vet**",
     ),
-    (lambda a: a.startswith("* "), "een opsomming met `*`", "begin elk punt met `- `"),
+    (
+        lambda a: _STAR_BULLET.search(_INLINE_CODE.sub("", a)),
+        "een opsomming met `*`",
+        "begin elk punt met `- `",
+    ),
 )
 _HELP_DOCUMENTS = sorted(
     {
@@ -292,10 +306,24 @@ def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
         ("| a | b |\n|---|---|\n| 1 | 2 |", "een tabel"),
         ("Tekst ervoor.\n| a | b |\n|---|---|", "een tabel"),
         ("```python\nprint(1)\n```", "een codeblok"),
+        ("Tekst ervoor.\n| a | b |\n|--|:-:|", "een tabel"),
+        ("~~~\nprint(1)\n~~~", "een codeblok"),
         ("### Kop", "een kop met ###"),
+        ("Tekst ervoor.\n### Kop", "een kop met ###"),
         ("* een\n* twee", "een opsomming met `*`"),
+        ("Kies er een:\n* een\n* twee", "een opsomming met `*`"),
     ],
-    ids=["tabel", "tabel-na-tekst", "codeblok", "kop-niveau-3", "sterretje"],
+    ids=[
+        "tabel",
+        "tabel-na-tekst",
+        "codeblok",
+        "tabel-korte-scheiding",
+        "codeblok-tildes",
+        "kop-niveau-3",
+        "kop-na-tekst",
+        "sterretje",
+        "sterretje-na-tekst",
+    ],
 )
 def test_each_shape_outside_the_subset_is_named(bron: str, vorm: str) -> None:
     meldingen = _letterlijke_markdown(f"# Titel\n\n{bron}")
@@ -304,8 +332,30 @@ def test_each_shape_outside_the_subset_is_named(bron: str, vorm: str) -> None:
     assert meldingen[0].startswith(vorm)
 
 
-def test_bold_at_the_start_of_a_paragraph_is_not_a_bullet() -> None:
-    assert _letterlijke_markdown("**Kies dit**, tenzij je een reden hebt.\n\n- een punt") == []
+@pytest.mark.parametrize(
+    "bron",
+    [
+        "**Kies dit**, tenzij je een reden hebt.\n\n- een punt",
+        "Tekst ervoor.\n## Kop\n- een punt",
+        "Een wildcard als `DATABASE_*` of `a * b` en een `# commentaar` of `### x`.",
+    ],
+    ids=["vet-vooraan", "kop-en-punt-na-tekst", "inline-code"],
+)
+def test_markdown_the_renderer_handles_is_not_reported(bron: str) -> None:
+    assert _letterlijke_markdown(bron) == []
+
+
+def test_every_keytool_import_passes_the_store_password() -> None:
+    """Zonder -storepass vraagt keytool erom, en een image-build heeft geen tty."""
+    aanroepen = [
+        (template, regel)
+        for template in _HELP_DOCUMENTS
+        for regel in help_file(template).read_text(encoding="utf-8").splitlines()
+        if "keytool -importcert" in regel
+    ]
+
+    assert aanroepen
+    assert [a for a in aanroepen if "-storepass " not in a[1]] == []
 
 
 # ---------------------------------------------------------------------------
