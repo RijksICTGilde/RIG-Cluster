@@ -200,6 +200,13 @@ class TestDeUpstreamKanNietUitZijnScalarBreken:
         with pytest.raises(pydantic.ValidationError):
             AddRegistryByCredentialsRequest(name="eigen", url=YAML_INJECTIE_UPSTREAM, username="u", password="t")
 
+    def test_de_api_laat_de_gebruikersnaam_weg_maar_niet_het_token(self) -> None:
+        """De gebruikersnaam is optioneel op elke schrijfweg, dus ook aan de API-deur."""
+        verzoek = AddRegistryByCredentialsRequest(name="eigen", url="ghcr.io/team", password="t")
+        assert verzoek.username is None
+        with pytest.raises(pydantic.ValidationError):
+            AddRegistryByCredentialsRequest(name="eigen", url="ghcr.io/team", username="u")
+
     def test_het_gerenderde_manifest_blijft_een_document(self, tmp_path: Any) -> None:
         """De tweede grendel: ook als de waarde er langs zou komen, quote het sjabloon hem.
 
