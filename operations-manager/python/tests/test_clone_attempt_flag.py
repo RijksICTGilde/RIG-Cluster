@@ -8,7 +8,8 @@ er geprovisioned wordt, zodat de volgende run weet dat de bestaande database van
 from __future__ import annotations
 
 import copy
-from typing import Any
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +20,9 @@ from opi.manager.project_manager import ProjectManager
 from opi.manager.revision_manager import RevisionManager
 from opi.services import ServiceType
 from opi.services.registry import get_service
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 HERE = settings.CLUSTER_MANAGER
 TARGET_DB = "demo_staging"
@@ -198,6 +202,23 @@ async def test_an_interrupted_run_does_not_save_the_flag_again(monkeypatch: pyte
     assert store.saves[0]["base"] == _project(**{"in-progress": True})
 
 
+async def test_the_flag_stays_off_for_deployments_this_run_does_not_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een vlag die deze run zet maar niet afrondt, blijft staan en laat een latere run een poging zien die er nooit was."""
+    project = _project()
+    elders = {"type": "deployment", "reference": "production", "mode": "once"}
+    project["deployments"].append({"name": "elders", "cluster": "ander-cluster", "clone-from": elders})
+    project["deployments"].append({"name": "later", "cluster": HERE, "clone-from": copy.deepcopy(elders)})
+    store = FakeStore(project)
+
+    pm = _manager(monkeypatch, store, FakePostgres())
+    assert await pm.process_project(deployment_names=["production", "staging", "elders"]) is True
+
+    for saved in store.saves:
+        clone_status = {d["name"]: d.get("clone-from", {}).get("status") for d in saved["data"]["deployments"]}
+        assert clone_status["elders"] is None, "een deployment op een ander cluster kreeg de vlag"
+        assert clone_status["later"] is None, "een deployment buiten deze run kreeg de vlag"
+
+
 @pytest.mark.parametrize(
     ("clone_from", "marked"),
     [
@@ -346,7 +367,7 @@ def _remote_manager(pg: FakePostgres) -> DatabaseManager:
     return manager
 
 
-async def _remote(manager: DatabaseManager, *, interrupted: bool) -> dict[str, Any]:
+async def _remote(manager: DatabaseManager, *, interrupted: bool, force: bool = False) -> dict[str, Any]:
     return await manager.clone_database_from_external_source(
         project_name="demo",
         deployment_name="staging",
@@ -356,6 +377,7 @@ async def _remote(manager: DatabaseManager, *, interrupted: bool) -> dict[str, A
         source_password="pw",
         source_database="bron",
         source_schema="bron",
+        force_clone=force,
         clone_interrupted=interrupted,
     )
 
@@ -378,11 +400,86 @@ async def test_a_remote_clone_without_the_flag_still_clones() -> None:
 
 
 async def test_a_failed_remote_clone_leaves_no_schema_behind() -> None:
-    pg = FakePostgres({TARGET_DB: {"public"}})
+    pg = FakePostgres({TARGET_DB: {"public", "eigen"}})
     pg.clone_error = RuntimeError("tunnel weg")
 
     result = await _remote(_remote_manager(pg), interrupted=False)
 
     assert result["success"] is False
     assert pg.clone_calls == [TARGET_DB]
-    assert pg.schemas[TARGET_DB] == {"public"}
+    assert pg.schemas[TARGET_DB] == {"public", "eigen"}, "alleen wat deze poging aanmaakte mag weg"
+
+
+async def test_an_interrupted_remote_clone_without_its_schema_clones_again() -> None:
+    pg = FakePostgres({TARGET_DB: {"public"}})
+
+    result = await _remote(_remote_manager(pg), interrupted=True)
+
+    assert result["success"] is True
+    assert pg.clone_calls == [TARGET_DB]
+
+
+async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrupted_attempt() -> None:
+    pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+
+    result = await _remote(_remote_manager(pg), interrupted=True, force=True)
+
+    assert result["success"] is True
+    assert pg.clone_calls == [f"{TARGET_DB}_v1"]
+
+
+def _remote_project(chisel: dict[str, str] | None = None) -> dict[str, Any]:
+    project = _project()
+    source: dict[str, Any] = {
+        "name": "oud-systeem",
+        "services": {
+            "postgresql-database": {
+                "host": "bron",
+                "username": "lezer",
+                "password": "pw",
+                "database": "bron",
+                "schema": "bron",
+            }
+        },
+    }
+    if chisel:
+        source["chisel"] = chisel
+    project["remote-sources"] = [source]
+    project["deployments"][1]["clone-from"] = {"type": "remote-source", "reference": "oud-systeem", "mode": "once"}
+    return project
+
+
+@pytest.mark.parametrize(
+    "chisel",
+    [None, {"server-url": "https://chisel.example", "username": "c", "password": "pw"}],
+    ids=["direct", "via-tunnel"],
+)
+async def test_the_flag_reaches_a_remote_clone_started_by_the_run(chisel: dict[str, str] | None) -> None:
+    pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+    manager = _remote_manager(pg)
+    project = _remote_project(chisel)
+    manager.project_manager.get_contents = AsyncMock(return_value=project)
+
+    @asynccontextmanager
+    async def tunnel(*_: Any) -> AsyncIterator[dict[str, Any]]:
+        yield {"host": "127.0.0.1", "port": 15432}
+
+    with (
+        patch("opi.utils.age.get_decoded_project_private_key", AsyncMock(return_value="sleutel")),
+        patch("opi.utils.age.decrypt_password_smart", AsyncMock(return_value="pw")),
+        patch("opi.utils.chisel_helper.chisel_tunnel", tunnel),
+    ):
+        result = await manager._ensure_database_state(
+            project_name="demo",
+            deployment_name="staging",
+            deployment=project["deployments"][1],
+            db_database=TARGET_DB,
+            db_schema=TARGET_DB,
+            db_username=TARGET_DB,
+            db_password="secret",
+            project_data=project,
+            clone_interrupted=True,
+        )
+
+    assert pg.clone_calls == [], "de vlag kwam niet aan bij de kloon op afstand"
+    assert result.database == TARGET_DB
