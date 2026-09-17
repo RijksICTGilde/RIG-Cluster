@@ -67,6 +67,14 @@ class TestHetSchemaWeigertBijDePoort:
         assert "Veld 'repositories/0/path'" in str(exc.value)
         assert "zonder '..'" in str(exc.value)
 
+    def test_een_patroonveld_zonder_beschrijving_houdt_de_kale_melding(self) -> None:
+        project = _project(".")
+        project["name"] = "Demo"
+        with pytest.raises(ProjectSchemaError) as exc:
+            validate_project_schema(project)
+        pattern = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))["properties"]["name"]["pattern"]
+        assert str(exc.value).endswith(f"does not match {pattern!r}")
+
     @pytest.mark.parametrize("path", TOEGESTAAN)
     def test_laat_door(self, path: str) -> None:
         validate_project_schema(_project(path))
@@ -75,8 +83,9 @@ class TestHetSchemaWeigertBijDePoort:
         """De git-monitor valideert tegen de gedeclareerde versie; de regel geldt daar ook."""
         project = _project("../buiten")
         project["schema-version"] = 2.8
-        with pytest.raises(ProjectSchemaError):
+        with pytest.raises(ProjectSchemaError) as exc:
             validate_declared_project_schema(project)
+        assert exc.value.field_path == "repositories/0/path"
 
     def test_een_bestaand_projectbestand_met_punt_valideert_ongewijzigd(self) -> None:
         with EXAMPLE_PROJECT.open(encoding="utf-8") as project_file:
@@ -144,6 +153,37 @@ class TestDeSchrijversGaanLangsHetAnker:
 
         with pytest.raises(RepositoryPathError):
             await manager._process_deployment_manifests(deployment, git_connector)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ontsnapping", ["../buiten", "absoluut"])
+    async def test_infrastructuurmanifesten(self, tmp_path: Path, ontsnapping: str) -> None:
+        """De oude ``os.path.join`` liet een absoluut pad de werkmap zelfs helemaal wegduwen."""
+        werkmap = tmp_path / "repo"
+        werkmap.mkdir()
+        repo_path = str(tmp_path / "buiten") if ontsnapping == "absoluut" else ontsnapping
+        manager = ProjectManager.__new__(ProjectManager)
+        manager._ensure_database_manager = AsyncMock(
+            return_value=MagicMock(_get_database_cluster_config=MagicMock(return_value={"database_config": {}}))
+        )
+        manager.get_progress_manager = MagicMock(return_value=None)
+        manager._kubectl_connector = MagicMock(get_secret=AsyncMock(return_value=None))
+        manager.get_git_connector_for_deployment = AsyncMock(
+            return_value=MagicMock(get_working_dir=AsyncMock(return_value=str(werkmap)))
+        )
+        project_data = {
+            "name": "demo",
+            "repositories": [{"name": "r", "url": "https://example.org/demo.git", "path": repo_path}],
+        }
+
+        with (
+            patch("opi.core.cluster_config.get_infrastructure_namespace", return_value="rig-prd-demo-infra"),
+            patch("opi.core.cluster_config.get_storage_class_name", return_value="standard"),
+            patch("opi.generation.manifests.render_template", return_value="kind: Secret\n"),
+            pytest.raises(RuntimeError) as exc,
+        ):
+            await manager._create_infrastructure_resources(project_data, "odcn-production")
+        assert isinstance(exc.value.__cause__, RepositoryPathError)
+        assert [p.relative_to(tmp_path) for p in tmp_path.rglob("*")] == [Path("repo")]
 
     @pytest.mark.asyncio
     async def test_pvc_hernoemen(self, lege_werkmap: Path) -> None:
