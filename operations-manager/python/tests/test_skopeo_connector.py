@@ -311,6 +311,7 @@ def fake_skopeo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 #: Wat de nepresolver per naam teruggeeft; IP-letterlijken gaan naar de echte.
 DNS = {
+    "localhost": ["127.0.0.1", "::1"],
     "ghcr.io": ["140.82.112.33"],
     "code.overheid.nl": ["145.21.1.1", "2a00:1450:4001:80b::2004"],
     "kubernetes.default.svc": ["10.96.0.1"],
@@ -358,6 +359,7 @@ class TestDestinationGuard:
             "10.43.0.1:8080/x",
             "kubernetes.default.svc/x",
             "0.0.0.0:9595/x",
+            "100.64.0.1:5000/x",
             "localhost:9595/x",
         ],
     )
