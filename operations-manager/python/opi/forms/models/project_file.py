@@ -376,9 +376,8 @@ class DeploymentModel(BaseModel):
     ] = Field(default=None, alias="data-retention-period")
 
 
-#: Relatief pad zonder ``..``, zonder voorloopstreep, backslash of stuurteken; ``""`` en ``.``
-#: zijn de repo zelf. Zonder lookahead en met `\z`, want pydantic valideert met de Rust-regex.
-#: ``$defs/repository/path`` in ``project_v2.json`` draagt hetzelfde patroon.
+#: Regel: features/repository-pad.md; ``$defs/repository/path`` in ``project_v2.json`` draagt hetzelfde
+#: patroon. Zonder lookahead en met ``\z``, want pydantic valideert met de Rust-regex.
 REPOSITORY_PATH_PATTERN = (
     r"^(?:(?:[^./\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])(?:[^.\\\u0000-\u001f]|\.[^.\\\u0000-\u001f])*)?\.?\z"
 )
