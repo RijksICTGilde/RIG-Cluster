@@ -9,13 +9,17 @@ produces, so a consumer does not have to guess the generated name.
 from __future__ import annotations
 
 from opi.forms.editables.editable import WidgetType
+from opi.forms.visualizers.config_setting_fields import setting_field
 from opi.forms.visualizers.visualizer import EditableVisualizer
+from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.catalog.postgresql_database.editables import (
     SCHEMA_DESCRIPTION_EDITABLE,
     SCHEMA_MARKED_EDITABLE,
     SCHEMA_POSTFIX_EDITABLE,
     SCHEMAS_EDITABLE,
 )
+from opi.services.services_enums import ServiceType
 
 SCHEMA_POSTFIX = EditableVisualizer(
     editable=SCHEMA_POSTFIX_EDITABLE,
@@ -62,3 +66,23 @@ POSTGRESQL_SCHEMAS = EditableVisualizer(
 )
 
 POSTGRESQL_SCHEMAS_VISUALIZERS = [POSTGRESQL_SCHEMAS]
+
+CONNECTION_LIMIT_FIELD = setting_field(
+    CONNECTION_LIMIT,
+    ServiceType.POSTGRESQL_DATABASE,
+    ConfigLayer.PROJECT,
+    widget=WidgetType.SELECT,
+    values_provider="ConnectionLimitOptionsProvider",
+    inherits=True,
+)
+
+# No virtualize: the per-deployment modal targets one deployment, like cross-domain-access.
+DEPLOYMENT_CONNECTION_LIMIT_FIELD = setting_field(
+    CONNECTION_LIMIT,
+    ServiceType.POSTGRESQL_DATABASE,
+    ConfigLayer.DEPLOYMENT,
+    widget=WidgetType.SELECT,
+    values_provider="DeploymentConnectionLimitOptionsProvider",
+    virtualize=None,
+    inherits=True,
+)

@@ -940,6 +940,8 @@ class TestDeploymentCardButton:
         assert len(actions) == 1
         # Index 1: the button must address the deployment it sits on, not the first one.
         assert actions[0].modal_endpoint == "/projects/me/modal-wizard/modal-edit-cross-domain-deployment-1"
+        assert actions[0].modal_title == "Cross-domain toegang - dev"
+        assert actions[0].visible
 
     def test_no_button_when_the_project_does_not_use_the_service(self) -> None:
         assert [a for a in self._actions(self._project(["redis"])) if a.icon == "netwerk"] == []

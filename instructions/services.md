@@ -215,7 +215,7 @@ maximum (or the allowed set), the default, and the layers a project may set it o
 def config_settings(self):
     return (
         IntegerSetting(path="connection-limit", layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
-                       default=20, minimum=1, maximum=100, label="Connectielimiet"),
+                       default=20, minimum=1, maximum=500, label="Connectielimiet"),
         QuantitySetting(path="storage", layers=(ConfigLayer.PROJECT,), default="1Gi",
                         minimum="1Gi", maximum="100Gi", kind=QuantityKind.MEMORY,
                         grow_only=True, label="Opslag"),
@@ -251,7 +251,8 @@ than one block of the same service without saying which is which and the compari
 between unrelated values.
 
 What a service does not declare is not settable, and a layer it does not name is refused.
-A service that declares nothing -- the whole catalog today -- behaves exactly as before.
+A service that declares nothing behaves exactly as before; `postgresql-database`
+(`connection_limit.py`) is the working example.
 See `features/speelruimte-van-een-dienst.md`.
 
 ## Forms and wizard screens
@@ -326,7 +327,7 @@ for you. Pick the layer from where the value belongs, then implement that row:
 |---|---|---|---|
 | `PROJECT` | Its own wizard step / modal, shown when the service is selected | `config_editables(PROJECT)`, `config_form_section(PROJECT)`, `config_section_id`, optionally `modal_flow_id` | Register the section and add it to the flows, see below |
 | `COMPONENT` | A fieldset inside the per-component form | `config_editables(COMPONENT)`, `config_component_visualizers()`, `config_component_layout()`, `config_component_order` | **None.** The registry collects it automatically |
-| `DEPLOYMENT` | No service-owned form hook exists today | Nothing to hook into | Fields are hand-authored in `forms/editables/fields/deployments.py`. Deployment-level config is normally OPI-managed state, not user input |
+| `DEPLOYMENT` | A per-deployment modal behind a button on the deployment card | `config_editables(DEPLOYMENT)`, `config_form_section(DEPLOYMENT)`, a `deployment_form_section(index)` and an `actions_provider` button built with `deployment_modal_action` | An `IndexedFlow` in `flows.py` (cross-domain-access and postgresql-database are the examples). Deployment-level config is often OPI-managed state; exempt such a layer with `form_exempt_layers` |
 | `DEPLOYMENT_COMPONENT` | A fieldset inside the per-deployment component form | `config_editables(DEPLOYMENT_COMPONENT)`, `config_deployment_component_visualizers()`, `config_deployment_component_layout()` | **None.** The registry collects it, like the component layer (RC-25) |
 
 **Every layer you carry config on needs an answer to "where do I edit this".** That answer

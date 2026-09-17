@@ -475,6 +475,22 @@ def build_cross_domain_deployment_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
+    """The per-deployment database settings (RC-201): the connection limit."""
+    from opi.services.registry import get_service
+    from opi.services.services_enums import ServiceType
+
+    section = get_service(ServiceType.POSTGRESQL_DATABASE).deployment_form_section(deployment_index)
+    return FormFlow(
+        flow_id=f"modal-edit-postgresql-deployment-{deployment_index}",
+        title="Connectielimiet per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config.
 
@@ -569,6 +585,11 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-cross-domain-deployment-",
         list_key="deployments",
         build=lambda index, _ctx: build_cross_domain_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-postgresql-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_postgresql_deployment_flow(index),
     ),
 )
 
