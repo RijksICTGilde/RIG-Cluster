@@ -288,6 +288,21 @@ _COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
 )
 
 
+def _is_generated(basename: str, generated_files: set[str]) -> bool:
+    """Whether a file belongs to the desired state of this run.
+
+    The ``.sops.yaml`` of a secret written this run as ``.to-sops.yaml`` is its previous
+    ciphertext, not an obsolete file. The prune runs before the encryption, so removing it
+    here leaves the skip-if-unchanged nothing to compare against and SOPS rewrites the
+    secret on every run.
+    """
+    if basename in generated_files:
+        return True
+    if basename.endswith(".sops.yaml"):
+        return basename.removesuffix(".sops.yaml") + ".to-sops.yaml" in generated_files
+    return False
+
+
 def _select_obsolete_component_manifests(
     directory: str,
     component_names: set[str],
@@ -352,7 +367,7 @@ def _select_obsolete_component_manifests(
         if basename.endswith(".marked-for-deletion.yaml"):
             continue
         # Generated this run -> part of the desired state, keep it.
-        if basename in generated_files:
+        if _is_generated(basename, generated_files):
             continue
         # Only prune files that belong to a component; shared/deployment-level files
         # (no component prefix) are never selected.
@@ -396,7 +411,7 @@ def _select_obsolete_service_manifests(
             continue
         if basename.endswith(".marked-for-deletion.yaml"):
             continue
-        if basename in generated_files:
+        if _is_generated(basename, generated_files):
             continue
         if any(basename.startswith(prefix) for prefix in service_prefixes):
             selected.append(basename)
@@ -3998,10 +4013,7 @@ class ProjectManager:
                     use_sops=spec.encrypt,
                 )
                 if spec.encrypt:
-                    # Beide namen in de gewenste toestand: zag de prune de .sops.yaml van de
-                    # vorige run als overbodig, dan verdwijnt hij vlak voor de encryptie en
-                    # heeft de skip-if-unchanged niets om tegen te vergelijken.
-                    created_files.extend([f"{spec.filename}.to-sops.yaml", f"{spec.filename}.sops.yaml"])
+                    created_files.append(f"{spec.filename}.to-sops.yaml")
                 else:
                     created_files.append(f"{spec.filename}.yaml")
                 logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
