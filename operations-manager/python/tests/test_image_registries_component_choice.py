@@ -2,8 +2,8 @@
 
 Drie richtingen, en ze horen alle drie te gelden voor het formulier en voor de API:
 
-- een niet-publieke waarde materialiseert de dienstvermelding op dat component;
-- de standaardwaarde (publiek) schrijft niets en haalt een bestaande vermelding weg;
+- een gekozen registry materialiseert de dienstvermelding op dat component;
+- de standaardwaarde (Automatisch) schrijft niets en haalt een bestaande vermelding weg;
 - een formulier waarin niemand iets koos voegt niets toe.
 
 Die derde is de val waar ``instructions/services.md`` voor waarschuwt: het pad-filter
@@ -93,14 +93,14 @@ class TestDeDrieRichtingenDoorHetFormulier:
         assert _chose(services) == "code-overheid"
 
     @pytest.mark.asyncio
-    async def test_publiek_kiezen_haalt_de_vermelding_weg(self) -> None:
+    async def test_automatisch_kiezen_haalt_de_vermelding_weg(self) -> None:
         project = _project([{"name": _SVC, "config": {"registry": "code-overheid"}}])
         services = await _save(project, _submission(""))
         assert [service_entry_name(entry) for entry in services] == []
 
     @pytest.mark.asyncio
     async def test_niemand_koos_iets_en_er_komt_niets_bij(self) -> None:
-        """De standaardwaarde is geen selectie: afwezig BETEKENT publiek."""
+        """De standaardwaarde is geen selectie: afwezig BETEKENT Automatisch."""
         services = await _save(_project(), _submission(""))
         assert services == []
 
@@ -158,7 +158,7 @@ class TestGeenTweedeKnop:
 class TestDezelfdeRegelViaDeApi:
     def test_de_config_wissen_haalt_de_vermelding_weg(self) -> None:
         """DELETE op de componentconfig. Een vermelding die alleen nog zijn naam draagt
-        zou hier niets zeggen: niet publiek, niet gekozen, niets."""
+        zou hier niets zeggen: niet automatisch, niet gekozen, niets."""
         project = _project([{"name": _SVC, "config": {"registry": "code-overheid"}}])
         removed = ServiceAdapter.remove_service_config(project, _SVC, ConfigLayer.COMPONENT, component_name="web")
         assert removed is True

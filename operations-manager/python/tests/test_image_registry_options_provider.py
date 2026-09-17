@@ -15,8 +15,8 @@ from __future__ import annotations
 from typing import Any
 
 from opi.forms.visualizers.providers import (
+    AUTOMATIC_REGISTRY_LABEL,
     INHERIT_REGISTRY_LABEL,
-    PUBLIC_REGISTRY_LABEL,
     ImageRegistryOptionsProvider,
 )
 
@@ -52,16 +52,16 @@ class TestDeLijstZelf:
 
     def test_de_standaardwaarde_staat_vooraan_en_schrijft_niets_weg(self) -> None:
         options = ImageRegistryOptionsProvider(yaml_data=_yaml([CODE])).get_options()
-        assert options[0] == {"value": "", "label": PUBLIC_REGISTRY_LABEL}
+        assert options[0] == {"value": "", "label": AUTOMATIC_REGISTRY_LABEL}
 
     def test_het_label_belooft_geen_publieke_weg(self) -> None:
         """Zonder keuze gaat een image onder een eigen upstream toch langs die registry
         (``TestEenEigenRegistryGeldtVoorHetHeleProject``), dus het label moet dat zeggen."""
-        assert "eigen registry" in PUBLIC_REGISTRY_LABEL
-        assert "geen token" not in PUBLIC_REGISTRY_LABEL
+        assert "eigen registry" in AUTOMATIC_REGISTRY_LABEL
+        assert "geen token" not in AUTOMATIC_REGISTRY_LABEL
 
     def test_bij_een_deployment_component_betekent_leeg_iets_anders(self) -> None:
-        """Daar is de niet-waarde geen "publiek" maar "geen afwijking van het component"."""
+        """Daar is de niet-waarde geen "automatisch" maar "geen afwijking van het component"."""
         options = ImageRegistryOptionsProvider(
             yaml_data=_yaml([CODE]),
             yaml_path="deployments[0]/components[0]/services/image-registries/config/registry",

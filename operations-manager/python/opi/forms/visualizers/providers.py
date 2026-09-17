@@ -1178,10 +1178,10 @@ class WakerComponentOptionsProvider:
 
 
 #: De niet-waarde bij een component: niets in het bestand.
-PUBLIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
+AUTOMATIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
 
 #: Dezelfde niet-waarde bij een DEPLOYMENT-component, waar leeg iets anders betekent:
-#: niet "publiek" maar "wat het component zelf koos".
+#: niet "automatisch" maar "wat het component zelf koos".
 INHERIT_REGISTRY_LABEL = "Zoals het component (geen afwijking)"
 
 
@@ -1252,7 +1252,7 @@ class ImageRegistryOptionsProvider:
 
     def _empty_label(self) -> str:
         """Wat "niets gekozen" op deze laag betekent, afgeleid uit het gerenderde pad."""
-        return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else PUBLIC_REGISTRY_LABEL
+        return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else AUTOMATIC_REGISTRY_LABEL
 
     def _component_image(self) -> str:
         """De image van het component waar dit veld bij staat, of "".
