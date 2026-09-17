@@ -123,7 +123,7 @@ waar een dienst per mount iets bijhoudt -- zodat een verkleining niet met een an
 component, of een andere mount, wordt vergeleken.
 
 Beide versies worden **hetzelfde gelezen**, en dat begint bij het opzoeken van de vorige:
-een blok wordt op zijn SLEUTEL (plek plus dienst) gepakt, niet op zijn waarde. Een dienst
+een blok wordt op zijn SLEUTEL (plek, dienst, en of het een eigenschap is) gepakt, niet op zijn waarde. Een dienst
 die er kaal in stond -- geselecteerd, zonder configblok -- is daarmee een versie die op de
 standaard staat, en geen afwezigheid. Daarna leest elke kant hetzelfde: de waarde als het
 veld er staat, anders de standaard van de dienst. Een veld weglaten is dus dezelfde
@@ -174,7 +174,9 @@ een geplakt geheim zijn -- en die zin gaat zowel het centrale log in als het ant
 aanroeper. Bij een wijziging geldt dat ook voor de VORIGE waarde, die geen toets opnieuw op
 zijn vorm beoordeelt. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten
 zijn speelruimte", plus de speelruimte), door `_setting_refusal`, die beide toetsen delen en
-die `owned_property` van het blok leest. Voor een blok in een `services:`-lijst blijft de waarde
+die `owned_property` van het blok leest. Dat houdt alleen als een eigenschap nooit met een
+`services:`-entry van dezelfde dienst wordt vergeleken, en daarom zit `owned_property` in de
+sleutel. Voor een blok in een `services:`-lijst blijft de waarde
 er wel in staan: daar is het de grens zelf die wordt teruggeciteerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
