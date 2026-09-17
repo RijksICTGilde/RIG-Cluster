@@ -1,8 +1,4 @@
-"""Backup- en restorepods draaien op de serviceaccount van het project, niet op ``default``.
-
-Getoetst op het manifest dat de manager werkelijk toepast: een variabele die de aanroeper
-niet meegeeft, rendert leeg en dan valt de pod stil terug op ``default``.
-"""
+"""Backup- en restorepods draaien op de serviceaccount van het project, getoetst op het manifest dat de manager toepast."""
 
 from __future__ import annotations
 

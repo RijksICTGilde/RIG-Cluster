@@ -1,17 +1,9 @@
 """
 Sandbox E2E: backup- en restorepods van een PVC draaien op de serviceaccount van het project (RC-207).
 
-Een pod die op ``default`` draait erft op ODCN elk pull-secret in de namespace. Dat de
-podspec het veld draagt toetst ``test_backup_pod_service_account.py``; hier wordt gemeten
-dat een PVC-backup en beide PVC-restorewegen onder die serviceaccount ook echt draaien:
-
-1. maak een project met persistente opslag;
-2. backup van de PVC;
-3. restore van die backup-run (de projectweg);
-4. restore via ``/restore/pvc/...`` (de namespaceweg, die zijn project nu doorgeeft);
-5. elke backup- en restorepod die langskwam droeg ``{project}-sa``.
-
-De database- en bucketpods lopen door ``test_sandbox_restore_van_buiten.py``.
+Dat de podspec het veld draagt toetst ``test_backup_pod_service_account.py``. Hier draaien een
+PVC-backup en beide PVC-restorewegen (via de backup-run en via ``/restore/pvc/...``) echt onder
+die serviceaccount. De database- en bucketpods lopen door ``test_sandbox_restore_van_buiten.py``.
 
 Vereist een draaiende sandbox met JOUW build, E2E_BASE_URL en kubectl-toegang.
 Draaien met:
