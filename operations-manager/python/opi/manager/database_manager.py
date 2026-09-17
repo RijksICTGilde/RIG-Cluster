@@ -2127,11 +2127,9 @@ class DatabaseManager:
                     logger.info(f"Database already exists for cloning: {target_database}")
                     result["operations"].append({"type": "database_prepared", "status": "exists"})
                     if clone_interrupted and not force_clone:
-                        # Anders dan bij _ensure_database_state blijft een achtergebleven
-                        # bronschema hier liggen. Daar is de bronnaam afgeleid van een eigen
-                        # deployment, hier is het de vrije string uit remote-sources, dus een
-                        # schema met die naam kan net zo goed levende data van de tenant zijn.
-                        # De weigering van postgres.py:1809 blijft dus staan.
+                        # Anders dan bij _ensure_database_state blijft een achtergebleven bronschema
+                        # hier liggen: die naam komt uit remote-sources en kan levende data van de
+                        # tenant zijn. De weigering van postgres.py:1809 blijft dus staan.
                         schemas_present = await self._schema_names(target_database)
                         clone_already_finished = target_schema in schemas_present
             except Exception as e:
