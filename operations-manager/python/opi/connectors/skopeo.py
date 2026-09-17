@@ -51,7 +51,7 @@ REFUSED_DESTINATION_REASON = "het platform mag deze registry niet benaderen"
 
 @contextlib.contextmanager
 def _authfile(registry: str, username: str, password: str) -> Iterator[str]:
-    """Een authfile (0600, in een eigen tijdelijke map) zodat het wachtwoord niet in de argv staat."""
+    """Zodat het wachtwoord niet in de argv staat."""
     with tempfile.TemporaryDirectory(prefix="skopeo-auth-") as directory:
         path = os.path.join(directory, "auth.json")
         with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as handle:
