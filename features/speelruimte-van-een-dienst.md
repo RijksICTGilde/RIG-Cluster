@@ -14,9 +14,9 @@ iets moet controleren dat die keuze binnen de perken blijft -- en dat mechanisme
 niet. Een grens stond hardgecodeerd in `opi/connectors/postgres.py`, of als los getal in
 een pydantic-model, of nergens: `storage: 500Gi` liep door tot het cluster het weigerde.
 
-> Nog geen enkele dienst in de catalogus declareert iets. Dit is het gereedschap waarop de
-> twee vervolgtaken bouwen; een dienst die niets declareert gedraagt zich precies zoals hij
-> deed.
+> De eerste declaratie is de connectielimiet van `postgresql-database` (RC-201, zie
+> `postgresql-connection-limits.md`). Een dienst die niets declareert gedraagt zich precies
+> zoals hij deed.
 
 ## De drie regels
 

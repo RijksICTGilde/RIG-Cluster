@@ -46,15 +46,41 @@ managed:
 
 Infrastructure roles get explicit caps and access to the reserved pool.
 
-### 4. Per-user connection limit for project workloads (postgres.py)
+### 4. Per-role connection limit for project workloads (instelbaar, RC-201)
 
-Every database user created by the Operations Manager now includes `CONNECTION LIMIT 20`:
+Every database role the Operations Manager creates for a deployment gets a `CONNECTION LIMIT`.
+The value is a setting of the `postgresql-database` service
+(`opi/services/catalog/postgresql_database/connection_limit.py`): 1 to 500, default 20.
 
-```sql
-CREATE USER <username> WITH PASSWORD '<password>' CONNECTION LIMIT 20
+```yaml
+services:
+  - name: postgresql-database
+    config:
+      connection-limit: 30        # every deployment of this project
+deployments:
+  - name: pr-250
+    services:
+      - reference: postgresql-database
+        config:
+          connection-limit: 80    # only this deployment
 ```
 
-This prevents any single project deployment from monopolizing connection slots.
+- Deployment over project over the default of 20. Nothing set keeps 20.
+- The `_ro` role of a deployment gets the same value as the read-write role.
+- The limit is per role, so several databases of one deployment (generations) share it.
+- On every processing run OPI reads `rolconnlimit` and sends `ALTER ROLE ... CONNECTION LIMIT`
+  only when it differs, so an existing role follows a changed value. The task shows the
+  outcome per role ("van 20 naar 80", or "ongewijzigd"). Credentials are not touched by this.
+- In the portal: the project value is in the database configuration (next to the extra
+  schemas), the deployment value behind the "Connectielimiet" button on the deployment card.
+  Both are a list of steps (10 to 500); a value outside the steps, set via the API, is shown
+  as "37 (eigen waarde)". An empty deployment field follows the project.
+- A value outside 1 to 500, or `true`, is refused on save with the message of the setting.
+
+**Let op:** nothing but the bound limits this. There is no quota per project and no
+permission check, and `max_connections` of the shared server is 250: one deployment asking
+500 can claim 1000 connections (two roles). Raising `max_connections` is a separate change
+with a restart.
 
 ### 5. Shutdown timeouts (cluster.yaml)
 
@@ -87,19 +113,19 @@ Previously `min_size=2` meant the pool always held 2 open connections. When Post
 | Superuser reserved | 3 | PostgreSQL default |
 | Infrastructure reserved | 10 | Keycloak, Forgejo via `pg_use_reserved_connections` |
 | General (project workloads) | 187 | Available to all roles |
-| **Per-role cap** | **20** | No single role can exceed this |
+| **Per-role cap** | **20** | Default; configurable per project and deployment (1-500) |
 | **Total** | **200** | |
 
 ## Limitations
 
-- The `CONNECTION LIMIT 20` on project users only applies to newly created roles. Existing roles (e.g., `amt_odc_prd_productie`) retain their previous unlimited setting until manually altered or recreated.
-- The per-role limit is hardcoded at 20. It is not yet configurable per project.
+- The per-role limit has no quota across projects; see the warning in section 4.
 - These limits address connection count only, not connection pooling efficiency. See `features/pgbouncer-connection-pooling.md` for the longer-term solution.
 
 ## Related
 
 - `features/pgbouncer-connection-pooling.md` - future PgBouncer integration for proper connection pooling
 - `infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` - CNPG cluster configuration
-- `operations-manager/python/opi/connectors/postgres.py` - user creation with CONNECTION LIMIT
+- `operations-manager/python/opi/services/catalog/postgresql_database/connection_limit.py` - the setting and the merge
+- `operations-manager/python/opi/connectors/postgres.py` - `create_user` and `set_connection_limit`
 - `operations-manager/python/opi/core/database_pool.py` - pool configuration
 - `operations-manager/python/opi/core/database_pools.py` - pool initialization
