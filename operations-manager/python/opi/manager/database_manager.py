@@ -870,6 +870,10 @@ class DatabaseManager:
             # to prevent a limbo state with a partially-created database
             schemas_before = set() if database_created_here else await self._schema_names(db_database)
             try:
+                # A later run looks for this database only at the recorded generation,
+                # so a clone into a new generation gets no flag (features/kloonpoging.md).
+                if final_generation == generation:
+                    await self.project_manager.mark_clone_started(deployment_name)
                 clone_result = await self.postgres_connector.clone_schema(
                     source_database=source_database,
                     target_database=db_database,
@@ -1980,6 +1984,7 @@ class DatabaseManager:
 
             # STEP 5: Prepare target database (generational approach for force_clone)
             clone_already_finished = False
+            new_generation_created = False
             try:
                 # Check if target database exists by attempting to create it
                 create_result = await self.postgres_connector.create_database(
@@ -2010,6 +2015,7 @@ class DatabaseManager:
                             f"Failed to create versioned database {target_database}: {create_result.get('message', 'Unknown error')}"
                         )
                     logger.info(f"Created new versioned database: {target_database}")
+                    new_generation_created = True
 
                     # Update generation in project file
                     service_type = (
@@ -2086,6 +2092,8 @@ class DatabaseManager:
             else:
                 schemas_before = await self._schema_names(target_database)
                 try:
+                    if not new_generation_created:
+                        await self.project_manager.mark_clone_started(deployment_name)
                     clone_result = await self.postgres_connector.clone_schema_from_external(
                         source_host=source_host,
                         source_port=source_port,

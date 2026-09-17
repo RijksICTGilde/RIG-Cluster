@@ -1,8 +1,8 @@
 """Een run die na een geslaagde databasekloon afbreekt, maakt bij de volgende run geen ``_v1``.
 
 De kloon loopt vooraan in ``process_project`` en de afronding wordt pas bij de save aan het
-eind vastgelegd. De vlag ``clone-from.status.in-progress`` staat daarom al op schijf voordat
-er geprovisioned wordt, zodat de volgende run weet dat de bestaande database van die poging is.
+eind vastgelegd. De vlag ``clone-from.status.in-progress`` gaat daarom op schijf op het moment
+dat de kloon begint, zodat de volgende run weet dat de bestaande database van die poging is.
 """
 
 from __future__ import annotations
@@ -113,14 +113,25 @@ class FakeStore:
         self.committed = copy.deepcopy(data)
 
 
+class FakeService:
+    """Een dienst die voor de database provisioneert, zoals Keycloak."""
+
+    def __init__(self, provision: Any) -> None:
+        self.provision = AsyncMock(side_effect=provision)
+
+
 def _manager(
-    monkeypatch: pytest.MonkeyPatch, store: FakeStore, pg: FakePostgres, manifests: Any = None
+    monkeypatch: pytest.MonkeyPatch,
+    store: FakeStore,
+    pg: FakePostgres,
+    manifests: Any = None,
+    before_database: Any = None,
 ) -> ProjectManager:
     """Een echte run door process_project; alleen wat naar het cluster en naar git gaat is nagebootst."""
     monkeypatch.setattr("opi.manager.project_manager.get_project_store", lambda: store)
     monkeypatch.setattr(
         "opi.manager.project_manager.provisioning_services",
-        lambda: [get_service(ServiceType.POSTGRESQL_DATABASE)],
+        lambda: [FakeService(before_database), get_service(ServiceType.POSTGRESQL_DATABASE)],
     )
     pm = ProjectManager(project_file_relative_path="projects/demo.yaml")
     db_manager = DatabaseManager(pm, db_host="postgres", admin_username="admin", admin_password="admin")
@@ -177,19 +188,62 @@ async def test_the_final_save_compares_against_the_state_after_the_flag_save(mon
     store = FakeStore(_project())
     pg = FakePostgres()
 
-    async def keycloak_write_and_read(**_: Any) -> None:
+    async def someone_writes_and_pm_reads(*_: Any, **__: Any) -> None:
         # Wat de Keycloak-stap halverwege doet: iemand anders schrijft, deze manager leest.
-        store.committed["description"] = "tussendoor geschreven"
+        store.committed.setdefault("users", []).append({"email": "tussendoor@example.nl", "role": "admin"})
         await pm.get_contents()
 
-    pm = _manager(monkeypatch, store, pg, manifests=keycloak_write_and_read)
+    pm = _manager(
+        monkeypatch, store, pg, manifests=someone_writes_and_pm_reads, before_database=someone_writes_and_pm_reads
+    )
     assert await pm.process_project() is True
 
     flag_save, final_save = store.saves
     assert _status(flag_save["data"]) == {"in-progress": True}
-    assert flag_save["base"] == _project()
-    assert final_save["base"] == flag_save["data"], "de save aan het eind moet de basis van de run houden"
+    assert flag_save["base"] == _project(), "de vlag-save moet tegen de basis van de run vergelijken"
+    assert final_save["base"] == flag_save["data"], "de save aan het eind moet de basis na de vlag-save houden"
     assert _status(final_save["data"])["completed"] is True
+    assert "in-progress" not in _status(final_save["data"])
+
+
+async def test_a_run_that_breaks_before_the_clone_leaves_no_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een database van voor de clone-from, met zijn schema, mag een latere run niet voor de kloon aanzien."""
+    store = FakeStore(_project())
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+
+    first = _manager(monkeypatch, store, pg, before_database=RuntimeError("keycloak weg"))
+    assert await first.process_project() is False
+
+    assert store.saves == []
+    assert pg.clone_calls == []
+
+    assert await _manager(monkeypatch, store, pg).process_project() is True
+    assert pg.clone_calls == [f"{TARGET_DB}_v1"], "de oude database telde als afgeronde kloon"
+
+
+async def test_a_clone_into_a_new_generation_gets_no_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De volgende run kent die generatie niet en zou de oude database voor de kloon aanzien."""
+    store = FakeStore(_project())
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+
+    first = _manager(monkeypatch, store, pg, manifests=RuntimeError("manifesten stuk"))
+    assert await first.process_project() is False
+
+    assert pg.clone_calls == [f"{TARGET_DB}_v1"]
+    assert store.saves == []
+
+    assert await _manager(monkeypatch, store, pg).process_project() is True
+    assert len(pg.clone_calls) == 2, "de oude database telde als afgeronde kloon"
+
+
+async def test_outside_a_run_the_flag_is_not_written(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = FakeStore(_project())
+    pm = _manager(monkeypatch, store, FakePostgres(), before_database=RuntimeError("keycloak weg"))
+    assert await pm.process_project() is False
+
+    await pm.mark_clone_started("staging")
+
+    assert store.saves == []
 
 
 async def test_an_interrupted_run_does_not_save_the_flag_again(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,7 +257,7 @@ async def test_an_interrupted_run_does_not_save_the_flag_again(monkeypatch: pyte
 
 
 async def test_the_flag_stays_off_for_deployments_this_run_does_not_process(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Een vlag die deze run zet maar niet afrondt, blijft staan en laat een latere run een poging zien die er nooit was."""
+    """Alleen een deployment waarvan deze run de database kloont krijgt de vlag, ook als er meer deployments zijn gevraagd."""
     project = _project()
     elders = {"type": "deployment", "reference": "production", "mode": "once"}
     project["deployments"].append({"name": "elders", "cluster": "ander-cluster", "clone-from": elders})
@@ -213,6 +267,8 @@ async def test_the_flag_stays_off_for_deployments_this_run_does_not_process(monk
     pm = _manager(monkeypatch, store, FakePostgres())
     assert await pm.process_project(deployment_names=["production", "staging", "elders"]) is True
 
+    flag_save = store.saves[0]
+    assert _status(flag_save["data"]) == {"in-progress": True}
     for saved in store.saves:
         clone_status = {d["name"]: d.get("clone-from", {}).get("status") for d in saved["data"]["deployments"]}
         assert clone_status["elders"] is None, "een deployment op een ander cluster kreeg de vlag"
@@ -261,6 +317,7 @@ def test_a_deployment_without_clone_from_gets_no_flag() -> None:
 def _db_manager(pg: FakePostgres) -> tuple[DatabaseManager, MagicMock]:
     pm = MagicMock()
     pm._revision_manager = RevisionManager(MagicMock())
+    pm.mark_clone_started = AsyncMock()
     manager = DatabaseManager(pm, db_host="postgres", admin_username="admin", admin_password="admin")
     manager._postgres_connector = pg  # type: ignore[assignment]
     return manager, pm
@@ -296,6 +353,7 @@ async def test_an_interrupted_clone_into_a_database_without_its_schema_clones_in
 
     assert pg.clone_calls == [TARGET_DB]
     assert result.database == TARGET_DB
+    manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
 
 
 async def test_force_clone_still_gets_a_new_generation_during_an_interrupted_attempt() -> None:
@@ -307,6 +365,7 @@ async def test_force_clone_still_gets_a_new_generation_during_an_interrupted_att
     assert pg.clone_calls == [f"{TARGET_DB}_v1"]
     assert result.database == f"{TARGET_DB}_v1"
     pm.report_clone_performed.assert_called_once_with("staging", "postgresql-database", 1)
+    pm.mark_clone_started.assert_not_awaited()
 
 
 async def test_a_finished_clone_is_recorded_like_a_fresh_one() -> None:
@@ -393,10 +452,12 @@ async def test_an_interrupted_remote_clone_with_its_schema_is_not_cloned_again()
 
 async def test_a_remote_clone_without_the_flag_still_clones() -> None:
     pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+    manager = _remote_manager(pg)
 
-    await _remote(_remote_manager(pg), interrupted=False)
+    await _remote(manager, interrupted=False)
 
     assert pg.clone_calls == [TARGET_DB]
+    manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
 
 
 async def test_a_failed_remote_clone_leaves_no_schema_behind() -> None:
@@ -422,10 +483,13 @@ async def test_an_interrupted_remote_clone_without_its_schema_clones_again() -> 
 async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrupted_attempt() -> None:
     pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
 
-    result = await _remote(_remote_manager(pg), interrupted=True, force=True)
+    manager = _remote_manager(pg)
+
+    result = await _remote(manager, interrupted=True, force=True)
 
     assert result["success"] is True
     assert pg.clone_calls == [f"{TARGET_DB}_v1"]
+    manager.project_manager.mark_clone_started.assert_not_awaited()
 
 
 def _remote_project(chisel: dict[str, str] | None = None) -> dict[str, Any]:
