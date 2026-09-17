@@ -780,11 +780,36 @@ async def test_an_interrupted_remote_clone_leaves_a_schema_with_the_source_name_
     manager = _remote_manager(pg)
 
     first = await _remote(manager, interrupted=False, source_schema=source_schema)
+    manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
     second = await _remote(manager, interrupted=True, source_schema=source_schema)
 
     assert first["success"] is False
     assert second["success"] is False
+    assert any("already exists" in error for error in second["errors"]), (
+        f"run 2 hoort op dezelfde weigering te stranden, niet ergens anders: {second['errors']}"
+    )
     assert pg.schemas[TARGET_DB] == {"public", source_schema}, "geen schema van de tenant weg"
+
+
+async def test_a_remote_clone_from_public_resumes_after_an_interrupted_run() -> None:
+    """`public` is de gewone bronnaam bij een externe bron. Productie weigert hem niet maar dropt
+    en hervult hem (postgres.py:1797), dus hij mag een tweede poging niet blokkeren.
+    """
+    pg = FakePostgres({TARGET_DB: {"public"}})
+    pg.clone_error = RuntimeError("tunnel weg")
+    manager = _remote_manager(pg)
+
+    first = await _remote(manager, interrupted=False, source_schema="public")
+
+    assert first["success"] is False
+    assert pg.schemas[TARGET_DB] == {"public"}, "de opruiming raakt public niet, die stond er al"
+
+    pg.clone_error = None
+    second = await _remote(manager, interrupted=True, source_schema="public")
+
+    assert second["success"] is True
+    assert pg.clone_calls == [TARGET_DB, TARGET_DB]
+    assert pg.schemas[TARGET_DB] == {TARGET_DB}
 
 
 async def test_force_clone_still_gets_a_new_remote_generation_during_an_interrupted_attempt() -> None:
