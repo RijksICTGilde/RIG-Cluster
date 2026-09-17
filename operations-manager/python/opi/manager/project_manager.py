@@ -293,9 +293,7 @@ def _is_generated(basename: str, generated_files: set[str]) -> bool:
     """Whether a file belongs to the desired state of this run.
 
     The ``.sops.yaml`` of a secret written this run as ``.to-sops.yaml`` is its previous
-    ciphertext, not an obsolete file. The prune runs before the encryption, so removing it
-    here leaves the skip-if-unchanged nothing to compare against and SOPS rewrites the
-    secret on every run.
+    ciphertext, which the skip-if-unchanged compares against after the prune.
     """
     if basename in generated_files:
         return True

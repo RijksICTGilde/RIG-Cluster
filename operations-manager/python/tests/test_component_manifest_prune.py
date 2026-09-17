@@ -107,8 +107,6 @@ class TestSelectObsoleteComponentManifests:
         assert selected == ["productie-fundament-oauth2-cookie-secret.to-sops.yaml"]
 
     def test_keeps_previous_ciphertext_of_secret_generated_this_run(self, tmp_path):
-        # The prune runs before the encryption: dropping the .sops.yaml here left the
-        # skip-if-unchanged nothing to compare against, so SOPS rewrote it every run.
         directory = str(tmp_path)
         for name in (
             "fundament-deployment.yaml",
