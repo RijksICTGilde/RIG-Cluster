@@ -446,20 +446,37 @@ async def test_force_clone_still_gets_a_new_generation_during_an_interrupted_att
     pm.mark_clone_started.assert_not_awaited()
 
 
-async def test_a_finished_clone_is_recorded_like_a_fresh_one() -> None:
-    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+@pytest.mark.parametrize(
+    ("present", "extra"),
+    [(set(), None), ({f"{TARGET_DB}_audit"}, [{"postfix": "audit"}])],
+    ids=["zonder-extra-schema", "met-extra-schema"],
+)
+async def test_a_finished_clone_is_recorded_like_a_fresh_one(present: set[str], extra: list[dict] | None) -> None:
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB, *present}})
     manager, pm = _db_manager(pg)
 
-    result = await _ensure(manager, interrupted=True)
+    result = await _ensure(manager, interrupted=True, extra=extra)
 
     assert pg.clone_calls == []
     assert result.database == TARGET_DB
     pm.report_clone_performed.assert_called_once_with("staging", "postgresql-database", None)
 
 
-async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking() -> None:
-    """Deel van de doelschema's aanwezig: dan houdt de failover, zie features/kloonpoging.md."""
-    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
+@pytest.mark.parametrize(
+    "present",
+    [
+        {TARGET_DB},
+        {f"{TARGET_DB}_audit"},
+        {TARGET_DB, "demo_production"},
+    ],
+    ids=["doelschema", "alleen-het-extra-schema", "doelschema-naast-een-bronnaam"],
+)
+async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking(present: set[str]) -> None:
+    """Deel van de doelschema's aanwezig: dan houdt de failover, zie features/kloonpoging.md.
+
+    Welk deel dat is maakt niet uit, en een bronnaam ernaast maakt het geen voortzetbare staat.
+    """
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", *present}})
     manager, pm = _db_manager(pg)
 
     result = await _ensure(manager, interrupted=True, extra=[{"postfix": "audit"}])
@@ -468,7 +485,7 @@ async def test_a_half_clone_keeps_the_failover_instead_of_deadlocking() -> None:
     assert pg.clone_calls == [f"{TARGET_DB}_v1"]
     pm.report_clone_performed.assert_called_once_with("staging", "postgresql-database", 1)
     pm.mark_clone_started.assert_not_awaited()
-    assert pg.schemas[TARGET_DB] == {"public", TARGET_DB}, "wat er stond blijft staan"
+    assert pg.schemas[TARGET_DB] == {"public", *present}, "wat er stond blijft staan, ook een bronnaam"
 
 
 @pytest.mark.parametrize(
@@ -492,6 +509,20 @@ async def test_an_interrupted_clone_drops_a_leftover_source_schema_and_clones_ag
     assert pg.clone_calls == [TARGET_DB]
     assert leftovers.isdisjoint(pg.schemas[TARGET_DB]), "de bronnamen zijn opgeruimd"
     pm.mark_clone_started.assert_awaited_once_with("staging")
+
+
+async def test_a_second_attempt_that_fails_leaves_no_source_schema_behind() -> None:
+    """De opruiming na een mislukte kloon telt vanaf NA het droppen van de bronnaam, anders
+    geldt de nieuwe kopie onder diezelfde naam als "stond er al" en blijft hij liggen."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", "demo_production"}})
+    pg.clone_error = RuntimeError("verbinding weg")
+    manager, _ = _db_manager(pg)
+
+    with pytest.raises(RuntimeError, match="verbinding weg"):
+        await _ensure(manager, interrupted=True)
+
+    assert pg.clone_calls == [TARGET_DB]
+    assert pg.schemas[TARGET_DB] == {"public"}
 
 
 async def test_a_finished_clone_still_gets_its_extensions() -> None:
