@@ -115,14 +115,14 @@ class TestKeepExistingValues:
     def test_een_gewijzigd_aliassjabloon_wordt_opnieuw_opgelost(self, tmp_path):
         d = str(tmp_path)
 
-        def write(template: str) -> dict[str, str]:
+        def write(password: str, template: str) -> dict[str, str]:
             pm = ProjectManager.__new__(ProjectManager)
             pm._manifest_generator = ManifestGenerator()
             pm._deployment_aliases = {"productie": {"secret": {"redis": {"REDIS_URL": template}}}}
             pm._write_secret_file(
                 SecretFileSpec(
                     secret_name=NAME,
-                    secret_pairs={"REDIS_PASSWORD": "geheim"},
+                    secret_pairs={"REDIS_PASSWORD": password},
                     secret_type="redis",
                     resolve_aliases=True,
                     keep_existing_values=True,
@@ -137,10 +137,13 @@ class TestKeepExistingValues:
             with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml")) as f:
                 return yaml.safe_load(f)["stringData"]
 
-        write("redis://:$REDIS_PASSWORD@oudhost")
+        write("geheim", "redis://:$REDIS_PASSWORD@oudhost")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert write("redis://:$REDIS_PASSWORD@nieuwhost")["REDIS_URL"] == "redis://:geheim@nieuwhost"
+        assert write("vers", "redis://:$REDIS_PASSWORD@nieuwhost") == {
+            "REDIS_PASSWORD": "geheim",
+            "REDIS_URL": "redis://:geheim@nieuwhost",
+        }
 
 
 class TestFaaltNaarDeNieuweWaarde:
