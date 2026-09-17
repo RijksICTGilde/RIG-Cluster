@@ -45,6 +45,7 @@ class _FakePostgresServer:
         self.live_password = LIVE_PASSWORD
         self.databases = {OLD_DATABASE}
         self.password_writes: list[str] = []
+        self.connection_limits: dict[str, int] = {}
 
     def authenticates(self, username: str, password: str, database: str) -> bool:
         return username == self.username and password == self.live_password and database in self.databases
@@ -60,6 +61,7 @@ class _FakePostgresConnector:
         if username == self.server.username:
             return {"status": "exists"}
         self.server.username = username
+        self.server.connection_limits[username] = connection_limit
         self.server.live_password = password
         self.server.password_writes.append(password)
         return {"status": "created"}
@@ -152,7 +154,7 @@ def restore_environment(server: _FakePostgresServer, kubectl: _FakeKubectlConnec
         yield backup_manager
 
 
-async def _run_restore() -> dict[str, Any]:
+async def _run_restore(project_data: dict[str, Any] | None = None) -> dict[str, Any]:
     project_file_handler = MagicMock()
     project_file_handler.get_database_generation = MagicMock(return_value=0)
     return await _restore_database_with_versioning(
@@ -163,7 +165,7 @@ async def _run_restore() -> dict[str, Any]:
         snapshot_id="k1234567890abcdef",
         deployment_cluster="local",
         namespace=NAMESPACE,
-        project_data=_project_data(),
+        project_data=project_data or _project_data(),
         project_file_handler=project_file_handler,
     )
 
@@ -202,6 +204,25 @@ class TestDeRestoreLaatHetWachtwoordStaan:
         assert result["success"] is True
         assert server.password_writes, "zonder geheim moet de restore wel een wachtwoord zetten"
         assert server.live_password == server.password_writes[-1]
+
+
+class TestDeRestoreMaaktDeRolMetDeConnectielimiet:
+    @pytest.mark.asyncio
+    async def test_een_nieuwe_rol_krijgt_de_limiet_van_de_deployment(
+        self, server: _FakePostgresServer, restore_environment: Any
+    ) -> None:
+        """RC-201: ook de restore maakt een ontbrekende rol aan, en dan met de limiet uit
+        het projectbestand, niet met de platformstandaard."""
+        server.username = "een_andere_rol"
+        project_data = _project_data()
+        project_data["services"] = [{"name": "postgresql-database", "config": {"connection-limit": 30}}]
+        project_data["deployments"][0]["services"] = [
+            {"reference": "postgresql-database", "config": {"connection-limit": 80}}
+        ]
+
+        await _run_restore(project_data)
+
+        assert server.connection_limits == {USERNAME: 80}
 
 
 class TestWijzigingNaDeRestore:

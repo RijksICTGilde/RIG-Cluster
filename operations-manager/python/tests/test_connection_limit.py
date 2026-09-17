@@ -12,8 +12,9 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import asyncpg
 import pytest
-from opi.connectors.postgres import PostgresConnector, PostgresValidationError
+from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, PostgresValidationError
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.visualizers.bridge import editable_to_form_field
 from opi.forms.visualizers.providers import ConnectionLimitOptionsProvider
@@ -134,6 +135,22 @@ async def test_zonder_wijziging_geen_alter_role() -> None:
     result = await connector.set_connection_limit("proj_test", 20)
     assert result["status"] == "unchanged"
     conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_een_ontbrekende_rol_wordt_gemeld_zonder_alter() -> None:
+    connector, conn = _connector(None)
+    result = await connector.set_connection_limit("proj_test", 80)
+    assert result == {"status": "not_found", "previous": None, "connection_limit": 80}
+    conn.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_een_databasefout_bij_het_zetten_wordt_een_connectorfout() -> None:
+    connector, conn = _connector(20)
+    conn.execute.side_effect = asyncpg.InsufficientPrivilegeError("permission denied to alter role")
+    with pytest.raises(PostgresExecutionError, match="permission denied to alter role"):
+        await connector.set_connection_limit("proj_test", 80)
 
 
 @pytest.mark.parametrize("waarde", [0, -1, True, "20"])
@@ -269,6 +286,40 @@ async def test_een_nieuwe_deployment_maakt_beide_rollen_met_de_limiet() -> None:
     assert rollen.alters == []
 
 
+@pytest.mark.asyncio
+async def test_een_rol_die_er_niet_is_breekt_de_verwerking_af() -> None:
+    """Een limiet op een rol die niet bestaat is geen "ongewijzigd": dan klopt er iets niet."""
+    stappen: list[tuple[str, str | None]] = []
+    mgr = _manager(_Rollen(), stappen)
+    mgr._postgres_connector.set_connection_limit = AsyncMock(  # type: ignore[union-attr]
+        return_value={"status": "not_found", "previous": None, "connection_limit": 80}
+    )
+    with pytest.raises(ValueError, match="proj_test does not exist"):
+        await mgr._reconcile_connection_limit("proj_test", 80)
+    assert stappen == []
+
+
+@pytest.mark.asyncio
+async def test_een_externe_kloon_zet_de_limiet_van_de_doelrol() -> None:
+    """De kloonroute lost de inloggegevens zelf op, buiten ``create_resources_for_deployment``."""
+    rollen = _Rollen(proj_test=20)
+    mgr = _manager(rollen, [])
+    project = _project({"connection-limit": 30}, test={"connection-limit": 80})
+    mgr.project_manager.get_contents = AsyncMock(return_value=project)  # type: ignore[attr-defined]
+    with (
+        patch.object(DatabaseManager, "_ensure_connection", lambda self: None),
+        patch.object(DatabaseManager, "_validate_external_source", AsyncMock(return_value={"table_count": 1})),
+        patch.object(DatabaseManager, "_deployment_uses_postgresql", AsyncMock(return_value=True)),
+        patch.object(DatabaseManager, "_get_database_config_for_deployment", AsyncMock(return_value=("h", "a", "p"))),
+        patch.object(DatabaseManager, "_resolve_database_credentials", AsyncMock(return_value="Wachtwoord123abc")),
+        patch.object(DatabaseManager, "_get_deployment_database_generation", lambda self, *args: None),
+    ):
+        result = await mgr._execute_external_clone("proj", "test", "bron", 5432, "u", "p", "db", "public", False)
+
+    assert {"type": "credentials_resolved", "status": "success"} in result["operations"]
+    assert rollen.alters == [("proj_test", 80)]
+
+
 # --- de wizard --------------------------------------------------------------------
 
 
@@ -276,6 +327,12 @@ def test_de_keuzelijst_toont_de_tien_stappen() -> None:
     opties = ConnectionLimitOptionsProvider().get_options()
     assert [o["value"] for o in opties] == ["", "10", "20", "40", "50", "75", "100", "150", "200", "250", "500"]
     assert opties[0]["label"] == "Standaard van het platform (20)"
+
+
+def test_een_bestaande_stap_komt_niet_dubbel_in_de_lijst() -> None:
+    opties = ConnectionLimitOptionsProvider(current_value="20").get_options()
+    assert [o for o in opties if o["value"] == "20"] == [{"value": "20", "label": "20"}]
+    assert len(opties) == 11
 
 
 def test_een_eigen_waarde_staat_op_zijn_plek_in_de_lijst() -> None:
@@ -287,13 +344,16 @@ def test_een_eigen_waarde_staat_op_zijn_plek_in_de_lijst() -> None:
     assert {"value": "37", "label": "37 (eigen waarde)"} in veld.options
 
 
-def test_de_deployment_toont_wat_er_geldt_zonder_eigen_waarde() -> None:
-    project = _project({"connection-limit": 30})
+@pytest.mark.parametrize(
+    ("project_config", "label"), [({"connection-limit": 30}, "Volg het project (30)"), ({}, "Volg het project (20)")]
+)
+def test_de_deployment_toont_wat_er_geldt_zonder_eigen_waarde(project_config: dict[str, Any], label: str) -> None:
+    project = _project(project_config)
     veld = editable_to_form_field(
         get_service(ServiceType.POSTGRESQL_DATABASE).deployment_form_section(0).editables[0], project, edit_mode=True
     )
     assert veld.value == ""
-    assert veld.options[0] == {"value": "", "label": "Volg het project (30)"}
+    assert veld.options[0] == {"value": "", "label": label}
 
 
 def test_een_leeg_veld_schrijft_geen_standaard_weg() -> None:
@@ -326,9 +386,12 @@ async def test_een_waarde_van_37_overleeft_de_wizard(flow_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_een_deployment_zonder_waarde_krijgt_er_geen_bij() -> None:
-    with patch("forms.test_modal_noop_roundtrip._project", side_effect=lambda: _met_limieten(_sweep_project(), None)):
-        _expected, result = await _roundtrip("modal-edit-postgresql-deployment-0")
+@pytest.mark.parametrize("flow_id", ["modal-edit-postgresql-schemas", "modal-edit-postgresql-deployment-0"])
+async def test_een_leeg_veld_krijgt_er_geen_waarde_bij(flow_id: str) -> None:
+    """De sweep staat toevoegingen toe; een weggeschreven 20 zou de projectwaarde overschaduwen."""
+    _expected, result = await _roundtrip(flow_id)
+    project_entry = next(e for e in result["services"] if service_entry_name(e) == _PG)
+    assert "connection-limit" not in (project_entry.get("config") or {})
     for entry in result["deployments"][0].get("services", []):
         if service_entry_name(entry) == _PG:
             assert "connection-limit" not in (entry.get("config") or {})
@@ -341,3 +404,14 @@ def test_de_deploymentkaart_krijgt_een_knop_naar_de_limiet() -> None:
     project = _project({}, test=None, productie=None)
     (knop,) = [a for a in postgresql_database_actions(project, "productie") if a.label == "Connectielimiet"]
     assert knop.modal_endpoint == "/projects/proj/modal-wizard/modal-edit-postgresql-deployment-1"
+
+
+@pytest.mark.parametrize(
+    ("project", "deployment"),
+    [
+        ({**_project({}), "services": ["minio-storage"]}, "test"),
+        (_project({}), "bestaat-niet"),
+    ],
+)
+def test_geen_knop_zonder_database_of_zonder_deployment(project: dict[str, Any], deployment: str) -> None:
+    assert [a for a in postgresql_database_actions(project, deployment) if a.label == "Connectielimiet"] == []
