@@ -95,8 +95,7 @@ limit. Before rolling out:
    WHERE rolcanlogin AND NOT rolsuper AND rolconnlimit <> 20;
    ```
 2. Put every value that must stay into the project file of that project (`connection-limit`
-   on the project or the deployment). A `namespace-postgresql-database` role cannot keep a
-   value other than 20.
+   on the project or the deployment).
 
 ### 5. Shutdown timeouts (cluster.yaml)
 
