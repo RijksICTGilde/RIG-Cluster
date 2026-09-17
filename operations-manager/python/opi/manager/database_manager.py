@@ -869,10 +869,18 @@ class DatabaseManager:
             # If clone fails and we created the database in this operation, clean it up
             # to prevent a limbo state with a partially-created database
             schemas_before = set() if database_created_here else await self._schema_names(db_database)
+            # The failover may have moved db_schema, so the target set is rebuilt here.
+            target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
+            # pg_dump restores under the source name and renames at the end, so a failed
+            # clone can leave either name behind.
+            clone_schemas = target_schemas | {source_schema, *(source for source, _ in extra_clone_pairs)}
             try:
                 # A later run looks for this database only at the recorded generation,
                 # so a clone into a new generation gets no flag (features/kloonpoging.md).
-                if final_generation == generation:
+                # The flag also stays off above a target schema this run did not create:
+                # that is the same set a later run reads back as "clone finished", so it
+                # would take a schema from before the clone-from for a finished clone.
+                if final_generation == generation and target_schemas.isdisjoint(schemas_before):
                     await self.project_manager.mark_clone_started(deployment_name)
                 clone_result = await self.postgres_connector.clone_schema(
                     source_database=source_database,
@@ -897,7 +905,7 @@ class DatabaseManager:
                     except Exception as cleanup_err:
                         logger.error(f"Failed to clean up database {db_database} after failed clone: {cleanup_err}")
                 else:
-                    await self._drop_schemas_created_since(db_database, schemas_before)
+                    await self._drop_schemas_created_since(db_database, schemas_before, clone_schemas)
                 raise
 
             logger.info(f"Successfully cloned database from {source_database} to {db_database}")
@@ -971,19 +979,32 @@ class DatabaseManager:
     async def _schema_names(self, database: str) -> set[str]:
         return {row["schema_name"] for row in await self.postgres_connector.list_schemas(database)}
 
-    async def _drop_schemas_created_since(self, database: str, schemas_before: set[str]) -> None:
+    async def _drop_schemas_created_since(
+        self, database: str, schemas_before: set[str], clone_schemas: set[str]
+    ) -> None:
         """Drop what a failed clone left in a database that already existed.
 
         A clone into a database it did not create cannot drop the database, so without
         this a half schema survives, and a retry would take it for a finished clone.
+
+        Only the clone's own schema names are candidates: this runs in a live tenant
+        database, and `list_schemas` also reports what another session made in the
+        meantime (a temp schema, which a superuser drops with CASCADE). A failing drop
+        does not stop the others either: the intermediate schema under the source name
+        sorts before the target name, and a surviving target schema is exactly what a
+        retry would take for a finished clone.
         """
         try:
-            leftovers = await self._schema_names(database) - schemas_before
-            for schema in sorted(leftovers):
+            leftovers = (await self._schema_names(database) - schemas_before) & clone_schemas
+        except (PostgresExecutionError, PostgresValidationError) as list_err:
+            logger.error(f"Failed to list schemas in {database} after failed clone: {list_err}")
+            return
+        for schema in sorted(leftovers):
+            try:
                 await self.postgres_connector.delete_schema(schema, database, cascade=True)
                 logger.info(f"Dropped schema {schema} in {database} after failed clone")
-        except (PostgresExecutionError, PostgresValidationError) as cleanup_err:
-            logger.error(f"Failed to clean up schemas in {database} after failed clone: {cleanup_err}")
+            except (PostgresExecutionError, PostgresValidationError) as cleanup_err:
+                logger.error(f"Failed to drop schema {schema} in {database} after failed clone: {cleanup_err}")
 
     async def _validate_clone_source(self, source_database: str, source_schema: str) -> None:
         """
@@ -2092,7 +2113,10 @@ class DatabaseManager:
             else:
                 schemas_before = await self._schema_names(target_database)
                 try:
-                    if not new_generation_created:
+                    # No flag above a target schema this run did not create: that schema
+                    # is what a later run reads back as "clone finished", while
+                    # clone_schema_from_external refuses to clone over it.
+                    if not new_generation_created and target_schema not in schemas_before:
                         await self.project_manager.mark_clone_started(deployment_name)
                     clone_result = await self.postgres_connector.clone_schema_from_external(
                         source_host=source_host,
@@ -2113,7 +2137,9 @@ class DatabaseManager:
 
                     result["operations"].append({"type": "database_cloned", "status": "success"})
                 except Exception as e:
-                    await self._drop_schemas_created_since(target_database, schemas_before)
+                    await self._drop_schemas_created_since(
+                        target_database, schemas_before, {target_schema, source_schema}
+                    )
                     result["errors"].append(f"Database clone failed: {e!s}")
                     result["operations"].append({"type": "database_cloned", "status": "failed", "error": str(e)})
                     return result

@@ -20,8 +20,11 @@ clone-from:
   databasekloon begint, bij `mode: once` waarvan `completed` nog niet true is. Hij gaat met een
   eigen commit naar git (`Clone attempt started for ...`), zodat hij een fout later in de run
   overleeft. Staat hij er al, dan wordt er niets opnieuw geschreven. Een run die eerder
-  stukgaat laat dus geen vlag achter, en een database van voor de `clone-from` telt niet als
-  afgeronde kloon.
+  stukgaat laat dus geen vlag achter.
+- **Niet boven een doelschema dat er al stond.** Precies de schema's die een volgende run
+  terugleest als "kloon afgerond" moeten nu nog ontbreken, anders zou die run een schema van
+  voor de `clone-from` voor de kloon aanzien. De kloon weigert zo'n schema toch
+  (`postgres.py:1840`), dus er gaat geen geslaagde kloon verloren.
 - **Niet bij een nieuwe generatie** (failover of `force-clone`): de volgende run zoekt de
   database onder de vastgelegde generatie, en die gaat pas bij de save aan het eind naar schijf.
   Met de vlag zou hij de oude database voor de kloon aanzien. Zo'n run gedraagt zich als voorheen.
@@ -51,9 +54,11 @@ doelschema (de extra schema's maakt het daarna leeg aan) en meldt alleen `report
 ## Een half schema blijft niet liggen
 
 Faalt een kloon in een database die er al stond, dan worden de schema's die deze poging
-aanmaakte weer weggegooid (ook het tussenschema onder de bronnaam). Schema's die er voor de
-poging al waren blijven staan. Een database die de poging zelf aanmaakte wordt bij
-`type: deployment`, zoals voorheen, in zijn geheel verwijderd; bij `remote-source` blijft die
+aanmaakte weer weggegooid (ook het tussenschema onder de bronnaam). Alleen de namen van deze
+kloon komen in aanmerking: dit is een levende tenantdatabase, en de schemalijst bevat ook wat
+een andere sessie ondertussen aanmaakte. Faalt een drop, dan gaan de overige schema's alsnog
+weg. Schema's die er voor de poging al waren blijven staan. Een database die de poging zelf
+aanmaakte wordt bij `type: deployment`, zoals voorheen, in zijn geheel verwijderd; bij `remote-source` blijft die
 staan en gaan alleen de nieuwe schema's weg. Zo betekent een overlevend doelschema altijd een
 afgeronde kloon.
 

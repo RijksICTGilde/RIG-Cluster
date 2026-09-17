@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.postgres import PostgresExecutionError
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
@@ -87,11 +88,24 @@ class FakePostgres:
         self.schemas[target_database].add(target_schema)
         return {"status": "success"}
 
-    async def clone_schema_from_external(self, *, target_database: str, target_schema: str, **_: Any) -> dict:
+    async def clone_schema_from_external(
+        self,
+        *,
+        source_schema: str,
+        target_database: str,
+        target_schema: str,
+        force_clone: bool = False,
+        **_: Any,
+    ) -> dict:
         self.clone_calls.append(target_database)
-        self.schemas[target_database].add(target_schema)
+        # Zoals _execute_pgdump_clone: een bestaand doelschema wordt zonder force_clone geweigerd.
+        if target_schema in self.schemas[target_database] and not force_clone:
+            raise RuntimeError(f"Target schema '{target_schema}' already exists in database '{target_database}'")
+        self.schemas[target_database].add(source_schema)
         if self.clone_error is not None:
             raise self.clone_error
+        self.schemas[target_database].discard(source_schema)
+        self.schemas[target_database].add(target_schema)
         return {"status": "success"}
 
     async def set_role_search_path(self, **_: Any) -> None:
@@ -350,7 +364,12 @@ def _db_manager(pg: FakePostgres) -> tuple[DatabaseManager, MagicMock]:
 
 
 async def _ensure(
-    manager: DatabaseManager, *, interrupted: bool, force: bool = False, extra: list[dict] | None = None
+    manager: DatabaseManager,
+    *,
+    interrupted: bool,
+    force: bool = False,
+    extra: list[dict] | None = None,
+    generation: int | None = None,
 ) -> Any:
     project = _project()
     if extra:
@@ -366,7 +385,7 @@ async def _ensure(
             db_password="secret",
             project_data=project,
             force_clone_override=force,
-            generation=None,
+            generation=generation,
             clone_interrupted=interrupted,
         )
 
@@ -423,6 +442,83 @@ async def test_a_failed_clone_into_an_existing_database_leaves_no_schema_behind(
         await _ensure(manager, interrupted=True)
 
     assert pg.schemas[TARGET_DB] == {"public", "eigen"}, "alleen wat deze poging aanmaakte mag weg"
+
+
+@pytest.mark.parametrize(
+    "present",
+    [TARGET_DB, f"{TARGET_DB}_audit"],
+    ids=["doelschema", "extra-schema"],
+)
+async def test_no_flag_above_a_target_schema_from_before_the_clone_from(present: str) -> None:
+    """Met de vlag boven zo'n schema zou een latere run het voor een afgeronde kloon aanzien."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", present}})
+    manager, pm = _db_manager(pg)
+
+    # Een vastgelegde generatie, want anders neemt een bestaande database eerst de failover.
+    await _ensure(manager, interrupted=False, generation=0, extra=[{"postfix": "audit"}])
+
+    pm.mark_clone_started.assert_not_awaited()
+
+
+async def test_the_cleanup_leaves_a_schema_from_another_session_alone() -> None:
+    """list_schemas meldt ook wat een andere sessie ondertussen maakte; dit draait in een levende database."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", "eigen"}})
+    manager, _ = _db_manager(pg)
+    clone_schema = pg.clone_schema
+
+    async def clone_while_another_session_works(**kwargs: Any) -> dict:
+        pg.schemas[TARGET_DB].add("pg_temp_7")
+        return await clone_schema(**kwargs)
+
+    pg.clone_schema = clone_while_another_session_works  # type: ignore[method-assign]
+    pg.clone_error = RuntimeError("verbinding weg")
+
+    with pytest.raises(RuntimeError):
+        await _ensure(manager, interrupted=True)
+
+    assert pg.schemas[TARGET_DB] == {"public", "eigen", "pg_temp_7"}, "alleen de schema's van deze kloon mogen weg"
+
+
+async def test_a_failing_schema_list_does_not_hide_the_clone_error() -> None:
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public"}})
+    manager, _ = _db_manager(pg)
+    pg.clone_error = RuntimeError("verbinding weg")
+    list_schemas = pg.list_schemas
+
+    async def fail_once_the_clone_has_run(database: str) -> list[dict[str, str]]:
+        if pg.clone_calls:
+            raise PostgresExecutionError("geen verbinding")
+        return await list_schemas(database)
+
+    pg.list_schemas = fail_once_the_clone_has_run  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="verbinding weg"):
+        await _ensure(manager, interrupted=True)
+
+
+async def test_one_failing_drop_does_not_leave_the_other_schema_behind() -> None:
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public"}})
+    manager, _ = _db_manager(pg)
+
+    async def clone_that_leaves_both_names(**_: Any) -> dict:
+        # Zoals een kloon die valt na het hernoemen van het eerste schema.
+        pg.schemas[TARGET_DB].update({"demo_production", TARGET_DB})
+        raise RuntimeError("verbinding weg")
+
+    delete_schema = pg.delete_schema
+
+    async def refuse_the_first(schema_name: str, database: str, cascade: bool = False) -> dict[str, str]:
+        if schema_name == "demo_production":
+            raise PostgresExecutionError("geen rechten")
+        return await delete_schema(schema_name, database, cascade=cascade)
+
+    pg.clone_schema = clone_that_leaves_both_names  # type: ignore[method-assign]
+    pg.delete_schema = refuse_the_first  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="verbinding weg"):
+        await _ensure(manager, interrupted=True)
+
+    assert pg.schemas[TARGET_DB] == {"public", "demo_production"}, "het doelschema moet weg, ook na een mislukte drop"
 
 
 async def test_a_failed_clone_into_a_fresh_database_still_drops_the_database() -> None:
@@ -489,7 +585,7 @@ async def test_an_interrupted_remote_clone_with_its_schema_is_not_cloned_again()
 
 
 async def test_a_remote_clone_without_the_flag_still_clones() -> None:
-    pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+    pg = FakePostgres({TARGET_DB: {"public"}})
     manager = _remote_manager(pg)
     clones_at_flag: list[list[str]] = []
     manager.project_manager.mark_clone_started.side_effect = lambda _: clones_at_flag.append(list(pg.clone_calls))
@@ -499,6 +595,22 @@ async def test_a_remote_clone_without_the_flag_still_clones() -> None:
     assert pg.clone_calls == [TARGET_DB]
     manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
     assert clones_at_flag == [[]], "de vlag moet op schijf staan voordat de kloon begint"
+
+
+async def test_a_remote_clone_does_not_claim_a_target_schema_from_before_the_clone_from() -> None:
+    """Zonder deze grens zet run 1 de vlag boven een bestaand schema en meldt run 2 een kloon die nooit liep."""
+    pg = FakePostgres({TARGET_DB: {"public", TARGET_DB}})
+    manager = _remote_manager(pg)
+
+    first = await _remote(manager, interrupted=False)
+
+    manager.project_manager.mark_clone_started.assert_not_awaited()
+    assert first["success"] is False, "clone_schema_from_external weigert een bestaand doelschema"
+
+    second = await _remote(manager, interrupted=False)
+
+    assert second["success"] is False, "zonder vlag telt het oude schema niet als afgeronde kloon"
+    assert pg.clone_calls == [TARGET_DB, TARGET_DB]
 
 
 async def test_a_failed_remote_flag_save_is_reported_as_a_failed_clone() -> None:
