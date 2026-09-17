@@ -488,6 +488,22 @@ skopeo geeft. Zonder dat uitpakken toetst hij het cijfertekstblok en wordt een g
 token geweigerd. Is de waarde niet uit te pakken (geen sleutel), dan wordt er niets
 getoetst en dus niets geweigerd.
 
+De toets is een uitgaand verzoek naar een host die de afnemer kiest, en de eerste
+stderr-regel komt terug als veldfout. `UPSTREAM_PATTERN` is alleen een vormcontrole, dus
+de connector (`_destination_refused` in `skopeo.py`) resolvet de host eerst en weigert als
+een van de adressen niet publiek is (`ipaddress.is_global`: loopback, link-local en dus
+het metadata-adres, RFC1918, CGNAT, unique-local) of als de naam niet resolvet. Elke
+weigering krijgt dezelfde reden (`REFUSED_DESTINATION_REASON`), anders is de weigering
+zelf een orakel voor het clusternetwerk. De enige uitzondering is de platformregistry
+(`REGISTRY_URL`) in de sandbox: `*.sandbox.rijksapp.dev` resolvet in de pod via CoreDNS
+naar de ingress, een privaat adres. `localhost:5001` heeft geen uitzondering nodig: in de
+pod is `localhost` de pod zelf, dus die registry was via deze toets nooit bereikbaar.
+
+Skopeo krijgt de inloggegevens via een authfile (`--authfile` bij `list-tags`,
+`--dest-authfile` bij de push), niet op de commandoregel waar ze in
+`/proc/<pid>/cmdline` staan. `_authfile` schrijft hem met mode 0600 in een eigen
+tijdelijke map en ruimt die op, ook als skopeo faalt.
+
 ## Op de projectpagina
 
 De dienst levert een blok met wat de afnemer heeft ingevuld, en haalt de toestand van de
