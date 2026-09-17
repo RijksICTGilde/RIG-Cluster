@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
@@ -245,9 +246,7 @@ class TestConfigureOverlay:
     @pytest.mark.parametrize("changed", ["app.py", "nieuwpakket/module.py"], ids=["gewijzigd", "ongetrackt"])
     def test_task_fills_in_repo_override_and_tag(self, repo: Path, changed: str) -> None:
         """Via de echte `task` (eigen shell), dus ook de doorgifte SANDBOX_OM_REPO -> SANDBOX_OM_IMAGE -> sed."""
-        task = shutil.which("task")
-        if task is None:
-            pytest.skip("task ontbreekt")
+        task = echt_programma("task")
         shutil.copy(TASKFILE, repo / "Taskfile.yaml")
         target = repo / "operations-manager/python/opi" / changed
         target.parent.mkdir(exist_ok=True)
@@ -348,9 +347,7 @@ class TestGenericUpdateOnSandbox:
         De clustertools op het PATH zijn nepversies die falen, zodat een run die te ver
         komt nooit een echt cluster raakt.
         """
-        task = shutil.which("task")
-        if task is None:
-            pytest.skip("task ontbreekt")
+        task = echt_programma("task")
         shutil.copy(TASKFILE, repo / "Taskfile.yaml")
         (repo / ".env-taskfile-current").write_text(f"CLUSTER_TYPE={cluster_type}\nKIND_CLUSTER_NAME=rig-sandbox\n")
         stubs = repo / "stubs"
