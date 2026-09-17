@@ -165,15 +165,6 @@ class TestDeToets:
 class TestDeConnector:
     """De maskering, want een foutregel van skopeo kan de verwijzing mét token bevatten."""
 
-    def test_de_creds_worden_gemaskeerd_in_het_log(self) -> None:
-        from opi.connectors.skopeo import SkopeoConnector
-
-        masked = SkopeoConnector._mask_list_tags_credentials(
-            ["skopeo", "list-tags", "--creds", "robbert:geheim", "docker://x"]
-        )
-        assert masked[3] == "robbert:***"
-        assert "geheim" not in " ".join(masked)
-
     def test_een_userinfo_in_een_foutmelding_wordt_gemaskeerd(self) -> None:
         from opi.connectors.skopeo import SkopeoConnector
 

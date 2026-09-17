@@ -5,10 +5,21 @@ Tests singleton pattern, validation, command construction, and push execution
 with mocked subprocess calls.
 """
 
+import ipaddress
+import logging
+import os
+import socket
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
+from opi.connectors.skopeo import (
+    REFUSED_DESTINATION_REASON,
+    SkopeoConnectionError,
+    SkopeoConnector,
+    SkopeoExecutionError,
+    SkopeoValidationError,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -111,31 +122,28 @@ class TestCommandConstruction:
             dest = connector._build_destination("mink", "myapp", "v1")
             assert dest == "docker://rcr.rijksapps.nl/rig/zad:mink_myapp-v1"
 
-    def test_build_command_with_creds(self, connector):
+    def test_build_command_with_authfile(self, connector):
         with patch("opi.connectors.skopeo.settings") as mock_settings:
-            mock_settings.REGISTRY_USERNAME = "rig+zad"
             mock_settings.REGISTRY_VERIFY_TLS = True
-            cmd = connector._build_command("/tmp/img.tar", "docker://rcr.rijksapps.nl/rig/proj/app:v1")
-            assert cmd[0] == "skopeo"
-            assert cmd[1] == "copy"
-            assert "--dest-creds" in cmd
-            creds_idx = cmd.index("--dest-creds")
-            assert cmd[creds_idx + 1] == "rig+zad:decrypted-token"
+            cmd = connector._build_command(
+                "/tmp/img.tar", "docker://rcr.rijksapps.nl/rig/proj/app:v1", "/tmp/auth/auth.json"
+            )
+            assert cmd[:4] == ["skopeo", "copy", "--dest-authfile", "/tmp/auth/auth.json"]
+            assert "decrypted-token" not in " ".join(cmd)
             assert "--dest-tls-verify=false" not in cmd
+
+    def test_build_command_without_credentials(self, connector):
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.REGISTRY_VERIFY_TLS = True
+            cmd = connector._build_command("/tmp/img.tar", "docker://dest", None)
+            assert cmd == ["skopeo", "copy", "docker-archive:/tmp/img.tar", "docker://dest"]
 
     def test_build_command_tls_verify_false(self, connector):
         with patch("opi.connectors.skopeo.settings") as mock_settings:
             mock_settings.REGISTRY_USERNAME = "rig+zad"
             mock_settings.REGISTRY_VERIFY_TLS = False
-            cmd = connector._build_command("/tmp/img.tar", "docker://dest")
+            cmd = connector._build_command("/tmp/img.tar", "docker://dest", None)
             assert "--dest-tls-verify=false" in cmd
-
-    def test_mask_credentials(self, connector):
-        cmd = ["skopeo", "copy", "--dest-creds", "user:secret", "src", "dst"]
-        masked = connector._mask_credentials(cmd)
-        assert masked[3] == "user:***"
-        # Original unchanged
-        assert cmd[3] == "user:secret"
 
 
 class TestPushImage:
@@ -265,3 +273,223 @@ class TestOwnerPinning:
             with pytest.raises(SkopeoValidationError):
                 await connector.push_image("/tmp/img.tar", "not_a_project", "app", "v1")
         mock_exec.assert_not_called()
+
+
+PASSWORD = "geheim-token-123"
+
+FAKE_SKOPEO = """#!/bin/sh
+tr '\\0' '\\n' < /proc/$$/cmdline > "$SKOPEO_RECORD/cmdline"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --authfile|--dest-authfile)
+      echo "$2" > "$SKOPEO_RECORD/path"
+      cp "$2" "$SKOPEO_RECORD/auth.json"
+      stat -c %a "$2" > "$SKOPEO_RECORD/mode";;
+  esac
+  shift
+done
+echo "unauthorized: authentication required" >&2
+exit "$SKOPEO_EXIT"
+"""
+
+
+@pytest.fixture
+def fake_skopeo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Een echte ``skopeo`` op PATH die zijn argv en authfile vastlegt."""
+    bin_dir = tmp_path / "bin"
+    record = tmp_path / "record"
+    bin_dir.mkdir()
+    record.mkdir()
+    script = bin_dir / "skopeo"
+    script.write_text(FAKE_SKOPEO)
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("SKOPEO_RECORD", str(record))
+    monkeypatch.setenv("SKOPEO_EXIT", "0")
+    return record
+
+
+#: Wat de nepresolver per naam teruggeeft; IP-letterlijken gaan naar de echte.
+DNS = {
+    "ghcr.io": ["140.82.112.33"],
+    "code.overheid.nl": ["145.21.1.1", "2a00:1450:4001:80b::2004"],
+    "kubernetes.default.svc": ["10.96.0.1"],
+    "registry.voorbeeld.nl": ["10.0.0.5"],
+    "half.voorbeeld.nl": ["140.82.112.34", "192.168.1.10"],
+    "registry.sandbox.rijksapp.dev": ["10.96.12.34"],
+}
+_REAL_GETADDRINFO = socket.getaddrinfo
+
+
+def _fake_getaddrinfo(host: str, port: object, *args: object, **kwargs: object) -> list:
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if host not in DNS:
+            raise socket.gaierror(socket.EAI_NONAME, "Name or service not known") from None
+        return [
+            (
+                socket.AF_INET6 if ":" in ip else socket.AF_INET,
+                socket.SOCK_STREAM,
+                6,
+                "",
+                (ip, 0, 0, 0) if ":" in ip else (ip, 0),
+            )
+            for ip in DNS[host]
+        ]
+    return _REAL_GETADDRINFO(host, port, *args, **kwargs)
+
+
+@pytest.fixture
+def resolver():
+    with patch("socket.getaddrinfo", side_effect=_fake_getaddrinfo) as fake:
+        yield fake
+
+
+@pytest.mark.asyncio
+class TestDestinationGuard:
+    """De tokentoets is een uitgaand verzoek naar een host die de afnemer kiest."""
+
+    @pytest.mark.parametrize(
+        "repository",
+        [
+            "169.254.169.254/latest",
+            "127.0.0.1:22/x",
+            "10.43.0.1:8080/x",
+            "kubernetes.default.svc/x",
+            "0.0.0.0:9595/x",
+            "localhost:9595/x",
+        ],
+    )
+    async def test_private_and_special_destinations_are_refused_with_one_message(
+        self, connector, resolver, fake_skopeo, repository
+    ):
+        with patch("asyncio.create_subprocess_exec") as mock_exec:
+            result = await connector.check_repository_access(repository, "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+        mock_exec.assert_not_called()
+
+    @pytest.mark.parametrize("repository", ["ghcr.io/iets", "code.overheid.nl/iets"])
+    async def test_a_public_registry_is_checked(self, connector, resolver, fake_skopeo, repository):
+        assert await connector.check_repository_access(repository, "robbert", PASSWORD) == (True, "")
+        assert (fake_skopeo / "cmdline").read_text().splitlines()[-1] == f"docker://{repository}"
+
+    async def test_a_public_looking_name_that_resolves_privately_is_refused(self, connector, resolver, fake_skopeo):
+        """Een oordeel op de tekst alleen laat deze door."""
+        result = await connector.check_repository_access("registry.voorbeeld.nl/app", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+        assert not (fake_skopeo / "cmdline").exists()
+
+    async def test_one_private_address_among_public_ones_is_enough(self, connector, resolver, fake_skopeo):
+        result = await connector.check_repository_access("half.voorbeeld.nl/app", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
+    async def test_a_name_that_does_not_resolve_gets_the_same_message(self, connector, resolver, fake_skopeo):
+        """Anders verklapt het verschil welke interne namen bestaan."""
+        result = await connector.check_repository_access("bestaat.niet.intern/app", "robbert", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
+    async def test_the_platform_registry_is_allowed_in_the_sandbox(self, connector, resolver, fake_skopeo):
+        """In de pod resolvet ``*.sandbox.rijksapp.dev`` via CoreDNS naar de ingress."""
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "sandboxed-local"
+            mock_settings.REGISTRY_URL = "registry.sandbox.rijksapp.dev"
+            result = await connector.check_repository_access("registry.sandbox.rijksapp.dev/rig/app", "admin", PASSWORD)
+        assert result == (True, "")
+
+    async def test_the_sandbox_exception_holds_only_for_the_platform_registry(self, connector, resolver, fake_skopeo):
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "sandboxed-local"
+            mock_settings.REGISTRY_URL = "registry.sandbox.rijksapp.dev"
+            result = await connector.check_repository_access("kubernetes.default.svc/x", "admin", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
+    async def test_the_sandbox_exception_holds_only_in_the_sandbox(self, connector, resolver, fake_skopeo):
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.CLUSTER_MANAGER = "odcn-production"
+            mock_settings.REGISTRY_URL = "registry.sandbox.rijksapp.dev"
+            result = await connector.check_repository_access("registry.sandbox.rijksapp.dev/rig/app", "admin", PASSWORD)
+        assert result == (False, REFUSED_DESTINATION_REASON)
+
+
+def _assert_authfile_used_and_gone(record: Path, registry: str, username: str) -> None:
+    cmdline = (record / "cmdline").read_text()
+    assert PASSWORD not in cmdline
+    assert username not in cmdline
+    assert (record / "mode").read_text().strip() == "600"
+    auth = (record / "auth.json").read_text()
+    assert registry in auth
+    assert PASSWORD not in auth  # base64, zoals een dockerconfigjson
+    path = Path((record / "path").read_text().strip())
+    assert not path.exists()
+    assert not path.parent.exists()
+
+
+@pytest.mark.asyncio
+class TestCredentialsStayOutOfArgv:
+    """Het wachtwoord staat in een authfile, niet in ``/proc/<pid>/cmdline``."""
+
+    @pytest.mark.parametrize("exit_code", ["0", "1"])
+    async def test_list_tags(self, connector, resolver, fake_skopeo, monkeypatch, exit_code):
+        monkeypatch.setenv("SKOPEO_EXIT", exit_code)
+        ok, reason = await connector.check_repository_access("ghcr.io/team/app", "robbert", PASSWORD)
+        assert ok is (exit_code == "0")
+        _assert_authfile_used_and_gone(fake_skopeo, "ghcr.io", "robbert")
+        assert "--authfile" in (fake_skopeo / "cmdline").read_text()
+
+    @pytest.mark.parametrize("exit_code", ["0", "1"])
+    async def test_push(self, connector, fake_skopeo, monkeypatch, exit_code):
+        monkeypatch.setenv("SKOPEO_EXIT", exit_code)
+        connector._registry_password = PASSWORD
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.REGISTRY_URL = "rcr.rijksapps.nl"
+            mock_settings.REGISTRY_ORG = "rig"
+            mock_settings.REGISTRY_USERNAME = "rig+zad"
+            mock_settings.REGISTRY_VERIFY_TLS = True
+            if exit_code == "0":
+                await connector.push_image("/tmp/img.tar", "mink", "app", "v1")
+            else:
+                with pytest.raises(SkopeoExecutionError, match="unauthorized"):
+                    await connector.push_image("/tmp/img.tar", "mink", "app", "v1")
+        _assert_authfile_used_and_gone(fake_skopeo, "rcr.rijksapps.nl", "rig+zad")
+        assert "--dest-authfile" in (fake_skopeo / "cmdline").read_text()
+
+    async def test_push_without_credentials_passes_no_authfile(self, connector, fake_skopeo):
+        connector._registry_password = None
+        with patch("opi.connectors.skopeo.settings") as mock_settings:
+            mock_settings.REGISTRY_URL = "rcr.rijksapps.nl"
+            mock_settings.REGISTRY_ORG = "rig"
+            mock_settings.REGISTRY_USERNAME = "rig+zad"
+            mock_settings.REGISTRY_VERIFY_TLS = True
+            await connector.push_image("/tmp/img.tar", "mink", "app", "v1")
+        assert not (fake_skopeo / "path").exists()
+
+    async def test_the_authfile_is_removed_when_the_process_cannot_start(self, connector, resolver, tmp_path):
+        """Een uitzondering binnen het blok ruimt het bestand ook op."""
+        seen: list[str] = []
+
+        async def exploding_exec(*cmd: str, **kwargs: object) -> None:
+            seen.append(cmd[cmd.index("--authfile") + 1])
+            raise PermissionError("no exec")
+
+        with (
+            patch("asyncio.create_subprocess_exec", side_effect=exploding_exec),
+            pytest.raises(PermissionError),
+        ):
+            await connector.check_repository_access("ghcr.io/team/app", "robbert", PASSWORD)
+        assert seen
+        assert not Path(seen[0]).exists()
+
+    async def test_the_log_carries_no_password(self, connector, resolver, fake_skopeo, caplog):
+        with caplog.at_level(logging.DEBUG, logger="opi.connectors.skopeo"):
+            await connector.check_repository_access("ghcr.io/team/app", "robbert", PASSWORD)
+            connector._registry_password = PASSWORD
+            with patch("opi.connectors.skopeo.settings") as mock_settings:
+                mock_settings.REGISTRY_URL = "rcr.rijksapps.nl"
+                mock_settings.REGISTRY_ORG = "rig"
+                mock_settings.REGISTRY_USERNAME = "rig+zad"
+                mock_settings.REGISTRY_VERIFY_TLS = True
+                await connector.push_image("/tmp/img.tar", "mink", "app", "v1")
+        assert "Verifying registry access" in caplog.text
+        assert "Pushing image" in caplog.text
+        assert PASSWORD not in caplog.text
