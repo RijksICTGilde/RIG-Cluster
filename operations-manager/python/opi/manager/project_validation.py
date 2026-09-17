@@ -159,7 +159,7 @@ def _check_declared_settings(provider: Service, block: ServiceConfigBlock, proje
         raise ProjectIntegrityError(
             f"Project '{project_name}': configuratie van service '{provider.service_type.value}' {block.where} "
             f"is ongeldig: {_setting_refusal(e, block)}"
-        ) from e
+        ) from None
 
 
 def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
@@ -167,6 +167,8 @@ def _setting_refusal(e: SettingError, block: ServiceConfigBlock) -> str:
 
     On an owned-property block it names the declaration instead of the value, old or new:
     that property can hold a pasted secret (see features/speelruimte-van-een-dienst.md).
+    Callers raise ``from None``: the SettingError still names the value, and a handler
+    that logs a traceback would print it.
     """
     # ``setting`` is set only on a refusal that names a value; a wrong-layer refusal
     # names none and reads the same either way.
@@ -851,7 +853,7 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
             raise ProjectIntegrityError(
                 f"Project '{project_name}': configuratie van service '{block.name}' kan niet zo worden gewijzigd: "
                 f"{_setting_refusal(e, block)}"
-            ) from e
+            ) from None
 
 
 async def validate_project_structure(project_data: dict[str, Any], *, previous: dict[str, Any] | None = None) -> None:
