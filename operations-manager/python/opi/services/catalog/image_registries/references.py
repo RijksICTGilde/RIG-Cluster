@@ -34,7 +34,7 @@ def validate_registry_references(project_data: dict[str, Any]) -> list[str]:
 
     return [
         f"Registry '{naam}' bestaat niet (meer) in dit project, maar wordt nog gebruikt door: "
-        f"{', '.join(plekken)}. Zet daar eerst een andere registry of de publieke registry, "
+        f"{', '.join(plekken)}. Zet daar eerst een andere registry of Automatisch, "
         f"en haal deze registry daarna pas weg."
         for naam, plekken in sorted(gebruikt.items())
     ]

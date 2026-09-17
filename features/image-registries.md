@@ -99,10 +99,10 @@ components:
           registry: code-overheid
 
   - name: proxy                                   # publieke image
-    image: nginx:alpine                           # dienst niet aangevinkt, dus niets
+    image: nginx:alpine                           # geen keuze, dus niets
 ```
 
-"Publieke registry" is een non-waarde: geen vermelding, geen sleutel. Een deployment mag de
+"Automatisch" is een non-waarde: geen vermelding, geen sleutel. Een deployment mag de
 keuze overschrijven met dezelfde dienstvermelding onder `deployments[].components[].services`.
 
 ### De keuze staat bij de image, en de keuze IS de selectie
@@ -115,7 +115,7 @@ Een dienst die geen slot noemt landt nog steeds onderaan de componentvorm.
 
 Er is geen aan/uit voor deze dienst op componentniveau: hij staat niet in het rijtje vinkjes.
 Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken wat een
-aangevinkte dienst met waarde "publiek" betekent, en wat een uitgevinkte dienst met een
+aangevinkte dienst met waarde "automatisch" betekent, en wat een uitgevinkte dienst met een
 registry erin betekent, en die twee regels lopen uit elkaar. Een keuzelijst met een
 expliciete "geen"-optie is net zo expliciet als een vinkje, alleen met meer opties.
 
@@ -124,8 +124,8 @@ Drie richtingen, en ze gelden voor het formulier en voor de API:
 | Wat de afnemer doet | Wat er gebeurt |
 |---|---|
 | een registry kiezen | de dienstvermelding wordt gematerialiseerd op dat component |
-| "Publieke registry" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
-| niets kiezen | er verandert niets; afwezig BETEKENT publiek |
+| "Automatisch" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
+| niets kiezen | er verandert niets; afwezig BETEKENT automatisch (zie de voorrangsregel hieronder) |
 
 Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
 een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
@@ -159,11 +159,11 @@ bestand overdraagbaar naar een ander platform.
 
 ### De keuze bij een component is een voorrangsregel, geen aan/uit
 
-Wat een component aanvinkt bepaalt WELKE van je registries voorgaat, niet OF er een van je
+Wat je bij een component kiest bepaalt WELKE van je registries voorgaat, niet OF er een van je
 registries geldt. `build_rules()` zet alle registries van het project in de lijst, met de
-gekozen registry vooraan en de clustertabel erachter. Een component dat de dienst niet
-aanvinkt maar wel een image draait die onder een van je eigen upstreams valt, gaat dus ook
-langs je eigen proxy en krijgt dat pull-secret.
+gekozen registry vooraan en de clustertabel erachter. Een component op "Automatisch" met een
+image die onder een van je eigen upstreams valt, gaat dus ook langs je eigen proxy en krijgt
+dat pull-secret.
 
 Bewust zo, en om twee redenen:
 
@@ -179,7 +179,7 @@ Bewust zo, en om twee redenen:
 Het overwogen alternatief (voor een component met een keuze alleen die ene regel plus de
 clustertabel, en zonder keuze alleen de clustertabel) is daarop afgewezen.
 
-De afnemer hoort de consequentie wel te kennen, en `help.md` noemt haar: niet aanvinken is
+De afnemer hoort de consequentie wel te kennen, en `help.md` noemt haar: "Automatisch" is
 geen keuze voor de publieke weg. Publiek is wat een image is als hij buiten al je eigen
 registries valt. `TestEenEigenRegistryGeldtVoorHetHeleProject` in
 `tests/test_image_registries_rules.py` pint het vast.

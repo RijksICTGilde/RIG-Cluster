@@ -13,11 +13,11 @@ Je schrijft altijd je eigen registry, nooit een adres van het platform. Wat er t
 
 ## Een publieke image
 
-Dan laat je het keuzeveld bij dat component op **Publieke registry, geen token nodig** staan. Dat is de standaard, en er wordt niets opgeslagen. Publieke images werken vanzelf.
+Dan laat je het keuzeveld bij dat component op **Automatisch** staan. Dat is de standaard, en er wordt niets opgeslagen. Publieke images werken vanzelf.
 
 Heeft je project nog geen registry, dan staat dat keuzeveld er niet. Je eerste registry voeg je dus hier toe.
 
-De keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt. Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder `ghcr.io/mijnorg` die met jouw token op, ook zonder vinkje bij dat component. Kiezen hoef je alleen als meer dan een van je registries bij dezelfde image past.
+Automatisch is dus niet altijd publiek: de keuze bij een component bepaalt WELKE van je registries voorgaat, niet OF er een geldt. Staat hierboven `ghcr.io/mijnorg`, dan haalt elk component met een image onder `ghcr.io/mijnorg` die met jouw token op, ook als het op Automatisch staat. Kiezen hoef je alleen als meer dan een van je registries bij dezelfde image past.
 
 ## Wat je van het token moet weten
 
@@ -31,6 +31,6 @@ Dat kan pas als geen enkel component hem meer gebruikt. Anders weigeren we het o
 
 ## De dienst uitzetten
 
-Net als bij het weghalen van een registry kan dat pas als geen component er nog een gebruikt. Zet die componenten eerst op de publieke registry.
+Net als bij het weghalen van een registry kan dat pas als geen component er nog een gebruikt. Zet die componenten eerst op Automatisch.
 
 Zet je de dienst uit, dan wordt de kopie die het platform van je images bewaart opgeruimd, inclusief de organisatie die daarvoor is aangemaakt. Bovenstrooms, in je eigen registry, verandert er niets: je images staan er nog. De eerste keer dat een pod daarna start duurt het pullen iets langer, want de kopie moet opnieuw worden opgehaald.
