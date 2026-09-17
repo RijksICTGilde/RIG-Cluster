@@ -19,6 +19,7 @@ from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
+from opi.utils.naming import generate_project_service_account_name
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -572,6 +573,16 @@ class BaseBackupManager:
         """
         rendered = self.kubectl.template_manifest(manifest_content, variables)
         return apply_rules_to_document(rendered, cluster_rules(settings.CLUSTER_MANAGER))
+
+    @staticmethod
+    def _pod_service_account_name(project_name: str | None) -> str:
+        """De serviceaccount van het project, waar een backup- of restorepod op draait.
+
+        Zonder project bleef het veld leeg en draaide de pod stil op ``default``.
+        """
+        if not project_name:
+            raise ValueError("A backup or restore pod needs a project to run under its service account")
+        return generate_project_service_account_name(project_name)
 
     async def get_status(self) -> BackupStatus:
         """Get current backup status."""
