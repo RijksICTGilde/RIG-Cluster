@@ -232,7 +232,7 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
 # ---------------------------------------------------------------------------
 
 _PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
-_TABLE_SEPARATOR = re.compile(r"(?:^| )\|?\s*:?-+:?\s*\|\s*:?-+")
+_TABLE_SEPARATOR = re.compile(r"(?:^| )(?:\|\s*:?-+:?\s*\||\|?\s*:?-+:?\s*\|\s*:?-+)")
 # The renderer joins paragraph lines with a space, so a heading or a `*` list right under
 # a line of text ends up mid-paragraph.
 # Inline code is left out of that search: `a * b` in backticks is not a list.
@@ -304,10 +304,12 @@ def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
     ("bron", "vorm"),
     [
         ("| a | b |\n|---|---|\n| 1 | 2 |", "een tabel"),
+        ("| a | b |", "een tabel"),
         ("Tekst ervoor.\n| a | b |\n|---|---|", "een tabel"),
         ("```python\nprint(1)\n```", "een codeblok"),
         ("Tekst ervoor.\n| a | b |\n|--|:-:|", "een tabel"),
         ("a | b\n--- | ---\n1 | 2", "een tabel"),
+        ("Tekst ervoor.\n| a |\n| --- |\n| 1 |", "een tabel"),
         ("~~~\nprint(1)\n~~~", "een codeblok"),
         ("### Kop", "een kop met ###"),
         ("Tekst ervoor.\n### Kop", "een kop met ###"),
@@ -316,10 +318,12 @@ def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
     ],
     ids=[
         "tabel",
+        "pijprij-zonder-scheiding",
         "tabel-na-tekst",
         "codeblok",
         "tabel-korte-scheiding",
         "tabel-zonder-buitenpijpen",
+        "tabel-een-kolom-na-tekst",
         "codeblok-tildes",
         "kop-niveau-3",
         "kop-na-tekst",
