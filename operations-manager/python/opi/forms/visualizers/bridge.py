@@ -303,11 +303,9 @@ def should_render_editable(
 def _has_options(editable: EditableVisualizer, yaml_data: dict[str, Any], index: int | None) -> bool:
     """Whether this field's own options provider has anything to offer right now.
 
-    Asked of the SAME provider that fills the widget and that ``values_must_exist`` judges
-    a stored value against, so "is there a field" and "what may it hold" cannot answer
-    differently. ``yaml_path`` travels along because a provider may phrase itself
-    differently per layer (the registry picker's empty option means "public" on a component
-    and "no override" on a deployment-component).
+    ``yaml_path`` travels along because a provider may phrase itself differently per layer
+    (the registry picker's empty option means "public" on a component and "no override" on
+    a deployment-component).
     """
     ed = editable.editable
     if not ed.values_provider:

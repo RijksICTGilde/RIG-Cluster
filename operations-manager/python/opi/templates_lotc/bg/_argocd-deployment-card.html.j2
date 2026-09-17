@@ -153,7 +153,7 @@
                         {% for comp in uit.image %}
                             <c-paragraph size="sm">{{ comp.reference }}{% if comp.image %} - {{ comp.image }}{% endif %}</c-paragraph>
                         {% endfor %}
-                        <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag. Voor een private repository, controleer je credentials.</c-paragraph>
+                        <c-paragraph size="sm">Push een geldige image of deploy opnieuw met een bestaande tag. Staat de image in een private registry, controleer dan je inloggegevens.</c-paragraph>
                     </c-stack>
                 </c-alert>
             {% endif %}

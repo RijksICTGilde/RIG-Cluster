@@ -63,8 +63,7 @@ class DirectSecretBackend:
         upstream = registry.get("upstream")
         password = _plain_password(registry, ctx)
         if not upstream or not password:
-            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een token. Komt hij hier
-            # toch, dan blazen we op in plaats van stil geen pull-secret te schrijven --
+            # Onbereikbaar: ``RegistryEntry`` eist een secretName of een token. Toch luid,
             # anders merkt de afnemer het pas als de pod niet kan pullen.
             raise MissingRegistryCredentialsError(str(registry.get("name")), ctx.project_name)
         username = _pull_username(registry)

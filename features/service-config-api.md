@@ -377,7 +377,7 @@ that slips past the request-time check still fails the task with `validation_err
 The message puts the location before each reason (`registries, nummer 2: ...`, list
 indexes counted from 1; the location carries field names, list indexes and dict keys,
 never a value), and appends the accepted-field list only when a key is unknown
-(`extra_forbidden`) -- for a wrong or missing value inside a field it would suggest the
+(`extra_forbidden`): for a wrong or missing value inside a field it would suggest the
 field itself is not accepted. No schema-version bump and no change to the global
 project schema is involved: the record shapes are already valid there. After a
 successful write the project is processed (reconciled) so the config takes effect. A

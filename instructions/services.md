@@ -463,7 +463,7 @@ place: `COMPONENT_IMAGE_SLOT` (`opi/forms/layout.py`), directly after `image`. A
 lands there by putting `slot=COMPONENT_IMAGE_SLOT` on its layout node; without a slot
 nothing changes.
 
-The form names the place, the service fills it -- not the other way round. An anchor on the
+The form names the place, the service fills it, not the other way round. An anchor on the
 node (`after="image"`) would let a service decide the order of a form it does not own, and
 two services choosing the same anchor would fight over one spot. `image-registries` is the
 first inhabitant.
@@ -473,7 +473,7 @@ first inhabitant.
 `component_selection_follows_config` (default False) says a component does not tick this
 service separately: its own field, with an explicit "none" option, is the choice.
 `image-registries` is the first and so far only one. Three consequences follow from that one
-declaration -- the service gets no checkbox in the per-component picker; clearing its config
+declaration: the service gets no checkbox in the per-component picker; clearing its config
 removes the ENTRY instead of demoting it to a bare string, on the form path
 (`_prune_service_map_entry`) and on the API path (`ServiceAdapter.remove_service_config`); and
 `_strip_removed_services_from_components` (the `post_merge` of the services section) leaves its
@@ -484,7 +484,7 @@ instead.
 
 Only declare it where the config has an explicit "none" value, otherwise there is no way
 left to say "not this one". And note it INVERTS the default-seeding trap below: here a
-chosen value materialising the service is exactly what is wanted -- but only in that one
+chosen value materialising the service is exactly what is wanted, but only in that one
 direction, so cover each direction with its own test.
 
 #### A field that is only there when there is something to choose
@@ -1173,7 +1173,7 @@ its four wiring points are listed under "Forms and wizard screens".
 - **Do not seed a service's config defaults onto something that has not selected it.** The
   `{K}` path filter materialises the service into the list as a side effect, so a default
   quietly turns into a selection. The one service that WANTS this says so with
-  `component_selection_follows_config`, and then only in one direction -- see above.
+  `component_selection_follows_config`, and then only in one direction (see above).
 - **Provisioning is replay-safe by contract**, and so is manifest generation.
 - **Keep the catalog import-light.** Import forms, managers and connectors inside the method
   that needs them, not at module scope.
