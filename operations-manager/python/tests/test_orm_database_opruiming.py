@@ -72,7 +72,7 @@ def _naam(pid: int | str, gemaakt: float, namespace: str | None = None) -> str:
 
 
 NU = 1_800_000_000.0
-# Afgeleid van de eigen namespace: een vaste waarde was in container 4026534473 de eigen.
+# Niet vast: 4026534473 was in een container de eigen namespace.
 VREEMDE_NAMESPACE = str(int(_pid_namespace()) + 1)
 
 
