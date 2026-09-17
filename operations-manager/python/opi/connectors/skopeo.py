@@ -49,7 +49,7 @@ _TAG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$")
 REFUSED_DESTINATION_REASON = "het platform mag deze registry niet benaderen"
 
 #: Eén melding voor elke mislukte toets: skopeo volgt redirects en token-realms, dus stderr is een orakel.
-UNREADABLE_REASON = "de registry gaf met deze inloggegevens geen leesrecht, of was niet bereikbaar"
+UNREADABLE_REASON = "de registry weigerde of was niet bereikbaar"
 
 
 @contextlib.contextmanager
