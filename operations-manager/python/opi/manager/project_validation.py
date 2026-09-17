@@ -824,9 +824,15 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
     Fails closed: raises ProjectIntegrityError on the first refused change.
     """
     project_name = project_data.get("name", "(onbekend)")
-    before = {(block.location, block.name): block.config for block in iter_service_config_blocks(previous)}
+    # ``owned_property`` is part of the place: a component property and a ``services:``
+    # entry of the same service are two blocks, and pairing one with the other would
+    # render the property's old value through the entry's refusal.
+    before = {
+        (block.location, block.name, block.owned_property): block.config
+        for block in iter_service_config_blocks(previous)
+    }
     for block in iter_service_config_blocks(project_data):
-        key = (block.location, block.name)
+        key = (block.location, block.name, block.owned_property)
         if key not in before:
             continue  # the service was not there before: an addition, no change to judge
         # Asked of the KEY, not of the value. A service referenced bare (config None) is

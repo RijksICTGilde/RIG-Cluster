@@ -1063,6 +1063,24 @@ def test_de_wijzigingstoets_op_een_eigenschapsblok_noemt_de_waarde_niet(
     assert EIGENSCHAP_VOLUME.latitude() in str(fout.value)
 
 
+def test_een_eigenschap_wordt_niet_vergeleken_met_een_lijstentry_van_dezelfde_dienst(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """De vorige versie draagt de waarde als eigenschap, de nieuwe zet de dienst in ``services:``."""
+    provider = get_service(ServiceType.ALIASES)
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
+    vorige = _met_eigenschap("aliases", "hunter2")
+    huidige = _project({"storage": "1Gi"})
+    huidige["services"].append("aliases")
+    huidige["components"][0]["services"].append({"name": "aliases", "config": {"LIMIET": "5Gi"}})
+
+    with pytest.raises(ProjectIntegrityError) as fout:
+        asyncio.run(validate_project_structure(huidige, previous=vorige))
+
+    assert "hunter2" not in str(fout.value)
+    assert "kan niet zo worden gewijzigd: 'LIMIET' valt buiten zijn speelruimte" in str(fout.value)
+
+
 def test_de_wijzigingstoets_op_een_serviceslijst_noemt_de_waarde_wel(declaring: Any) -> None:
     """Daar is het de grens zelf die wordt teruggeciteerd, net als bij de waardetoets."""
     declaring(VOLUME)
