@@ -8,7 +8,7 @@ from typing import Any
 
 from opi.services import CloneFromType
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE
-from opi.utils.naming import generate_manifest_name, generate_pvc_manifest_type
+from opi.utils.naming import generate_deployment_manifest_path, generate_manifest_name, generate_pvc_manifest_type
 
 logger = logging.getLogger(__name__)
 
@@ -508,11 +508,8 @@ class PVCManager:
             result["success"] = False
             return result
 
-        repo_path = await self.project_manager.get_repository_path(repo_name)
-        if repo_path:
-            deployment_path = f"{repo_path}/{cluster}/{project_name}/{deployment_name}"
-        else:
-            deployment_path = f"{cluster}/{project_name}/{deployment_name}"
+        repo_path = await self.project_manager.get_repository_path(repo_name) or ""
+        deployment_path = generate_deployment_manifest_path(cluster, project_name, deployment_name, repo_path)
 
         working_dir = await git_connector.get_working_dir()
         full_output_dir = os.path.join(working_dir, deployment_path)

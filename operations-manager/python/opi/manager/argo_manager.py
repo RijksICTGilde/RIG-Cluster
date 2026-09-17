@@ -15,10 +15,12 @@ from opi.utils.naming import (
     generate_argocd_project_application_name,
     generate_argocd_project_folder_path,
     generate_argocd_repository_secret_name,
+    generate_deployment_manifest_path,
     generate_infrastructure_application_name,
     generate_infrastructure_argocd_application_filename,
     generate_infrastructure_argocd_appproject_filename,
     generate_infrastructure_argocd_folder_path,
+    generate_infrastructure_manifest_path,
     generate_project_level_manifest_path,
     get_output_filename_from_template,
     make_argocd_repository_url_unique,
@@ -616,11 +618,9 @@ class ArgoManager:
 
                 # Combine repository path, cluster name, project name, and deployment name
                 cluster_name = deployment.get("cluster", "local")
-                repo_path = repo_info.get("path", "")
-                if repo_path:
-                    deployment_path = f"{repo_path}/{cluster_name}/{project_name}/{deployment['name']}"
-                else:
-                    deployment_path = f"{cluster_name}/{project_name}/{deployment['name']}"
+                deployment_path = generate_deployment_manifest_path(
+                    cluster_name, project_name, deployment["name"], repo_info.get("path", "")
+                )
 
                 # Make repository URL unique for ArgoCD (must match the repository secret URL)
                 repo_url = make_argocd_repository_url_unique(repo_info.get("url"), project_name)
@@ -788,11 +788,9 @@ class ArgoManager:
             app_name = f"{project_name}-infrastructure"
 
             # Repository path for infrastructure resources
-            repo_path = repo_info.get("path", "")
-            if repo_path:
-                infrastructure_path = f"{repo_path}/{cluster_name}/{project_name}/infrastructure"
-            else:
-                infrastructure_path = f"{cluster_name}/{project_name}/infrastructure"
+            infrastructure_path = generate_infrastructure_manifest_path(
+                cluster_name, project_name, repo_info.get("path", "")
+            )
 
             # Make repository URL unique for ArgoCD
             repo_url = make_argocd_repository_url_unique(repo_info.get("url"), project_name)
