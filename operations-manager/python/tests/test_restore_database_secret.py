@@ -211,8 +211,6 @@ class TestDeRestoreMaaktDeRolMetDeConnectielimiet:
     async def test_een_nieuwe_rol_krijgt_de_limiet_van_de_deployment(
         self, server: _FakePostgresServer, restore_environment: Any
     ) -> None:
-        """RC-201: ook de restore maakt een ontbrekende rol aan, en dan met de limiet uit
-        het projectbestand, niet met de platformstandaard."""
         server.username = "een_andere_rol"
         project_data = _project_data()
         project_data["services"] = [{"name": "postgresql-database", "config": {"connection-limit": 30}}]

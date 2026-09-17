@@ -71,7 +71,6 @@ ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
 
 
 def deployment_index(project_data: dict[str, Any], deployment_name: str) -> int | None:
-    """De positie van ``deployment_name`` in ``deployments``, of None."""
     deployments = project_data.get("deployments") or []
     return next(
         (i for i, d in enumerate(deployments) if isinstance(d, dict) and d.get("name") == deployment_name),
