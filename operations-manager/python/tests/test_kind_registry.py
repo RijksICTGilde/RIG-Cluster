@@ -202,6 +202,17 @@ class TestSetupScript:
         assert "docker run" not in run.log
         assert "docker start" not in run.log
 
+    def test_keeps_a_registry_whose_env_continues_after_the_match(self, tmp_path: Path) -> None:
+        """``grep -q`` stopt bij de treffer; onder pipefail telde de SIGPIPE van docker als "geen deletes".
+
+        Meer dan een pijpbuffer (64 KiB) na de treffer maakt die SIGPIPE zeker, niet afhankelijk van de load.
+        """
+        env = "REGISTRY_STORAGE_DELETE_ENABLED=true\n" + "OPVULLING=x\n" * 10_000
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_REG_ENV=env)
+
+        assert run.returncode == 0, run.stderr
+        assert "docker rename" not in run.log
+
     def test_a_new_registry_accepts_deletes(self, tmp_path: Path) -> None:
         """Zonder deletes doet scripts/prune-kind-registry.sh niets."""
         run = _run(tmp_path, "--cluster", "proef")
@@ -486,6 +497,14 @@ class TestPruneScriptRefusals:
         assert run.returncode == 0
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
+
+    def test_prunes_a_registry_whose_env_continues_after_the_match(self, tmp_path: Path) -> None:
+        """Zelfde SIGPIPE als bij setup; hier sloeg die het opruimen stil over."""
+        env = "REGISTRY_STORAGE_DELETE_ENABLED=true\n" + "OPVULLING=x\n" * 10_000
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV=env)
+
+        assert run.returncode == 0, run.stderr
+        assert "curl" in run.log
 
     def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
         run = _prune(tmp_path, STUB_REG_STATE="false")
