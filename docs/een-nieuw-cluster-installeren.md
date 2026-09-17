@@ -109,7 +109,7 @@ Dit hoeft alleen beantwoord te worden voor fundament; de code leest het al via e
 | `supports_vpa` | `:169` | `true` | een draaiende VPA-recommender, waar de resource-tuner op leunt |
 | `letsencrypt.contact_email` | `:170`-`:172` | `rig-platform@rijksoverheid.nl` | contactadres voor de ACME-account |
 | `nice_url.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
-| `image_registries` | `:310`-`:343` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
+| `image_registries` | `:310`-`:346` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `tenants`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
 | `create_wizard_clusters` | alleen in `local` (`:16`) | — | ontbreekt bewust in productie: de wizard biedt dan alleen het eigen cluster |
 
 Oordeel voor alle regels in deze tabel: **staat al goed** — het is een invulopgave, geen
@@ -436,9 +436,10 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
 private registry een dockerconfigjson-secret in de namespace en blijft de image ongewijzigd,
 precies zoals op `local` en `sandboxed-local`. Met een ándere mirror achter dezelfde
 Quay-operator is het het `image_registries`-blok in `cluster_config.py` met een eigen
-`registry_host`, `customer_name`, `organization_api_version` en `rules`-tabel. Laat je
+`registry_host`, `customer_name`, `tenants`, `organization_api_version` en `rules`-tabel. Laat je
 `organization_api_version` weg, dan erft het cluster stilzwijgend de ODCN-groep uit de terugval
-in `backends.py`. Een mirror met een ánder mechanisme is een derde backend in
+in `backends.py`. Laat je `tenants` weg, dan krijgt de `Organization` een lege lijst en weigert
+het schema van de operator hem (`minItems: 1`). Een mirror met een ánder mechanisme is een derde backend in
 `opi/services/catalog/image_registries/backends.py`. Zie `features/image-registries.md`.)*
 
 ### 3.5 Opslag en back-up
@@ -529,7 +530,7 @@ te voorkomen.
 | 16 | `bootstrap/.../operations-manager/overlays/fundament/` invullen (configmap-checklist uit 2.2l) | 3.3, 3.4, 3.6, 3.7 |
 | 17 | `infrastructure/bootstrap/clusters/fundament/kustomization.yaml` samenstellen — begin bij de 9 componenten die op ODCN echt draaien | 3.2-5 (wat levert het platform zelf) |
 | 18 | Per meegaand component een `overlays/fundament/` aanmaken; let op de vijf storageclass-plaatsen (2.2n) en de tenant-selector in de backup-networkpolicy (2.2o) | 3.5, 3.2-6 |
-| 19 | Het `image_registries`-blok in `cluster_config.py`: backend `quay-proxy-organization` met eigen `registry_host`/`customer_name`/`organization_api_version`/`rules`, óf `{"backend": "direct-secret"}` als er geen mirror is | 3.4 |
+| 19 | Het `image_registries`-blok in `cluster_config.py`: backend `quay-proxy-organization` met eigen `registry_host`/`customer_name`/`tenants`/`organization_api_version`/`rules`, óf `{"backend": "direct-secret"}` als er geen mirror is | 3.4 |
 | 20 | `ip_whitelist`-equivalent bouwen (punt 2.3-8) | 3.3-12, alleen als afgeschermd |
 | 21 | Publish/pin-taken clusteronafhankelijk maken (punt 2.3-7) | alleen als fundament eigen image-pins krijgt |
 | 22 | Hub-en-spoke inrichten, of niet | paragraaf 5, beslissing 5.6 |
