@@ -1,8 +1,4 @@
-"""De gedeelde secretschrijver neemt een bestaande waarde over als de dienst daarom vraagt.
-
-Het cookie-secret van de authorization-wall kreeg bij elke run een nieuwe waarde, waardoor
-elke deploy alle oauth2-proxy-sessies ongeldig maakte. Met echte ``sops`` en ``age``.
-"""
+"""De gedeelde secretschrijver neemt een bestaande waarde over als de dienst daarom vraagt."""
 
 import os
 import shutil
