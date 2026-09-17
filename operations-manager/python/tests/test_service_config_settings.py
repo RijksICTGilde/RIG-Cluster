@@ -1118,6 +1118,36 @@ def test_een_niet_afdwingende_schrijver_logt_de_vorige_waarde_niet(
     assert all("hunter2" not in r.getMessage() for r in caplog.records)
 
 
+@pytest.mark.parametrize("toets", ["waarde", "wijziging"])
+def test_de_gelogde_traceback_noemt_de_waarde_niet(
+    toets: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``project_manager`` logt een ProjectIntegrityError met ``logger.exception``.
+
+    Een gekoppelde SettingError staat dan met zijn eigen melding in de traceback.
+    """
+    geheim = "hunter2"
+    provider = get_service(ServiceType.USER_ENV_VARS)
+    monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
+    logger = logging.getLogger("test.traceback")
+
+    with caplog.at_level(logging.ERROR, logger="test.traceback"):
+        try:
+            if toets == "waarde":
+                validate_service_configs(_met_eigenschap("user-env-vars", geheim))
+            else:
+                validate_service_setting_changes(
+                    _met_eigenschap("user-env-vars", geheim), _met_eigenschap("user-env-vars", "5Gi")
+                )
+        except ProjectIntegrityError:
+            logger.exception("opslaan mislukt")
+
+    assert len(caplog.records) == 1
+    gelogd = logging.Formatter().format(caplog.records[0])
+    assert "valt buiten zijn speelruimte" in gelogd
+    assert geheim not in gelogd
+
+
 def test_de_zin_uit_de_declaratie_staat_op_een_plek() -> None:
     """Beide toetsen delen de opbouw, dus de formulering kan niet uit elkaar lopen."""
     bron = Path(project_validation.__file__).read_text()
