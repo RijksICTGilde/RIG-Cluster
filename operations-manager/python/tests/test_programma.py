@@ -48,9 +48,19 @@ def echt(repo: Path) -> Path:
     return _script(repo / "installs" / "proefprog", "echo 'proefprog 1.0'\n")
 
 
-def _beheerder(repo: Path, antwoord: Path) -> None:
+def _beheerder(repo: Path, antwoord: Path, naam: str = "asdf", code: int = 0) -> None:
+    """Zoals asdf en mise: `which` antwoordt alleen onder een map met .tool-versions."""
     _script(
-        repo / "beheerder" / "asdf", f'[ "$1" = which ] && echo "{antwoord}" || {{ shift 2; exec {antwoord} "$@"; }}\n'
+        repo / "beheerder" / naam,
+        f"""[ "$1" = which ] || {{ shift 2; exec {antwoord} "$@"; }}
+d=$PWD
+while [ "$d" != / ]; do
+  [ -f "$d/.tool-versions" ] && {{ echo "{antwoord}"; exit {code}; }}
+  d=$(dirname "$d")
+done
+echo "No version is set" >&2
+exit 126
+""",
     )
 
 
@@ -60,10 +70,24 @@ def test_a_directly_installed_program_is_returned_as_found(repo: Path) -> None:
     assert _vind("proefprog") == str(prog)
 
 
+@pytest.mark.parametrize("beheerder", ["asdf", "mise"])
 @pytest.mark.parametrize("shim", [SHIM_ZONDER_MOTOR, SHIM_ZONDER_VERSIE], ids=["kale-path", "buiten-repo"])
-def test_a_shim_gives_way_to_the_program_of_the_version_manager(repo: Path, echt: Path, shim: str) -> None:
+def test_a_shim_gives_way_to_the_program_of_the_version_manager(
+    repo: Path, echt: Path, shim: str, beheerder: str
+) -> None:
     _script(repo / "shims" / "proefprog", shim.format(echt=echt))
+    _beheerder(repo, echt, beheerder)
+
+    assert _vind("proefprog") == str(echt)
+
+
+def test_the_version_manager_is_asked_from_within_this_repo(
+    repo: Path, echt: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pytest kan buiten de repo gestart zijn; de versie staat in .tool-versions van deze repo."""
+    _script(repo / "shims" / "proefprog", SHIM_ZONDER_MOTOR)
     _beheerder(repo, echt)
+    monkeypatch.chdir(tmp_path_factory.mktemp("elders"))
 
     assert _vind("proefprog") == str(echt)
 
@@ -86,6 +110,14 @@ def test_a_shim_without_version_manager_skips_with_path_and_reason(repo: Path, e
 def test_a_version_manager_path_that_does_not_run_is_not_returned(repo: Path) -> None:
     _script(repo / "shims" / "proefprog", SHIM_ZONDER_MOTOR)
     _beheerder(repo, _script(repo / "installs" / "proefprog", "exit 3\n"))
+
+    with pytest.raises(pytest.skip.Exception, match="niet aanroepbaar"):
+        echt_programma("proefprog")
+
+
+def test_a_refusing_version_manager_is_not_believed(repo: Path, echt: Path) -> None:
+    _script(repo / "shims" / "proefprog", SHIM_ZONDER_MOTOR)
+    _beheerder(repo, echt, code=1)
 
     with pytest.raises(pytest.skip.Exception, match="niet aanroepbaar"):
         echt_programma("proefprog")
