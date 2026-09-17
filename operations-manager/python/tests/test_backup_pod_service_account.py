@@ -155,7 +155,7 @@ async def test_without_a_project_no_pod_is_applied(kind: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_namespace_restore_passes_its_project_to_the_pod() -> None:
+async def test_a_namespace_restore_passes_its_project_and_cluster_to_the_pod() -> None:
     manager = _manager(PVCBackupManager)
     manager._get_pvc_info = AsyncMock(return_value={"name": "data"})  # type: ignore[method-assign]
     manager._derive_backup_key = AsyncMock(return_value="kp")  # type: ignore[method-assign]
@@ -163,7 +163,7 @@ async def test_a_namespace_restore_passes_its_project_to_the_pod() -> None:
     manager._cleanup_pod = AsyncMock()  # type: ignore[method-assign]
 
     result = await manager._restore_pvc(
-        cluster="local",
+        cluster="sandboxed-local",
         namespace="rig-amt",
         pvc_name="data",
         target_pvc_name="data",
@@ -172,4 +172,8 @@ async def test_a_namespace_restore_passes_its_project_to_the_pod() -> None:
     )
 
     assert result.success, result.error
-    assert _applied_pod(manager)["spec"]["serviceAccountName"] == SERVICE_ACCOUNT
+    pod = _applied_pod(manager)
+    assert pod["spec"]["serviceAccountName"] == SERVICE_ACCOUNT
+    # Zonder cluster kreeg de pod de OpenShift-tak, en op kind weigert de kubelet dan de
+    # niet-numerieke gebruiker van de backup-image.
+    assert pod["spec"]["securityContext"]["runAsUser"] == 1001
