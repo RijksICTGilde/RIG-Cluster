@@ -10,6 +10,7 @@ metadata:
     backup.rig.nl/pvc: "{{ pvc_name }}"
     backup.rig.nl/target-pvc: "{{ target_pvc_name }}"
 spec:
+  serviceAccountName: "{{ service_account_name }}"
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   securityContext:

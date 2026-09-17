@@ -462,6 +462,7 @@ class TestRestoreEndpointsEnforceOwnership:
         )
         assert response.status_code == 200
         manager.restore_pvc.assert_awaited_once()
+        assert manager.restore_pvc.await_args.kwargs["project_name"] == "test-project"
 
     def test_openapi_declares_project_name_required(self, test_client) -> None:
         """The published schema must state that project_name is required.

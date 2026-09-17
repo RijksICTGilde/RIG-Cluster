@@ -773,6 +773,7 @@ async def restore_pvc(
             storage_size=body.storage_size,
             storage_class=body.storage_class,
             overwrite=body.overwrite,
+            project_name=project_name,
         )
 
         status = "success" if result.success else "failed"

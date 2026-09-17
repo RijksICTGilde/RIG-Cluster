@@ -14,6 +14,7 @@ metadata:
     backup.rig.nl/timestamp: "{{ timestamp }}"
     backup.rig.nl/trigger: "{{ trigger | default('scheduled') }}"
 spec:
+  serviceAccountName: "{{ service_account_name }}"
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   containers:

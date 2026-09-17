@@ -26,6 +26,7 @@ _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 _BASE_CTX: dict = {
     "pod_name": "test-pod",
     "namespace": "rig-test",
+    "service_account_name": "wies-sa",
     "timestamp": "20260520-073000",
     "backup_run_id": "20260520073000",
     "s3_endpoint": "minio.example:9000",
