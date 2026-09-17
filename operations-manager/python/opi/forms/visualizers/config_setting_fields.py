@@ -34,6 +34,7 @@ def setting_field(
     widget: WidgetType | None = None,
     values_provider: str | None = None,
     virtualize: tuple[str, str] | None = ("services", "_services-config"),
+    inherits: bool = False,
 ) -> EditableVisualizer:
     """The wizard field for ``setting`` at ``layer``, derived from the declaration.
 
@@ -46,6 +47,10 @@ def setting_field(
     ``virtualize`` defaults to the services pair every per-service config field needs:
     without it the form posts over the service SELECTION list instead of next to it.
 
+    ``inherits=True`` makes an empty field say nothing: no prefill and no stored key, so
+    the value comes from a less specific layer or the service default. Without it an
+    untouched field on a deployment writes the service default over the project's value.
+
     Raises:
         SettingError: if the service does not open the field up at ``layer``.
     """
@@ -53,7 +58,8 @@ def setting_field(
         yaml_path=setting.yaml_path(service, layer),
         validator=ConfigSettingValidator(setting),
         converter=IntegerConverter() if isinstance(setting, IntegerSetting) else None,
-        default=setting.default,
+        default=None if inherits else setting.default,
+        remove_when_none=inherits,
         values_provider=values_provider,
         virtualize=virtualize,
     )
