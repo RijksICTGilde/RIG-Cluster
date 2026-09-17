@@ -405,6 +405,7 @@ def test_de_deploymentkaart_krijgt_een_knop_naar_de_limiet() -> None:
     (knop,) = [a for a in postgresql_database_actions(project, "productie") if a.label == "Connectielimiet"]
     assert knop.modal_endpoint == "/projects/proj/modal-wizard/modal-edit-postgresql-deployment-1"
     assert knop.modal_title == "Connectielimiet - productie"
+    assert knop.visible
 
 
 @pytest.mark.parametrize(
