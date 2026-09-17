@@ -232,7 +232,7 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
 # ---------------------------------------------------------------------------
 
 _PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
-_TABLE_SEPARATOR = re.compile(r"\|\s*:?-+:?\s*\|")
+_TABLE_SEPARATOR = re.compile(r"(?:^| )\|?\s*:?-+:?\s*\|\s*:?-+")
 # The renderer joins the lines of a paragraph with a space, so a heading or a `*` list
 # written straight under a line of text shows up halfway the paragraph, after a space.
 # Inline code is left out of that search: `a * b` in backticks is not a list.
@@ -243,7 +243,7 @@ _BUITEN_SUBSET = (
     (lambda a: a.startswith("|") or _TABLE_SEPARATOR.search(a), "een tabel", "gebruik een opsomming"),
     (
         lambda a: "```" in a or "~~~" in a,
-        "een codeblok (```)",
+        "een codeblok (``` of ~~~)",
         "zet de opdracht als `inline code` in een alinea of opsomming",
     ),
     (
@@ -307,6 +307,7 @@ def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
         ("Tekst ervoor.\n| a | b |\n|---|---|", "een tabel"),
         ("```python\nprint(1)\n```", "een codeblok"),
         ("Tekst ervoor.\n| a | b |\n|--|:-:|", "een tabel"),
+        ("a | b\n--- | ---\n1 | 2", "een tabel"),
         ("~~~\nprint(1)\n~~~", "een codeblok"),
         ("### Kop", "een kop met ###"),
         ("Tekst ervoor.\n### Kop", "een kop met ###"),
@@ -318,6 +319,7 @@ def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
         "tabel-na-tekst",
         "codeblok",
         "tabel-korte-scheiding",
+        "tabel-zonder-buitenpijpen",
         "codeblok-tildes",
         "kop-niveau-3",
         "kop-na-tekst",
