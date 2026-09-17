@@ -47,7 +47,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="database",
-        # The console and job buttons; the collector keeps one of each when a project
+        # The console, job and connection-limit buttons; the collector keeps one of each when a project
         # happens to use both PostgreSQL variants.
         actions_provider=postgresql_database_actions,
     )
@@ -164,10 +164,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             section_id=f"postgresql-deployment-config{suffix}",
             title="Database per deployment",
             icon="database",
-            description=(
-                "Kies je niets, dan volgt deze deployment de connectielimiet van het project. "
-                "De meelezende gebruiker krijgt dezelfde limiet."
-            ),
+            description="De meelezende gebruiker krijgt dezelfde limiet.",
             post_save_action="process_project",
             editables=[field],
             layout=[Fieldset(legend="Verbindingen", children=[field.editable.yaml_path])],

@@ -16,8 +16,8 @@ In de configuratie kies je bij **scope** tussen **shared** (een database op de g
 
 Er worden een database, een gebruiker en een wachtwoord aangemaakt. Je component krijgt onder meer **DATABASE_SERVER_HOST**, **DATABASE_SERVER_PORT**, **DATABASE_SERVER_USER**, **DATABASE_PASSWORD** en **DATABASE_DB**. Er is ook een meelezende gebruiker (**DATABASE_SERVER_USER_RO**) voor rapportages of analyses.
 
+Je kunt extra schema's binnen dezelfde database laten aanmaken. Bij het verwijderen van deze service wordt de database gemarkeerd voor uitgestelde verwijdering, zodat gegevens niet meteen weg zijn.
+
 ## Connectielimiet
 
 De connectielimiet is het maximale aantal gelijktijdige verbindingen per databasegebruiker van een deployment, standaard 20. Je stelt hem in voor het hele project en kunt hem per deployment overschrijven. Heeft een deployment meerdere databases, dan delen die samen deze limiet. De meelezende gebruiker krijgt dezelfde waarde. Een hogere waarde gaat ten koste van de ruimte die andere projecten op de gedeelde databaseserver hebben, dus kies niet hoger dan je applicatie echt nodig heeft.
-
-Je kunt extra schema's binnen dezelfde database laten aanmaken. Bij het verwijderen van deze service wordt de database gemarkeerd voor uitgestelde verwijdering, zodat gegevens niet meteen weg zijn.
