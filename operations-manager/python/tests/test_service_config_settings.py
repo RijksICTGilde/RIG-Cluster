@@ -1122,10 +1122,7 @@ def test_een_niet_afdwingende_schrijver_logt_de_vorige_waarde_niet(
 def test_de_gelogde_traceback_noemt_de_waarde_niet(
     toets: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """``project_manager`` logt een ProjectIntegrityError met ``logger.exception``.
-
-    Een gekoppelde SettingError staat dan met zijn eigen melding in de traceback.
-    """
+    """``project_manager`` logt een ProjectIntegrityError met ``logger.exception``."""
     geheim = "hunter2"
     provider = get_service(ServiceType.USER_ENV_VARS)
     monkeypatch.setattr(provider, "config_settings", lambda: (EIGENSCHAP_VOLUME,))
