@@ -233,8 +233,8 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
 
 _PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
 _TABLE_SEPARATOR = re.compile(r"(?:^| )\|?\s*:?-+:?\s*\|\s*:?-+")
-# The renderer joins the lines of a paragraph with a space, so a heading or a `*` list
-# written straight under a line of text shows up halfway the paragraph, after a space.
+# The renderer joins paragraph lines with a space, so a heading or a `*` list right under
+# a line of text ends up mid-paragraph.
 # Inline code is left out of that search: `a * b` in backticks is not a list.
 _INLINE_CODE = re.compile(r"`[^`]*`")
 _HEADING_IN_TEXT = re.compile(r"(?:^| )#{3,}(?: |$)")
