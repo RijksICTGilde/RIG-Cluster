@@ -1,17 +1,8 @@
 """Van wat een afnemer plakt naar de upstream die wij nodig hebben.
 
-Een upstream is een hostnaam met eventueel een pad (``code.overheid.nl/robbert``), en dat
-is niet wat er in de adresbalk staat als je naar je eigen packages kijkt. De belofte is
-"wij fixen het onder water": plak wat je hebt, wij maken er de upstream van.
-
-Waarom de upstream uberhaupt nodig is, ook al draagt de image de host al: op een cluster
-dat rechtstreeks kan pullen is een token in principe genoeg, maar op ODCN wordt er een
-proxy-organisatie aangemaakt voor precies EEN upstream-namespace, en die moet je kennen
-voordat er een image is.
-
-Alle vormen die we kennen staan hieronder. Wat we niet herkennen laten we met rust op de
-generieke bewerkingen na (protocol eraf, kleine letters, geen afsluitende schuine streep),
-zodat een onbekende vorm door het patroon wordt afgewezen in plaats van stil verminkt.
+Wat we niet herkennen laten we met rust op de generieke bewerkingen na (protocol eraf,
+kleine letters, geen afsluitende schuine streep), zodat een onbekende vorm door het patroon
+wordt afgewezen in plaats van stil verminkt.
 """
 
 from __future__ import annotations
@@ -124,16 +115,8 @@ def _without_image_reference(host: str, segments: list[str]) -> str:
 def upstream_from_project_images(project_data: dict[str, Any]) -> str | None:
     """De upstream die uit de images van dit project volgt, of None als hij niet volgt.
 
-    De afnemer heeft zijn image al ingetypt voordat hij een registry toevoegt, en de
-    upstream staat daar in: ``code.overheid.nl/team/app:1.2`` zegt ``code.overheid.nl/team``.
-    Dat vooruit invullen scheelt hem de vraag waarom wij iets willen weten dat hij ons al
-    verteld heeft -- op ODCN moeten we het namelijk wel weten: daar wordt een
-    proxy-organisatie aangemaakt voor precies EEN upstream-namespace, en die moet er zijn
-    voordat er een image is.
-
-    Alleen als het ANTWOORD eenduidig is. Wijzen de images van dit project naar meer dan een
-    prefix, dan is er niets af te leiden en is de vraag juist het punt; een gok zou een
-    registry opleveren die nergens bij hoort. Een image zonder host (``nginx:alpine``) telt
+    Alleen als het antwoord eenduidig is: bij meer dan een prefix is de vraag juist het
+    punt. Een image zonder host (``nginx:alpine``) telt
     niet mee: die staat op Docker Hub en daar heb je geen eigen registry voor nodig.
     """
     prefixes = {

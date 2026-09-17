@@ -11,22 +11,11 @@ PULL_SECRET_POSTFIX = "robot-pull-secret"
 
 #: De gebruikersnaam die wij invullen als de afnemer er geen opgaf.
 #:
-#: Er MOET iets staan, en dat is geen keuze van ons: een ``kubernetes.io/dockerconfigjson``
-#: draagt per registry een ``auth`` van ``base64(gebruikersnaam:wachtwoord)``. Er is geen
-#: veld voor alleen een token, dus een leeg linkerdeel zou ``:token`` opleveren, en dat
-#: weigeren registries als een lege gebruikersnaam.
-#:
-#: Wat de waarde IS doet er bij de meeste registries niet toe zolang het token klopt
-#: (ghcr.io kijkt er niet naar); waar hij er wel toe doet -- Docker Hub, Quay -- moet de
-#: afnemer hem zelf invullen. Laat hij hem daar leeg, dan komt de plaatshouder in het
-#: pull-secret en weigert de registry de pull; de tokentoets (``enforcers.py``) meldt dat
-#: alleen onder zijn eigen voorwaarden. ``x-access-token`` is de naam die GitLab en GitHub
-#: in hun eigen documentatie gebruiken voor precies dit gat.
-#:
-#: Hij wordt berekend, niet opgeslagen: het projectbestand draagt alleen wat de afnemer
-#: heeft ingevuld, net als bij de RCR-URL en de secretnaam hieronder. Laat de afnemer het
-#: veld leeg, dan blijft het leeg in de config en ontstaat deze waarde pas op het moment
-#: dat de dockerconfigjson wordt gebouwd.
+#: Er MOET iets staan: een ``kubernetes.io/dockerconfigjson`` draagt per registry een
+#: ``auth`` van ``base64(gebruikersnaam:wachtwoord)``, en ``:token`` weigeren registries als
+#: een lege gebruikersnaam. ghcr.io kijkt niet naar de waarde; Docker Hub en Quay wel, daar
+#: moet de afnemer hem zelf invullen. ``x-access-token`` is de naam die GitLab en GitHub
+#: voor dit gat gebruiken. Berekend bij het bouwen, nooit opgeslagen.
 PULL_USERNAME_PLACEHOLDER = "x-access-token"
 
 UPSTREAM_HASH_LENGTH = 8
@@ -106,21 +95,10 @@ SLUG_ATTEMPTS = 100
 def registry_slug(label: str, taken: set[str]) -> str:
     """De verwijzing die bij een vrij label hoort, uniek binnen het project.
 
-    De afnemer typt "Code Overheid" en niet "code-overheid": een DNS-label is onze eis en
-    niet zijn probleem. Dezelfde vorm die het project zelf al heeft met ``name`` plus
-    ``display-name``, een niveau lager.
-
-    De slug is BEVROREN zodra hij bestaat -- deze functie draait alleen voor een entry die
-    er nog geen heeft (zie ``ImageRegistriesService.generate_missing_values``). Hij is de
-    verwijzing vanaf componenten en hij zit in de naam van het dockerconfigjson-secret,
-    dus een label dat later verandert mag hem niet meenemen.
-
     ``REGISTRY_NAME_PATTERN`` eist een kleine LETTER vooraan, zodat de naam nooit als
     YAML-getal wordt gelezen; een label dat met een cijfer begint krijgt daarom een ``r``.
-    Dat prefix schuift de grens een teken naar links, en het afkappen daarna kan dus weer
-    op een streepje eindigen -- wat het patroon weigert, op een veld dat de afnemer sinds
-    RC-187 niet meer ziet. Daarom hier de opschoning van ``sanitize_kubernetes_name``
-    herhalen op de nieuwe grens.
+    Het afkappen daarna kan weer op een streepje eindigen, dat het patroon weigert op een
+    veld dat de afnemer niet ziet. Daarom de ``rstrip`` op de nieuwe grens.
     """
     basis = sanitize_kubernetes_name(label, max_length=60)
     if not basis[0].isalpha():

@@ -57,31 +57,19 @@ SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 def _normalize_upstream(value: object, info: ValidationInfo) -> object:
     """De invoerhulp, VOOR de vormregel: wat een afnemer plakt is zelden de upstream.
 
-    Hier en niet in een converter van de editable, zodat het formulier en de API dezelfde
-    omzetting krijgen -- de converter roept deze functie aan, hij herhaalt hem niet.
-
-    Wat hij NIET doet is een projectbestand dat er al staat repareren. De hele-bestandspoort
-    draait dit model over elk bestand bij elke save en elke herverwerking, met
-    ``STORED_CONTEXT_KEY`` erbij; zou de omzetting daar ook draaien, dan kwam een opgeslagen
-    ``https://ghcr.io`` door de poort en bleef hij ONgewijzigd in het bestand staan -- want
-    valideren schrijft niet terug. ``normalize_prefix`` matcht die vorm nooit, dus de
-    registry zou stil niet meer gelden in plaats van luid geweigerd te worden. Een
-    opgeslagen waarde hoort dus al canoniek te zijn, en blijft dat.
+    Niet onder ``STORED_CONTEXT_KEY``: valideren schrijft niet terug, dus een opgeslagen
+    ``https://ghcr.io`` zou door de hele-bestandspoort komen en ongewijzigd blijven staan,
+    waarna ``normalize_prefix`` hem nooit matcht en de registry stil niet meer geldt.
     """
     if info.context and info.context.get(STORED_CONTEXT_KEY):
         return value
     return normalize_upstream(value) if isinstance(value, str) else value
 
 
-#: De upstream: eerst omgezet vanuit wat er geplakt is, dan pas aan de vormregel gehouden.
 #: Als geannoteerd type en niet als losse ``field_validator``, want ``ModelFieldValidator``
-#: bouwt zijn toets uit de ANNOTATIE van het veld -- een validator naast het model zou het
-#: formulier een geplakte URL laten afwijzen die de API wel accepteert.
-#: De volgorde in ``Annotated`` is niet vrijblijvend: met het patroon VOOR de
-#: before-validator staat het patroon ook in het gerenderde JSON-schema, en dat fragment is
-#: waar een client de regel leest. Andersom valt het uit het schema weg (pydantic beschrijft
-#: dan de INVOER, en die mag van een before-validator alles zijn) terwijl de toets zelf
-#: gewoon blijft draaien -- een stille regel is precies wat we hier niet willen.
+#: bouwt zijn toets uit de ANNOTATIE: anders wijst het formulier een geplakte URL af die de
+#: API accepteert. Het patroon staat VOOR de before-validator, anders valt het uit het
+#: gerenderde JSON-schema (pydantic beschrijft dan de invoer) terwijl de toets blijft draaien.
 Upstream = Annotated[str, Field(pattern=UPSTREAM_PATTERN), BeforeValidator(_normalize_upstream)]
 
 
@@ -117,17 +105,11 @@ class RegistryEntry(BaseModel):
     username: str | None = Field(
         default=None,
         description=(
-            "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel, want "
-            "wat hij betekent verschilt per registry: bij GitHub (ghcr.io) doet de waarde er niet toe "
-            "zolang het token klopt, bij Docker Hub is het de accountnaam en bij Quay de naam van het "
-            "robotaccount. Laat je hem leeg, dan blijft hij leeg in het projectbestand en vult het "
-            "platform een neutrale plaatshouder in het pull-secret. Eist de registry een echte naam, "
-            "dan mislukt het ophalen van de images. De tokentoets vangt dat alleen in een formulier "
-            "met het registryblok (de wizards, de dienstenmodal en de modal van het blok), en alleen "
-            "tegen images uit deze registry in de samengevoegde data van dat formulier: in de "
-            "edit-wizard en de modals staan de bestaande componenten daar altijd in, alleen bij de "
-            "eerste stap vooruit in de create-wizard nog niet. In het componentformulier en via de "
-            "API wordt er niet getoetst."
+            "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel: bij "
+            "GitHub (ghcr.io) doet de waarde er niet toe, bij Docker Hub is het de accountnaam en bij "
+            "Quay de naam van het robotaccount. Leeg blijft leeg in het projectbestand; het pull-secret "
+            "krijgt dan een plaatshouder. Eist de registry een echte naam, dan mislukt het ophalen van "
+            "de images. Via de API wordt het token niet getoetst."
         ),
     )
     password: str | None = Field(
@@ -150,9 +132,7 @@ class RegistryEntry(BaseModel):
     def _has_something_to_be_called(self) -> RegistryEntry:
         """Een entry zonder naam EN zonder label is nergens naar te verwijzen.
 
-        ``name`` mag ontbreken omdat het platform hem uit het label afleidt
-        (``ImageRegistriesService.generate_missing_values``), maar dan moet dat label er
-        wel zijn -- anders valt er niets af te leiden en is de entry onzichtbaar voor
+        Zonder allebei valt er geen naam af te leiden en is de entry onzichtbaar voor
         ``project_registries``, dus voor de hele dienst.
         """
         if not self.name and not self.display_name:
@@ -166,29 +146,15 @@ class RegistryEntry(BaseModel):
 
         Zonder een van beide komt hij overal doorheen en schrijft de backend stil geen
         pull-secret; de afnemer merkt het pas als de pod niet kan pullen, met een melding die
-        niet over een ontbrekend token gaat. De twee vormen mengen kan ook niet: met een
-        ``secretName`` slaat de backend gebruikersnaam en token over, dus die zouden er voor
-        niets staan. In het model, zodat het formulier en de API dezelfde regel krijgen.
+        niet over een ontbrekend token gaat. Mengen kan ook niet: met een ``secretName``
+        slaat de backend gebruikersnaam en token over.
 
-        De gebruikersnaam hoort hier NIET bij, en dat is een herziening (RC-187). Wat hij
-        betekent verschilt per registry -- bij ghcr.io doet de waarde er niet toe, bij Docker
-        Hub is het de accountnaam, bij Quay de robotnaam -- en dat verschil kan een formulier
-        niet weten. Laat de afnemer hem leeg, dan vult ``PULL_USERNAME_PLACEHOLDER`` het gat in
-        de dockerconfigjson. Eist de registry wel een echte naam, dan vangt de tokentoets
-        (``enforcers.py``) dat alleen onder twee voorwaarden. Hij draait in een formulierflow
-        met het registryblok (de wizards, ook bij de eindinzending, de dienstenmodal en de modal
-        van het blok), niet in de componentmodal en niet via de API. En hij toetst tegen de
-        images onder die upstream in de samengevoegde data: in de edit-wizard en de modals staan
-        de bestaande componenten daar altijd in, alleen bij de eerste stap vooruit in de
-        create-wizard nog niet. Via de API, of zonder image in die data, komt zo'n entry
-        ongetoetst door en loopt hij pas bij de pull vast.
+        De gebruikersnaam is optioneel, zie ``PULL_USERNAME_PLACEHOLDER``.
         """
         if self.secret_name and (self.username or self.password):
             msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
             raise ValueError(msg)
         if not self.secret_name and not self.password:
-            # Noem wat er MIST: bij een entry met een gebruikersnaam vraagt de melding alleen
-            # het token, niet ook de naam die er al staat.
             if self.username:
                 msg = "Vul een token in bij de gebruikersnaam, anders kunnen we de images niet ophalen"
             else:

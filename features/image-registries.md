@@ -38,46 +38,35 @@ een `secretName` naar een dockerconfigjson-secret dat het platform zelf neerzet.
 beide of allebei weigert `RegistryEntry` (`_has_exactly_one_way_to_pull`), dus het formulier
 en de API op dezelfde save-poort. Zonder die regel kwam een entry zonder token overal
 doorheen en schreef de backend stil geen pull-secret, waarna de afnemer het pas merkte aan
-een pod die niet kon pullen. De tak in `backends.py` die dat vroeger stil deed is nu
-onbereikbaar en blaast op (`MissingRegistryCredentialsError`) als hij er toch komt; op ODCN
-wordt er dus ook geen proxy-organisatie zonder credentials meer aangemaakt. De twee
-entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met `secretName`) voldoen
-allebei.
+een pod die niet kon pullen. Komt `backends.py` er toch, dan blaast hij op
+(`MissingRegistryCredentialsError`); op ODCN komt er dus ook geen proxy-organisatie zonder
+credentials meer. De twee entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met
+`secretName`) voldoen allebei.
 
-De weigering noemt wat er mist: een entry met een gebruikersnaam maar zonder token krijgt
-"Vul een token in bij de gebruikersnaam", niet de kale vraag om allebei. De
-generieke foutopbouw in `project_validation.py` zet er de plek voor (`registries, nummer 2: ...`,
-geteld vanaf 1), zodat je bij meer registries weet welke je moet repareren.
+De weigering noemt wat er mist, en `project_validation.py` zet er de plek voor
+(`registries, nummer 2: ...`, geteld vanaf 1).
 
 ### De gebruikersnaam is optioneel, het token niet
 
 Wat `username` betekent verschilt per registry: bij ghcr.io doet de waarde er niet toe zolang
 het token klopt, bij Docker Hub moet het de accountnaam zijn en bij Quay de robotnaam. Dat
 verschil kan een formulier niet weten en de afnemer hoeft het niet te weten, dus het veld is
-optioneel (RC-187, een herziening van de eerste vorm waarin hij verplicht was).
+optioneel.
 
-Leeg laten verandert niets aan het projectbestand: er komt geen waarde in, ook niet bij het
-opslaan en ook niet in de migratie. De gebruikersnaam voor de dockerconfigjson ontstaat pas op
-het moment dat het manifest wordt gebouwd, uit `PULL_USERNAME_PLACEHOLDER` (`naming.py`,
-`x-access-token`) via `_pull_username()` in `backends.py`. Dezelfde regel als bij de RCR-URL en
-de secretnaam: het projectbestand draagt alleen wat de afnemer heeft ingevuld, de rest is een
-berekening. Er MOET iets staan omdat een `kubernetes.io/dockerconfigjson` per registry een
-`auth` van `base64(gebruikersnaam:wachtwoord)` draagt: er is geen veld voor alleen een token.
+Leeg laten verandert niets aan het projectbestand, ook niet in de migratie. De gebruikersnaam
+voor de dockerconfigjson ontstaat pas bij het bouwen van het manifest, uit
+`PULL_USERNAME_PLACEHOLDER` (`naming.py`, waar ook staat waarom er iets moet staan) via
+`_pull_username()` in `backends.py`.
 
 Een registry die wel een echte naam eist heeft geen poort die hem bij een lege gebruikersnaam
 tegenhoudt. De tokentoets (`enforcers.py`) praat echt met de registry, met precies het paar
-dat de backend daarna schrijft, maar alleen onder twee voorwaarden. Hij draait in elke
-formulierflow waar het registryblok in zit: de create- en edit-wizard (bij de stap vooruit en
-bij de eindinzending), de dienstenmodal en de modal van het blok. Hij draait niet in de
-componentmodal (die heeft alleen de componentsectie) en niet via de API (ook niet
-`POST .../registries/by-credentials`). En hij toetst alleen tegen images onder de upstream die
-in de samengevoegde data van de flow staan, zie de alinea over de tokentoets verderop. In de
-edit-wizard en de modals staan de bestaande componenten daar altijd in, ook als de flow ze niet
-toont; alleen bij de eerste stap vooruit in de create-wizard nog niet. Een component dat later
-via de componentmodal of de API bijkomt wordt niet getoetst, en zo'n entry loopt dan pas bij
-de pull vast. Faalt de toets terwijl het veld leeg was, dan noemt de melding dat de
-gebruikersnaam waarschijnlijk nodig is in plaats van alleen te zeggen dat het token niet werkt
-(`_access_denied_message`).
+dat de backend daarna schrijft, maar alleen in een formulierflow met het registryblok: de
+create- en edit-wizard (bij de stap vooruit en bij de eindinzending), de dienstenmodal en de
+modal van het blok. Niet in de componentmodal en niet via de API (ook niet
+`POST .../registries/by-credentials`), en alleen tegen images die in de data van de flow staan
+(zie "Validaties" verderop). Een component dat later via de componentmodal of de API
+bijkomt wordt niet getoetst; zo'n entry loopt pas bij de pull vast. Faalt de toets terwijl het
+veld leeg was, dan noemt de melding de gebruikersnaam (`_access_denied_message`).
 
 Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
 
@@ -92,9 +81,9 @@ De naam is vrije tekst plus een afgeleide verwijzing, net als bij het project ze
 `display-name` mag ontbreken (elke registry van voor RC-187 heeft alleen een `name`); dan
 is de verwijzing zelf het label op het scherm. `name` mag ook ontbreken, maar alleen met een
 label ernaast: `generate_missing_values` leidt de slug er dan uit af met `registry_slug()`,
-uniek binnen het project, en laat een bestaande slug met rust -- hij is de verwijzing vanaf
-componenten en hij zit in de naam van het dockerconfigjson-secret, dus een gewijzigd label
-mag hem niet meenemen. Die haak draait op allebei de schrijfwegen: de portal via `post_merge`
+uniek binnen het project, en laat een bestaande slug met rust. Hij is de verwijzing vanaf
+componenten en zit in de naam van het dockerconfigjson-secret, dus een gewijzigd label mag
+hem niet meenemen. Die haak draait op allebei de schrijfwegen: de portal via `post_merge`
 van de configsectie, de API via `registry.generate_missing_values`.
 
 Bij een component staat alleen een verwijzing bij naam, en alleen als er iets te verwijzen
@@ -138,22 +127,14 @@ Drie richtingen, en ze gelden voor het formulier en voor de API:
 | "Publieke registry" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
 | niets kiezen | er verandert niets; afwezig BETEKENT publiek |
 
-Dat is precies de val waar `instructions/services.md` voor waarschuwt -- het `{K}`-padfilter
-materialiseert een dienst als bijwerking, dus een default wordt stil een selectie -- en die
-willen we hier WEL, maar alleen in de ene richting.
+Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
+een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
+een keer, als `component_selection_follows_config` op de dienst; wat daaruit volgt staat in
+`instructions/services.md`.
 
-De regel staat een keer, als `component_selection_follows_config` op de dienst, met twee
-lezers: `FilteredServiceOptionsProvider` laat de dienst uit het vinkjesrijtje, en
-`ServiceAdapter.remove_service_config` haalt bij het wissen de vermelding weg in plaats van
-hem terug te zetten naar een kale naam. Aan de formulierkant doet
-`_prune_service_map_entry` (`opi/forms/editables/processor.py`) hetzelfde zodra de laatste
-waarde uit het blok verdwijnt.
-
-Waar het veld VERSCHIJNT volgt uit zijn eigen keuzelijst: `hidden_without_options` op de
-editable vraagt dezelfde provider die de widget vult en waar `values_must_exist` een
-opgeslagen waarde tegen houdt. Geen tweede voorwaarde ernaast die eruit kan lopen. Heeft het
-project geen registries, dan blijft de componentvorm precies zoals hij was -- de toestand van
-47 van de 49 projecten.
+Of het veld verschijnt volgt uit zijn eigen keuzelijst (`hidden_without_options`). Heeft het
+project geen registries, dan blijft de componentvorm zoals hij was: de toestand van 47 van de
+49 projecten.
 
 ### De weg terug is geen stille weg
 
@@ -163,15 +144,12 @@ wordt uitgezet, maar de verwijzing in het projectbestand niet. `validate_registr
 componenten erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert
 stilletjes waar een image vandaan komt.
 
-Voor de tweede route is daar een uitzondering voor nodig in
-`_strip_removed_services_from_components` (`wizard_sections.py`, de `post_merge` van de
-dienstensectie). Die hook draait VOOR `validate_project` en gooit elke componentvermelding weg
-waarvan de dienst niet meer op projectniveau staat -- dan is de verwijzing er niet meer tegen
-de tijd dat de grendel kijkt. Diensten die `component_selection_follows_config` declareren
-slaat hij daarom over: daar IS de waarde de selectie, dus opruimen betekent stilletjes
-veranderen waar een image vandaan komt. Zonder die uitzondering deed dezelfde handeling
-bovendien twee verschillende dingen -- de lijstvorm op een component werd gestript, de
-dict-vorm op een deployment-component niet, en die laatste werd dan wel geweigerd.
+Voor de tweede route slaat `_strip_removed_services_from_components` (`wizard_sections.py`,
+de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
+`validate_project` en gooit elke componentvermelding weg waarvan de dienst niet meer op
+projectniveau staat, waarna de grendel niets meer ziet. Zonder de uitzondering deed dezelfde
+handeling bovendien twee dingen: de lijstvorm op een component werd gestript, de dict-vorm op
+een deployment-component niet, en die laatste werd dan wel geweigerd.
 
 Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
 keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.
@@ -317,25 +295,17 @@ installatiekeuze.
 
 `upstream_from_project_images()` doet het omgekeerde en vult het veld vooruit in: een
 nieuwe registry krijgt de upstream die uit de images van dit project volgt, en alleen als
-die eenduidig is. De afnemer heeft zijn image al ingetypt, en op ODCN kunnen we de vraag
-niet weglaten -- daar wordt een proxy-organisatie aangemaakt voor precies een
-upstream-namespace, en die moet er zijn voordat er een image is. Wijzen de images naar meer
-dan een prefix, dan is de vraag juist het punt en vullen we niets in.
+die eenduidig is. Weglaten kan de vraag niet: op ODCN wordt een proxy-organisatie aangemaakt
+voor precies een upstream-namespace, en die moet er zijn voordat er een image is.
 
 De omzetting hangt als `BeforeValidator` aan het veld in `config_model.py`, dus de API en het
 formulier (via `ModelFieldValidator`, dat zijn toets uit de ANNOTATIE bouwt) krijgen hem
 allebei; de schrijfkant van het formulier roept dezelfde functie aan via `UpstreamConverter`,
 en de migratie 2.8 -> 2.9 ook.
 
-Wat hij bewust NIET doet is een projectbestand repareren dat er al staat. De
-hele-bestandspoort draait het model met `STORED_CONTEXT_KEY`, en daar slaat de omzetting
-over: valideren schrijft niet terug, dus een opgeslagen `https://ghcr.io` zou door de poort
-komen en ONgewijzigd in het bestand blijven staan, waarna `normalize_prefix` hem nooit matcht
-en de registry stil niet meer geldt in plaats van luid geweigerd te worden.
-
-De volgorde in `Annotated` is niet vrijblijvend: met het patroon VOOR de before-validator
-staat het patroon ook in het gerenderde JSON-schema, en dat fragment is waar een client de
-regel leest.
+Een projectbestand dat er al staat repareert hij bewust niet: onder `STORED_CONTEXT_KEY` slaat
+de omzetting over, zodat een opgeslagen `https://ghcr.io` luid geweigerd wordt in plaats van
+stil niet meer te gelden (de reden staat bij `_normalize_upstream` in `config_model.py`).
 
 ## De provisioning-backend
 

@@ -74,10 +74,7 @@ class ImageRegistriesService(Service):
     # zichzelf daar bijschrijven.
     allows_implicit_project_selection = True
     config_component_order = 8
-    # Er is geen aan/uit voor deze dienst bij een component: de gekozen registry IS de
-    # selectie. Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken
-    # wat een aangevinkte dienst met waarde "publiek" betekent, en wat een uitgevinkte
-    # dienst met een registry erin betekent, en die twee regels lopen uit elkaar.
+    # De gekozen registry IS de selectie; zie features/image-registries.md.
     component_selection_follows_config = True
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
@@ -115,9 +112,8 @@ class ImageRegistriesService(Service):
 
     def config_component_layout(self) -> list[Any]:
         svc = self.service_type.value
-        # In het slot achter het image-veld en niet in een eigen fieldset onderaan: de
-        # vraag is waar DIE image vandaan komt. Geen ``depends_on`` op de dienstenlijst
-        # meer -- de keuze IS de selectie, dus het veld zou wachten op wat het zelf zet.
+        # Geen ``depends_on`` op de dienstenlijst: de keuze IS de selectie, dus het veld
+        # zou wachten op wat het zelf zet.
         return [
             Div(
                 slot=COMPONENT_IMAGE_SLOT,
@@ -149,14 +145,10 @@ class ImageRegistriesService(Service):
     def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
         """Geef elke registry zonder ``name`` er een, afgeleid van zijn label.
 
-        De afnemer typt "Code Overheid"; dat wij er een DNS-label van maken is onze eis en
-        niet zijn probleem. Hier en niet in een converter van de editable, want allebei de
-        schrijfwegen komen hier langs: de portal via ``post_merge`` van de sectie en de API
-        via ``registry.generate_missing_values``. Zo kan er geen registry ontstaan die de
-        ene weg wel een naam geeft en de andere niet.
-
-        Een bestaande naam blijft staan, ook als het label verandert: hij is de verwijzing
-        vanaf componenten en hij zit in de naam van het pull-secret.
+        Hier en niet in een converter van de editable, want allebei de schrijfwegen komen
+        hier langs: de portal via ``post_merge`` van de sectie en de API via
+        ``registry.generate_missing_values``. Een bestaande naam blijft staan, ook als het
+        label verandert.
         """
         # Lazy: ``opi.services.project`` leest ``opi.forms``, en dat leest via de providers
         # deze module.
@@ -258,9 +250,8 @@ class ImageRegistriesService(Service):
 
         De eerste drie kijken naar de andere projecten op het cluster en niet naar een
         configblok, dus ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit
-        project de dienst aanvinkt: het gaat om waar een image NAAR wijst. De vierde kijkt
-        naar het project als geheel -- componenten tegen de registrylijst -- en hoort om
-        dezelfde reden hier en niet bij een van de twee blokken.
+        project de dienst aanvinkt: het gaat om waar een image NAAR wijst. De vierde legt
+        componenten naast de registrylijst en hoort om dezelfde reden hier.
         """
         return [
             *validate_proxy_organization_ownership(project_data),

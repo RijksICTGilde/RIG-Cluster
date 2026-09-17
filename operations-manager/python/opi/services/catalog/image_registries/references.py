@@ -1,17 +1,8 @@
 """De weg terug: een registry verdwijnt niet onder een component vandaan.
 
-Het keuzeveld bij een component bestaat alleen zolang het project registries HEEFT
-(``ImageRegistryOptionsProvider``). Zet je de dienst uit of haal je de laatste registry
-weg terwijl componenten er nog naar verwijzen, dan verdwijnt dat veld en blijft de
-verwijzing in het projectbestand staan: onzichtbaar, en niet meer te corrigeren op het
-scherm waar hij vandaan kwam.
-
-Daarom weigeren bij het OPSLAAN, met de componenten erbij die de registry nog gebruiken.
-Niet automatisch opruimen: dan verandert stilletjes waar een image vandaan komt, en dat is
-precies het soort wijziging waar iemand bij moet nadenken.
-
-Waarom naast ``values_must_exist``: die toets slaat een LEGE keuzelijst over, met opzet
-(zie ``instructions/services.md``) -- en leeg is nu juist de toestand die hier ontstaat.
+Zie features/image-registries.md, "De weg terug is geen stille weg". Naast
+``values_must_exist``, want die slaat een LEGE keuzelijst met opzet over, en leeg is precies
+de toestand die hier ontstaat.
 """
 
 from __future__ import annotations

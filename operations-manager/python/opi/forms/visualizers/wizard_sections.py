@@ -167,10 +167,6 @@ COMPONENTS_SECTION = FormSection(
                     children=[
                         "name",
                         "image",
-                        # De benoemde plek direct achter het image-veld: waar een image
-                        # vandaan komt is een eigenschap van dat veld, niet iets dat
-                        # onderaan het formulier hoort. Welke dienst hier landt bepaalt
-                        # de dienst zelf, met ``slot=`` op zijn layoutknoop.
                         *_service_component_layouts(COMPONENT_IMAGE_SLOT),
                         # Het startcommando hoort bij het image: het vervangt de entrypoint
                         # daarvan, dus je beoordeelt de twee samen.
@@ -460,14 +456,9 @@ def _strip_removed_services_from_components(
     ``cleanup_removed_services_from_yaml_change`` won't fire (it checks
     component-level usage).
 
-    Met EEN uitzondering: een dienst die ``component_selection_follows_config``
-    declareert wordt hier niet opgeruimd (RC-187). Daar IS de waarde de selectie, dus
-    wegstrippen betekent stilletjes veranderen waar een image vandaan komt -- precies
-    de wijziging waar iemand bij moet nadenken. De verwijzing blijft dus staan en
-    ``validate_registry_references`` weigert de save met de componenten erbij.
-    Zonder deze uitzondering doet dezelfde handeling bovendien twee verschillende
-    dingen: de lijstvorm op een component wordt gestript, de dict-vorm op een
-    deployment-component niet, en die laatste wordt dan wel geweigerd.
+    Behalve een dienst die ``component_selection_follows_config`` declareert: daar
+    blijft de verwijzing staan, zodat een ``validate_project``-grendel hem nog ziet.
+    Zie features/image-registries.md, "De weg terug is geen stille weg".
     """
     project_services = set(_extract_services(project_data))
     for comp in project_data.get("components", []):

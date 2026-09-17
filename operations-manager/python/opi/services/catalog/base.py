@@ -738,22 +738,9 @@ class Service(ABC):
     #: user-facing priority is a deferred future refinement.
     config_component_order: ClassVar[int] = 100
 
-    #: Whether the CONFIG of this service at the component layer is at the same time the
-    #: SELECTION of it, so there is no separate on/off for it on a component (RC-187).
-    #:
-    #: Default False: a component ticks the service and then configures it, which is what
-    #: every component-bound service does. True says the two are one decision -- the value
-    #: IS the choice -- and has two consequences, both derived from this one declaration
-    #: so they cannot drift apart:
-    #:
-    #: - the service gets no checkbox in the per-component service picker
-    #:   (``FilteredServiceOptionsProvider``);
-    #: - clearing its config removes the ENTRY instead of demoting it to a bare string
-    #:   (``ServiceAdapter.remove_service_config`` and the form's empty-value path),
-    #:   because an entry without config would be a state nobody can read a meaning off.
-    #:
-    #: Only declare it for a service whose config has an explicit "none" value, otherwise
-    #: there is no way left to say "not this one".
+    #: Whether the CONFIG of this service at the component layer is at the same time its
+    #: SELECTION, so there is no separate on/off for it on a component. What follows from
+    #: it, and when to declare it: ``instructions/services.md``.
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
