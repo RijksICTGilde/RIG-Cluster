@@ -445,7 +445,12 @@ def check_setting_changes(settings: Sequence[ConfigSetting], previous: Any, conf
         new_value = read_setting_value(config, setting)
         if old_value is MISSING and new_value is MISSING:
             continue  # neither version mentions the field: both stand on the default
-        setting.check_change(
-            setting.default if old_value is MISSING else old_value,
-            setting.default if new_value is MISSING else new_value,
-        )
+        try:
+            setting.check_change(
+                setting.default if old_value is MISSING else old_value,
+                setting.default if new_value is MISSING else new_value,
+            )
+        except SettingError as e:
+            # Both values can be in this message, so it carries the declaration like
+            # ``check_settings`` does.
+            raise SettingError(str(e), setting=setting) from None
