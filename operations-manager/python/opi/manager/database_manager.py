@@ -875,11 +875,10 @@ class DatabaseManager:
             # clone can leave either name behind.
             clone_schemas = target_schemas | {source_schema, *(source for source, _ in extra_clone_pairs)}
             try:
-                # A later run looks for this database only at the recorded generation,
-                # so a clone into a new generation gets no flag (features/kloonpoging.md).
-                # The flag also stays off above a target schema this run did not create:
-                # that is the same set a later run reads back as "clone finished", so it
-                # would take a schema from before the clone-from for a finished clone.
+                # Geen vlag bij een nieuwe generatie (die staat pas bij de save aan het
+                # eind op schijf) en niet boven een schema dat er al stond: in beide gevallen
+                # zou een volgende run dat voor een afgeronde kloon aanzien
+                # (features/kloonpoging.md).
                 if final_generation == generation and target_schemas.isdisjoint(schemas_before):
                     await self.project_manager.mark_clone_started(deployment_name)
                 clone_result = await self.postgres_connector.clone_schema(
@@ -984,15 +983,10 @@ class DatabaseManager:
     ) -> None:
         """Drop what a failed clone left in a database that already existed.
 
-        A clone into a database it did not create cannot drop the database, so without
-        this a half schema survives, and a retry would take it for a finished clone.
-
-        Only the clone's own schema names are candidates: this runs in a live tenant
-        database, and `list_schemas` also reports what another session made in the
-        meantime (a temp schema, which a superuser drops with CASCADE). A failing drop
-        does not stop the others either: the intermediate schema under the source name
-        sorts before the target name, and a surviving target schema is exactly what a
-        retry would take for a finished clone.
+        The database itself cannot be dropped here, so without this a half schema
+        survives and a retry takes it for a finished clone. Only the clone's own schema
+        names are candidates: this runs in a live tenant database, where another session
+        creates schemas too.
         """
         try:
             leftovers = (await self._schema_names(database) - schemas_before) & clone_schemas
@@ -2113,9 +2107,7 @@ class DatabaseManager:
             else:
                 schemas_before = await self._schema_names(target_database)
                 try:
-                    # No flag above a target schema this run did not create: that schema
-                    # is what a later run reads back as "clone finished", while
-                    # clone_schema_from_external refuses to clone over it.
+                    # Geen vlag boven een doelschema dat er al stond, zie _ensure_database_state.
                     if not new_generation_created and target_schema not in schemas_before:
                         await self.project_manager.mark_clone_started(deployment_name)
                     clone_result = await self.postgres_connector.clone_schema_from_external(

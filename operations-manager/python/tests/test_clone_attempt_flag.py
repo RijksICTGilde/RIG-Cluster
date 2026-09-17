@@ -1,8 +1,7 @@
 """Een run die na een geslaagde databasekloon afbreekt, maakt bij de volgende run geen ``_v1``.
 
-De kloon loopt vooraan in ``process_project`` en de afronding wordt pas bij de save aan het
-eind vastgelegd. De vlag ``clone-from.status.in-progress`` gaat daarom op schijf op het moment
-dat de kloon begint, zodat de volgende run weet dat de bestaande database van die poging is.
+De vlag ``clone-from.status.in-progress`` gaat op schijf op het moment dat de kloon begint,
+zodat de volgende run weet dat de bestaande database van die poging is (features/kloonpoging.md).
 """
 
 from __future__ import annotations
