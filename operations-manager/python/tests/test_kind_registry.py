@@ -45,6 +45,7 @@ case "$1" in
     case "$*" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
+        sleep "${STUB_ENV_PAUSE:-0}"
         echo "PATH=/usr/bin"
         ;;
       *State.Running*)
@@ -239,6 +240,13 @@ class TestSetupScript:
             "docker start kind-registry",
         ]
         assert "oude registry staat er weer" in run.stderr
+
+    def test_output_after_the_match_does_not_recreate_the_registry(self, tmp_path: Path) -> None:
+        """`grep -q` stopt bij de treffer; onder pipefail maakte de SIGPIPE van docker de pijp vals."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_ENV_PAUSE="0.2")
+
+        assert run.returncode == 0, run.stderr
+        assert "docker rename" not in run.log
 
     def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
@@ -499,6 +507,12 @@ class TestPruneScriptRefusals:
         assert run.returncode == 7
         assert "failed to garbage collect: disk full" in run.stderr
         assert "klaar" not in run.stdout
+
+    def test_output_after_the_match_does_not_skip_the_cleanup(self, tmp_path: Path) -> None:
+        """Een falende garbage-collect bewijst dat het script voorbij de deletecontrole kwam."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_ENV_PAUSE="0.2", STUB_GC_FAILS="7")
+
+        assert run.returncode == 7, run.stderr
 
     def test_never_touches_the_builder(self) -> None:
         """De buildcache van de builder hoort niet in de registry en mag hier niet weg."""
