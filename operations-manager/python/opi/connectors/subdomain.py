@@ -165,14 +165,14 @@ def get_supported_base_domains(cluster: str | None = None) -> set[str]:
         return entry["domain"] if isinstance(entry, dict) else entry
 
     if cluster and cluster in CLUSTER_CONFIG:
-        nice_url_config = CLUSTER_CONFIG[cluster].get("nice_url", {})
-        return {_extract_domain(d) for d in nice_url_config.get("supported_domains", [])}
+        domains_config = CLUSTER_CONFIG[cluster].get("domains", {})
+        return {_extract_domain(d) for d in domains_config.get("supported_domains", [])}
 
     # Collect all supported domains from all clusters
     all_domains: set[str] = set()
     for cluster_config in CLUSTER_CONFIG.values():
-        nice_url_config = cluster_config.get("nice_url", {})
-        all_domains.update(_extract_domain(d) for d in nice_url_config.get("supported_domains", []))
+        domains_config = cluster_config.get("domains", {})
+        all_domains.update(_extract_domain(d) for d in domains_config.get("supported_domains", []))
     return all_domains
 
 

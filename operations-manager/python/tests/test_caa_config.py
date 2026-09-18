@@ -40,11 +40,11 @@ def _managing_zone(domain: str) -> str | None:
     return None
 
 
-def test_every_nice_url_domain_under_managed_zone_uses_allowed_issuer() -> None:
+def test_every_supported_domain_under_managed_zone_uses_allowed_issuer() -> None:
     """Geen enkel cluster geeft uit onder onze zones met een CA die CAA niet toestaat."""
     checked = 0
     for cluster_name, cluster in CLUSTER_CONFIG.items():
-        for entry in cluster.get("nice_url", {}).get("supported_domains", []):
+        for entry in cluster.get("domains", {}).get("supported_domains", []):
             issuer = entry.get("issuer")
             if not issuer:
                 # Geen issuer betekent: hier wordt niets uitgegeven (kind, local,

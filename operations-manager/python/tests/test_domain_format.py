@@ -14,7 +14,7 @@ Tests the configurable hostname template system:
 """
 
 import pytest
-from opi.core.cluster_config import get_domain_supports_dots, get_nice_url_supported_domains
+from opi.core.cluster_config import get_domain_supports_dots, get_supported_domain_names
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
@@ -397,8 +397,8 @@ class TestPerDomainDotSupport:
     def test_get_domain_supports_dots_unknown_domain(self):
         assert get_domain_supports_dots("local", "nonexistent.domain") is False
 
-    def test_get_nice_url_supported_domains_extracts_strings(self):
-        domains = get_nice_url_supported_domains("local")
+    def test_get_supported_domain_names_extracts_strings(self):
+        domains = get_supported_domain_names("local")
         assert "kind" in domains
         assert "local" in domains
         assert all(isinstance(d, str) for d in domains)
