@@ -1,6 +1,9 @@
 """Tests for the new options providers added in Sub-part C."""
 
+from opi.core.cluster_config import get_supported_domain_names
+from opi.core.config import settings
 from opi.forms.visualizers.providers import (
+    CUSTOM_DOMAIN_SENTINEL,
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
@@ -138,17 +141,33 @@ class TestRepositoryOptionsProvider:
 
 
 class TestClusterBaseDomainOptionsProvider:
-    def test_returns_options_without_cluster(self):
-        provider = ClusterBaseDomainOptionsProvider()
-        options = provider.get_options()
-        # Should aggregate domains from all clusters
-        assert isinstance(options, list)
+    """De keuzelijst leest het ``domains``-blok rechtstreeks uit CLUSTER_CONFIG. Bij een
+    verkeerde sleutel houdt de gebruiker alleen "Cluster standaard" en "Eigen domein..."
+    over, zonder fout.
+    """
 
-    def test_returns_options_with_unknown_cluster(self):
-        provider = ClusterBaseDomainOptionsProvider(cluster="nonexistent")
-        options = provider.get_options()
-        # Falls back to all domains
-        assert isinstance(options, list)
+    def test_options_list_the_domains_of_the_named_cluster(self):
+        waarden = [o["value"] for o in ClusterBaseDomainOptionsProvider(cluster="odcn-production").get_options()]
+
+        assert "rijks.app" in waarden
+        assert waarden == ["", *get_supported_domain_names("odcn-production"), CUSTOM_DOMAIN_SENTINEL]
+
+    def test_options_follow_the_cluster_that_is_asked_for(self):
+        waarden = [o["value"] for o in ClusterBaseDomainOptionsProvider(cluster="local").get_options()]
+
+        assert "kind" in waarden
+        assert "rijks.app" not in waarden
+
+    def test_without_a_cluster_it_follows_the_cluster_this_opi_manages(self):
+        zonder = ClusterBaseDomainOptionsProvider().get_options()
+        beheerd = ClusterBaseDomainOptionsProvider(cluster=settings.CLUSTER_MANAGER).get_options()
+
+        assert zonder == beheerd
+
+    def test_unknown_cluster_falls_back_to_the_two_fixed_options(self):
+        options = ClusterBaseDomainOptionsProvider(cluster="nonexistent").get_options()
+
+        assert [o["value"] for o in options] == ["", CUSTOM_DOMAIN_SENTINEL]
 
     def test_options_have_value_and_label(self):
         provider = ClusterBaseDomainOptionsProvider()

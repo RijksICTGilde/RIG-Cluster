@@ -169,7 +169,7 @@ Two things to know before measuring it again:
 ## Wanneer `standard` niets oplevert: een eigen domein op een cluster zonder uitgifte
 
 `standard` betekent "het platform regelt het certificaat", en dat lukt niet overal. Voor de
-domeinen die het cluster zelf aanbiedt (`nice_url.supported_domains`) is er een
+domeinen die het cluster zelf aanbiedt (`domains.supported_domains`) is er een
 platformcertificaat en is er niets te regelen. Voor een **eigen domein** moet cert-manager
 er een halen, via een ACME HTTP-01-uitdaging die van buiten bereikbaar moet zijn -- en dat
 kan niet op elk cluster.

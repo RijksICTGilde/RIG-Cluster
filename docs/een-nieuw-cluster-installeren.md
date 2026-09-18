@@ -108,7 +108,7 @@ Dit hoeft alleen beantwoord te worden voor fundament; de code leest het al via e
 | `uses_capsule` | `:165` | `true` | multi-tenancy waar OPI op wacht bij namespace-creatie |
 | `supports_vpa` | `:169` | `true` | een draaiende VPA-recommender, waar de resource-tuner op leunt |
 | `letsencrypt.contact_email` | `:170`-`:172` | `rig-platform@rijksoverheid.nl` | contactadres voor de ACME-account |
-| `nice_url.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
+| `domains.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
 | `image_registries` | `:310`-`:346` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `tenants`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
 | `create_wizard_clusters` | alleen in `local` (`:16`) | — | ontbreekt bewust in productie: de wizard biedt dan alleen het eigen cluster |
 
@@ -409,7 +409,7 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
 10. Welke DNS-zone krijgen wij als default voor deployments? Krijgen wij daar een wildcard
     op, of moet elke hostnaam apart aangevraagd?
 11. Draait er external-dns? Zo ja: op welke API/host praat die, en mogen wij er records in
-    zetten via annotaties? *(Vult `nice_url.supported_domains[].external_dns_target`.)*
+    zetten via annotaties? *(Vult `domains.supported_domains[].external_dns_target`.)*
 12. Mag het ZAD-portaal publiek op internet bereikbaar zijn, of moet het achter een
     afscherming? Zo afgeschermd: op IP-niveau, via VPN, of alleen intern? **Zie paragraaf 5 —
     dit antwoord bepaalt de hele hub-en-spoke-opzet.**
