@@ -20,6 +20,7 @@ from ruamel.yaml import YAML
 
 from opi.core.cluster_config import get_namespace_prefix
 from opi.core.config import settings
+from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 
 #: Label the platform puts on a Secret or ConfigMap that must stay OUT of the config-hash
 #: the ArgoCD CMP plugin injects as ``checksum/config`` on every pod template.
@@ -253,7 +254,7 @@ class ManifestGenerator:
 
             # Determine output filename based on SOPS usage
             if use_sops:
-                final_filename = f"{output_filename}.to-sops.yaml"
+                final_filename = sops_filenames(output_filename).plaintext
                 logger.debug(f"Creating SOPS manifest: {final_filename}")
             else:
                 final_filename = f"{output_filename}.yaml"
@@ -373,12 +374,11 @@ class ManifestGenerator:
                     continue
 
             # Separate SOPS files from regular files first
-            # Include both .sops.yaml and .to-sops.yaml files as SOPS files
-            sops_files = [f for f in relative_files if f.endswith((".sops.yaml", ".to-sops.yaml"))]
+            sops_files = [f for f in relative_files if f.endswith((SOPS_SUFFIX, TO_SOPS_SUFFIX))]
             regular_files = [
                 f
                 for f in relative_files
-                if (f.endswith((".yaml", ".yml"))) and not f.endswith(".sops.yaml") and not f.endswith(".to-sops.yaml")
+                if f.endswith((".yaml", ".yml")) and not f.endswith((SOPS_SUFFIX, TO_SOPS_SUFFIX))
             ]
 
             # Remove project_name from paths if provided (for structure: given_path/project_name/deployment_name/)
@@ -546,19 +546,10 @@ class ManifestGenerator:
                 with open(decrypt_sops_template_path) as f:
                     decrypt_sops_data = yaml.load(f)
 
-                # Convert .to-sops.yaml files to .sops.yaml for decrypt configuration
-                # The decrypt-sops.yaml needs to reference the final encrypted filenames
-                decrypt_files = []
-                for f in sops_files:
-                    if f.endswith(".to-sops.yaml"):
-                        # Convert .to-sops.yaml to .sops.yaml for decrypt configuration
-                        decrypt_files.append(f.replace(".to-sops.yaml", ".sops.yaml"))
-                    else:
-                        # Keep .sops.yaml files as-is
-                        decrypt_files.append(f)
-
-                # Remove duplicates that can occur when both .to-sops.yaml and .sops.yaml exist
-                decrypt_files = list(dict.fromkeys(decrypt_files))
+                # decrypt-sops.yaml references the final encrypted filenames, so a file
+                # still awaiting encryption is listed under the name it will carry. Both
+                # halves of one pair collapse onto the same name, hence the deduplication.
+                decrypt_files = list(dict.fromkeys(sops_filenames(f).encrypted for f in sops_files))
 
                 # Update files list
                 decrypt_sops_data["files"] = decrypt_files
