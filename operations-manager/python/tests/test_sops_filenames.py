@@ -46,12 +46,10 @@ class TestSopsFilenames:
         assert sops_filenames("registry.example.com-secret").encrypted == "registry.example.com-secret.sops.yaml"
 
     def test_gewone_yaml_is_geen_helft_van_het_paar(self) -> None:
-        """Alleen de twee sops-suffixen tellen als stam; de rest van de naam blijft staan."""
         assert sops_filenames("issuer.yaml").plaintext == "issuer.yaml.to-sops.yaml"
 
 
 _OPI_ROOT = pathlib.Path(opi.__file__).parent
-#: De eigenaar zelf: daar STAAN de twee waarden.
 _EIGENAAR = _OPI_ROOT / "utils" / "sops.py"
 
 
@@ -89,8 +87,6 @@ def _handgemaakte_namen(pad: pathlib.Path) -> list[str]:
 
 
 class TestGeenTweedeBron:
-    """De suffixen staan in de code op precies een plek, anders loopt de omzetting weer uiteen."""
-
     def test_alleen_de_eigenaar_noemt_de_suffixen(self) -> None:
         treffers = [
             regel for pad in sorted(_OPI_ROOT.rglob("*.py")) if pad != _EIGENAAR for regel in _handgemaakte_namen(pad)

@@ -1247,7 +1247,6 @@ class TestCreateKustomizationFiles:
         assert "creds.sops.yaml" in files  # kept as-is
 
     def test_sops_both_halves_of_one_pair_are_listed_once(self, generator, yaml_loader, tmp_path):
-        """Both names of one secret collapse onto the encrypted name, so it must not be listed twice."""
         output_dir = str(tmp_path / "output")
         os.makedirs(output_dir)
 
