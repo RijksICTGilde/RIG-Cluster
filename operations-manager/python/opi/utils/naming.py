@@ -6,6 +6,7 @@ including deployments, services, PVCs, and other manifest resources.
 """
 
 import logging
+import posixpath
 import re
 from typing import Any, get_args
 
@@ -984,6 +985,27 @@ def generate_gitops_argocd_application_path(cluster: str, project_name: str, dep
     return f"{cluster_clean}/{project_clean}/{filename}"
 
 
+class RepositoryPathError(ValueError):
+    """Een ``repositories[].path`` dat het manifestpad buiten de repo laat vallen."""
+
+
+def _under_repo_path(repo_path: str, relative: str) -> str:
+    """``relative`` onder ``repo_path``, of een weigering als de uitkomst de repo verlaat.
+
+    Geeft het samengestelde pad ongenormaliseerd terug: ``./cluster/...`` staat zo in
+    bestaande ArgoCD-applicaties, en normaliseren zou die allemaal laten verschuiven.
+    """
+    if not repo_path:
+        return relative
+    path = f"{repo_path}/{relative}"
+    normalized = posixpath.normpath(path)
+    if normalized == ".." or normalized.startswith(("/", "../")):
+        raise RepositoryPathError(
+            f"Repositorypad '{repo_path}' valt buiten de repository; gebruik een relatief pad zonder '..'."
+        )
+    return path
+
+
 def generate_deployment_manifest_path(
     cluster: str, project_name: str, deployment_name: str, repo_path: str = ""
 ) -> str:
@@ -1005,10 +1027,7 @@ def generate_deployment_manifest_path(
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
 
-    if repo_path:
-        return f"{repo_path}/{cluster_clean}/{project_clean}/{deployment_clean}"
-    else:
-        return f"{cluster_clean}/{project_clean}/{deployment_clean}"
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{deployment_clean}")
 
 
 def generate_project_deployment_prefix(project_name: str, deployment_name: str) -> str:
@@ -1415,9 +1434,7 @@ def generate_project_level_manifest_path(cluster: str, project_name: str, repo_p
     cluster_clean = _sanitize_for_lowercase(cluster)
     project_clean = _sanitize_for_lowercase(project_name)
 
-    if repo_path:
-        return f"{repo_path}/{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}"
-    return f"{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}"
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}")
 
 
 def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
@@ -1445,9 +1462,7 @@ def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_
     project_clean = _sanitize_for_lowercase(project_name)
     cluster_clean = _sanitize_for_lowercase(cluster)
 
-    if repo_path:
-        return f"{repo_path}/{cluster_clean}/{project_clean}/infrastructure"
-    return f"{cluster_clean}/{project_clean}/infrastructure"
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/infrastructure")
 
 
 def generate_infrastructure_argocd_application_filename(project_name: str) -> str:

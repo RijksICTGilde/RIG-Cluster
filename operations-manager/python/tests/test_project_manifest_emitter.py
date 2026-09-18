@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 from opi.core.project_schema import ProjectIntegrityError
 from opi.generation.manifests import render_template
+from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import _select_obsolete_service_manifests
 from opi.manager.project_validation import validate_project_structure
 from opi.services.services_enums import ServiceType
@@ -48,26 +50,36 @@ class TestDePrune:
         ]
 
     def test_de_versleutelde_kopie_blijft_staan_als_de_dienst_hem_nog_maakt(self, tmp_path: Any) -> None:
-        """De emitter zet BEIDE namen in de gewenste toestand, precies hiervoor."""
-        _touch(
-            tmp_path,
-            "image-registries-demo-registry.sops.yaml",
-            "image-registries-demo-registry.to-sops.yaml",
-        )
-        generated = {"image-registries-demo-registry.to-sops.yaml", "image-registries-demo-registry.sops.yaml"}
-        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == []
-
-    def test_alleen_de_to_sops_naam_zou_de_vorige_ciphertext_opeten(self, tmp_path: Any) -> None:
-        """De tegenproef op de regel hierboven: zonder de tweede naam gaat hij wel weg."""
         _touch(
             tmp_path,
             "image-registries-demo-registry.sops.yaml",
             "image-registries-demo-registry.to-sops.yaml",
         )
         generated = {"image-registries-demo-registry.to-sops.yaml"}
+        assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == []
+
+    def test_een_versleutelde_kopie_zonder_to_sops_deze_run_gaat_weg(self, tmp_path: Any) -> None:
+        _touch(
+            tmp_path,
+            "image-registries-demo-registry.sops.yaml",
+            "image-registries-oud-registry.sops.yaml",
+        )
+        generated = {"image-registries-demo-registry.to-sops.yaml"}
         assert _select_obsolete_service_manifests(str(tmp_path), PREFIXES, generated) == [
-            "image-registries-demo-registry.sops.yaml"
+            "image-registries-oud-registry.sops.yaml"
         ]
+
+    def test_ook_op_deploymentniveau_blijven_keycloak_en_redis_staan(self, tmp_path: Any) -> None:
+        _touch(
+            tmp_path,
+            "productie-keycloak-secret.sops.yaml",
+            "productie-keycloak-secret.to-sops.yaml",
+            "productie-redis-secret.sops.yaml",
+            "productie-redis-secret.to-sops.yaml",
+        )
+        prefixes = {f"productie-{service.value}-" for service in ServiceType}
+        generated = {"productie-keycloak-secret.to-sops.yaml", "productie-redis-secret.to-sops.yaml"}
+        assert _select_obsolete_service_manifests(str(tmp_path), prefixes, generated) == []
 
     def test_de_kustomize_plumbing_wordt_niet_aangeraakt(self, tmp_path: Any) -> None:
         _touch(tmp_path, "kustomization.yaml", "decrypt-sops.yaml")
@@ -141,10 +153,6 @@ class TestWieHetProjectniveauDraagt:
         """De derde kant. Koos de verwijderaar op bestandsvolgorde, dan ging hij bij twee
         repositories in de VERKEERDE repo zoeken, en dan blijft de map met zijn
         SOPS-secrets staan terwijl de verwijdering 'not_found' meldt."""
-        from unittest.mock import AsyncMock, MagicMock
-
-        from opi.manager.delete_project_manager import DeleteProjectManager
-
         # De map staat in repo 'a', de repository van de ALFABETISCH EERSTE deployment.
         (tmp_path / "a" / "odcn-production" / "demo" / PROJECT_LEVEL_DIR).mkdir(parents=True)
 

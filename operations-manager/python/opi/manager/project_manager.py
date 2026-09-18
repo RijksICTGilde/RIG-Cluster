@@ -21,6 +21,7 @@ import asyncpg
 from fastapi import HTTPException
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -155,8 +156,10 @@ from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
+    generate_deployment_manifest_path,
     generate_external_hostname,
     generate_helm_values_filename,
+    generate_infrastructure_manifest_path,
     generate_ingress_name_from_path,
     generate_issuer_manifest_name,
     generate_issuer_name,
@@ -191,7 +194,7 @@ from opi.utils.secrets import (
     RedisSecret,
     UserSecret,
 )
-from opi.utils.sops import encrypt_to_sops_files_or_fail
+from opi.utils.sops import decrypt_sops_with_key, encrypt_to_sops_files_or_fail
 from opi.utils.yaml_util import (
     find_value_by_jsonpath,
 )
@@ -288,6 +291,37 @@ _COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
 )
 
 
+def _is_generated(basename: str, generated_files: set[str]) -> bool:
+    """Whether a file belongs to the desired state of this run.
+
+    The ``.sops.yaml`` of a secret written this run as ``.to-sops.yaml`` is its previous
+    ciphertext, which the skip-if-unchanged compares against after the prune.
+    """
+    if basename in generated_files:
+        return True
+    if basename.endswith(".sops.yaml"):
+        return basename.removesuffix(".sops.yaml") + ".to-sops.yaml" in generated_files
+    return False
+
+
+def _existing_secret_pairs(sops_path: str, private_key: str | None) -> dict[str, str]:
+    """The ``stringData`` of a previously written SOPS secret, empty on any doubt."""
+    if private_key is None or not os.path.exists(sops_path):
+        return {}
+    decrypted = decrypt_sops_with_key(sops_path, private_key)
+    if decrypted is None:
+        return {}
+    try:
+        doc = YAML(typ="safe").load(decrypted)
+    except YAMLError:
+        logger.info(f"Could not parse decrypted {os.path.basename(sops_path)}, writing fresh values")
+        return {}
+    string_data = doc.get("stringData") if isinstance(doc, dict) else None
+    if not isinstance(string_data, dict):
+        return {}
+    return {key: value for key, value in string_data.items() if isinstance(value, str)}
+
+
 def _select_obsolete_component_manifests(
     directory: str,
     component_names: set[str],
@@ -352,7 +386,7 @@ def _select_obsolete_component_manifests(
         if basename.endswith(".marked-for-deletion.yaml"):
             continue
         # Generated this run -> part of the desired state, keep it.
-        if basename in generated_files:
+        if _is_generated(basename, generated_files):
             continue
         # Only prune files that belong to a component; shared/deployment-level files
         # (no component prefix) are never selected.
@@ -396,7 +430,7 @@ def _select_obsolete_service_manifests(
             continue
         if basename.endswith(".marked-for-deletion.yaml"):
             continue
-        if basename in generated_files:
+        if _is_generated(basename, generated_files):
             continue
         if any(basename.startswith(prefix) for prefix in service_prefixes):
             selected.append(basename)
@@ -1429,6 +1463,7 @@ class ProjectManager:
         service_port: int | None,
         output_dir: str,
         created_files: list[str],
+        private_key: str | None,
     ) -> None:
         """Emit the sleep-mode waker for one component, or nothing.
 
@@ -1542,6 +1577,7 @@ class ProjectManager:
             output_dir=output_dir,
             template_path=secret_template,
             created_files=created_files,
+            private_key=private_key,
         )
         logger.info(
             "sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference
@@ -1556,6 +1592,7 @@ class ProjectManager:
         output_dir: str,
         template_path: str,
         created_files: list[str],
+        private_key: str | None,
     ) -> None:
         """Write one deployment SOPS secret manifest (RC-5 Phase 6c shared writer).
 
@@ -1571,6 +1608,10 @@ class ProjectManager:
             self._add_secret_to_create(deployment_name, spec.secret_type, spec.register_secret)
 
         secret_data = dict(spec.secret_pairs)
+        manifest_name = f"{spec.secret_name}-secret"
+        if spec.keep_existing_values:
+            existing = _existing_secret_pairs(os.path.join(output_dir, f"{manifest_name}.sops.yaml"), private_key)
+            secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
         if spec.resolve_aliases and spec.secret_type:
             aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
             if aliases:
@@ -1579,7 +1620,6 @@ class ProjectManager:
                 secret_data.update(resolved_aliases)
                 logger.info(f"Added {len(resolved_aliases)} resolved {spec.secret_type} aliases to deployment secret")
 
-        manifest_name = f"{spec.secret_name}-secret"
         secret_path = self._manifest_generator.create_manifest_file(
             template_path=template_path,
             values={
@@ -2499,13 +2539,10 @@ class ProjectManager:
             # Create infrastructure resources directory in deployment repo
             # Path: {cluster}/{project_name}/infrastructure/
             # This contains the actual Kubernetes resources (PostgreSQL cluster, secrets)
-            repo_path = infra_repo_config.get("path", "")
-            if repo_path:
-                infra_resources_dir = os.path.join(
-                    deployment_working_dir, repo_path, cluster_name, project_name, "infrastructure"
-                )
-            else:
-                infra_resources_dir = os.path.join(deployment_working_dir, cluster_name, project_name, "infrastructure")
+            infra_resources_dir = os.path.join(
+                deployment_working_dir,
+                generate_infrastructure_manifest_path(cluster_name, project_name, infra_repo_config["path"]),
+            )
             os.makedirs(infra_resources_dir, exist_ok=True)
 
             # Write manifests - secret as .to-sops.yaml for encryption
@@ -3998,10 +4035,7 @@ class ProjectManager:
                     use_sops=spec.encrypt,
                 )
                 if spec.encrypt:
-                    # Beide namen in de gewenste toestand: zag de prune de .sops.yaml van de
-                    # vorige run als overbodig, dan verdwijnt hij vlak voor de encryptie en
-                    # heeft de skip-if-unchanged niets om tegen te vergelijken.
-                    created_files.extend([f"{spec.filename}.to-sops.yaml", f"{spec.filename}.sops.yaml"])
+                    created_files.append(f"{spec.filename}.to-sops.yaml")
                 else:
                     created_files.append(f"{spec.filename}.yaml")
                 logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
@@ -4047,11 +4081,8 @@ class ProjectManager:
         deployment_name = deployment["name"]
         cluster_name = deployment["cluster"]
 
-        repo_path = await self.get_repository_path(deployment["repository"])
-        if repo_path:
-            deployment_path = f"{repo_path}/{cluster_name}/{project_name}/{deployment_name}"
-        else:
-            deployment_path = f"{cluster_name}/{project_name}/{deployment_name}"
+        repo_path = await self.get_repository_path(deployment["repository"]) or ""
+        deployment_path = generate_deployment_manifest_path(cluster_name, project_name, deployment_name, repo_path)
 
         prefixed_namespace = get_prefixed_namespace(cluster_name, deployment["namespace"])
         target_path = os.path.join(await git_connector.get_working_dir(), deployment_path)
@@ -5526,6 +5557,7 @@ class ProjectManager:
         """
         project_data = await self.get_contents()
         working_dir = await git_connector.get_working_dir()
+        private_key = await self._sops_private_key_for(project_data)
 
         project_name = await self.get_name()
         logger.info(f"Creating application manifests for project: {project_name}")
@@ -6596,6 +6628,7 @@ class ProjectManager:
                 service_port=variables.get("service_port"),
                 output_dir=full_output_dir,
                 created_files=created_files,
+                private_key=private_key,
             )
 
             # Create PVC manifests for persistent storage using PVCManager
@@ -6855,6 +6888,7 @@ class ProjectManager:
                         output_dir=full_output_dir,
                         template_path=secret_template_path,
                         created_files=created_files,
+                        private_key=private_key,
                     )
 
         # Emit one tenant-baseline NetworkPolicy per deployment after all
@@ -8876,7 +8910,7 @@ class ProjectManager:
         self,
         name: str,
         url: str,
-        username: str,
+        username: str | None,
         password: str,
     ) -> dict[str, Any]:
         """
@@ -8887,7 +8921,8 @@ class ProjectManager:
         Args:
             name: Unique registry identifier
             url: Registry URL (without protocol, may include path)
-            username: Registry username or token name
+            username: Registry username or token name; omitted from the entry when empty,
+                so the project file carries only what the caller supplied (RC-187)
             password: Registry password or token (will be AGE-encrypted)
 
         Returns:
@@ -8906,7 +8941,9 @@ class ProjectManager:
 
         encrypted_password = LiteralScalarString(await encrypt_age_content(password, public_key))
 
-        registry_entry = {"name": name, "upstream": url, "username": username, "password": encrypted_password}
+        registry_entry: dict[str, Any] = {"name": name, "upstream": url, "password": encrypted_password}
+        if username:
+            registry_entry["username"] = username
         created = self._upsert_registry_entry(project_data, registry_entry)
 
         action = "Add" if created else "Update"

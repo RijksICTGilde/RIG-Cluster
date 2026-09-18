@@ -367,6 +367,9 @@ def test_auth_wall_contributes_sidecar_and_port_override():
         "banner": "Restricted",
     }
     assert resolved == [("mydep", "keycloak")]
+    [cookie_spec] = contribution.secret_files
+    assert cookie_spec.secret_name == "mydep-web-oauth2-cookie"
+    assert cookie_spec.keep_existing_values is True
 
 
 def test_auth_wall_contributes_nothing_without_keycloak_secret():
@@ -741,8 +744,8 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
         # hand-authored "Variabelen" fieldset used to sit.
         "Aliassen",
         "Eigen omgevingsvariabelen",
-        # Waar de image vandaan komt staat boven wat er verder aan het component hangt.
-        "Eigen registry",
+        # image-registries staat hier NIET meer tussen: die knoop noemt een slot en landt
+        # daarmee bij het image-veld in plaats van onderaan (RC-187).
         "services{persistent-storage}/config",
         "services{temp-storage}/config",
         "services{attachments}/config",

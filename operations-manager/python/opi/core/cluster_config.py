@@ -311,6 +311,9 @@ CLUSTER_CONFIG = {
             "backend": "quay-proxy-organization",
             "registry_host": "rcr.rijksapps.nl",
             "customer_name": "rig",
+            # De Capsule-tenants waarin de operator het pull-secret neerzet. Verplicht veld
+            # op de CR; onze namespaces heten rig-prd-*, dus de tenant is prd.
+            "tenants": ["prd"],
             # Gemeten op het cluster, niet uit de operator-documentatie; zie
             # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",

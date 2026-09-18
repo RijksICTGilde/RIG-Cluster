@@ -5,7 +5,7 @@ de registry en een token. Wat er technisch onder gebeurt verschilt per cluster, 
 verschil merkt de afnemer niet.
 
 ```
-afnemer geeft:  upstream + gebruikersnaam + token          (eenmalig, projectniveau)
+afnemer geeft:  upstream + token (+ gebruikersnaam waar die telt)  (eenmalig, projectniveau)
                 per component: welke registry hoort bij deze image
 
 ZAD doet op een cluster met internettoegang (kind, sandbox):
@@ -33,6 +33,59 @@ services:
             password: <AGE>
 ```
 
+Een entry draagt precies een van twee manieren om te pullen: `username` plus `password`, of
+een `secretName` naar een dockerconfigjson-secret dat het platform zelf neerzet. Geen van
+beide of allebei weigert `RegistryEntry` (`_has_exactly_one_way_to_pull`), dus het formulier
+en de API op dezelfde save-poort. Zonder die regel kwam een entry zonder token overal
+doorheen en schreef de backend stil geen pull-secret, waarna de afnemer het pas merkte aan
+een pod die niet kon pullen. Komt `backends.py` er toch, dan blaast hij op
+(`MissingRegistryCredentialsError`); op ODCN komt er dus ook geen proxy-organisatie zonder
+credentials meer. De twee entries die de vloot heeft (`algor-odc` met token, `dp-bn7` met
+`secretName`) voldoen allebei.
+
+De weigering noemt wat er mist, en `project_validation.py` zet er de plek voor
+(`registries, nummer 2: ...`, geteld vanaf 1).
+
+### De gebruikersnaam is optioneel, het token niet
+
+Wat `username` betekent verschilt per registry: bij ghcr.io doet de waarde er niet toe zolang
+het token klopt, bij Docker Hub moet het de accountnaam zijn en bij Quay de robotnaam. Dat
+verschil kan een formulier niet weten en de afnemer hoeft het niet te weten, dus het veld is
+optioneel.
+
+Leeg laten verandert niets aan het projectbestand, ook niet in de migratie. De gebruikersnaam
+voor de dockerconfigjson ontstaat pas bij het bouwen van het manifest, uit
+`PULL_USERNAME_PLACEHOLDER` (`naming.py`, waar ook staat waarom er iets moet staan) via
+`_pull_username()` in `backends.py`.
+
+Een registry die wel een echte naam eist heeft geen poort die hem bij een lege gebruikersnaam
+tegenhoudt. De tokentoets (`enforcers.py`) praat echt met de registry, met precies het paar
+dat de backend daarna schrijft, maar alleen in een formulierflow met het registryblok: de
+create- en edit-wizard (bij de stap vooruit en bij de eindinzending), de dienstenmodal en de
+modal van het blok. Niet in de componentmodal en niet via de API (ook niet
+`POST .../registries/by-credentials`), en alleen tegen images die in de data van de flow staan
+(zie "Validaties" verderop). Een component dat later via de componentmodal of de API
+bijkomt wordt niet getoetst; zo'n entry loopt pas bij de pull vast. Faalt de toets terwijl het
+veld leeg was, dan noemt de melding de gebruikersnaam (`_access_denied_message`).
+
+Het tokenveld in het formulier is een `WidgetType.PASSWORD`: afgeschermd op het scherm.
+
+De naam is vrije tekst plus een afgeleide verwijzing, net als bij het project zelf:
+
+```yaml
+        registries:
+          - name: code-overheid          # de verwijzing, afgeleid en daarna bevroren
+            display-name: Code Overheid  # wat de afnemer typte
+```
+
+`display-name` mag ontbreken (elke registry van voor RC-187 heeft alleen een `name`); dan
+is de verwijzing zelf het label op het scherm. `name` mag ook ontbreken, maar alleen met een
+label ernaast: `generate_missing_values` leidt de slug er dan uit af met `registry_slug()`,
+uniek binnen het project, en laat een bestaande slug met rust. Hij is de verwijzing vanaf
+componenten en zit in de naam van het dockerconfigjson-secret, dus een gewijzigd label mag
+hem niet meenemen. Die haak draait op allebei de schrijfwegen: de portal via `post_merge`
+van de configsectie, de API via `registry.generate_missing_values`.
+
 Bij een component staat alleen een verwijzing bij naam, en alleen als er iets te verwijzen
 valt:
 
@@ -46,22 +99,71 @@ components:
           registry: code-overheid
 
   - name: proxy                                   # publieke image
-    image: nginx:alpine                           # dienst niet aangevinkt, dus niets
+    image: nginx:alpine                           # geen keuze, dus niets
 ```
 
-"Publieke registry" is een non-waarde: geen vermelding, geen sleutel. Een deployment mag de
+"Automatisch" is een non-waarde: geen vermelding, geen sleutel. Een deployment mag de
 keuze overschrijven met dezelfde dienstvermelding onder `deployments[].components[].services`.
+
+### De keuze staat bij de image, en de keuze IS de selectie
+
+Zodra het project minstens een registry heeft, staat er bij elk component een keuzeveld
+**Registry**, direct achter het image-veld, zonder dat de dienst bij dat component is
+aangevinkt. Waar dat veld staat bepaalt het FORMULIER (`COMPONENT_IMAGE_SLOT` in
+`opi/forms/layout.py`), wat erin komt bepaalt de dienst (`slot=` op zijn layoutknoop).
+Een dienst die geen slot noemt landt nog steeds onderaan de componentvorm.
+
+Er is geen aan/uit voor deze dienst op componentniveau: hij staat niet in het rijtje vinkjes.
+Twee knoppen voor dezelfde beslissing zou betekenen dat we moeten bedenken wat een
+aangevinkte dienst met waarde "automatisch" betekent, en wat een uitgevinkte dienst met een
+registry erin betekent, en die twee regels lopen uit elkaar. Een keuzelijst met een
+expliciete "geen"-optie is net zo expliciet als een vinkje, alleen met meer opties.
+
+Drie richtingen, en ze gelden voor het formulier en voor de API:
+
+| Wat de afnemer doet | Wat er gebeurt |
+|---|---|
+| een registry kiezen | de dienstvermelding wordt gematerialiseerd op dat component |
+| "Automatisch" kiezen | een bestaande vermelding gaat weg; er wordt niets geschreven |
+| niets kiezen | er verandert niets; afwezig BETEKENT automatisch (zie de voorrangsregel hieronder) |
+
+Dat is de val waar `instructions/services.md` voor waarschuwt (het `{K}`-padfilter maakt van
+een default stil een selectie), maar hier gewild, en alleen in de ene richting. De regel staat
+een keer, als `component_selection_follows_config` op de dienst; wat daaruit volgt staat in
+`instructions/services.md`.
+
+Of het veld verschijnt volgt uit zijn eigen keuzelijst (`hidden_without_options`). Heeft het
+project geen registries, dan blijft de componentvorm zoals hij was: de toestand van 47 van de
+49 projecten.
+
+### De weg terug is geen stille weg
+
+Het keuzeveld verdwijnt als de laatste registry weggaat OF als de dienst op projectniveau
+wordt uitgezet, maar de verwijzing in het projectbestand niet. `validate_registry_references`
+(`references.py`, aan de haak `validate_project`) weigert daarom het opslaan, met de
+componenten erbij die de registry nog gebruiken. Niet automatisch opruimen: dan verandert
+stilletjes waar een image vandaan komt.
+
+Voor de tweede route slaat `_strip_removed_services_from_components` (`wizard_sections.py`,
+de `post_merge` van de dienstensectie) deze dienst over. Die hook draait VOOR
+`validate_project` en gooit elke componentvermelding weg waarvan de dienst niet meer op
+projectniveau staat, waarna de grendel niets meer ziet. Zonder de uitzondering deed dezelfde
+handeling bovendien twee dingen: de lijstvorm op een component werd gestript, de dict-vorm op
+een deployment-component niet, en die laatste werd dan wel geweigerd.
+
+Dat staat naast `values_must_exist` en niet in plaats daarvan: die toets slaat een LEGE
+keuzelijst met opzet over, en leeg is precies de toestand die hier ontstaat.
 
 De afnemer schrijft altijd de UPSTREAM, nooit een adres van het platform. Dat houdt het
 bestand overdraagbaar naar een ander platform.
 
 ### De keuze bij een component is een voorrangsregel, geen aan/uit
 
-Wat een component aanvinkt bepaalt WELKE van je registries voorgaat, niet OF er een van je
+Wat je bij een component kiest bepaalt WELKE van je registries voorgaat, niet OF er een van je
 registries geldt. `build_rules()` zet alle registries van het project in de lijst, met de
-gekozen registry vooraan en de clustertabel erachter. Een component dat de dienst niet
-aanvinkt maar wel een image draait die onder een van je eigen upstreams valt, gaat dus ook
-langs je eigen proxy en krijgt dat pull-secret.
+gekozen registry vooraan en de clustertabel erachter. Een component op "Automatisch" met een
+image die onder een van je eigen upstreams valt, gaat dus ook langs je eigen proxy en krijgt
+dat pull-secret.
 
 Bewust zo, en om twee redenen:
 
@@ -77,7 +179,7 @@ Bewust zo, en om twee redenen:
 Het overwogen alternatief (voor een component met een keuze alleen die ene regel plus de
 clustertabel, en zonder keuze alleen de clustertabel) is daarop afgewezen.
 
-De afnemer hoort de consequentie wel te kennen, en `help.md` noemt haar: niet aanvinken is
+De afnemer hoort de consequentie wel te kennen, en `help.md` noemt haar: "Automatisch" is
 geen keuze voor de publieke weg. Publiek is wat een image is als hij buiten al je eigen
 registries valt. `TestEenEigenRegistryGeldtVoorHetHeleProject` in
 `tests/test_image_registries_rules.py` pint het vast.
@@ -170,6 +272,40 @@ vergelijken zijn de tokentoets (`enforcers.py`) en het vooruit invullen van het 
 
 `display_image()` is de weg terug, voor de schermen: een gebruiker ziet de eigen registry
 in plaats van de kale RCR-URL.
+
+## Wat een afnemer plakt is zelden een upstream
+
+`normalize_upstream()` (`upstream.py`) maakt van een geplakte browser-URL of een volledige
+image-verwijzing de upstream die wij nodig hebben:
+
+| Geplakt | Upstream |
+|---|---|
+| `https://code.overheid.nl/robbert/-/packages` | `code.overheid.nl/robbert` |
+| `https://github.com/orgs/rijksictgilde/packages` | `ghcr.io/rijksictgilde` |
+| `https://hub.docker.com/r/bitnami/nginx` | `docker.io/bitnami` |
+| `https://gitlab.com/groep/project/container_registry` | `registry.gitlab.com/groep/project` |
+| `code.overheid.nl/team/app:1.2` | `code.overheid.nl/team` |
+
+Alleen een tag of digest onderscheidt een image-verwijzing van een upstream met een pad:
+`code.overheid.nl/team` blijft dus zoals hij is. Een vorm die we niet kennen laten we met
+rust op de generieke bewerkingen na (protocol eraf, kleine letters, geen afsluitende schuine
+streep), zodat het patroon hem afwijst in plaats van er iets van te maken dat ergens anders
+heen wijst. Een eigen GitLab wordt om die reden niet geraden: de registryhost is daar een
+installatiekeuze.
+
+`upstream_from_project_images()` doet het omgekeerde en vult het veld vooruit in: een
+nieuwe registry krijgt de upstream die uit de images van dit project volgt, en alleen als
+die eenduidig is. Weglaten kan de vraag niet: op ODCN wordt een proxy-organisatie aangemaakt
+voor precies een upstream-namespace, en die moet er zijn voordat er een image is.
+
+De omzetting hangt als `BeforeValidator` aan het veld in `config_model.py`, dus de API en het
+formulier (via `ModelFieldValidator`, dat zijn toets uit de ANNOTATIE bouwt) krijgen hem
+allebei; de schrijfkant van het formulier roept dezelfde functie aan via `UpstreamConverter`,
+en de migratie 2.8 -> 2.9 ook.
+
+Een projectbestand dat er al staat repareert hij bewust niet: onder `STORED_CONTEXT_KEY` slaat
+de omzetting over, zodat een opgeslagen `https://ghcr.io` luid geweigerd wordt in plaats van
+stil niet meer te gelden (de reden staat bij `_normalize_upstream` in `config_model.py`).
 
 ## De provisioning-backend
 
@@ -385,7 +521,9 @@ organisatie in RCR. Bovenstrooms verandert er niets: de images staan er nog.
 |---|---|
 | Regelvorm en `resolve_image()` | `opi/services/catalog/image_registries/rules.py` |
 | De twee bronnen samengevoegd | `opi/services/catalog/image_registries/resolution.py` |
-| Naamregels | `opi/services/catalog/image_registries/naming.py` |
+| Naamregels en de slug uit een label | `opi/services/catalog/image_registries/naming.py` |
+| Upstream uit wat er geplakt is | `opi/services/catalog/image_registries/upstream.py` |
+| De weg terug bij het opslaan | `opi/services/catalog/image_registries/references.py` |
 | Backends | `opi/services/catalog/image_registries/backends.py` |
 | Eigendomsregels over het hele project | `opi/services/catalog/image_registries/ownership.py`, aan de haak `validate_project` |
 | Clusterconfig | `get_image_registries_config` in `opi/core/cluster_config.py` |
@@ -480,9 +618,13 @@ de dienst weg te laten.
 
 De tokentoets meet wat er te meten valt: het tag-overzicht (`list-tags`, dus de
 `tags/list`-aanroep die het leesrecht nodig heeft) van een repository waar dit project
-werkelijk een image uit haalt. Is er nog geen zo'n image (de normale toestand in de
-wizard, waar de registry vóór de componenten komt), dan wordt er niets geweigerd: een
-weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op een aanname.
+werkelijk een image uit haalt. Hij leest de samengevoegde data van de flow
+(`WizardState.get_merged_data`). In de edit-wizard en de modals staan de bestaande
+componenten daar altijd in; alleen bij de eerste stap vooruit in de create-wizard, waar de
+registry vóór de componenten komt, nog niet. Is er geen image onder de upstream, dan wordt er
+niets geweigerd: een weigering op iets wat we niet gemeten hebben blokkeert een gebruiker op
+een aanname. Bij de eindinzending draait `_validate_whole_flow` de toets opnieuw over alle
+secties, en dan staan de componenten er in de create-wizard ook bij.
 
 De toets draait NA de formulierverwerking, en die heeft het token op dat moment al
 versleuteld. Hij pakt de opgeslagen waarde dus eerst uit, alle drie de opslagvormen die

@@ -242,7 +242,8 @@ service actually shows up there.
       body means the config model is not wired to the layer.
 - [ ] The typed body round-trips: a real config block lands in the project YAML at the
       target, and a block the model rejects fails at request time (422) or, as a
-      backstop, at the save chokepoint with the accepted-field list. Do not reason
+      backstop, at the save chokepoint (with the accepted-field list only when a key is
+      unknown). Do not reason
       about it; submit and read the resulting YAML, the same rule as item 4.
 - [ ] A service that carries config but exposes no API route is a gap, not an absence:
       either it has a config model declared on no layer (wire the layer, or record why
