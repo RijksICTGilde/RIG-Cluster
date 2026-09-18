@@ -14,6 +14,7 @@ from opi.core.cluster_config import (
     get_cluster_config,
     get_cluster_domains_config,
     get_database_server,
+    get_external_dns_target_for_hostname,
     get_ingress_cluster_issuer,
     get_ingress_config,
     get_ingress_ip_whitelist,
@@ -261,6 +262,59 @@ class TestClusterDomainFunctions:
     def test_production_supported_domains(self):
         domains = get_supported_domain_names("odcn-production")
         assert "rijks.app" in domains
+
+
+class TestExternalDnsTargetForHostname:
+    """De external-dns-annotatie komt uit hetzelfde ``domains``-blok als de rest.
+
+    De lezer pakt het blok met ``.get(...)``: leest hij de verkeerde sleutel, dan krijgt
+    elke hostnaam None en verdwijnt de annotatie zonder foutmelding uit de ingress. Deze
+    toetsen pinnen daarom een echt doel uit de clusterconfiguratie, niet alleen de vorm.
+    """
+
+    def test_subdomain_gets_the_target_of_its_base_domain(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "mijnapp.rijks.app") == "router.rijks.app"
+
+    def test_bare_base_domain_gets_the_same_target(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "rijks.app") == "router.rijks.app"
+
+    def test_each_configured_domain_has_its_own_target(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rijksapp.nl") == "router.rijksapp.nl"
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rijksapp.dev") == "router.rijksapp.dev"
+
+    def test_hostname_in_the_cluster_postfix_zone_has_no_target(self):
+        """De standaardzone van het cluster krijgt zijn DNS van de router zelf."""
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rig.prd1.gn2.quattro.rijksapps.nl") is None
+
+    def test_a_name_that_only_ends_in_the_same_letters_is_not_a_subdomain(self):
+        """``nietrijks.app`` valt niet onder ``rijks.app``, alleen ``*.rijks.app`` doet dat."""
+        assert get_external_dns_target_for_hostname("odcn-production", "nietrijks.app") is None
+
+    def test_cluster_without_configured_targets_returns_none(self):
+        """De Kind-clusters publiceren geen DNS, dus geen enkel domein heeft een doel."""
+        assert get_external_dns_target_for_hostname("local", "mijnapp.kind") is None
+        assert get_external_dns_target_for_hostname("sandboxed-local", "mijnapp.sandbox.rijksapp.dev") is None
+
+    def test_the_most_specific_domain_wins(self):
+        """Valt een naam onder twee geconfigureerde domeinen, dan telt de langste."""
+        config = {
+            "supported_domains": [
+                {"domain": "example.nl", "external_dns_target": "router.example.nl"},
+                {"domain": "test.example.nl", "external_dns_target": "router.test.example.nl"},
+            ]
+        }
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=config):
+            target = get_external_dns_target_for_hostname("odcn-production", "app.test.example.nl")
+
+        assert target == "router.test.example.nl"
+
+    def test_cluster_without_domains_block_returns_none(self):
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=None):
+            assert get_external_dns_target_for_hostname("odcn-production", "mijnapp.rijks.app") is None
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            get_external_dns_target_for_hostname("nonexistent-cluster", "mijnapp.rijks.app")
 
 
 class TestSelectableClusters:
