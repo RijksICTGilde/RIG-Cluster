@@ -303,6 +303,15 @@ exit "$SKOPEO_EXIT"
 """
 
 
+#: De nepskopeo legt zijn argv vast via procfs en meet de mode met GNU ``stat -c``; op macOS
+#: bestaat geen van beide, en dan is de toets rood zonder dat er iets aan de code mankeert.
+#: Alleen de tests die de OPNAME lezen hangen hieraan; de weigeringen draaien overal.
+RECORDING_NEEDS_PROCFS = pytest.mark.skipif(
+    not Path("/proc/self/cmdline").exists(),
+    reason="de nepskopeo leest zijn argv uit /proc en meet de mode met GNU stat -c",
+)
+
+
 @pytest.fixture
 def fake_skopeo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Een echte ``skopeo`` op PATH die zijn argv en authfile vastlegt."""
@@ -383,6 +392,7 @@ class TestDestinationGuard:
         assert result == (False, REFUSED_DESTINATION_REASON)
         mock_exec.assert_not_called()
 
+    @RECORDING_NEEDS_PROCFS
     @pytest.mark.parametrize("repository", ["ghcr.io/iets", "code.overheid.nl/iets"])
     async def test_a_public_registry_is_checked(self, connector, resolver, fake_skopeo, repository):
         assert await connector.check_repository_access(repository, "robbert", PASSWORD) == (True, "")
@@ -450,6 +460,7 @@ def _assert_authfile_used_and_gone(record: Path, registry: str, username: str) -
 
 
 @pytest.mark.asyncio
+@RECORDING_NEEDS_PROCFS
 class TestCredentialsStayOutOfArgv:
     @pytest.mark.parametrize("exit_code", ["0", "1"])
     async def test_list_tags(self, connector, resolver, fake_skopeo, monkeypatch, exit_code):
