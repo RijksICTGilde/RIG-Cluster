@@ -151,7 +151,7 @@ def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str], 
 
 
 def get_supported_base_domains(cluster: str | None = None) -> set[str]:
-    """Get all supported base domains for nice URLs.
+    """Get all supported base domains.
 
     Args:
         cluster: Optional cluster name to get domains for specific cluster.

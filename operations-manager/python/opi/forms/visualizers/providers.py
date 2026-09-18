@@ -573,8 +573,7 @@ class BaseDomainOptionsProvider:
 class ClusterBaseDomainOptionsProvider:
     """Provides base domain options based on the selected cluster.
 
-    Reads the domains the cluster offers from CLUSTER_CONFIG. When no cluster
-    is specified, returns all known domains across all clusters.
+    Reads the domains the cluster offers from CLUSTER_CONFIG.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
