@@ -69,15 +69,15 @@ def _docstrings(boom: ast.AST) -> set[int]:
     return gevonden
 
 
-def _handgemaakte_namen(pad: pathlib.Path) -> list[str]:
+def _handgemaakte_namen(bron: str, herkomst: str) -> list[str]:
     """Tekstwaarden die op een suffix EINDIGEN, dus een naam of globpatroon.
 
     Een logregel die de suffix midden in een zin noemt is prose, geen tweede bron.
     """
-    boom = ast.parse(pad.read_text())
+    boom = ast.parse(bron)
     overslaan = _docstrings(boom)
     return [
-        f"{pad.relative_to(_OPI_ROOT)}:{knoop.lineno}: {knoop.value!r}"
+        f"{herkomst}:{knoop.lineno}: {knoop.value!r}"
         for knoop in ast.walk(boom)
         if isinstance(knoop, ast.Constant)
         and isinstance(knoop.value, str)
@@ -86,10 +86,25 @@ def _handgemaakte_namen(pad: pathlib.Path) -> list[str]:
     ]
 
 
+#: Een bron met alle drie de gevallen: een docstring, een logzin, en een echte tweede bron.
+_PROEFBRON = '''"""Schrijft de platte helft als <naam>.to-sops.yaml"""
+
+logger.info("klaar met .sops.yaml voor dit component")
+pad = f"{naam}.to-sops.yaml"
+'''
+
+
 class TestGeenTweedeBron:
+    def test_de_scan_vindt_een_teruggezette_literal(self) -> None:
+        """Zonder deze toets is een scan die niets meer vindt niet te onderscheiden van schone code."""
+        assert _handgemaakte_namen(_PROEFBRON, "proef.py") == ["proef.py:4: '.to-sops.yaml'"]
+
     def test_alleen_de_eigenaar_noemt_de_suffixen(self) -> None:
         treffers = [
-            regel for pad in sorted(_OPI_ROOT.rglob("*.py")) if pad != _EIGENAAR for regel in _handgemaakte_namen(pad)
+            regel
+            for pad in sorted(_OPI_ROOT.rglob("*.py"))
+            if pad != _EIGENAAR
+            for regel in _handgemaakte_namen(pad.read_text(), str(pad.relative_to(_OPI_ROOT)))
         ]
         assert not treffers, "Gebruik sops_filenames()/de suffixconstanten uit opi/utils/sops.py:\n" + "\n".join(
             treffers
