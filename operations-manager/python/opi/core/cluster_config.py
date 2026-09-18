@@ -1230,11 +1230,9 @@ def get_cluster_domains_config(cluster_name: str) -> dict | None:
         cluster_name: Name of the cluster
 
     Returns:
-        Dictionary containing the domain configuration with keys:
-        - supported_domains: List of domains this cluster offers, each with its
-          issuer, dot support, subdomain restriction and external-dns target
-
-        Returns None if the cluster offers no domains of its own.
+        The ``domains`` block: ``supported_domains`` holds one entry per domain the
+        cluster offers, with its issuer, dot support, subdomain restriction and
+        external-dns target. None if the cluster offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
@@ -1247,14 +1245,12 @@ def get_supported_domain_names(cluster_name: str) -> list[str]:
     """
     Get the names of the domains a cluster offers.
 
-    Extracts the domain strings from the structured supported_domains list.
-
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        List of domain strings the cluster offers.
-        Returns empty list if the cluster offers no domains of its own.
+        The ``domain`` of every entry in ``supported_domains``, empty if the cluster
+        offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
