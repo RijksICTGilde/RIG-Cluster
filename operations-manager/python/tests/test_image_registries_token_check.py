@@ -226,7 +226,6 @@ class TestZonderGebruikersnaam:
         assert "geen gebruikersnaam ingevuld" in melding
         assert "Docker Hub en Quay" in melding
         assert UNREADABLE_REASON in melding
-        # De reden van skopeo hoort er niet in te staan, ook niet in deze tak.
         assert "incorrect username or password" not in melding
 
     @pytest.mark.asyncio

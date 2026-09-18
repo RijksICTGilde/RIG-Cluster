@@ -71,8 +71,7 @@ class RegistryTokenEnforcer:
 def _access_denied_message(repository: str, has_username: bool) -> str:
     """Wat de afnemer op het scherm krijgt als de registry ons niet binnenlaat.
 
-    De reden is vast en komt niet van skopeo: zijn stderr verschilt per uitkomst en is
-    daarmee een orakel op het clusternetwerk (zie ``UNREADABLE_REASON``). Faalt de toets
+    De reden is vast en komt niet van skopeo (zie ``UNREADABLE_REASON``). Faalt de toets
     terwijl de optionele gebruikersnaam leeg was, dan ligt het waarschijnlijk daaraan
     (Docker Hub, Quay), en dat zegt de melding.
     """
