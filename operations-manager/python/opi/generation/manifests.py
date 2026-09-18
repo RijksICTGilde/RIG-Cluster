@@ -546,8 +546,7 @@ class ManifestGenerator:
                 with open(decrypt_sops_template_path) as f:
                     decrypt_sops_data = yaml.load(f)
 
-                # decrypt-sops.yaml references the final encrypted filenames, so a file
-                # still awaiting encryption is listed under the name it will carry. Both
+                # decrypt-sops.yaml lists the names the files carry after encryption, so both
                 # halves of one pair collapse onto the same name, hence the deduplication.
                 decrypt_files = list(dict.fromkeys(sops_filenames(f).encrypted for f in sops_files))
 
