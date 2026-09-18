@@ -14,6 +14,7 @@ Twee testprojecten dekken de twee gevallen:
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -69,11 +70,14 @@ def test_de_otp_staat_er_als_code_en_niet_als_seed(auth_page: Page, app_server: 
     en de seed blijft op de server - die zou voor altijd codes geven, deze code vergaat
     binnen een periode.
     """
+    voor = time.time()
     _open(auth_page, app_server, MET_BLOKKEN, "services-info")
     html = auth_page.content()
+    na = time.time()
 
-    code, _ = totp_now(SEED)
-    assert code in html, "de OTP-code van dit moment staat niet op de pagina"
+    # De render ligt tussen voor en na; valt daar een periodegrens tussen, dan is het een van beide codes.
+    codes = {totp_now(SEED, at=moment)[0] for moment in (voor, na)}
+    assert any(code in html for code in codes), "de OTP-code van dit moment staat niet op de pagina"
     assert SEED not in html, "de seed hoort de pagina nooit te bereiken"
     assert "Toon code" not in html, "de knop is een veld geworden"
 

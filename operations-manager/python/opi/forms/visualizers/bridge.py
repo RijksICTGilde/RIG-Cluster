@@ -90,7 +90,7 @@ def editable_to_form_field(
     # (e.g. dict → string for select dropdowns). Use view() for read-only display.
     display_value = raw_value
     if converter:
-        if widget in ("select", "text", "textarea", "radio"):
+        if widget in ("select", "text", "password", "textarea", "radio"):
             display_value = converter.read(raw_value, context_data=yaml_data)
         else:
             display_value = converter.view(raw_value, context_data=yaml_data)
@@ -245,6 +245,8 @@ def should_render_editable(
         return False
 
     ed = editable.editable
+    if ed.hidden_without_options and not _has_options(editable, yaml_data, index):
+        return False
     depends_on = ed.depends_on
     show_when = ed.show_when
 
@@ -296,6 +298,20 @@ def should_render_editable(
             dep_value = dep_value(yaml_data)
 
     return evaluate_show_when(dep_value, show_when)
+
+
+def _has_options(editable: EditableVisualizer, yaml_data: dict[str, Any], index: int | None) -> bool:
+    """Whether this field's own options provider has anything to offer right now.
+
+    ``yaml_path`` travels along because a provider may phrase itself differently per layer
+    (the registry picker's empty option means "automatic" on a component and "no override" on
+    a deployment-component).
+    """
+    ed = editable.editable
+    if not ed.values_provider:
+        return False
+    yaml_path = resolve_path(ed.yaml_path, index) if index is not None else ed.yaml_path
+    return bool(_resolve_options(ed.values_provider, {"yaml_data": yaml_data, "yaml_path": yaml_path}))
 
 
 def resolve_options_for_editable(

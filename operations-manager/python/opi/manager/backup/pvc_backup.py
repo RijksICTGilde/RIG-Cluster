@@ -468,6 +468,7 @@ class PVCBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "pvc_name": pvc_name,
                 "clone_pvc_name": clone_pvc_name,
                 "timestamp": timestamp,
@@ -684,6 +685,7 @@ class PVCBackupManager(BaseBackupManager):
         storage_size: str = "10Gi",
         storage_class: str | None = None,
         overwrite: bool = False,
+        project_name: str | None = None,
     ) -> RestoreResult:
         """
         Restore a PVC from a Kopia backup.
@@ -697,6 +699,7 @@ class PVCBackupManager(BaseBackupManager):
             storage_size: Size for new PVC (required if creating new)
             storage_class: Storage class for new PVC (optional)
             overwrite: If True, allows restoring to existing PVC
+            project_name: Project that owns the namespace
 
         Returns:
             RestoreResult with operation details
@@ -712,6 +715,7 @@ class PVCBackupManager(BaseBackupManager):
                 storage_size=storage_size,
                 storage_class=storage_class,
                 overwrite=overwrite,
+                project_name=project_name,
             )
 
     async def _restore_pvc(
@@ -724,6 +728,7 @@ class PVCBackupManager(BaseBackupManager):
         storage_size: str = "10Gi",
         storage_class: str | None = None,
         overwrite: bool = False,
+        project_name: str | None = None,
     ) -> RestoreResult:
         """
         Internal: restore a single PVC (lock must be held).
@@ -777,6 +782,8 @@ class PVCBackupManager(BaseBackupManager):
                 kopia_password=kopia_password,
                 backup_prefix=backup_prefix,
                 snapshot_id=snapshot_id,
+                project_name=project_name,
+                cluster=cluster,
             )
 
             # 5. Wait for pod completion
@@ -1106,6 +1113,7 @@ spec:
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "pvc_name": pvc_name,
                 "target_pvc_name": target_pvc_name,
                 "s3_endpoint": self.config.s3_endpoint,

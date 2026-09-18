@@ -51,6 +51,7 @@ async def _emit(project: dict, monkeypatch, *, service_port: int | None = 8080) 
         service_port=service_port,
         output_dir="/tmp/out",
         created_files=created_files,
+        private_key=None,
     )
     return created_files
 

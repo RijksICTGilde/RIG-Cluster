@@ -362,7 +362,9 @@ class ManifestGenerator:
             # Convert to relative paths from the base directory
             base_path = Path(directory)
             relative_files = []
-            for file_path in all_files:
+            # Sorted: glob follows the directory order, which differs per checkout and
+            # reshuffled the kustomization resources on every run.
+            for file_path in sorted(all_files):
                 try:
                     rel_path = Path(file_path).relative_to(base_path)
                     relative_files.append(str(rel_path))

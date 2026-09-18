@@ -60,6 +60,7 @@ _SCHEMA_SECTION_MARKER = "# Which schema in the dump holds"
 _RENDER_CONTEXT: dict[str, Any] = {
     "pod_name": "db-restore-test",
     "namespace": "rig-amt",
+    "service_account_name": "amt-sa",
     "reference_name": "amt-db",
     "target_db_host": "postgres.example",
     "target_db_port": 5432,

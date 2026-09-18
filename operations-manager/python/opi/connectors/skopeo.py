@@ -18,9 +18,8 @@ import threading
 from typing import TYPE_CHECKING
 
 from opi.core.config import settings
-from opi.services.catalog.image_registries.naming import upstream_host
 from opi.utils.age import decrypt_password_smart_auto_sync
-from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag
+from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
 from opi.utils.secrets import RegistrySecret
 
 if TYPE_CHECKING:
