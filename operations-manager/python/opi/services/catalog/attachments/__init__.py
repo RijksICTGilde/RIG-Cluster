@@ -255,7 +255,8 @@ class AttachmentsService(Service):
 
         De functies zelf blijven bij de wandelaars waar ze op leunen
         (``extract_attachment_usage`` en broers, in ``project_file_handler``); alleen de
-        aanroep hoort hier. Lazy, want die module leest via de dienstenlijst deze.
+        aanroep hoort hier. Lazy geimporteerd, want die module leest via de dienstenlijst
+        dit pakket.
         """
         from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 
