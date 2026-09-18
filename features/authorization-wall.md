@@ -77,7 +77,7 @@ The authorization wall is configured automatically from the project's existing K
 | OIDC Issuer URL | Keycloak realm discovery URL |
 | Client ID | Project's Keycloak client ID |
 | Client Secret | Project's Keycloak client secret (from envFrom) |
-| Cookie Secret | Auto-generated random 32-byte key |
+| Cookie Secret | Random 32-byte key, generated on the first deploy and kept on later ones (to rotate it, see `sops-skip-unchanged-reencryption.md`) |
 | Redirect URL | `https://<hostname>/oauth2/callback` |
 
 ## Dependencies

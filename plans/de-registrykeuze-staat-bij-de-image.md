@@ -1,6 +1,7 @@
 # De registrykeuze staat bij de image
 
-**Status**: plan, nog niets gebouwd. Vervolg op RC-177.
+**Status**: gebouwd (RC-187, PR #166). Vervolg op RC-177. Wat er staat is
+`features/image-registries.md`; hieronder staat de afweging waar het uit volgde.
 **Datum**: 2026-09-11
 **Context**: `features/image-registries.md`, `plans/private-images-uit-een-eigen-registry.md`, `instructions/services.md`
 
@@ -83,3 +84,5 @@ Voorstel: weigeren bij het opslaan, met de componenten erbij die de registry nog
 ## Open
 
 - Slot of anker. Ik neig naar het slot, zie hierboven.
+  **Beslist**: het slot. `COMPONENT_IMAGE_SLOT` in `opi/forms/layout.py`; een dienst
+  noemt de plek met `slot=` op zijn layoutknoop, en zonder opgave blijft hij onderaan.

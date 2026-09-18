@@ -179,6 +179,46 @@ class TestUpsertRegistryByCredentials:
         assert _registries(project_data)[0]["password"] == "encrypted-new"
 
     @pytest.mark.asyncio
+    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    async def test_zonder_gebruikersnaam_komt_de_sleutel_er_niet_in(
+        self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
+    ) -> None:
+        """RC-187: de gebruikersnaam is optioneel, en het projectbestand draagt alleen wat de
+        aanroeper meegaf -- geen lege string en geen plaatshouder. Die ontstaat pas bij het
+        bouwen van de dockerconfigjson."""
+        mock_encrypt.return_value = "encrypted"
+        project_data = _with_registries()
+        project_manager.get_contents = AsyncMock(return_value=project_data)
+
+        result = await project_manager.upsert_registry_by_credentials(
+            name="my-registry", url="ghcr.io", username=None, password="mytoken"
+        )
+
+        assert result["success"] is True
+        assert "username" not in _registries(project_data)[0]
+
+    @pytest.mark.asyncio
+    @patch("opi.manager.project_manager.encrypt_age_content", new_callable=AsyncMock)
+    @patch("opi.manager.project_manager.get_project_public_key", return_value="age1publickey123")
+    async def test_een_bestaande_gebruikersnaam_verdwijnt_als_hij_wordt_weggelaten(
+        self, mock_pubkey: MagicMock, mock_encrypt: AsyncMock, project_manager: ProjectManager
+    ) -> None:
+        """Een upsert vervangt de hele entry, net als bij de andere velden; anders bleef een
+        gebruikersnaam staan die de aanroeper juist kwijt wilde."""
+        mock_encrypt.return_value = "encrypted-new"
+        project_data = _with_registries(
+            {"name": "my-registry", "upstream": "ghcr.io", "username": "oud", "password": "encrypted-old"}
+        )
+        project_manager.get_contents = AsyncMock(return_value=project_data)
+
+        await project_manager.upsert_registry_by_credentials(
+            name="my-registry", url="ghcr.io", username="", password="newpass"
+        )
+
+        assert "username" not in _registries(project_data)[0]
+
+    @pytest.mark.asyncio
     @patch("opi.manager.project_manager.get_project_public_key", return_value=None)
     async def test_fails_without_public_key(self, mock_pubkey: MagicMock, project_manager: ProjectManager) -> None:
         project_data: dict = {"name": "test-project"}
