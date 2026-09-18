@@ -547,6 +547,9 @@ project heeft hem nodig, ook een project dat nooit een eigen registry opgeeft). 
 gegenereerde podspec draagt de secrets die hij zelf nodig heeft, geleverd door
 `resolve_image()`. Meestal is dat er precies één.
 
+Alle projectpods draaien erop: de Deployment, de job- en consolepod, en de backup- en
+restorepods (PVC, database en bucket).
+
 Gemeten op 2026-09-07 met een lege serviceaccount in `rig-prd-test`: een pod met
 `alpine:3.20.3` faalt, dezelfde pod met het RCR-pad faalt, en dezelfde pod met een expliciet
 secret in de podspec slaagt. De eerste rij is de belangrijkste: na admission stond er
