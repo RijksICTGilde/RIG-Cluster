@@ -2426,6 +2426,15 @@ def registry_tag_owner(registry_tag: str) -> str | None:
     return owner
 
 
+def upstream_host(upstream: str) -> str:
+    """``code.overheid.nl/robbert`` -> ``code.overheid.nl``.
+
+    Staat hier en niet bij de dienst image-registries, want de skopeo-connector heeft hem
+    ook nodig en een connector hoort niet van een dienstpakket af te hangen.
+    """
+    return upstream.split("/", 1)[0]
+
+
 def normalize_registry_repo(repo: str) -> str:
     """The comparable form of a registry repository, so one repo has one spelling.
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from opi.utils.naming import sanitize_kubernetes_name
+from opi.utils.naming import sanitize_kubernetes_name, upstream_host
 
 #: De operator plakt dit achter de naam van het pull-secret dat hij maakt.
 PULL_SECRET_POSTFIX = "robot-pull-secret"
@@ -19,11 +19,6 @@ PULL_SECRET_POSTFIX = "robot-pull-secret"
 PULL_USERNAME_PLACEHOLDER = "x-access-token"
 
 UPSTREAM_HASH_LENGTH = 8
-
-
-def upstream_host(upstream: str) -> str:
-    """``code.overheid.nl/robbert`` -> ``code.overheid.nl``."""
-    return upstream.split("/", 1)[0]
 
 
 def friendly_name(upstream: str) -> str:
