@@ -1,4 +1,4 @@
-"""Of de samengestelde schemanamen van dit project passen.
+"""Of de samengestelde schemanamen van dit project passen (RC-59).
 
 Een extra schema heet ``{project}_{deployment}_{postfix}`` en dat moet binnen de 63
 tekens van PostgreSQL blijven. Hoeveel ruimte de postfix heeft hangt dus af van de
@@ -15,17 +15,13 @@ from opi.utils.naming import generate_extra_database_schema
 
 
 def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
-    """De samengestelde schemanamen van elk extra schema, tegen elke deployment (RC-59).
+    """Elk extra schema tegen ELKE deployment, ook een deployment die er nog niet was toen
+    de schemalijst werd opgeslagen.
 
-    ``UniqueSchemaEnforcer`` draaide dit al, maar alleen als de SCHEMALIJST werd
-    opgeslagen en alleen tegen de deployments die er op dat moment waren. Dat laat het
-    echte gat open: een postfix die vandaag past, past niet meer zodra er een deployment
-    met een langere naam bij komt, en op die weg keek niets naar schema's. De fout kwam
-    dan pas bij de rollout boven, als een ``ValueError`` uit
-    ``generate_extra_database_schema``, lang na de wijziging die hem veroorzaakte.
-
-    Schema's die voor verwijdering gemarkeerd zijn tellen niet mee: ze zijn onderweg naar
-    buiten en mogen een opslag niet blokkeren.
+    Dat is het gat dat ``UniqueSchemaEnforcer`` openliet: een postfix die vandaag past,
+    past niet meer zodra er een deployment met een langere naam bij komt, en op die weg
+    keek niets naar schema's. Een gemarkeerd schema telt niet mee, want dat mag een
+    opslag niet blokkeren (``get_postgres_schemas``).
     """
     errors: list[str] = []
     project_name = project_data.get("name") or ""

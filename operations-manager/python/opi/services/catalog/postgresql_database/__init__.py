@@ -173,9 +173,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
         """Of de extra schema's voor ELKE deployment een naam opleveren die past.
 
-        Een project zonder deze dienst heeft geen schema's, dus dan is de uitkomst leeg
-        (``get_postgres_schemas``).
+        Leeg voor een project zonder deze dienst: dan zijn er geen schema's.
         """
+        # Lazy: ``postgres_scope`` leest via de dienstenlijst dit pakket.
         from opi.services.catalog.postgresql_database.schema_names import validate_database_schema_names
 
         return validate_database_schema_names(project_data)

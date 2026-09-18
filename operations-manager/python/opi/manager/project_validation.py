@@ -605,10 +605,9 @@ def validate_declared_choices(project_data: dict[str, Any]) -> list[str]:
     usually a menu rather than a closed set (see that flag). Only fields that carry it are
     looked at, and only the layers the service declares config on.
 
-    Deliberately NOT a service's ``validate_project``, unlike the rules that moved out of
-    this module (RC-182): the walk is over the fields of EVERY service, so handing it to
-    the one service whose field happens to carry the flag today (invite) would make that
-    service judge the others.
+    Not a service's ``validate_project`` (RC-182): the walk is over the fields of EVERY
+    service, so handing it to the one service whose field carries the flag today (invite)
+    would make that service judge the others.
     """
     from opi.forms.editables.service_path import expand_wildcard_path
     from opi.forms.visualizers.providers import PROVIDER_REGISTRY, UNDECLARED_SOURCE, OptionsSource
