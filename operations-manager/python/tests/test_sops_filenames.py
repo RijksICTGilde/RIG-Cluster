@@ -1,9 +1,7 @@
 """De suffixen van de versleutelpijplijn horen bij een eigenaar.
 
 De twee namen die een secret draagt stonden op zeventien plekken met de hand gebouwd of
-met ``replace()`` omgezet. Deze toetsen pinnen de eigenaar: de letterlijke waarden (ze
-staan in het GitOps-contract, de CMP-plugin en decrypt-sops.yaml matchen erop) en de
-omzetting in beide richtingen.
+met ``replace()`` omgezet. Deze toetsen pinnen de eigenaar.
 """
 
 import os
@@ -54,8 +52,6 @@ class TestSopsFilenames:
 
 
 class TestAanroepersGebruikenDeEigenaar:
-    """De plekken die de namen vroeger zelf bouwden, lopen nu langs sops.py."""
-
     def test_manifestgenerator_schrijft_de_platte_naam(self, tmp_path) -> None:
         template = tmp_path / "secret.yaml.jinja"
         template.write_text("kind: Secret\n")
@@ -69,7 +65,6 @@ class TestAanroepersGebruikenDeEigenaar:
         assert os.path.basename(pad) == sops_filenames("demo-secret").plaintext
 
     def test_decrypt_sops_noemt_de_versleutelde_naam(self, tmp_path) -> None:
-        """Een bestand dat nog moet worden versleuteld staat onder de naam die het krijgt."""
         for naam in ("a.to-sops.yaml", "a.sops.yaml", "b.to-sops.yaml"):
             (tmp_path / naam).write_text("kind: Secret\n")
         ManifestGenerator().create_kustomization_files(
