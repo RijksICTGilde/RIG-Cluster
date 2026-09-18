@@ -112,6 +112,21 @@ class TestOverEenMap:
         assert geschreven["spec"]["template"]["spec"]["containers"][0]["image"].startswith("rcr.rijksapps.nl")
         assert (tmp_path / "secret.to-sops.yaml").read_text() == origineel_secret
 
+    @pytest.mark.parametrize("suffix", [".to-sops.yaml", ".sops.yaml"])
+    def test_een_sops_bestand_blijft_ongemoeid(self, tmp_path: Any, suffix: str) -> None:
+        """Beide helften van het paar gaan de pas voorbij, ook met inhoud die hij zou herschrijven.
+
+        De versleutelde helft draagt een MAC over zijn inhoud: herschrijven maakt hem
+        onleesbaar voor KSOPS. Vandaar de inhoud van een manifest dat de pas WEL aanpakt.
+        """
+        pad = tmp_path / f"web{suffix}"
+        pad.write_text(yaml.dump(_deployment("ghcr.io/org/web:1")))
+        origineel = pad.read_text()
+
+        apply_rules_to_directory(str(tmp_path), [GHCR])
+
+        assert pad.read_text() == origineel
+
     def test_een_bestand_zonder_wijziging_wordt_niet_herschreven(self, tmp_path: Any) -> None:
         """Anders herversleutelt SOPS zich suf op precies de churn die eerder is opgeruimd."""
         path = tmp_path / "service.yaml"
