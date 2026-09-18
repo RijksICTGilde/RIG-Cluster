@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.skopeo import SkopeoConnector
+from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.converters import resolve_project_private_key
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.service_path import smart_get_value
@@ -58,31 +58,34 @@ class RegistryTokenEnforcer:
                 )
                 continue
             ok, reason = await connector.check_repository_access(repository, username, str(password))
+            if not ok and reason == REFUSED_DESTINATION_REASON:
+                raise FieldError(f"{_REGISTRIES_PATH}[{index}]/upstream", REFUSED_DESTINATION_REASON.capitalize())
             if not ok:
                 raise FieldError(
                     f"{_REGISTRIES_PATH}[{index}]/password",
-                    _access_denied_message(repository, reason, bool(given_username)),
+                    _access_denied_message(repository, bool(given_username)),
                 )
         return value
 
 
-def _access_denied_message(repository: str, reason: str, has_username: bool) -> str:
+def _access_denied_message(repository: str, has_username: bool) -> str:
     """Wat de afnemer op het scherm krijgt als de registry ons niet binnenlaat.
 
-    Faalt de toets terwijl de optionele gebruikersnaam leeg was, dan ligt het waarschijnlijk
-    daaraan (Docker Hub, Quay), en dat zegt de melding.
+    De reden is vast en komt niet van skopeo (zie ``UNREADABLE_REASON``). Faalt de toets
+    terwijl de optionele gebruikersnaam leeg was, dan ligt het waarschijnlijk daaraan
+    (Docker Hub, Quay), en dat zegt de melding.
     """
     if has_username:
-        opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen."
+        opening = f"Met deze gebruikersnaam en dit token kunnen we '{repository}' niet lezen: {UNREADABLE_REASON}."
         raad = "Het token heeft leesrecht op packages nodig."
     else:
-        opening = f"Met dit token kunnen we '{repository}' niet lezen."
+        opening = f"Met dit token kunnen we '{repository}' niet lezen: {UNREADABLE_REASON}."
         raad = (
             "Het token heeft leesrecht op packages nodig. Je hebt geen gebruikersnaam ingevuld: "
             "bij Docker Hub en Quay is die wel nodig, dus vul daar je accountnaam of de naam van "
             "je robotaccount in."
         )
-    return f"{opening} {raad} De registry zei: {reason}"
+    return f"{opening} {raad}"
 
 
 def _connector() -> SkopeoConnector:
