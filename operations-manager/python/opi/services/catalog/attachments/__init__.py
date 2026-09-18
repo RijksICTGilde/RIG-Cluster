@@ -245,19 +245,15 @@ class AttachmentsService(Service):
     # --- regels over het hele project --------------------------------------------------
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """De twee bijlageregels: verwijst elke koppeling naar een bestaande catalogusregel,
-        en is elke koppeling zelf te leveren.
+        """De twee bijlageregels: verwijst elke koppeling naar een bestaande
+        catalogusregel, en is elke koppeling zelf te leveren.
 
-        Beide kijken naar het project als geheel (de catalogus staat op projectniveau, de
-        koppelingen op de componenten), dus ``validate_config`` kan ze niet vellen. Ze
-        draaien ook zonder dat dit project de dienst aanvinkt: een verwijzing naar een
-        bijlage die er niet is, is juist dan fout.
-
-        De functies zelf blijven bij de wandelaars waar ze op leunen
-        (``extract_attachment_usage`` en broers, in ``project_file_handler``); alleen de
-        aanroep hoort hier. Lazy geimporteerd, want die module leest via de dienstenlijst
-        dit pakket.
+        Beide leggen de catalogus (projectniveau) naast de koppelingen (componenten), dus
+        ``validate_config`` kan ze niet vellen. Draaien ook zonder dat dit project de
+        dienst aanvinkt: het gaat om waar een project naar WIJST. De functies zelf blijven
+        bij de wandelaars waar ze op leunen, in ``project_file_handler``.
         """
+        # Lazy: die module leest via de dienstenlijst dit pakket.
         from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 
         return [*validate_attachment_references(project_data), *validate_attachment_couplings(project_data)]

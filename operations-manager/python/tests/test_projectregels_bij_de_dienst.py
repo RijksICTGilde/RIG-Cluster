@@ -1,10 +1,5 @@
 """De projectbrede regels hangen aan de dienst die ze bezit (RC-182).
 
-RC-177 bouwde ``Service.validate_project`` en hing de eigendomsregels van
-``image-registries`` daaraan. De bijlageregels en de schemanaamregel stonden nog los in
-``validate_project_structure``, terwijl ze over een dienst gaan. Ze hangen nu aan
-``attachments`` respectievelijk ``postgresql-database``.
-
 Elke regel wordt op de POORT gemeten en niet alleen op zijn functie: de haak is pas iets
 waard als de lus in ``validate_project_structure`` hem ook echt aanroept. De functies
 zelf houden hun eigen toetsen (``test_attachment_schema.py``,
@@ -85,13 +80,15 @@ class TestBijlagenOpDePoort:
     def test_een_kloppend_project_komt_erdoor(self) -> None:
         asyncio.run(
             validate_project_structure(
-                _bijlageproject([{"reference": "keystore", "provide-as": "file", "path": "/etc/tls/k.p12"}], ["keystore"])
+                _bijlageproject(
+                    [{"reference": "keystore", "provide-as": "file", "path": "/etc/tls/k.p12"}], ["keystore"]
+                )
             )
         )
 
     def test_ook_een_project_zonder_de_dienst(self) -> None:
-        """De regel gaat over waar een project naar WIJST, dus de dienst weglaten mag hem
-        niet omzeilen: een certificaat van publish-on-web noemt ook een bijlage."""
+        """Een certificaat van publish-on-web noemt ook een bijlage, dus de dienst
+        weglaten mag de regel niet omzeilen."""
         project = {
             "schema-version": 2,
             "name": "demo",
@@ -128,8 +125,6 @@ class TestSchemanamenOpDePoort:
         assert "rapportage" in fouten[0]
 
     def test_zonder_de_dienst_zegt_de_regel_niets(self) -> None:
-        """Een regel over de eigen config van een dienst moet zwijgen als de dienst er niet
-        is, ook al draait de haak op elk project."""
         project = _schemaproject("rapportage", "d" * 55)
         project["services"] = ["publish-on-web"]
         project["components"][0]["services"] = ["publish-on-web"]
