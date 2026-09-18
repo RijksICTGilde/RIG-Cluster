@@ -30,7 +30,6 @@ een bestaand paar om in de andere:
 
 ```python
 sops_filenames("odcn/demo/values.to-sops.yaml").encrypted   # 'odcn/demo/values.sops.yaml'
-sops_filenames("productie-docs-helm-values.sops.yaml").plaintext
 ```
 
 De constanten zijn voor herkenning (`endswith`, globpatronen, overslaglijsten), de
