@@ -17,6 +17,7 @@ from opi.services.catalog.image_registries.resolution import (
     build_rules,
     cluster_rules,
     project_registries,
+    resolve_deployment_component_image,
     resolve_project_image,
 )
 from opi.services.catalog.image_registries.rules import (
@@ -324,9 +325,8 @@ class TestEenEigenRegistryGeldtVoorHetHeleProject:
     """De keuze bij een component is een VOORRANGSregel, geen aan/uit-schakelaar.
 
     Een project dat ``ghcr.io/mijnorg`` als eigen registry opgeeft zegt daarmee dat die
-    upstream van hem is. Een component dat de dienst NIET aanvinkt maar wel een image onder
-    die prefix draait gaat dus ook langs de eigen proxy, met hetzelfde token. Bewust zo, en
-    om twee redenen:
+    upstream van hem is. Een component ZONDER keuze maar met een image onder die prefix
+    gaat dus ook langs de eigen proxy, met hetzelfde token. Bewust zo, en om twee redenen:
 
     - Het alternatief (alleen de gekozen regel plus de clustertabel) laat zo'n image bij de
       GEDEELDE proxy uitkomen, en die heeft geen credentials voor een prive-pakket. Dat is
@@ -335,7 +335,7 @@ class TestEenEigenRegistryGeldtVoorHetHeleProject:
       component welke container is. Twee antwoorden op dezelfde vraag zouden daar meteen
       uiteenlopen.
 
-    Wat de afnemer ervan moet weten staat in ``help.md``: niet-aanvinken is geen keuze voor
+    Wat de afnemer ervan moet weten staat in ``help.md``: "Automatisch" is geen keuze voor
     de publieke weg, het is alleen "hier valt niets te kiezen".
     """
 
@@ -426,16 +426,12 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         return data
 
     def test_de_keuze_van_het_component_erft(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         deployment_component = {"reference": "web", "image": self.IMAGE}
         resolved = resolve_deployment_component_image(data, deployment_component, data["components"][0], SANDBOX)
         assert resolved.secret == "demo-ander-registry"
 
     def test_de_deployment_override_wint(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         deployment_component = {
             "reference": "web",
@@ -447,8 +443,6 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
         assert resolved.secret == "demo-een-registry"
 
     def test_zonder_enige_keuze_wint_de_eerste_in_het_bestand(self) -> None:
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = _project([self.EEN, self.ANDER])
         resolved = resolve_deployment_component_image(data, {"reference": "web", "image": self.IMAGE}, None, SANDBOX)
         assert resolved.secret == "demo-een-registry"
@@ -456,8 +450,6 @@ class TestDeComponentkeuzeErftEnDeDeploymentOverschrijft:
     def test_op_odcn_levert_de_override_een_andere_organisatie_op(self) -> None:
         """De tegenproef dat de keuze echt doorwerkt tot in de herschrijving, niet alleen
         tot in het secret: op een cluster mét proxy verandert ook de bestemming."""
-        from opi.services.catalog.image_registries.resolution import resolve_deployment_component_image
-
         data = self._project()
         zonder = resolve_deployment_component_image(
             data, {"reference": "web", "image": self.IMAGE}, data["components"][0], ODCN

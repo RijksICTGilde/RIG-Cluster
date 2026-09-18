@@ -4,12 +4,34 @@
       "additionalProperties": false,
       "description": "E\u00e9n private registry van het project.",
       "properties": {
+        "display-name": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Het label dat je op het scherm ziet; vrije tekst, dus geen DNS-label nodig.",
+          "title": "Display-Name"
+        },
         "name": {
-          "description": "Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
-          "maxLength": 63,
-          "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?$",
-          "title": "Name",
-          "type": "string"
+          "anyOf": [
+            {
+              "maxLength": 63,
+              "pattern": "^[a-z]([-a-z0-9]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "De verwijzing waarmee een component deze registry aanwijst, uniek binnen het project. Laat hem weg en geef een 'display-name': het platform leidt hem daar dan uit af. Hij ligt vast zodra hij bestaat, want componenten wijzen ernaar en hij zit in de naam van het pull-secret; een gewijzigd label verandert hem niet mee.",
+          "title": "Name"
         },
         "password": {
           "anyOf": [
@@ -41,7 +63,7 @@
           "title": "Secretname"
         },
         "upstream": {
-          "description": "De registry inclusief pad waar de images staan, zonder protocol, bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'.",
+          "description": "De registry inclusief pad waar de images staan, zonder protocol, bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'. Een geplakte browser-URL of een volledige image-referentie wordt omgezet naar deze vorm.",
           "pattern": "^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?::[0-9]{1,5})?|[a-z0-9](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}|localhost)(?:/[a-z0-9][a-z0-9._-]*)*$",
           "title": "Upstream",
           "type": "string"
@@ -56,12 +78,11 @@
             }
           ],
           "default": null,
-          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt; leeg voor een registry zonder inlog.",
+          "description": "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel: bij GitHub (ghcr.io) doet de waarde er niet toe, bij Docker Hub is het de accountnaam en bij Quay de naam van het robotaccount. Leeg blijft leeg in het projectbestand; het pull-secret krijgt dan een plaatshouder. Eist de registry een echte naam, dan mislukt het ophalen van de images. Via de API wordt het token niet getoetst.",
           "title": "Username"
         }
       },
       "required": [
-        "name",
         "upstream"
       ],
       "title": "RegistryEntry",

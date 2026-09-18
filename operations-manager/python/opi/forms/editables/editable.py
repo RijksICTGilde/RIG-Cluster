@@ -204,6 +204,7 @@ class WidgetType(StrEnum):
     """Enumeration of available widget types - no magic strings."""
 
     TEXT = "text"
+    PASSWORD = "password"
     TEXTAREA = "textarea"
     SELECT = "select"
     CHECKBOX = "checkbox"
@@ -262,6 +263,13 @@ class Editable:
     Enforced by ``validate_declared_choices`` at the save chokepoint, as a
     ``ProjectIntegrityError``. Not by the form widget: a select can only ever show what it
     offers, while the API and hand-written YAML never pass a widget at all.
+    """
+    hidden_without_options: bool = False
+    """Whether this field disappears when its ``values_provider`` offers nothing.
+
+    Off by default: an empty list usually means "the options are not known here yet", and
+    a field that vanishes would be worse than an empty dropdown. See
+    ``instructions/services.md`` for why this beats a ``depends_on``.
     """
     required: bool = False
     default: Any = None

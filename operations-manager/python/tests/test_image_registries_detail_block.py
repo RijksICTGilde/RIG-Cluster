@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+import opi.services.catalog.image_registries.web as web
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
+from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.base import ProjectPageContext
 from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.image_registries.naming import organization_name
-from opi.services.catalog.image_registries.web import _organization_status, registry_status_fragment
+from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
+from opi.services.catalog.image_registries.web import (
+    _expires_soon,
+    _organization_status,
+    image_registries_router,
+    registry_status_fragment,
+)
 from opi.services.services_enums import UIEvent
 
 REGISTRY = {
@@ -52,6 +62,26 @@ class TestHetBlok:
         # De velden die het sjabloon wel toont blijven staan.
         assert section.context["registries"][0]["username"] == "robbert.uittenbroek"
 
+    def test_een_entry_zonder_gebruikersnaam_zegt_nog_steeds_dat_er_een_token_is(self) -> None:
+        """RC-187: de gebruikersnaam is optioneel, en zonder deze tak zou zo'n registry in
+        het blok helemaal geen regel krijgen -- niet te onderscheiden van een entry zonder
+        inloggegevens. Gemeten op het ECHT gerenderde blok."""
+        zonder = {k: v for k, v in REGISTRY.items() if k != "username"}
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([zonder]))
+        assert section.context["registries"][0]["has_token"] is True
+
+        html = templates_lotc.env.get_template(section.template).render(section=section)
+        assert "Het token is versleuteld opgeslagen" in html
+        assert "geen gebruikersnaam ingevuld" in html
+        assert "Ingelogd als" not in html
+
+    def test_met_een_gebruikersnaam_blijft_het_de_oude_regel(self) -> None:
+        """De tegenproef op dezelfde render: de tak eronder mag hem niet overnemen."""
+        (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([REGISTRY]))
+        html = templates_lotc.env.get_template(section.template).render(section=section)
+        assert "Ingelogd als robbert.uittenbroek" in html
+        assert "geen gebruikersnaam ingevuld" not in html
+
     def test_het_blok_rekent_geen_rcr_url_uit(self) -> None:
         """Die is een BEREKENING; hem hier neerzetten zou een tweede waarheid geven."""
         (section,) = ImageRegistriesService().handle_ui(UIEvent.PROJECT_SECTIONS, _ctx([REGISTRY]))
@@ -60,8 +90,6 @@ class TestHetBlok:
     def test_de_dienst_brengt_zijn_eigen_endpoint_mee(self) -> None:
         """Een blok dat lazy laadt bezit de route die het vult; anders blijft de helft
         achter in de algemene router."""
-        from opi.services.catalog.image_registries.web import image_registries_router
-
         assert image_registries_router in ImageRegistriesService().web_routers()
 
 
@@ -141,42 +169,26 @@ class TestDeVerloopwaarschuwing:
 
     @staticmethod
     def _over(days: int) -> str:
-        from datetime import UTC, datetime, timedelta
-
         return (datetime.now(UTC) + timedelta(days=days)).isoformat().replace("+00:00", "Z")
 
     def test_binnen_veertien_dagen_is_dringend(self) -> None:
-        from opi.services.catalog.image_registries.web import _expires_soon
-
         assert _expires_soon(self._over(3)) is True
 
     def test_al_verlopen_is_ook_dringend(self) -> None:
-        from opi.services.catalog.image_registries.web import _expires_soon
-
         assert _expires_soon(self._over(-1)) is True
 
     def test_ruim_op_tijd_is_geen_waarschuwing(self) -> None:
-        from opi.services.catalog.image_registries.web import _expires_soon
-
         assert _expires_soon(self._over(60)) is False
 
     def test_geen_datum_is_geen_waarschuwing(self) -> None:
-        from opi.services.catalog.image_registries.web import _expires_soon
-
         assert _expires_soon("") is False
 
     def test_een_onleesbare_datum_is_geen_waarschuwing(self) -> None:
         """Dringend melden op een aanname is erger dan zwijgen over iets wat misschien
         niets is."""
-        from opi.services.catalog.image_registries.web import _expires_soon
-
         assert _expires_soon("morgen") is False
 
     async def test_de_vlag_komt_mee_uit_het_cluster(self) -> None:
-        import json
-
-        from opi.services.catalog.image_registries.web import _organization_status
-
         status = await _organization_status(
             _kubectl(
                 json.dumps(
@@ -210,13 +222,6 @@ class TestDeLeeswegVanHetStatusEndpoint:
     """
 
     def _patch(self, monkeypatch: pytest.MonkeyPatch, registries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        import opi.connectors.kubectl as kubectl_module
-        import opi.core.cluster_config as cluster_config
-        import opi.services.project_authorization as authorization
-        import opi.services.project_store as project_store
-        import opi.web.lotc_switch as lotc_switch
-        from opi.services.catalog.image_registries.resolution import BACKEND_QUAY_PROXY
-
         async def _geen_ontsleuteling(name: str) -> None:
             raise AssertionError("het statusfragment hoeft het projectbestand niet ontsleuteld")
 
@@ -225,16 +230,16 @@ class TestDeLeeswegVanHetStatusEndpoint:
         )
         store = SimpleNamespace(get=lambda name: project, get_decrypted=_geen_ontsleuteling)
 
-        monkeypatch.setattr(project_store, "get_project_store", lambda: store)
-        monkeypatch.setattr(authorization, "is_user_authorized_for_project", lambda project_name, email: True)
+        monkeypatch.setattr(web, "get_project_store", lambda: store)
+        monkeypatch.setattr(web, "is_user_authorized_for_project", lambda project_name, email: True)
         monkeypatch.setattr(
-            cluster_config,
+            web,
             "get_image_registries_config",
             lambda cluster: {"backend": BACKEND_QUAY_PROXY, "customer_name": "rig"},
         )
-        monkeypatch.setattr(cluster_config, "get_prefixed_namespace", lambda cluster, project_name: "rig-prd-demo")
+        monkeypatch.setattr(web, "get_prefixed_namespace", lambda cluster, project_name: "rig-prd-demo")
         monkeypatch.setattr(
-            kubectl_module,
+            web,
             "KubectlConnector",
             lambda: _kubectl('{"status": {"proxyCache": {"ready": true}, "credentialsConfigured": true}}'),
         )
@@ -245,7 +250,7 @@ class TestDeLeeswegVanHetStatusEndpoint:
             gerenderd.append(context)
             return HTMLResponse("")
 
-        monkeypatch.setattr(lotc_switch, "render", _render)
+        monkeypatch.setattr(web, "render", _render)
         return gerenderd
 
     def _request(self) -> Any:
@@ -272,10 +277,8 @@ class TestDeLeeswegVanHetStatusEndpoint:
         """De weigering van het endpoint zelf. Zonder deze test is de eigendomscontrole
         ongedekt: hem weghalen laat de rest van de suite groen, terwijl het fragment dan de
         namen en upstreams van andermans registries teruggeeft."""
-        import opi.services.project_authorization as authorization
-
         gerenderd = self._patch(monkeypatch, [REGISTRY])
-        monkeypatch.setattr(authorization, "is_user_authorized_for_project", lambda project_name, email: False)
+        monkeypatch.setattr(web, "is_user_authorized_for_project", lambda project_name, email: False)
 
         with pytest.raises(HTTPException) as opgevangen:
             await registry_status_fragment(self._request(), "demo")
