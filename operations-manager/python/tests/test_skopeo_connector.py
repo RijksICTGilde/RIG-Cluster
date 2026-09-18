@@ -303,9 +303,7 @@ exit "$SKOPEO_EXIT"
 """
 
 
-#: De nepskopeo legt zijn argv vast via procfs en meet de mode met GNU ``stat -c``; op macOS
-#: bestaat geen van beide, en dan is de toets rood zonder dat er iets aan de code mankeert.
-#: Alleen de tests die de OPNAME lezen hangen hieraan; de weigeringen draaien overal.
+#: Alleen de tests die de OPNAME van de nepskopeo lezen hangen hieraan; de weigeringen draaien overal.
 RECORDING_NEEDS_PROCFS = pytest.mark.skipif(
     not Path("/proc/self/cmdline").exists(),
     reason="de nepskopeo leest zijn argv uit /proc en meet de mode met GNU stat -c",
