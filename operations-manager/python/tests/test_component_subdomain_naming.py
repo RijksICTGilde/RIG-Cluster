@@ -1,20 +1,20 @@
 """
-Tests for nice URL naming functionality.
+Tests for the ``component.subdomain`` domain-format.
 
-Tests the nice URL dot-separated pattern for hostnames:
+Tests the dot-separated pattern for hostnames:
 - component.subdomain.base_domain (domain-format component.subdomain)
 - subdomain.base_domain (root URL, when a root-component is set)
 """
 
 import pytest
 from opi.core.cluster_config import (
-    get_nice_url_config,
-    get_nice_url_supported_domains,
-    is_nice_url_domain_supported,
+    get_cluster_domains_config,
+    get_supported_domain_names,
+    is_domain_supported,
 )
 from opi.utils.naming import (
     find_root_component,
-    generate_nice_url_root_hostname,
+    generate_root_hostname,
     get_component_ingress_map,
     get_deployment_hostnames,
 )
@@ -34,22 +34,22 @@ def _approved(*domains: str) -> dict:
     return {"domains": {"allowed-domains": [{"domain": d, "status": "approved"} for d in domains]}}
 
 
-class TestGenerateNiceUrlRootHostname:
-    """Tests for generate_nice_url_root_hostname function."""
+class TestGenerateRootHostname:
+    """Tests for generate_root_hostname function."""
 
     def test_basic_root_pattern(self):
         """Basic root URL pattern: subdomain.base_domain."""
-        result = generate_nice_url_root_hostname("myapp", "rijks.app")
+        result = generate_root_hostname("myapp", "rijks.app")
         assert result == "myapp.rijks.app"
 
     def test_different_domains(self):
         """Different base domains work correctly."""
-        assert generate_nice_url_root_hostname("testapp", "rijksapps.nl") == "testapp.rijksapps.nl"
-        assert generate_nice_url_root_hostname("local", "kind") == "local.kind"
+        assert generate_root_hostname("testapp", "rijksapps.nl") == "testapp.rijksapps.nl"
+        assert generate_root_hostname("local", "kind") == "local.kind"
 
     def test_sanitizes_subdomain(self):
         """Subdomains are lowercased."""
-        result = generate_nice_url_root_hostname("MyApp", "rijks.app")
+        result = generate_root_hostname("MyApp", "rijks.app")
         assert result == "myapp.rijks.app"
 
 
@@ -71,10 +71,10 @@ class TestFindRootComponent:
         assert find_root_component({}) is None
 
 
-class TestGetComponentIngressMapNiceUrl:
+class TestGetComponentIngressMapComponentSubdomain:
     """Tests for get_component_ingress_map with the component.subdomain format."""
 
-    def test_nice_url_format_generates_correct_hostname(self):
+    def test_component_subdomain_format_generates_correct_hostname(self):
         """The component.subdomain format generates a dot-separated hostname."""
         result = get_component_ingress_map(
             component_name="frontend",
@@ -90,7 +90,7 @@ class TestGetComponentIngressMapNiceUrl:
         assert "prod-frontend" in result
         assert result["prod-frontend"] == "frontend.mydomain.rijks.app"
 
-    def test_nice_url_format_different_subdomain(self):
+    def test_component_subdomain_format_different_subdomain(self):
         """The component.subdomain format uses the subdomain correctly."""
         result = get_component_ingress_map(
             component_name="backend",
@@ -135,10 +135,10 @@ class TestGetComponentIngressMapNiceUrl:
         assert result["prod-frontend"] == "myapp.custom.nl"
 
 
-class TestGetDeploymentHostnamesNiceUrl:
+class TestGetDeploymentHostnamesComponentSubdomain:
     """Tests for get_deployment_hostnames with the component.subdomain format."""
 
-    def test_nice_url_format_multiple_components(self):
+    def test_component_subdomain_format_multiple_components(self):
         """The format generates unique hostnames for each component plus root."""
         result = get_deployment_hostnames(
             component_names=["frontend", "backend", "api"],
@@ -159,7 +159,7 @@ class TestGetDeploymentHostnamesNiceUrl:
         assert "api.mydomain.rijks.app" in result
         assert "mydomain.rijks.app" in result  # Root hostname
 
-    def test_nice_url_format_includes_root_hostname(self):
+    def test_component_subdomain_format_includes_root_hostname(self):
         """The format includes the root hostname when a root component is set."""
         result = get_deployment_hostnames(
             component_names=["frontend"],
@@ -178,47 +178,47 @@ class TestGetDeploymentHostnamesNiceUrl:
         assert "testapp.rijks.app" in result  # Root hostname
 
 
-class TestClusterConfigNiceUrl:
-    """Tests for cluster configuration nice URL functions."""
+class TestClusterConfigDomains:
+    """Tests for the cluster domain configuration functions."""
 
-    def test_get_nice_url_config_local(self):
-        """Local cluster has nice URL config."""
-        config = get_nice_url_config("local")
+    def test_get_cluster_domains_config_local(self):
+        """Local cluster has a domains config."""
+        config = get_cluster_domains_config("local")
         assert config is not None
         assert "supported_domains" in config
 
-    def test_get_nice_url_config_production(self):
-        """Production cluster has nice URL config."""
-        config = get_nice_url_config("odcn-production")
+    def test_get_cluster_domains_config_production(self):
+        """Production cluster has a domains config."""
+        config = get_cluster_domains_config("odcn-production")
         assert config is not None
         assert "supported_domains" in config
 
-    def test_get_nice_url_supported_domains_local(self):
+    def test_get_supported_domain_names_local(self):
         """Local cluster supports kind and local domains."""
-        domains = get_nice_url_supported_domains("local")
+        domains = get_supported_domain_names("local")
         assert "kind" in domains
         assert "local" in domains
 
-    def test_get_nice_url_supported_domains_production(self):
+    def test_get_supported_domain_names_production(self):
         """Production cluster supports the app base domains (not the cluster infra domain rijksapps.nl)."""
-        domains = get_nice_url_supported_domains("odcn-production")
+        domains = get_supported_domain_names("odcn-production")
         assert "rijks.app" in domains
         assert "rijksapp.dev" in domains
         assert "rijksapps.nl" not in domains
 
-    def test_is_nice_url_domain_supported_true(self):
+    def test_is_domain_supported_true(self):
         """Check if rijks.app is supported on production."""
-        assert is_nice_url_domain_supported("odcn-production", "rijks.app") is True
+        assert is_domain_supported("odcn-production", "rijks.app") is True
 
-    def test_is_nice_url_domain_supported_false(self):
+    def test_is_domain_supported_false(self):
         """Check if unsupported domain returns False."""
-        assert is_nice_url_domain_supported("odcn-production", "example.com") is False
+        assert is_domain_supported("odcn-production", "example.com") is False
 
-    def test_is_nice_url_domain_supported_local(self):
+    def test_is_domain_supported_local(self):
         """Check if kind is supported on local."""
-        assert is_nice_url_domain_supported("local", "kind") is True
+        assert is_domain_supported("local", "kind") is True
 
     def test_unknown_cluster_raises_error(self):
         """Unknown cluster should raise ValueError."""
         with pytest.raises(ValueError, match="not found in configuration"):
-            get_nice_url_supported_domains("nonexistent-cluster")
+            get_supported_domain_names("nonexistent-cluster")

@@ -100,7 +100,7 @@ Specifies a custom base domain for the deployment. Available on **any deployment
 - In `nice-url` mode: replaces the cluster domain with a registered domain (e.g., `rijksapp.nl`)
 - In other modes: overrides the cluster's `ingress_postfix` for hostname resolution
 
-The domain must be listed in the cluster's `nice_url.supported_domains` configuration.
+The domain must be listed in the cluster's `domains.supported_domains` configuration.
 
 ```yaml
 deployments:

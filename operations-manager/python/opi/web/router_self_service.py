@@ -31,8 +31,8 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
     """
     result = {}
     for cluster_name, config in CLUSTER_CONFIG.items():
-        nice_url_config = config.get("nice_url", {})
-        raw_domains = nice_url_config.get("supported_domains", [])
+        domains_config = config.get("domains", {})
+        raw_domains = domains_config.get("supported_domains", [])
 
         domain_options = []
         for entry in raw_domains:
