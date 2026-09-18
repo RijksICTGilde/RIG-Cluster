@@ -49,6 +49,9 @@ class FieldWidgetAdapter(WidgetAdapter):
     def render_text(self, field: FormField) -> str:
         return self._render_template("text.html.j2", {"field": field})
 
+    def render_password(self, field: FormField) -> str:
+        return self._render_template("text.html.j2", {"field": field, "input_type": "password"})
+
     def render_textarea(self, field: FormField) -> str:
         return self._render_template("textarea.html.j2", {"field": field})
 

@@ -16,7 +16,7 @@ De eerste service met een guide is publish-on-web: het domeinenverhaal (domain-f
 
 1. Schrijf `guide.md` in het servicepakket, naast `help.md`, in het kleine markdown-dialect. Toepassingsgericht: per scenario wat je instelt en wat je dan krijgt.
 2. Zet `guide_template="<pakket>/guide.md"` op de `ServiceDefinition`.
-3. Klaar: de API serveert hem als `guide`, de portal rendert hem via de helproute met het icoon van de service. Meer is er niet; `tests/test_service_help_markdown.py` bewaakt dat elke gedeclareerde guide bestaat, met een titel begint en zonder restjes componentmarkup rendert.
+3. Klaar: de API serveert hem als `guide`, de portal rendert hem via de helproute met het icoon van de service. Meer is er niet; `tests/test_service_help_markdown.py` bewaakt dat elke gedeclareerde guide bestaat, met een titel begint, zonder restjes componentmarkup rendert en binnen het dialect blijft (een tabel, codeblok, `###` of `*` wordt rood).
 
 De goedkeuringsbanner (approval_specs) staat bewust alleen boven de popup-help, niet boven de guide: een guide benoemt per scenario zelf wat een aanvraag is en wat niet.
 

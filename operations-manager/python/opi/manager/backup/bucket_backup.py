@@ -398,6 +398,7 @@ class BucketBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "source_minio_endpoint": source_minio_endpoint,
                 "source_bucket_name": source_bucket_name,
                 "source_access_key": source_access_key,
@@ -475,6 +476,7 @@ class BucketBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "source_minio_endpoint": source_minio_endpoint,
                 "source_bucket_name": source_bucket_name,
                 "source_access_key": source_access_key,
@@ -681,6 +683,7 @@ class BucketBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "reference_name": reference_name,
                 "target_minio_endpoint": target_minio_endpoint,
                 "target_bucket_name": target_bucket_name,

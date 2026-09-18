@@ -390,9 +390,15 @@ data:
 
             # Inject config hash annotation into all Deployments, StatefulSets, and DaemonSets
             # This causes pods to restart when any Secret or ConfigMap in the app changes
+            #
+            # strenv, niet env: env() raadt het type, en zestien hex-tekens lezen zo nu en dan
+            # als getal (allemaal cijfers, of e-notatie). Gemeten over 200.000 hashes: 1 op
+            # ~1400. Kubernetes weigert dan het manifest, en opnieuw uitrollen geeft dezelfde hash:
+            #   json: cannot unmarshal number into Go struct field ObjectMeta.spec.template.metadata.annotations
+            # Gezien op wies/pr-672, hash 3048182736028951.
             export CONFIG_HASH
             yq eval-all '
               with(select(.kind == "Deployment" or .kind == "StatefulSet" or .kind == "DaemonSet");
-                .spec.template.metadata.annotations["checksum/config"] = env(CONFIG_HASH)
+                .spec.template.metadata.annotations["checksum/config"] = strenv(CONFIG_HASH)
               )
             ' "$TEMP_OUTPUT"
