@@ -80,6 +80,10 @@ class FakePostgres:
         self.schemas[database].discard(schema_name)
         return {"status": "deleted"}
 
+    async def set_connection_limit(self, username: str, connection_limit: int) -> dict[str, Any]:
+        """Deze nep modelleert geen rollen, maar de kloonroute komt er sinds 737e52a7 wel langs."""
+        return {"status": "unchanged", "previous": connection_limit, "connection_limit": connection_limit}
+
     async def clone_schema(
         self,
         *,

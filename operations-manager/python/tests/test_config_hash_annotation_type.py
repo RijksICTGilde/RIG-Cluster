@@ -21,12 +21,11 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
 from ruamel.yaml import YAML
+from tests.programma import echt_programma
 
 _PLUGIN = Path(__file__).parent.parent.parent.parent / "bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml"
 
@@ -56,9 +55,7 @@ def _injection_expression() -> str:
 
 def test_the_plugin_stamps_the_hash_as_a_string() -> None:
     """Zonder ``strenv`` komt hier ``checksum/config: 3048182736028951`` uit, en dat is een int."""
-    yq = shutil.which("yq")
-    if yq is None:
-        pytest.skip("yq binary not available")
+    yq = echt_programma("yq")
 
     result = subprocess.run(
         [yq, "eval-all", _injection_expression(), "-"],
