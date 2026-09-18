@@ -57,6 +57,7 @@ class FakePostgres:
         self.clone_error: Exception | None = None
         # Het bronschema waarvan de restore faalt; None is het eerste (het doelschema).
         self.clone_error_at: str | None = None
+        self.connection_limits: dict[str, int] = {}
 
     async def create_database(self, database_name: str, owner: str) -> dict[str, str]:
         if database_name in self.schemas:
@@ -138,6 +139,14 @@ class FakePostgres:
 
     async def set_role_search_path(self, **_: Any) -> None:
         return None
+
+    async def set_connection_limit(self, username: str, connection_limit: int) -> dict[str, Any]:
+        # Een rol zonder expliciete limiet staat op -1, en database_manager blaast op bij
+        # "not_found": de rol is in deze run al aangemaakt, dus die uitkomst hoort hier niet.
+        previous = self.connection_limits.get(username, -1)
+        self.connection_limits[username] = connection_limit
+        status = "unchanged" if previous == connection_limit else "updated"
+        return {"status": status, "previous": previous, "connection_limit": connection_limit}
 
 
 class FakeStore:
