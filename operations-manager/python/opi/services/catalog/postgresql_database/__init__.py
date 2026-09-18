@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.base import (
     ConfigLayer,
@@ -169,6 +169,17 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
             editables=[field],
             layout=[Fieldset(legend="Verbindingen", children=[field.editable.yaml_path])],
         )
+
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """Of de extra schema's voor ELKE deployment een naam opleveren die past.
+
+        Hier en niet bij de schemalijst: een deployment erbij is de andere manier waarop
+        een geldige postfix een onmogelijke naam wordt. Een project zonder deze dienst
+        heeft geen schema's, dus dan is de uitkomst leeg (``get_postgres_schemas``).
+        """
+        from opi.services.catalog.postgresql_database.schema_names import validate_database_schema_names
+
+        return validate_database_schema_names(project_data)
 
     async def provision(self, ctx: ProvisionContext) -> None:
         # database_manager handles both the shared and namespace postgres variants in
