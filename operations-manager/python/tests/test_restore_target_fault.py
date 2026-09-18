@@ -100,6 +100,7 @@ def env() -> Environment:
 _DATABASE_CTX: dict[str, Any] = {
     "pod_name": "db-restore-test",
     "namespace": NAMESPACE,
+    "service_account_name": f"{PROJECT}-sa",
     "reference_name": "main-database",
     "target_db_host": "doel.invalid",
     "target_db_port": 5432,
@@ -124,6 +125,7 @@ _DATABASE_CTX: dict[str, Any] = {
 _BUCKET_CTX: dict[str, Any] = {
     "pod_name": "bucket-restore-test",
     "namespace": NAMESPACE,
+    "service_account_name": f"{PROJECT}-sa",
     "reference_name": "main-minio",
     "target_minio_endpoint": "http://doel.invalid:9000",
     "target_bucket_name": "b",

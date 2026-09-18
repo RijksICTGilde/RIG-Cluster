@@ -245,6 +245,9 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: flo
         f"Projectbestand '{project_name}' is afgekeurd: het voldoet niet aan het projectschema "
         f"(versie {described}). Veld '{location}': {first.message}"
     )
+    # Een patroon zegt de gebruiker niets; de beschrijving van het veld wel.
+    if first.validator == "pattern" and isinstance(first.schema, dict) and first.schema.get("description"):
+        message = f"{message}. {first.schema['description']}"
     # Do not log at ERROR here: the message is carried on the exception and the
     # caller logs it once with context. Self-logging made one rejection surface as
     # several ERR alerts (validator + orchestrator + task-progress). debug keeps a

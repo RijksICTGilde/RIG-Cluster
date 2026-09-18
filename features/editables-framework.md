@@ -78,6 +78,8 @@ class EditableVisualizer:
 
 Dit maakt hetzelfde `Editable` herbruikbaar met verschillende widgets — tekstveld in een wizard, readonly op een detailpagina, verborgen in een API-context.
 
+Een geheim (een token, een wachtwoord) krijgt `WidgetType.PASSWORD`: een tekstveld met `type="password"`, zodat de waarde niet leesbaar op het scherm staat. Verder gedraagt het zich als `TEXT`, ook in de brug: het krijgt `converter.read()` en niet `view()`, anders zou een ongewijzigde opslag de weergave van het geheim als nieuw geheim terugschrijven. Let op: afgeschermd is niet afwezig, de waarde staat nog wel in de pagina. Eerste gebruiker is het token van `image-registries`.
+
 ### FormField — resolved en klaar voor rendering
 
 De bridge-laag lost het pad op tegen de actuele data, past converters toe, evalueert condities, en levert een volledig resolved veld op dat de template direct kan renderen.

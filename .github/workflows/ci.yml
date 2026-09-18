@@ -43,6 +43,14 @@ jobs:
       # de age-keygen binary op de runner.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
+      # De sops-tests (test_sops_skip_unchanged, test_secret_file_keep_existing) slaan
+      # zonder de sops binary stil over. Ubuntu heeft geen sops-pakket, dus de release,
+      # op dezelfde versie als de Dockerfile.
+      - name: Install sops
+        run: |
+          curl -sSfL -o "$RUNNER_TEMP/sops" https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64
+          sudo install -m 0755 "$RUNNER_TEMP/sops" /usr/local/bin/sops
+          sops --version
       - name: Run tests with coverage
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report

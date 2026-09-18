@@ -47,7 +47,7 @@ class PostgresqlDatabaseService(Service):
                 layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
                 default=20,
                 minimum=1,
-                maximum=100,
+                maximum=500,
                 label="Connectielimiet",
             ),
             QuantitySetting(

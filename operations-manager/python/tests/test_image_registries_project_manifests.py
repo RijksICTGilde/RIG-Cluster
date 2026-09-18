@@ -11,11 +11,17 @@ from typing import Any, ClassVar
 
 import pytest
 import yaml
+from opi.core.cluster_config import get_image_registries_config
 from opi.generation.manifests import ManifestGenerator
 from opi.services.catalog.base import ProjectManifestContext
 from opi.services.catalog.image_registries import ImageRegistriesService
-from opi.services.catalog.image_registries.backends import FILENAME_PREFIX
-from opi.services.catalog.image_registries.naming import organization_name, upstream_hash
+from opi.services.catalog.image_registries.backends import FILENAME_PREFIX, MissingRegistryCredentialsError
+from opi.services.catalog.image_registries.naming import (
+    PULL_USERNAME_PLACEHOLDER,
+    organization_name,
+    upstream_hash,
+)
+from opi.services.catalog.image_registries.resolution import resolve_project_image
 from opi.services.registry import project_manifest_services
 from opi.services.services_enums import ServiceType
 from opi.utils.age import encrypt_age_content_sync
@@ -93,18 +99,17 @@ class TestDirectSecretBackend:
 
     def test_de_upstream_inclusief_pad_is_de_sleutel_in_auths(self, service: ImageRegistriesService) -> None:
         """kubelet kiest de meest specifieke match; dat is wat het veld altijd al droeg."""
-        import base64
-        import json
-
         spec = service.contribute_project_manifests(_ctx(SANDBOX, [REGISTRY]))[0]
         config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
         assert list(config["auths"]) == ["code.overheid.nl/robbert.uittenbroek"]
         auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
         assert auth == "robbert.uittenbroek:een-token"
 
-    def test_zonder_inloggegevens_geen_secret(self, service: ImageRegistriesService) -> None:
-        naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
-        assert service.contribute_project_manifests(_ctx(SANDBOX, [naked])) == []
+    def test_zonder_token_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+        """Het model laat zo'n entry niet door; komt hij hier toch, dan niet stil geen secret."""
+        naked = {"name": "publiek", "upstream": "code.overheid.nl/open", "username": "u"}
+        with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
+            service.contribute_project_manifests(_ctx(SANDBOX, [naked]))
 
     def test_een_bestaand_secret_schrijft_niets(self, service: ImageRegistriesService) -> None:
         existing = {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
@@ -207,8 +212,6 @@ class TestTweeRegistriesOnderDezelfdeHost:
     def test_de_twee_images_gaan_naar_verschillende_organisaties(self) -> None:
         """En daarmee doet de keuze per component weer iets: twee regels, twee
         bestemmingen, twee secrets."""
-        from opi.services.catalog.image_registries.resolution import resolve_project_image
-
         data = _ctx(ODCN, [self.EEN, self.ANDER]).project_data
         een = resolve_project_image("ghcr.io/orga/app:1", data, ODCN)
         ander = resolve_project_image("ghcr.io/orgb/app:1", data, ODCN)
@@ -232,12 +235,58 @@ class TestTweeRegistriesOnderDezelfdeHost:
         assert specs[0].values["secret_pairs"] == {"username": "a", "password": "token-a"}
 
 
+class TestDeGebruikersnaamIsOptioneel:
+    """RC-187: een entry zonder gebruikersnaam schrijft wel degelijk een secret.
+
+    De dockerconfigjson draagt per registry een ``auth`` van
+    ``base64(gebruikersnaam:wachtwoord)``; er is geen veld voor alleen een token. De
+    plaatshouder ontstaat daarom HIER, bij het bouwen van het manifest, en staat niet in het
+    projectbestand -- zie ``TestDeGebruikersnaamBlijftLeegInHetProjectbestand`` in
+    ``test_image_registries_schema_guards.py`` voor die kant.
+    """
+
+    ZONDER: ClassVar[dict[str, Any]] = {
+        "name": "code-overheid",
+        "upstream": "code.overheid.nl/robbert.uittenbroek",
+        "password": "een-token",
+    }
+
+    def test_het_directe_secret_draagt_een_volledig_paar(self, service: ImageRegistriesService) -> None:
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [self.ZONDER]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth == f"{PULL_USERNAME_PLACEHOLDER}:een-token"
+
+    def test_het_upstream_credential_op_odcn_draagt_hem_ook(self, service: ImageRegistriesService) -> None:
+        specs = service.contribute_project_manifests(_ctx(ODCN, [self.ZONDER]))
+        assert specs[0].values["secret_pairs"] == {
+            "username": PULL_USERNAME_PLACEHOLDER,
+            "password": "een-token",
+        }
+
+    @pytest.mark.parametrize("leeg", [None, ""], ids=["afwezig", "leeg"])
+    def test_een_lege_waarde_telt_als_geen_waarde(self, service: ImageRegistriesService, leeg: str | None) -> None:
+        """Het formulier stuurt een leeg veld als lege string, de API laat de sleutel weg."""
+        entry = {**self.ZONDER} if leeg is None else {**self.ZONDER, "username": leeg}
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [entry]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth.split(":", 1)[0] == PULL_USERNAME_PLACEHOLDER
+
+    def test_een_ingevulde_gebruikersnaam_wordt_niet_vervangen(self, service: ImageRegistriesService) -> None:
+        """De tegenproef: met een naam erin komt die naam in het paar, niet de plaatshouder."""
+        spec = service.contribute_project_manifests(_ctx(SANDBOX, [REGISTRY]))[0]
+        config = json.loads(spec.values["secret_pairs"][".dockerconfigjson"])
+        auth = base64.b64decode(config["auths"]["code.overheid.nl/robbert.uittenbroek"]["auth"]).decode()
+        assert auth == "robbert.uittenbroek:een-token"
+
+
 class TestQuayProxyOrganizationBackendZonderInloggegevens:
-    def test_zonder_inloggegevens_alleen_de_organisatie(self, service: ImageRegistriesService) -> None:
-        naked = {"name": "publiek", "upstream": "code.overheid.nl/open"}
-        specs = service.contribute_project_manifests(_ctx(ODCN, [naked]))
-        assert len(specs) == 1
-        assert specs[0].values["credentials_secret"] is None
+    def test_zonder_token_blaast_hij_op(self, service: ImageRegistriesService) -> None:
+        """Net als bij het directe secret: geen stille organisatie zonder credentials."""
+        naked = {"name": "publiek", "upstream": "code.overheid.nl/open", "username": "u"}
+        with pytest.raises(MissingRegistryCredentialsError, match="publiek"):
+            service.contribute_project_manifests(_ctx(ODCN, [naked]))
 
 
 class TestDeGerenderdeOrganisatie:
@@ -260,15 +309,13 @@ class TestDeGerenderdeOrganisatie:
         manifest = self._render(tmp_path, service)
         assert manifest["kind"] == "Organization"
         assert manifest["spec"]["proxyCache"]["upstreamRegistry"] == "code.overheid.nl/robbert.uittenbroek"
-        assert manifest["spec"]["proxyCache"]["credentialsSecret"]["name"] == (
+        assert manifest["spec"]["proxyCache"]["credentialsSecretRef"]["name"] == (
             f"{organization_name(REGISTRY['upstream'], 'rig', 'demo')}-upstream-credentials"
         )
 
     def test_de_api_version_komt_uit_de_clusterconfig(self, tmp_path: Any, service: ImageRegistriesService) -> None:
         """Een platformfeit, geen vaste waarde in het sjabloon: als de groep/versie van de
         CRD afwijkt is dat een regel clusterconfig en niet een sjabloonwijziging."""
-        from opi.core.cluster_config import get_image_registries_config
-
         manifest = self._render(tmp_path, service)
         assert manifest["apiVersion"] == get_image_registries_config(ODCN)["organization_api_version"]
 
@@ -276,7 +323,7 @@ class TestDeGerenderdeOrganisatie:
         """rotation.enabled: false doet niet wat de documentatie belooft: het token krijgt
         alsnog retentionDays en verloopt, zonder dat iemand het ververst."""
         manifest = self._render(tmp_path, service)
-        assert manifest["spec"]["robot"]["rotation"] == {"enabled": True, "retentionDays": 90}
+        assert manifest["spec"]["robot"]["imagePullSecret"]["rotation"] == {"enabled": True, "retentionDays": 90}
 
 
 class TestElkBestandIsWeerOpTeRuimen:
