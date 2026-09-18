@@ -36,6 +36,10 @@ class WidgetAdapter(ABC):
         """Render a text input field."""
 
     @abstractmethod
+    def render_password(self, field: FormField) -> str:
+        """Render a text input whose value is masked on screen."""
+
+    @abstractmethod
     def render_textarea(self, field: FormField) -> str:
         """Render a textarea field."""
 
@@ -241,7 +245,7 @@ class WidgetAdapter(ABC):
             "datetime": self.render_date,  # Can override for datetime-local
             "file": self.render_file,
             "hidden": self.render_hidden,
-            "password": self.render_text,  # Password uses text input with type override
+            "password": self.render_password,
             "service_cards": self.render_service_cards,
             "display_card": self.render_display_card,
             "key_value": self.render_key_value_editor,

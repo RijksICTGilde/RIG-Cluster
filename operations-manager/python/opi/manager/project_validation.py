@@ -97,8 +97,21 @@ def validation_reasons(error: ValidationError) -> str:
     voor een ``model_validator`` zet valt eraf: de zin eromheen zegt al dat er iets ongeldig
     is, en "Value error" voegt daar niets aan toe wat de lezer verder helpt.
     """
-    reasons = [error_entry["msg"].removeprefix("Value error, ") for error_entry in error.errors()]
+    reasons = [
+        _located(error_entry["loc"], error_entry["msg"].removeprefix("Value error, ")) for error_entry in error.errors()
+    ]
     return "; ".join(reasons) or "waarde voldoet niet aan het model"
+
+
+def _located(loc: tuple[int | str, ...], reason: str) -> str:
+    """Zet de plek voor de reden, zodat je bij drie registries weet welke je moet repareren.
+
+    ``loc`` draagt veldnamen, lijstindexen en dict-sleutels, geen waarden, dus hier lekt niets
+    wat ``msg`` alleen zou verbergen. Een index telt vanaf 1: ``registries, nummer 2`` is de
+    tweede entry zoals een mens hem telt.
+    """
+    parts = [f"nummer {part + 1}" if isinstance(part, int) else part for part in loc]
+    return f"{', '.join(parts)}: {reason}" if parts else reason
 
 
 def _validate_one_config(
@@ -129,7 +142,10 @@ def _validate_one_config(
                 # stamped version to migrate from; validate the shape directly.
                 model.model_validate(raw)
         except ValidationError as e:
-            accepted = _accepted_config_fields(provider, layer)
+            # De lijst geaccepteerde velden helpt alleen bij een onbekende sleutel. Bij een fout
+            # BINNEN een veld las hij alsof dat veld zelf fout was.
+            unknown_key = any(error_entry["type"] == "extra_forbidden" for error_entry in e.errors())
+            accepted = _accepted_config_fields(provider, layer) if unknown_key else []
             hint = f" Geaccepteerde velden: {', '.join(accepted)}." if accepted else ""
             raise ProjectIntegrityError(
                 f"Project '{project_name}': configuratie van service '{name}' {where} is ongeldig: "

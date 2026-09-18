@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 import base64
+import copy
 import shutil
 import subprocess
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from opi.connectors.skopeo import SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
+from opi.forms.editables.processor import EditableFormProcessor
+from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.services.catalog.base import ConfigLayer
+from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
 from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer, _repository_under
+from opi.services.catalog.image_registries.naming import PULL_USERNAME_PLACEHOLDER
+from opi.services.registry import get_service
+from opi.services.services_enums import ServiceType
 from opi.utils.age import encrypt_age_content_sync
 
 REGISTRY = {
@@ -89,18 +99,19 @@ class TestDeToets:
             assert await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"}) is data
 
     async def test_zonder_image_wordt_er_niets_geweigerd(self) -> None:
-        """De normale toestand in de wizard: de registry komt voor de componenten. Een
-        weigering op iets wat we niet gemeten hebben zou een gebruiker blokkeren op een
-        aanname."""
+        """De eerste stap vooruit in de create-wizard: de registry komt voor de componenten.
+        In de edit-wizard en de modals staan de bestaande componenten al in de samengevoegde
+        data. Een weigering op iets wat we niet gemeten hebben zou een gebruiker blokkeren op
+        een aanname."""
         connector = _connector(False, "zou niet aangeroepen mogen worden")
         data = _data([REGISTRY])
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         connector.check_repository_access.assert_not_awaited()
 
-    async def test_zonder_inloggegevens_wordt_er_niets_getoetst(self) -> None:
+    async def test_met_een_secretname_wordt_er_niets_getoetst(self) -> None:
         connector = _connector(False)
-        data = _data([{"name": "publiek", "upstream": "code.overheid.nl/open"}], [IMAGE])
+        data = _data([{"name": "platform", "upstream": "code.overheid.nl/open", "secretName": "rig-pull"}], [IMAGE])
         with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         connector.check_repository_access.assert_not_awaited()
@@ -118,10 +129,6 @@ class TestDeToets:
         """Geen skopeo is geen oordeel over het token, en die beslissing zit in de
         CONNECTOR zelf, daarom staat er in de enforcer geen tweede vangnet omheen.
         Gemeten op de echte methode met een connector die niet beschikbaar is."""
-        from types import SimpleNamespace
-
-        from opi.connectors.skopeo import SkopeoConnector
-
         niet_beschikbaar = SimpleNamespace(is_skopeo_available=False)
         ok, reason = await SkopeoConnector.check_repository_access(
             niet_beschikbaar,  # type: ignore[arg-type]
@@ -162,12 +169,76 @@ class TestDeToets:
         )
 
 
+class TestZonderGebruikersnaam:
+    """RC-187: de gebruikersnaam is optioneel, en DEZE toets is de poort.
+
+    Het model laat een entry zonder gebruikersnaam door, want wat hij betekent verschilt per
+    registry. Hier praten we echt met de registry, met precies het paar dat de backend daarna
+    in de dockerconfigjson zet -- dus met dezelfde plaatshouder. Een registry die wel een
+    echte naam eist weigert hier, en dan moet de melding dat noemen.
+    """
+
+    ZONDER: ClassVar[dict[str, str]] = {k: v for k, v in REGISTRY.items() if k != "username"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("leeg", [None, ""], ids=["afwezig", "leeg"])
+    async def test_de_plaatshouder_gaat_naar_de_registry(self, leeg: str | None) -> None:
+        """Niet een lege gebruikersnaam en niet overslaan: hetzelfde paar als de backend."""
+        connector = _connector(True)
+        registry = dict(self.ZONDER) if leeg is None else {**self.ZONDER, "username": leeg}
+        data = _data([registry], [IMAGE])
+        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        connector.check_repository_access.assert_awaited_once_with(
+            "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo", PULL_USERNAME_PLACEHOLDER, "een-token"
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_registry_die_een_echte_naam_eist_geeft_een_leesbare_fout(self) -> None:
+        """Wat Docker Hub en Quay doen: het token klopt, de gebruikersnaam niet. Zonder de
+        zin over de gebruikersnaam zoekt de afnemer het in het token."""
+        data = _data([self.ZONDER], [IMAGE])
+        with (
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, "unauthorized: incorrect username or password"),
+            ),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        melding = str(exc.value)
+        assert "geen gebruikersnaam ingevuld" in melding
+        assert "Docker Hub en Quay" in melding
+        assert "incorrect username or password" in melding
+
+    @pytest.mark.asyncio
+    async def test_met_een_gebruikersnaam_blijft_de_melding_over_het_token_gaan(self) -> None:
+        """De tegenproef: wie hem wel invulde krijgt geen raad over een veld dat al gevuld is."""
+        data = _data([REGISTRY], [IMAGE])
+        with (
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, "unauthorized: reqPackageAccess"),
+            ),
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        assert "geen gebruikersnaam ingevuld" not in str(exc.value)
+
+    @pytest.mark.asyncio
+    async def test_zonder_token_wordt_er_nog_steeds_niets_getoetst(self) -> None:
+        """De eis die BLEEF: zonder token valt er niets te meten, en het model weigert hem."""
+        connector = _connector(False)
+        data = _data([{"name": "eigen", "upstream": "code.overheid.nl/robbert.uittenbroek"}], [IMAGE])
+        with patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        connector.check_repository_access.assert_not_awaited()
+
+
 class TestDeConnector:
     """De maskering, want een foutregel van skopeo kan de verwijzing mét token bevatten."""
 
     def test_de_creds_worden_gemaskeerd_in_het_log(self) -> None:
-        from opi.connectors.skopeo import SkopeoConnector
-
         masked = SkopeoConnector._mask_list_tags_credentials(
             ["skopeo", "list-tags", "--creds", "robbert:geheim", "docker://x"]
         )
@@ -175,8 +246,6 @@ class TestDeConnector:
         assert "geheim" not in " ".join(masked)
 
     def test_een_userinfo_in_een_foutmelding_wordt_gemaskeerd(self) -> None:
-        from opi.connectors.skopeo import SkopeoConnector
-
         masked = SkopeoConnector._mask_userinfo("error pinging docker://robbert:geheim@code.overheid.nl/v2/")
         assert "geheim" not in masked
         assert "***@code.overheid.nl" in masked
@@ -190,8 +259,6 @@ class TestDeTokenConverter:
     AGE = "-----BEGIN AGE ENCRYPTED FILE-----\nxxx\n-----END AGE ENCRYPTED FILE-----"
 
     def _converter(self) -> Any:
-        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
-
         return ProjectAgeSecretConverter()
 
     def test_zonder_sleutel_blijft_het_blok_staan(self) -> None:
@@ -256,8 +323,6 @@ class TestDeConverterKentAlleDrieDeOpslagvormen:
         }
 
     def _converter(self) -> Any:
-        from opi.services.catalog.image_registries.converters import ProjectAgeSecretConverter
-
         return ProjectAgeSecretConverter()
 
     def _opgeslagen(self, project: dict[str, Any], vorm: str) -> str:
@@ -328,22 +393,15 @@ class TestDeToetsLangsDeOpslagroute:
         }
 
     def _section(self) -> Any:
-        from opi.services.catalog.base import ConfigLayer
-        from opi.services.registry import get_service
-        from opi.services.services_enums import ServiceType
-
         section = get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT)
         assert section is not None
         assert section.enforcer is not None
         return section
 
-    async def _opslaan(self, project: dict[str, Any], connector: Any) -> tuple[dict[str, Any], dict[str, list[str]]]:
+    async def _opslaan(
+        self, project: dict[str, Any], connector: Any, upstream: str = "code.overheid.nl/robbert.uittenbroek"
+    ) -> tuple[dict[str, Any], dict[str, list[str]]]:
         """De vorm van ``router_detail_edit.py:995-1026``: verwerken, dan de sectie toetsen."""
-        import copy
-
-        from opi.forms.editables.processor import EditableFormProcessor
-        from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
-
         section = self._section()
         inzending = {
             "_services-config": {
@@ -352,7 +410,7 @@ class TestDeToetsLangsDeOpslagroute:
                         "registries": [
                             {
                                 "name": "code-overheid",
-                                "upstream": "code.overheid.nl/robbert.uittenbroek",
+                                "upstream": upstream,
                                 "username": "robbert.uittenbroek",
                                 # Wat de gebruiker intypt: het token zelf.
                                 "password": self.TOKEN,
@@ -400,6 +458,21 @@ class TestDeToetsLangsDeOpslagroute:
         assert errors == {}
         connector.check_repository_access.assert_awaited_once_with(
             "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo", "robbert.uittenbroek", self.TOKEN
+        )
+
+    async def test_een_geplakte_browser_url_komt_als_upstream_in_het_bestand(self, project: dict[str, Any]) -> None:
+        """De invoerhulp langs het formulier: de converter van het veld zet hem om, niet alleen
+        de toets die hem goedkeurt. Anders slaat de portal de URL letterlijk op."""
+        connector = _connector(True)
+        submitted_yaml, errors = await self._opslaan(
+            project, connector, upstream="https://code.overheid.nl/robbert.uittenbroek/-/packages"
+        )
+
+        assert errors == {}
+        opgeslagen = submitted_yaml["services"][0]["config"]["registries"][0]["upstream"]
+        assert opgeslagen == "code.overheid.nl/robbert.uittenbroek"
+        assert connector.check_repository_access.await_args.args[0] == (
+            "code.overheid.nl/robbert.uittenbroek/zad-deployment-demo"
         )
 
     async def test_een_te_smal_token_komt_langs_dezelfde_route_wel_op_het_veld(self, project: dict[str, Any]) -> None:
