@@ -46,6 +46,7 @@ case "$1" in
     case "$*" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
+        sleep "${STUB_ENV_PAUSE:-0}"
         echo "PATH=/usr/bin"
         for _ in $(seq "${STUB_REG_ENV_TAIL:-0}"); do echo "OPVULLING=$RANDOM$RANDOM$RANDOM"; done
         ;;
@@ -510,6 +511,12 @@ class TestPruneScriptRefusals:
         assert run.returncode == 7
         assert "failed to garbage collect: disk full" in run.stderr
         assert "klaar" not in run.stdout
+
+    def test_output_after_the_match_does_not_skip_the_cleanup(self, tmp_path: Path) -> None:
+        """Een falende garbage-collect bewijst dat het script voorbij de deletecontrole kwam."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_ENV_PAUSE="0.2", STUB_GC_FAILS="7")
+
+        assert run.returncode == 7, run.stderr
 
     def test_never_touches_the_builder(self) -> None:
         """De buildcache van de builder hoort niet in de registry en mag hier niet weg."""

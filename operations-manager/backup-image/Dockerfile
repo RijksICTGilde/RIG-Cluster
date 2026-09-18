@@ -2,6 +2,10 @@
 # Supports: PVC backups (kopia), PostgreSQL backups (pg_dump/pg_restore), MinIO backups (mc)
 # Target image: ghcr.io/minbzk/base-images/rig-backup:latest
 
+# dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
+ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
+FROM quay.io/minio/mc:${MC_VERSION} AS mc
+
 FROM python:3.14-slim
 
 # Set environment variables
@@ -28,9 +32,7 @@ RUN curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}
     && rm -rf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" "kopia-${KOPIA_VERSION}-linux-x64"
 
 # Install MinIO client - for bucket operations
-RUN curl -LO "https://dl.min.io/client/mc/release/linux-amd64/mc" \
-    && chmod +x mc \
-    && mv mc /usr/local/bin/mc
+COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
 
 # Create non-root user with home directory for Kopia cache
 RUN groupadd -g 1001 backupuser 2>/dev/null || true && \
