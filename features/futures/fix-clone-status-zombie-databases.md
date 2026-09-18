@@ -1,5 +1,7 @@
 # Fix clone-status zombie databases
 
+**Status**: gebouwd in RC-203 als een aangepaste optie B, zie `features/kloonpoging.md`. Het opruimen van bestaande zombies is niet gedaan.
+
 ## Problem
 
 When a project-processing run for a deployment with `clone-from` fails *after* the database clone succeeds but *before* `set_clone_status(completed=True)` is written, the next refresh fires the generational failover and creates a versioned database (`_v1`, `_v2`, ...). After 5 attempts the cap kicks in and the deployment is permanently blocked until a human drops the zombie databases.

@@ -6,6 +6,7 @@ from opi.services.catalog.base import ProjectManifestContext, ProjectManifestSpe
 from opi.services.catalog.platform.variables import PlatformVariables
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.utils.naming import generate_project_service_account_name
 
 
 class PlatformService(Service):
@@ -33,8 +34,6 @@ class PlatformService(Service):
         Bij het platform en niet bij image-registries, want elk project heeft hem nodig,
         ook een project zonder eigen registry. Zie ``generate_project_service_account_name``.
         """
-        from opi.utils.naming import generate_project_service_account_name
-
         name = generate_project_service_account_name(ctx.project_name)
         return [
             ProjectManifestSpec(

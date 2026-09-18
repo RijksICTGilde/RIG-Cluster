@@ -13,6 +13,7 @@ metadata:
     backup.rig.nl/bucket: "{{ reference_name }}"
     backup.rig.nl/timestamp: "{{ timestamp }}"
 spec:
+  serviceAccountName: "{{ service_account_name }}"
   restartPolicy: Never
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
   containers:

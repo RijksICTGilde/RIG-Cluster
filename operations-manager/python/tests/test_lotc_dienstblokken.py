@@ -69,15 +69,23 @@ BLOKKEN: dict[str, dict[str, Any]] = {
         "section": _section(
             {
                 "project_name": "voorbeeld",
+                # De VORM die ``registries_block`` oplevert: geen token, wel de vraag of er
+                # een is. De vier takken van het sjabloon staan er alle vier in.
                 "registries": [
                     {
                         "name": "code-overheid",
                         "upstream": "code.overheid.nl/voorbeeld",
                         "username": "voorbeeld",
-                        "password": "-----BEGIN AGE ENCRYPTED FILE-----",
+                        "has_token": True,
                     },
-                    {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"},
-                    {"name": "publiek", "upstream": "ghcr.io/open"},
+                    {"name": "ghcr", "upstream": "ghcr.io/voorbeeld", "username": None, "has_token": True},
+                    {
+                        "name": "platform",
+                        "upstream": "rcr.rijksapps.nl/rig",
+                        "secretName": "rig-robot-pull-secret",
+                        "has_token": False,
+                    },
+                    {"name": "publiek", "upstream": "ghcr.io/open", "has_token": False},
                 ],
             }
         ),

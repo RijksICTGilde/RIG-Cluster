@@ -48,6 +48,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.manager.project_validation import validate_project_structure
+from opi.services.catalog.image_registries.resolution import project_registries
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
 from opi.utils.yaml_util import load_yaml_from_path
 
@@ -218,8 +219,6 @@ async def test_legacy_registries_block_is_relocated_not_lost() -> None:
     toets hetzelfde uit, dus de aankomst moet apart gemeten worden. ``algor-odc`` is het
     ene bestand in de vloot met inloggegevens erin.
     """
-    from opi.services.catalog.image_registries.resolution import project_registries
-
     gemeten = 0
     for path in _fixture_paths():
         raw = _load(path)

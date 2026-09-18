@@ -96,7 +96,11 @@
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "branch": { "type": "string" },
-        "path": { "type": "string" },
+        "path": {
+          "type": "string",
+          "description": "Een relatief pad binnen de repository, zonder '..', zonder voorloopstreep en zonder backslash. Gebruik '.' voor de repository zelf.",
+          "pattern": "^(?:(?:[^./\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])(?:[^.\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])*)?\\.?\\z"
+        },
         "project_name": { "type": "string" }
       }
     },
@@ -483,7 +487,8 @@
           "additionalProperties": false,
           "properties": {
             "completed": { "type": "boolean" },
-            "timestamp": { "type": "string" }
+            "timestamp": { "type": "string" },
+            "in-progress": { "type": "boolean" }
           }
         }
       }

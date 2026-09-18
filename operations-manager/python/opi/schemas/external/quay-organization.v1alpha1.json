@@ -1,0 +1,448 @@
+{
+  "$comment": "Opgehaald uit het ODCN-cluster met: kubectl get --raw /openapi/v3/apis/quay.k8s.rijksapps.nl/v1alpha1 . Dit is de waarheid over de Organization-CR; onze sjablonen worden hiertegen getoetst.",
+  "schema": {
+    "description": "Organization is the Schema for the organizations API.\nIt represents a Quay organisation with all its associated configuration.",
+    "properties": {
+      "apiVersion": {
+        "description": "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
+        "type": "string"
+      },
+      "kind": {
+        "description": "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
+        "type": "string"
+      },
+      "metadata": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"
+          }
+        ],
+        "description": "Standard object's metadata. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata"
+      },
+      "spec": {
+        "description": "OrganizationSpec defines the desired state of the Quay Organisation.",
+        "properties": {
+          "authorization": {
+            "description": "Authorization configures teams, OIDC sync and default permissions.",
+            "properties": {
+              "defaultPermissions": {
+                "description": "DefaultPermissions configures prototype (default) repository permissions.",
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "description": "Enabled controls whether default prototype permissions are set.\nDefaults to true.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "teamSync": {
+                "description": "TeamSync configures OIDC team synchronisation.",
+                "properties": {
+                  "authLevels": {
+                    "description": "AuthLevels lists the authorisation levels to create.\nEach level results in a team named \"<customer>-<tenant>-<level.name>-group\".\nThe group is synced to the OIDC group of the same name.\nDefaults to admin/developer/viewer all with role Member.",
+                    "items": {
+                      "description": "AuthLevelSpec defines a single authorisation level that maps to a\nQuay team role.",
+                      "properties": {
+                        "name": {
+                          "description": "Name is the short name of the level, e.g. \"admin\", \"developer\", \"viewer\".",
+                          "type": "string"
+                        },
+                        "role": {
+                          "default": "Member",
+                          "description": "Role is the Quay team role assigned to this level.",
+                          "enum": [
+                            "Admin",
+                            "Creator",
+                            "Member"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "role"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "enabled": {
+                    "default": true,
+                    "description": "Enabled controls whether teams are synchronised via OIDC. Defaults to true.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
+          "customerName": {
+            "description": "CustomerName is the name of the customer. It also becomes the Quay\norganisation name.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "preventDeletion": {
+            "default": false,
+            "description": "PreventDeletion blocks deletion of this Organization CR when set to true.\nThe controller will not remove its finalizer until this field is set back\nto false, preventing accidental removal of the Quay organisation and its\nassociated resources.",
+            "type": "boolean"
+          },
+          "proxyCache": {
+            "description": "ProxyCache configures this organisation as a proxy cache for an upstream\nregistry. When enabled, the Quay org name becomes\n\"<proxyCache.friendlyName>-<customerName>\".",
+            "properties": {
+              "credentialsSecretRef": {
+                "description": "CredentialsSecretRef references a Secret in the same namespace as the\nOrganization CR that contains upstream registry credentials.\nExpected keys: \"username\" and \"password\".",
+                "properties": {
+                  "name": {
+                    "default": "",
+                    "description": "Name of the referent.\nThis field is effectively required, but due to backwards compatibility is\nallowed to be empty. Instances of this type with an empty value here are\nalmost certainly wrong.\nMore info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names",
+                    "type": "string"
+                  }
+                },
+                "type": "object",
+                "x-kubernetes-map-type": "atomic"
+              },
+              "enabled": {
+                "default": false,
+                "description": "Enabled controls whether this proxy cache configuration is applied.",
+                "type": "boolean"
+              },
+              "friendlyName": {
+                "description": "FriendlyName is a short label for the upstream registry, used as the\nprefix of the Quay organisation name. Must not contain a dot (\".\").\nExample: \"quay\" results in an org named \"quay-<customerName>\".\nRequired when enabled is true.",
+                "pattern": "^[^.]+$",
+                "type": "string"
+              },
+              "upstreamRegistry": {
+                "description": "UpstreamRegistry is the URL of the upstream registry, e.g. \"quay.io\".\nRequired when enabled is true.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object",
+            "x-kubernetes-validations": [
+              {
+                "message": "spec.proxyCache.friendlyName and upstreamRegistry are required when enabled is true",
+                "rule": "!self.enabled || (has(self.friendlyName) && has(self.upstreamRegistry))"
+              }
+            ]
+          },
+          "quayInstanceRef": {
+            "description": "QuayInstanceRef is the name of the cluster-scoped QuayInstance CR that\ndefines which Quay registry this Organisation lives in. If omitted, the\ncontroller selects the QuayInstance with Default set to true.",
+            "type": "string"
+          },
+          "quota": {
+            "description": "Quota controls the storage quota for the organisation.\nDefaults: LimitGiB=10, WarningPercent=80, RejectPercent=100.",
+            "properties": {
+              "limitGiB": {
+                "default": 10,
+                "description": "LimitGiB is the maximum storage in gibibytes. Defaults to 10.",
+                "format": "int64",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "rejectPercent": {
+                "default": 100,
+                "description": "RejectPercent rejects pushes at this usage percentage.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "warningPercent": {
+                "default": 80,
+                "description": "WarningPercent triggers a warning notification at this usage percentage.",
+                "maximum": 100,
+                "minimum": 1,
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "robot": {
+            "description": "Robot configures the Quay robot account for the organisation.",
+            "properties": {
+              "enabled": {
+                "default": true,
+                "description": "Enabled controls whether a robot account is created. Defaults to true.",
+                "type": "boolean"
+              },
+              "imagePullSecret": {
+                "description": "ImagePullSecret controls the Kubernetes Secret holding the robot's\nDocker config credentials.",
+                "properties": {
+                  "additionalLabels": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "AdditionalLabels are extra labels added to the created Secret.",
+                    "type": "object"
+                  },
+                  "enabled": {
+                    "default": true,
+                    "description": "Enabled controls whether an imagePullSecret is created. Defaults to true.",
+                    "type": "boolean"
+                  },
+                  "name": {
+                    "description": "Name of the created imagePullSecret.\nDefaults to \"<organizationName>-robot-pull-secret\".",
+                    "type": "string"
+                  },
+                  "rotation": {
+                    "description": "Rotation configures automatic token rotation.",
+                    "properties": {
+                      "enabled": {
+                        "default": true,
+                        "description": "Enabled controls whether token rotation is active. Defaults to true.",
+                        "type": "boolean"
+                      },
+                      "retentionDays": {
+                        "default": 90,
+                        "description": "RetentionDays specifies the number of days a token remains valid.\nAfter this many days the controller regenerates the token.",
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ],
+                "type": "object"
+              },
+              "name": {
+                "description": "Name of the robot account within Quay.\nDefaults to \"<organizationName>-robot\".",
+                "type": "string"
+              },
+              "readerMembers": {
+                "description": "ReaderMembers is a list of additional Quay usernames to add to the\nrobot-reader team alongside the robot account itself.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "enabled"
+            ],
+            "type": "object"
+          },
+          "suffix": {
+            "description": "Suffix is an optional string appended to the Quay organisation name\nwith a \"-\" separator, e.g. suffix \"acc\" results in \"<customerName>-acc\".\nWhen combined with a proxy cache the format becomes\n\"<friendlyName>-<customerName>-<suffix>\".\nThis field is immutable after creation.",
+            "type": "string"
+          },
+          "tenants": {
+            "description": "Tenants is an ordered list of tenant names (e.g. [\"test\",\"acc\",\"prd\"]).\nTeams are created per tenant per auth level.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "customerName",
+          "tenants"
+        ],
+        "type": "object"
+      },
+      "status": {
+        "description": "OrganizationStatus defines the observed state of Organization.",
+        "properties": {
+          "boundQuayInstance": {
+            "description": "BoundQuayInstance is the name of the QuayInstance CR that this\nOrganisation is reconciled against. Set by the controller after\nresolving the (possibly defaulted) quayInstanceRef.",
+            "type": "string"
+          },
+          "conditions": {
+            "description": "Conditions reflect the overall reconciliation state.",
+            "items": {
+              "description": "Condition contains details for one aspect of the current state of this API Resource.",
+              "properties": {
+                "lastTransitionTime": {
+                  "description": "lastTransitionTime is the last time the condition transitioned from one status to another.\nThis should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.",
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "message": {
+                  "description": "message is a human readable message indicating details about the transition.\nThis may be an empty string.",
+                  "maxLength": 32768,
+                  "type": "string"
+                },
+                "observedGeneration": {
+                  "description": "observedGeneration represents the .metadata.generation that the condition was set based upon.\nFor instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date\nwith respect to the current state of the instance.",
+                  "format": "int64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reason": {
+                  "description": "reason contains a programmatic identifier indicating the reason for the condition's last transition.\nProducers of specific condition types may define expected values and meanings for this field,\nand whether the values are considered a guaranteed API.\nThe value should be a CamelCase string.\nThis field may not be empty.",
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "pattern": "^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$",
+                  "type": "string"
+                },
+                "status": {
+                  "description": "status of the condition, one of True, False, Unknown.",
+                  "enum": [
+                    "True",
+                    "False",
+                    "Unknown"
+                  ],
+                  "type": "string"
+                },
+                "type": {
+                  "description": "type of condition in CamelCase or in foo.example.com/CamelCase.",
+                  "maxLength": 316,
+                  "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "lastTransitionTime",
+                "message",
+                "reason",
+                "status",
+                "type"
+              ],
+              "type": "object"
+            },
+            "type": "array",
+            "x-kubernetes-list-map-keys": [
+              "type"
+            ],
+            "x-kubernetes-list-type": "map"
+          },
+          "imagePullSecret": {
+            "description": "ImagePullSecret reports the name and token state of the robot's imagePullSecret.",
+            "properties": {
+              "name": {
+                "description": "Name is the Kubernetes Secret name containing the robot's Docker config credentials.",
+                "type": "string"
+              },
+              "tokenExpiryDate": {
+                "description": "TokenExpiryDate is the date (YYYY-MM-DD) on which the current robot token expires and will be rotated.",
+                "type": "string"
+              },
+              "tokenLastRotatedAt": {
+                "description": "TokenLastRotatedAt is the compact UTC timestamp (yyyyMMddTHHmmssZ) of the most recent token rotation.",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "lastSyncTime": {
+            "description": "LastSyncTime records the last time reconciliation against Quay completed.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "observedGeneration": {
+            "description": "ObservedGeneration is the .metadata.generation this status corresponds to.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "proxyCache": {
+            "description": "ProxyCache reports the proxy cache configuration state.",
+            "properties": {
+              "credentialsConfigured": {
+                "description": "CredentialsConfigured is true when upstream registry credentials were\nloaded from a Secret and sent to Quay. False means the proxy cache is\nconfigured for anonymous/public access.",
+                "type": "boolean"
+              },
+              "credentialsHash": {
+                "description": "CredentialsHash is a SHA-256 digest of the credentials last applied to\nQuay. It is used to detect secret rotation without comparing plaintext\nvalues. Quay redacts passwords in GET responses so direct comparison is\nnot possible.",
+                "type": "string"
+              },
+              "ready": {
+                "description": "Ready indicates whether the proxy cache is fully configured.",
+                "type": "boolean"
+              },
+              "upstream": {
+                "description": "Upstream is the upstream registry URL.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "credentialsConfigured",
+              "ready",
+              "upstream"
+            ],
+            "type": "object"
+          },
+          "quayOrgName": {
+            "description": "QuayOrgName is the actual organisation name in Quay (may differ from\ncustomerName when a proxy cache is enabled).",
+            "type": "string"
+          },
+          "robotAccountName": {
+            "description": "RobotAccountName is the fully-qualified Quay robot account name.",
+            "type": "string"
+          },
+          "teams": {
+            "description": "Teams lists the current state of all managed Quay teams.",
+            "items": {
+              "description": "TeamStatus reports the current state of a single Quay team.",
+              "properties": {
+                "memberCount": {
+                  "description": "MemberCount is the number of members in the team as reported by Quay.",
+                  "type": "integer"
+                },
+                "name": {
+                  "description": "Name is the Quay team name.",
+                  "type": "string"
+                },
+                "oidcSynced": {
+                  "description": "OIDCSynced indicates whether OIDC sync is currently active for this team.",
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name",
+                "oidcSynced"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "type": "object",
+    "x-kubernetes-group-version-kind": [
+      {
+        "group": "quay.k8s.rijksapps.nl",
+        "kind": "Organization",
+        "version": "v1alpha1"
+      }
+    ],
+    "x-kubernetes-validations": [
+      {
+        "message": "spec.customerName is immutable after creation",
+        "rule": "self.spec.customerName == oldSelf.spec.customerName"
+      },
+      {
+        "message": "spec.quayInstanceRef is immutable once set",
+        "rule": "!has(oldSelf.spec.quayInstanceRef) || (has(self.spec.quayInstanceRef) && self.spec.quayInstanceRef == oldSelf.spec.quayInstanceRef)"
+      },
+      {
+        "message": "spec.proxyCache cannot be added or removed after creation",
+        "rule": "has(self.spec.proxyCache) == has(oldSelf.spec.proxyCache)"
+      },
+      {
+        "message": "spec.proxyCache.enabled, friendlyName, and upstreamRegistry are immutable after creation",
+        "rule": "!has(self.spec.proxyCache) || (self.spec.proxyCache.enabled == oldSelf.spec.proxyCache.enabled && (!has(oldSelf.spec.proxyCache.friendlyName) || (has(self.spec.proxyCache.friendlyName) && self.spec.proxyCache.friendlyName == oldSelf.spec.proxyCache.friendlyName)) && (!has(oldSelf.spec.proxyCache.upstreamRegistry) || (has(self.spec.proxyCache.upstreamRegistry) && self.spec.proxyCache.upstreamRegistry == oldSelf.spec.proxyCache.upstreamRegistry)))"
+      },
+      {
+        "message": "spec.suffix is immutable after creation",
+        "rule": "(!has(self.spec.suffix) && !has(oldSelf.spec.suffix)) || (has(self.spec.suffix) && has(oldSelf.spec.suffix) && self.spec.suffix == oldSelf.spec.suffix)"
+      }
+    ]
+  }
+}

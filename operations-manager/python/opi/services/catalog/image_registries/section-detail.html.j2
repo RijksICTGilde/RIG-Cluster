@@ -12,16 +12,13 @@
                 <c-secret-field value="{{ registry.upstream }}" revealed show-copy />
                 {% if registry.username %}
                     <c-paragraph size="sm">Ingelogd als {{ registry.username }}; het token is versleuteld opgeslagen.</c-paragraph>
+                {% elif registry.has_token %}
+                    <c-paragraph size="sm">Het token is versleuteld opgeslagen. Je hebt geen gebruikersnaam ingevuld.</c-paragraph>
                 {% elif registry.secretName %}
                     <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
-                {% else %}
-                    <c-paragraph size="sm">Zonder inloggegevens: alleen publieke images uit deze registry.</c-paragraph>
                 {% endif %}
             </c-stack>
         {% endfor %}
-
-        {# Wat we niet kunnen verbergen, hier en niet alleen achter het vraagteken. #}
-        <c-paragraph size="sm">Het token heeft leesrecht op packages nodig. Er geldt een quotum op wat het platform van je images bewaart, en het token verloopt periodiek: dan vul je hier een nieuw token in. Zet je deze dienst uit, dan verdwijnt de kopie die het platform bewaart; in je eigen registry verandert er niets.</c-paragraph>
 
         <div hx-get="/projects/details/{{ section.context.project_name }}/image-registries/status"
              hx-trigger="load"

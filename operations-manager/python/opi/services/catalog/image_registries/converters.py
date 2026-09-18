@@ -1,4 +1,4 @@
-"""Converter voor het registry-token.
+"""Converters voor de dienst ``image-registries``.
 
 Versleuteld met de sleutel van het PROJECT en niet met de systeemsleutel, dus
 ``AGEEncryptConverter`` (die ``settings.SOPS_AGE_PUBLIC_KEY`` gebruikt) kan dit niet.
@@ -12,9 +12,27 @@ from typing import Any
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.forms.editables.converters import resolve_project_private_key
+from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.utils.age import carries_encrypted_value, decrypt_password_smart_sync, encrypt_age_content_sync
 
 logger = logging.getLogger(__name__)
+
+
+class UpstreamConverter:
+    """Maakt van wat er geplakt is de upstream die wij nodig hebben.
+
+    Dezelfde functie als de ``BeforeValidator`` in ``config_model.py``: de editable-laag
+    kan niet bij een pydantic before-validator.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return value if isinstance(value, str) else ""
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return normalize_upstream(value) if isinstance(value, str) else value
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return str(value) if value else "Niet ingevuld"
 
 
 class ProjectAgeSecretConverter:

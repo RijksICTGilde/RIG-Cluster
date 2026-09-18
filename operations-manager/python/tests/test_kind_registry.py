@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.programma import echt_programma
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
@@ -45,7 +46,9 @@ case "$1" in
     case "$*" in
       *Config.Env*)
         echo "${STUB_REG_ENV-REGISTRY_STORAGE_DELETE_ENABLED=true}"
+        sleep "${STUB_ENV_PAUSE:-0}"
         echo "PATH=/usr/bin"
+        for _ in $(seq "${STUB_REG_ENV_TAIL:-0}"); do echo "OPVULLING=$RANDOM$RANDOM$RANDOM"; done
         ;;
       *State.Running*)
         [ -n "${STUB_REG_STATE:-}" ] || exit 1
@@ -117,10 +120,6 @@ echo "kubectl $*" >> "$STUB_LOG"
 cat >> "$STUB_KUBECTL_STDIN"
 exit 0
 """
-
-
-#: De treffer eerst, daarna meer dan een pipebuffer (64 KiB) zodat ``grep -q`` stopt terwijl docker nog schrijft.
-LONG_ENV_WITH_DELETES = "\n".join(["REGISTRY_STORAGE_DELETE_ENABLED=true", *(["P=x"] * 25000)])
 
 
 class Run:
@@ -230,13 +229,6 @@ class TestSetupScript:
         assert "--name kind-registry " in calls[create]
         assert "docker start" not in run.log
 
-    def test_a_long_env_after_the_match_still_counts_as_deletes(self, tmp_path: Path) -> None:
-        """Onder pipefail telt de SIGPIPE van een vroeg stoppende grep als ontbrekende treffer."""
-        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_REG_ENV=LONG_ENV_WITH_DELETES)
-
-        assert run.returncode == 0, run.stderr
-        assert "docker rename" not in run.log
-
     def test_the_old_registry_comes_back_when_recreating_fails(self, tmp_path: Path) -> None:
         """Hernoemd en gestopt achterlaten zou de volgende run een lege registry laten maken."""
         run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true", STUB_REG_ENV="", STUB_RUN_FAILS="1")
@@ -251,8 +243,11 @@ class TestSetupScript:
         ]
         assert "oude registry staat er weer" in run.stderr
 
-    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path) -> None:
-        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
+    @pytest.mark.parametrize("state", ["true", "false"])
+    @pytest.mark.parametrize("tail", ["0", "20000"], ids=["kort", "langer-dan-pipebuffer"])
+    def test_does_not_recreate_a_registry_that_accepts_deletes(self, tmp_path: Path, state: str, tail: str) -> None:
+        """De lange env breekt zeker een grep die bij de treffer stopt."""
+        run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE=state, STUB_REG_ENV_TAIL=tail)
 
         assert "docker rename" not in run.log
         assert "docker rm" not in run.log
@@ -445,13 +440,12 @@ def _prune(tmp_path: Path, *args: str, command: list[str] | None = None, **env_e
         stub = bindir / name
         stub.write_text(f"#!/usr/bin/env bash\n{body}" if name == "curl" else body)
         stub.chmod(0o755)
-    extra_path = f":{Path(shutil.which('task') or '').parent}" if command else ""
     proc = subprocess.run(
         command or ["bash", str(PRUNE_SCRIPT), *args],
         capture_output=True,
         text=True,
         env={
-            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin{extra_path}",
+            "PATH": f"{bindir}:/usr/bin:/bin:/usr/local/bin",
             "HOME": str(tmp_path),
             "STUB_LOG": str(tmp_path / "calls.log"),
             **env_extra,
@@ -498,11 +492,12 @@ class TestPruneScriptRefusals:
         assert "sandbox:setup-registry" in run.stderr
         assert "curl" not in run.log
 
-    def test_a_long_env_after_the_match_still_counts_as_deletes(self, tmp_path: Path) -> None:
-        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV=LONG_ENV_WITH_DELETES)
+    def test_env_after_the_delete_setting_does_not_skip_the_prune(self, tmp_path: Path) -> None:
+        """Meer uitvoer dan een pipebuffer na de treffer: zo breekt een grep die vroeg stopt zeker."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_REG_ENV_TAIL="20000")
 
         assert "staat geen deletes toe" not in run.stderr
-        assert "curl" in run.log
+        assert "garbage-collect" in run.log
 
     def test_defaults_to_the_registry_next_to_the_sandbox(self, tmp_path: Path) -> None:
         run = _prune(tmp_path, STUB_REG_STATE="false")
@@ -516,6 +511,12 @@ class TestPruneScriptRefusals:
         assert run.returncode == 7
         assert "failed to garbage collect: disk full" in run.stderr
         assert "klaar" not in run.stdout
+
+    def test_output_after_the_match_does_not_skip_the_cleanup(self, tmp_path: Path) -> None:
+        """Een falende garbage-collect bewijst dat het script voorbij de deletecontrole kwam."""
+        run = _prune(tmp_path, STUB_REG_STATE="true", STUB_ENV_PAUSE="0.2", STUB_GC_FAILS="7")
+
+        assert run.returncode == 7, run.stderr
 
     def test_never_touches_the_builder(self) -> None:
         """De buildcache van de builder hoort niet in de registry en mag hier niet weg."""
@@ -622,9 +623,7 @@ class TestTaskfile:
     @pytest.mark.usefixtures("bash_available")
     def test_the_deploy_step_ends_green_on_a_server_without_a_registry(self, tmp_path: Path) -> None:
         """Zo staat de gedeelde server: rig-sandbox draait, kind-registry niet."""
-        if shutil.which("task") is None:
-            pytest.skip("task is niet geinstalleerd")
-        run = _prune(tmp_path, command=["task", "--taskfile", str(TASKFILE), PRUNE_TASK])
+        run = _prune(tmp_path, command=[echt_programma("task"), "--taskfile", str(TASKFILE), PRUNE_TASK])
 
         assert run.returncode == 0, run.stderr
         assert "draait niet" in run.stderr
