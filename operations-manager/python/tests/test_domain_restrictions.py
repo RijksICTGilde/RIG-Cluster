@@ -21,6 +21,7 @@ from opi.core.cluster_config import (
     get_restricted_subdomain_domains,
     is_domain_subdomain_restricted,
 )
+from opi.forms.editables.generators import IssuerGenerator
 
 # ---------------------------------------------------------------------------
 # Cluster config helpers
@@ -588,3 +589,24 @@ class TestIssuerGeneratorCustomDomain:
         gen = IssuerGenerator(deployment_index=0)
         result = gen.generate(yaml_data)
         assert result == "letsencrypt"
+
+
+class TestIssuerGeneratorWithoutABaseDomain:
+    """Zonder base-domain hoort er geen issuer uit te komen.
+
+    Valt die grendel weg, dan is het domein ook geen van de door het cluster aangeboden
+    domeinen, en schrijft de generator ``letsencrypt`` voor een adres dat er niet is.
+    """
+
+    def test_deployment_without_a_base_domain_gets_no_issuer(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+        assert IssuerGenerator(deployment_index=0).generate({"deployments": [{"name": "productie"}]}) is None
+
+    def test_an_empty_base_domain_gets_no_issuer(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+        assert IssuerGenerator(deployment_index=0).generate({"deployments": [{"base-domain": ""}]}) is None
+
+    def test_an_index_past_the_deployment_list_gets_no_issuer(self):
+        assert IssuerGenerator(deployment_index=1).generate({"deployments": [{"base-domain": "rijks.app"}]}) is None

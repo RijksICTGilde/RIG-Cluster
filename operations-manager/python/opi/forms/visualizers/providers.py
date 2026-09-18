@@ -571,18 +571,14 @@ class BaseDomainOptionsProvider:
 
 
 class ClusterBaseDomainOptionsProvider:
-    """Provides base domain options based on the selected cluster.
-
-    Reads supported nice-URL domains from CLUSTER_CONFIG. When no cluster
-    is specified, returns all known domains across all clusters.
-    """
+    """Provides the base domain options the selected cluster offers, from CLUSTER_CONFIG."""
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
-            "De domeinen die het cluster van deze deployment aanbiedt (nice_url in de "
-            "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster. Dit is "
-            "geen gesloten verzameling: een eigen domein zet je door de domeinnaam zelf in dit "
-            "veld te schrijven, en 'custom-domain-certificates' in hetzelfde antwoord zegt of "
+            "De domeinen die het cluster van deze deployment aanbiedt. Leeg betekent het "
+            "standaarddomein van het cluster. Dit is geen gesloten verzameling: een eigen "
+            "domein zet je door de domeinnaam zelf in dit veld te schrijven, en "
+            "'custom-domain-certificates' in hetzelfde antwoord zegt of "
             "dit cluster daar een certificaat voor kan uitgeven. Een adres op een eigen domein "
             "is de combinatie met een subdomein-format plus 'subdomain' (mijn.domein.nl = "
             "base-domain 'domein.nl' + subdomain 'mijn'); alleen het kale domein zelf gaat via "
@@ -612,7 +608,7 @@ class ClusterBaseDomainOptionsProvider:
             default_label = f"Cluster standaard ({postfix.lstrip('.')})" if postfix else "Cluster standaard"
             options: list[dict[str, Any]] = [{"value": "", "label": default_label}]
 
-            raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
+            raw = CLUSTER_CONFIG[cluster].get("domains", {}).get("supported_domains", [])
             domains = [_extract_domain(d) for d in raw]
             options.extend({"value": d, "label": d} for d in domains)
             options.append({"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."})
