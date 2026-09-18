@@ -14,12 +14,40 @@ import os
 import subprocess
 import tempfile
 import uuid
+from typing import NamedTuple
 
 import yaml
 from opi.core.config import settings
 from opi.utils.age import encrypt_age_content
 
 logger = logging.getLogger(__name__)
+
+#: The two suffixes one secret file carries on its way through the encryption
+#: pipeline: written in plain text as ``.to-sops.yaml``, replaced by its encrypted
+#: ``.sops.yaml`` counterpart before anything is committed. Both names are part of
+#: the GitOps contract: the ArgoCD CMP plugin and decrypt-sops.yaml match on
+#: ``.sops.yaml``, and the pre-commit guard in the git connector refuses any
+#: ``.to-sops.yaml`` left in the tree.
+SOPS_SUFFIX = ".sops.yaml"
+TO_SOPS_SUFFIX = ".to-sops.yaml"
+
+
+class SopsFilenames(NamedTuple):
+    """The plaintext and encrypted name of one secret file."""
+
+    plaintext: str
+    encrypted: str
+
+
+def sops_filenames(name: str) -> SopsFilenames:
+    """Both names belonging to ``name``.
+
+    ``name`` may be a bare basename or already carry either suffix, so the same call
+    builds the pair for a new secret and converts one name of an existing pair into
+    the other.
+    """
+    stem = name.removesuffix(TO_SOPS_SUFFIX).removesuffix(SOPS_SUFFIX)
+    return SopsFilenames(f"{stem}{TO_SOPS_SUFFIX}", f"{stem}{SOPS_SUFFIX}")
 
 
 class SOPSKeyEncryptionError(Exception):
@@ -176,7 +204,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
             commit/push, because the failed files remain in plain text.
     """
 
-    pattern = os.path.join(directory, "*.to-sops.yaml")
+    pattern = os.path.join(directory, f"*{TO_SOPS_SUFFIX}")
     to_sops_files = sorted(glob.glob(pattern))
 
     if not to_sops_files:
@@ -190,10 +218,10 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
 
     for file_path in to_sops_files:
         base_name = os.path.basename(file_path)
-        if not base_name.endswith(".to-sops.yaml"):
+        if not base_name.endswith(TO_SOPS_SUFFIX):
             continue
 
-        output_name = base_name[: -len(".to-sops.yaml")] + ".sops.yaml"
+        output_name = sops_filenames(base_name).encrypted
         output_path = os.path.join(directory, output_name)
 
         # Skip re-encryption when the secret is unchanged: keep the existing
@@ -274,7 +302,7 @@ def encrypt_to_sops_files_or_fail(
     Raises:
         RuntimeError: If encryption fails or any .to-sops.yaml file remains.
     """
-    pattern = os.path.join(directory, "*.to-sops.yaml")
+    pattern = os.path.join(directory, f"*{TO_SOPS_SUFFIX}")
 
     try:
         encrypt_to_sops_files(directory, public_key, private_key)

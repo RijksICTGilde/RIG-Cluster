@@ -11,6 +11,7 @@ import re
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -2146,7 +2147,7 @@ def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypt
         >>> generate_helm_values_filename("local-deployment", "docs", encrypted=False)
         'local-deployment-docs-helm-values.yaml'
     """
-    extension = ".sops.yaml" if encrypted else ".yaml"
+    extension = SOPS_SUFFIX if encrypted else ".yaml"
     deployment_clean = _sanitize_for_lowercase(deployment_name)
     chart_clean = _sanitize_for_lowercase(chart_name)
     return f"{deployment_clean}-{chart_clean}-helm-values{extension}"
