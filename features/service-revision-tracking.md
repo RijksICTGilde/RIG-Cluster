@@ -32,10 +32,11 @@ opi/handlers/project_file_handler.py   <- Reads/writes clone-from status and ser
 The `clone-from` field on a deployment tracks the full clone lifecycle:
 
 1. **Upsert creates clone-from**: The API writes clone-from as a dict with `type`, `reference`, and `mode` keys
-2. **Services execute clone**: Each service manager (database, minio, PVC) reads clone-from and performs the clone
-3. **Services record tracking**: Each service calls `record_clone()` (writes generation + revision) and `report_clone_performed()` (notifies ProjectManager)
-4. **ProjectManager updates status**: After all services complete, `set_clone_status(completed=True)` is called
-5. **Reprocessing skips clone**: On next sync, services check `status.completed` and skip if `mode=once`
+2. **The database clone marks the attempt**: Just before the copy starts, `status.in-progress: true` is committed for an unfinished `mode: once` clone (see `kloonpoging.md`)
+3. **Services execute clone**: Each service manager (database, minio, PVC) reads clone-from and performs the clone
+4. **Services record tracking**: Each service calls `record_clone()` (writes generation + revision) and `report_clone_performed()` (notifies ProjectManager)
+5. **ProjectManager updates status**: After all services complete, `set_clone_status(completed=True)` is called, which also drops `in-progress`
+6. **Reprocessing skips clone**: On next sync, services check `status.completed` and skip if `mode=once`
 
 ```yaml
 # Before clone (written by upsert API)

@@ -174,6 +174,8 @@ class ProvisionContext:
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
+    # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
+    clone_interrupted: bool = False
 
 
 @dataclass
