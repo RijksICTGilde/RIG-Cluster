@@ -114,11 +114,8 @@ class TestOverEenMap:
 
     @pytest.mark.parametrize("suffix", [".to-sops.yaml", ".sops.yaml"])
     def test_een_sops_bestand_blijft_ongemoeid(self, tmp_path: Any, suffix: str) -> None:
-        """Beide helften van het paar gaan de pas voorbij, ook met inhoud die hij zou herschrijven.
-
-        De versleutelde helft draagt een MAC over zijn inhoud: herschrijven maakt hem
-        onleesbaar voor KSOPS. Vandaar de inhoud van een manifest dat de pas WEL aanpakt.
-        """
+        """Herschrijven breekt de MAC van de versleutelde helft, dus KSOPS leest hem niet meer.
+        Vandaar inhoud die de pas WEL zou aanpakken."""
         pad = tmp_path / f"web{suffix}"
         pad.write_text(yaml.dump(_deployment("ghcr.io/org/web:1")))
         origineel = pad.read_text()
