@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.skopeo import SkopeoConnector
+from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
@@ -90,8 +90,24 @@ class TestDeToets:
         ):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
         assert exc.value.field_path == "services/image-registries/config/registries[0]/password"
+        assert UNREADABLE_REASON in str(exc.value)
         assert "leesrecht op packages" in str(exc.value)
-        assert "reqPackageAccess" in str(exc.value)
+        assert "reqPackageAccess" not in str(exc.value)
+
+    async def test_een_geweigerde_bestemming_geeft_alleen_de_vaste_melding_op_de_upstream(self) -> None:
+        registry = {**REGISTRY, "upstream": "10.43.0.1:8080"}
+        data = _data([registry], ["10.43.0.1:8080/app:1"])
+        connector = SkopeoConnector()
+        with (
+            patch.object(connector, "is_skopeo_available", True),
+            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=connector),
+            patch("asyncio.create_subprocess_exec") as mock_exec,
+            pytest.raises(FieldError) as exc,
+        ):
+            await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
+        mock_exec.assert_not_called()
+        assert exc.value.field_path == "services/image-registries/config/registries[0]/upstream"
+        assert str(exc.value) == "Het platform mag deze registry niet benaderen"
 
     async def test_een_goed_token_gaat_door(self) -> None:
         data = _data([REGISTRY], [IMAGE])
@@ -138,16 +154,24 @@ class TestDeToets:
         )
         assert (ok, reason) == (True, "")
 
-    async def test_de_tweede_registry_wordt_ook_gemeten(self) -> None:
+    @pytest.mark.parametrize(
+        ("reason", "veld"),
+        [("401", "registries[1]/password"), (REFUSED_DESTINATION_REASON, "registries[1]/upstream")],
+        ids=["token", "bestemming"],
+    )
+    async def test_de_tweede_registry_wordt_ook_gemeten(self, reason: str, veld: str) -> None:
         """De fout wijst het VELD aan, dus de index moet die van de echte registry zijn."""
         ander = {**REGISTRY, "name": "ander", "upstream": "ghcr.io/team"}
         data = _data([ander, REGISTRY], [IMAGE])
         with (
-            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=_connector(False, "401")),
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, reason),
+            ),
             pytest.raises(FieldError) as exc,
         ):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
-        assert exc.value.field_path.endswith("registries[1]/password")
+        assert exc.value.field_path.endswith(veld)
 
     async def test_een_upstream_zonder_pad_wordt_ook_getoetst(self) -> None:
         """Dezelfde invoer, alleen de upstream verschilt: ``ghcr.io`` tegenover
@@ -209,7 +233,8 @@ class TestZonderGebruikersnaam:
         melding = str(exc.value)
         assert "geen gebruikersnaam ingevuld" in melding
         assert "Docker Hub en Quay" in melding
-        assert "incorrect username or password" in melding
+        assert UNREADABLE_REASON in melding
+        assert "incorrect username or password" not in melding
 
     @pytest.mark.asyncio
     async def test_met_een_gebruikersnaam_blijft_de_melding_over_het_token_gaan(self) -> None:
@@ -237,13 +262,6 @@ class TestZonderGebruikersnaam:
 
 class TestDeConnector:
     """De maskering, want een foutregel van skopeo kan de verwijzing mét token bevatten."""
-
-    def test_de_creds_worden_gemaskeerd_in_het_log(self) -> None:
-        masked = SkopeoConnector._mask_list_tags_credentials(
-            ["skopeo", "list-tags", "--creds", "robbert:geheim", "docker://x"]
-        )
-        assert masked[3] == "robbert:***"
-        assert "geheim" not in " ".join(masked)
 
     def test_een_userinfo_in_een_foutmelding_wordt_gemaskeerd(self) -> None:
         masked = SkopeoConnector._mask_userinfo("error pinging docker://robbert:geheim@code.overheid.nl/v2/")
