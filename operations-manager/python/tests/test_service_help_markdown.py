@@ -36,6 +36,7 @@ from opi.services.services_enums import ServiceType
 
 _CATALOG = pathlib.Path(opi.__file__).parent / "services" / "catalog"
 _SERVICES = sorted(ServiceType, key=lambda s: s.value)
+_FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "help_markdown"
 
 
 def _render(markdown: str, **kwargs) -> str:
@@ -224,6 +225,143 @@ def test_alleen_een_intern_pad_of_https_wordt_een_link() -> None:
     for bron in ("[x](javascript:alert(1))", "[x](data:text/html,y)", "[x](ftp://host/f)"):
         markup = markdown_to_components(bron)
         assert "c-link" not in markup, bron
+
+
+# ---------------------------------------------------------------------------
+# Markdown outside the subset: the renderer shows it as literal text
+# ---------------------------------------------------------------------------
+
+_PARAGRAPH = re.compile(r"<c-paragraph>(.*?)</c-paragraph>", re.DOTALL)
+_TABLE_SEPARATOR = re.compile(r"(?:^| )(?:\|\s*:?-+:?\s*\||\|?\s*:?-+:?\s*\|\s*:?-+)")
+# The renderer joins paragraph lines with a space, so a heading or a `*` list right under
+# a line of text ends up mid-paragraph.
+# Inline code is left out of that search: `a * b` in backticks is not a list.
+_INLINE_CODE = re.compile(r"`[^`]*`")
+_HEADING_IN_TEXT = re.compile(r"(?:^| )#{3,}(?: |$)")
+_STAR_BULLET = re.compile(r"(?:^| )\* ")
+_BUITEN_SUBSET = (
+    (lambda a: a.startswith("|") or _TABLE_SEPARATOR.search(a), "een tabel", "gebruik een opsomming"),
+    (
+        lambda a: "```" in a or "~~~" in a,
+        "een codeblok (``` of ~~~)",
+        "zet de opdracht als `inline code` in een alinea of opsomming",
+    ),
+    (
+        lambda a: a.startswith("#") or _HEADING_IN_TEXT.search(_INLINE_CODE.sub("", a)),
+        "een kop met ### of zonder spatie",
+        "gebruik `# ` of `## `, of een alinea met **vet**",
+    ),
+    (
+        lambda a: _STAR_BULLET.search(_INLINE_CODE.sub("", a)),
+        "een opsomming met `*`",
+        "begin elk punt met `- `",
+    ),
+)
+_HELP_DOCUMENTS = sorted(
+    {
+        template
+        for service in _SERVICES
+        for template in (
+            ServiceAdapter.get_service_definition(service).help_template,
+            ServiceAdapter.get_service_definition(service).guide_template,
+        )
+        if template
+    }
+)
+
+
+def _letterlijke_markdown(markdown: str) -> list[str]:
+    meldingen = []
+    for alinea in _PARAGRAPH.findall(markdown_to_components(markdown)):
+        for past, vorm, alternatief in _BUITEN_SUBSET:
+            if past(alinea):
+                meldingen.append(f"{vorm} wordt letterlijke tekst, {alternatief}: {alinea[:60]!r}")
+                break
+    return meldingen
+
+
+@pytest.mark.parametrize("help_template", _HELP_DOCUMENTS)
+def test_the_explanation_stays_inside_the_supported_markdown(help_template: str) -> None:
+    """Op de uitkomst van de renderer en niet op de bron: wat telt is wat op het scherm komt."""
+    meldingen = _letterlijke_markdown(help_file(help_template).read_text(encoding="utf-8"))
+
+    assert meldingen == [], f"{help_template}:\n" + "\n".join(meldingen)
+
+
+def test_the_vlam_explanation_that_slipped_through_is_caught() -> None:
+    """De versie uit RC-167 die door een groene suite kwam.
+
+    14 en niet de 11 uit het plan: die telde alinea's die met de vorm beginnen, en drie
+    codeblokken lopen na een witregel door in een alinea die pas halverwege ``` bevat.
+    """
+    meldingen = _letterlijke_markdown((_FIXTURES / "vlam_help_79d77881.md").read_text(encoding="utf-8"))
+
+    assert len(meldingen) == 14
+    assert any(m.startswith("een tabel wordt letterlijke tekst, gebruik een opsomming") for m in meldingen)
+
+
+@pytest.mark.parametrize(
+    ("bron", "vorm"),
+    [
+        ("| a | b |\n|---|---|\n| 1 | 2 |", "een tabel"),
+        ("| a | b |", "een tabel"),
+        ("Tekst ervoor.\n| a | b |\n|---|---|", "een tabel"),
+        ("```python\nprint(1)\n```", "een codeblok"),
+        ("Tekst ervoor.\n| a | b |\n|--|:-:|", "een tabel"),
+        ("a | b\n--- | ---\n1 | 2", "een tabel"),
+        ("Tekst ervoor.\n| a |\n| --- |\n| 1 |", "een tabel"),
+        ("~~~\nprint(1)\n~~~", "een codeblok"),
+        ("### Kop", "een kop met ###"),
+        ("Tekst ervoor.\n### Kop", "een kop met ###"),
+        ("* een\n* twee", "een opsomming met `*`"),
+        ("Kies er een:\n* een\n* twee", "een opsomming met `*`"),
+    ],
+    ids=[
+        "tabel",
+        "pijprij-zonder-scheiding",
+        "tabel-na-tekst",
+        "codeblok",
+        "tabel-korte-scheiding",
+        "tabel-zonder-buitenpijpen",
+        "tabel-een-kolom-na-tekst",
+        "codeblok-tildes",
+        "kop-niveau-3",
+        "kop-na-tekst",
+        "sterretje",
+        "sterretje-na-tekst",
+    ],
+)
+def test_each_shape_outside_the_subset_is_named(bron: str, vorm: str) -> None:
+    meldingen = _letterlijke_markdown(f"# Titel\n\n{bron}")
+
+    assert len(meldingen) == 1
+    assert meldingen[0].startswith(vorm)
+
+
+@pytest.mark.parametrize(
+    "bron",
+    [
+        "**Kies dit**, tenzij je een reden hebt.\n\n- een punt",
+        "Tekst ervoor.\n## Kop\n- een punt",
+        "Een wildcard als `DATABASE_*` of `a * b` en een `# commentaar` of `### x`.",
+    ],
+    ids=["vet-vooraan", "kop-en-punt-na-tekst", "inline-code"],
+)
+def test_markdown_the_renderer_handles_is_not_reported(bron: str) -> None:
+    assert _letterlijke_markdown(bron) == []
+
+
+def test_every_keytool_import_passes_the_store_password() -> None:
+    """Zonder -storepass vraagt keytool erom, en een image-build heeft geen tty."""
+    aanroepen = [
+        (template, regel)
+        for template in _HELP_DOCUMENTS
+        for regel in help_file(template).read_text(encoding="utf-8").splitlines()
+        if "keytool -importcert" in regel
+    ]
+
+    assert aanroepen
+    assert [a for a in aanroepen if "-storepass " not in a[1]] == []
 
 
 # ---------------------------------------------------------------------------
