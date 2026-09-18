@@ -10,8 +10,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div, Fieldset
+from opi.forms.visualizers.sections import FormSection
 from opi.services.catalog.base import (
     ConfigLayer,
+    ConfigRole,
     DetailPageSection,
     ProjectManifestContext,
     ProjectManifestSpec,
@@ -20,13 +23,27 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.catalog.events import on
+from opi.services.catalog.image_registries.backends import backend_for_cluster
 from opi.services.catalog.image_registries.config_model import ComponentRegistryConfig, ImageRegistriesConfig
+from opi.services.catalog.image_registries.editables import (
+    COMPONENT_REGISTRY_EDITABLE,
+    DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
+    REGISTRIES_SEQUENCE_EDITABLE,
+)
+from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer
+from opi.services.catalog.image_registries.naming import registry_slug
 from opi.services.catalog.image_registries.ownership import (
     validate_proxy_organization_claims,
     validate_proxy_organization_ownership,
     validate_registry_entry_ownership,
 )
+from opi.services.catalog.image_registries.references import validate_registry_references
 from opi.services.catalog.image_registries.resolution import project_registries
+from opi.services.catalog.image_registries.visualizers import (
+    COMPONENT_REGISTRY,
+    DEPLOYMENT_COMPONENT_REGISTRY,
+    REGISTRIES_SEQUENCE,
+)
 from opi.services.services import ServiceDefinition, service_entry_name
 from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
 
@@ -53,10 +70,12 @@ class ImageRegistriesService(Service):
     config_schema_version = "1.0"
     config_section_id = "image-registries-config"
     modal_flow_id = "modal-edit-image-registries-config"
-    # De registries staan op projectniveau, dus een component dat de dienst aanvinkt mag
+    # De registries staan op projectniveau, dus een component dat een registry kiest mag
     # zichzelf daar bijschrijven.
     allows_implicit_project_selection = True
     config_component_order = 8
+    # De gekozen registry IS de selectie; zie features/image-registries.md.
+    component_selection_follows_config = True
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         # De registries op het project, de verwijzing bij naam op (deployment-)component.
@@ -65,8 +84,6 @@ class ImageRegistriesService(Service):
         return self.config_model
 
     def config_roles(self, layer: ConfigLayer):
-        from opi.services.catalog.base import ConfigRole
-
         # Het project gebruikt zijn eigen registries; een component bindt er een aan zijn image.
         if layer is ConfigLayer.PROJECT:
             return (ConfigRole.USE,)
@@ -80,12 +97,6 @@ class ImageRegistriesService(Service):
         return []
 
     def config_editables(self, layer: ConfigLayer):
-        from opi.services.catalog.image_registries.editables import (
-            COMPONENT_REGISTRY_EDITABLE,
-            DEPLOYMENT_COMPONENT_REGISTRY_EDITABLE,
-            REGISTRIES_SEQUENCE_EDITABLE,
-        )
-
         if layer is ConfigLayer.PROJECT:
             return [REGISTRIES_SEQUENCE_EDITABLE]
         if layer is ConfigLayer.COMPONENT:
@@ -97,31 +108,23 @@ class ImageRegistriesService(Service):
     # --- component- en deployment-componentniveau -------------------------------------
 
     def config_component_visualizers(self) -> list[EditableVisualizer]:
-        from opi.services.catalog.image_registries.visualizers import COMPONENT_REGISTRY
-
         return [COMPONENT_REGISTRY]
 
     def config_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
-
         svc = self.service_type.value
+        # Geen ``depends_on`` op de dienstenlijst: de keuze IS de selectie, dus het veld
+        # zou wachten op wat het zelf zet.
         return [
-            Fieldset(
-                legend="Eigen registry",
-                depends_on="services",
-                show_when={"contains": svc},
+            Div(
+                slot=COMPONENT_IMAGE_SLOT,
                 children=[f"services{{{svc}}}/config/registry"],
             )
         ]
 
     def config_deployment_component_visualizers(self) -> list[EditableVisualizer]:
-        from opi.services.catalog.image_registries.visualizers import DEPLOYMENT_COMPONENT_REGISTRY
-
         return [DEPLOYMENT_COMPONENT_REGISTRY]
 
     def config_deployment_component_layout(self) -> list[Any]:
-        from opi.forms.layout import Fieldset
-
         svc = self.service_type.value
         # ``services`` is hier een dict keyed op dienstnaam, dus een gewoon padsegment. Het
         # fieldset staat er onvoorwaardelijk, want de dienstenlijst van het component is
@@ -137,6 +140,45 @@ class ImageRegistriesService(Service):
             )
         ]
 
+    # --- het vrije label en de slug die eruit volgt -----------------------------------
+
+    def generate_missing_values(self, project_data: dict[str, Any]) -> dict[str, str]:
+        """Geef elke registry zonder ``name`` er een, afgeleid van zijn label.
+
+        Hier en niet in een converter van de editable, want allebei de schrijfwegen komen
+        hier langs: de portal via ``post_merge`` van de sectie en de API via
+        ``registry.generate_missing_values``. Een bestaande naam blijft staan, ook als het
+        label verandert.
+        """
+        # Lazy: ``opi.services.project`` leest ``opi.forms``, en dat leest via de providers
+        # deze module.
+        from opi.services.project import Project
+
+        base = config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")
+        registries = Project(project_data).get(base) or []
+        if not isinstance(registries, list):
+            return {}
+        bezet = {entry["name"] for entry in registries if isinstance(entry, dict) and entry.get("name")}
+        gegenereerd: dict[str, str] = {}
+        for index, entry in enumerate(registries):
+            if not isinstance(entry, dict) or entry.get("name") or not entry.get("display-name"):
+                continue
+            slug = registry_slug(str(entry["display-name"]), bezet)
+            entry["name"] = slug
+            bezet.add(slug)
+            gegenereerd[f"{base}[{index}]/name"] = slug
+        if gegenereerd:
+            logger.info(
+                f"Registrynaam afgeleid voor {len(gegenereerd)} registry(s) van project "
+                f"'{project_data.get('name', 'unknown')}'"
+            )
+        return gegenereerd
+
+    def _generate_missing_names(self, project_data: dict[str, Any], _form_data: dict[str, Any]) -> None:
+        """De ``post_merge``-vorm van :meth:`generate_missing_values`: de portal geeft twee
+        dicts en wil niets terug, en een implementatie bedient allebei de wegen."""
+        self.generate_missing_values(project_data)
+
     # --- projectniveau: de wizardsectie ----------------------------------------------
 
     def _config_selected(self, project_data: dict[str, Any]) -> bool:
@@ -149,10 +191,6 @@ class ImageRegistriesService(Service):
             return super().config_form_section(layer)
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
-            from opi.forms.visualizers.sections import FormSection
-            from opi.services.catalog.image_registries.enforcers import RegistryTokenEnforcer
-            from opi.services.catalog.image_registries.visualizers import REGISTRIES_SEQUENCE
-
             cached = FormSection(
                 section_id=self.config_section_id or "image-registries-config",
                 title="Eigen container registries",
@@ -163,6 +201,7 @@ class ImageRegistriesService(Service):
                 editables=[REGISTRIES_SEQUENCE],
                 layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "registries")],
                 enforcer=RegistryTokenEnforcer(),
+                post_merge=self._generate_missing_names,
             )
             self._config_section_cache = cached
         return cached
@@ -179,9 +218,14 @@ class ImageRegistriesService(Service):
         if not registries:
             return []
         # Alleen wat het sjabloon toont. ``ctx.project_data`` is ONTSLEUTELD, dus de entry
-        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext.
+        # zelf draagt het token in platte tekst; dat hoort niet in een rendercontext. Van het
+        # token gaat daarom alleen de VRAAG mee of het er is: sinds de gebruikersnaam optioneel
+        # is (RC-187) is dat het enige waaraan het blok een entry met inloggegevens herkent.
         getoond = [
-            {key: registry.get(key) for key in ("name", "upstream", "username", "secretName")}
+            {
+                **{key: registry.get(key) for key in ("name", "upstream", "username", "secretName")},
+                "has_token": bool(registry.get("password")),
+            }
             for registry in registries
         ]
         return [
@@ -192,6 +236,8 @@ class ImageRegistriesService(Service):
         ]
 
     def web_routers(self) -> list[Any]:
+        # Lazy: de router leest de projectstore, en die leest via ``project_validation`` en
+        # ``opi.forms`` deze module.
         from opi.services.catalog.image_registries.web import image_registries_router
 
         return [*super().web_routers(), image_registries_router]
@@ -199,24 +245,25 @@ class ImageRegistriesService(Service):
     # --- regels over het hele project --------------------------------------------------
 
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
-        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``).
+        """De drie eigendomsregels rond de proxy-organisaties (zie ``ownership.py``), plus
+        de weg terug (``references.py``).
 
-        Ze kijken naar de andere projecten op het cluster en niet naar een configblok, dus
-        ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit project de dienst
-        aanvinkt: het gaat om waar een image NAAR wijst.
+        De eerste drie kijken naar de andere projecten op het cluster en niet naar een
+        configblok, dus ze kunnen niet in ``validate_config``. Draaien ook zonder dat dit
+        project de dienst aanvinkt: het gaat om waar een image NAAR wijst. De vierde legt
+        componenten naast de registrylijst en hoort om dezelfde reden hier.
         """
         return [
             *validate_proxy_organization_ownership(project_data),
             *validate_registry_entry_ownership(project_data),
             *validate_proxy_organization_claims(project_data),
+            *validate_registry_references(project_data),
         ]
 
     # --- projectbrede manifesten ------------------------------------------------------
 
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
         """Wat deze dienst op het PROJECTniveau van de deployments-repo neerzet."""
-        from opi.services.catalog.image_registries.backends import backend_for_cluster
-
         registries = project_registries(ctx.project_data)
         if not registries:
             return []
