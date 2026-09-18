@@ -633,6 +633,26 @@ skopeo geeft. Zonder dat uitpakken toetst hij het cijfertekstblok en wordt een g
 token geweigerd. Is de waarde niet uit te pakken (geen sleutel), dan wordt er niets
 getoetst en dus niets geweigerd.
 
+De toets is een uitgaand verzoek naar een host die de afnemer kiest. `UPSTREAM_PATTERN` is
+alleen een vormcontrole, dus de connector (`_destination_refused` in `skopeo.py`) resolvet
+de host eerst en weigert als een van de adressen niet publiek is (`ipaddress.is_global`: loopback, link-local en dus
+het metadata-adres, RFC1918, CGNAT, unique-local) of als de naam niet resolvet. Elke
+weigering krijgt dezelfde reden (`REFUSED_DESTINATION_REASON`), en de enforcer zet die
+zonder tokenadvies op het `upstream`-veld. De enige uitzondering is
+de platformregistry (`REGISTRY_URL`) in de sandbox (`_is_sandbox_registry`).
+`localhost:5001` heeft geen uitzondering nodig: in de pod is `localhost` de pod zelf, dus
+die registry was via deze toets nooit bereikbaar.
+
+Die grendel ziet alleen de eerste hop. Skopeo volgt daarna zelf een redirect en een
+token-realm naar elk adres, ook een intern adres. Daarom komt de tekst van skopeo nooit
+bij de afnemer: elke mislukte toets geeft dezelfde veldfout (`UNREADABLE_REASON`), en de
+ruwe stderr gaat alleen naar het serverlog. Een aparte melding "token geweigerd" kan niet:
+een fout token bij de registry en een intern doel met 401 achter een realm geven dezelfde
+tekst. Wat overblijft is een blind verzoek met alleen gelukt of mislukt als antwoord.
+
+Skopeo krijgt de inloggegevens via een authfile (`_authfile`: mode 0600, opgeruimd ook als
+skopeo faalt), niet op de commandoregel waar ze in `/proc/<pid>/cmdline` staan.
+
 ## Op de projectpagina
 
 De dienst levert een blok met wat de afnemer heeft ingevuld, en haalt de toestand van de
