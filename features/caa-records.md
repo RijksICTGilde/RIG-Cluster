@@ -91,8 +91,8 @@ geeft de API 401.
 2. Zet de CA in `CAA_IDENTIFIERS` (naam -> de issuer-domain-name die die CA publiceert) en
    voeg hem toe aan de issuerlijst van de zone.
 
-De test `test_every_nice_url_domain_under_managed_zone_uses_allowed_issuer` loopt alle
-clusters in `CLUSTER_CONFIG` langs: elk `nice_url.supported_domains`-domein met een `issuer`
+De test `test_every_supported_domain_under_managed_zone_uses_allowed_issuer` loopt alle
+clusters in `CLUSTER_CONFIG` langs: elk `domains.supported_domains`-domein met een `issuer`
 dat onder een beheerde zone valt, moet een issuer noemen die die zone toestaat. Dat is de
 eigenlijke opbrengst van deze feature: het risico van CAA zit niet in het zetten, maar in
 een dienst die later onder onze zone bij een andere CA gaat vernieuwen. Die fout wordt hier
