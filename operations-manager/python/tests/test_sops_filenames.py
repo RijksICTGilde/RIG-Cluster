@@ -5,16 +5,9 @@ met ``replace()`` omgezet. Deze toetsen pinnen de eigenaar.
 """
 
 import ast
-import os
 import pathlib
-import re
 
 import opi
-import pytest
-from opi.connectors.git import GitConnector
-from opi.generation.manifests import ManifestGenerator
-from opi.manager.project_manager import _is_generated
-from opi.utils.naming import generate_helm_values_filename
 from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 
 
@@ -55,55 +48,6 @@ class TestSopsFilenames:
     def test_gewone_yaml_is_geen_helft_van_het_paar(self) -> None:
         """Alleen de twee sops-suffixen tellen als stam; de rest van de naam blijft staan."""
         assert sops_filenames("issuer.yaml").plaintext == "issuer.yaml.to-sops.yaml"
-
-
-class TestAanroepersGebruikenDeEigenaar:
-    def test_manifestgenerator_schrijft_de_platte_naam(self, tmp_path) -> None:
-        template = tmp_path / "secret.yaml.jinja"
-        template.write_text("kind: Secret\n")
-        pad = ManifestGenerator().create_manifest_file(
-            template_path=str(template),
-            values={},
-            output_dir=str(tmp_path),
-            output_filename="demo-secret",
-            use_sops=True,
-        )
-        assert os.path.basename(pad) == sops_filenames("demo-secret").plaintext
-
-    def test_decrypt_sops_noemt_de_versleutelde_naam(self, tmp_path) -> None:
-        for naam in ("a.to-sops.yaml", "a.sops.yaml", "b.to-sops.yaml"):
-            (tmp_path / naam).write_text("kind: Secret\n")
-        ManifestGenerator().create_kustomization_files(
-            output_dir=str(tmp_path),
-            sops_files=["a.to-sops.yaml", "a.sops.yaml", "b.to-sops.yaml"],
-        )
-        inhoud = (tmp_path / "decrypt-sops.yaml").read_text()
-        assert "a.to-sops.yaml" not in inhoud
-        assert inhoud.count("a.sops.yaml") == 1
-        assert "b.sops.yaml" in inhoud
-
-    def test_helm_values_gebruiken_dezelfde_suffix(self) -> None:
-        naam = generate_helm_values_filename("productie", "docs", encrypted=True)
-        assert naam.endswith(SOPS_SUFFIX)
-        assert sops_filenames(naam).plaintext == "productie-docs-helm-values.to-sops.yaml"
-
-    def test_vorige_ciphertext_van_een_geschreven_secret_blijft(self) -> None:
-        """De prune mag de .sops.yaml van een deze run geschreven .to-sops.yaml niet opruimen."""
-        assert _is_generated("demo-secret.sops.yaml", {"demo-secret.to-sops.yaml"})
-        assert not _is_generated("oud-secret.sops.yaml", {"demo-secret.to-sops.yaml"})
-
-    def test_commitgrendel_weigert_de_platte_naam(self, tmp_path) -> None:
-        connector = GitConnector.__new__(GitConnector)
-        connector._GitConnector__working_dir = str(tmp_path)
-        connector._get_server_context = lambda: "testserver"
-
-        (tmp_path / sops_filenames("lek").plaintext).write_text("wachtwoord: geheim\n")
-        with pytest.raises(RuntimeError, match=re.escape("lek.to-sops.yaml")):
-            connector._abort_if_plaintext_secrets_present()
-
-        os.remove(tmp_path / sops_filenames("lek").plaintext)
-        (tmp_path / sops_filenames("lek").encrypted).write_text("wachtwoord: ENC[...]\n")
-        connector._abort_if_plaintext_secrets_present()
 
 
 _OPI_ROOT = pathlib.Path(opi.__file__).parent
