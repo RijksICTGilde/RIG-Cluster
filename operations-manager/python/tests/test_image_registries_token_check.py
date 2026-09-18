@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.skopeo import UNREADABLE_REASON, SkopeoConnector
+from opi.connectors.skopeo import REFUSED_DESTINATION_REASON, UNREADABLE_REASON, SkopeoConnector
 from opi.forms.editables.enforcers import FieldError
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
@@ -154,16 +154,24 @@ class TestDeToets:
         )
         assert (ok, reason) == (True, "")
 
-    async def test_de_tweede_registry_wordt_ook_gemeten(self) -> None:
+    @pytest.mark.parametrize(
+        ("reason", "veld"),
+        [("401", "registries[1]/password"), (REFUSED_DESTINATION_REASON, "registries[1]/upstream")],
+        ids=["token", "bestemming"],
+    )
+    async def test_de_tweede_registry_wordt_ook_gemeten(self, reason: str, veld: str) -> None:
         """De fout wijst het VELD aan, dus de index moet die van de echte registry zijn."""
         ander = {**REGISTRY, "name": "ander", "upstream": "ghcr.io/team"}
         data = _data([ander, REGISTRY], [IMAGE])
         with (
-            patch("opi.services.catalog.image_registries.enforcers._connector", return_value=_connector(False, "401")),
+            patch(
+                "opi.services.catalog.image_registries.enforcers._connector",
+                return_value=_connector(False, reason),
+            ),
             pytest.raises(FieldError) as exc,
         ):
             await RegistryTokenEnforcer().enforce(data, {"project_name": "demo"})
-        assert exc.value.field_path.endswith("registries[1]/password")
+        assert exc.value.field_path.endswith(veld)
 
     async def test_een_upstream_zonder_pad_wordt_ook_getoetst(self) -> None:
         """Dezelfde invoer, alleen de upstream verschilt: ``ghcr.io`` tegenover

@@ -485,15 +485,20 @@ class TestCredentialsStayOutOfArgv:
         _assert_authfile_used_and_gone(fake_skopeo, "rcr.rijksapps.nl", "rig+zad")
         assert "--dest-authfile" in (fake_skopeo / "cmdline").read_text()
 
-    async def test_push_without_credentials_passes_no_authfile(self, connector, fake_skopeo):
-        connector._registry_password = None
+    @pytest.mark.parametrize(
+        ("password", "username"), [(None, "rig+zad"), (PASSWORD, "")], ids=["zonder-wachtwoord", "zonder-gebruiker"]
+    )
+    async def test_push_without_credentials_passes_no_authfile(self, connector, fake_skopeo, password, username):
+        """Een half paar levert geen authfile op, zoals het eerder geen ``--dest-creds`` opleverde."""
+        connector._registry_password = password
         with patch("opi.connectors.skopeo.settings") as mock_settings:
             mock_settings.REGISTRY_URL = "rcr.rijksapps.nl"
             mock_settings.REGISTRY_ORG = "rig"
-            mock_settings.REGISTRY_USERNAME = "rig+zad"
+            mock_settings.REGISTRY_USERNAME = username
             mock_settings.REGISTRY_VERIFY_TLS = True
             await connector.push_image("/tmp/img.tar", "mink", "app", "v1")
         assert not (fake_skopeo / "path").exists()
+        assert PASSWORD not in (fake_skopeo / "cmdline").read_text()
 
     async def test_the_authfile_is_removed_when_the_process_cannot_start(self, connector, resolver, tmp_path):
         seen: list[str] = []
