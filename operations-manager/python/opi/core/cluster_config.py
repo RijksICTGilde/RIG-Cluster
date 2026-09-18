@@ -1222,7 +1222,7 @@ def get_ca_certificate_config(cluster_name: str) -> dict | None:
     }
 
 
-def get_domains_config(cluster_name: str) -> dict | None:
+def get_cluster_domains_config(cluster_name: str) -> dict | None:
     """
     Get the domain configuration for a specific cluster.
 
@@ -1259,7 +1259,7 @@ def get_supported_domain_names(cluster_name: str) -> list[str]:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
         return []
     raw = domains_config.get("supported_domains", [])
@@ -1302,7 +1302,7 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is not None:
         for entry in domains_config.get("supported_domains", []):
             if isinstance(entry, dict) and entry.get("domain") == domain:
@@ -1326,7 +1326,7 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
     Returns:
         Target hostname for the external-dns annotation, or None if none configured.
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
         return None
 
@@ -1362,7 +1362,7 @@ def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
         return False
     for entry in domains_config.get("supported_domains", []):
@@ -1384,7 +1384,7 @@ def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
         return []
     return [
@@ -1408,7 +1408,7 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    domains_config = get_domains_config(cluster_name)
+    domains_config = get_cluster_domains_config(cluster_name)
     if domains_config is None:
         return False
     for entry in domains_config.get("supported_domains", []):
