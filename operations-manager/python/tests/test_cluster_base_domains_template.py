@@ -1,9 +1,8 @@
 """De domeinkeuze in het zelfbedieningsportaal komt uit het ``domains``-blok.
 
-``get_cluster_base_domains_for_template`` pakt dat blok met ``.get("domains", {})``. Een
-verkeerde sleutel geeft daar geen fout maar een lege lijst per cluster, en dan biedt het
-portaal geen enkel domein aan terwijl de suite groen blijft. Daarom toetsen we hier de
-domeinen zelf, en het label dat de twee lokale namen krijgen.
+``get_cluster_base_domains_for_template`` pakt dat blok met ``.get("domains", {})``: bij een
+verkeerde sleutel biedt het portaal geen enkel domein meer aan, zonder fout en met een groene
+suite. Daarom toetsen we hier de domeinen zelf.
 """
 
 from unittest.mock import patch
@@ -38,7 +37,6 @@ class TestClusterBaseDomainsForTemplate:
         assert labels["local"] == "local (lokaal)"
 
     def test_cluster_without_domains_block_gets_an_empty_list(self) -> None:
-        """Een cluster dat geen eigen domeinen aanbiedt hoort erbij te staan, leeg."""
         with patch.dict(CLUSTER_CONFIG, {"cluster-zonder-domeinen": {"ingress_postfix": ".voorbeeld.nl"}}):
             resultaat = get_cluster_base_domains_for_template()
 
