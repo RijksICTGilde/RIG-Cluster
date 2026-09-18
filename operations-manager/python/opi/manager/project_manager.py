@@ -613,6 +613,8 @@ class ProjectManager:
 
         # Runtime force_clone override from API (used by PVC manager and other nested calls)
         self._force_clone_override: bool = False
+        # (project_data, compare-and-swap base) of the process_project run in progress
+        self._process_run: tuple[dict[str, Any], dict[str, Any] | None] | None = None
 
         # Last processing error message (set when process_project fails)
         self._processing_error: str | None = None
@@ -1873,6 +1875,24 @@ class ProjectManager:
         BEFORE any write or commit. Raises ProjectIntegrityError; fails closed.
         """
         await validate_project_structure(project_data)
+
+    async def mark_clone_started(self, deployment_name: str) -> None:
+        """Commit the clone-attempt flag on the running process_project's data (features/kloonpoging.md).
+
+        The end-of-run save drops the flag again, so its base moves along with this save.
+        """
+        if self._process_run is None:
+            return
+        project_data, base = self._process_run
+        if not self._project_file_handler.mark_clone_in_progress(project_data, deployment_name):
+            return
+        await self.save_and_commit_project(
+            project_data,
+            f"Clone attempt started for {deployment_name}",
+            enforce_validation=False,
+            base=base,
+        )
+        self._process_run = (project_data, self.__contents_as_read)
 
     async def save_and_commit_project(
         self,
@@ -5326,6 +5346,15 @@ class ProjectManager:
                 reenable_msg = "auto-reenable: image changed for " + ", ".join(f"{d}/{c}" for d, c in reenabled)
                 await self.save_and_commit_project(project_data, reenable_msg, enforce_validation=False)
 
+            interrupted_clones = {
+                name
+                for deployment in project_data.get("deployments", [])
+                if (name := deployment.get("name"))
+                and deployment.get("cluster") == settings.CLUSTER_MANAGER
+                and (targets is None or name in targets)
+                and self._project_file_handler.is_clone_in_progress(project_data, name)
+            }
+
             # Snapshot the compare-and-swap base for the end-of-run save. Right now it
             # is exactly the state project_data was built on: the read above, plus the
             # reenable save when one happened. The provisioning steps below read and
@@ -5333,6 +5362,7 @@ class ProjectManager:
             # its generated admin credentials mid-run), and each of those moves the
             # recorded base forward -- past project_data's lineage.
             process_base = self.__contents_as_read
+            self._process_run = (project_data, process_base)
 
             # # 1.5. Create configuration handler to collect deployment info
             # config_handler = create_configuration_handler(project_name, self.project_data)
@@ -5412,6 +5442,7 @@ class ProjectManager:
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
                         mail_manager=self._mail_manager,
+                        clone_interrupted=current_deployment_name in interrupted_clones,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)
@@ -5467,7 +5498,7 @@ class ProjectManager:
             # committed since (the Keycloak credentials, an external edit) as
             # deleted by us and publishes right over it. Against the true base it
             # three-way merges our mutations with whatever landed in between.
-            self.__contents_as_read = process_base
+            self.__contents_as_read = self._process_run[1]
             scope = f" (deployment: {deployment_name})" if deployment_name else ""
             await self.save_and_commit_project(
                 project_data,
@@ -5505,7 +5536,7 @@ class ProjectManager:
             self._processing_exception = e
             return False
         finally:
-            pass
+            self._process_run = None
             # TODO: we may need to close it here, but the project manager is still used in a flow which should change
             # await self.close()
 

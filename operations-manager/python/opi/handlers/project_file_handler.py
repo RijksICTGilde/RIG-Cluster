@@ -2817,6 +2817,33 @@ class ProjectFileHandler:
 
         return project_data
 
+    def is_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """True als een eerdere run aan deze kloon begon en hem niet als afgerond vastlegde."""
+        status = self.get_clone_status(project_data, deployment_name)
+        return bool(status and status.get("in-progress"))
+
+    def mark_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """Zet de pogingsvlag op een once-kloon die nog niet af is.
+
+        set_clone_status vervangt het hele statusblok, dus de vlag verdwijnt vanzelf
+        zodra de kloon als afgerond wordt vastgelegd.
+
+        Returns:
+            True als de vlag nu pas aan ging.
+        """
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+            clone_from = deployment.get("clone-from")
+            if not isinstance(clone_from, dict) or clone_from.get("mode", "once") != "once":
+                return False
+            status = clone_from.setdefault("status", {})
+            if status.get("completed") or status.get("in-progress"):
+                return False
+            status["in-progress"] = True
+            return True
+        return False
+
     def get_clone_mode(self, project_data: dict[str, Any], deployment_name: str) -> str:
         """
         Get the clone mode from a deployment's clone-from configuration.

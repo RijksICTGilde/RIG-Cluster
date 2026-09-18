@@ -487,7 +487,8 @@
           "additionalProperties": false,
           "properties": {
             "completed": { "type": "boolean" },
-            "timestamp": { "type": "string" }
+            "timestamp": { "type": "string" },
+            "in-progress": { "type": "boolean" }
           }
         }
       }
