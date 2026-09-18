@@ -123,13 +123,13 @@ waar een dienst per mount iets bijhoudt -- zodat een verkleining niet met een an
 component, of een andere mount, wordt vergeleken.
 
 Beide versies worden **hetzelfde gelezen**, en dat begint bij het opzoeken van de vorige:
-een blok wordt op zijn SLEUTEL (plek plus dienst) gepakt, niet op zijn waarde. Een dienst
-die er kaal in stond -- geselecteerd, zonder configblok -- is daarmee een versie die op de
-standaard staat, en geen afwezigheid. Daarna leest elke kant hetzelfde: de waarde als het
-veld er staat, anders de standaard van de dienst. Een veld weglaten is dus dezelfde
-verlaging als het veld expliciet verlagen, en dat is precies de bedoeling -- anders was de
-regel te omzeilen door het veld (of het hele configblok) gewoon weg te laten, en een leeg
-wizardveld doet dat.
+een blok wordt op zijn SLEUTEL (plek, dienst, en of het een eigenschap is) gepakt, niet
+op zijn waarde. Een dienst die er kaal in stond -- geselecteerd, zonder configblok -- is
+daarmee een versie die op de standaard staat, en geen afwezigheid. Daarna leest elke kant
+hetzelfde: de waarde als het veld er staat, anders de standaard van de dienst. Een veld
+weglaten is dus dezelfde verlaging als het veld expliciet verlagen, en dat is precies de
+bedoeling -- anders was de regel te omzeilen door het veld (of het hele configblok)
+gewoon weg te laten, en een leeg wizardveld doet dat.
 
 De regel geldt in beide richtingen: het maakt niet uit aan WELKE kant het veld of het blok
 ontbreekt. Deze drie wegen leveren dus dezelfde weigering op (en spiegelen ze de vorige
@@ -171,9 +171,11 @@ Op zo'n eigenschapsblok **noemt de weigering de waarde niet**, om dezelfde reden
 modelfout ernaast dat ook niet doet: `user-env-vars` is de eigen omgeving van een component
 en accepteert een platte `dict[str, str]`, dus een waarde op een gedeclareerd pad kan daar
 een geplakt geheim zijn -- en die zin gaat zowel het centrale log in als het antwoord aan de
-aanroeper. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten zijn
-speelruimte", plus de speelruimte). Voor een blok in een `services:`-lijst blijft de waarde
-er wel in staan: daar is het de grens zelf die wordt teruggeciteerd.
+aanroeper. Bij een wijziging geldt dat ook voor de VORIGE waarde, die geen toets opnieuw op
+zijn vorm beoordeelt. De weigering wordt daar uit de DECLARATIE opgebouwd ("`'X'` valt buiten
+zijn speelruimte", plus de speelruimte), door `_setting_refusal`, die beide toetsen delen.
+Voor een blok in een `services:`-lijst blijft de waarde er wel in staan: daar is het de grens
+zelf die wordt teruggeciteerd.
 
 **Het wizardveld bouwen.** `setting_field(setting, service, layer)` maakt de `Editable` +
 `EditableVisualizer` uit de declaratie: het yaml-pad via `config_path`, de invoercontrole
