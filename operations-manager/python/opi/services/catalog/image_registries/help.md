@@ -5,7 +5,7 @@ Draait je applicatie op een image die in je eigen private registry staat, dan vu
 ## Wat je invult
 
 - **Naam** - hoe jij deze registry noemt, bijvoorbeeld `Code Overheid`. Vrije tekst; wij maken er zelf een korte verwijzing van, en die blijft hetzelfde als je het label later verandert.
-- **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol, bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag je die URL hier ook plakken: wij maken er de goede vorm van. Datzelfde geldt voor een volledige image-verwijzing met tag. Wij moeten hem vanaf het internet kunnen bereiken: een naam die we niet kunnen opzoeken, of die naar een intern adres wijst, wijzen we bij het opslaan af.
+- **Registry** - waar je images staan, inclusief je eigen pad en zonder protocol, bijvoorbeeld `code.overheid.nl/jouw-naam`. Heb je de pagina van je packages open, dan mag je die URL hier ook plakken: wij maken er de goede vorm van. Datzelfde geldt voor een volledige image-verwijzing met tag. Wij moeten de registry vanaf het internet kunnen bereiken: een naam die we niet kunnen opzoeken, of die naar een intern adres wijst, wijzen we bij het opslaan af.
 - **Token** - waarmee wij bij je images mogen. Verplicht.
 - **Gebruikersnaam** - alleen nodig bij een registry die ernaar kijkt, zoals Docker Hub en Quay: vul daar je accountnaam of de naam van je robotaccount in. Bij GitHub (ghcr.io) mag je hem leeg laten. Eist je registry een naam en laat je hem leeg, dan lukt het ophalen van je images niet.
 
