@@ -174,6 +174,8 @@ class ProvisionContext:
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
+    # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
+    clone_interrupted: bool = False
 
 
 @dataclass
@@ -306,6 +308,9 @@ class SecretFileSpec:
     #: application a second time right after it came back up -- while nothing the
     #: application reads had changed at all.
     include_in_config_hash: bool = True
+    #: When True, a value already in this secret's previous ciphertext wins over the one
+    #: in ``secret_pairs``, which is then only the value for the first write.
+    keep_existing_values: bool = False
 
 
 @dataclass
@@ -737,6 +742,11 @@ class Service(ABC):
     #: per-component form; lower shows first. A static ordering for now -- a
     #: user-facing priority is a deferred future refinement.
     config_component_order: ClassVar[int] = 100
+
+    #: Whether the CONFIG of this service at the component layer is at the same time its
+    #: SELECTION, so there is no separate on/off for it on a component. What follows from
+    #: it, and when to declare it: ``instructions/services.md``.
+    component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
     #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer

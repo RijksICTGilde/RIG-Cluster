@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
@@ -2816,6 +2817,33 @@ class ProjectFileHandler:
 
         return project_data
 
+    def is_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """True als een eerdere run aan deze kloon begon en hem niet als afgerond vastlegde."""
+        status = self.get_clone_status(project_data, deployment_name)
+        return bool(status and status.get("in-progress"))
+
+    def mark_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """Zet de pogingsvlag op een once-kloon die nog niet af is.
+
+        set_clone_status vervangt het hele statusblok, dus de vlag verdwijnt vanzelf
+        zodra de kloon als afgerond wordt vastgelegd.
+
+        Returns:
+            True als de vlag nu pas aan ging.
+        """
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+            clone_from = deployment.get("clone-from")
+            if not isinstance(clone_from, dict) or clone_from.get("mode", "once") != "once":
+                return False
+            status = clone_from.setdefault("status", {})
+            if status.get("completed") or status.get("in-progress"):
+                return False
+            status["in-progress"] = True
+            return True
+        return False
+
     def get_clone_mode(self, project_data: dict[str, Any], deployment_name: str) -> str:
         """
         Get the clone mode from a deployment's clone-from configuration.
@@ -2857,8 +2885,6 @@ class ProjectFileHandler:
             Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
             ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
         """
-        from opi.services.catalog.image_registries.resolution import project_registries
-
         registries = project_registries(project_data)
         if registries:
             logger.info(f"Found {len(registries)} container registr{'y' if len(registries) == 1 else 'ies'}")
@@ -2878,8 +2904,6 @@ class ProjectFileHandler:
             Registry config dict with keys: name, upstream, username, password
             or None if the component points at no registry
         """
-        from opi.services.catalog.image_registries.resolution import component_registry_name
-
         component = next(
             (
                 c

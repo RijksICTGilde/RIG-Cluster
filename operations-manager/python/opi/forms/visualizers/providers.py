@@ -12,7 +12,10 @@ from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.forms.editables.service_path import smart_get_value
+from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
@@ -635,9 +638,16 @@ class FilteredServiceOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get service options filtered to project-enabled services."""
+        # Lazy: de registry laadt de dienstencatalogus, en die leest ``opi.forms`` en daarmee
+        # deze module.
+        from opi.services.registry import get_service
+
         options: list[dict[str, Any]] = []
         for service_type in ServiceType:
             if service_type.value not in self.project_services:
+                continue
+            if get_service(service_type).component_selection_follows_config:
+                # Geen aan/uit op een component: het eigen keuzeveld IS de selectie.
                 continue
             definition = ServiceAdapter.get_service_definition(service_type)
             options.append(
@@ -1204,12 +1214,22 @@ class WakerComponentOptionsProvider:
         return options
 
 
+#: De niet-waarde bij een component: niets in het bestand.
+AUTOMATIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
+
+#: Dezelfde niet-waarde bij een DEPLOYMENT-component, waar leeg iets anders betekent:
+#: niet "automatisch" maar "wat het component zelf koos".
+INHERIT_REGISTRY_LABEL = "Zoals het component (geen afwijking)"
+
+
 class ImageRegistryOptionsProvider:
     """De registries die dit project zelf heeft opgegeven, om er bij een component naar te verwijzen.
 
     Via ``smart_get_value``, want in de wizard staat de config onder de virtuele
     ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
     gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
+
+    Een lege lijst laat het veld verdwijnen (``hidden_without_options``).
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
@@ -1231,11 +1251,6 @@ class ImageRegistryOptionsProvider:
         self._current_value = current_value
 
     def get_options(self) -> list[dict[str, Any]]:
-        from opi.forms.editables.service_path import smart_get_value
-        from opi.services.catalog.base import ConfigLayer, config_path
-        from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
-        from opi.services.services_enums import ServiceType
-
         registries = (
             smart_get_value(
                 self._yaml_data,
@@ -1259,13 +1274,22 @@ class ImageRegistryOptionsProvider:
             if len(passend) == 1:
                 entries = [passend[0], *(e for e in entries if e is not passend[0])]
 
+        # Het LABEL op het scherm, de slug als waarde: de afnemer noemde hem "Code
+        # Overheid" en hoort dat terug te zien, ook al verwijst het bestand met de slug.
+        labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
         names = [entry["name"] for entry in entries]
-        options = [{"value": name, "label": name} for name in names]
+        if not names and not self._current_value:
+            return []
+
+        options = [{"value": "", "label": self._empty_label()}]
+        options.extend({"value": name, "label": labels[name]} for name in names)
         if self._current_value and self._current_value not in names:
             options.append({"value": self._current_value, "label": f"{self._current_value} (bestaat niet meer)"})
-        if not options:
-            return [{"value": "", "label": "Nog geen registries: vul ze eerst in bij de dienst"}]
         return options
+
+    def _empty_label(self) -> str:
+        """Wat "niets gekozen" op deze laag betekent, afgeleid uit het gerenderde pad."""
+        return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else AUTOMATIC_REGISTRY_LABEL
 
     def _component_image(self) -> str:
         """De image van het component waar dit veld bij staat, of "".

@@ -838,7 +838,15 @@ class AddRegistryByCredentialsRequest(BaseModel):
 
     name: str = Field(..., max_length=63, pattern=REGISTRY_NAME_PATTERN, description="Unique registry identifier")
     url: str = Field(..., max_length=512, pattern=UPSTREAM_PATTERN, description=_REGISTRY_URL_DESCRIPTION)
-    username: str = Field(..., max_length=256, description="Registry username or token name")
+    username: str | None = Field(
+        None,
+        max_length=256,
+        description=(
+            "Registry username or token name. Optional: what it means differs per registry "
+            "(ghcr.io ignores it, Docker Hub wants the account name, Quay the robot name). Leave "
+            "it out and it stays out of the project file; the pull secret gets a placeholder."
+        ),
+    )
     password: str = Field(..., max_length=4096, description="Registry password or token (will be AGE-encrypted)")
 
 

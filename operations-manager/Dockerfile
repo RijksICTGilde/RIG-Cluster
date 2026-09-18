@@ -2,7 +2,11 @@
 
 # uv krijgt een eigen stage, want buildkit expandeert geen variabele in `COPY --from=`.
 ARG UV_VERSION=0.12.15
+ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
+# dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
+FROM quay.io/minio/mc:${MC_VERSION} AS mc
 
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
@@ -51,10 +55,8 @@ RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/
     && chmod +x "sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && mv "sops-${SOPS_VERSION}.linux.${TARGETARCH}" /usr/local/bin/sops
 
-# Install MinIO client - cached unless mc version changes
-RUN curl -LO "https://dl.min.io/client/mc/release/linux-${TARGETARCH}/mc" \
-    && chmod +x mc \
-    && mv mc /usr/local/bin/mc
+# Install MinIO client
+COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64

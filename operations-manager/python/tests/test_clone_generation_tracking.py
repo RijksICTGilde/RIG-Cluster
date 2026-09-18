@@ -87,6 +87,7 @@ def mock_project_manager() -> MagicMock:
     pm._revision_manager = RevisionManager(MagicMock())
     pm._project_file_handler = ProjectFileHandler()
     pm.report_clone_performed = MagicMock()
+    pm.mark_clone_started = AsyncMock()
     pm.get_name = AsyncMock(return_value="test-project")
     pm._add_secret_to_create = MagicMock()
     return pm
