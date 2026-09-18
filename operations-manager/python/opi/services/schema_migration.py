@@ -8,10 +8,11 @@ number directly.
 """
 
 import logging
-import re
 from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.postgres_scope import database_generation_service_type
+from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_storage_name
@@ -127,8 +128,12 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         if version < step_version and step(project_data):
             migrated = True
 
-    if migrated:
+    # De stamp zegt "dit bestand voldoet aan versie X", niet "er is iets veranderd": ook als
+    # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie, dus dat hoort de
+    # stamp te zeggen.
+    if migrated or version < LATEST_SCHEMA_VERSION:
         project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        migrated = True
 
     # Always run v2 fixups to clean up corruption from past bugs
     if _fixup_v2_data(project_data):
@@ -1258,19 +1263,16 @@ def _normalize_upstream(url: Any) -> Any:
 
     Het oude patroon liet een protocol, hoofdletters en een afsluitende schuine streep toe;
     zonder deze omzetting sneuvelt zo'n bestand bij de eerste save.
+
+    Dezelfde omzetting die het configmodel op een NIEUWE invoer draait, en met opzet
+    dezelfde functie: een bestaand bestand hoort niet door een andere regel te gaan dan
+    wat een afnemer vandaag intypt.
     """
-    if not isinstance(url, str):
-        return url
-    # ``.lower()`` eerst, want ``HTTPS://GHCR.IO`` was een geldige 2.8-waarde. Userinfo
-    # (``ssh://git@host/x``) wordt bewust NIET weggeknipt: dat zou een upstream opleveren
-    # die er geldig uitziet maar ergens anders heen wijst.
-    return re.sub(r"^(?:https?|ssh|git)://", "", url.lower()).rstrip("/")
+    return normalize_upstream(url) if isinstance(url, str) else url
 
 
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
     """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
-    from opi.services.project import Project
-
     Project(project_data).set(f"services/{service_name}/config", config)
 
 

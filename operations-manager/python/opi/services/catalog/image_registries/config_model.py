@@ -7,7 +7,12 @@ zie ``naming.py``.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, ValidationInfo, model_validator
+
+from opi.services.catalog.image_registries.upstream import normalize_upstream
+from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 
 #: Een hostnaam met eventueel een pad, in kleine letters, zonder protocol en zonder tag.
 #: Ook een veiligheidsgrendel, zie features/image-registries.md.
@@ -49,26 +54,63 @@ REGISTRY_NAME_MESSAGE = (
 SECRET_NAME_PATTERN = r"^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
 
 
+def _normalize_upstream(value: object, info: ValidationInfo) -> object:
+    """De invoerhulp, VOOR de vormregel: wat een afnemer plakt is zelden de upstream.
+
+    Niet onder ``STORED_CONTEXT_KEY``: valideren schrijft niet terug, dus een opgeslagen
+    ``https://ghcr.io`` zou door de hele-bestandspoort komen en ongewijzigd blijven staan,
+    waarna ``normalize_prefix`` hem nooit matcht en de registry stil niet meer geldt.
+    """
+    if info.context and info.context.get(STORED_CONTEXT_KEY):
+        return value
+    return normalize_upstream(value) if isinstance(value, str) else value
+
+
+#: Als geannoteerd type en niet als losse ``field_validator``, want ``ModelFieldValidator``
+#: bouwt zijn toets uit de ANNOTATIE: anders wijst het formulier een geplakte URL af die de
+#: API accepteert. Het patroon staat VOOR de before-validator, anders valt het uit het
+#: gerenderde JSON-schema (pydantic beschrijft dan de invoer) terwijl de toets blijft draaien.
+Upstream = Annotated[str, Field(pattern=UPSTREAM_PATTERN), BeforeValidator(_normalize_upstream)]
+
+
 class RegistryEntry(BaseModel):
     """Eén private registry van het project."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    name: str = Field(
+    name: str | None = Field(
+        default=None,
         pattern=REGISTRY_NAME_PATTERN,
         max_length=63,
-        description="Naam waarmee een component naar deze registry verwijst, uniek binnen het project.",
+        description=(
+            "De verwijzing waarmee een component deze registry aanwijst, uniek binnen het project. "
+            "Laat hem weg en geef een 'display-name': het platform leidt hem daar dan uit af. "
+            "Hij ligt vast zodra hij bestaat, want componenten wijzen ernaar en hij zit in de naam "
+            "van het pull-secret; een gewijzigd label verandert hem niet mee."
+        ),
     )
-    upstream: str = Field(
-        pattern=UPSTREAM_PATTERN,
+    display_name: str | None = Field(
+        default=None,
+        max_length=255,
+        alias="display-name",
+        description="Het label dat je op het scherm ziet; vrije tekst, dus geen DNS-label nodig.",
+    )
+    upstream: Upstream = Field(
         description=(
             "De registry inclusief pad waar de images staan, zonder protocol, "
-            "bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'."
+            "bijvoorbeeld 'code.overheid.nl/robbert.uittenbroek'. Een geplakte browser-URL of "
+            "een volledige image-referentie wordt omgezet naar deze vorm."
         ),
     )
     username: str | None = Field(
         default=None,
-        description="Gebruikersnaam waarmee ZAD bij de registry inlogt; leeg voor een registry zonder inlog.",
+        description=(
+            "Gebruikersnaam waarmee ZAD bij de registry inlogt, naast 'password'. Optioneel: bij "
+            "GitHub (ghcr.io) doet de waarde er niet toe, bij Docker Hub is het de accountnaam en bij "
+            "Quay de naam van het robotaccount. Leeg blijft leeg in het projectbestand; het pull-secret "
+            "krijgt dan een plaatshouder. Eist de registry een echte naam, dan mislukt het ophalen van "
+            "de images. Via de API wordt het token niet getoetst."
+        ),
     )
     password: str | None = Field(
         default=None,
@@ -85,6 +127,40 @@ class RegistryEntry(BaseModel):
             "in plaats van gebruikersnaam en token. Voor een secret dat het platform zelf neerzet."
         ),
     )
+
+    @model_validator(mode="after")
+    def _has_something_to_be_called(self) -> RegistryEntry:
+        """Een entry zonder naam EN zonder label is nergens naar te verwijzen.
+
+        Zonder allebei valt er geen naam af te leiden en is de entry onzichtbaar voor
+        ``project_registries``, dus voor de hele dienst.
+        """
+        if not self.name and not self.display_name:
+            msg = "Geef een 'name' of een 'display-name'"
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def _has_exactly_one_way_to_pull(self) -> RegistryEntry:
+        """Een entry draagt OF een ``secretName`` OF een token.
+
+        Zonder een van beide komt hij overal doorheen en schrijft de backend stil geen
+        pull-secret; de afnemer merkt het pas als de pod niet kan pullen, met een melding die
+        niet over een ontbrekend token gaat. Mengen kan ook niet: met een ``secretName``
+        slaat de backend gebruikersnaam en token over.
+
+        De gebruikersnaam is optioneel, zie ``PULL_USERNAME_PLACEHOLDER``.
+        """
+        if self.secret_name and (self.username or self.password):
+            msg = "Geef een 'secretName' OF een 'username' met 'password', niet allebei"
+            raise ValueError(msg)
+        if not self.secret_name and not self.password:
+            if self.username:
+                msg = "Vul een token in bij de gebruikersnaam, anders kunnen we de images niet ophalen"
+            else:
+                msg = "Vul een token in, anders kunnen we de images niet ophalen"
+            raise ValueError(msg)
+        return self
 
 
 class ImageRegistriesConfig(BaseModel):
@@ -104,7 +180,11 @@ class ComponentRegistryConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     registry: str = Field(
+        min_length=1,
         description=(
-            "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt."
-        )
+            "Naam van de registry uit de projectconfig van deze dienst waar de image van dit component vandaan komt. "
+            "Er is geen lege waarde: een component zonder deze dienstvermelding gebruikt de registry van dit project "
+            "waar zijn image onder valt, en anders de publieke weg. "
+            "Gebruik DELETE om die keuze terug te draaien; dat haalt de vermelding weg."
+        ),
     )

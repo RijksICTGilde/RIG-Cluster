@@ -741,6 +741,11 @@ class Service(ABC):
     #: user-facing priority is a deferred future refinement.
     config_component_order: ClassVar[int] = 100
 
+    #: Whether the CONFIG of this service at the component layer is at the same time its
+    #: SELECTION, so there is no separate on/off for it on a component. What follows from
+    #: it, and when to declare it: ``instructions/services.md``.
+    component_selection_follows_config: ClassVar[bool] = False
+
     #: Layers where this service carries config but deliberately offers no form, mapped
     #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer
     #: that is API-only on purpose. The point is that the choice is written down: without
