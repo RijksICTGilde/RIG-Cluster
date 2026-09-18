@@ -1230,9 +1230,8 @@ def get_cluster_domains_config(cluster_name: str) -> dict | None:
         cluster_name: Name of the cluster
 
     Returns:
-        The ``domains`` block: ``supported_domains`` holds one entry per domain the
-        cluster offers, with its issuer, dot support, subdomain restriction and
-        external-dns target. None if the cluster offers no domains of its own.
+        The ``domains`` block, with one ``supported_domains`` entry per domain the
+        cluster offers. None if the cluster offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration

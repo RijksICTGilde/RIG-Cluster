@@ -267,9 +267,8 @@ class TestClusterDomainFunctions:
 class TestExternalDnsTargetForHostname:
     """De external-dns-annotatie komt uit hetzelfde ``domains``-blok als de rest.
 
-    De lezer pakt het blok met ``.get(...)``: leest hij de verkeerde sleutel, dan krijgt
-    elke hostnaam None en verdwijnt de annotatie zonder foutmelding uit de ingress. Deze
-    toetsen pinnen daarom een echt doel uit de clusterconfiguratie, niet alleen de vorm.
+    Bij een verkeerde sleutel krijgt elke hostnaam None en verdwijnt de annotatie zonder
+    foutmelding uit de ingress. Daarom pinnen deze toetsen een echt doel uit de configuratie.
     """
 
     def test_subdomain_gets_the_target_of_its_base_domain(self):
@@ -287,7 +286,6 @@ class TestExternalDnsTargetForHostname:
         assert get_external_dns_target_for_hostname("odcn-production", "a.rig.prd1.gn2.quattro.rijksapps.nl") is None
 
     def test_a_name_that_only_ends_in_the_same_letters_is_not_a_subdomain(self):
-        """``nietrijks.app`` valt niet onder ``rijks.app``, alleen ``*.rijks.app`` doet dat."""
         assert get_external_dns_target_for_hostname("odcn-production", "nietrijks.app") is None
 
     def test_cluster_without_configured_targets_returns_none(self):

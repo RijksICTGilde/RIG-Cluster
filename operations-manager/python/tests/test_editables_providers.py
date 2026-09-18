@@ -141,10 +141,9 @@ class TestRepositoryOptionsProvider:
 
 
 class TestClusterBaseDomainOptionsProvider:
-    """De keuzelijst leest het ``domains``-blok van het cluster rechtstreeks uit
-    CLUSTER_CONFIG. Leest hij de verkeerde sleutel, dan levert dat geen fout op maar een
-    lijst met alleen "Cluster standaard" en "Eigen domein...", dus zonder een toets op de
-    domeinen zelf breekt de lijst stil.
+    """De keuzelijst leest het ``domains``-blok rechtstreeks uit CLUSTER_CONFIG. Bij een
+    verkeerde sleutel houdt de gebruiker alleen "Cluster standaard" en "Eigen domein..."
+    over, zonder fout.
     """
 
     def test_options_list_the_domains_of_the_named_cluster(self):
