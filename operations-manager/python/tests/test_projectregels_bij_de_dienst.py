@@ -99,6 +99,22 @@ class TestBijlagenOpDePoort:
         with pytest.raises(ProjectIntegrityError, match="spook"):
             asyncio.run(validate_project_structure(project))
 
+    def test_beide_regels_melden_in_een_keer(self) -> None:
+        """Beide regels zitten in dezelfde haak, dus een project dat er twee breekt hoort
+        ze samen te horen. Voorheen weigerde de verwijzingsraise voor de tweede regel."""
+        project = _bijlageproject(
+            [
+                {"reference": "spook", "provide-as": "file", "path": "/etc/tls/k.p12"},
+                {"reference": "keystore", "provide-as": "file", "path": "/etc/tls/k2.p12"},
+                {"reference": "keystore", "provide-as": "file", "path": "/etc/tls/k3.p12"},
+            ],
+            ["keystore"],
+        )
+        with pytest.raises(ProjectIntegrityError) as fout:
+            asyncio.run(validate_project_structure(project))
+        assert "spook" in str(fout.value)
+        assert "meervoudig gekoppeld" in str(fout.value)
+
     def test_de_regels_hangen_aan_de_dienst(self) -> None:
         dienst = get_service(ServiceType.ATTACHMENTS)
         assert dienst in project_validating_services()
@@ -117,6 +133,14 @@ class TestSchemanamenOpDePoort:
     def test_een_naam_die_past_komt_erdoor(self) -> None:
         asyncio.run(validate_project_structure(_schemaproject("rapportage", "deployment-1")))
 
+    def test_ook_een_deployment_verderop_in_de_lijst_telt(self) -> None:
+        """De regel gaat over ELKE deployment: een tweede met een langere naam maakt een
+        postfix die voor de eerste past alsnog onmogelijk."""
+        project = _schemaproject("rapportage", "kort")
+        project["deployments"].append(_deployment("d" * 55))
+        with pytest.raises(ProjectIntegrityError, match="d" * 55):
+            asyncio.run(validate_project_structure(project))
+
     def test_de_regel_hangt_aan_de_dienst(self) -> None:
         dienst = get_service(ServiceType.POSTGRESQL_DATABASE)
         assert dienst in project_validating_services()
@@ -129,3 +153,34 @@ class TestSchemanamenOpDePoort:
         project["services"] = ["publish-on-web"]
         project["components"][0]["services"] = ["publish-on-web"]
         assert get_service(ServiceType.POSTGRESQL_DATABASE).validate_project(project) == []
+
+    def test_de_schemas_van_de_zusterdienst_tellen_niet_mee(self) -> None:
+        """Schema's horen bij ``postgresql-database`` (RC-17), dus hetzelfde configblok
+        onder de zusterdienst is niet van deze dienst. Naast het vorige geval, dat het blok
+        weghaalt en dus niet scheidt tussen "niet van mij" en "er staat toch niets"."""
+        project = _schemaproject("rapportage", "d" * 55)
+        project["services"] = [
+            {
+                "name": ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value,
+                "config": {"schemas": [{"postfix": "rapportage"}]},
+            }
+        ]
+        project["components"][0]["services"] = [ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value]
+        assert get_service(ServiceType.POSTGRESQL_DATABASE).validate_project(project) == []
+
+
+class TestDeGedeeldeLus:
+    def test_twee_diensten_melden_in_dezelfde_fout(self) -> None:
+        """De lus loopt de hele lijst af voor hij weigert, dus een project dat bij twee
+        diensten struikelt hoort beide meldingen te krijgen en niet alleen de eerste."""
+        project = _schemaproject("rapportage", "d" * 55)
+        project["services"].append(
+            {"attachments": {"data": [{"id": "keystore", "filename": "k.p12", "content": _VERSLEUTELD}]}}
+        )
+        project["components"][0]["services"].append(
+            {"attachments": {"config": [{"reference": "spook", "provide-as": "file", "path": "/etc/tls/k.p12"}]}}
+        )
+        with pytest.raises(ProjectIntegrityError) as fout:
+            asyncio.run(validate_project_structure(project))
+        assert "spook" in str(fout.value)
+        assert "rapportage" in str(fout.value)
