@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Each format ID maps to a pair of templates: (dash_template, dot_template).
 # The dash variant joins prefix parts with hyphens; the dot variant uses dots.
-# Which variant is used depends on cluster nice_url support.
+# Which variant is used depends on the domain's supports_dots in the cluster config.
 #
 # Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
 #   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
@@ -1831,9 +1831,9 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain}.{base_domain}"
 
 
-def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
+def generate_root_hostname(subdomain: str, base_domain: str) -> str:
     """
-    Generate the root hostname for nice URL mode.
+    Generate the root hostname of a deployment.
 
     The root hostname is just subdomain.base_domain and resolves to the
     component marked with root: true in the deployment configuration.
@@ -1846,10 +1846,10 @@ def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
         Root hostname in pattern subdomain.base_domain
 
     Examples:
-        >>> generate_nice_url_root_hostname("myapp", "rijks.app")
+        >>> generate_root_hostname("myapp", "rijks.app")
         'myapp.rijks.app'
 
-        >>> generate_nice_url_root_hostname("mydomain", "rijksapps.nl")
+        >>> generate_root_hostname("mydomain", "rijksapps.nl")
         'mydomain.rijksapps.nl'
     """
     subdomain_clean = _sanitize_for_lowercase(subdomain)
@@ -2111,7 +2111,7 @@ def get_deployment_hostnames(
     # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
     # cannot disagree.
     if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
-        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+        root_hostname = generate_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
 

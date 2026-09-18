@@ -167,12 +167,12 @@ from opi.utils.naming import (
     generate_manifest_name,
     generate_network_policy_manifest_name,
     generate_network_policy_name,
-    generate_nice_url_root_hostname,
     generate_project_level_manifest_path,
     generate_project_realm_name,
     generate_project_service_account_name,
     generate_public_url,
     generate_pvc_name,
+    generate_root_hostname,
     generate_storage_name,
     generate_tls_secret_name,
     generate_unique_name,
@@ -6486,7 +6486,7 @@ class ProjectManager:
                         and is_root_component
                         and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
                     ):
-                        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+                        root_hostname = generate_root_hostname(subdomain, base_domain)
                         root_ingress_name = f"{deployment_name}-root"
                         root_manifest_name = generate_manifest_name(component_name, "ingress-root")
 

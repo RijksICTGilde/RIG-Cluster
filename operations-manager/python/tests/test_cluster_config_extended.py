@@ -13,6 +13,7 @@ from opi.core.cluster_config import (
     get_ca_certificate_config,
     get_cluster_config,
     get_database_server,
+    get_domains_config,
     get_ingress_cluster_issuer,
     get_ingress_config,
     get_ingress_ip_whitelist,
@@ -27,15 +28,14 @@ from opi.core.cluster_config import (
     get_minio_server,
     get_namespace,
     get_namespace_prefix,
-    get_nice_url_config,
-    get_nice_url_supported_domains,
     get_prefixed_namespace,
     get_redis_server,
     get_storage_access_modes,
     get_storage_class_name,
     get_storage_config,
+    get_supported_domain_names,
     get_volume_snapshot_class,
-    is_nice_url_domain_supported,
+    is_domain_supported,
     uses_capsule,
 )
 
@@ -239,27 +239,27 @@ class TestCaCertificateConfig:
         assert config is None
 
 
-class TestNiceUrlFunctions:
-    """Tests for nice URL config functions."""
+class TestClusterDomainFunctions:
+    """Tests for the cluster domain configuration functions."""
 
-    def test_get_nice_url_config_local(self):
-        config = get_nice_url_config("local")
+    def test_get_domains_config_local(self):
+        config = get_domains_config("local")
         assert config is not None
         assert "supported_domains" in config
 
-    def test_get_nice_url_supported_domains_local(self):
-        domains = get_nice_url_supported_domains("local")
+    def test_get_supported_domain_names_local(self):
+        domains = get_supported_domain_names("local")
         assert "kind" in domains
         assert "local" in domains
 
-    def test_is_nice_url_domain_supported_kind(self):
-        assert is_nice_url_domain_supported("local", "kind") is True
+    def test_is_domain_supported_kind(self):
+        assert is_domain_supported("local", "kind") is True
 
-    def test_is_nice_url_domain_not_supported(self):
-        assert is_nice_url_domain_supported("local", "example.com") is False
+    def test_is_domain_not_supported(self):
+        assert is_domain_supported("local", "example.com") is False
 
-    def test_production_nice_url_domains(self):
-        domains = get_nice_url_supported_domains("odcn-production")
+    def test_production_supported_domains(self):
+        domains = get_supported_domain_names("odcn-production")
         assert "rijks.app" in domains
 
 

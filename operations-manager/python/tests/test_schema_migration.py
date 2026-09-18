@@ -1387,7 +1387,7 @@ class TestRemoveDomainMode:
             ],
         }
 
-    def test_nice_url_without_format_becomes_component_subdomain(self) -> None:
+    def test_mode_without_format_becomes_component_subdomain(self) -> None:
         data = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
         result, was_migrated = migrate_to_latest(data)
 
@@ -1397,7 +1397,7 @@ class TestRemoveDomainMode:
         assert config["domain-format"] == "component.subdomain"
         validate_project_schema(result)
 
-    def test_nice_url_with_explicit_format_only_loses_the_mode(self) -> None:
+    def test_mode_with_explicit_format_only_loses_the_mode(self) -> None:
         data = self._project({"subdomain": "desa", "domain-mode": "nice-url", "domain-format": "component.subdomain"})
         result, _ = migrate_to_latest(data)
 

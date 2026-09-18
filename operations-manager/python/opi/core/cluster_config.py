@@ -80,7 +80,7 @@ CLUSTER_CONFIG = {
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
@@ -163,7 +163,7 @@ CLUSTER_CONFIG = {
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {"domain": "sandbox.rijksapp.dev", "supports_dots": False, "restricted_subdomains": True},
                 {
@@ -279,7 +279,7 @@ CLUSTER_CONFIG = {
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {
                     "domain": "rijks.app",
@@ -1067,7 +1067,7 @@ def supports_vpa(cluster_name: str) -> bool:
 def supports_custom_domain_certificates(cluster_name: str) -> bool:
     """Whether this cluster can obtain a certificate for a domain of the user's own.
 
-    A domain outside the cluster's ``nice_url.supported_domains`` gets no certificate for
+    A domain outside the cluster's ``domains.supported_domains`` gets no certificate for
     free: the platform certificate covers the supported domains only, so cert-manager has
     to issue one, over an ACME HTTP-01 challenge that the outside world must be able to
     reach. On production that works. On the two Kind clusters it cannot: they are not
@@ -1222,68 +1222,65 @@ def get_ca_certificate_config(cluster_name: str) -> dict | None:
     }
 
 
-def get_nice_url_config(cluster_name: str) -> dict | None:
+def get_domains_config(cluster_name: str) -> dict | None:
     """
-    Get the nice URL configuration for a specific cluster.
-
-    Nice URLs use dot-separated patterns like component.deployment.base_domain
-    instead of the default dash-separated patterns.
+    Get the domain configuration for a specific cluster.
 
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        Dictionary containing nice URL configuration with keys:
-        - supported_domains: List of domains that support the nice URL pattern
+        Dictionary containing the domain configuration with keys:
+        - supported_domains: List of domains this cluster offers, each with its
+          issuer, dot support, subdomain restriction and external-dns target
 
-        Returns None if nice URLs are not configured for this cluster.
+        Returns None if the cluster offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config.get("nice_url")
+    return cluster_config.get("domains")
 
 
-def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
+def get_supported_domain_names(cluster_name: str) -> list[str]:
     """
-    Get the list of domains that support nice URLs for a specific cluster.
+    Get the names of the domains a cluster offers.
 
-    Extracts domain strings from the structured supported_domains list
-    for backward compatibility.
+    Extracts the domain strings from the structured supported_domains list.
 
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        List of domain strings that support nice URL pattern.
-        Returns empty list if nice URLs are not configured.
+        List of domain strings the cluster offers.
+        Returns empty list if the cluster offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is None:
         return []
-    raw = nice_url_config.get("supported_domains", [])
+    raw = domains_config.get("supported_domains", [])
     return [entry["domain"] if isinstance(entry, dict) else entry for entry in raw]
 
 
-def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
+def is_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
-    Check if a specific base domain supports nice URLs on a cluster.
+    Check if a cluster offers a specific base domain.
 
     Args:
         cluster_name: Name of the cluster
         base_domain: The base domain to check (e.g., "rijks.app")
 
     Returns:
-        True if the domain supports nice URLs on this cluster, False otherwise.
+        True if the cluster offers this domain, False otherwise.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    supported_domains = get_nice_url_supported_domains(cluster_name)
+    supported_domains = get_supported_domain_names(cluster_name)
     return base_domain in supported_domains
 
 
@@ -1305,9 +1302,9 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is not None:
-        for entry in nice_url_config.get("supported_domains", []):
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is not None:
+        for entry in domains_config.get("supported_domains", []):
             if isinstance(entry, dict) and entry.get("domain") == domain:
                 return entry.get("issuer")
     return None
@@ -1329,13 +1326,13 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
     Returns:
         Target hostname for the external-dns annotation, or None if none configured.
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is None:
         return None
 
     candidates = [
         entry
-        for entry in nice_url_config.get("supported_domains", [])
+        for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("external_dns_target")
     ]
     # Sort longest domain first so more specific bases match before less specific ones.
@@ -1365,10 +1362,10 @@ def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is None:
         return False
-    for entry in nice_url_config.get("supported_domains", []):
+    for entry in domains_config.get("supported_domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("restricted_subdomains", False)
     return False
@@ -1387,12 +1384,12 @@ def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is None:
         return []
     return [
         entry["domain"]
-        for entry in nice_url_config.get("supported_domains", [])
+        for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("restricted_subdomains", False)
     ]
 
@@ -1411,10 +1408,10 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_domains_config(cluster_name)
+    if domains_config is None:
         return False
-    for entry in nice_url_config.get("supported_domains", []):
+    for entry in domains_config.get("supported_domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("supports_dots", False)
     return False

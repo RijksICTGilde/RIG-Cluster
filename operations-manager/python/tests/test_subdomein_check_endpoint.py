@@ -139,7 +139,7 @@ class TestWatDeControleBelooft:
     """
 
     def test_een_domein_van_dit_cluster_is_er_een_van_ons(self, client: TestClient) -> None:
-        """``local`` staat in de nice_url-domeinen van dit testcluster, en dat is dezelfde
+        """``local`` staat in de ``domains``-lijst van dit testcluster, en dat is dezelfde
         lijst die bepaalt welk domein een certificaat van het platform krijgt."""
         response = client.get(PATH, params={"base_domain": "local"}, headers=HEADERS)
 

@@ -9,7 +9,7 @@ automatically enable Let's Encrypt (issuer: letsencrypt) for HTTPS.
 class TestAutoIssuerLogic:
     """Tests for the auto-issuer logic used in nice-url mode."""
 
-    def test_auto_issuer_enabled_for_nice_url_mode(self):
+    def test_auto_issuer_enabled_for_the_retired_mode(self):
         """Auto-issuer should be enabled when domain_mode is nice-url with base_domain."""
         # Simulate the logic from web/router.py and api/router.py
         domain_mode = "nice-url"
@@ -71,7 +71,7 @@ class TestAutoIssuerLogic:
 class TestEditDomainSettingsYamlUpdate:
     """Tests for YAML update logic when editing domain settings."""
 
-    def test_nice_url_mode_sets_issuer_in_yaml(self):
+    def test_switching_to_the_retired_mode_sets_issuer_in_yaml(self):
         """Switching to nice-url mode should set issuer: letsencrypt in YAML."""
         yaml_dep = {
             "name": "prod",
@@ -93,7 +93,7 @@ class TestEditDomainSettingsYamlUpdate:
         assert yaml_dep["base-domain"] == "rijks.app"
         assert yaml_dep["issuer"] == "letsencrypt"
 
-    def test_switching_away_from_nice_url_removes_issuer(self):
+    def test_switching_away_from_the_retired_mode_removes_issuer(self):
         """Switching away from nice-url mode should remove issuer from YAML."""
         yaml_dep = {
             "name": "prod",

@@ -30,11 +30,11 @@ def _prod_settings():
 
 
 class TestClusterDefaultDomainResolver:
-    def test_resolves_to_cluster_ingress_domain_not_first_nice_url(self):
+    def test_resolves_to_cluster_ingress_domain_not_first_supported_domain(self):
         with _prod_settings():
             resolved = ClusterDefaultDomain().resolve({})
         assert resolved == _PROD_DEFAULT
-        # The bug returned a nice-URL domain like rijks.app
+        # The bug returned one of the cluster's supported domains, like rijks.app
         assert resolved != "rijks.app"
 
 
