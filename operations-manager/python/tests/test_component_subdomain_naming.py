@@ -8,7 +8,7 @@ Tests the dot-separated pattern for hostnames:
 
 import pytest
 from opi.core.cluster_config import (
-    get_domains_config,
+    get_cluster_domains_config,
     get_supported_domain_names,
     is_domain_supported,
 )
@@ -181,15 +181,15 @@ class TestGetDeploymentHostnamesComponentSubdomain:
 class TestClusterConfigDomains:
     """Tests for the cluster domain configuration functions."""
 
-    def test_get_domains_config_local(self):
+    def test_get_cluster_domains_config_local(self):
         """Local cluster has a domains config."""
-        config = get_domains_config("local")
+        config = get_cluster_domains_config("local")
         assert config is not None
         assert "supported_domains" in config
 
-    def test_get_domains_config_production(self):
+    def test_get_cluster_domains_config_production(self):
         """Production cluster has a domains config."""
-        config = get_domains_config("odcn-production")
+        config = get_cluster_domains_config("odcn-production")
         assert config is not None
         assert "supported_domains" in config
 

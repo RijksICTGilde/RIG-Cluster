@@ -12,8 +12,8 @@ from opi.core.cluster_config import (
     get_argo_namespace,
     get_ca_certificate_config,
     get_cluster_config,
+    get_cluster_domains_config,
     get_database_server,
-    get_domains_config,
     get_ingress_cluster_issuer,
     get_ingress_config,
     get_ingress_ip_whitelist,
@@ -242,8 +242,8 @@ class TestCaCertificateConfig:
 class TestClusterDomainFunctions:
     """Tests for the cluster domain configuration functions."""
 
-    def test_get_domains_config_local(self):
-        config = get_domains_config("local")
+    def test_get_cluster_domains_config_local(self):
+        config = get_cluster_domains_config("local")
         assert config is not None
         assert "supported_domains" in config
 
