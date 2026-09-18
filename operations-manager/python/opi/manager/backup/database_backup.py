@@ -280,6 +280,7 @@ class DatabaseBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "db_host": database_host,
                 "db_port": database_port,
                 "db_name": database_name,
@@ -606,6 +607,7 @@ class DatabaseBackupManager(BaseBackupManager):
             {
                 "pod_name": pod_name,
                 "namespace": namespace,
+                "service_account_name": self._pod_service_account_name(project_name),
                 "reference_name": reference_name,
                 "target_db_host": target_database_host,
                 "target_db_port": target_database_port,
