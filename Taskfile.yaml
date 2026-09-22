@@ -3468,6 +3468,9 @@ tasks:
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
     cmds:
+      # Skaffold pusht naar localhost:5001; staat die registry er niet, dan is de fout
+      # een kale push-timeout. Idempotent, net als in sandbox:update-operations-manager.
+      - task: sandbox:setup-registry
       - echo "Starting Skaffold in hot-reload mode (sandboxed-local)..."
       - task: version:generate
       # Vastgepind, niet afgeleid van de huidige context: skaffold rolt anders uit naar
@@ -3478,6 +3481,7 @@ tasks:
   sandbox:skaffold-debug:
     desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
     cmds:
+      - task: sandbox:setup-registry
       - echo "Starting Skaffold in debug mode (sandboxed-local)..."
       - 'echo "Attach IntelliJ debugger: Run → Debug Remote Debug - Operations Manager (localhost:5678)"'
       - SOPS_AGE_KEY="$(sed -n '3p' security/sandbox-key.txt)" skaffold dev --kube-context kind-rig-sandbox --port-forward -f operations-manager/skaffold-sandboxed-local-debug.yaml
