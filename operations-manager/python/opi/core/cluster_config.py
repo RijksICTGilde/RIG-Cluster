@@ -85,6 +85,9 @@ CLUSTER_CONFIG = {
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
+            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat
+            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden.
+            "managed_zones": ["kind", "local"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
         # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
@@ -158,7 +161,7 @@ CLUSTER_CONFIG = {
             "passthrough_port": 8443,
             "api_host": "vlam-api.rijksweb.nl",
             "cluster_ip": "10.96.144.8",
-            "ca_bundle": "rijksdienst-ca.pem",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -173,6 +176,7 @@ CLUSTER_CONFIG = {
                     "restricted_subdomains": True,
                 },
             ],
+            "managed_zones": ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
         # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
@@ -249,16 +253,22 @@ CLUSTER_CONFIG = {
             "deployment": "productie",
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
-            "port": 8081,
+            # Poort 8082 en niet 8081. Beide termineren, maar 8081 gaat naar
+            # `vlam-api.rijksweb.nl` en dat adres is bij SSC-ICT uitgezet: op 2026-09-21
+            # gemeten geeft het geen antwoord meer (verbinding wordt na de TCP-handshake
+            # meteen gesloten), terwijl `vlam-api.overheid-i.nl` 200 geeft. 8082 gaat naar
+            # het nieuwe adres. 8081 blijft in de proxy bestaan zolang er afnemers op
+            # kunnen staan, maar een nieuwe afnemer moet er niet meer op uitkomen.
+            "port": 8082,
             # HET DOORLUS-PAD (RC-167). Poort 8443 van dezelfde proxy lust de TLS-sessie
             # door zonder te termineren: de afnemer praat dan zelf met VLAM en verifieert
             # zelf. Drie waarden maken dat bruikbaar, en ze horen bij elkaar:
             #
             #   passthrough_port  waar de doorlus luistert;
             #   api_host          de naam die in de URL staat, want TLS vergelijkt de
-            #                     hostnaam uit de URL met het certificaat. `rijksweb.nl` is
-            #                     de naam waar de proxy zelf op uitkomt (SNI-ACL, cert), en
-            #                     daarmee de naam waar deze keten op gebouwd is;
+            #                     hostnaam uit de URL met het certificaat. Dit is sinds
+            #                     2026-09-21 het overheid-i-adres; de SNI-ACL van de
+            #                     doorlus liet beide namen al door;
             #   cluster_ip        waar die naam heen moet wijzen. hostAliases neemt een
             #                     ADRES, geen servicenaam, en de Service-template van ZAD
             #                     zet geen clusterIP, dus dit is het dynamisch toegewezen
@@ -271,10 +281,15 @@ CLUSTER_CONFIG = {
             # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
             # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
             # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
+            # De bundel bevat sinds 2026-09-21 TWEE ketens, want de twee adressen hebben
+            # verschillende uitgevers: rijksweb komt onder de Rijksdienst Root CA van
+            # SSC-ICT, overheid-i onder DigiCert Global Root G2. Tot die datum ontbrak dit
+            # bestand in het pakket, en dan geeft _passthrough() None terug: de doorlus
+            # heeft daardoor nooit aangestaan.
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.254.144",
-            "ca_bundle": "rijksdienst-ca.pem",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
@@ -303,6 +318,10 @@ CLUSTER_CONFIG = {
                     "external_dns_target": "router.rijksapp.dev",
                 },
             ],
+            # De vierde is de ingress_postfix-zone hierboven: van ons, maar niet
+            # aangeboden. Noem de zone zelf en nooit zijn ouder rijksapps.nl: die is van
+            # ODC-Noord en in gebruik als eigen basisdomein van projecten.
+            "managed_zones": ["rijks.app", "rijksapp.nl", "rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
         },
         # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
         # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
@@ -1279,6 +1298,57 @@ def is_domain_supported(cluster_name: str, base_domain: str) -> bool:
     return base_domain in supported_domains
 
 
+def get_managed_zones(cluster_name: str) -> list[str]:
+    """
+    Get the DNS zones a cluster serves itself.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        The ``managed_zones`` of the cluster, empty if it declares none.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
+        return []
+    return list(domains_config.get("managed_zones", []))
+
+
+def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
+    """Return the most specific zone the hostname falls under, or None.
+
+    One walk for both callers: two of them side by side is how one grows a suffix rule the
+    other lacks.
+    """
+    for zone in sorted(zones, key=len, reverse=True):
+        if hostname == zone or hostname.endswith("." + zone):
+            return zone
+    return None
+
+
+def is_platform_domain(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a domain falls within a zone this cluster serves.
+
+    This is the management question, not the offer question ``is_domain_supported``
+    answers: ``team.rijks.app`` is not offered and is still ours.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The base domain to check (e.g., "team.rijks.app")
+
+    Returns:
+        True if the domain is one of our zones or sits under one.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return _longest_matching_zone(domain, get_managed_zones(cluster_name)) is not None
+
+
 def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
     """
     Get the issuer for a specific domain on a cluster.
@@ -1325,19 +1395,13 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
     if domains_config is None:
         return None
 
-    candidates = [
-        entry
+    candidates = {
+        entry["domain"]: entry["external_dns_target"]
         for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("external_dns_target")
-    ]
-    # Sort longest domain first so more specific bases match before less specific ones.
-    candidates.sort(key=lambda e: -len(e["domain"]))
-
-    for entry in candidates:
-        domain = entry["domain"]
-        if hostname == domain or hostname.endswith("." + domain):
-            return entry["external_dns_target"]
-    return None
+    }
+    zone = _longest_matching_zone(hostname, list(candidates))
+    return candidates[zone] if zone is not None else None
 
 
 def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:

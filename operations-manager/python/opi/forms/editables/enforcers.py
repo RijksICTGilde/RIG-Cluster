@@ -10,9 +10,10 @@ from opi.connectors.subdomain import (
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
     validate_bare_domain_allowed,
+    validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
-from opi.core.cluster_config import get_domain_supports_dots
+from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     custom_domain_certificate_note,
@@ -22,7 +23,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, resolve_domain_tail
 
 
 class FieldError(ValueError):
@@ -339,6 +340,18 @@ class DomainConfigEnforcer:
                     f"Dit domein ({actual_domain}) ondersteunt punten niet. "
                     f"Kies een ander URL-formaat of een ander domein."
                 )
+
+        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
+        # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
+        # basisdomein is de clusterstandaard en dus een eigen zone (op ``actual_domain is
+        # None`` afgaan liet 'admin' daar gewoon door), en dit moet VOOR de
+        # goedkeuringscheck hieronder, die bij een domein zonder allowlist-entry een
+        # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
+        if subdomain and "{subdomain}" in template:
+            reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
+            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
+            if not is_valid and error_msg:
+                raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
         # Check domain approval for any non-platform domain (a domain not in the
         # cluster's supported set), whether it arrived via the wizard's custom
