@@ -1085,10 +1085,34 @@ class TestGetDeploymentHostnamesBareDomain:
             domain_format="subdomain",
             subdomain="www",
             expose_on_bare_domain="frontend",
-            project_data={},
+            project_data=_approved("voorbeeld.nl"),
             cluster=_CLUSTER,
         )
         assert hostnames.count("voorbeeld.nl") == 1
+
+    def test_bare_domain_not_included_when_the_domain_is_not_approved(self):
+        """De apex hangt aan dezelfde goedkeuring als het rootadres.
+
+        Zonder deze grendel bleef de apex in de lijst staan terwijl elk ander adres van
+        hetzelfde domein naar het clusteradres terugviel: een certificaataanvraag op de
+        apex van een domein dat niemand aan dit project gaf. En niet de apex van de
+        clusterzone in plaats daarvan, want die is van iedereen op het cluster.
+        """
+        hostnames = get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="prod",
+            project_name="myapp",
+            ingress_postfix=".kind",
+            subdomain="www",
+            base_domain="voorbeeld.nl",
+            domain_format="subdomain",
+            expose_on_bare_domain="frontend",
+            project_data={"domains": {"allowed-domains": [{"domain": "voorbeeld.nl", "status": "requested"}]}},
+            cluster=_CLUSTER,
+        )
+        assert "voorbeeld.nl" not in hostnames
+        assert "kind" not in hostnames
+        assert hostnames == ["frontend-prod-myapp.kind"]
 
 
 class TestEnsureFqdn:
