@@ -33,11 +33,15 @@ De twee overige `.sops.yaml`-bestanden staan in `sops-sandbox/` en horen bij een
 
 De sleutelwaarde zelf staat nergens in git: `bootstrap/.../deployment.yaml` verwijst met `secretKeyRef` naar het secret `sops-age-key`, en `sops-plugin.sh` leest datzelfde secret. Het is een bootstrapwaarde die alleen in Kubernetes leeft. De drie treffers op `AGE-SECRET-KEY` in de Taskfile en de plugin zijn vormcontroles, geen waarden.
 
-## De cutover kan overlappend, en dat verandert alles
+## De cutover: in een keer naar de nieuwe sleutel
 
-Gemeten: een age-blob kan **meerdere recipients** dragen. `age -r A -r B` levert iets op dat met A en met B te openen is, beide getoetst. Daarmee hoeft er geen moment te bestaan waarop alleen de nieuwe sleutel werkt.
+**Geen dubbele recipients.** Elk versleuteld veld gaat van A naar B, en A verdwijnt meteen. Dat is een bewuste keuze en het alternatief is overwogen: je kunt een age-blob voor twee sleutels tegelijk versleutelen (`age -r A -r B`), zodat oud en nieuw allebei werken en er geen omschakelmoment is. Dat is hier afgewezen.
 
-Even belangrijk is wie de sleutel wanneer leest:
+De reden: dit is een sleutelwissel na blootstelling, dus het doel is dat A zo snel mogelijk niets meer opent. Een overlapfase houdt A juist geldig, voegt een extra ronde toe om hem er later weer af te halen, en die ronde kan vergeten worden. Dan heb je alle moeite gedaan en is de oude sleutel nog steeds bruikbaar.
+
+Wat de overlap zou oplossen is een venster tussen "de bestanden staan op B" en "het secret is gewisseld". Gemeten is dat venster klein: `ENABLE_GIT_MONITOR` staat op `False` en er draait geen scheduler die uit zichzelf projecten verwerkt. OPI leest pas als iemand iets doet. Houd het venster kort door pas te pushen als alles lokaal geverifieerd is, en meteen daarna het secret te wisselen.
+
+Wie de sleutel wanneer leest bepaalt de volgorde:
 
 | consument | leest | bij een wissel |
 |---|---|---|
@@ -45,27 +49,27 @@ Even belangrijk is wie de sleutel wanneer leest:
 | operations-manager | env-var uit datzelfde secret | **pod moet herstarten** |
 | ontwikkelaar lokaal | `security/key.txt` | bestand vervangen |
 
-Dat geeft drie blokken, waarvan alleen het middelste kort is:
-
 ```
-VOORBEREIDING   (dagen van tevoren mag, niets gaat stuk, alles blijft op A werken)
-  1. B aanmaken als security/key.txt, A hernoemen naar security/old_key.txt
-  2. de 19 sops-bestanden: sops rotate --add-age B     -> A en B werken
-  3. elk projectbestand: age-private-key EN repositories[].password voor A EN B
-  4. beide repos committen en pushen
-
-CUTOVER         (seconden, en terugdraaibaar)
-  5. het k8s secret sops-age-key vervangen door B
-  6. de operations-manager herstarten
-     (de sops-plugin pakt B bij zijn volgende render vanzelf op)
-
-NAZORG          (later, rustig, pas als alles aantoonbaar op B draait)
-  7. sops rotate --rm-age A over de 19 bestanden
-  8. de projectbestanden: A als recipient eraf
-  9. A uit het cluster, uit security/, en van elke laptop
+1. B aanmaken als security/key.txt, A hernoemen naar security/old_key.txt
+2. alles omzetten van A naar B: de 19 sops-bestanden, de twee configmaps,
+   operations-manager/python/.env, en per projectbestand de twee velden
+3. VERIFIEREN terwijl er nog niets gepusht is (zie "De verificatie is het echte product")
+4. committen en pushen, beide repos
+5. meteen daarna: het k8s secret vervangen en de operations-manager herstarten
+6. EINDTOETS: ontsleutelen met A faalt overal
 ```
 
-Tot en met stap 6 is elke stap terug te draaien door het secret terug te zetten: alles is immers nog met A te openen. De onomkeerbaarheid begint pas bij 7, en daar is geen haast bij. Dat is precies de eigenschap die "het moet in één keer goed" wegneemt.
+Terugdraaien als stap 5 misgaat: zet het secret terug naar A en draai de commits van stap 4 terug. Dat is meer werk dan bij een overlapfase, en dat is de prijs van deze keuze. Daar staat tegenover dat A na stap 6 aantoonbaar niets meer opent, zonder dat er een vervolgstap op de lijst blijft staan.
+
+## De eindtoets: de rotatie is pas klaar als A niets meer opent
+
+Zonder deze toets is de operatie niet af, want "het script liep" zegt niet dat A waardeloos is. De toets is een eigen stand van het script (`--assert-old-key-dead`) die over ALLE vier de vindplaatsen loopt en per veld probeert te ontsleutelen met A:
+
+- **elke ontsleuteling met A moet falen.** Een enkele treffer betekent dat er een bestand is overgeslagen, en die noemt hij bij naam.
+- **elke ontsleuteling met B moet slagen.** Anders is er iets omgezet naar een sleutel die niemand heeft.
+- **de telling moet kloppen:** evenveel velden als de vingerafdruk van voor de omzetting.
+
+Draai hem als laatste stap, en nog een keer een dag later. Pas als hij schoon is mag `security/old_key.txt` weg en mag het secret met A uit het cluster.
 
 ## Drie vormen, drie wegen, een script
 
@@ -95,10 +99,10 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 
 1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. Het script vraagt naar de paden met een default (`security/old_key.txt` en `security/key.txt`) en neemt nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt er een, dan stopt het met het pad in de melding. Zie "De vorm van het gereedschap". *Verify:* een droogloop met een ontbrekend bestand weigert en noemt het pad.
 2. **`rotate-sops-key.py`, droogloop als standaard.** Zet de 19 SOPS-bestanden om EN elke `base64+age:`-waarde die buiten een SOPS-bestand staat: de twee configmaps en `operations-manager/python/.env`. Die worden anders vergeten, want `sops rotate` ziet ze niet. Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt de 19 SOPS-bestanden en NIET de 2 in `sops-sandbox/`, plus de drie bestanden met losse `base64+age:`-waarden, en wijzigt niets.
-3. **Fase toevoegen: `--add-key B`.** `sops rotate -i --add-age B` over die 19. *Verify:* elk bestand is daarna met A én met B te ontsleutelen, en de ciphertext van de waarden is veranderd.
+3. **De omzetting: `sops rotate -i --add-age B --rm-age A`** over die 19, in een beweging. *Verify:* elk bestand is daarna met B te ontsleutelen en met A NIET meer, en de ciphertext van de waarden is veranderd.
 4. **`set-sops-key-secret.py`.** Zet de inhoud van `security/key.txt` in het secret `sops-age-key` van `rig-prd-operations`, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
-5. **`rotate-project-keys.py`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
-6. **Fase verwijderen: `--remove-key A`.** `sops rotate -i --rm-age A`. Pas draaien als stap 5 over alle projecten klaar is; het script weigert als er nog projecten op A staan. *Verify:* geen bestand noemt de publieke sleutel van A meer, en ontsleutelen met A faalt.
+5. **`rotate-project-keys.py`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. Versleutelt voor B alleen; A verdwijnt uit het bestand. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met B en niet meer met A, en beide velden zijn meegegaan.
+6. **De eindtoets: `--assert-old-key-dead`.** Loopt over alle vier de vindplaatsen en eist dat ontsleutelen met A overal faalt en met B overal slaagt. Zie de eigen sectie hierboven. *Verify:* de toets is schoon, en een opzettelijk overgeslagen bestand laat hem falen.
 7. **De vaste sleutels uit de tests, en pas NA stap 6.** De volgorde is hier een besluit en geen detail. Zolang A nog geldig is, is het testbestand de enige plek die verraadt dat er iets te halen valt, en een losse commit die precies die regel weghaalt zet daar een pijl naar. De sleutel staat er al bijna een jaar, dus een paar dagen extra verandert niets aan de blootstelling; hem waardeloos maken wel. Dus: eerst roteren, A intrekken, en pas daarna opruimen, als onderdeel van een ronde die alle vijf de bestanden raakt en dus over "dezelfde sleutel voor alle tests" gaat in plaats van over één regel.
 
    Dit is niet één bestand. Een scan van de werkboom vindt er **vijf**:
@@ -115,14 +119,14 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 8. **De PAT-vervanging is dezelfde lus met een andere ingang.** Er is precies één verschil tussen de twee handelingen:
 
    ```
-   lees veld -> ontsleutel met A -> [waarde behouden OF vervangen] -> versleutel voor A+B -> schrijf
+   lees veld -> ontsleutel met A -> [waarde behouden OF vervangen] -> versleutel voor B    -> schrijf
                                               ^                ^
                                           recrypt          nieuwe PAT
    ```
 
-   Bouw die lus één keer, met een optionele nieuwe waarde. Zonder waarde is het een recrypt, met waarde een vervanging. Dat levert `rotate-project-keys.py` en `replace-git-pat.py` op als twee ingangen op dezelfde motor, en het betekent dat je elk projectbestand **één keer** hoeft aan te raken in plaats van twee keer. Minder commits, minder gelegenheid om iets te laten vallen.
+   Bouw die lus één keer, met een optionele nieuwe waarde. Zonder waarde is het een recrypt naar B, met waarde een vervanging plus recrypt naar B. Dat levert `rotate-project-keys.py` en `replace-git-pat.py` op als twee ingangen op dezelfde motor, en het betekent dat je elk projectbestand **één keer** hoeft aan te raken in plaats van twee keer. Minder commits, minder gelegenheid om iets te laten vallen.
 
-   **Randvoorwaarde, en die is hard: de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste bestand wordt geschreven.** Anders verliest een project zijn repositorytoegang op het moment dat zijn bestand is omgezet, en de rest nog niet. Dus dezelfde overlap als bij de sleutel: maak de nieuwe PAT aan, laat beide geldig zijn, zet alle bestanden om, en trek de oude pas daarna in.
+   **Randvoorwaarde, en die is hard: de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste bestand wordt geschreven.** Anders verliest een project zijn repositorytoegang op het moment dat zijn bestand is omgezet, en de rest nog niet. Laat bij GitHub dus beide tokens geldig zijn tijdens de ronde, en trek de oude pas in als alles om is. Dat is iets anders dan de sleutel: bij een PAT kost dat niets, want GitHub kent gewoon twee geldige tokens naast elkaar.
 
    **De afweging om ze samen te draaien.** Voordeel is één ronde over de projectbestanden. Nadeel is dat een fout in de PAT-vervanging ook de sleutelrotatie meesleept, en dat je ze niet los kunt terugdraaien. Mijn voorstel: bouw ze als één motor met twee ingangen, maar laat de eerste echte ronde alleen de sleutel doen. Is die aantoonbaar goed gegaan, dan is de PAT-ronde een herhaling van iets dat al gewerkt heeft. *Verify:* een project kan na afloop zijn repository benaderen met de nieuwe PAT, en de oude waarde komt in geen enkel bestand meer voor.
 9. **Een grendel die dit structureel tegenhoudt.** Zie de eigen sectie hieronder; dit is meer dan een regel in een hook.
@@ -228,7 +232,7 @@ De toets die telt is niet "het script draait zonder fout" maar **"er is niets ve
 
 - **Ontsleutel elk bestand voor en na, en vergelijk de PLATTE inhoud.** Die moet identiek zijn, op de twee omgezette velden na. Een vergelijking van de ciphertext zegt niets, want die verandert altijd.
 - **Tel de velden.** Evenveel deployments, componenten, services en env-vars voor als na. Een YAML-ronde door een parser kan stil dingen laten vallen: commentaar, ankers, lege waarden, de volgorde van sleutels.
-- **Toets op beide sleutels.** Na de voorbereidingsfase moet elk omgezet bestand met A én met B te openen zijn.
+- **Toets beide kanten op.** Elk omgezet bestand moet met B open gaan en met A NIET meer. Dat tweede is de eigenlijke toets: een bestand dat nog met A opent is overgeslagen.
 - **Draai hem twee keer.** De tweede keer hoort niets te doen en dat te melden.
 - **Laat er een kapot bestand tussen zitten.** Een project met een onleesbare waarde moet worden overgeslagen met een melding, niet de hele ronde afbreken en niet half weggeschreven worden.
 
@@ -240,13 +244,15 @@ Pas als dat op alle 45 goed gaat, mag hetzelfde script de echte repo aanraken.
 scripts/rotate-sops-key.py --dry-run     # vraagt de paden, noemt wat het zou doen, wijzigt niets
 scripts/rotate-sops-key.py               # zelfde vragen, voert uit
 
-SOPS_AGE_KEY="$(sed -n '3p' security/old_key.txt)" sops --decrypt <bestand>   # werkt nog
-SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)"     sops --decrypt <bestand>   # werkt ook
+SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)"     sops --decrypt <bestand>   # moet werken
+SOPS_AGE_KEY="$(sed -n '3p' security/old_key.txt)" sops --decrypt <bestand>   # moet FALEN
+
+scripts/rotate-sops-key.py --assert-old-key-dead   # de eindtoets over alle vier de vindplaatsen
 ```
 
 Klaar als:
 
-- er een overlapfase bestaat waarin A en B allebei werken, aantoonbaar met de twee decrypts;
+- de eindtoets `--assert-old-key-dead` schoon is: A opent niets meer, B opent alles;
 - het script weigert A te verwijderen zolang er projecten op A staan;
 - een tweede keer draaien niets doet en dat meldt;
 - de sandboxsleutel onaangeroerd is;
