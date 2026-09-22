@@ -216,7 +216,7 @@ een platformbeheerde opzet, dan verandert alleen dat blok.
 | | |
 |---|---|
 | variabele | `ManifestContribution.env_vars` — additief, dus de eigen variabelen van het component blijven staan. Geen geheim: een intern adres versleutelen maakt het alleen onleesbaar voor de eigenaar. |
-| netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per aangevinkt component, egress-only, `podSelector` op `app`. Opent ELKE poort van de proxy waarvoor de afnemer een adres kreeg (`VlamEndpoint.ports`) — een adres dat de netwerkregel niet opent is een time-out |
+| netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per aangevinkt component, egress-only, `podSelector` op `app`. Opent ELKE poort van de proxy waarvoor de afnemer een adres kreeg (`VlamEndpoint.ports`): een adres dat de netwerkregel niet opent is een time-out |
 | alias en bestand | `template_vars["host_aliases"]` (override, niets anders zet die sleutel) en `ManifestContribution.secret_mounts` (additief) plus een `SecretFileSpec` met de inhoud van de bundel |
 | uitzetten | de bestandsnaam draagt het prune-voorvoegsel `{deployment}-vlam-`, dus de generieke opruiming haalt de regel weg zodra de dienst niet meer bijdraagt |
 | aanzetten | het vinkje op het component (RC-213). Tot dan gold de PROJECTselectie voor elk component van elke deployment: op `bouwm-6gn` droeg `main-component-1` `VLAM_API_URL` en viel het onder de egress-regel zonder dat ooit te hebben gevraagd |

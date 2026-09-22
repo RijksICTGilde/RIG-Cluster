@@ -213,10 +213,10 @@ class VlamService(Service):
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """One egress NetworkPolicy per component that ticked the service.
 
-        Per component and not per deployment, because access is per component: a policy
-        selecting the whole deployment opened the way to VLAM for pods whose owner never
-        asked for it. Egress only -- this opens the way OUT; whether a pod actually gets
-        through is decided by the inbound rule at the VLAM side.
+        Per component and not per deployment: a policy selecting the whole deployment
+        opened the way to VLAM for pods whose owner never asked for it. Egress only --
+        this opens the way OUT; whether a pod actually gets through is decided by the
+        inbound rule at the VLAM side.
         """
         endpoint = vlam_endpoint(ctx.cluster)
         if endpoint is None:

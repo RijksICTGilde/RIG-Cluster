@@ -17,7 +17,7 @@ Het scherm wist dat wel, maar zei het niet.
 
 Het selectieveld heette tot RC-33 `scope`, en dat las als een antwoord op "waar stel ik
 dit in" -- terwijl het dat nooit was. De projectdetailkaart rendeerde het letterlijk als
-"Component scope". Bij `keycloak` staat daar dus "per component" terwijl zijn config
+"Component scope". Bij `keycloak` staat daar dus "component" terwijl zijn config
 projectbreed is: één realm voor het hele project, elk component kiest alleen of het erachter
 staat. Wie de verkeerde van de twee leest, vertelt de gebruiker iets onjuists.
 

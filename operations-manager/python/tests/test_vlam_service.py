@@ -127,8 +127,7 @@ class TestTheServiceDeclaration:
         """Toegang hoort per component: de standaard, en nu ook echt zo uitgevoerd.
 
         Tot RC-213 stond de dienst op de projectkeuze alleen, en kreeg elk component van
-        elke deployment de variabelen en de uitgaande regel. Gemeten op ``bouwm-6gn``:
-        ``component-1`` vinkte niets aan en droeg toch ``VLAM_API_URL``.
+        elke deployment de variabelen en de uitgaande regel.
         """
         assert SERVICE.definition.selectable_per_component is True
 

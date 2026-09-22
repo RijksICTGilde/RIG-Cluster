@@ -54,9 +54,8 @@ _LAYER_PHRASES: dict[ConfigLayer, tuple[str, ...]] = {
 def selection_labels(service_type: ServiceType) -> list[str]:
     """The user-facing phrases for how a service is chosen, for the service card.
 
-    Two independent facts, so up to two phrases: who ticks the service, and whether one
-    provision serves a whole deployment. One enum value had to answer both and the
-    sharing won: the card never said that each component ticks postgres for itself.
+    Two phrases where one enum value had to answer both facts and the sharing won: the
+    card never said that each component ticks postgres for itself.
     """
     definition = SERVICES[service_type].definition
     labels = ["Per component aan te zetten" if definition.selectable_per_component else "Geldt voor het hele project"]

@@ -1642,10 +1642,7 @@ class Service(ABC):
 def offers_component_checkbox(service: Service) -> bool:
     """Whether a component ticks this service on and off in the per-component picker.
 
-    Two separate declarations take the checkbox away, and they meet here so the picker
-    asks one question: ``selectable_per_component`` False means there is no per-component
-    choice at all (the service decides for itself where it works), while
-    ``component_selection_follows_config`` means the choice exists but lives in the
-    service's own config field. Their consequences elsewhere differ, so they stay apart.
+    The one place where the two declarations that take the checkbox away meet; they stay
+    separate because their consequences elsewhere differ (``instructions/services.md``).
     """
     return service.definition.selectable_per_component and not service.component_selection_follows_config
