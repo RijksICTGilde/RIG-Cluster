@@ -1035,6 +1035,11 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         # De waarschuwing gaat mee naar de volgende stap, want dat is waar je er iets aan
         # doet: in deze flow is dat de certificaatstap.
         if errors or section_global_errors:
+            # Een fout op een pad dat dit scherm niet tekent verdwijnt, en de stap staat
+            # stil zonder te zeggen waarom. Die meldingen gaan naar de algemene balk.
+            section_global_errors = section_global_errors + _create_renderer().take_unrendered_errors(
+                section.editables, submitted_yaml, errors, edit_mode=True
+            )
             # Log why the step did not advance so it is diagnosable from Loki, not
             # just from the (previously missing) on-screen message.
             logger.warning(

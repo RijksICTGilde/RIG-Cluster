@@ -311,6 +311,33 @@ class FormRenderer:
             return self.adapter.render_flow(content_parts)
         return self._render_layout_element(layout, fields_by_name, yaml_data)
 
+    def take_unrendered_errors(
+        self,
+        editables: list[EditableVisualizer],
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool = False,
+    ) -> list[str]:
+        """Remove the errors no field on this screen carries, and return their messages.
+
+        An error keyed to a path this form does not draw has nowhere to appear, so the step
+        refuses to advance and says nothing. An enforcer raising a plain ``ValueError``
+        lands on the GROUP path (``deployments[1]``), which is a container and never an
+        input; that has now cost two invisible messages (RIG-Cluster#179).
+
+        A virtualized field answers to both its spellings: the map is keyed by the VIRTUAL
+        path while ``editable_to_form_field`` reads its errors under the real one, so a
+        group child would otherwise look undrawn.
+        """
+        from opi.forms.editables.editable import reverse_virtualize
+
+        drawn: set[str] = set()
+        for path, field in self._build_fields_from_editables(editables, yaml_data, None, edit_mode).items():
+            drawn.add(path)
+            if field.virtualize:
+                drawn.add(reverse_virtualize(field.path, field.virtualize))
+        return [msg for path in list(errors) if path not in drawn for msg in errors.pop(path)]
+
     def _build_fields_from_editables(
         self,
         editables: list[EditableVisualizer],
