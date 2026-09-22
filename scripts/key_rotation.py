@@ -29,8 +29,10 @@ copy and still open an updated file. ``sops rotate`` mints a new data key. This 
 therefore only ever uses ``rotate``.
 
 **Why by recipient and not by filename.** ``sops_files_for()`` selects on the recipient in
-the metadata. That leaves the practice key in ``sops-sandbox/`` untouched without needing a
-path exclusion list, which silently falls behind the moment a file is added.
+the metadata, so a file encrypted for any other key is not touched. The alternative is a path
+exclusion list, and that silently falls behind the moment a file is added. This is not
+hypothetical: the tree held a practice key in ``sops-sandbox/`` with two files of its own until
+this rotation removed it, and the sandbox and developer keys are still separate keys.
 
 **Why the verification hashes the PLAINTEXT.** The ciphertext changes on every conversion,
 so comparing it says nothing. The plaintext does not change, so its sha256 says everything:

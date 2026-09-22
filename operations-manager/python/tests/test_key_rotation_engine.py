@@ -316,7 +316,7 @@ def test_sops_files_finds_a_file_without_the_sops_suffix(tmp_path: Path) -> None
 
 
 def test_selection_by_recipient_leaves_another_key_alone(tmp_path: Path) -> None:
-    """This is what keeps the sops-sandbox practice key out of the rotation."""
+    """A file on another key must not be touched: the sandbox key is a different key."""
     (tmp_path / "platform.sops.yaml").write_text(_sops_stub("age1platform"))
     (tmp_path / "practice.sops.yaml").write_text(_sops_stub("age1practice"))
 
