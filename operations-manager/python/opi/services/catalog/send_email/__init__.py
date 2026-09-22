@@ -126,8 +126,6 @@ class SendEmailService(Service):
         help_template="send_email/help.md",
         icon="envelop",
         color="donkerblauw",
-        # Per component: elk onderdeel beslist zelf of het de SMTP-gegevens krijgt. De
-        # configuratie is er maar een, op projectniveau -- net als bij keycloak.
         secret_class="SendEmailSecret",
         variables=[var.value for var in SendEmailVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,

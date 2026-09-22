@@ -89,10 +89,8 @@ class InviteService(Service):
         help_template="invite/help.md",
         icon="envelop",
         color="lichtblauw",
-        # Niet per component en niet per deployment: een uitnodiging geldt voor het
-        # Keycloak-realm van het project. Stond op COMPONENT omdat er geen andere waarde
-        # was, met als gevolg dat de dienst in de componentkeuze verscheen en de UI meldde
-        # dat je hem per component kiest.
+        # Een uitnodiging geldt voor het Keycloak-realm van het project, dus er valt per
+        # component niets aan te vinken.
         selectable_per_component=False,
         variables=[],
         # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates

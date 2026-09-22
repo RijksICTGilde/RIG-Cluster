@@ -15,8 +15,11 @@ from __future__ import annotations
 
 import pytest
 from opi.forms.visualizers.providers import FilteredServiceOptionsProvider
-from opi.services.catalog.base import ConfigLayer, offers_component_checkbox
+from opi.manager import project_manager
+from opi.manager.project_manager import collect_manifest_contributions
+from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, offers_component_checkbox
 from opi.services.registry import SERVICES
+from opi.services.services import ServiceDefinition
 from opi.services.services_enums import ServiceType
 
 #: De lagen waarop configuratie PER COMPONENT staat. Draagt een dienst hier iets, dan is
@@ -123,3 +126,57 @@ class TestDeComponentkeuze:
 
     def test_een_dienst_die_het_project_niet_heeft_staat_er_sowieso_niet(self) -> None:
         assert self._keuze([]) == []
+
+
+class TestWaarDeManifestbijdrageZijnSelectieLeest:
+    """De tweede consument van de declaratie, naast de picker.
+
+    Geen enkele dienst in de catalogus draagt vandaag ALLEBEI (geen vinkje per component
+    en wel een manifestbijdrage), dus de tak is hier met een nepdienst gemeten. Zonder
+    deze toets kan de tak stil verdwijnen, en dan draagt de eerstvolgende dienst die hem
+    nodig heeft nergens meer bij: geen enkel component vinkt hem immers ooit aan.
+    """
+
+    class _Nep:
+        """Zo veel van een dienst als ``collect_manifest_contributions`` aanraakt."""
+
+        def __init__(self, *, selectable: bool) -> None:
+            self.definition = ServiceDefinition(
+                name="nep",
+                description="nep",
+                icon="wolk",
+                color="grijs-600",
+                selectable_per_component=selectable,
+            )
+
+        def manifest_activation_types(self) -> tuple[ServiceType, ...]:
+            return (ServiceType.VLAM,)
+
+        def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
+            return ManifestContribution(env_vars={"NEP": "1"})
+
+    def _ctx(self) -> ManifestContext:
+        return ManifestContext(
+            deployment_name="prod",
+            project_data={},
+            unique_name="prod-web",
+            cluster="odcn-production",
+            get_secret=lambda *args, **kwargs: None,
+            component_def={"name": "web", "services": []},
+        )
+
+    def _bijdragen(self, *, selectable: bool, component: list[str], project: list[str]) -> list:
+        nep = self._Nep(selectable=selectable)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(project_manager, "manifest_services", lambda: [nep])
+            return collect_manifest_contributions(self._ctx(), component_services=component, project_services=project)
+
+    def test_zonder_vinkje_per_component_telt_de_projectlijst(self) -> None:
+        vlam = ServiceType.VLAM.value
+        assert self._bijdragen(selectable=False, component=[], project=[vlam])
+        assert not self._bijdragen(selectable=False, component=[vlam], project=[])
+
+    def test_met_vinkje_per_component_telt_de_componentlijst(self) -> None:
+        vlam = ServiceType.VLAM.value
+        assert self._bijdragen(selectable=True, component=[vlam], project=[])
+        assert not self._bijdragen(selectable=True, component=[], project=[vlam])
