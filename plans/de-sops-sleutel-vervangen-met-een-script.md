@@ -49,9 +49,9 @@ Dat geeft drie blokken, waarvan alleen het middelste kort is:
 
 ```
 VOORBEREIDING   (dagen van tevoren mag, niets gaat stuk, alles blijft op A werken)
-  1. B aanmaken in security/new.txt          (A staat in security/old.txt)
+  1. B aanmaken als security/key.txt, A hernoemen naar security/old_key.txt
   2. de 19 sops-bestanden: sops rotate --add-age B     -> A en B werken
-  3. elk projectbestand: age-private-key opnieuw versleutelen voor A EN B
+  3. elk projectbestand: age-private-key EN repositories[].password voor A EN B
   4. beide repos committen en pushen
 
 CUTOVER         (seconden, en terugdraaibaar)
@@ -78,9 +78,9 @@ Niet alles wat aan de platformsleutel hangt is een SOPS-bestand. `sops rotate` r
 | `base64+age:` in een projectbestand | per project `config.age-private-key` en `repositories[].password` | idem, via het gevalideerde schrijfpad |
 | `base64+age:` in een env-bestand in git | `operations-manager/python/.env`: dezelfde twee GIT-wachtwoorden | idem; dit bestand wordt bij lokaal ontwikkelen echt geladen, dus zonder omzetting werkt dat niet meer zodra A eruit gaat |
 
-De tweede rij is het gat dat je noemde. Een age-blok is meerregelig en past niet in een `KEY=value`-env-regel, vandaar de base64-omweg. Er is tooling om zo'n waarde te MAKEN (`task encrypt-value-age-base64`), maar niet om hem om te zetten. Dat recrypt-stuk moet er dus bij, en het is dezelfde lees-ontsleutel-versleutel-schrijf-lus als rij drie: bouw hem één keer en laat beide wegen hem gebruiken.
+De tweede rij wordt makkelijk vergeten. Een age-blok is meerregelig en past niet in een `KEY=value`-env-regel, vandaar de base64-omweg. Er is tooling om zo'n waarde te MAKEN (`task encrypt-value-age-base64`), maar niet om hem om te zetten. Dat recrypt-stuk moet er dus bij, en het is dezelfde lees-ontsleutel-versleutel-schrijf-lus als rij drie: bouw hem één keer en laat beide wegen hem gebruiken.
 
-Let op het verschil tussen omzetten en opnieuw genereren. `task generate-env-secrets-for-operations-manager` leest `security/key.txt` en bouwt het SOPS-secret uit `operations-manager/python/.env.<cluster>.secrets`, een plaintext bron die lokaal staat en niet in git. Voor dat ene bestand is hernoemen van `newkey.txt` naar `key.txt` plus die taak draaien inderdaad genoeg, precies zoals je zei. Voor de configmap en de projectbestanden gaat dat niet op: daar is geen plaintext bron, alleen de ciphertext zelf, en die moet je dus echt recrypten.
+Let op het verschil tussen omzetten en opnieuw genereren. `task generate-env-secrets-for-operations-manager` leest `security/key.txt` en bouwt het SOPS-secret uit `operations-manager/python/.env.<cluster>.secrets`, een plaintext bron die lokaal staat en niet in git. Voor dat ene bestand is de nieuwe sleutel als `security/key.txt` neerzetten plus die taak draaien genoeg. Voor de configmap en de projectbestanden gaat dat niet op: daar is geen plaintext bron, alleen de ciphertext zelf, en die moet je dus echt recrypten.
 
 ## `updatekeys` is hier niet genoeg
 
@@ -94,10 +94,10 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 ## Wat er gebouwd moet worden
 
 1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. Het script vraagt naar de paden met een default (`security/old_key.txt` en `security/key.txt`) en neemt nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt er een, dan stopt het met het pad in de melding. Zie "De vorm van het gereedschap". *Verify:* een droogloop met een ontbrekend bestand weigert en noemt het pad.
-2. **`task rotate-sops-key`, droogloop als standaard.** Zet de 19 SOPS-bestanden om EN elke `base64+age:`-waarde die buiten een SOPS-bestand staat: de twee configmaps en `operations-manager/python/.env`. Die worden anders vergeten, want `sops rotate` ziet ze niet. Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
+2. **`rotate-sops-key.py`, droogloop als standaard.** Zet de 19 SOPS-bestanden om EN elke `base64+age:`-waarde die buiten een SOPS-bestand staat: de twee configmaps en `operations-manager/python/.env`. Die worden anders vergeten, want `sops rotate` ziet ze niet. Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt de 19 SOPS-bestanden en NIET de 2 in `sops-sandbox/`, plus de drie bestanden met losse `base64+age:`-waarden, en wijzigt niets.
 3. **Fase toevoegen: `--add-key B`.** `sops rotate -i --add-age B` over die 19. *Verify:* elk bestand is daarna met A én met B te ontsleutelen, en de ciphertext van de waarden is veranderd.
-4. **`task set-sops-key-secret`.** Zet de inhoud van `security/new.txt` in het secret `sops-age-key` van de doelnamespace, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
-5. **`task rotate-project-keys`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
+4. **`set-sops-key-secret.py`.** Zet de inhoud van `security/key.txt` in het secret `sops-age-key` van de doelnamespace (`rig-system` op de sandbox, `rig-prd-operations` op productie), en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
+5. **`rotate-project-keys.py`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
 6. **Fase verwijderen: `--remove-key A`.** `sops rotate -i --rm-age A`. Pas draaien als stap 5 over alle projecten klaar is; het script weigert als er nog projecten op A staan. *Verify:* geen bestand noemt de publieke sleutel van A meer, en ontsleutelen met A faalt.
 7. **De vaste sleutels uit de tests, en pas NA stap 6.** De volgorde is hier een besluit en geen detail. Zolang A nog geldig is, is het testbestand de enige plek die verraadt dat er iets te halen valt, en een losse commit die precies die regel weghaalt zet daar een pijl naar. De sleutel staat er al bijna een jaar, dus een paar dagen extra verandert niets aan de blootstelling; hem waardeloos maken wel. Dus: eerst roteren, A intrekken, en pas daarna opruimen, als onderdeel van een ronde die alle vijf de bestanden raakt en dus over "dezelfde sleutel voor alle tests" gaat in plaats van over één regel.
 
@@ -120,7 +120,7 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
                                           recrypt          nieuwe PAT
    ```
 
-   Bouw die lus één keer, met een optionele nieuwe waarde. Zonder waarde is het een recrypt, met waarde een vervanging. Dat levert `task rotate-project-keys` en `task replace-git-pat` op als twee ingangen op dezelfde motor, en het betekent dat je elk projectbestand **één keer** hoeft aan te raken in plaats van twee keer. Minder commits, minder gelegenheid om iets te laten vallen.
+   Bouw die lus één keer, met een optionele nieuwe waarde. Zonder waarde is het een recrypt, met waarde een vervanging. Dat levert `rotate-project-keys.py` en `replace-git-pat.py` op als twee ingangen op dezelfde motor, en het betekent dat je elk projectbestand **één keer** hoeft aan te raken in plaats van twee keer. Minder commits, minder gelegenheid om iets te laten vallen.
 
    **Randvoorwaarde, en die is hard: de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste bestand wordt geschreven.** Anders verliest een project zijn repositorytoegang op het moment dat zijn bestand is omgezet, en de rest nog niet. Dus dezelfde overlap als bij de sleutel: maak de nieuwe PAT aan, laat beide geldig zijn, zet alle bestanden om, en trek de oude pas daarna in.
 
@@ -159,7 +159,7 @@ nieuwe PAT     [leeg = huidige waarde hergebruiken]
 
 **De naamgeving is de migratie.** `security/key.txt` is altijd "dit is de sleutel, of dit wordt hij". Gemeten: **84 verwijzingen naar `security/key.txt`** in de repo, in de Taskfile, in CLAUDE.md en in de installatiedocumentatie. Zou de nieuwe sleutel anders gaan heten, dan moeten die allemaal mee. Dus de oude schuift naar `old_key.txt` en de nieuwe neemt de vaste naam over. Het script doet die hernoeming zelf aan het eind, na bevestiging, zodat er geen los handwerk overblijft dat iemand vergeet.
 
-**Python, niet shell, en dat is tegen de voorkeur in.** De sops-kant zou prima in shell kunnen: `sops rotate` doet daar het werk. De projectbestanden niet. Gemeten op de 45 testbestanden:
+**Python, en dat is besloten.** De sops-kant zou prima in shell kunnen, daar doet `sops rotate` het werk. De projectbestanden niet, en dat gaf de doorslag. Gemeten op de 45 testbestanden:
 
 - **alle 45** dragen de sleutel als meerregelige YAML block scalar (`age-private-key: |-` met een BEGIN/END-blok eronder), waar de inspringing en de chomping-indicator exact moeten kloppen;
 - in datzelfde bestand staat `repositories[].password` juist als `base64+age:` op **één** regel, dus twee vormen door elkaar;
@@ -167,7 +167,9 @@ nieuwe PAT     [leeg = huidige waarde hergebruiken]
 
 Dat met sed en awk doen kan, maar het is precies het soort bewerking waarbij een fout niet crasht maar stil een geldig bestand met verkeerde inhoud oplevert. Python heeft `ruamel.yaml`, dat commentaar en volgorde behoudt, en OPI heeft de ontsleutel- en versleutelfuncties plus `save_and_commit_project` al klaarstaan.
 
-Een shell-schil om een Python-kern is een optie, maar dan onderhoud je twee talen voor één gereedschap. Mijn voorstel is daarom één Python-script. Als de voorkeur voor shell zwaarder weegt dan dit argument, dan is de grens: shell voor de SOPS-bestanden en de env-regels, Python voor de projectbestanden, en nooit de projectbestanden met tekstvervanging.
+Daar komt bij dat de verificatie hieronder in Python te doen is en in shell niet, en dat OPI de ontsleutel- en versleutelfuncties al heeft. Het wordt dus één Python-script, geen shell-schil om een Python-kern, want dan onderhoud je twee talen voor één gereedschap.
+
+Dit is geen stijlvoorkeur maar een gemeten risico. Tijdens het schrijven van dit plan is de omzetting één keer met tekstvervanging geprobeerd op deze 45 bestanden: **56 van de 90 velden bleven stil op de oude sleutel staan**, zonder foutmelding. Met `ruamel.yaml` ging dezelfde bewerking in één keer goed. Raak de projectbestanden dus nooit met sed, awk of `str.replace` aan.
 
 ## Waar de bouwer sleutel A vindt
 
