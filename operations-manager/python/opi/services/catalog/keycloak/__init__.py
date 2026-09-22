@@ -22,7 +22,7 @@ from opi.services.catalog.events import on
 from opi.services.catalog.keycloak.config_model import KeycloakConfig
 from opi.services.catalog.keycloak.variables import KeycloakVariables
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType, UIEvent
 from opi.utils.secrets import KeycloakSecret
 
 
@@ -34,7 +34,6 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        binding=ServiceBinding.COMPONENT,
         secret_class="KeycloakSecret",
         variables=[var.value for var in KeycloakVariables],
         requires=["services/publish-on-web"],

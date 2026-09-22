@@ -2,15 +2,15 @@
 
 Two questions look alike and are not the same:
 
-* **Binding** (``ServiceDefinition.binding``): does an individual component tick this
-  service, or does a whole deployment get it at once. This is about *selection*.
+* **Selection** (``ServiceDefinition.selectable_per_component``): does an individual
+  component tick this service, or does the project's own choice settle it.
 * **Config layer** (``ConfigLayer``): at which level of the project file the service's
   settings live, and therefore on which screen they are edited.
 
-They differ in practice: keycloak binds per component (each component decides whether it
-sits behind login) while its configuration is one realm for the whole project, so its
+They differ in practice: keycloak is ticked per component (each component decides whether
+it sits behind login) while its configuration is one realm for the whole project, so its
 config lives at ``ConfigLayer.PROJECT``. Anything telling a user "where do I configure
-this" must read the layers, never the binding.
+this" must read the layers, never the selection.
 
 The concrete gap this closes: on the project-wide services step a user ticks a service
 whose config lives only on the component layer, no configuration screen follows, and
@@ -23,16 +23,7 @@ from __future__ import annotations
 
 from opi.services.catalog.base import ConfigLayer
 from opi.services.registry import SERVICES
-from opi.services.services_enums import ServiceBinding, ServiceType
-
-#: How a service's binding reads to a user. Rendered on the project-details service card,
-#: which previously showed the raw enum value plus the English word "scope" -- read by at
-#: least one user as the answer to "where do I configure this", which it is not.
-BINDING_LABELS: dict[ServiceBinding, str] = {
-    ServiceBinding.COMPONENT: "Per component te kiezen",
-    ServiceBinding.DEPLOYMENT: "Gedeeld per deployment",
-    ServiceBinding.PROJECT: "Voor het hele project",
-}
+from opi.services.services_enums import ServiceType
 
 #: De niet-project-lagen, als KORTE aanduiding van waar de dienst wordt ingesteld.
 #:
@@ -60,9 +51,19 @@ _LAYER_PHRASES: dict[ConfigLayer, tuple[str, ...]] = {
 }
 
 
-def binding_label(service_type: ServiceType) -> str:
-    """The user-facing phrase for how a service is chosen (component vs deployment)."""
-    return BINDING_LABELS[SERVICES[service_type].definition.binding]
+def selection_labels(service_type: ServiceType) -> list[str]:
+    """The user-facing phrases for how a service is chosen, for the service card.
+
+    Two independent facts, so up to two phrases: who ticks the service, and whether one
+    provision serves a whole deployment. Postgres carries both -- every component ticks
+    it for itself, and the ones that do share a database. Previously one enum value had
+    to answer both, and the second fact won.
+    """
+    definition = SERVICES[service_type].definition
+    labels = ["Per component aan te zetten" if definition.selectable_per_component else "Geldt voor het hele project"]
+    if definition.shared_per_deployment:
+        labels.append("Gedeeld per deployment")
+    return labels
 
 
 def project_step_config_hint(service_type: ServiceType) -> str | None:

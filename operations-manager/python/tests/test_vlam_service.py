@@ -35,7 +35,8 @@ from opi.manager.project_validation import validate_service_availability
 from opi.services.catalog.base import DeploymentManifestContext, ManifestContext, ManifestContribution
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
 from opi.services.registry import get_service
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceType, UIEvent
+from opi.utils.naming import generate_unique_name
 from ruamel.yaml import YAML
 
 SERVICE = get_service(ServiceType.VLAM)
@@ -47,17 +48,25 @@ WITHOUT_VLAM = "local"
 
 
 def _project(*, selected: bool = True, cluster: str = WITH_VLAM) -> dict:
-    """A project with one deployment of one component, optionally taking vlam."""
+    """A project with one deployment of two components; only ``web`` takes vlam.
+
+    Two components rather than one, because the whole question this service moved on is
+    what the OTHER component gets. ``selected=False`` is a project that took the service
+    nowhere.
+    """
     return {
         "name": "myproject",
         "services": ([{"name": ServiceType.VLAM.value}] if selected else []),
-        "components": [{"name": "web", "services": []}],
+        "components": [
+            {"name": "web", "services": ([ServiceType.VLAM.value] if selected else [])},
+            {"name": "worker", "services": []},
+        ],
         "deployments": [
             {
                 "name": "prod",
                 "cluster": cluster,
                 "namespace": "myproject",
-                "components": [{"reference": "web"}],
+                "components": [{"reference": "web"}, {"reference": "worker"}],
             }
         ],
     }
@@ -114,9 +123,14 @@ class TestTheServiceDeclaration:
     def test_it_is_selectable_by_a_user(self) -> None:
         assert SERVICE.definition.hidden is False
 
-    def test_it_binds_per_deployment(self) -> None:
-        """Every pod of the deployment gets the same address; there is nothing to pick."""
-        assert SERVICE.definition.binding is ServiceBinding.DEPLOYMENT
+    def test_a_component_switches_it_on_for_itself(self) -> None:
+        """Toegang hoort per component: de standaard, en nu ook echt zo uitgevoerd.
+
+        Tot RC-213 stond de dienst op de projectkeuze alleen, en kreeg elk component van
+        elke deployment de variabelen en de uitgaande regel. Gemeten op ``bouwm-6gn``:
+        ``component-1`` vinkte niets aan en droeg toch ``VLAM_API_URL``.
+        """
+        assert SERVICE.definition.selectable_per_component is True
 
     def test_it_carries_no_config_at_all(self) -> None:
         assert SERVICE.config_model is None
@@ -131,7 +145,7 @@ class TestTheServiceDeclaration:
         ]
 
     def test_only_the_terminated_address_is_unconditional(self) -> None:
-        """De twee doorlus-variabelen hangen aan het CLUSTER, niet aan de binding.
+        """De twee doorlus-variabelen hangen aan het CLUSTER, niet aan de selectie.
 
         Dat verschil staat in de declaratie omdat de e2e-probe erop oordeelt: hij eist dat
         elke variabele van een gebonden dienst in de pod staat, en zonder deze markering
@@ -150,7 +164,7 @@ class TestTheServiceDeclaration:
         names = {var.name for var in SERVICE.definition.variables}
         assert names.isdisjoint({"REQUESTS_CA_BUNDLE", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE"})
 
-    def test_binding_it_somewhere_enrols_it_at_project_level(self) -> None:
+    def test_ticking_it_somewhere_enrols_it_at_project_level(self) -> None:
         """RC-103: no project layer means nothing to decide there, so a bare selection is
         added rather than refused. The cluster question is a different one, and
         ``available_on_cluster`` answers it -- see TestAvailability."""
@@ -269,9 +283,10 @@ class TestTheContributionReachesTheComponent:
         apply_manifest_contributions(variables, contributions)
         return variables["env_vars"]
 
-    def test_the_project_selection_switches_it_on_without_any_component_ticking_it(self) -> None:
-        """The whole point of manifest_activated_by_project: the component list is empty."""
-        env_vars = self._env_vars_after_merge(component_services=[], project_services=[ServiceType.VLAM.value])
+    def test_the_component_that_ticked_it_gets_the_address(self) -> None:
+        env_vars = self._env_vars_after_merge(
+            component_services=[ServiceType.VLAM.value], project_services=[ServiceType.VLAM.value]
+        )
         assert env_vars["VLAM_API_URL"].startswith("http://")
 
     def test_a_project_without_the_service_gets_nothing(self) -> None:
@@ -279,12 +294,15 @@ class TestTheContributionReachesTheComponent:
 
     def test_the_components_own_variables_survive(self) -> None:
         """Additive, not an override: a service adding one variable must not wipe the rest."""
-        env_vars = self._env_vars_after_merge(component_services=[], project_services=[ServiceType.VLAM.value])
+        env_vars = self._env_vars_after_merge(
+            component_services=[ServiceType.VLAM.value], project_services=[ServiceType.VLAM.value]
+        )
         assert env_vars["APP_ENV"] == "production"
 
-    def test_a_component_ticking_it_is_not_what_switches_it_on(self) -> None:
-        """Deployment-bound: the component list is not consulted for this service."""
-        assert self._env_vars_after_merge(component_services=[ServiceType.VLAM.value], project_services=[]) == {
+    def test_the_project_selection_alone_gives_a_component_nothing(self) -> None:
+        """RC-213: dit was precies andersom, en daardoor droeg een component dat niets
+        aanvinkte toch ``VLAM_API_URL`` (gemeten op ``bouwm-6gn/main-component-1``)."""
+        assert self._env_vars_after_merge(component_services=[], project_services=[ServiceType.VLAM.value]) == {
             "APP_ENV": "production"
         }
 
@@ -294,7 +312,9 @@ class TestTheContributionReachesTheComponent:
         apply_manifest_contributions(
             variables,
             collect_manifest_contributions(
-                self._ctx(), component_services=[], project_services=[ServiceType.VLAM.value]
+                self._ctx(),
+                component_services=[ServiceType.VLAM.value],
+                project_services=[ServiceType.VLAM.value],
             ),
         )
         rendered = YAML().load(render_template("deployment.yaml.jinja", variables))
@@ -324,7 +344,7 @@ class TestTheNetworkPolicy:
             namespace="rig-prd-myproject",
         )
 
-    def test_a_project_using_the_service_gets_one_egress_rule(self) -> None:
+    def test_a_component_using_the_service_gets_one_egress_rule(self) -> None:
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         assert len(specs) == 1
         endpoint = vlam_endpoint(WITH_VLAM)
@@ -342,6 +362,31 @@ class TestTheNetworkPolicy:
         """No file means the prune removes a stale one -- that is how switching off works."""
         assert SERVICE.contribute_deployment_manifests(self._ctx(selected=False)) == []
 
+    def test_only_the_component_that_ticked_it_gets_a_policy(self) -> None:
+        """RC-213: de vorige regel selecteerde de hele deployment, dus ook ``worker``.
+
+        Gemeten in productie op ``bouwm-6gn``: ``main-component-1`` vinkte vlam niet aan
+        en viel toch onder ``vlam-main-network-policy``.
+        """
+        specs = SERVICE.contribute_deployment_manifests(self._ctx())
+        assert [spec.values["pod_selector"] for spec in specs] == [{"app": generate_unique_name("prod", "web")}]
+
+    def test_every_ticking_component_gets_its_own_policy(self) -> None:
+        ctx = self._ctx()
+        ctx.project_data["components"][1]["services"] = [ServiceType.VLAM.value]
+        specs = SERVICE.contribute_deployment_manifests(ctx)
+        assert [spec.filename for spec in specs] == [
+            "prod-vlam-web-network-policy",
+            "prod-vlam-worker-network-policy",
+        ]
+
+    def test_a_component_outside_this_deployment_is_not_counted(self) -> None:
+        """De componentlijst van het PROJECT, begrensd op wat deze deployment uitrolt."""
+        ctx = self._ctx()
+        ctx.project_data["components"].append({"name": "elders", "services": [ServiceType.VLAM.value]})
+        specs = SERVICE.contribute_deployment_manifests(ctx)
+        assert [spec.filename for spec in specs] == ["prod-vlam-web-network-policy"]
+
     def test_a_cluster_without_vlam_gets_nothing(self) -> None:
         assert SERVICE.contribute_deployment_manifests(self._ctx(cluster=WITHOUT_VLAM)) == []
 
@@ -357,7 +402,7 @@ class TestTheNetworkPolicy:
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
         rendered = YAML().load(render_template(specs[0].template_path, specs[0].values))
         assert rendered["spec"]["policyTypes"] == ["Egress"]
-        assert rendered["spec"]["podSelector"]["matchLabels"] == {"deployment": "prod", "project": "myproject"}
+        assert rendered["spec"]["podSelector"]["matchLabels"] == {"app": generate_unique_name("prod", "web")}
         rule = rendered["spec"]["egress"][0]
         peer = rule["to"][0]
         assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == "rig-prd-vlam-wt8"
@@ -367,11 +412,11 @@ class TestTheNetworkPolicy:
         }
         assert [port["port"] for port in rule["ports"]] == [8081]
 
-    def test_the_rule_selects_every_pod_of_the_deployment(self) -> None:
-        """Deployment-bound: one policy for the deployment, not one per component."""
+    def test_the_filename_names_the_component(self) -> None:
+        """Dezelfde vorm als send-email, zodat de prune per component werkt en de oude
+        ``prod-vlam-network-policy`` vanzelf verdwijnt."""
         specs = SERVICE.contribute_deployment_manifests(self._ctx())
-        assert len(specs) == 1
-        assert "component" not in specs[0].values["pod_selector"]
+        assert specs[0].filename == "prod-vlam-web-network-policy"
 
 
 # ---------------------------------------------------------------------------
@@ -544,36 +589,40 @@ class TestDeAliasOpDeDeployment:
             component_def={"name": "web", "services": []},
         )
 
-    def _rendered(self, *, project_services: list[str]) -> dict:
+    def _rendered(self, *, component_services: list[str]) -> dict:
         variables = _golden_deployment_vars()
         apply_manifest_contributions(
             variables,
-            collect_manifest_contributions(self._ctx(), component_services=[], project_services=project_services),
+            collect_manifest_contributions(
+                self._ctx(),
+                component_services=component_services,
+                project_services=[ServiceType.VLAM.value],
+            ),
         )
         return YAML().load(render_template("deployment.yaml.jinja", variables))
 
     def test_de_pod_krijgt_de_regel_in_etc_hosts(self, doorlus) -> None:
-        pod_spec = self._rendered(project_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
+        pod_spec = self._rendered(component_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
         assert pod_spec["hostAliases"] == [{"ip": "172.30.254.144", "hostnames": ["vlam-api.rijksweb.nl"]}]
 
     def test_de_naam_in_de_regel_is_de_naam_uit_het_doorlus_adres(self, doorlus) -> None:
         """Anders wijst /etc/hosts een andere naam aan dan de URL gebruikt en doet de
         alias niets, terwijl alles er goed uitziet."""
-        rendered = self._rendered(project_services=[ServiceType.VLAM.value])
+        rendered = self._rendered(component_services=[ServiceType.VLAM.value])
         container = rendered["spec"]["template"]["spec"]["containers"][0]
         env = {entry["name"]: entry["value"] for entry in container["env"]}
         alias = rendered["spec"]["template"]["spec"]["hostAliases"][0]
         assert alias["hostnames"][0] in env["VLAM_API_URL_DIRECT"]
 
     def test_een_component_zonder_de_dienst_krijgt_geen_blok(self, doorlus) -> None:
-        pod_spec = self._rendered(project_services=[])["spec"]["template"]["spec"]
+        pod_spec = self._rendered(component_services=[])["spec"]["template"]["spec"]
         assert "hostAliases" not in pod_spec
 
     def test_zonder_doorlus_geen_blok(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
         from opi.services.catalog.vlam import endpoint as endpoint_module
 
         monkeypatch.setattr(endpoint_module, "CA_BUNDLE_DIR", tmp_path)
-        pod_spec = self._rendered(project_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
+        pod_spec = self._rendered(component_services=[ServiceType.VLAM.value])["spec"]["template"]["spec"]
         assert "hostAliases" not in pod_spec
 
 
@@ -596,7 +645,9 @@ class TestDeGemounteCaBundel:
         apply_manifest_contributions(
             variables,
             collect_manifest_contributions(
-                self._ctx(), component_services=[], project_services=[ServiceType.VLAM.value]
+                self._ctx(),
+                component_services=[ServiceType.VLAM.value],
+                project_services=[ServiceType.VLAM.value],
             ),
         )
         return YAML().load(render_template("deployment.yaml.jinja", variables))

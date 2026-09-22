@@ -59,9 +59,9 @@ from opi.services.catalog.base import (
 from opi.services.catalog.events import on
 from opi.services.catalog.vlam.endpoint import CA_BUNDLE_URL, vlam_endpoint
 from opi.services.catalog.vlam.variables import VlamVariables
-from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType, UIEvent
-from opi.utils.naming import generate_network_policy_name
+from opi.services.services import ServiceDefinition
+from opi.services.services_enums import CleanupStrategy, ServiceType, UIEvent
+from opi.utils.naming import generate_network_policy_name, generate_unique_name
 
 logger = logging.getLogger(__name__)
 
@@ -77,15 +77,9 @@ class VlamService(Service):
         help_template="vlam/help.md",
         icon="wolk",
         color="donkerblauw",
-        # Per deployment: er valt per component niets te kiezen. Elk component van elke
-        # deployment van dit project krijgt hetzelfde adres en dezelfde uitgaande regel.
-        binding=ServiceBinding.DEPLOYMENT,
         variables=[var.value for var in VlamVariables],
         cleanup_strategy=CleanupStrategy.NONE,
     )
-    #: The project's selection switches this on; no component ever ticks it (see the
-    #: binding above), so a component-scoped activation would never fire.
-    manifest_activated_by_project = True
     #: After the existing contributors, so no already-rendered manifest changes order.
     manifest_order = 80
 
@@ -130,12 +124,6 @@ class VlamService(Service):
             )
         ]
 
-    def _selected(self, project_data: dict[str, Any]) -> bool:
-        """Whether this project has the service in its project-level services list."""
-        return self.service_type.value in [
-            service_entry_name(entry) for entry in project_data.get("services", []) or []
-        ]
-
     @staticmethod
     def ca_secret_name(deployment_name: str) -> str:
         """The Secret holding the CA bundle for one deployment.
@@ -147,7 +135,7 @@ class VlamService(Service):
         return f"{deployment_name}-vlam-ca"
 
     def contribute_manifest_context(self, ctx: ManifestContext) -> ManifestContribution:
-        """What every component of a project that took the service is given.
+        """What a component that ticked the service is given.
 
         Always ``VLAM_API_URL``, the TERMINATED path: a plain env var and not an envFrom
         secret, because the value is an in-cluster address that the reader of the manifest
@@ -223,15 +211,13 @@ class VlamService(Service):
         ]
 
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
-        """One egress NetworkPolicy per deployment, towards the VLAM proxy pod.
+        """One egress NetworkPolicy per component that ticked the service.
 
-        Deployment-wide rather than per component, because the service is deployment-bound:
-        the pods of a deployment carry ``deployment`` and ``project`` labels, so one policy
-        selects exactly them. Egress only -- this opens the way OUT; whether a pod actually
-        gets through is decided by the inbound rule at the VLAM side.
+        Per component and not per deployment, because access is per component: a policy
+        selecting the whole deployment opened the way to VLAM for pods whose owner never
+        asked for it. Egress only -- this opens the way OUT; whether a pod actually gets
+        through is decided by the inbound rule at the VLAM side.
         """
-        if not self._selected(ctx.project_data):
-            return []
         endpoint = vlam_endpoint(ctx.cluster)
         if endpoint is None:
             return []
@@ -239,12 +225,12 @@ class VlamService(Service):
         deployment_name = ctx.deployment["name"]
         return [
             DeploymentManifestSpec(
-                filename=f"{deployment_name}-{self.service_type.value}-network-policy",
+                filename=f"{deployment_name}-{self.service_type.value}-{component}-network-policy",
                 template_path="service-network-policy.yaml.jinja",
                 values={
-                    "name": generate_network_policy_name(self.service_type.value, deployment_name),
+                    "name": generate_network_policy_name(f"{self.service_type.value}-{component}", deployment_name),
                     "namespace": ctx.namespace,
-                    "pod_selector": {"deployment": deployment_name, "project": ctx.project_name},
+                    "pod_selector": {"app": generate_unique_name(deployment_name, component)},
                     "ingress": [],
                     "egress": [
                         {
@@ -258,4 +244,5 @@ class VlamService(Service):
                     ],
                 },
             )
+            for component in self.components_using_service(ctx)
         ]

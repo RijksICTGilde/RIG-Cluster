@@ -45,7 +45,7 @@ from opi.services.catalog.cross_domain_access.config_model import CrossDomainAcc
 from opi.services.catalog.cross_domain_access.merge import IncompleteRuleError, merge_rules, to_merged_rule
 from opi.services.catalog.cross_domain_access.resolve import ResolvedRule, resolve_rules
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceType
 from opi.utils.naming import generate_network_policy_name, generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ class CrossDomainAccessService(Service):
         # The rules apply per deployment (each gets its own NetworkPolicy); the effect
         # lives entirely in generated manifests, so there is nothing server-side to clean
         # up -- the generic manifest prune removes the policy files when the service is off.
-        binding=ServiceBinding.DEPLOYMENT,
+        selectable_per_component=False,
         variables=[],
         cleanup_strategy=CleanupStrategy.NONE,
     )
