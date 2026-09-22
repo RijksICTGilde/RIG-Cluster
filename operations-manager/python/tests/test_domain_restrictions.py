@@ -655,6 +655,32 @@ class TestEnforcerAppliesReservedNamesPerDomain:
             )
 
     @pytest.mark.asyncio
+    async def test_a_reserved_name_on_the_cluster_default_is_refused(self, monkeypatch):
+        """Een leeg basisdomein IS de postfix-zone: de clusterstandaard levert
+        admin.rig.prd1.gn2.quattro.rijksapps.nl op. De enforcer rekent daar met
+        actual_domain=None, dus een check die op die waarde wacht laat 'admin' door.
+        """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 0)
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
     async def test_a_reserved_name_on_a_tenant_domain_under_the_postfix_parent_passes(self, monkeypatch):
         """ug-zxt publiceert op ux-onderzoeken.rijksapps.nl: hun domein, hun namen."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer
