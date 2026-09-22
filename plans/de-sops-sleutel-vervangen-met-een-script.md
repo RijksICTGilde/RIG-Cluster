@@ -93,7 +93,7 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 
 ## Wat er gebouwd moet worden
 
-1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. De scripts lezen `security/old.txt` en `security/new.txt` en nemen nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt een van de twee, dan stopt het script met een duidelijke melding. *Verify:* een droogloop zonder `new.txt` weigert en noemt het pad.
+1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. Het script vraagt naar de paden met een default (`security/old_key.txt` en `security/key.txt`) en neemt nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt er een, dan stopt het met het pad in de melding. Zie "De vorm van het gereedschap". *Verify:* een droogloop met een ontbrekend bestand weigert en noemt het pad.
 2. **`task rotate-sops-key`, droogloop als standaard.** Zet de 19 SOPS-bestanden om EN elke `base64+age:`-waarde die buiten een SOPS-bestand staat: de twee configmaps en `operations-manager/python/.env`. Die worden anders vergeten, want `sops rotate` ziet ze niet. Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
 3. **Fase toevoegen: `--add-key B`.** `sops rotate -i --add-age B` over die 19. *Verify:* elk bestand is daarna met A én met B te ontsleutelen, en de ciphertext van de waarden is veranderd.
 4. **`task set-sops-key-secret`.** Zet de inhoud van `security/new.txt` in het secret `sops-age-key` van de doelnamespace, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
@@ -147,6 +147,28 @@ Daarom drie lagen, waarvan alleen de tweede en derde bindend zijn:
 
 Issue #94 vraagt al om CI secret-scanning (gitleaks of trufflehog). Dat ticket is hiermee niet langer optioneel.
 
+## De vorm van het gereedschap
+
+**Geen Taskfile-taak.** Taskfile werkt slecht met parameters en dit heeft er vier. Het wordt een script dat je aanroept en dat vraagt wat het nodig heeft, met een default op elke vraag zodat doorklikken de gewone weg is:
+
+```
+oude sleutel   [security/old_key.txt]
+nieuwe sleutel [security/key.txt]
+nieuwe PAT     [leeg = huidige waarde hergebruiken]
+```
+
+**De naamgeving is de migratie.** `security/key.txt` is altijd "dit is de sleutel, of dit wordt hij". Gemeten: **84 verwijzingen naar `security/key.txt`** in de repo, in de Taskfile, in CLAUDE.md en in de installatiedocumentatie. Zou de nieuwe sleutel anders gaan heten, dan moeten die allemaal mee. Dus de oude schuift naar `old_key.txt` en de nieuwe neemt de vaste naam over. Het script doet die hernoeming zelf aan het eind, na bevestiging, zodat er geen los handwerk overblijft dat iemand vergeet.
+
+**Python, niet shell, en dat is tegen de voorkeur in.** De sops-kant zou prima in shell kunnen: `sops rotate` doet daar het werk. De projectbestanden niet. Gemeten op de 45 testbestanden:
+
+- **alle 45** dragen de sleutel als meerregelige YAML block scalar (`age-private-key: |-` met een BEGIN/END-blok eronder), waar de inspringing en de chomping-indicator exact moeten kloppen;
+- in datzelfde bestand staat `repositories[].password` juist als `base64+age:` op **één** regel, dus twee vormen door elkaar;
+- **3 van de 45** hebben commentaar, dat een naïeve YAML-ronde weggooit.
+
+Dat met sed en awk doen kan, maar het is precies het soort bewerking waarbij een fout niet crasht maar stil een geldig bestand met verkeerde inhoud oplevert. Python heeft `ruamel.yaml`, dat commentaar en volgorde behoudt, en OPI heeft de ontsleutel- en versleutelfuncties plus `save_and_commit_project` al klaarstaan.
+
+Een shell-schil om een Python-kern is een optie, maar dan onderhoud je twee talen voor één gereedschap. Mijn voorstel is daarom één Python-script. Als de voorkeur voor shell zwaarder weegt dan dit argument, dan is de grens: shell voor de SOPS-bestanden en de env-regels, Python voor de projectbestanden, en nooit de projectbestanden met tekstvervanging.
+
 ## Testen: tegen echte projectbestanden, niet tegen fixtures
 
 Er staat een kopie van oudere projectbestanden op `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects` onder `projects/`. Gemeten: **45 bestanden, alle 45 met `age-private-key` en `age-public-key`**, en 34 met een `password:` in age-vorm. Dat is de testset, en die is representatiever dan welke fixture dan ook.
@@ -164,11 +186,11 @@ Pas als dat op alle 45 goed gaat, mag hetzelfde script de echte repo aanraken.
 ## Assertie
 
 ```bash
-task rotate-sops-key -- --dry-run          # 19 bestanden, geen wijziging
-task rotate-sops-key -- --add-key <B.pub>
-SOPS_AGE_KEY="$(sed -n '3p' security/key-A.txt)" sops --decrypt <bestand>   # werkt
-SOPS_AGE_KEY="$(sed -n '3p' security/key-B.txt)" sops --decrypt <bestand>   # werkt ook
-task rotate-project-keys -- --dry-run      # noemt de projecten die nog op A staan
+scripts/rotate-sops-key.py --dry-run     # vraagt de paden, noemt wat het zou doen, wijzigt niets
+scripts/rotate-sops-key.py               # zelfde vragen, voert uit
+
+SOPS_AGE_KEY="$(sed -n '3p' security/old_key.txt)" sops --decrypt <bestand>   # werkt nog
+SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)"     sops --decrypt <bestand>   # werkt ook
 ```
 
 Klaar als:
