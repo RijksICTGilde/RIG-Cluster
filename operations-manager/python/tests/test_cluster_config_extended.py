@@ -319,9 +319,7 @@ class TestExternalDnsTargetForHostname:
 
 
 class TestManagedZones:
-    """``managed_zones`` zegt welke zones ZAD zelf bedient, een ander feit dan de
-    AANBODlijst ``supported_domains``. De reserveringslijst hangt aan dit antwoord.
-    """
+    """De reserveringslijst hangt aan dit antwoord: welke zones ZAD zelf bedient."""
 
     def test_local_serves_its_two_domains(self):
         assert get_managed_zones("local") == ["kind", "local"]

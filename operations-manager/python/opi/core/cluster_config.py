@@ -86,8 +86,7 @@ CLUSTER_CONFIG = {
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
             # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat
-            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden
-            # (op odcn-production is de ingress_postfix-zone precies dat geval).
+            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden.
             "managed_zones": ["kind", "local"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
@@ -320,9 +319,8 @@ CLUSTER_CONFIG = {
                 },
             ],
             # De vierde is de ingress_postfix-zone hierboven: van ons, maar niet
-            # aangeboden, dus in geen enkele andere lijst. Noem de zone zelf en nooit zijn
-            # ouder rijksapps.nl: die is van ODC-Noord en is in gebruik als eigen
-            # basisdomein van projecten.
+            # aangeboden. Noem de zone zelf en nooit zijn ouder rijksapps.nl: die is van
+            # ODC-Noord en in gebruik als eigen basisdomein van projecten.
             "managed_zones": ["rijks.app", "rijksapp.nl", "rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
         },
         # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
