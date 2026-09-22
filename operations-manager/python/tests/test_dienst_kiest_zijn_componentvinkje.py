@@ -38,6 +38,10 @@ def test_de_declaratie_klopt_met_de_lagen(service_type: ServiceType) -> None:
     De twee horen bij elkaar: wie iets per component instelt, kiest hem daar ook per
     component. Vallen ze uit elkaar, dan is er een scherm dat vraagt om een instelling die
     het component nooit aanzette, of een vinkje dat nergens toe leidt.
+
+    Een regel en niet twee: "geen vinkje dus geen componentconfig" en "wel componentconfig
+    dus wel een vinkje" zijn elkaars omkering, dus ze worden door dezelfde dienst gebroken
+    en leveren dezelfde rode toets op.
     """
     service = SERVICES[service_type]
     draagt_componentconfig = any(layer in _COMPONENT_LAYERS for layer in service.config_layers())
@@ -45,16 +49,10 @@ def test_de_declaratie_klopt_met_de_lagen(service_type: ServiceType) -> None:
         assert not draagt_componentconfig, (
             f"{service_type.value} wordt niet per component gekozen maar draagt wel componentconfiguratie"
         )
-
-
-@pytest.mark.parametrize("service_type", list(SERVICES), ids=lambda s: s.value)
-def test_wie_componentconfiguratie_draagt_houdt_de_standaard(service_type: ServiceType) -> None:
-    """De omkering van de regel hierboven, want alleen die vangt de fout in de andere
-    richting: een dienst die ``selectable_per_component=False`` krijgt terwijl hij een
-    instelling per component draagt."""
-    service = SERVICES[service_type]
-    if any(layer in _COMPONENT_LAYERS for layer in service.config_layers()):
-        assert service.definition.selectable_per_component is True
+    if draagt_componentconfig:
+        assert service.definition.selectable_per_component is True, (
+            f"{service_type.value} draagt componentconfiguratie maar is niet per component te kiezen"
+        )
 
 
 @pytest.mark.parametrize("service_type", sorted(NIET_PER_COMPONENT, key=lambda s: s.value), ids=lambda s: s.value)
