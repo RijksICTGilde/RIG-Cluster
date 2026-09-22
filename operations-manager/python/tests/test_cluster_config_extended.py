@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 from opi.core.cluster_config import (
+    CLUSTER_CONFIG,
     _compute_ca_hash,
     get_argo_namespace,
     get_ca_certificate_config,
@@ -24,6 +25,7 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_keycloak_support_http,
     get_letsencrypt_contact_email,
+    get_managed_zones,
     get_minio_host,
     get_minio_port,
     get_minio_server,
@@ -37,6 +39,7 @@ from opi.core.cluster_config import (
     get_supported_domain_names,
     get_volume_snapshot_class,
     is_domain_supported,
+    is_platform_domain,
     uses_capsule,
 )
 
@@ -313,6 +316,88 @@ class TestExternalDnsTargetForHostname:
     def test_unknown_cluster_raises(self):
         with pytest.raises(ValueError, match="not found in configuration"):
             get_external_dns_target_for_hostname("nonexistent-cluster", "mijnapp.rijks.app")
+
+
+class TestManagedZones:
+    """``managed_zones`` zegt welke zones ZAD zelf bedient, en dat is een ander feit dan
+    ``supported_domains``: dat is een AANBODlijst, en een zone kan van ons zijn zonder
+    aangeboden te worden. De reserveringslijst hangt aan dit antwoord.
+    """
+
+    def test_local_serves_its_two_domains(self):
+        assert get_managed_zones("local") == ["kind", "local"]
+
+    def test_sandbox_serves_its_two_domains(self):
+        assert get_managed_zones("sandboxed-local") == ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"]
+
+    def test_production_also_names_its_postfix_zone(self):
+        """De vierde zone staat in geen enkele andere lijst: van ons, maar niet aangeboden."""
+        assert get_managed_zones("odcn-production") == [
+            "rijks.app",
+            "rijksapp.nl",
+            "rijksapp.dev",
+            "rig.prd1.gn2.quattro.rijksapps.nl",
+        ]
+
+    def test_cluster_without_domains_block_has_no_zones(self):
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=None):
+            assert get_managed_zones("odcn-production") == []
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            get_managed_zones("nonexistent-cluster")
+
+
+class TestIsPlatformDomain:
+    """De beheervraag: valt deze naam binnen een zone die wij bedienen."""
+
+    def test_an_offered_domain_is_ours(self):
+        assert is_platform_domain("odcn-production", "rijks.app") is True
+        assert is_platform_domain("odcn-production", "rijksapp.nl") is True
+        assert is_platform_domain("odcn-production", "rijksapp.dev") is True
+
+    def test_a_name_under_an_offered_domain_is_ours(self):
+        """Suffix, geen lidmaatschap: team.rijks.app staat in geen enkele lijst en is toch
+        een label op onze registreerbare zone."""
+        assert is_platform_domain("odcn-production", "team.rijks.app") is True
+
+    def test_the_postfix_zone_is_ours(self):
+        assert is_platform_domain("odcn-production", "rig.prd1.gn2.quattro.rijksapps.nl") is True
+
+    def test_the_parent_of_the_postfix_zone_is_not_ours(self):
+        """rijksapps.nl is van ODC-Noord en in gebruik als eigen basisdomein van projecten."""
+        assert is_platform_domain("odcn-production", "ux-onderzoeken.rijksapps.nl") is False
+        assert is_platform_domain("odcn-production", "rijksapps.nl") is False
+
+    def test_a_tenant_domain_is_not_ours(self):
+        assert is_platform_domain("odcn-production", "uitbetrouwbarebron.nl") is False
+
+    def test_a_name_that_only_ends_in_the_same_letters_is_not_ours(self):
+        assert is_platform_domain("odcn-production", "nietrijks.app") is False
+
+    def test_sandbox_serves_the_domain_it_offers(self):
+        assert is_platform_domain("sandboxed-local", "robbertuittenbroek.nl") is True
+        assert is_platform_domain("sandboxed-local", "rijks.app") is False
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            is_platform_domain("nonexistent-cluster", "rijks.app")
+
+
+class TestManagedZonesCoverTheRest:
+    """De beheerlijst staat los, dus hij kan wegdrijven. Deze toets is de grendel: vergeet
+    iemand een nieuwe zone, dan valt hij om in plaats van dat er stil een gat ontstaat.
+    """
+
+    @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
+    def test_the_postfix_zone_is_managed(self, cluster_name):
+        zone = get_ingress_postfix(cluster_name).lstrip(".")
+        assert is_platform_domain(cluster_name, zone), f"{cluster_name}: {zone} staat in geen managed_zones"
+
+    @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
+    def test_every_offered_domain_is_managed(self, cluster_name):
+        for domain in get_supported_domain_names(cluster_name):
+            assert is_platform_domain(cluster_name, domain), f"{cluster_name}: {domain} staat in geen managed_zones"
 
 
 class TestSelectableClusters:

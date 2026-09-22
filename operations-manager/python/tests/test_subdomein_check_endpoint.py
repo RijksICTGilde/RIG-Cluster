@@ -166,6 +166,38 @@ class TestWatDeControleBelooft:
         assert response.json()["cluster_domain"] is True
 
 
+class TestDeGereserveerdeNamenGeldenPerDomein:
+    """De live-check moet hetzelfde zeggen als de wizard, anders hoort de gebruiker twee
+    verhalen over dezelfde naam."""
+
+    def test_een_gereserveerde_naam_op_een_zone_van_ons_is_niet_beschikbaar(
+        self, client: TestClient, connector: Any
+    ) -> None:
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "local"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available"] is False
+        assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
+        connector.check_availability.assert_not_awaited()
+
+    def test_dezelfde_naam_op_een_eigen_domein_is_gewoon_vrij(self, client: TestClient) -> None:
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "uitbetrouwbarebron.nl"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available"] is True
+        assert body["validation_error"] is None
+
+
 class TestDeControleBlijftEenControle:
     """De decorator eraf halen was de andere uitweg, en die kost de afscherming."""
 
