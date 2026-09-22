@@ -1,8 +1,8 @@
 """Een dienst zegt zelf of je hem per component aanvinkt (RC-213).
 
-De grendel hieronder is het punt van de hele wijziging. Zonder hem staat dit over een half
-jaar opnieuw scheef, want de standaard is "wel een vinkje" en niemand komt er langs. Wat er
-scheef stond en waarom: ``features/dienst-per-component-aanvinken.md``.
+Zonder deze grendel staat dit over een half jaar opnieuw scheef: de standaard is "wel een
+vinkje" en niemand komt er langs. Wat er scheef stond en waarom:
+``features/dienst-per-component-aanvinken.md``.
 """
 
 from __future__ import annotations
@@ -35,9 +35,8 @@ NIET_PER_COMPONENT = {
 def test_de_declaratie_klopt_met_de_lagen(service_type: ServiceType) -> None:
     """Geen vinkje per component betekent ook geen configuratie per component.
 
-    De twee horen bij elkaar: wie iets per component instelt, kiest hem daar ook per
-    component. Vallen ze uit elkaar, dan is er een scherm dat vraagt om een instelling die
-    het component nooit aanzette, of een vinkje dat nergens toe leidt.
+    Vallen ze uit elkaar, dan is er een scherm dat vraagt om een instelling die het
+    component nooit aanzette, of een vinkje dat nergens toe leidt.
 
     Een regel en niet twee: "geen vinkje dus geen componentconfig" en "wel componentconfig
     dus wel een vinkje" zijn elkaars omkering, dus ze worden door dezelfde dienst gebroken

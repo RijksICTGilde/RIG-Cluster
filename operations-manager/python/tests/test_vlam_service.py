@@ -124,11 +124,7 @@ class TestTheServiceDeclaration:
         assert SERVICE.definition.hidden is False
 
     def test_a_component_switches_it_on_for_itself(self) -> None:
-        """Toegang hoort per component: de standaard, en nu ook echt zo uitgevoerd.
-
-        Tot RC-213 stond de dienst op de projectkeuze alleen, en kreeg elk component van
-        elke deployment de variabelen en de uitgaande regel.
-        """
+        """Toegang hoort per component: de standaard, en nu ook echt zo uitgevoerd."""
         assert SERVICE.definition.selectable_per_component is True
 
     def test_it_carries_no_config_at_all(self) -> None:
@@ -299,8 +295,6 @@ class TestTheContributionReachesTheComponent:
         assert env_vars["APP_ENV"] == "production"
 
     def test_the_project_selection_alone_gives_a_component_nothing(self) -> None:
-        """RC-213: dit was precies andersom, en daardoor droeg een component dat niets
-        aanvinkte toch ``VLAM_API_URL`` (gemeten op ``bouwm-6gn/main-component-1``)."""
         assert self._env_vars_after_merge(component_services=[], project_services=[ServiceType.VLAM.value]) == {
             "APP_ENV": "production"
         }

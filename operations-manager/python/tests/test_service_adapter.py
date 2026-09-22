@@ -215,7 +215,6 @@ class TestSelectionAndSharing:
         }
 
     def test_postgres_is_both(self):
-        """De twee vragen staan los: postgres wordt per component aangevinkt EN gedeeld."""
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
         assert (defn.selectable_per_component, defn.shared_per_deployment) == (True, True)
 
