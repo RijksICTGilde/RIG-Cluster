@@ -9,10 +9,6 @@ standaardrun.
 
 Gemeten op ``/lotc/bg/services``: dezelfde sjablonen met de voorbeeldprojecten uit
 ``opi/web/lotc_fixtures/``, dus dezelfde pagina met andere gegevens.
-
-Wat hier bewust NIET staat: een toets op ``kind_type``, ``help``, ``used_by`` of
-``service_filters``. Die worden door geen enkel sjabloon gelezen, net als de ``chips`` die
-RC-215 weghaalde, en vastleggen wat niemand rendert is precies wat die taak opruimde.
 """
 
 from __future__ import annotations
@@ -31,8 +27,6 @@ from opi.web.navigation_lotc import to_nldd_icon
 from starlette.middleware.sessions import SessionMiddleware
 from tests.test_lotc_icon_mapping import _gerenderde_naam
 
-#: Het icoon van een kaart staat VOOR zijn kop, in dezelfde c-cluster. Als paar gelezen,
-#: want los geteld zegt een icoon niets over de kaart waar het bij hoort.
 KAARTKOP = re.compile(r'<nldd-icon[^>]*name="([^"]+)"[^>]*>\s*</nldd-icon>\s*<nldd-title[^>]*>\s*<h3>([^<]+)</h3>')
 
 
@@ -58,8 +52,8 @@ def _label(service_type: ServiceType) -> str:
 def _zichtbaar_in_de_registry() -> list[ServiceType]:
     """De diensten die de pagina hoort te tonen, uit dezelfde bron als de pagina zelf.
 
-    Afgeleid en niet overgetypt: een lijst met de hand erin zou meegroeien noch
-    meekrimpen met de registry, en dan bewaakt hij alleen zichzelf.
+    Een lijst met de hand erin groeit niet mee met de registry en bewaakt dan alleen
+    zichzelf.
     """
     return [
         service_type
@@ -99,14 +93,7 @@ def test_een_verborgen_dienst_krijgt_geen_kaart(client: TestClient) -> None:
 
 
 def test_elke_kaart_noemt_zijn_eigen_omschrijving_en_api_naam(client: TestClient) -> None:
-    """De twee dingen waarvoor je deze pagina opent: wat doet het en hoe heet het.
-
-    Binnen de kaart gemeten: met "staat ergens op de pagina" blijft deze toets groen als
-    elke kaart de omschrijving van Keycloak draagt (gemeten).
-
-    De API-naam staat in een ``<code>``, want die typ je letterlijk over in je
-    projectbestand.
-    """
+    """De twee dingen waarvoor je deze pagina opent: wat doet het en hoe heet het."""
     tekst = client.get("/lotc/bg/services").text
 
     for service_type in _zichtbaar_in_de_registry():
@@ -124,8 +111,8 @@ def test_elke_kaart_draagt_het_icoon_van_zijn_eigen_dienst(client: TestClient) -
     """Niet een vast kaarticoon: elke dienst brengt zijn eigen beeld mee.
 
     Icoon en kop worden als PAAR gelezen. Los geteld blijft een pagina waarop elke kaart
-    hetzelfde icoon draagt groen (gemeten), en bovendien staan er negen iconen van de
-    pagina zelf voor de eerste kaart.
+    hetzelfde icoon draagt groen (gemeten), en de pagina zet bovendien haar eigen iconen
+    voor de eerste kaart.
 
     Verwacht wordt de naam die de BROWSER opzoekt, dus na alle vertaalstappen: onze
     iconen dragen ROOS-namen, ``to_nldd_icon`` maakt van ``sleutel`` een ``lock-closed``,
@@ -144,12 +131,7 @@ def test_elke_kaart_draagt_het_icoon_van_zijn_eigen_dienst(client: TestClient) -
 
 
 def test_het_filter_splitst_de_lijst_in_zelf_te_kiezen_en_altijd_aan(client: TestClient) -> None:
-    """``?kind=`` is een echte link: de keuze staat in de URL en werkt zonder JavaScript.
-
-    De twee helften samen zijn de hele lijst, en ze overlappen niet. Dat is wat er
-    kapotgaat als ``kind_label`` uit de rij verdwijnt: de filter valt dan stil terug op
-    "alles" in plaats van een foutmelding te geven.
-    """
+    """``?kind=`` is een echte link: de keuze staat in de URL en werkt zonder JavaScript."""
     alle = _dienstnamen(client)
     zelf = _dienstnamen(client, "?kind=user")
     altijd = _dienstnamen(client, "?kind=system")
