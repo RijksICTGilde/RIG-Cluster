@@ -12,14 +12,19 @@ Het scherm wist dat wel, maar zei het niet.
 
 | | Beantwoordt | Lees het voor |
 |---|---|---|
-| `ServiceDefinition.binding` | Kiest een los component deze dienst, of krijgt een heel deployment hem | Selectie |
+| `ServiceDefinition.selectable_per_component` | Zet een los component deze dienst zelf aan, of beslist de projectkeuze dat | Selectie |
 | `service.config_layers()` | Op welke niveaus van het projectbestand deze dienst instellingen draagt | Configuratie: op welk scherm je iets bewerkt |
 
-Het `binding`-veld heette tot RC-33 `scope`, en dat las als een antwoord op "waar stel ik
+Het selectieveld heette tot RC-33 `scope`, en dat las als een antwoord op "waar stel ik
 dit in" -- terwijl het dat nooit was. De projectdetailkaart rendeerde het letterlijk als
-"Component scope". Bij `keycloak` staat daar dus "component" terwijl zijn config
+"Component scope". Bij `keycloak` staat daar dus "per component" terwijl zijn config
 projectbreed is: één realm voor het hele project, elk component kiest alleen of het erachter
 staat. Wie de verkeerde van de twee leest, vertelt de gebruiker iets onjuists.
+
+Sinds RC-213 is het een `bool` met een standaard in plaats van een verplichte enum, en
+draagt een tweede veld het feit dat in die enum was meegelift: `shared_per_deployment`,
+"één voorziening voor de hele deployment". Postgres draagt allebei, en de kaart toont
+allebei de zinnen.
 
 De twee blijven bestaan (ze beantwoorden verschillende vragen) maar zijn uit elkaar
 getrokken in naam en documentatie. `instructions/services.md` heeft de regel;
@@ -81,8 +86,8 @@ een aparte, al bestaande garantie: `tests/test_service_config_layers.py`
 ## Bestanden
 
 - `opi/services/config_location.py` -- `project_step_config_hint`, `config_hint_for_value`,
-  `binding_label`
+  `selection_labels`
 - `opi/forms/widgets/roos.py` -- `render_service_cards` hangt de regel aan een aangevinkte kaart
 - `opi/templates/widgets/service_cards.html.j2` -- rendert hem
-- `opi/templates/project-details/section-services.html.j2` -- detailkaart: binding-label + regel
+- `opi/templates/project-details/section-services.html.j2` -- detailkaart: selectielabels + regel
 - `tests/test_service_config_location.py` -- bron van waarheid, de zeven diensten, de kaarten
