@@ -38,12 +38,11 @@ BLOKKADE_SECONDEN = 7.0
 
 
 def _vrije_poort() -> int:
-    """Een poort die op dit moment vrij is, in plaats van een vast nummer.
+    """Een vrije poort, in plaats van een vast nummer.
 
     Met vaste nummers viel deze module om zodra iets anders op de machine die poort al
-    had: ``start_probe_server`` slikt die OSError bewust (de FastAPI-endpoints bestaan
-    nog), dus de toets zag alleen een geweigerde verbinding en meldde een omgevingsbotsing
-    als bevinding.
+    had: ``start_probe_server`` slikt die OSError bewust, dus de toets zag alleen een
+    geweigerde verbinding en meldde een omgevingsbotsing als bevinding.
     """
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
