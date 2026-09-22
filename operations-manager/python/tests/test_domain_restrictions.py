@@ -688,6 +688,58 @@ class TestEnforcerAppliesReservedNamesPerDomain:
         yaml_data = self._yaml("ux-onderzoeken.rijksapps.nl", "admin")
         assert await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "ug-zxt"}) is yaml_data
 
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_subzone_is_refused_before_the_approval_warning(self, monkeypatch):
+        """De stand waarin een eigen domein altijd begint: nog geen allowlist-entry.
+
+        De aanvraagcheck heft dan een niet-blokkerende FieldWarning, en die sluit de
+        enforcer af. Staat de reservering daarachter, dan komt 'admin' op onze eigen zone
+        gewoon door het formulier.
+        """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "team.rijks.app",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 0)
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_the_postfix_zone_is_refused_before_the_approval_warning(self, monkeypatch):
+        """Dezelfde ongekeurde stand op de clusterzone: die staat niet in supported_domains,
+        dus de aanvraagcheck bijt er ook.
+        """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rig.prd1.gn2.quattro.rijksapps.nl",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
 
 # ---------------------------------------------------------------------------
 # IssuerGenerator with custom domain config
