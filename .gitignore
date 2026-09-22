@@ -65,6 +65,8 @@ secrets-overview-*.yaml
 !/operations-manager/python/tests/e2e/screenshots/vergelijk/
 /operations-manager/docs/
 /operations-manager/python/tests/e2e/artifacts/
+# Coverage-uitvoer. Niets in de repo maakt deze map; hij ontstaat bij een handmatige run.
+/operations-manager/python/.diff-coverage/
 /.env
 
 # Sleutelmateriaal hoort nooit in de repo.
