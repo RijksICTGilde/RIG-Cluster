@@ -218,7 +218,7 @@ reflected in `opi_container_memory_bytes`. The cgroup metric handles cgroups v2 
 | `git.py` | git clone/push | High - depends on repo size |
 | `kopia.py` | kopia backup/restore | High - backup data in memory |
 | `kubectl.py` | kubectl apply (large manifests) | Moderate |
-| `sops.py` / `age.py` | sops/age encrypt/decrypt | Low |
+| `sops.py` / `age.py` | sops encrypt/decrypt, age encrypt (age decrypt runs in-process, no subprocess) | Low |
 | `minio_mc.py` | mc commands | Low-moderate |
 
 ### Diagnosing an OOM Kill
