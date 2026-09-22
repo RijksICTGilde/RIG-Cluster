@@ -746,10 +746,6 @@ class Service(ABC):
     #: Whether the CONFIG of this service at the component layer is at the same time its
     #: SELECTION, so there is no separate on/off for it on a component. What follows from
     #: it, and when to declare it: ``instructions/services.md``.
-    #:
-    #: The sibling declaration is ``ServiceDefinition.selectable_per_component``, which
-    #: takes the same checkbox away for the opposite reason: there is no per-component
-    #: choice at all. ``offers_component_checkbox`` is where the two meet.
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
@@ -1625,8 +1621,7 @@ class Service(ABC):
 
         Read from the project's component definitions (that is where a component's
         ``services`` list lives), restricted to the components this deployment actually
-        rolls out. For a deployment-wide contribution that is nonetheless per component:
-        one manifest per ticking component instead of one selecting the whole deployment.
+        rolls out.
         """
         local: set[str] = {
             component.get("reference")

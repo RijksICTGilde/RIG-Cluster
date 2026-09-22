@@ -142,8 +142,6 @@ class TestSelectionLabels:
         assert selection_labels(ServiceType.SLEEP_MODE) == ["Geldt voor het hele project"]
 
     def test_sharing_is_a_second_chip_next_to_the_first(self) -> None:
-        # Postgres carries both facts, and the card must show both: every component ticks
-        # it for itself, and the ones that do share one database per deployment.
         assert selection_labels(ServiceType.POSTGRESQL_DATABASE) == [
             "Per component aan te zetten",
             "Gedeeld per deployment",

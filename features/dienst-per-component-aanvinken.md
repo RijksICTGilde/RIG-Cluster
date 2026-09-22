@@ -44,19 +44,12 @@ niet). `hidden` slaat alleen op de projectkaart.
 
 ## Twee declaraties, één vraag
 
-Twee verschillende feiten halen allebei hetzelfde vinkje weg:
-
-| declaratie | betekent | voorbeeld |
-|---|---|---|
-| `component_selection_follows_config` | er is wél een componentkeuze, maar die zit in het eigen configuratieveld met zijn "geen"-optie | image-registries |
-| `selectable_per_component = False` | er is geen componentkeuze; de dienst bepaalt zelf waar hij werkt | sleep-mode |
-
-Ze mogen niet samengevouwen worden: de eerste stuurt ook het leeggooien aan
-(`_prune_service_map_entry`, `ServiceAdapter.remove_service_config`) en het overslaan in
-`_strip_removed_services_from_components`, de tweede stuurt waar de manifestbijdrage zijn
-selectie leest. De picker stelt er één afgeleide vraag over,
-`offers_component_checkbox(service)` in `opi/services/catalog/base.py`, zodat er één plek
-is waar de twee feiten samenkomen.
+`component_selection_follows_config` haalt hetzelfde vinkje weg om de andere reden: daar
+is wél een keuze per component, maar die zit in het eigen configuratieveld. Ze mogen niet
+samengevouwen worden, want hun gevolgen elders verschillen. De picker stelt er één
+afgeleide vraag over, `offers_component_checkbox(service)` in
+`opi/services/catalog/base.py`, zodat er één plek is waar de twee feiten samenkomen.
+Beide declaraties naast elkaar, met wat er verder aan hangt: `instructions/services.md`.
 
 ## Gedeeld per deployment is een derde feit
 

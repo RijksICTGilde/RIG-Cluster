@@ -400,10 +400,6 @@ class ServiceDefinition:
     for itself where it works, so it gets no checkbox in the per-component services
     picker and its manifest contribution reads the PROJECT's services list. A default,
     because for most of the catalog the answer is obvious; the exceptions declare it.
-
-    Distinct from ``Service.component_selection_follows_config``, which also removes the
-    checkbox but says the opposite thing: there IS a per-component choice and it lives in
-    the service's own config field. ``instructions/services.md`` states the split.
     """
     shared_per_deployment: bool = False
     """Whether one provision of this service serves a whole deployment.

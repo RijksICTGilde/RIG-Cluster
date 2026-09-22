@@ -2107,8 +2107,8 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
     OpenAPI document, so a generated client learned nothing here while the per-service
     config endpoints did carry their schema.
 
-    Carries `kind`, the two selection flags, `hidden` and `requires` as well, so this list alone is
-    enough to *choose* a service -- which one a project may pick, which one the platform
+    Carries `kind`, the two selection flags, `hidden` and `requires` as well, so this list
+    alone is enough to *choose* a service -- which one a project may pick, which one the platform
     runs regardless, and what a service needs before it can be used. Applying it then
     only needs `GET /api/v2/services/{service_name}`.
     """
