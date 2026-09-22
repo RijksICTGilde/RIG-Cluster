@@ -33,6 +33,8 @@ from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get
 from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.forms.widgets.base import WidgetAdapter
 
@@ -58,6 +60,19 @@ class IdentityTranslator:
 
     def __call__(self, key: str) -> str:
         return key
+
+
+#: Herkenbaar en vertaalbaar-veilig: de vertaler laat een onbekende sleutel staan, dus een
+#: sonde komt er ongewijzigd uit. Zie ``FormRenderer.take_unrendered_errors``.
+_PROBE = "zad-probe-veld-"
+
+
+def _all_fields(fields: Iterable[FormField]) -> Iterator[FormField]:
+    """Elk veld in de boom, ook de rijen van een reeks."""
+    for field in fields:
+        yield field
+        if field.children:
+            yield from _all_fields(field.children)
 
 
 class FormRenderer:
@@ -325,18 +340,27 @@ class FormRenderer:
         lands on the GROUP path (``deployments[1]``), which is a container and never an
         input; that has now cost two invisible messages (RIG-Cluster#179).
 
-        A virtualized field answers to both its spellings: the map is keyed by the VIRTUAL
-        path while ``editable_to_form_field`` reads its errors under the real one, so a
-        group child would otherwise look undrawn.
+        Which paths are drawn is not derived from the paths but MEASURED: each one is
+        offered to the renderer as a unique probe message, and whatever comes back on a
+        field was drawn. Comparing paths cannot answer it -- a virtualized field is keyed
+        by its virtual spelling while its errors are read under the real one, and a
+        sequence keys only the sequence itself while every row child carries its own.
+        Reading the field tree the renderer builds is the only spelling-proof answer.
         """
-        from opi.forms.editables.editable import reverse_virtualize
-
-        drawn: set[str] = set()
-        for path, field in self._build_fields_from_editables(editables, yaml_data, None, edit_mode).items():
-            drawn.add(path)
-            if field.virtualize:
-                drawn.add(reverse_virtualize(field.path, field.virtualize))
-        return [msg for path in list(errors) if path not in drawn for msg in errors.pop(path)]
+        paths = list(errors)
+        probes = {path: [f"{_PROBE}{index}"] for index, path in enumerate(paths)}
+        drawn = {
+            message
+            for field in _all_fields(
+                self._build_fields_from_editables(editables, yaml_data, probes, edit_mode).values()
+            )
+            for message in field.errors
+        }
+        unrendered: list[str] = []
+        for index, path in enumerate(paths):
+            if f"{_PROBE}{index}" not in drawn:
+                unrendered.extend(errors.pop(path))
+        return unrendered
 
     def _build_fields_from_editables(
         self,
