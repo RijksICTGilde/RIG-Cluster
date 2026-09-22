@@ -1,5 +1,6 @@
 """Ontsleuteling loopt in het proces, niet via een fork van het age-binary."""
 
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 KLARE_TEKST = "een geheim\nmet twee regels"
+
+#: De vorm van de waarden die hier echt door lopen (een PAT uit een configmap), zonder er een te zijn.
+GEHEIM = "ghp_" + "z" * 36
 
 
 def _binary_versleutelt(klare_tekst: str, publieke_sleutel: str) -> str:
@@ -191,3 +195,39 @@ class TestRandenVanDeInvoer:
         assert is_age_encrypted(omrand)
         assert await decrypt_age_content(omrand, prive) == KLARE_TEKST
         assert decrypt_age_content_sync(omrand, prive) == KLARE_TEKST
+
+
+class TestGeenGeheimInDeUitvoer:
+    """Een ontsleutelde waarde hoort in geen enkele logregel en in geen foutmelding.
+
+    Beide staan in de CI-uitvoer van elke rode run, en een rode run is precies het moment
+    waarop iemand anders meekijkt.
+    """
+
+    @pytest.mark.asyncio
+    async def test_de_klare_tekst_komt_niet_in_de_logs(self, age_sleutelpaar, caplog):
+        publiek, prive = age_sleutelpaar
+        blok = _binary_versleutelt(GEHEIM, publiek)
+
+        with caplog.at_level(logging.DEBUG, logger="opi.utils.age"):
+            assert await decrypt_age_content(blok, prive) == GEHEIM
+            assert decrypt_age_content_sync(blok, prive) == GEHEIM
+
+        gelogd = "\n".join(r.getMessage() for r in caplog.records)
+        assert GEHEIM not in gelogd
+        assert prive not in gelogd
+
+    @pytest.mark.asyncio
+    async def test_een_mislukte_ontsleuteling_noemt_sleutel_noch_cijfertekst(self, age_sleutelpaar, caplog):
+        publiek, _ = age_sleutelpaar
+        andere = str(pyrage.x25519.Identity.generate())
+        blok = _binary_versleutelt(GEHEIM, publiek)
+
+        with caplog.at_level(logging.DEBUG, logger="opi.utils.age"):
+            with pytest.raises(Exception, match="Age decryption failed") as fout:
+                await decrypt_age_content(blok, andere)
+            assert decrypt_age_content_sync(blok, andere) is None
+
+        uitvoer = str(fout.value) + "\n".join(r.getMessage() for r in caplog.records)
+        assert andere not in uitvoer
+        assert blok.strip() not in uitvoer
