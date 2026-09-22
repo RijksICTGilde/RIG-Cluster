@@ -70,11 +70,7 @@ class TestAgePasswordDecryption:
         assert is_age_encrypted("") is False
 
     def test_decrypt_password_smart_sync_base64_age(self):
-        """Test decryption of base64+age password from configmap.
-
-        Ontsleutelen loopt in het proces, dus er is geen subprocess-aanroep meer om na te
-        bootsen; deze toets doet de echte ontsleuteling.
-        """
+        """Test decryption of base64+age password from configmap."""
         result = decrypt_password_smart_sync(self.encrypted_password, self.private_key)
 
         assert len(result) == 40
@@ -101,11 +97,7 @@ class TestAgePasswordDecryption:
         assert result == "simple_password"
 
     def test_configmap_password_integration(self):
-        """Beide opgeslagen vormen van hetzelfde geheim leveren dezelfde waarde op.
-
-        De configmap draagt de base64+age-vorm, met daarin het armored blok. Ze horen tot
-        op de letter hetzelfde te openen, ongeacht via welke ingang je binnenkomt.
-        """
+        """De base64+age-vorm uit de configmap en het armored blok erin openen hetzelfde."""
         configmap_password = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
 
         # Test decryption with key from security/key.txt

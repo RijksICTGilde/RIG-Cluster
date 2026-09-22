@@ -21,13 +21,8 @@ def get_global_private_key() -> str:
 
 
 def _decrypt_in_process(encrypted_content: str, private_key: str) -> str:
-    """Decrypt an age payload inside this process, without starting the age binary.
-
-    pyrage is a binding on the Rust implementation of age and reads both stored forms,
-    so blocks written by the binary open unchanged. Two things follow that the subprocess
-    route could not give: no fork per decrypted field (OPI has been OOMKilled by
-    subprocess fan-out before), and the private key stays in memory instead of being
-    written to a tempfile for the binary to read.
+    """Decrypt without starting the age binary: no fork per field, and the private key
+    stays in memory instead of in a tempfile.
     """
     identity = pyrage.x25519.Identity.from_str(private_key.strip())
     return pyrage.decrypt(encrypted_content.strip().encode(), [identity]).decode("utf-8").strip()
@@ -37,8 +32,7 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     """
     Decrypt age-encrypted content using the provided private key.
 
-    Stays async while nothing is awaited: every caller awaits it, and the signature is
-    what keeps them unchanged.
+    Stays async without awaiting anything: that is what keeps every caller unchanged.
 
     Args:
         encrypted_content: The age-encrypted content (including BEGIN/END markers)
