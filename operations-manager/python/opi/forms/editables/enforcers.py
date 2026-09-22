@@ -342,14 +342,11 @@ class DomainConfigEnforcer:
                 )
 
         # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
-        # veldvalidator krijgt het basisdomein niet mee. Een leeg basisdomein is hier geen
-        # "geen domein" maar de clusterstandaard, en dat is juist een van onze eigen
-        # zones: op ``actual_domain is None`` afgaan liet 'admin' daar gewoon door.
-        #
-        # Voor de goedkeuringscheck hieronder, want die heft bij een domein zonder
-        # allowlist-entry een niet-blokkerende FieldWarning en sluit de enforcer daarmee
-        # af. Dat is precies de stand waarin een eigen domein begint, en erachter stond
-        # deze check op 'admin.team.rijks.app' nooit aan de beurt.
+        # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
+        # basisdomein is de clusterstandaard en dus een eigen zone (op ``actual_domain is
+        # None`` afgaan liet 'admin' daar gewoon door), en dit moet VOOR de
+        # goedkeuringscheck hieronder, die bij een domein zonder allowlist-entry een
+        # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
         if subdomain and "{subdomain}" in template:
             reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
             is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
