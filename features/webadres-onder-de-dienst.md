@@ -191,8 +191,8 @@ Drie dingen die stil kapot waren en dit werk blokkeerden:
 brondeployment en sloot daarbij de vijf wortelsleutels uit (`subdomain`, `base-domain`,
 `domain-mode`, `domain-format`, `issuer`). Zodra die waarden onder de dienst staan is dat
 een no-op: ze reizen mee in het `services`-blok, dat als geheel gekopieerd wordt. Het adres
-wordt nu **na** de kopie verwijderd, met `clear_domain_name_settings()` — dezelfde
-autoriteit over de locatie als de lezers en schrijvers — en de door de aanroeper gevraagde
+wordt nu **na** de kopie verwijderd, met `clear_domain_name_settings()` (dezelfde
+autoriteit over de locatie als de lezers en schrijvers), en de door de aanroeper gevraagde
 instellingen worden daarna opnieuw geschreven, want de kopie liep er anders overheen. Een
 clone landt dus op het clusteradres, niet op de hostnamen van de bron. Merk op dat de clone
 ook `root-component` en `expose-component-on-bare-domain` laat vallen; die werden voorheen

@@ -16,15 +16,14 @@ De naamkant mag niet mee: dan claimen twee deployments dezelfde hostnaam, vraagt
 tijdelijke preview een certificaat aan voor het productiedomein, en hangt de preview aan de
 DNS-configuratie van de bron. `issuer`, `root-component` en `expose-component-on-bare-domain`
 staan aan die kant omdat ze alleen iets betekenen sámen met een basisdomein dat de kloon niet
-heeft: de issuer is gekozen vóór dat domein, en de andere twee worden alleen gelezen als er
-een `base-domain` staat.
+heeft; `DOMAIN_SHAPE_SETTINGS` noemt per instelling waar dat gemeten is.
 
 `domain-format` noemt geen hostnaam. Het zegt of een deployment één adres publiceert of één
 per component, en twee deployments kunnen dezelfde waarde dragen zonder te botsen.
 
 De splitsing staat in `opi/services/catalog/publish_on_web/domain_config.py`, naast
 `DomainSetting`: `DOMAIN_SHAPE_SETTINGS` wordt opgesomd, `DOMAIN_NAME_SETTINGS` is de rest.
-Een instelling die erbij komt valt dus vanzelf aan de naamkant, en dat is de veilige kant.
+Een instelling die erbij komt valt dus vanzelf aan de naamkant.
 
 ## Waarom de vorm wel mee moet
 
@@ -70,10 +69,10 @@ hebben?).
 
 ## Toetsen
 
-- `tests/test_kloon_erft_de_vorm_van_het_webadres.py` — de vorm reist mee, de naam niet, en
+- `tests/test_kloon_erft_de_vorm_van_het_webadres.py`: de vorm reist mee, de naam niet, en
   de kloon publiceert evenveel hostnamen als zijn bron. Die laatste is de assertie die
   `asses-k2n` had gevangen: niet het veld maar de uitkomst.
-- `tests/test_publish_on_web_domain_config.py` — de splitsing dekt elke instelling precies
+- `tests/test_publish_on_web_domain_config.py`: de splitsing dekt elke instelling precies
   één keer, en `clear_domain_name_settings` laat de vorm staan.
-- `tests/test_domain_format.py` — een formaat is zelfdragend precies wanneer zijn hostnaam
+- `tests/test_domain_format.py`: een formaat is zelfdragend precies wanneer zijn hostnaam
   zonder naam overeind blijft.

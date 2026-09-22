@@ -462,13 +462,10 @@ class TestDomainEditablesShowWhen:
 
 
 class TestSelfContainedFormats:
-    """The formats a deployment can carry without naming a domain of its own.
+    """The formats a deployment can carry without naming a domain of its own (RC-217).
 
-    A clone keeps the shape of its source's web address but never its name (RC-217), so
-    this set decides which shapes survive that. Measured on the rendered hostname rather
-    than on the list, because it is the hostname that breaks: an empty ``{subdomain}``
-    leaves a dangling separator, and an extra label is outside the single-label wildcard
-    certificate.
+    Measured on the rendered hostname rather than on the list, because it is the hostname
+    that breaks.
     """
 
     @pytest.mark.parametrize("domain_format", sorted(DOMAIN_FORMAT_TEMPLATES))
