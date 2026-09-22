@@ -96,7 +96,8 @@ for node in $nodes; do
     if ! grep -qE '^[[:space:]]*config_path[[:space:]]*=' <<<"$config"; then
         echo "[kind-registry] node $node leest geen /etc/containerd/certs.d." >&2
         echo "[kind-registry] De kind-config van dit cluster mist containerdConfigPatches." >&2
-        echo "[kind-registry] Voeg ze toe (docs/sandbox-kind-registry.md) en bouw het cluster opnieuw." >&2
+        echo "[kind-registry] Bijwerken zonder herbouw kan: docs/sandbox-kind-registry.md," >&2
+        echo "[kind-registry] sectie 'Een bestaand cluster bijwerken zonder herbouw'." >&2
         exit 4
     fi
     docker exec "$node" mkdir -p "$REGISTRY_DIR"
