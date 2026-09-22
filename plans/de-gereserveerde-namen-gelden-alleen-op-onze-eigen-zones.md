@@ -166,6 +166,10 @@ Deze wijziging maakt een controle LOSSER. Dat is precies het soort wijziging dat
    Los het basisdomein in dat blok daarom op met `resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))` (`opi/utils/naming.py:64`), en laat `actual_domain` zelf ongemoeid: dat is wat de goedkeurings- en beschikbaarheidschecks eronder nodig hebben. `apply_domain_approval_fallback` (`opi/connectors/subdomain.py`) heeft een comment over precies deze val;
 4. `ux-onderzoeken.rijksapps.nl` van `ug-zxt` blijft een EIGEN domein. Dit valt om bij een beheerlijst die de ouder `rijksapps.nl` noemt in plaats van de postfix-zone.
 
+**Waar het blok staat, bepaalt of de poort iets betekent.** Het goedkeuringsblok erboven heft een `FieldWarning` zodra een domein geen `allowed-domains`-regel heeft en het aanvraagvinkje uit staat, en een `FieldWarning` is een exception: de enforcer stopt daar en alles erna komt niet aan de beurt. De reserveringscheck hoort dus VOOR dat blok, direct na de punten-check. Staat hij erachter, dan gelden poort 2 en poort 3 alleen voor een al goedgekeurd domein, en dat is precies de stand waarin een eigen domein nooit begint.
+
+**En de toetsen moeten de ONgoedgekeurde stand rijden.** De helper `_yaml()` in `tests/test_domain_restrictions.py` zet het domein op `status: approved`. Wie zijn poortgevallen alleen daarmee schrijft, toetst de tak die niet het probleem is, en krijgt groen om de verkeerde reden. Elk van de vier gevallen hierboven hoort er in beide standen te staan.
+
 En één eigenschap die geen test met een getal heeft maar wel de reden is dat de tekst zo luidt: op een platformdomein blijft de melding generiek (`Subdomein 'x' is niet beschikbaar`), zonder het woord "gereserveerd" en zonder onderscheid met "al in gebruik". Wie die tekst specifieker maakt, maakt de lijst aftastbaar.
 
 ## De toets
