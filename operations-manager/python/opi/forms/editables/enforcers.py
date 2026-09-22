@@ -269,7 +269,7 @@ class DomainConfigEnforcer:
                 bare_config = get_project_allowed_domain_config(value, actual_domain)
                 bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
                 if bare_status is None and dep.get("_request-domain"):
-                    pass  # De aanvraag is onderweg; DomainRequestHook schrijft hem bij het opslaan
+                    pass  # DomainRequestHook schrijft de aanvraag bij het opslaan
                 elif bare_status == "requested":
                     pass
                 elif bare_status == "denied":

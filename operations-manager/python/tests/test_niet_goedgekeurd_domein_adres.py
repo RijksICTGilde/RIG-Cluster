@@ -170,8 +170,6 @@ def test_een_goedgekeurd_domein_levert_gewoon_het_eigen_adres(clusteradres: None
 
 @pytest.mark.parametrize("domeinstatus", [None, "requested", "denied"])
 def test_de_terugval_logt_welk_adres_vervalt(caplog: pytest.LogCaptureFixture, domeinstatus: str | None) -> None:
-    """Wie in de logs zoekt waarom een deployment op het clusteradres antwoordt, zoekt op
-    het adres dat hij verwachtte."""
     with caplog.at_level(logging.WARNING, logger="opi.utils.naming"):
         formaat, domein = apply_domain_approval_fallback(
             "component.subdomain",

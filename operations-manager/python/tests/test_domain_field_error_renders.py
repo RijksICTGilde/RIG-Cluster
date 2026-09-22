@@ -282,12 +282,7 @@ class TestEenRijFoutInEenReeksBlijftStaan:
 
 
 class TestDeWizardstapZetHemInDeBalk:
-    """Dezelfde melding, op de andere route die hem moet tonen.
-
-    De aanmaakwizard en de bewerkmodal lopen allebei door ``take_unrendered_errors``; de
-    vormtoets die hier stond ("pad eindigt op ``]``") liet een virtueel dienstpad zonder
-    veld gewoon verdwijnen.
-    """
+    """Dezelfde melding als hierboven, op de andere route die hem moet tonen."""
 
     @staticmethod
     def _submission() -> dict:

@@ -138,13 +138,10 @@ def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str], 
     "Not a platform domain" alone is therefore only half the rule. Both halves live here
     so both publication call sites (bare-domain registration and the apex ingress) refuse
     for the same reason, in the same words. The form enforcer does NOT call this function:
-    since RC-216 it runs its own per-status version, which lets a pending request through
-    (refusing there had no exit: the request that would resolve it is only written at
-    PRE_SAVE) and refuses ``denied`` only when ``denied_blocks`` is on, so the save gate
-    still accepts a withdrawn approval. What both do share are the messages,
-    via ``BARE_DOMAIN_PLATFORM_MESSAGE`` and ``bare_domain_not_owned_message``; widen the
-    rule here and ``DomainConfigEnforcer`` needs the same change, or the form silently
-    lags behind.
+    since RC-216 it runs its own per-status version and shares only the messages
+    (``BARE_DOMAIN_PLATFORM_MESSAGE``, ``bare_domain_not_owned_message``). Widen the rule
+    here and ``DomainConfigEnforcer`` needs the same change, or the form silently lags
+    behind.
 
     The supported set is passed in rather than looked up here: the caller already knows
     which cluster it is deciding for.
