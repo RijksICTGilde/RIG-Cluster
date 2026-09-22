@@ -88,10 +88,8 @@ class TestEnforcerRefusesBareDomainOnPlatformDomain:
     async def test_the_spelling_does_not_unlock_it_either(self):
         """Het platformdomein met hoofdletters is hetzelfde domein.
 
-        Het formulier vergelijkt zelf met de lijst sinds RC-216; daarvoor deed
-        ``validate_bare_domain_allowed`` dat. Zonder het kleinmaken degradeert de harde
-        weigering tot de aanvraagmelding, en dan is de apex van het platformdomein aan te
-        vragen."""
+        Zonder het kleinmaken degradeert de harde weigering tot de aanvraagmelding, en dan
+        is de apex van het platformdomein aan te vragen."""
         config = {**_PUT_SHAPE, "base-domain": "RijksApp.DEV"}
         with (
             patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
@@ -127,9 +125,7 @@ class TestEnforcerRefusesBareDomainOnPlatformDomain:
         availability.assert_awaited_once()
 
     async def test_a_bare_domain_another_project_holds_lands_on_the_checkbox(self):
-        """De apex is al van een ander project, en dat hoort de gebruiker bij het vinkje.
-
-        Deze weigering ging als gewone ``ValueError`` naar het groepspad, dezelfde weg
+        """Deze weigering ging als gewone ``ValueError`` naar het groepspad, dezelfde weg
         waarlangs de melding uit RIG-Cluster#179 onzichtbaar bleef."""
         bezet = AsyncMock()
         bezet.get_by_subdomain = AsyncMock(return_value={"project_name": "een-ander"})
