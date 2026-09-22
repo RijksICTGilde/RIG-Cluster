@@ -12,7 +12,7 @@ ZAD restricts which subdomains and custom domains can be used in project deploym
 
 ## Subdomain Restrictions
 
-All platform domains (e.g., `rijks.app`, `rijksapps.nl`) have `restricted_subdomains: true` in the cluster configuration. When a domain is restricted, projects must explicitly list which subdomains they are allowed to use.
+All platform domains (e.g., `rijks.app`, `rijksapp.nl`) have `restricted_subdomains: true` in the cluster configuration. When a domain is restricted, projects must explicitly list which subdomains they are allowed to use.
 
 ### Configuration
 
