@@ -75,6 +75,20 @@ class TestUitwisselbaarMetHetBinary:
         assert gelezen.stdout.decode() == KLARE_TEKST
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
 
+    @pytest.mark.asyncio
+    async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, sleutelpaar):
+        """Een detailpagina opent per component het ``user-env-vars``-blok in een keer.
+
+        Niet-ascii loopt hier over ``decode("utf-8")``; het regeleinde aan het eind valt
+        weg, want beide varianten strippen hun uitkomst, ook de oude.
+        """
+        publiek, prive = sleutelpaar
+        blok = _binary_versleutelt("WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9\n", publiek)
+
+        assert (
+            await decrypt_age_content(blok, prive) == "WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9"
+        )
+
     def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, sleutelpaar):
         """De meting waar de versleutelkant later op kan rusten.
 
@@ -163,3 +177,35 @@ class TestFoutgedrag:
         assert decrypt_age_content_sync(blok, "AGE-SECRET-KEY-GEENGELDIGESLEUTEL") is None
         assert decrypt_age_content_sync("geen age-blok", "AGE-SECRET-KEY-GEENGELDIGESLEUTEL") is None
         assert decrypt_age_content_sync("", "iets") is None
+
+
+class TestRandenVanDeInvoer:
+    """De twee ``strip()``-aanroepen in ``_decrypt_in_process``: pyrage is strenger dan het binary."""
+
+    @pytest.mark.asyncio
+    async def test_sleutel_met_een_regeleinde_erachter_opent(self, sleutelpaar):
+        """``age -d -i`` opent een sleutelbestand met een regeleinde erachter (gemeten: exit 0).
+
+        De sleutel komt uit een k8s-secret of een omgevingsvariabele, dus die vorm komt
+        in productie voor; ``Identity.from_str`` weigert hem met ``IdentityError``.
+        """
+        publiek, prive = sleutelpaar
+        blok = _binary_versleutelt(KLARE_TEKST, publiek)
+
+        assert await decrypt_age_content(blok, prive + "\n") == KLARE_TEKST
+        assert decrypt_age_content_sync(blok, prive + "\n") == KLARE_TEKST
+
+    @pytest.mark.asyncio
+    async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, sleutelpaar):
+        """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort
+        doorlaat moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar.
+
+        Wijder dan het binary, dat op een blok met witruimte ervoor afketste met
+        "unexpected intro".
+        """
+        publiek, prive = sleutelpaar
+        omrand = "\n  " + _binary_versleutelt(KLARE_TEKST, publiek).strip() + "\n\n"
+
+        assert is_age_encrypted(omrand)
+        assert await decrypt_age_content(omrand, prive) == KLARE_TEKST
+        assert decrypt_age_content_sync(omrand, prive) == KLARE_TEKST
