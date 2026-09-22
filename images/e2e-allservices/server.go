@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -242,20 +243,20 @@ func renderHTML(cache *resultCache, query url.Values, chat *chatOutcome) string 
 }
 
 // renderVlamSection is the "Test VLAM" block: empty unless the vlam service is bound.
-// The model field is pre-filled with what the last probe round saw, so the common case
-// is one click. The token field is a password field and never gets a value back - not
-// even after a POST that used it.
+// The model is picked from a list rather than typed; see renderModelField for why none
+// of them is offered as a default. The token field is a password field and never gets a
+// value back - not even after a POST that used it.
 func renderVlamSection(cache *resultCache, chat *chatOutcome) string {
 	if !vlamBound() {
 		return ""
 	}
 	endpoint := strings.TrimRight(firstEnv("VLAM_API_URL"), "/") + vlamChatPath
 
-	model, question := vlamLastModel(cache), defaultChatQuestion
+	question, chosen := defaultChatQuestion, ""
 	outcome := ""
 	if chat != nil {
 		if chat.Model != "" {
-			model = chat.Model
+			chosen = chat.Model
 		}
 		if chat.Question != "" {
 			question = chat.Question
@@ -273,15 +274,52 @@ func renderVlamSection(cache *resultCache, chat *chatOutcome) string {
 <h2>Test VLAM</h2>
 <p class="meta">Doet echt een chat-completion via <code>%s</code>, met het token dat je hier invult.
 Dat token gaat alleen mee in die ene aanroep: het wordt niet opgeslagen, niet gelogd en niet teruggetoond.
-De vraag en het antwoord komen alleen op deze pagina, niet in de log.</p>
+De vraag en het antwoord komen alleen op deze pagina, niet in de log.
+De keuzelijst toont de modellen die VLAM noemt, niet de modellen die jouw token opent: welke dat
+zijn weet alleen VLAM.</p>
 <form method="post" action="/vlam-chat">
  <p><label for="vlam-token">Token</label>
   <input id="vlam-token" type="password" name="token" size="40" autocomplete="off" required></p>
  <p><label for="vlam-model">Model</label>
-  <input id="vlam-model" type="text" name="model" value="%s" size="40" required></p>
+  %s</p>
  <p><label for="vlam-question">Vraag</label>
   <input id="vlam-question" type="text" name="question" value="%s" size="40" required></p>
  <button type="submit">Stel de vraag</button>
 </form>%s`,
-		html.EscapeString(endpoint), html.EscapeString(model), html.EscapeString(question), outcome)
+		html.EscapeString(endpoint), renderModelField(vlamModels(cache), chosen),
+		html.EscapeString(question), outcome)
+}
+
+// renderModelField is a dropdown of exactly the models the last probe round saw, with
+// NOTHING pre-selected. The probe carries no credential, so it learns which models EXIST
+// and never which ones a given token opens. Offering the first of the list as a default
+// read as a recommendation the probe cannot make: on 2026-09-21 that default was
+// vlam-llm-medium-vast, which no key opened, so the first thing a consumer saw was a 401
+// that looks like a broken platform instead of a wrong model choice.
+//
+// Falls back to a free text field when the probe has not run yet or VLAM listed nothing,
+// so the form stays usable instead of offering an empty dropdown.
+func renderModelField(models []string, chosen string) string {
+	if len(models) == 0 {
+		return fmt.Sprintf(`<input id="vlam-model" type="text" name="model" value="%s" size="40" `+
+			`required placeholder="de probe kent nog geen modellen">`, html.EscapeString(chosen))
+	}
+
+	var b strings.Builder
+	b.WriteString(`<select id="vlam-model" name="model" required>`)
+	b.WriteString(`<option value="" disabled`)
+	// Also when a posted model is no longer in the list: then nothing else can be selected.
+	if !slices.Contains(models, chosen) {
+		b.WriteString(` selected`)
+	}
+	b.WriteString(`>Kies een model</option>`)
+	for _, m := range models {
+		b.WriteString(`<option value="` + html.EscapeString(m) + `"`)
+		if m == chosen {
+			b.WriteString(` selected`)
+		}
+		b.WriteString(`>` + html.EscapeString(m) + `</option>`)
+	}
+	b.WriteString(`</select>`)
+	return b.String()
 }

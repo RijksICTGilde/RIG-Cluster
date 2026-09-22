@@ -59,8 +59,15 @@ credential, so it says nothing about whether a project's own token opens the doo
 and whether a model actually answers. That last stretch needs something only a
 human has, so it hangs off a manual **"Test VLAM"** form (`POST /vlam-chat`) when
 the vlam service is bound: one real, non-streaming chat completion to
-`{VLAM_API_URL}/v1/chat/completions` with a token, a model (pre-filled with what
-the last probe round saw) and a question you type, and the answer on the page.
+`{VLAM_API_URL}/v1/chat/completions` with a token, a model **picked from a dropdown**
+of exactly what the last probe round saw, and a question you type, and the answer on
+the page. Nothing in that list is pre-selected, and that is the point: the probe holds
+no credential, so it learns which models EXIST and never which ones a given token
+opens. Offering the first of the list read as a recommendation it cannot make. On
+2026-09-21 that default was `vlam-llm-medium-vast`, which no key opened, so the first
+thing a consumer saw was a 401 that looks like a broken platform instead of a wrong
+model choice. Without a probe round the field falls back to free text, because an empty
+dropdown is a dead end.
 The token is used for that one request and then dropped - never stored, never
 logged, never rendered back, not even into the field it came from - and the
 question and answer stay off the log too, which is why this one answers the POST

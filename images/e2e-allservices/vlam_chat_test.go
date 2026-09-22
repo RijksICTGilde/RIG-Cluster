@@ -360,15 +360,48 @@ func TestThePageCarriesTheFormOnlyWhenTheServiceIsBound(t *testing.T) {
 	}
 }
 
-func TestTheModelFieldIsPrefilledFromTheLastProbeRound(t *testing.T) {
-	// One click for the common case: the probe already learned a model name that works.
+func TestTheModelFieldOffersWhatTheProbeSawAndPicksNothing(t *testing.T) {
+	// The probe carries no credential, so it learns which models EXIST and never which
+	// ones this caller's token opens. Pre-selecting one reads as a recommendation it
+	// cannot make, and lands the caller in a 401 that looks like a broken platform.
 	t.Setenv("VLAM_API_URL", "http://vlam.invalid")
 	cache := newResultCache()
 	cache.set(Result{ID: vlamProbeTargetID, Kind: "vlam", Bound: true, OK: boolp(true),
-		Detail: map[string]any{"first_model": "vlam-stub"}})
+		Detail: map[string]any{"model_ids": []string{"vlam-stub", "vlam-stub-2"}}})
 
-	if !strings.Contains(renderHTML(cache, nil, nil), `value="vlam-stub"`) {
-		t.Error("expected the model from the last probe round to be pre-filled")
+	page := renderHTML(cache, nil, nil)
+
+	for _, want := range []string{`<option value="vlam-stub">`, `<option value="vlam-stub-2">`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("expected %s in the dropdown, got %q", want, page)
+		}
+	}
+	if !strings.Contains(page, `<option value="" disabled selected>`) {
+		t.Error("expected the placeholder to be the selected option")
+	}
+}
+
+func TestThePostedModelStaysSelected(t *testing.T) {
+	// After a failed attempt the page redraws; having to pick the model again would be
+	// the second annoyance on top of the first.
+	t.Setenv("VLAM_API_URL", "http://vlam.invalid")
+	cache := newResultCache()
+	cache.set(Result{ID: vlamProbeTargetID, Kind: "vlam", Bound: true, OK: boolp(true),
+		Detail: map[string]any{"model_ids": []string{"vlam-stub", "vlam-stub-2"}}})
+
+	page := renderHTML(cache, nil, &chatOutcome{Model: "vlam-stub-2", Err: "401"})
+
+	if !strings.Contains(page, `<option value="vlam-stub-2" selected>`) {
+		t.Errorf("expected the posted model to stay selected, got %q", page)
+	}
+}
+
+func TestTheModelFieldFallsBackToTextWithoutAProbeRound(t *testing.T) {
+	// An empty dropdown is a dead end; a text field still lets someone try a name.
+	t.Setenv("VLAM_API_URL", "http://vlam.invalid")
+
+	if !strings.Contains(renderHTML(newResultCache(), nil, nil), `<input id="vlam-model" type="text"`) {
+		t.Error("expected a text field when the probe has not run yet")
 	}
 }
 
