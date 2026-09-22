@@ -37,8 +37,7 @@ class SleepModeService(Service):
         help_template="sleep_mode/help.md",
         icon="klok",
         color="donkerblauw",
-        # De dienst bepaalt zelf met ``match:`` welke deployments slapen; per component
-        # valt er niets te kiezen.
+        # Per component valt er niets te kiezen; de reikwijdte zit in ``match`` hieronder.
         selectable_per_component=False,
         # Selectable in the wizard with its own project-level config section
         # (SleepModeService.config_form_section). A cluster-wide default still

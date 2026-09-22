@@ -221,8 +221,9 @@ skip in `_strip_removed_services_from_components`; the second decides where the 
 contribution reads its selection. The picker asks one derived question,
 `offers_component_checkbox(service)` (`catalog/base.py`), so there is one place where the
 two meet. `tests/test_dienst_kiest_zijn_componentvinkje.py` holds the catalogue to it:
-no component-layer config without a component checkbox, and no checkbox taken away from a
-service that carries such config.
+`selectable_per_component = False` means no config on the component layers, and a service
+that carries such config keeps the default. image-registries does, and loses its checkbox
+to the other declaration.
 
 A third, separate fact is `shared_per_deployment`: one provision serves a whole deployment,
 so every component of it that takes the service gets the same database, bucket or cache. It
@@ -323,8 +324,9 @@ definition with `hidden=True`** (`providers.py:116`). So:
   file, by an API call, or by a cluster-wide default the service owns itself.
 
 `hidden=True` is a legitimate choice (`platform` is implicit, `namespace-redis` is a variant
-picked by policy), but it is a *decision*, not a default you inherit. If a user is supposed to enable your service,
-`hidden` must stay `False` and you owe the user a configuration screen as well.
+picked by policy), but it is a *decision*, not a default you inherit. If a user is supposed
+to enable your service, `hidden` must stay `False` and you owe the user a configuration
+screen as well.
 
 The card itself is rendered by the `service_block` macro in
 `opi/templates_lotc/widgets/_macros.html.j2` - icon, name, description and help button - and the

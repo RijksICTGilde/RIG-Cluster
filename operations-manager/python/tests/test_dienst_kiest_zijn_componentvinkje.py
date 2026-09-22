@@ -1,14 +1,8 @@
 """Een dienst zegt zelf of je hem per component aanvinkt (RC-213).
 
-De componentkeuze toonde bijna alles wat het project had aangezet. Ze stelde een vraag,
-``component_selection_follows_config``, en die dekt precies een geval: image-registries.
-Voor de rest gold "staat het in de projectlijst, dan staat het in de lijst", en dat gaf
-vinkjes die aantoonbaar niets deden: sleep-mode bepaalt met ``match:`` zelf welke
-deployments slapen, een uitnodiging geldt voor het Keycloak-realm van het project, en de
-componentkeuze van cross-domain-access zit in de regel zelf (``to.component``).
-
 De grendel hieronder is het punt van de hele wijziging. Zonder hem staat dit over een half
-jaar opnieuw scheef, want de standaard is "wel een vinkje" en niemand komt er langs.
+jaar opnieuw scheef, want de standaard is "wel een vinkje" en niemand komt er langs. Wat er
+scheef stond en waarom: ``features/dienst-per-component-aanvinken.md``.
 """
 
 from __future__ import annotations
