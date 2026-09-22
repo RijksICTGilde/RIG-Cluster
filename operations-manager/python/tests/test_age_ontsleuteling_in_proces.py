@@ -1,16 +1,4 @@
-"""Ontsleuteling loopt in het proces, niet via een fork van het age-binary.
-
-Wat hier bewaakt wordt:
-
-1. **Uitwisselbaarheid met het binary.** Bestaande projectbestanden en SOPS-bestanden
-   zijn met `age` geschreven, en OPI schrijft nog steeds met `age`. Beide richtingen
-   worden gemeten, zodat een blok van de ene kant altijd door de andere te lezen is.
-2. **Er start geen subprocess meer op het leespad.** Dat is het punt van de wijziging:
-   een fork per veld is wat OPI eerder OOMKilled heeft gekregen. De grendel zet
-   `create_subprocess_exec` en `subprocess.run` op ontploffen.
-3. **De private sleutel gaat niet naar schijf.** Zonder binary is er geen sleutelbestand
-   meer nodig; `tempfile.NamedTemporaryFile` mag dus niet worden aangeraakt.
-"""
+"""Ontsleuteling loopt in het proces, niet via een fork van het age-binary."""
 
 import shutil
 import subprocess
@@ -88,12 +76,10 @@ class TestUitwisselbaarMetHetBinary:
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
 
     def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, sleutelpaar):
-        """De meting waar het plan de versleutelkant op wacht.
+        """De meting waar de versleutelkant later op kan rusten.
 
-        De versleutelkant is hier niet omgezet (pyrage 1.4.0 kent geen armor-uitvoer, en
-        de opgeslagen vorm is armored). Deze toets legt vast dat de bibliotheek wel
-        uitwisselbaar is met het binary, zodat die stap later op een meting rust en niet
-        op een aanname.
+        Die kant is hier niet omgezet: pyrage 1.4.0 kent geen armor-uitvoer en de
+        opgeslagen vorm is armored.
         """
         publiek, prive = sleutelpaar
         blok = pyrage.encrypt(KLARE_TEKST.encode(), [pyrage.x25519.Recipient.from_str(publiek)])

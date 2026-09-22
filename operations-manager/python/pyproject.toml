@@ -74,10 +74,8 @@ dependencies = [
     "opentelemetry-instrumentation-logging>=0.48b0",
     "jsonschema>=4.26.0",
     "starlette==0.50.0",
-    # Binding op de Rust-implementatie van age. Ontsleutelen loopt hiermee in het proces
-    # in plaats van via een fork van het age-binary per veld; zie
-    # features/age-ontsleuteling-in-proces.md. Het binary blijft nodig voor versleutelen
-    # en voor SOPS.
+    # Ontsleutelen loopt hiermee in het proces in plaats van via een fork van het
+    # age-binary per veld; zie features/age-ontsleuteling-in-proces.md.
     "pyrage>=1.4.0",
 ]
 
