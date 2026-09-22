@@ -341,6 +341,21 @@ class DomainConfigEnforcer:
                     f"Kies een ander URL-formaat of een ander domein."
                 )
 
+        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
+        # veldvalidator krijgt het basisdomein niet mee. Een leeg basisdomein is hier geen
+        # "geen domein" maar de clusterstandaard, en dat is juist een van onze eigen
+        # zones: op ``actual_domain is None`` afgaan liet 'admin' daar gewoon door.
+        #
+        # Voor de goedkeuringscheck hieronder, want die heft bij een domein zonder
+        # allowlist-entry een niet-blokkerende FieldWarning en sluit de enforcer daarmee
+        # af. Dat is precies de stand waarin een eigen domein begint, en erachter stond
+        # deze check op 'admin.team.rijks.app' nooit aan de beurt.
+        if subdomain and "{subdomain}" in template:
+            reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
+            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
+            if not is_valid and error_msg:
+                raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
+
         # Check domain approval for any non-platform domain (a domain not in the
         # cluster's supported set), whether it arrived via the wizard's custom
         # input ("__custom__") or as a literal base-domain on an API upsert.
@@ -374,16 +389,6 @@ class DomainConfigEnforcer:
                 else:
                     warning = f"Gebruik van het domein '{actual_domain}' is op aanvraag."
                     raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
-
-        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
-        # veldvalidator krijgt het basisdomein niet mee. Een leeg basisdomein is hier geen
-        # "geen domein" maar de clusterstandaard, en dat is juist een van onze eigen
-        # zones: op ``actual_domain is None`` afgaan liet 'admin' daar gewoon door.
-        if subdomain and "{subdomain}" in template:
-            reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
-            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
-            if not is_valid and error_msg:
-                raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
