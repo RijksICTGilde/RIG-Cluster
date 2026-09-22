@@ -1,7 +1,10 @@
 """Tests for scripts/sops_rotation.py: the round over the SOPS files and the loose env values.
 
-Three properties carry the whole cutover, and a "it ran" check catches none of them:
+Four properties carry the whole cutover, and a "it ran" check catches none of them:
 
+* a converted SOPS file opens with B, no longer opens with A, and its ciphertext CHANGED -- the
+  third is what separates ``sops rotate`` from ``sops updatekeys``, which leaves the data key
+  in place;
 * the plan tells "to do" from "already done" from "broken" by MEASURING, which is what makes a
   second run a no-op rather than a failure on the fingerprint;
 * the fingerprint covers the same SET of fields before and after, or the comparison invents
@@ -9,31 +12,75 @@ Three properties carry the whole cutover, and a "it ran" check catches none of t
 * a skipped file makes the final check fail by name, and the count has to add up across BOTH
   fingerprints (this repo's and the projects one), not just one.
 
-The env-line side is exercised on real ciphertext; ``sops`` itself is only needed for the tests
-marked as such, and they skip without the binary.
+Both halves run on real ciphertext, made by the encryptor OPI itself uses. ``sops`` is needed
+only for the SOPS half, so those tests carry ``needs_sops`` and skip without the binary.
 """
 
 from __future__ import annotations
 
 import base64
+import re
 import shutil
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
+import yaml
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
-from opi.utils.sops import generate_sops_key_pair
+from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import sops_rotation as tool  # noqa: E402
-from key_rotation import Fingerprint, opens_with, sha256_of  # noqa: E402
+from key_rotation import (  # noqa: E402
+    ConversionFailed,
+    Fingerprint,
+    env_fields,
+    opens_with,
+    sha256_of,
+    sops_files_for,
+    sops_plaintext,
+    sops_recipients,
+    sops_rotate,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
+
+#: The SOPS half of the round needs the binary itself. The env-line half does not, so it is a
+#: marker per test rather than a second module-level skip.
+needs_sops = pytest.mark.skipif(shutil.which("sops") is None, reason="requires the sops binary")
+
+#: Every ENC[...] value in a SOPS file. ``sops rotate`` mints a new data key, so these must all
+#: differ afterwards; ``sops updatekeys`` would leave them byte-for-byte the same.
+_ENC_VALUE = re.compile(r"ENC\[[^\]]*\]")
+
+
+def _sops_file(directory: Path, name: str, body: str, public_key: str) -> Path:
+    """A real SOPS file for one recipient, made by the same encryptor OPI itself uses."""
+    (directory / f"{name}.to-sops.yaml").write_text(body)
+    encrypt_to_sops_files(str(directory), public_key)
+    return directory / f"{name}.sops.yaml"
+
+
+def _encrypted_values(path: Path) -> list[str]:
+    return _ENC_VALUE.findall(path.read_text())
+
+
+def _selecting_from(tree: Path) -> AbstractContextManager[Any]:
+    """Point the tool's file selection at a temporary tree, keeping the real recipient match.
+
+    Patching the SELECTION and not the result: the recipient comparison itself stays live, so a
+    round that stopped honouring it still goes red.
+    """
+    return patch.object(tool, "sops_files_for", side_effect=lambda _tree, public: sops_files_for(tree, public))
 
 
 @pytest.fixture(autouse=True)
@@ -253,13 +300,27 @@ async def test_the_final_check_fails_when_the_count_does_not_match(tmp_path: Pat
     assert not check.clean
 
 
-def test_renaming_is_a_no_op_when_the_keys_already_sit_in_place(capsys: pytest.CaptureFixture) -> None:
-    """The repo references security/key.txt everywhere, so the name is the migration."""
-    tool.CANONICAL_OLD.parent.mkdir(parents=True, exist_ok=True)
-    if not tool.CANONICAL_OLD.is_file() or not tool.CANONICAL_NEW.is_file():
-        pytest.skip("no local security/ keys to check the no-op path against")
-    tool.rename_keys(tool.CANONICAL_OLD, tool.CANONICAL_NEW, yes=True)
+def test_renaming_is_a_no_op_when_the_keys_already_sit_in_place(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The repo references security/key.txt everywhere, so the name is the migration.
+
+    Running this against the real ``security/`` made it skip on every machine that has no keys
+    there, which is every machine running CI -- so the no-op path was never measured. The fixed
+    names are patched to a temporary pair instead, the way the two tests below do it.
+    """
+    target_old = tmp_path / "security" / "old_key.txt"
+    target_new = tmp_path / "security" / "key.txt"
+    target_old.parent.mkdir()
+    target_old.write_text("old\n")
+    target_new.write_text("new\n")
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", target_old),
+        patch.object(tool, "CANONICAL_NEW", target_new),
+    ):
+        tool.rename_keys(target_old, target_new, yes=True)
+
     assert "already sit under their fixed names" in capsys.readouterr().out
+    assert (target_old.read_text(), target_new.read_text()) == ("old\n", "new\n")
 
 
 def test_renaming_moves_both_files_into_place(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
@@ -509,3 +570,331 @@ async def test_the_final_check_walks_this_repos_own_project_file(tmp_path: Path)
     assert check.counted == 1
     assert not check.clean
     assert check.still_opens_with_old[0].endswith("#repositories[0].password")
+
+
+# ---------------------------------------------------------------------------
+# the SOPS files themselves: the first of the four places, and the one the task is named after
+# ---------------------------------------------------------------------------
+
+
+SECRET_BODY = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: demo\nstringData:\n  password: hunter2\n"
+
+
+@needs_sops
+def test_sops_rotate_moves_the_file_to_the_new_recipient_and_mints_a_new_data_key(tmp_path: Path) -> None:
+    """The plan's verify clause for the conversion: B opens it, A does not, ciphertext changed.
+
+    The third assertion is the one that picks ``rotate`` over ``updatekeys``. SOPS encrypts the
+    content with a data key and encrypts only that data key per recipient: ``updatekeys`` swaps
+    the recipients and leaves the data key alone, so the ENC[...] values stay byte-for-byte the
+    same and anyone who once held A can still open the file with the data key out of an older
+    copy. ``rotate`` mints a new data key, which is why every value here has to differ.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
+    ciphertext_before = _encrypted_values(path)
+    assert ciphertext_before
+
+    sops_rotate(path, old_public, new_public, old_private)
+
+    assert sops_recipients(path) == [new_public]
+    assert "hunter2" in (sops_plaintext(path, new_private) or "")
+    assert sops_plaintext(path, old_private) is None
+    assert _encrypted_values(path) != ciphertext_before
+
+
+@needs_sops
+def test_sops_rotate_names_the_file_and_leaves_it_alone_when_the_key_does_not_fit(tmp_path: Path) -> None:
+    """A failure halfway through a rotation must not leave an unreadable file behind."""
+    _old_private, old_public = generate_sops_key_pair()
+    _new_private, new_public = generate_sops_key_pair()
+    stranger_private, _stranger_public = generate_sops_key_pair()
+    path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
+    before = path.read_text()
+
+    with pytest.raises(ConversionFailed) as caught:
+        sops_rotate(path, old_public, new_public, stranger_private)
+
+    assert str(path) in str(caught.value)
+    assert path.read_text() == before
+    assert sops_recipients(path) == [old_public]
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_round_converts_a_sops_file_and_leaves_another_recipient_alone(tmp_path: Path) -> None:
+    """Selection by recipient, measured through the whole round instead of on the selector.
+
+    Measured on this tree right now: 21 SOPS files, all on the one platform recipient -- so a
+    round that worked on "every sops file" would look correct here. It did not look correct
+    before this branch, when ``sops-sandbox/`` held two files on a practice key, and it would not
+    the next time a file arrives on the sandbox or developer key. The proof therefore has to be
+    synthetic: a second recipient in the tree, untouched.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    _stranger_private, stranger_public = generate_sops_key_pair()
+    ours = _sops_file(tmp_path, "platform", SECRET_BODY, old_public)
+    theirs = _sops_file(tmp_path, "practice", SECRET_BODY, stranger_public)
+    theirs_before = theirs.read_text()
+
+    with _selecting_from(tmp_path):
+        plan = await tool.build_plan([], old_private, new_private, old_public)
+        assert plan.sops == [ours]
+        await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
+
+    assert sops_recipients(ours) == [new_public]
+    assert theirs.read_text() == theirs_before
+    assert sops_recipients(theirs) == [stranger_public]
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_fingerprint_shows_a_rotated_sops_document_kept_its_content(tmp_path: Path) -> None:
+    """The whole product of the tool: proof that nothing changed but the key.
+
+    The document is hashed as one field, before with A and after with B, and the hash has to
+    match -- a rotation that dropped or shifted a value inside the file fails here even though
+    the file still decrypts.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    path = _sops_file(tmp_path, "demo", SECRET_BODY, old_public)
+
+    with _selecting_from(tmp_path):
+        before, closed_before = await tool.fingerprint_now([path], [], old_private, new_private)
+        plan = await tool.build_plan([], old_private, new_private, old_public)
+        await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
+        after, closed_after = await tool.fingerprint_now([path], [], new_private)
+
+    assert closed_before == []
+    assert closed_after == []
+    assert list(before.fields) == [f"{path}#<sops-document>"]
+    assert before.compare(after) == []
+    assert "hunter2" not in path.read_text()
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_names_a_sops_file_that_was_skipped(tmp_path: Path) -> None:
+    """A file left on A has to fail the check BY NAME, or the rotation is not demonstrably done.
+
+    The check walks both recipients on purpose: a skipped file still sits on the old one, so
+    walking only the new recipient would make it invisible and the check would come back clean.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    done = _sops_file(tmp_path, "converted", SECRET_BODY, old_public)
+    forgotten = _sops_file(tmp_path, "forgotten", SECRET_BODY, old_public)
+    sops_rotate(done, old_public, new_public, old_private)
+
+    with _selecting_from(tmp_path), patch.object(tool, "env_paths", return_value=[]):
+        check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
+
+    assert check.counted == 2
+    assert check.still_opens_with_old == [str(forgotten)]
+    assert check.does_not_open_with_new == [str(forgotten)]
+    assert not check.clean
+    assert any(f"STILL opens with the old key: {forgotten}" in line for line in check.lines())
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_is_clean_once_every_sops_file_is_over(tmp_path: Path) -> None:
+    """The other half: with nothing left on A the check says so, so a red one means something."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    for name in ("een", "twee"):
+        sops_rotate(_sops_file(tmp_path, name, SECRET_BODY, old_public), old_public, new_public, old_private)
+
+    with _selecting_from(tmp_path), patch.object(tool, "env_paths", return_value=[]):
+        check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, 2)
+
+    assert check.counted == 2
+    assert check.clean
+    assert "CLEAN the old key opens nothing, the new key opens everything" in check.lines()
+
+
+# ---------------------------------------------------------------------------
+# the entry point end to end, over both halves at once
+# ---------------------------------------------------------------------------
+
+
+async def _two_place_tree(tmp_path: Path, old_public: str) -> tuple[Path, Path, list[str]]:
+    """A SOPS file and an env file on the same key, plus the two key files the tool asks for."""
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    sops_path = _sops_file(tree, "demo", SECRET_BODY, old_public)
+    env_path = await _env_file(tree / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    return sops_path, env_path, [str(sops_path), str(env_path)]
+
+
+def _key_files(tmp_path: Path, old_private: str, new_private: str) -> list[str]:
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    return ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_a_dry_run_names_both_places_and_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """``--dry-run`` is what the operator looks at before the irreversible half starts."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
+    before = (sops_path.read_text(), env_path.read_text())
+    fingerprint = tmp_path / "fingerprint.json"
+
+    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+        code = await tool.main(
+            ["--ja", "--dry-run", *_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+        )
+
+    assert code == 0
+    printed = capsys.readouterr().out
+    assert "1 SOPS files on the old recipient" in printed
+    assert "1 loose base64+age: values on the old key" in printed
+    assert "= 2 fields" in printed
+    assert "Dry run: nothing was changed." in printed
+    assert (sops_path.read_text(), env_path.read_text()) == before
+    assert not fingerprint.exists()
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_whole_round_converts_both_places_and_leaves_a_checkable_fingerprint(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """One run of the tool as the operator runs it, over a SOPS file and a loose value at once."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+        code = await tool.main(["--ja", *arguments])
+        capsys.readouterr()
+        again = await tool.main(["--ja", *arguments])
+
+    assert code == 0
+    assert again == 0
+    assert "Nothing to do: no field sits on the old key any more." in capsys.readouterr().out
+    assert sops_recipients(sops_path) == [new_public]
+    assert sops_plaintext(sops_path, old_private) is None
+    assert not await opens_with(tool.all_env_fields([env_path])[0].value, old_private)
+
+    written = fingerprint.read_text()
+    assert len(Fingerprint.load(fingerprint).fields) == 2
+    assert "hunter2" not in written
+    assert "AGE-SECRET-KEY-" not in written
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_verify_says_clean_long_after_the_round_and_red_when_a_file_drifted(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``--verify`` has to stand on its own, months later, without converting anything.
+
+    Second half: a file put back on the old key must make it red. Without that this mode could
+    report CLEAN on a tree it can no longer open.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+        assert await tool.main(["--ja", *arguments]) == 0
+        capsys.readouterr()
+
+        assert await tool.main(["--ja", "--verify", *arguments]) == 0
+        assert "CLEAN 2 fields readable with the new key and unchanged in content" in capsys.readouterr().out
+
+        # Put the SOPS file back on the old key: the same content, but the new key cannot read it.
+        sops_rotate(sops_path, new_public, old_public, new_private)
+        assert await tool.main(["--ja", "--verify", *arguments]) == 1
+
+    assert f"FAIL does not open with the new key: {sops_path}#<sops-document>" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_verify_is_red_on_a_file_that_is_not_in_the_fingerprint_and_opens_with_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A field the fingerprint never saw AND the new key cannot open must not read as clean.
+
+    The hash comparison cannot catch this one: the field is in neither measurement, so it is
+    neither "disappeared" nor "changed". Only the list of fields that opened with no key at all
+    carries it, which is why that list has its own say in the exit code -- otherwise this run
+    prints a FAIL line and then reports CLEAN with a zero exit.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    sops_path, env_path, _ = await _two_place_tree(tmp_path, old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+        assert await tool.main(["--ja", *arguments]) == 0
+        # A file that arrives AFTER the fingerprint was taken and was never converted: it is
+        # walked (the old recipient is part of the selection) but the new key does not open it.
+        stray = _sops_file(sops_path.parent, "stray", SECRET_BODY, old_public)
+        capsys.readouterr()
+
+        code = await tool.main(["--ja", "--verify", *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert f"FAIL does not open with the new key: {stray}#<sops-document>" in printed
+    assert "CLEAN" not in printed
+
+
+# ---------------------------------------------------------------------------
+# the worklist itself
+# ---------------------------------------------------------------------------
+
+
+def test_every_configured_env_file_is_really_there_and_holds_an_encrypted_value() -> None:
+    """The row that gets forgotten: ``sops rotate`` does not see a loose ``base64+age:`` value.
+
+    ``env_paths()`` drops a path that does not exist, so a moved or renamed configmap costs the
+    tool a file WITHOUT any complaint -- the round would pass, the final check would pass, and
+    that value would stay on the old key. This is the assertion that turns such a move into a
+    red test instead of a silent miss.
+    """
+    missing = [name for name in tool.ENV_FILES if not (tool.REPO / name).is_file()]
+
+    assert missing == []
+    assert "operations-manager/python/.env" in tool.ENV_FILES
+    for path in tool.env_paths():
+        assert env_fields(path), f"{path} carries no base64+age: value any more"
+
+
+def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
+    """A skip reads as green, and the SOPS half of this file is exactly what must not go quiet.
+
+    Measured: the test job installed ``age`` but not ``sops``, so every test here that rotates a
+    real SOPS file -- and the whole of ``test_sops_skip_unchanged`` -- skipped on the runner
+    while the summary said passed. The version is pinned to the one the OPI image carries.
+    """
+    workflow = yaml.safe_load((tool.REPO / ".github" / "workflows" / "ci.yml").read_text())
+    # Steps that really run: a step behind a falsy condition installs nothing, and reading only
+    # the "run" lines would call that wired up.
+    installs = [
+        step.get("run", "")
+        for step in workflow["jobs"]["test"]["steps"]
+        if str(step.get("if", "true")).strip().lower() not in {"false", "${{ false }}"}
+    ]
+
+    assert any("sops" in command and "chmod +x" in command for command in installs)
+    dockerfile = (tool.REPO / "operations-manager" / "Dockerfile").read_text()
+    pinned = re.search(r"ARG SOPS_VERSION=(v[\d.]+)", dockerfile)
+    assert pinned is not None
+    assert any(pinned.group(1) in command for command in installs), (
+        f"CI must install the same sops as the image ({pinned.group(1)})"
+    )

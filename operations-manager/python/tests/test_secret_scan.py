@@ -36,9 +36,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
 from secret_scan import (  # noqa: E402
     Finding,
     age_key_is_real,
+    history_blobs,
     looks_like_a_jwt,
     report,
     scan_files,
+    scan_history,
     scan_text,
     split_findings,
     tracked_files,
@@ -262,6 +264,78 @@ def test_only_tracked_files_are_scanned(tmp_path: Path) -> None:
 
     assert [path.name for path in paths] == ["committed.txt"]
     assert scan_files(paths) == []
+
+
+# ---------------------------------------------------------------------------
+# the one-off sweep over the history
+# ---------------------------------------------------------------------------
+
+
+def _repo_with(tmp_path: Path, files: dict[str, str]) -> Path:
+    """A git repository holding these files, one commit per file."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@e.invalid"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], check=True)
+    for name, content in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+        subprocess.run(["git", "-C", str(tmp_path), "add", name], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", f"add {name}"], check=True)
+    return tmp_path
+
+
+@needs_age
+def test_a_secret_deleted_from_the_tree_is_still_found_in_the_history(tmp_path: Path) -> None:
+    """The reason the sweep exists: removing the file does not remove the secret.
+
+    A clean working tree says nothing about what an old commit still holds, and a key rotation
+    does not change that either -- every old version stays openable with the key it was
+    encrypted for. What the sweep finds is what decides whether more has to be rotated.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    repo = _repo_with(tmp_path, {"leaked.py": f'KEY = "{private_key}"\n'})
+    (repo / "leaked.py").unlink()
+    subprocess.run(["git", "-C", str(repo), "commit", "-q", "-am", "remove it"], check=True)
+
+    assert scan_files(tracked_files(repo)) == []
+
+    findings = scan_history(repo)
+
+    assert [(finding.path, finding.kind) for finding in findings] == [("leaked.py", "age-private-key")]
+
+
+@needs_age
+@pytest.mark.timeout(60)
+def test_the_history_sweep_finishes_on_a_repository_that_has_subdirectories(tmp_path: Path) -> None:
+    """The measured failure: a non-blob object left unread in the batch pipe desynchronises it.
+
+    ``git rev-list --objects --all`` names tree objects as well as blobs, and ``git cat-file
+    --batch`` writes a payload for every sha it is given. Skipping a tree without READING its
+    bytes leaves those bytes in the stream, and what the next read then finds where a header
+    should be depends on the repository: on this small one the tree content lands in the size
+    field, on the real 47k-object sweep it was a read that waited nine minutes for a header that
+    never came.
+
+    A subdirectory is the smallest shape that puts a tree in that list. Both outcomes fail this
+    test -- the garbage header raises, and the timeout catches the wait.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    repo = _repo_with(
+        tmp_path,
+        {
+            "nested/deep/one.txt": "nothing to see\n",
+            "nested/two.txt": "also nothing\n",
+            "zz-last.py": f'KEY = "{private_key}"\n',
+        },
+    )
+
+    named = [name for _sha, name in history_blobs(repo)]
+    assert "nested" in named, "no tree object in the listing, so this would not reproduce it"
+
+    findings = scan_history(repo)
+
+    assert [finding.path for finding in findings] == ["zz-last.py"]
 
 
 # ---------------------------------------------------------------------------

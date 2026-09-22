@@ -268,3 +268,128 @@ async def test_a_missing_key_file_names_the_path(tmp_path: Path, capsys: pytest.
     )
     assert code == 2
     assert str(tmp_path / "gone.txt") in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_the_run_writes_only_where_the_old_platform_key_sits(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The selection has to survive into what is actually WRITTEN, not just into the listing.
+
+    ``report_holders`` picking the right namespaces proves nothing on its own: a run that looped
+    over every holder instead of over the selected ones would keep that listing green while
+    replacing ten projects' own SOPS keys with the platform key -- measured, exactly the shape
+    of the trap this tool exists for. So this asserts the namespaces that were written and the
+    ones that were restarted, and that the others were touched by neither.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    _project_private, project_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"{new_private}\n")
+    holders = [
+        tool.SecretHolder("rig-prd-operations", old_public),
+        tool.SecretHolder("rig-prd-ron", old_public),
+        tool.SecretHolder("rig-prd-cot-zaq", project_public),
+    ]
+    written: list[tuple[str, Path]] = []
+    restarted: list[str] = []
+
+    async def record_write(namespace: str, path: Path) -> None:
+        written.append((namespace, path))
+
+    async def record_restart(namespace: str) -> bool:
+        restarted.append(namespace)
+        return namespace == "rig-prd-operations"
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="odcn-production")),
+        patch.object(tool, "find_holders", AsyncMock(return_value=holders)),
+        patch.object(tool, "write_secret", record_write),
+        patch.object(tool, "restart_operations_manager", record_restart),
+    ):
+        code = await tool.main(
+            [
+                "--old-key",
+                str(tmp_path / "old_key.txt"),
+                "--new-key",
+                str(key_file),
+                "--confirm-cluster",
+                "odcn-production",
+            ]
+        )
+
+    assert code == 0
+    assert written == [("rig-prd-operations", key_file), ("rig-prd-ron", key_file)]
+    assert restarted == ["rig-prd-operations", "rig-prd-ron"]
+    assert "rig-prd-cot-zaq" not in [namespace for namespace, _path in written]
+    assert "deployment/operations-manager restarted and ready in rig-prd-operations" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_second_run_finds_nothing_to_do_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Rerun safety at the entry point: every namespace already on the new key is a no-op."""
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write = AsyncMock()
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="odcn-production")),
+        patch.object(
+            tool, "find_holders", AsyncMock(return_value=[tool.SecretHolder("rig-prd-operations", new_public)])
+        ),
+        patch.object(tool, "write_secret", write),
+    ):
+        code = await tool.main(
+            [
+                "--old-key",
+                str(tmp_path / "old_key.txt"),
+                "--new-key",
+                str(tmp_path / "key.txt"),
+                "--confirm-cluster",
+                "odcn-production",
+            ]
+        )
+
+    assert code == 0
+    assert "Nothing to do: no namespace carries the old platform key." in capsys.readouterr().out
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_cluster_stops_before_anything_is_touched(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """kubectl failing is an ordinary operator experience, and it must end the run, not crash it.
+
+    Without the listing there is no way to tell the platform key from a project's own, so
+    guessing is the one thing this tool may not do.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    connector = AsyncMock()
+    # The context lookup succeeds and the secret listing does not: without that listing there is
+    # no way to tell which namespaces carry the platform key.
+    connector.run_command = AsyncMock(side_effect=[("odcn-production", "", 0), ("", "connection refused", 1)])
+
+    with patch.object(tool, "create_kubectl_connector", return_value=connector):
+        code = await tool.main(
+            [
+                "--old-key",
+                str(tmp_path / "old_key.txt"),
+                "--new-key",
+                str(tmp_path / "key.txt"),
+                "--confirm-cluster",
+                "odcn-production",
+            ]
+        )
+
+    assert code == 2
+    assert "connection refused" in capsys.readouterr().err
