@@ -319,9 +319,8 @@ class TestExternalDnsTargetForHostname:
 
 
 class TestManagedZones:
-    """``managed_zones`` zegt welke zones ZAD zelf bedient, en dat is een ander feit dan
-    ``supported_domains``: dat is een AANBODlijst, en een zone kan van ons zijn zonder
-    aangeboden te worden. De reserveringslijst hangt aan dit antwoord.
+    """``managed_zones`` zegt welke zones ZAD zelf bedient, een ander feit dan de
+    AANBODlijst ``supported_domains``. De reserveringslijst hangt aan dit antwoord.
     """
 
     def test_local_serves_its_two_domains(self):
@@ -331,7 +330,6 @@ class TestManagedZones:
         assert get_managed_zones("sandboxed-local") == ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"]
 
     def test_production_also_names_its_postfix_zone(self):
-        """De vierde zone staat in geen enkele andere lijst: van ons, maar niet aangeboden."""
         assert get_managed_zones("odcn-production") == [
             "rijks.app",
             "rijksapp.nl",

@@ -118,7 +118,7 @@ The `supports-dots` field controls whether dot-separated domain formats (like `c
 
 1. **Cluster config** (`cluster_config.py`): Each domain entry has `restricted_subdomains: true/false`. Helper functions: `is_domain_subdomain_restricted()`, `get_restricted_subdomain_domains()`.
 
-   The same `domains` block also holds `managed_zones`: the DNS zones the cluster serves itself. That is a different question from `supported_domains`, which is the list of domains the cluster OFFERS. A zone can be ours without being offered, which is the case for the cluster's own `ingress_postfix` zone. `is_platform_domain()` answers the management question with a suffix match, so `team.rijks.app` counts as ours while `ux-onderzoeken.rijksapps.nl` does not.
+   The same `domains` block also holds `managed_zones`: the DNS zones the cluster serves itself. `supported_domains` is the list of domains the cluster OFFERS, and a zone can be ours without being offered, which is the case for the cluster's own `ingress_postfix` zone. `is_platform_domain()` answers the management question with a suffix match, so `team.rijks.app` counts as ours while `ux-onderzoeken.rijksapps.nl` does not.
 
 2. **Project YAML model** (`project_file.py`): `DomainsModel` with `AllowedSubdomainEntry` and `CustomDomainEntry` Pydantic models.
 
