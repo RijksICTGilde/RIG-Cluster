@@ -5,6 +5,8 @@ This module provides common fixtures used across unit and integration tests.
 """
 
 import os
+import shutil
+import subprocess
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -488,6 +490,22 @@ async def orm_db(_orm_db_url):
         await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     await dispose_engine()
+
+
+@pytest.fixture
+def age_sleutelpaar() -> tuple[str, str]:
+    """Een wegwerpsleutelpaar van age-keygen, in de vorm die in projectbestanden staat.
+
+    Toetsen die echt ontsleutelen maken hun eigen paar: een werkende private sleutel in de
+    repo opent ook de versleutelde waarden die elders in de boom staan.
+    """
+    if shutil.which("age-keygen") is None:
+        pytest.skip("age-keygen is nodig voor een wegwerpsleutelpaar")
+
+    uitvoer = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True).stdout
+    prive = next(r for r in uitvoer.splitlines() if r.startswith("AGE-SECRET-KEY-"))
+    publiek = next(r for r in uitvoer.splitlines() if "public key:" in r).split(": ", 1)[1].strip()
+    return publiek, prive
 
 
 # --- Live voortgang van een lange run ------------------------------------------------

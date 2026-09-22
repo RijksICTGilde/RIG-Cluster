@@ -1,13 +1,19 @@
-"""
-Test Age password decryption using the GIT_PROJECTS_SERVER_PASSWORD from configmap.
+"""Toetsen op de opgeslagen wachtwoordvormen: base64+age, age en plain.
+
+Sleutel en cijfertekst komen uit een wegwerpsleutelpaar. Hier stond eerst het paar uit de
+odcn-production-configmap met de echte private sleutel eronder: dat opende niet alleen deze
+toets maar elke waarde in de boom die met die sleutel versleuteld is, en pytest drukt bij
+een rode assertie de ontsleutelde waarde af.
 """
 
 import base64
+import shutil
 
 import pytest
 from opi.utils.age import (
     decrypt_age_content_sync,
     decrypt_password_smart_sync,
+    encrypt_age_content_sync,
     is_age_encrypted,
     parse_password_with_prefix,
 )
@@ -15,27 +21,29 @@ from opi.utils.age import (
 #: Een sleutel die het versleutelde wachtwoord in deze toetsen niet opent.
 ANDERE_PRIVATE_KEY = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
 
+WACHTWOORD = "een-wegwerpwachtwoord"
+
+
+@pytest.fixture
+def versleuteld_wachtwoord(age_sleutelpaar: tuple[str, str]) -> str:
+    """Het wachtwoord in de vorm waarin de configmap hem draagt: base64 over een age-blok."""
+    if shutil.which("age") is None:
+        pytest.skip("versleutelen loopt nog via het age-binary")
+
+    publiek, _ = age_sleutelpaar
+    blok = encrypt_age_content_sync(WACHTWOORD, publiek)
+    return f"base64+age:{base64.b64encode(blok.encode()).decode()}"
+
 
 class TestAgePasswordDecryption:
-    """Test Age encryption/decryption functionality with real configmap data."""
+    """Test Age encryption/decryption functionality with the stored password formats."""
 
-    def setup_method(self):
-        """Setup test data from configmap."""
-        # Password from configmap.yaml (base64+age format)
-        self.encrypted_password = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
-
-        # Private key from security/key.txt
-        self.private_key = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
-
-    def test_parse_password_with_prefix(self):
+    def test_parse_password_with_prefix(self, versleuteld_wachtwoord: str):
         """Test password prefix parsing."""
         # Test base64+age prefix
-        password_type, content = parse_password_with_prefix(self.encrypted_password)
+        password_type, content = parse_password_with_prefix(versleuteld_wachtwoord)
         assert password_type == "base64+age"
-        assert (
-            content
-            == "LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
-        )
+        assert content == versleuteld_wachtwoord.removeprefix("base64+age:")
 
         # Test plain prefix
         plain_type, plain_content = parse_password_with_prefix("plain:test123")
@@ -59,54 +67,48 @@ class TestAgePasswordDecryption:
         password_type, content = parse_password_with_prefix("age:")
         assert password_type == "plain", "age: with no content is not valid encrypted data, should be treated as plain"
 
-    def test_is_age_encrypted(self):
+    def test_is_age_encrypted(self, versleuteld_wachtwoord: str):
         """Test Age encryption detection."""
         # Decode base64 to get actual Age content
-        base64_content = "LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
-        age_content = base64.b64decode(base64_content).decode("utf-8")
+        age_content = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
 
         assert is_age_encrypted(age_content) is True
         assert is_age_encrypted("plain text") is False
         assert is_age_encrypted("") is False
 
-    def test_decrypt_password_smart_sync_base64_age(self):
-        """Test decryption of base64+age password from configmap.
+    def test_decrypt_password_smart_sync_base64_age(self, age_sleutelpaar, versleuteld_wachtwoord: str):
+        """Test decryption of a base64+age password in the configmap format."""
+        _, prive = age_sleutelpaar
 
-        The stored value is a GitHub PAT, so its prefix and length pin the plaintext
-        without writing the token itself into the repository.
-        """
-        result = decrypt_password_smart_sync(self.encrypted_password, self.private_key)
+        assert decrypt_password_smart_sync(versleuteld_wachtwoord, prive) == WACHTWOORD
 
-        assert result.startswith("ghp_")
-        assert len(result) == 40
-
-    def test_decrypt_password_smart_sync_failure(self):
+    def test_decrypt_password_smart_sync_failure(self, versleuteld_wachtwoord: str):
         """Test handling of decryption failure."""
         # API now raises ValueError on decryption failure
         with pytest.raises(ValueError, match="Failed to decrypt"):
-            decrypt_password_smart_sync(self.encrypted_password, ANDERE_PRIVATE_KEY)
+            decrypt_password_smart_sync(versleuteld_wachtwoord, ANDERE_PRIVATE_KEY)
 
-    def test_decrypt_password_smart_sync_no_key(self):
+    def test_decrypt_password_smart_sync_no_key(self, versleuteld_wachtwoord: str):
         """Test behavior when no private key is provided."""
         # API now raises ValueError when no key is available
         with pytest.raises(ValueError, match="no private key available"):
-            decrypt_password_smart_sync(self.encrypted_password, None)
+            decrypt_password_smart_sync(versleuteld_wachtwoord, None)
 
-    def test_decrypt_password_smart_sync_plain_text(self):
+    def test_decrypt_password_smart_sync_plain_text(self, age_sleutelpaar):
         """Test handling of plain text passwords."""
+        _, prive = age_sleutelpaar
         plain_password = "plain:simple_password"
-        result = decrypt_password_smart_sync(plain_password, self.private_key)
+        result = decrypt_password_smart_sync(plain_password, prive)
 
         # Should return the content without prefix
         assert result == "simple_password"
 
-    def test_configmap_password_integration(self):
+    def test_configmap_password_integration(self, age_sleutelpaar, versleuteld_wachtwoord: str):
         """De base64+age-vorm uit de configmap en het armored blok erin openen hetzelfde."""
-        configmap_password = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
+        _, prive = age_sleutelpaar
 
-        # Test decryption with key from security/key.txt
-        result = decrypt_password_smart_sync(configmap_password, self.private_key)
-        armored = base64.b64decode(configmap_password.removeprefix("base64+age:")).decode("utf-8")
+        result = decrypt_password_smart_sync(versleuteld_wachtwoord, prive)
+        armored = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
 
         assert is_age_encrypted(armored)
-        assert decrypt_age_content_sync(armored, self.private_key) == result
+        assert decrypt_age_content_sync(armored, prive) == result
