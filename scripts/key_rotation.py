@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -77,7 +78,7 @@ from opi.utils.age import (  # noqa: E402
     is_age_encrypted,
 )
 from opi.utils.sops import _decrypt_sops_with_key  # noqa: E402
-from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_path  # noqa: E402
+from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
 from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
@@ -436,14 +437,30 @@ def env_fields(path: str | Path) -> list[EnvField]:
 
 
 def write_env_value(path: str | Path, line_number: int, old_value: str, new_value: str) -> None:
-    """Replace exactly one value on exactly one line, leaving the indentation intact."""
+    """Replace exactly one value on exactly one line, leaving the indentation intact.
+
+    Written through a temporary file in the same directory and moved into place with
+    ``os.replace``, for the same reason the YAML writer does it: a torn ``configmap.yaml`` or
+    ``.env`` is worse than an unconverted one, and it would be discovered by a deployment rather
+    than by this tool.
+    """
     path = Path(path)
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     index = line_number - 1
     if old_value not in lines[index]:
         raise ConversionFailed(f"{path}:{line_number} no longer holds the expected value")
     lines[index] = lines[index].replace(old_value, new_value)
-    path.write_text("".join(lines), encoding="utf-8")
+
+    handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as target:
+            target.write("".join(lines))
+            target.flush()
+            os.fsync(target.fileno())
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +623,12 @@ async def rotate_project_file(
         return round_report
 
     if not dry_run:
-        path.write_text(dump_yaml_to_string(data), encoding="utf-8")
+        # save_yaml_to_path and not write_text: it dumps to a temporary file in the same
+        # directory and moves it into place with os.replace, so a reader sees either the old file
+        # or the complete new one. "Not half written" is a promise this round makes, and a torn
+        # project file is the one outcome worse than a skipped one. Same canonical writer either
+        # way -- both go through yaml_util._create_yaml_writer.
+        save_yaml_to_path(str(path), data)
         round_report.rewritten = True
     return round_report
 
