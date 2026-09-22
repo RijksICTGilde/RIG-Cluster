@@ -9,6 +9,9 @@ block. These tests hold it to the two properties that make the relocation safe:
   split into two values that disagree.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 from opi.services.catalog.publish_on_web.domain_config import (
     DOMAIN_NAME_SETTINGS,
@@ -354,4 +357,37 @@ class TestDeNaamVormSplitsing:
             "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies"}}],
         }
         clear_domain_name_settings(dep)
+        assert "services" not in dep
+
+
+_Wisser = Callable[[dict[str, Any]], None]
+
+
+@pytest.mark.parametrize("clear", [clear_domain_settings, clear_domain_name_settings], ids=["heel", "alleen-naam"])
+class TestDeStaartDieBeideWissersDelen:
+    """Tot RC-217 hing deze staart aan de kloonweg, die nog maar een van de twee aanroept.
+
+    De andere wisser had daarna geen enkele toets meer die rood werd als hij hem oversloeg.
+    """
+
+    def test_de_teruggetrokken_domain_mode_gaat_mee(self, clear: _Wisser) -> None:
+        dep = {
+            "name": "productie",
+            "domain-mode": "nice-url",
+            "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies", "domain-mode": "nice-url"}}],
+        }
+
+        clear(dep)
+
+        assert "domain-mode" not in dep
+        assert "domain-mode" not in (get_domain_config(dep) or {})
+
+    def test_een_leeg_record_blijft_niet_achter(self, clear: _Wisser) -> None:
+        dep = {
+            "name": "productie",
+            "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies"}}],
+        }
+
+        clear(dep)
+
         assert "services" not in dep
