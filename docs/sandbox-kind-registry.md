@@ -46,8 +46,36 @@ Zonder die regel leest containerd de `hosts.toml` niet en pullt de node niets, z
 er tot de eerste deploy iets misgaat. Het script controleert daarom per node of containerd
 een `config_path` kent, en weigert als dat niet zo is.
 
-Een kind-config geldt alleen bij `kind create cluster`, dus een bestaand cluster dat de
-regel mist moet opnieuw gebouwd worden.
+Een kind-config geldt alleen bij `kind create cluster`. Een cluster van voor 2026-09-16 mist
+de regel dus, en `sandbox:setup-registry` weigert daarop met exit 4.
+
+### Een bestaand cluster bijwerken zonder herbouw
+
+Herbouwen mag, maar hoeft niet: dezelfde regel kan in de node bijgeschreven worden. Per node:
+
+```bash
+docker exec <node> sh -c 'cp /etc/containerd/config.toml /etc/containerd/config.toml.bak-pre-registry
+cat >> /etc/containerd/config.toml <<EOF
+
+[plugins."io.containerd.grpc.v1.cri".registry]
+  config_path = "/etc/containerd/certs.d"
+EOF'
+docker exec <node> systemctl restart containerd
+```
+
+Daarna `task sandbox:setup-registry`, die nu wel doorloopt. Toetsen of de node de registry
+echt ziet:
+
+```bash
+docker exec <node> curl -s -o /dev/null -w '%{http_code}\n' http://kind-registry:5000/v2/
+```
+
+Het herstarten van containerd laat draaiende containers staan; kubelet verbindt opnieuw en
+de pods blijven Running.
+
+Deze patch leeft in de node-container, niet in git. Hij overleeft een herstart van de
+container en verdwijnt bij een clusterherbouw, waarna de kind-config hetzelfde blok levert.
+Zet er een comment bij dat het met de hand staat, anders gaat de volgende lezer zoeken.
 
 ## Opruimen
 
@@ -123,8 +151,10 @@ lagen die hij mist.
 De algemene `task update-operations-manager` laadt met `kind load`. Na `sandbox:setup` leest
 hij de sandbox-env, dus hij stopt dan meteen met een verwijzing naar deze taak.
 
-`task sandbox:skaffold-dev` pusht naar dezelfde registry (`build.local.push`). De dev- en
-debug-overlay hernoemen de ghcr-image naar `localhost:5001/operations-manager`, want
+`task sandbox:skaffold-dev` pusht naar dezelfde registry (`build.local.push`) en roept
+daarom `sandbox:setup-registry` als eerste stap aan, net als `sandbox:update-operations-manager`.
+Zonder dat komt een ontbrekende registry naar buiten als een push-timeout op `localhost:5001`.
+De dev- en debug-overlay hernoemen de ghcr-image naar `localhost:5001/operations-manager`, want
 skaffold vervangt alleen verwijzingen met de naam van zijn artifact.
 
 `sandbox-deploy` (de dclaude-helper, niet in deze repo) en de CMP-image
