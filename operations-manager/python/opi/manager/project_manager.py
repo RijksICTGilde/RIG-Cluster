@@ -5696,7 +5696,16 @@ class ProjectManager:
         # Register or clean up bare domain in subdomain registry
         expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_domain_registered = False
-        if expose_on_bare_domain and base_domain:
+        # Opslaan mag, toepassen niet: het formulier laat een kaal domein op een nog niet
+        # goedgekeurd eigen domein door (RC-216), dus de goedkeuring hangt hier, aan
+        # dezelfde voorwaarde als het rootadres. Zolang die er niet is houdt deze
+        # deployment ook geen registratie op de apex: de tak eronder ruimt hem op,
+        # dezelfde weg als wanneer het vinkje uitgaat.
+        if (
+            expose_on_bare_domain
+            and base_domain
+            and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+        ):
             # The publication path enforces the bare-domain rule itself, not just the form
             # layer: the setting is also writable through the service config API, which the
             # form enforcer never sees. This is the point of no return -- past it a
@@ -5714,8 +5723,15 @@ class ProjectManager:
             )
             bare_domain_registered = True
             logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
-        elif base_domain and not expose_on_bare_domain:
-            # Bare domain deselected — clean up any existing registration
+        elif base_domain:
+            # Bare domain deselected, or not (yet) approved — clean up any existing registration
+            if expose_on_bare_domain:
+                logger.warning(
+                    "Bare domain '%s' not applied for deployment '%s': the domain is not approved for project '%s'",
+                    base_domain,
+                    deployment_name,
+                    project_name,
+                )
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
             # Scoped to this project: the base-domain is just a string in a project file,
@@ -6553,7 +6569,12 @@ class ProjectManager:
 
                     # Create bare domain ingress for expose-component-on-bare-domain mode.
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
-                    if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                    if (
+                        expose_on_bare_domain
+                        and base_domain
+                        and component_name == expose_on_bare_domain
+                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+                    ):
                         # Same rule as at registration: never an apex ingress plus
                         # certificate from a tenant namespace on a platform domain, nor on
                         # a domain that is not approved for this project.

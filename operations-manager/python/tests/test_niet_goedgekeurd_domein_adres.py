@@ -26,6 +26,7 @@ mechanisme voor gebouwd.
 from __future__ import annotations
 
 import copy
+import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -36,6 +37,7 @@ from opi.services.catalog.publish_on_web.urls import public_urls_for_deployment
 from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 from opi.services.services_enums import ServiceType
+from opi.utils.naming import apply_domain_approval_fallback
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -164,6 +166,40 @@ def test_de_portal_toont_het_clusteradres_zolang_het_domein_niet_is_goedgekeurd(
 def test_een_goedgekeurd_domein_levert_gewoon_het_eigen_adres(clusteradres: None, vorm: str) -> None:
     """De negatieve kant: de poort mag niet zomaar alles naar het cluster trekken."""
     assert _adressen(_project(VORMEN[vorm], "approved")) == [f"https://{GEVRAAGDE_ADRESSEN[vorm]}"]
+
+
+@pytest.mark.parametrize("domeinstatus", [None, "requested", "denied"])
+def test_de_terugval_logt_welk_adres_vervalt(caplog: pytest.LogCaptureFixture, domeinstatus: str | None) -> None:
+    """Wie in de logs zoekt waarom een deployment op het clusteradres antwoordt, zoekt op
+    het adres dat hij verwachtte. Dat adres stond er niet in: de regel noemde alleen het
+    domein en het subdomein apart."""
+    with caplog.at_level(logging.WARNING, logger="opi.utils.naming"):
+        formaat, domein = apply_domain_approval_fallback(
+            "component.subdomain",
+            EIGEN_DOMEIN,
+            SUBDOMEIN,
+            CLUSTERPOSTFIX,
+            _project(VORMEN["met-domain-format"], domeinstatus),
+            "local",
+        )
+
+    assert (formaat, domein) == ("component-deployment-project", CLUSTERPOSTFIX.lstrip("."))
+    assert f"{SUBDOMEIN}.{EIGEN_DOMEIN}" in caplog.text
+    assert CLUSTERPOSTFIX.lstrip(".") in caplog.text
+
+
+def test_een_goedgekeurd_domein_logt_niets(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING, logger="opi.utils.naming"):
+        apply_domain_approval_fallback(
+            "component.subdomain",
+            EIGEN_DOMEIN,
+            SUBDOMEIN,
+            CLUSTERPOSTFIX,
+            _project(VORMEN["met-domain-format"], "approved"),
+            "local",
+        )
+
+    assert caplog.text == ""
 
 
 # ---------------------------------------------------------------------------

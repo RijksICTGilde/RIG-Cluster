@@ -1937,14 +1937,19 @@ def apply_domain_approval_fallback(
     if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
         return domain_format, base_domain
 
-    # Not approved — fall back to safe format on cluster domain
+    # Not approved — fall back to safe format on cluster domain. The log names the address
+    # that lapses, not just the domain: it is the one line that explains why a deployment
+    # is answering on the cluster address, and the reader is looking for the address they
+    # expected. The owner hears the same thing on the deployment page, where
+    # ``collect_deployment_approval_notices`` says it in their own words.
+    cluster_domain = ingress_postfix.lstrip(".")
     logger.warning(
-        "Domain '%s' with subdomain '%s' not approved, falling back to %s on cluster domain",
+        "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
+        f"{subdomain}.{base_domain}" if subdomain else base_domain,
         base_domain,
-        subdomain,
+        cluster_domain,
         SAFE_FALLBACK_FORMAT,
     )
-    cluster_domain = ingress_postfix.lstrip(".")
     return SAFE_FALLBACK_FORMAT, cluster_domain
 
 
@@ -2115,8 +2120,11 @@ def get_deployment_hostnames(
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
 
-    # Add bare domain hostname when expose-on-bare-domain is enabled
-    if expose_on_bare_domain and base_domain:
+    # The apex hangs on the same approval as the root address above. Ungated, it stayed in
+    # the list while every other address of an unapproved domain fell back to the cluster
+    # one -- an apex, and a certificate request on it, for a domain nobody granted this
+    # project. Same condition as the root address, not a variant beside it.
+    if domain_approved and expose_on_bare_domain and base_domain:
         bare_hostname = generate_bare_domain_hostname(base_domain)
         if bare_hostname not in hostnames:
             hostnames.append(bare_hostname)
