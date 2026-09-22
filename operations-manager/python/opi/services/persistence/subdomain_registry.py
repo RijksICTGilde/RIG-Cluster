@@ -32,7 +32,7 @@ from opi.connectors.subdomain import (
     SubdomainNotAvailableError,
     SubdomainValidationError,
     validate_base_domain,
-    validate_subdomain,
+    validate_subdomain_for_domain,
 )
 from opi.core.db import Base, session_scope
 
@@ -138,7 +138,7 @@ class SubdomainConnector:
             SubdomainError: If registration fails
         """
         # Validate subdomain format
-        is_valid, error_message = validate_subdomain(subdomain)
+        is_valid, error_message = validate_subdomain_for_domain(subdomain, base_domain, cluster)
         if not is_valid:
             raise SubdomainValidationError(error_message)
 
@@ -502,7 +502,7 @@ class SubdomainConnector:
             SubdomainNotAvailableError: If the new subdomain is already taken by another project
         """
         # Validate subdomain format first (before any DB operations)
-        is_valid, error_message = validate_subdomain(subdomain)
+        is_valid, error_message = validate_subdomain_for_domain(subdomain, base_domain, cluster)
         if not is_valid:
             raise SubdomainValidationError(error_message)
 

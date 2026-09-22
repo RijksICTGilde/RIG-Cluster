@@ -85,6 +85,12 @@ CLUSTER_CONFIG = {
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
+            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat is
+            # een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden (op
+            # odcn-production is de ingress_postfix-zone precies dat geval). De
+            # gereserveerde subdomeinen gelden alleen hierbinnen; op het domein van een
+            # tenant is het hun zone en hun keuze.
+            "managed_zones": ["kind", "local"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
         # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
@@ -173,6 +179,7 @@ CLUSTER_CONFIG = {
                     "restricted_subdomains": True,
                 },
             ],
+            "managed_zones": ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
         # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
@@ -314,6 +321,11 @@ CLUSTER_CONFIG = {
                     "external_dns_target": "router.rijksapp.dev",
                 },
             ],
+            # De vierde is de ingress_postfix-zone hierboven: van ons, maar niet
+            # aangeboden, dus in geen enkele andere lijst. Noem de zone zelf en nooit zijn
+            # ouder rijksapps.nl: die is van ODC-Noord en is in gebruik als eigen
+            # basisdomein van projecten.
+            "managed_zones": ["rijks.app", "rijksapp.nl", "rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
         },
         # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
         # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
@@ -1290,6 +1302,59 @@ def is_domain_supported(cluster_name: str, base_domain: str) -> bool:
     return base_domain in supported_domains
 
 
+def get_managed_zones(cluster_name: str) -> list[str]:
+    """
+    Get the DNS zones a cluster serves itself.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        The ``managed_zones`` of the cluster, empty if it declares none.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
+        return []
+    return list(domains_config.get("managed_zones", []))
+
+
+def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
+    """Return the most specific zone the hostname falls under, or None.
+
+    Longest zone first, so a name under both ``rijks.app`` and ``team.rijks.app`` matches
+    the latter. One walk for every caller: two of them side by side is how the one grows a
+    suffix rule the other lacks.
+    """
+    for zone in sorted(zones, key=len, reverse=True):
+        if hostname == zone or hostname.endswith("." + zone):
+            return zone
+    return None
+
+
+def is_platform_domain(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a domain falls within a zone this cluster serves.
+
+    This is the management question, not the offer question ``is_domain_supported``
+    answers: ``team.rijks.app`` is not a domain the cluster offers, but it does sit in our
+    registrable zone, and the cluster's own postfix zone is ours without being offered at all.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The base domain to check (e.g., "team.rijks.app")
+
+    Returns:
+        True if the domain is one of our zones or sits under one.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return _longest_matching_zone(domain, get_managed_zones(cluster_name)) is not None
+
+
 def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
     """
     Get the issuer for a specific domain on a cluster.
@@ -1336,19 +1401,13 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
     if domains_config is None:
         return None
 
-    candidates = [
-        entry
+    candidates = {
+        entry["domain"]: entry["external_dns_target"]
         for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("external_dns_target")
-    ]
-    # Sort longest domain first so more specific bases match before less specific ones.
-    candidates.sort(key=lambda e: -len(e["domain"]))
-
-    for entry in candidates:
-        domain = entry["domain"]
-        if hostname == domain or hostname.endswith("." + domain):
-            return entry["external_dns_target"]
-    return None
+    }
+    zone = _longest_matching_zone(hostname, list(candidates))
+    return candidates[zone] if zone is not None else None
 
 
 def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:

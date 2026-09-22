@@ -86,7 +86,11 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import (
+    get_supported_base_domains,
+    validate_base_domain,
+    validate_subdomain_for_domain,
+)
 from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import (
     get_domain_supports_dots,
@@ -642,7 +646,7 @@ async def check_subdomain_availability_v2(
     # oplossen is.
     cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
 
-    is_valid, validation_error = validate_subdomain(subdomain)
+    is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
     if not is_valid:
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),

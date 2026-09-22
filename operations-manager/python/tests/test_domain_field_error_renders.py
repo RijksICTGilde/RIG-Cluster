@@ -44,3 +44,38 @@ async def test_subdomain_field_error_appears_in_rendered_html():
     # The message is surfaced in the rendered field HTML (not swallowed).
     assert "niet beschikbaar" in html
     assert "mozad-dle" in html
+
+
+@pytest.mark.asyncio
+async def test_reserved_subdomain_error_appears_in_rendered_html():
+    """De reserveringsmelding kwam uit de veldvalidator en hangt nu aan de enforcer. Hij
+    hoort nog steeds bij het subdomeinveld te renderen, niet op het groepspad.
+    """
+    section = build_domain_section(1, edit_mode=True)
+    yaml_data = {
+        "deployments": [
+            {"name": "main"},
+            {
+                "name": "stable",
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "base-domain": "rijks.app",
+                            "domain-format": "subdomain",
+                            "subdomain": "admin",
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    html = _render_section_html(
+        section,
+        yaml_data,
+        errors={domain_setting_path(DomainSetting.SUBDOMAIN, 1): ["Subdomein 'admin' is niet beschikbaar"]},
+        locked_services=None,
+    )
+
+    assert "Subdomein &#39;admin&#39; is niet beschikbaar" in html
