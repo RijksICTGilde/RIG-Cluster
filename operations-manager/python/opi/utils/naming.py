@@ -65,8 +65,8 @@ ROOT_COMPONENT_FORMAT_IDS: list[str] = [
 #:
 #: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
 #: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
-#: produces a multi-label host the single-label wildcard certificate cannot cover -- the
-#: regel-k4c regression, which is why a clone used to be denied its format altogether.
+#: produces a multi-label host the single-label wildcard certificate cannot cover (the
+#: regel-k4c regression).
 SELF_CONTAINED_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
 ]

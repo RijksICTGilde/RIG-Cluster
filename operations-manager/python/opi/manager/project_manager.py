@@ -7553,20 +7553,15 @@ class ProjectManager:
                             }
                         )
 
-                        # A clone uses its own (target) domain setup, never the source's:
-                        # it must land on the default cluster domain rather than inherit
-                        # the source's DNS config, or two deployments claim the same
-                        # hostnames. The web address travels inside the source's
-                        # `services` block, so it is removed AFTER the copy -- excluding
-                        # the old root key names would be a silent no-op.
+                        # A clone uses its own (target) domain setup, never the source's
+                        # hostnames, or two deployments claim the same ones. The web
+                        # address travels inside the source's `services` block, so it is
+                        # removed AFTER the copy -- excluding the old root key names would
+                        # be a silent no-op.
                         #
-                        # The SHAPE stays: a clone that drops it does not keep the
-                        # platform default of the day its source was set up, it picks up
-                        # the default of the day it is processed (RC-217).
-                        #
-                        # Unless the shape cannot stand without the name it is about to
-                        # lose: a dotted format needs a dots-capable base-domain, and a
-                        # {subdomain} format renders the empty string without one. Dropped
+                        # The SHAPE stays, unless it leans on the name it is about to lose
+                        # (SELF_CONTAINED_FORMAT_IDS): dropping it handed the clone the
+                        # platform default of the day it was processed (RC-217). Dropped
                         # first, so clearing the names also tidies away a service entry
                         # that has nothing left in it.
                         if (
