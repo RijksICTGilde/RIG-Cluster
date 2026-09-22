@@ -13,7 +13,7 @@ from opi.connectors.subdomain import (
     validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
-from opi.core.cluster_config import get_domain_supports_dots
+from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     custom_domain_certificate_note,
@@ -23,7 +23,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, resolve_domain_tail
 
 
 class FieldError(ValueError):
@@ -378,8 +378,15 @@ class DomainConfigEnforcer:
         # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
         # veldvalidator krijgt het basisdomein niet mee. De fout hangt aan het
         # subdomeinveld, anders rendert hij op het onzichtbare groepspad.
-        if subdomain and actual_domain and "{subdomain}" in template:
-            is_valid, error_msg = validate_subdomain_for_domain(subdomain, actual_domain, cluster)
+        #
+        # Een leeg basisdomein is hier geen "geen domein": het is de ingress_postfix-zone
+        # van het cluster, en dat is juist een van onze eigen zones. ``actual_domain`` is
+        # daar bewust None (er valt niets goed te keuren), dus los de staart hier apart op
+        # in plaats van op None te wachten, zoals ``apply_domain_approval_fallback`` dat
+        # ook doet. Op None afgaan liet 'admin' op de clusterstandaard gewoon door.
+        if subdomain and "{subdomain}" in template:
+            reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
+            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
             if not is_valid and error_msg:
                 raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
