@@ -192,12 +192,10 @@ else. The field was called `scope` until RC-33, which read like an answer to "wh
 configure this" -- and the project-details card rendered it as literally "Component scope",
 which is how a user came to expect a keycloak settings screen per component.
 
-It is a *default*, `True`, and the exceptions declare themselves (RC-213). Its predecessor
-`binding` was required without one, and five services filled something in because the field
-had to be filled: sleep-mode, invite and cross-domain-access each got a component checkbox
-that provably did nothing. `False` means the service decides for itself where it works,
-the way sleep-mode picks its deployments with `match:`; which services declare it and why
-is `features/dienst-per-component-aanvinken.md`.
+It is a *default*, `True`, and the exceptions declare themselves (RC-213). `False` means
+the service decides for itself where it works, the way sleep-mode picks its deployments
+with `match:`. Which services declare it and why, and what its required predecessor
+`binding` drifted into, is `features/dienst-per-component-aanvinken.md`.
 
 **Anything that tells a user where to configure something reads the layers**, via
 `service.config_layers()` / `service.config_form_section(layer)`, never the selection.
@@ -225,10 +223,9 @@ two meet. `tests/test_dienst_kiest_zijn_componentvinkje.py` holds the catalogue 
 that carries such config keeps the default. image-registries does, and loses its checkbox
 to the other declaration.
 
-A third, separate fact is `shared_per_deployment`: one provision serves a whole deployment,
-so every component of it that takes the service gets the same database, bucket or cache. It
-says nothing about who ticks the service. Postgres carries both, and the service card shows
-both sentences.
+A third, separate fact is `shared_per_deployment`: one provision serves a whole deployment.
+It says nothing about who ticks the service, and a service can carry both
+(`features/dienst-per-component-aanvinken.md`).
 
 That module is also the answer to a service that carries no project-level config at all.
 The project-wide services step can only show sections for `ConfigLayer.PROJECT`, so ticking
@@ -324,8 +321,8 @@ definition with `hidden=True`** (`providers.py:116`). So:
   file, by an API call, or by a cluster-wide default the service owns itself.
 
 `hidden=True` is a legitimate choice (`namespace-postgresql-database` and `namespace-redis`
-are variants picked by policy), but it is a *decision*, not a default you inherit. If a
-user is supposed to enable your service, `hidden` must stay `False` and you owe the user a
+are variants picked by policy), but it is a *decision*, not a default you inherit. If a user
+is supposed to enable your service, `hidden` must stay `False` and you owe the user a
 configuration screen as well.
 
 The card itself is rendered by the `service_block` macro in

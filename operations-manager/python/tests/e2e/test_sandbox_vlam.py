@@ -153,9 +153,8 @@ def test_the_egress_policy_opens_only_the_proxy(vlam_project: CreatedProject) ->
 
     spec = policies[0]["spec"]
     assert spec["policyTypes"] == ["Egress"]
-    # Sinds RC-213 selecteert de regel het COMPONENT dat de dienst aanvinkte, niet de hele
-    # deployment: toegang tot VLAM hoort bij het component dat erom vroeg. Het project van
-    # deze meting heeft er een, en de wizard vinkt hem daar standaard aan.
+    # Het project van deze meting heeft een component, en de wizard vinkt de dienst daar
+    # standaard aan.
     assert spec["podSelector"]["matchLabels"]["app"].startswith(f"{vlam_project.deployment_name}-")
     peer = spec["egress"][0]["to"][0]
     assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == endpoint.namespace

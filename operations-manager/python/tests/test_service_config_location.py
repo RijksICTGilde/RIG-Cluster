@@ -194,15 +194,11 @@ class TestDeChipsOpDeProjectpagina:
         assert "Geldt voor het hele project" not in kaarten["Keycloak Authentication"]
 
     def test_een_dienst_zonder_componentkeuze_zegt_dat_hij_voor_het_project_geldt(self) -> None:
-        """Invite is de dienst die dit zichtbaar maakte: de kaart meldde "Per component te
-        kiezen" terwijl een uitnodiging bij het realm van het project hoort."""
         kaart = self._kaarten()["Uitnodiging"]
         assert "Geldt voor het hele project" in kaart
         assert "Per component aan te zetten" not in kaart
 
     def test_gedeeld_per_deployment_komt_als_tweede_chip_naast_de_eerste(self) -> None:
-        """Beide feiten op een kaart, want ze staan los: postgres wordt per component
-        aangevinkt EN levert een database per deployment."""
         kaart = self._kaarten()["Namespace PostgreSQL Database"]
         assert "Per component aan te zetten" in kaart
         assert "Gedeeld per deployment" in kaart
@@ -216,7 +212,7 @@ class TestDeChipsVanServicesOverview:
 
     Die leest de declaraties rechtstreeks uit de registry en niet uit
     ``selection_labels``, dus geen van de toetsen hierboven merkt het als de twee
-    afleidingen uit elkaar gaan lopen. Dat uiteenlopen is de fout die RC-213 repareerde.
+    afleidingen uit elkaar gaan lopen.
 
     Een scherm hangt er vandaag niet aan: ``bg/_service-card.html.j2`` heeft de chips er
     bewust uit gehaald en leest ``chips`` niet.

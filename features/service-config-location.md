@@ -23,8 +23,7 @@ staat. Wie de verkeerde van de twee leest, vertelt de gebruiker iets onjuists.
 
 Sinds RC-213 is het een `bool` met een standaard in plaats van een verplichte enum, en
 draagt een tweede veld het feit dat in die enum was meegelift: `shared_per_deployment`,
-"één voorziening voor de hele deployment". Postgres draagt allebei, en de kaart toont
-allebei de zinnen.
+"één voorziening voor de hele deployment" (`features/dienst-per-component-aanvinken.md`).
 
 De twee blijven bestaan (ze beantwoorden verschillende vragen) maar zijn uit elkaar
 getrokken in naam en documentatie. `instructions/services.md` heeft de regel;
