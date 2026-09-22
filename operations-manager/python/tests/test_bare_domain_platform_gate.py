@@ -85,6 +85,22 @@ class TestEnforcerRefusesBareDomainOnPlatformDomain:
         ):
             await DomainConfigEnforcer().enforce(_project(config), {"project_name": "demo"})
 
+    async def test_the_spelling_does_not_unlock_it_either(self):
+        """Het platformdomein met hoofdletters is hetzelfde domein.
+
+        Het formulier vergelijkt zelf met de lijst sinds RC-216; daarvoor deed
+        ``validate_bare_domain_allowed`` dat. Zonder het kleinmaken degradeert de harde
+        weigering tot de aanvraagmelding, en dan is de apex van het platformdomein aan te
+        vragen."""
+        config = {**_PUT_SHAPE, "base-domain": "RijksApp.DEV"}
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch.object(DomainConfigEnforcer, "_check_bare_domain_availability", new=AsyncMock()),
+            pytest.raises(FieldError) as exc_info,
+        ):
+            await DomainConfigEnforcer().enforce(_project(config), {"project_name": "demo"})
+        assert str(exc_info.value) == BARE_DOMAIN_PLATFORM_MESSAGE
+
     async def test_an_aanvraag_does_not_unlock_it(self):
         """De helft die nooit verzacht: het vinkje opent de weg naar een EIGEN domein.
 
@@ -109,6 +125,36 @@ class TestEnforcerRefusesBareDomainOnPlatformDomain:
         ):
             await DomainConfigEnforcer().enforce(_project(config, _OWNED), {"project_name": "demo"})
         availability.assert_awaited_once()
+
+    async def test_a_bare_domain_another_project_holds_lands_on_the_checkbox(self):
+        """De apex is al van een ander project, en dat hoort de gebruiker bij het vinkje.
+
+        Deze weigering ging als gewone ``ValueError`` naar het groepspad, dezelfde weg
+        waarlangs de melding uit RIG-Cluster#179 onzichtbaar bleef."""
+        bezet = AsyncMock()
+        bezet.get_by_subdomain = AsyncMock(return_value={"project_name": "een-ander"})
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch("opi.forms.editables.enforcers.SubdomainConnector", return_value=bezet),
+            pytest.raises(FieldError) as exc_info,
+        ):
+            await DomainConfigEnforcer().enforce(
+                _project({"base-domain": "mijn-app.nl", "expose-component-on-bare-domain": "frontend"}, _OWNED),
+                {"project_name": "demo"},
+            )
+        assert str(exc_info.value) == "Het kale domein 'mijn-app.nl' is niet beschikbaar"
+        assert exc_info.value.field_path == _BARE_FIELD
+
+    async def test_the_project_that_already_holds_it_passes(self):
+        """Bewerken van een deployment die de apex al heeft is geen botsing met zichzelf."""
+        eigen = AsyncMock()
+        eigen.get_by_subdomain = AsyncMock(return_value={"project_name": "demo"})
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch("opi.forms.editables.enforcers.SubdomainConnector", return_value=eigen),
+        ):
+            project = _project({"base-domain": "mijn-app.nl", "expose-component-on-bare-domain": "frontend"}, _OWNED)
+            assert await DomainConfigEnforcer().enforce(project, {"project_name": "demo"}) is project
 
     async def test_no_bare_domain_component_is_untouched(self):
         """A deployment that does not ask for a bare domain must not be affected."""
