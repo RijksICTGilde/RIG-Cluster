@@ -211,13 +211,15 @@ class TestDeChipsOpDeProjectpagina:
         assert "Gedeeld per deployment" not in self._kaarten()["Publiceren op het web"]
 
 
-class TestDeChipsOpDeDienstenpagina:
-    """Dezelfde twee declaraties, tweede lezer: het overzicht op ``/lotc/bg/services``.
+class TestDeChipsVanServicesOverview:
+    """Dezelfde twee declaraties, tweede afleiding: de chips in ``services_overview``.
 
-    ``services_overview`` bouwt zijn chips rechtstreeks uit de registry en niet uit
-    ``selection_labels``, dus geen van de toetsen hierboven merkt het als die twee uit
-    elkaar gaan lopen. Dat uiteenlopen is de fout die RC-213 repareerde: een kaart die
-    "per component" zegt over een dienst die je daar niet aanvinkt.
+    Die leest de declaraties rechtstreeks uit de registry en niet uit
+    ``selection_labels``, dus geen van de toetsen hierboven merkt het als de twee
+    afleidingen uit elkaar gaan lopen. Dat uiteenlopen is de fout die RC-213 repareerde.
+
+    Een scherm hangt er vandaag niet aan: ``bg/_service-card.html.j2`` heeft de chips er
+    bewust uit gehaald en leest ``chips`` niet.
     """
 
     def _chips(self, service_type: ServiceType) -> list[str]:

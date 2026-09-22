@@ -249,8 +249,7 @@ def page_data(slug: str) -> dict[str, Any]:
 
     if slug == "services":
         # Filteren op "kies ik dit zelf of is het er altijd" - dat is de vraag waarmee
-        # iemand deze pagina opent. Hoe je hem aanzet (per component, per project) staat
-        # als chip op de kaart; dat is verdieping, geen keuze vooraf.
+        # iemand deze pagina opent.
         alle = services_overview(projects)
         return {
             "projects": projects,
