@@ -28,6 +28,14 @@ Dat de aanvraaghaak zelf werkt is bewezen: dezelfde stap zonder kaal domein en m
 
 **3. Een openstaande aanvraag heeft geen zichtbaar gevolg.** Een niet-goedgekeurd domein blokkeert het opslaan niet (bewust: anders kan een beheerder een goedkeuring niet intrekken) en `apply_domain_approval_fallback` (`opi/utils/naming.py:1903`) zet de deployment bij publicatie terug op het clusterdomein. Dat is de juiste grendel, maar hij meldt niets, aan niemand.
 
+## De scheidslijn waar dit plan op rust
+
+Opslaan en toepassen zijn twee verschillende dingen, en de goedkeuring hoort alleen over het tweede te gaan.
+
+**Opslaan mag.** Een eigen domein, een subdomein daarop en een kaal domein mogen alle drie in het projectbestand staan voordat de goedkeuring rond is. Het projectbestand legt vast wat het project WIL; een `requested`-regel hoort daarbij. Het formulier laat de gebruiker in een keer door.
+
+**Toepassen mag niet.** Zolang het domein niet is goedgekeurd, draait de deployment op het clusteradres en wordt het kale domein NIET toegepast. Niet op het eigen domein, want dat is nog niet bevestigd, en zeker niet op het clusteradres waarop teruggevallen wordt: dat zou de apex van onze eigen zone claimen.
+
 ## Wat er moet gebeuren
 
 ### 1. Het kaal-domein-blok krijgt dezelfde vorm als de blokken eronder
@@ -43,11 +51,29 @@ Alles op het pad van het veld zelf, `domain_setting_path(DomainSetting.BARE_DOMA
 
 Dit is veilig omdat publicatie de regel zelf opnieuw toetst: `validate_bare_domain_allowed` draait daar ook, en tot de goedkeuring houdt `apply_domain_approval_fallback` de deployment op het clusteradres. Het formulier hoeft de apex dus niet te bewaken; het moet de gebruiker vooruit helpen.
 
-### 2. Een fout zonder veld mag niet verdwijnen
+### 2. Het kale domein hangt aan de goedkeuring, net als het rootadres
+
+Dit is een bevinding op zichzelf, en hij staat er nu naast. In `opi/utils/naming.py` staan twee blokken onder elkaar:
+
+```python
+if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
+    root_hostname = generate_root_hostname(subdomain, base_domain)      # gegrendeld op goedkeuring
+...
+if expose_on_bare_domain and base_domain:                               # regel 2119, nergens op gegrendeld
+    bare_hostname = generate_bare_domain_hostname(base_domain)
+```
+
+Het rootadres wacht op `domain_approved`, het kale domein niet. Bij een niet-goedgekeurd eigen domein valt de rest dus terug op het clusteradres terwijl de apex gewoon in de hostnamenlijst blijft staan, inclusief certificaataanvraag daarop, vanuit een tenant-namespace.
+
+Vandaag is dat onschadelijk doordat het formulier je er niet doorheen laat en `expose-component-on-bare-domain` dus zelden zonder goedkeuring in een bestand komt. Stap 1 haalt die blokkade weg, en dan wordt dit acuut. Deze grendel hoort er dus VOOR stap 1 in, of in hetzelfde werk.
+
+De reparatie is dezelfde conditie die het rootadres al gebruikt: `domain_approved`. Niet een eigen variant ernaast.
+
+### 3. Een fout zonder veld mag niet verdwijnen
 
 Dit is de structurele helft. Een `ValueError` uit een enforcer die op een pad zonder gerenderd veld landt, hoort in de algemene "Let op"-balk te komen in plaats van nergens. Zolang dat niet zo is, is de volgende onzichtbare melding een kwestie van tijd; deze is de tweede die we op deze manier vinden.
 
-### 3. De terugval wordt zichtbaar
+### 4. De terugval wordt zichtbaar
 
 `apply_domain_approval_fallback` logt op WARNING welk adres niet gebruikt is en waarom, en de deploymentpagina toont dat als melding: "dit adres is nog niet in gebruik omdat het domein op goedkeuring wacht". Zonder deze stap verplaatst stap 1 de verrassing alleen maar: mensen komen dan door het formulier en staan zonder uitleg op het clusteradres.
 
@@ -59,6 +85,7 @@ De eerste vier gaan over het gedrag dat een gebruiker merkt, en horen in `tests/
 - diezelfde stand met `_request-domain` aangevinkt komt door de stap heen;
 - na die stap staat er een `allowed-domains`-regel met `status: requested`;
 - kaal domein op een PLATFORMdomein blijft hard geweigerd, met of zonder vinkje. Dit is de test die betrapt dat stap 1 te ver is doorgeschoten;
+- een deployment met kaal domein op een NIET-goedgekeurd eigen domein levert geen apex-hostnaam op, niet van het eigen domein en niet van de clusterzone. Dit is de toets bij stap 2, en hij valt vandaag om;
 - status `denied` blijft hard geweigerd in het formulier en blijft doorgelaten in de opslagpoort (`denied_blocks=False`), zodat een beheerder zijn intrekking kan opslaan.
 
 En voor stap 2 en 3:
