@@ -89,24 +89,18 @@ DOMAIN_SETTING_KEYS: tuple[str, ...] = tuple(setting.value for setting in Domain
 
 #: The settings that describe the SHAPE a hostname is built in, not the hostname itself.
 #:
-#: ``domain-format`` names no host: it says whether a deployment publishes one address or
-#: one per component. Two deployments can carry the same value without colliding, which is
-#: exactly what separates it from the rest.
-#:
-#: The other five are the NAME half below, each measured rather than assumed:
-#: ``base-domain`` and ``subdomain`` ARE the hostname; ``issuer`` is the certificate
-#: authority chosen for that domain (its editable declares ``depends_on`` base-domain);
-#: ``root-component`` only acts on a dotted layout, which needs a base-domain; and
-#: ``expose-component-on-bare-domain`` is read only in combination with one
-#: (``if expose_on_bare_domain and base_domain``). A value that means nothing without a
-#: domain the clone does not have would be inert baggage at best.
+#: ``domain-format`` names no host, so two deployments can carry the same value without
+#: colliding. The other five are the NAME half below: ``base-domain`` and ``subdomain`` ARE
+#: the hostname, ``issuer`` is chosen for that domain (its editable declares ``depends_on``
+#: base-domain), ``root-component`` only acts on a dotted layout, which needs one, and
+#: ``expose-component-on-bare-domain`` is read as ``if expose_on_bare_domain and
+#: base_domain``. None of the five means anything for a clone with no domain of its own.
 DOMAIN_SHAPE_SETTINGS: tuple[DomainSetting, ...] = (DomainSetting.DOMAIN_FORMAT,)
 
 #: Everything that names a web address, or only means something together with one.
 #:
-#: Derived rather than listed, so a setting added to ``DomainSetting`` lands here by
-#: default. That is the safe side: a new setting is cleared from a clone until someone
-#: decides it belongs to the shape, rather than silently travelling along.
+#: Derived rather than listed, so a new ``DomainSetting`` lands here by default: cleared
+#: from a clone until someone decides it belongs to the shape, rather than travelling along.
 DOMAIN_NAME_SETTINGS: tuple[DomainSetting, ...] = tuple(
     setting for setting in DomainSetting if setting not in DOMAIN_SHAPE_SETTINGS
 )
@@ -267,16 +261,12 @@ def clear_domain_settings(deployment: dict[str, Any]) -> None:
 def clear_domain_name_settings(deployment: dict[str, Any]) -> None:
     """Remove only what NAMES a web address, leaving the shape half in place.
 
-    The clone's half of :func:`clear_domain_settings`: a clone must never claim the
-    source's hostnames, but the shape those hostnames are built in belongs to nobody, and
-    dropping it silently handed the clone whatever the platform default happened to be on
-    the day it was processed. That is how the previews of ``asses-k2n`` moved from one
-    address per deployment to one per component without a single line of their project
-    file changing: same-origin ``/api`` calls landed in the frontend's client-side routing
-    catch-all and answered ``200`` with ``index.html``.
+    The clone's half of :func:`clear_domain_settings`. Dropping the shape as well did not
+    give a clone "no format", it gave it the platform default of the day it was processed
+    (RC-217, ``features/kloon-erft-de-vorm-van-het-webadres.md``).
 
-    Which formats can actually survive the loss of the name is a question about the
-    formats, not about the settings, and it is answered where the templates live
+    Which formats survive the loss of the name is a question about the formats, not about
+    the settings, so it is answered where the templates live
     (``naming.SELF_CONTAINED_FORMAT_IDS``).
     """
     for setting in DOMAIN_NAME_SETTINGS:
