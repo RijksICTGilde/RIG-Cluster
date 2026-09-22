@@ -65,9 +65,7 @@ class TestWebSubdomainCheckRateLimiter:
 
 
 class TestWebSubdomainCheckAppliesReservedNamesPerDomain:
-    """Dezelfde regel als in de wizard: de live-check in het portaal moet niet iets anders
-    zeggen over dezelfde naam dan het formulier ernaast.
-    """
+    """Dezelfde regel als in de wizard, op de check die het portaal live bevraagt."""
 
     @staticmethod
     async def _check(subdomain: str, base_domain: str) -> dict:
