@@ -51,11 +51,11 @@ Het foutgedrag is hetzelfde gebleven:
 ## Wat niet is omgezet
 
 **De versleutelkant.** `encrypt_age_content` en `encrypt_age_content_sync` starten nog
-steeds het binary. De winst is daar kleiner (versleutelen gebeurt bij het opslaan, niet
-bij elke render) en `pyrage` 1.4.0 kent geen armor-uitvoer, terwijl de opgeslagen vorm
-armored is. Die vorm met de hand nabouwen is meer risico dan de winst rechtvaardigt.
-Dat beide richtingen wel uitwisselbaar zijn is gemeten en vastgelegd in
-`tests/test_age_ontsleuteling_in_proces.py`, zodat die stap later op een meting rust.
+steeds het binary, met `--armor`. De winst is daar kleiner: versleutelen gebeurt bij het
+opslaan, niet bij elke render. `pyrage.encrypt` kent een `armored`-vlag, dus die stap is
+te doen; hij viel buiten deze wijziging. Dat beide richtingen uitwisselbaar zijn is
+gemeten en vastgelegd in `tests/test_age_ontsleuteling_in_proces.py`, zodat die stap
+later op een meting rust.
 
 **Geen cache.** Issue #145 stelde caching voor als alternatief. Ontsleutelde geheimen in
 een cache leggen is een risico dat je terugkrijgt voor tijdwinst die de omzetting
