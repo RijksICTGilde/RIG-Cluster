@@ -169,6 +169,43 @@ Dat met sed en awk doen kan, maar het is precies het soort bewerking waarbij een
 
 Een shell-schil om een Python-kern is een optie, maar dan onderhoud je twee talen voor één gereedschap. Mijn voorstel is daarom één Python-script. Als de voorkeur voor shell zwaarder weegt dan dit argument, dan is de grens: shell voor de SOPS-bestanden en de env-regels, Python voor de projectbestanden, en nooit de projectbestanden met tekstvervanging.
 
+## Waar de bouwer sleutel A vindt
+
+Het script moet tegen echte data getest worden, en dat kan niet zonder A. Beide helften zitten al in de repo, dus het plan verwijst ernaar in plaats van ze te kopieren. Dat scheelt een extra vindplaats op het moment dat we er juist een aan het opruimen zijn.
+
+- **De private sleutel**: `operations-manager/python/tests/test_age_password_decryption.py`, regel 21. Dat die daar staat is de aanleiding van deze taak. Zet hem lokaal in `security/old_key.txt`; die map is untracked.
+- **De publieke sleutel**: staat als `recipient` in elk van de 19 SOPS-bestanden, en in de `age-public-key` van elk projectbestand. Geen geheim, en al helemaal niet nieuw.
+- **De testbestanden**: `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects` onder `projects/`, 45 stuks, allemaal met beide velden.
+
+Daarmee kan de bouwer de volledige ronde draaien en verifieren zonder dat er iets buiten de repo nodig is, en zonder dat er iets bij komt.
+
+**Niet committen.** De nieuwe sleutel, `security/old_key.txt` en de vingerafdrukbestanden blijven op schijf. `security/` is untracked en dat moet zo blijven; controleer dat aan het eind van elke ronde.
+
+## De verificatie is het echte product
+
+De eis is dat je achteraf kunt aantonen dat er niets is veranderd behalve de sleutel. Dat is sterker dan "het script gaf geen fout", en het is de reden dat dit Python wordt en geen shell.
+
+De methode is een **vingerafdruk van de platte inhoud, voor en na**:
+
+```
+VOOR   per versleuteld veld: ontsleutel met A  ->  sha256 van de PLATTE waarde  ->  vingerafdruk.json
+                                                   (de waarde zelf wordt nooit opgeslagen)
+NA     per versleuteld veld: ontsleutel met B  ->  sha256  ->  vergelijk met de vingerafdruk
+```
+
+Dat werkt omdat de ciphertext bij elke omzetting verandert en de plaintext niet. Een vergelijking van de versleutelde vorm zegt dus niets; een vergelijking van de hash van de inhoud zegt alles. Er staat nooit een geheim in het bestand: alleen een pad, een veldnaam en een hash.
+
+Wat de verificatie afdekt:
+
+- **Elk veld is nog leesbaar**, nu met de nieuwe sleutel. Een veld dat niet meer opengaat is een harde fout.
+- **Elke waarde is ongewijzigd.** Een afwijkende hash betekent dat er inhoud is verschoven, en dat is precies de ramp die je niet wilt.
+- **Er is niets kwijt.** Het aantal velden in de vingerafdruk voor en na moet gelijk zijn. Een veld dat stil verdween tijdens een YAML-ronde valt hier door de mand, en dat is de fout die tekstvervanging maakt zonder te crashen.
+- **De PAT is de enige bewuste uitzondering.** Bij een vervanging hoort die hash juist te verschillen, en precies bij die velden. Het script noemt ze vooraf, zodat een afwijking elders meteen opvalt.
+
+Draai de verificatie als losse stand: `--verify` moet werken zonder dat er iets omgezet wordt, zodat je hem ook maanden later nog kunt draaien om te zien of alles nog klopt.
+
+**Wat het niet garandeert.** Dat de waarden zelf nog geldig zijn bij de tegenpartij, bijvoorbeeld of GitHub die PAT nog accepteert, valt hier niet mee te toetsen. Dit bewijst dat de omzetting niets heeft beschadigd, niet dat de inhoud doet wat hij moet doen. Daarvoor is de rooktest na de cutover: OPI leest een sops-bestand, ArgoCD rendert een applicatie, en een project haalt zijn repository op.
+
 ## Testen: tegen echte projectbestanden, niet tegen fixtures
 
 Er staat een kopie van oudere projectbestanden op `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects` onder `projects/`. Gemeten: **45 bestanden, alle 45 met `age-private-key` en `age-public-key`**, en 34 met een `password:` in age-vorm. Dat is de testset, en die is representatiever dan welke fixture dan ook.
