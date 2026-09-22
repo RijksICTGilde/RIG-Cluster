@@ -167,6 +167,12 @@ class TestValidateSubdomainForDomain:
         is_valid, error = validate_subdomain_for_domain("MY-APP", "uitbetrouwbarebron.nl", "odcn-production")
         assert is_valid is True, error
 
+    def test_case_is_no_way_around_the_list(self):
+        """Hoofdletters zijn in DNS hetzelfde adres. Zonder normalisatie van beide kanten
+        is ``ADMIN`` of ``RIJKS.APP`` een omweg om de lijst heen."""
+        assert validate_subdomain_for_domain("ADMIN", "rijks.app", "odcn-production")[0] is False
+        assert validate_subdomain_for_domain("admin", "RIJKS.APP", "odcn-production")[0] is False
+
     def test_the_cluster_decides_which_zones_are_ours(self):
         """Op sandboxed-local is robbertuittenbroek.nl WEL van ons, dus geldt de lijst daar.
         Dat is de clusterconfig die zijn werk doet."""

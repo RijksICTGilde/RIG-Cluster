@@ -606,6 +606,31 @@ class TestEnforcerAppliesReservedNamesPerDomain:
         assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
 
     @pytest.mark.asyncio
+    async def test_a_reserved_name_blocks_instead_of_asking_for_approval(self, monkeypatch):
+        """Zonder allowlist-entry geeft de aanvraagcheck eronder een FieldWarning, en die
+        laat de inzending door. De reservering moet er dus voor komen, anders komt 'admin'
+        op rijks.app alsnog door het formulier.
+        """
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rijks.app",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
     async def test_a_reserved_name_on_a_subzone_of_a_platform_domain_is_refused(self, monkeypatch):
         """Valt om bij een controle op lidmaatschap in plaats van op suffix."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
