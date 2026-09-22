@@ -1937,10 +1937,9 @@ def apply_domain_approval_fallback(
     if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
         return domain_format, base_domain
 
-    # Not approved — fall back to safe format on cluster domain. The log names the address
+    # Not approved: fall back to safe format on cluster domain. The log names the address
     # that lapses, because that is what someone wondering where their address went will
-    # search for. The owner hears it on the deployment page instead, in their own words
-    # (``collect_deployment_approval_notices``).
+    # search for.
     cluster_domain = ingress_postfix.lstrip(".")
     logger.warning(
         "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
@@ -2120,9 +2119,8 @@ def get_deployment_hostnames(
             hostnames.append(root_hostname)
 
     # The apex hangs on the same approval as the root address above. Ungated, it stayed in
-    # the list while every other address of an unapproved domain fell back to the cluster
-    # one -- an apex, and a certificate request on it, for a domain nobody granted this
-    # project. Same condition as the root address, not a variant beside it.
+    # the list while every other address of that domain fell back to the cluster one: an
+    # apex, and a certificate request on it, for a domain nobody granted this project.
     if domain_approved and expose_on_bare_domain and base_domain:
         bare_hostname = generate_bare_domain_hostname(base_domain)
         if bare_hostname not in hostnames:
