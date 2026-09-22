@@ -14,7 +14,7 @@ from opi.services.catalog.persistent_storage.variables import PersistentStorageV
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE, StorageConfig
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 
 
 class PersistentStorageService(BackupsPageMixin, Service):
@@ -25,7 +25,6 @@ class PersistentStorageService(BackupsPageMixin, Service):
         help_template="persistent_storage/help.md",
         icon="server",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         backup_label="pvc",
         # Gelijk aan temp-storage: een startwaarde, geen inschatting. Een PVC kan wel
         # groeien en niet krimpen, dus te ruim beginnen is duurder dan te krap beginnen.

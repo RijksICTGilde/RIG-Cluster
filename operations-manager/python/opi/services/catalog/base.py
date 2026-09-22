@@ -32,7 +32,7 @@ from pydantic import ValidationError
 
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
-from opi.services.services import ServiceDefinition
+from opi.services.services import ServiceDefinition, service_entry_name
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -746,6 +746,10 @@ class Service(ABC):
     #: Whether the CONFIG of this service at the component layer is at the same time its
     #: SELECTION, so there is no separate on/off for it on a component. What follows from
     #: it, and when to declare it: ``instructions/services.md``.
+    #:
+    #: The sibling declaration is ``ServiceDefinition.selectable_per_component``, which
+    #: takes the same checkbox away for the opposite reason: there is no per-component
+    #: choice at all. ``offers_component_checkbox`` is where the two meet.
     component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
@@ -822,15 +826,6 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
-    #: Where the selection that switches the per-component contribution on is read.
-    #: False (the default): the component's own ``services`` list, so each component
-    #: decides. True: the PROJECT's list, so every component of every deployment gets
-    #: the contribution. That is what ``ServiceBinding.DEPLOYMENT`` means for a service
-    #: that hands each pod the same thing and has no per-component choice to make
-    #: (vlam: one address, one egress rule) -- without it such a service could never
-    #: contribute at all, because no component ever ticks it.
-    manifest_activated_by_project: ClassVar[bool] = False
-
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
     #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
     #: included) by ``__init_subclass__``, so participation cannot drift from
@@ -1623,3 +1618,38 @@ class Service(ABC):
         service-manifest prune both skip it.
         """
         return []
+
+    def components_using_service(self, ctx: DeploymentManifestContext) -> list[str]:
+        """The names of this deployment's components that ticked this service, sorted.
+
+        Read from the project's component definitions (that is where a component's
+        ``services`` list lives), restricted to the components this deployment actually
+        rolls out. For a deployment-wide contribution that is nonetheless per component:
+        one manifest per ticking component instead of one selecting the whole deployment.
+        """
+        local: set[str] = {
+            component.get("reference")
+            for component in ctx.deployment.get("components", []) or []
+            if isinstance(component, dict) and component.get("reference")
+        }
+        using: set[str] = set()
+        for component in ctx.project_data.get("components", []) or []:
+            name = component.get("name")
+            if name not in local:
+                continue
+            names = [service_entry_name(entry) for entry in component.get("services", []) or []]
+            if self.service_type.value in names:
+                using.add(name)
+        return sorted(using)
+
+
+def offers_component_checkbox(service: Service) -> bool:
+    """Whether a component ticks this service on and off in the per-component picker.
+
+    Two separate declarations take the checkbox away, and they meet here so the picker
+    asks one question: ``selectable_per_component`` False means there is no per-component
+    choice at all (the service decides for itself where it works), while
+    ``component_selection_follows_config`` means the choice exists but lives in the
+    service's own config field. Their consequences elsewhere differ, so they stay apart.
+    """
+    return service.definition.selectable_per_component and not service.component_selection_follows_config

@@ -20,8 +20,8 @@ gets its own model, selected by ``PublishOnWebService.config_model_for(layer)``:
 One model per layer rather than one bag of ten optional fields: with a single model nothing
 stops ``tls`` from landing on a deployment or ``subdomain`` on a component, and "every field
 optional" is exactly what makes such a file validate. ``config_model`` names the component
-model -- the layer this ``ServiceBinding.COMPONENT`` service is actually bound at, and the
-one whose entries carry a stamped ``schema-version`` -- so that is what the committed
+model -- the layer a component ticks this service on, and the one whose entries carry a
+stamped ``schema-version`` -- so that is what the committed
 fragment documents; the other two are OPI-written and validated shape-first (see
 ``project_validation._validate_one_config``).
 """
