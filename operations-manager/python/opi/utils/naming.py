@@ -2119,8 +2119,7 @@ def get_deployment_hostnames(
             hostnames.append(root_hostname)
 
     # The apex hangs on the same approval as the root address above. Ungated, it stayed in
-    # the list while every other address of that domain fell back to the cluster one: an
-    # apex, and a certificate request on it, for a domain nobody granted this project.
+    # the list while every other address of that domain fell back to the cluster one.
     if domain_approved and expose_on_bare_domain and base_domain:
         bare_hostname = generate_bare_domain_hostname(base_domain)
         if bare_hostname not in hostnames:
