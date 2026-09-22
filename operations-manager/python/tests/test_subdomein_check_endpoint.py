@@ -185,6 +185,23 @@ class TestDeGereserveerdeNamenGeldenPerDomein:
         assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
         connector.check_availability.assert_not_awaited()
 
+    def test_onder_onze_zone_blijft_de_lijst_gelden_terwijl_cluster_domain_nee_zegt(self, client: TestClient) -> None:
+        """De twee vragen lopen hier uiteen en dat hoort zo: ``team.local`` wordt niet
+        AANGEBODEN (cluster_domain false) en is wel onze zone, dus de lijst bijt. Valt om
+        zodra iemand er een antwoord van maakt.
+        """
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "team.local"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cluster_domain"] is False
+        assert body["available"] is False
+        assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
+
     def test_dezelfde_naam_op_een_eigen_domein_is_gewoon_vrij(self, client: TestClient) -> None:
         response = client.get(
             f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
