@@ -216,22 +216,19 @@ Op die tweede helft loopt de scheidslijn tussen **opslaan** en **toepassen**:
 - *Opslaan mag.* Een kaal domein op een eigen domein dat nog op goedkeuring wacht mag in het
   projectbestand staan; het projectbestand legt vast wat het project wil. Het formulier laat
   je in één keer door met een waarschuwing bij het vinkje, en `DomainRequestHook` schrijft de
-  `requested`-regel bij het opslaan. Daarvoor weigerde de enforcer hier met een gewone
-  `ValueError` op het groepspad: onzichtbaar op het scherm, en zonder uitgang, want de
+  `requested`-regel bij het opslaan. Daarvoor weigerde de enforcer hier zonder uitgang: de
   aanvraag die de weigering zou oplossen wordt pas bij PRE_SAVE geschreven.
 - *Toepassen mag niet.* De apex hangt aan `is_deployment_domain_approved`, dezelfde
   voorwaarde als het rootadres, op alle drie de plekken die hem opleveren:
-  `get_deployment_hostnames`, `register_bare_domain` en de apex-ingress. Zolang het domein
-  niet is goedgekeurd wordt de apex niet geclaimd, houdt de deployment er ook geen
-  registratie op, en blijft de rest op het clusteradres
-  (`apply_domain_approval_fallback`, dat logt welk adres daarmee vervalt). De
-  deploymentpagina en de API melden het via `collect_deployment_approval_notices`.
+  `get_deployment_hostnames`, `register_bare_domain` en de apex-ingress. De rest van de
+  deployment blijft op het clusteradres (`apply_domain_approval_fallback`, dat logt welk
+  adres daarmee vervalt); de deploymentpagina en de API melden het via
+  `collect_deployment_approval_notices`.
 - *Een ingetrokken goedkeuring* (`denied`) weigert in het formulier en gaat door de
   opslagpoort (`denied_blocks=False`), zodat een beheerder zijn eigen oordeel kan opslaan.
 
 `validate_bare_domain_allowed()` in `connectors/subdomain.py` draagt beide helften en staat
-op het publicatiepad, vlak voor `register_bare_domain` en voor het renderen van de
-apex-ingress, achter diezelfde goedkeuringspoort.
+op het publicatiepad, achter diezelfde goedkeuringspoort.
 
 **Een kaal domein afmelden raakt alleen de eigen registratie.** `delete_bare_domain()` deed
 zijn `DELETE` op `(subdomain='@', base_domain)` zonder eigenaarsfilter, terwijl de

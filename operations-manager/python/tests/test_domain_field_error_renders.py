@@ -99,10 +99,8 @@ class TestAnErrorWithoutAFieldGoesToTheGeneralBar:
     de knop stuk leek.
 
     Een enforcer die een gewone ``ValueError`` heft landt op het pad van de GROEP
-    (``deployments[1]``), en dat is een container, geen invoerveld. De stap ging niet
-    verder en er stond niets op het scherm: "klikken op 'Volgende' werkt gewoon niet"
-    (RIG-Cluster#179). Wat geen veld heeft hoort in de algemene foutbalk, en de renderer
-    die het formulier tekent is de enige die weet welke paden er zijn.
+    (``deployments[1]``), en dat is een container, geen invoerveld: "klikken op 'Volgende'
+    werkt gewoon niet" (RIG-Cluster#179).
     """
 
     def test_the_group_path_renders_nothing(self):
@@ -132,12 +130,11 @@ class TestAnErrorWithoutAFieldGoesToTheGeneralBar:
         assert errors == {}
 
     def test_a_real_field_keeps_its_error(self):
-        """De tegenkant: een melding die WEL een veld heeft blijft er hangen, anders
-        verhuist elke veldfout naar de balk en staat er niets meer bij het veld.
+        """De tegenkant: een melding die WEL een veld heeft blijft er hangen.
 
-        Het subdomeinveld wordt alleen getekend bij een formaat dat er een vraagt, en dat
-        is precies wat "heeft dit pad een veld" moet kunnen zien: dezelfde sleutel is in
-        de ene stand een veldfout en in de andere een melding zonder veld.
+        Het subdomeinveld wordt alleen getekend bij een formaat dat er een vraagt, dus
+        dezelfde sleutel is in de ene stand een veldfout en in de andere een melding
+        zonder veld.
         """
         section = build_domain_section(1, edit_mode=True)
         field = domain_setting_path(DomainSetting.SUBDOMAIN, 1)
@@ -167,9 +164,8 @@ class TestDeModalStapZetHemInDeBalk:
     """Dezelfde weg als in productie: de stap die niet verdergaat moet zeggen waarom.
 
     De enforcer van de GROEP heft hier een gewone ``ValueError`` ("Een aangepast domein is
-    geselecteerd maar niet ingevuld"), en die landt op ``deployments[1]``. Dat is een
-    tweede melding die op dezelfde manier onzichtbaar was als de kaal-domeinmelding uit
-    RIG-Cluster#179.
+    geselecteerd maar niet ingevuld"): de tweede melding die op deze manier onzichtbaar
+    was.
     """
 
     @staticmethod
@@ -230,10 +226,9 @@ class TestEenRijFoutInEenReeksBlijftStaan:
     """De valkuil die de browsertoets ving: een reeks tekent zijn rijen, de kaart niet.
 
     ``_build_fields_from_editables`` zet alleen de REEKS zelf in zijn kaart
-    (``components``); elk veld van een rij hangt als kind onder die reeks en draagt zijn
-    eigen melding. Een vergelijking op de sleutels van die kaart zag ``components[0]/name``
-    daarom aan voor een pad zonder veld, en haalde de verplicht-melding van de
-    componentenstap weg: het veld werd niet meer rood en de cursor landde nergens.
+    (``components``); elk veld van een rij hangt als kind onder die reeks. Een
+    vergelijking op de sleutels van die kaart hield ``components[0]/name`` daarom voor
+    een pad zonder veld, en haalde de verplicht-melding van de componentenstap weg.
     """
 
     def test_de_verplicht_melding_van_een_component_wordt_niet_weggehaald(self):
