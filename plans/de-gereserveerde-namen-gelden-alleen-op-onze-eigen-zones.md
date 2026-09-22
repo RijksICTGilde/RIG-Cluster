@@ -159,7 +159,11 @@ Deze wijziging maakt een controle LOSSER. Dat is precies het soort wijziging dat
 
 1. `admin`, `www`, `api` en `test` blijven geweigerd op `rijks.app`, `rijksapp.nl` en `rijksapp.dev`;
 2. `admin` op basisdomein `team.rijks.app` blijft geweigerd. Dit valt om bij een implementatie die op lidmaatschap test in plaats van op suffix;
-3. `admin` op de `ingress_postfix`-zone van het cluster wordt geweigerd. Dit valt om als de beheerlijst die zone niet noemt;
+3. `admin` op de `ingress_postfix`-zone wordt geweigerd, en dan in de spelling waarin die zone in de praktijk bereikt wordt: **een LEEG basisdomein** (de keuze "Cluster standaard") met `domain-format: subdomain`. Dat geeft `admin.rig.prd1.gn2.quattro.rijksapps.nl`. De zone als expliciet ingetypt basisdomein is de tweede spelling en dekt deze niet af, want die komt in nul projectbestanden voor.
+
+   **Dit is de val, en hij is gemeten in RC-214.** In de enforcer geldt `actual_domain = custom_domain if base_domain == "__custom__" else base_domain or None`, dus bij de clusterstandaard is `actual_domain` None en slaat elke check achter `and actual_domain` over. Het publicatiepad vangt het evenmin: `project_manager.py` registreert alleen `if ... and subdomain and base_domain`. Vóór deze wijziging dekte de domein-BLINDE veldvalidator dat pad wel. Wie de check alleen aan `actual_domain` hangt, maakt op precies die zone een gat dat er eerst niet was.
+
+   Los het basisdomein in dat blok daarom op met `resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))` (`opi/utils/naming.py:64`), en laat `actual_domain` zelf ongemoeid: dat is wat de goedkeurings- en beschikbaarheidschecks eronder nodig hebben. `apply_domain_approval_fallback` (`opi/connectors/subdomain.py`) heeft een comment over precies deze val;
 4. `ux-onderzoeken.rijksapps.nl` van `ug-zxt` blijft een EIGEN domein. Dit valt om bij een beheerlijst die de ouder `rijksapps.nl` noemt in plaats van de postfix-zone.
 
 En één eigenschap die geen test met een getal heeft maar wel de reden is dat de tekst zo luidt: op een platformdomein blijft de melding generiek (`Subdomein 'x' is niet beschikbaar`), zonder het woord "gereserveerd" en zonder onderscheid met "al in gebruik". Wie die tekst specifieker maakt, maakt de lijst aftastbaar.
@@ -169,7 +173,7 @@ En één eigenschap die geen test met een getal heeft maar wel de reden is dat d
 - `test` op `uitbetrouwbarebron.nl` komt door de wizard EN door `register_or_update_for_deployment()`. Alleen het eerste testen is precies de halve reparatie waar dit plan voor waarschuwt;
 - `test`, `admin`, `www` en `api` blijven geweigerd op de drie platformdomeinen, met de ongewijzigde generieke tekst;
 - `admin` op `team.rijks.app` blijft geweigerd;
-- `admin` op de `ingress_postfix`-zone wordt geweigerd;
+- `admin` op de `ingress_postfix`-zone wordt geweigerd via een LEEG basisdomein plus `domain-format: subdomain`, niet alleen via de ingetypte zone. Geen enkele toets in de suite reed die weg vóór RC-214;
 - `ux-onderzoeken.rijksapps.nl` blijft een eigen domein;
 - elke `ingress_postfix`-zone en elk `supported_domains`-domein van elk cluster in `CLUSTER_CONFIG` wordt gedekt door de `managed_zones` van datzelfde cluster;
 - de vormregels zijn onveranderd: leeg, 64 tekens, `-x`, `x-`, `MY-APP` wordt `my-app` en is geldig;
@@ -198,6 +202,8 @@ De volledige suite moet hetzelfde aantal gefaalde tests geven als vóór de wijz
 ## Waar op te letten
 
 **De beschikbaarheidscheck is een andere check.** Die blijft doen wat hij doet, ook op een eigen domein: één eigenaar per `(subdomain, base_domain)`, met de melding die het bezittende project noemt (`enforcers.py:444`). Issue #156 gaat daarover. Niet in deze taak meenemen.
+
+**De clusterstandaard is een leeg basisdomein, geen domein.** `actual_domain` is None zodra de gebruiker "Cluster standaard" kiest, en dat is precies de `ingress_postfix`-zone. Elke regel die je aan `actual_domain` hangt, geldt daar dus niet. Zie poort 3.
 
 **Eén waarschuwing wint.** `DomainConfigEnforcer` levert waarschuwingen af door een `FieldWarning` te heffen, dus de eerste die afgaat verdringt de rest, en de certificaatnotitie staat bewust achteraan. Voeg hier geen vierde waarschuwing tussen zonder te bepalen waar hij in die rij hoort.
 
