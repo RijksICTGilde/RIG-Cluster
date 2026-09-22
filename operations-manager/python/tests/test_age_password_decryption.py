@@ -70,11 +70,15 @@ class TestAgePasswordDecryption:
         assert is_age_encrypted("") is False
 
     def test_decrypt_password_smart_sync_base64_age(self):
-        """Test decryption of base64+age password from configmap."""
+        """Test decryption of base64+age password from configmap.
+
+        The stored value is a GitHub PAT, so its prefix and length pin the plaintext
+        without writing the token itself into the repository.
+        """
         result = decrypt_password_smart_sync(self.encrypted_password, self.private_key)
 
+        assert result.startswith("ghp_")
         assert len(result) == 40
-        assert not result.startswith("base64+age:")
 
     def test_decrypt_password_smart_sync_failure(self):
         """Test handling of decryption failure."""
