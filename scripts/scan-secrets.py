@@ -56,7 +56,10 @@ def main(argv: list[str] | None = None) -> int:
         findings = scan_history(tree, include_ciphertext=arguments.inventory)
         return report(findings, what=f"the git history of {tree}")
 
-    if arguments.files:
+    # "is not None" and not a truthiness test: "--files" with nothing after it would otherwise
+    # fall through to the whole-tree scan, which is a surprise in a hook whose whole job is to be
+    # fast on the staged files.
+    if arguments.files is not None:
         paths = [Path(name) for name in arguments.files]
         findings = scan_files(paths, include_ciphertext=arguments.inventory)
         return report(findings, what=f"{len(paths)} staged files")

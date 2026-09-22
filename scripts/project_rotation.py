@@ -49,6 +49,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from key_rotation import (  # type: ignore[reportMissingImports]
+    PROJECT_FIELD_PRIVATE_KEY,
     Fingerprint,
     MissingKey,
     ProjectRound,
@@ -164,7 +165,12 @@ async def run_round(
         result.fingerprint_before.fields.update(report.fingerprint_before.fields)
         result.fingerprint_after.fields.update(report.fingerprint_after.fields)
         if new_pat is not None:
-            result.replaced_fields.extend(key for key in report.fingerprint_before.fields if key.endswith(".password"))
+            # Everything EXCEPT the project key: that one is only ever re-encrypted, never
+            # replaced. Derived from the field name rather than sniffed for ".password", so a
+            # future field cannot land on the replaced list by accident.
+            result.replaced_fields.extend(
+                key for key in report.fingerprint_before.fields if not key.endswith(f"#{PROJECT_FIELD_PRIVATE_KEY}")
+            )
         if report.rewritten and repo_root is not None:
             # The commits land in zad-projects next to OPI's own ("auto-tune: adjust
             # resources ..."), so they follow that wording rather than this repo's.

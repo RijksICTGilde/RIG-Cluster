@@ -300,21 +300,28 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     assert "main" in triggers["push"]["branches"]
 
 
+def _scan_secrets_module():
+    """The hyphenated CLI, loaded by path and registered so its own module-level code can run."""
+    existing = sys.modules.get("scan_secrets")
+    if existing is not None:
+        return existing
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("scan_secrets", _SCRIPTS_DIR / "scan-secrets.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["scan_secrets"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_the_scan_refuses_to_run_without_age_keygen(monkeypatch: pytest.MonkeyPatch) -> None:
     """Silently scanning without the validity check would report the ~20 placeholders.
 
     Better to fail loudly than to produce a finding list nobody can act on.
     """
-    scan_module = sys.modules.get("scan_secrets")
-    if scan_module is None:
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location("scan_secrets", _SCRIPTS_DIR / "scan-secrets.py")
-        assert spec is not None
-        assert spec.loader is not None
-        scan_module = importlib.util.module_from_spec(spec)
-        sys.modules["scan_secrets"] = scan_module
-        spec.loader.exec_module(scan_module)
+    scan_module = _scan_secrets_module()
 
     monkeypatch.setattr(scan_module.shutil, "which", lambda _name: None)
     assert scan_module.main([]) == 2
@@ -330,3 +337,16 @@ def test_this_repository_is_clean_right_now() -> None:
     findings = scan_files(tracked_files(_REPO_ROOT))
 
     assert findings == [], "\n".join(str(finding) for finding in findings)
+
+
+@needs_age
+def test_empty_files_does_not_fall_through_to_the_whole_tree(capsys: pytest.CaptureFixture) -> None:
+    """``--files`` with nothing after it must scan nothing, not everything.
+
+    A truthiness test on the list would make the hook silently scan the whole tree, which is the
+    opposite of what the hook is for.
+    """
+    scan_module = _scan_secrets_module()
+
+    assert scan_module.main(["--files"]) == 0
+    assert "0 staged files" in capsys.readouterr().out
