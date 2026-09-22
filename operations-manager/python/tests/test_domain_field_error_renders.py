@@ -6,6 +6,7 @@ of silently anchoring it to the invisible deployment-group path.
 """
 
 import pytest
+from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 from opi.forms.visualizers.wizard_sections import build_domain_section
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.web.router_detail_edit import _render_section_html
@@ -44,3 +45,48 @@ async def test_subdomain_field_error_appears_in_rendered_html():
     # The message is surfaced in the rendered field HTML (not swallowed).
     assert "niet beschikbaar" in html
     assert "mozad-dle" in html
+
+
+@pytest.mark.asyncio
+async def test_reserved_subdomain_error_appears_in_rendered_html(monkeypatch):
+    """De reserveringsmelding kwam uit de veldvalidator en hangt nu aan de enforcer. Hij
+    hoort nog steeds bij het subdomeinveld te renderen, niet op het groepspad.
+
+    Pad en tekst komen uit de enforcer zelf: een met de hand ingevulde melding zou hier
+    blijven renderen ook als de enforcer hem ergens anders aan hangt.
+    """
+    monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+    section = build_domain_section(1, edit_mode=True)
+    yaml_data = {
+        "deployments": [
+            {"name": "main"},
+            {
+                "name": "stable",
+                "services": [
+                    {
+                        "reference": "publish-on-web",
+                        "config": {
+                            "base-domain": "rijks.app",
+                            "domain-format": "subdomain",
+                            "subdomain": "admin",
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    with pytest.raises(FieldError) as exc_info:
+        await DomainConfigEnforcer(deployment_index=1).enforce(yaml_data, {"project_name": "test-project"})
+
+    assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 1)
+
+    html = _render_section_html(
+        section,
+        yaml_data,
+        errors={exc_info.value.field_path: [str(exc_info.value)]},
+        locked_services=None,
+    )
+
+    assert "Subdomein &#39;admin&#39; is niet beschikbaar" in html

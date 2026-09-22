@@ -47,7 +47,7 @@ import yaml
 
 DEFAULT_ROOT = os.path.expanduser("~/IdeaProjects/rig-cluster-test-git-repositories")
 DEFAULT_DEPLOYMENTS_REPO = os.path.join(DEFAULT_ROOT, "rig-cluster-application-test-github")
-DEFAULT_PROJECTS_REPO = os.path.join(DEFAULT_ROOT, "rig-cluster-projects")
+DEFAULT_PROJECTS_REPO = os.path.join(DEFAULT_ROOT, "rig-cluster-projects-github")
 DEFAULT_ARGO_REPO = os.path.join(DEFAULT_ROOT, "argo-applications-github")
 DEFAULT_CLUSTER = "odcn-production"
 
