@@ -1,6 +1,7 @@
 """Tests for ServiceAdapter and ServiceType."""
 
 import pytest
+from opi.services.registry import SERVICES
 from opi.services.services import ServiceAdapter, ServiceDefinition, VariableDefinition
 from opi.services.services_enums import ServiceType
 
@@ -194,6 +195,24 @@ class TestSelectionAndSharing:
     )
     def test_shared_per_deployment(self, service: ServiceType):
         assert ServiceAdapter.get_service_definition(service).shared_per_deployment is True
+
+    def test_de_rest_van_de_catalogus_deelt_niets_per_deployment(self):
+        """De omkering, want zonder haar bewaakt de lijst hierboven alleen zichzelf.
+
+        Een zesde dienst die ``shared_per_deployment`` krijgt zet er een chip bij op de
+        dienstkaart ("Gedeeld per deployment"), en dat is een belofte over wie dezelfde
+        inloggegevens krijgt. Dat hoort een bewuste regel in dit bestand te zijn.
+        """
+        gedeeld = {
+            service_type for service_type, service in SERVICES.items() if service.definition.shared_per_deployment
+        }
+        assert gedeeld == {
+            ServiceType.POSTGRESQL_DATABASE,
+            ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
+            ServiceType.MINIO_STORAGE,
+            ServiceType.REDIS,
+            ServiceType.NAMESPACE_REDIS,
+        }
 
     def test_postgres_is_both(self):
         """De twee vragen staan los: postgres wordt per component aangevinkt EN gedeeld."""

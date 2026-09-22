@@ -16,7 +16,11 @@ component, where there is nothing to find.
 
 from __future__ import annotations
 
+import re
+from types import SimpleNamespace
+
 import pytest
+from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.base import ConfigLayer
 from opi.services.config_location import (
     config_hint_for_value,
@@ -25,6 +29,7 @@ from opi.services.config_location import (
 )
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceKind, ServiceType
+from opi.web.lotc_fixtures import page_data
 
 #: The services measured (5 August 2026, from the registry) as carrying config only away
 #: from the project layer. The first five are user-selectable and are exactly the cards
@@ -146,6 +151,64 @@ class TestSelectionLabels:
             "Per component aan te zetten",
             "Gedeeld per deployment",
         ]
+
+
+class TestDeChipsOpDeProjectpagina:
+    """De kaart zoals een gebruiker hem krijgt, niet de functie die de tekst levert.
+
+    ``selection_labels`` geeft sinds RC-213 een LIJST, en het sjabloon loopt er doorheen.
+    Dat de functie de goede zinnen teruggeeft zegt dus niets meer over wat er op het
+    scherm staat: een tikfout in de lus laat de kaart zonder chips achter en geen van de
+    toetsen hierboven merkt er iets van.
+    """
+
+    def _kaarten(self) -> dict[str, str]:
+        """Per dienstnaam het stuk HTML van zijn kaart, uit het diensttabblad.
+
+        Dezelfde route-context als ``opi/web/router.py`` die meegeeft: de ECHTE
+        ``selection_labels``, want de proefopstelling (/lotc/bg/project-tabs) geeft er
+        een lege dict voor door en dan rendert de lus per definitie niets.
+        """
+        request = SimpleNamespace(
+            scope={"type": "http"},
+            headers={},
+            cookies={},
+            state=SimpleNamespace(),
+            url=SimpleNamespace(path="/"),
+            session={},
+            query_params={},
+        )
+        data = page_data("project-tabs")
+        data["active_tab"] = "services"
+        data["tabs"] = {sleutel: {**tab, "url": "#"} for sleutel, tab in data["tabs"].items()}
+        data["service_selection_labels"] = selection_labels
+        html = templates_lotc.env.get_template("bg/project-tabs.html.j2").render(request=request, navigation=[], **data)
+        koppen = [(m.start(), m.group(1)) for m in re.finditer(r"<h3>([^<]+)</h3>", html)]
+        assert koppen, "het diensttabblad rendert geen enkele dienstkaart"
+        grenzen = [positie for positie, _ in koppen] + [len(html)]
+        return {naam: html[grenzen[i] : grenzen[i + 1]] for i, (_, naam) in enumerate(koppen)}
+
+    def test_een_dienst_die_je_per_component_aanzet_zegt_dat(self) -> None:
+        kaarten = self._kaarten()
+        assert "Per component aan te zetten" in kaarten["Keycloak Authentication"]
+        assert "Geldt voor het hele project" not in kaarten["Keycloak Authentication"]
+
+    def test_een_dienst_zonder_componentkeuze_zegt_dat_hij_voor_het_project_geldt(self) -> None:
+        """Invite is de dienst die dit zichtbaar maakte: de kaart meldde "Per component te
+        kiezen" terwijl een uitnodiging bij het realm van het project hoort."""
+        kaart = self._kaarten()["Uitnodiging"]
+        assert "Geldt voor het hele project" in kaart
+        assert "Per component aan te zetten" not in kaart
+
+    def test_gedeeld_per_deployment_komt_als_tweede_chip_naast_de_eerste(self) -> None:
+        """Beide feiten op een kaart, want ze staan los: postgres wordt per component
+        aangevinkt EN levert een database per deployment."""
+        kaart = self._kaarten()["Namespace PostgreSQL Database"]
+        assert "Per component aan te zetten" in kaart
+        assert "Gedeeld per deployment" in kaart
+
+    def test_een_dienst_die_niets_deelt_krijgt_die_chip_niet(self) -> None:
+        assert "Gedeeld per deployment" not in self._kaarten()["Publiceren op het web"]
 
 
 class TestTheCardsShowIt:
