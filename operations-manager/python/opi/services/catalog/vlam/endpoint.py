@@ -66,7 +66,7 @@ class VlamPassthrough:
     port: int
     #: The bundle on disk, inside this service's package.
     ca_bundle_path: Path
-    #: Where it lands in the pod, e.g. ``/etc/ssl/vlam/rijksdienst-ca.pem``.
+    #: Where it lands in the pod, e.g. ``/etc/ssl/vlam/vlam-ca.pem``.
     container_path: str
 
     @property

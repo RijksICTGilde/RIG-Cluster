@@ -18,7 +18,7 @@ Staan die twee variabelen niet in je pod, dan biedt dit cluster de doorlus niet 
 
 ## De CA-bundel
 
-`VLAM_CA_BUNDLE_PATH` wijst naar een bestand in je pod, bijvoorbeeld `/etc/ssl/vlam/rijksdienst-ca.pem`. Het platform zet het daar neer; je hoeft er niets voor te uploaden.
+`VLAM_CA_BUNDLE_PATH` wijst naar een bestand in je pod, bijvoorbeeld `/etc/ssl/vlam/vlam-ca.pem`. Het platform zet het daar neer; je hoeft er niets voor te uploaden.
 
 Twee dingen die vaak verward worden:
 
@@ -39,7 +39,7 @@ Daarom zet de dienst die variabelen bewust niet zelf. Hij geeft je een **pad**; 
 - **Python met `httpx` of `openai`**: maak een context met `ssl.create_default_context()`, dat is de standaardbundel, en voeg deze bundel eraan toe met `context.load_verify_locations(os.environ["VLAM_CA_BUNDLE_PATH"])`. Die context geef je als `verify=` aan `httpx.Client`; de `openai`-client neemt zo'n client over met `http_client=`.
 - **Node.js**: maak een `https.Agent` waarvan `ca` de ingebouwde `tls.rootCertificates` bevat **plus** de inhoud van het bundelbestand, en geef die agent mee aan fetch, axios of undici voor deze host. `NODE_EXTRA_CA_CERTS` mag hier ook: die variabele voegt juist wel toe in plaats van te vervangen. Hij geldt dan alleen voor je eigen proces, en je zet hem zelf als `user-env-var` met `$VLAM_CA_BUNDLE_PATH` als waarde.
 - **Go**: haal de systeempool op met `x509.SystemCertPool()`, voeg het bestand toe met `pool.AppendCertsFromPEM(pem)`, en zet die pool als `RootCAs` in de `tls.Config` van je transport.
-- **Java**: Java leest geen PEM-bestand, alleen een truststore. Kopieer in je image `$JAVA_HOME/lib/security/cacerts` naar bijvoorbeeld `/app/truststore.jks`, voeg de bundel eraan toe met `keytool -importcert -noprompt -storepass changeit -alias vlam-ca -file /etc/ssl/vlam/rijksdienst-ca.pem -keystore /app/truststore.jks`, en wijs `javax.net.ssl.trustStore` naar die kopie. Begin je met een lege store, dan heb je dezelfde vervangingsfout gemaakt, alleen met een ander gereedschap.
+- **Java**: Java leest geen PEM-bestand, alleen een truststore. Kopieer in je image `$JAVA_HOME/lib/security/cacerts` naar bijvoorbeeld `/app/truststore.jks`, voeg de bundel eraan toe met `keytool -importcert -noprompt -storepass changeit -alias vlam-ca -file /etc/ssl/vlam/vlam-ca.pem -keystore /app/truststore.jks`, en wijs `javax.net.ssl.trustStore` naar die kopie. Begin je met een lege store, dan heb je dezelfde vervangingsfout gemaakt, alleen met een ander gereedschap.
 - **curl, om het te proberen**: `curl --cacert "$VLAM_CA_BUNDLE_PATH" "$VLAM_API_URL_DIRECT/v1/models"` -- dat geldt alleen voor die ene aanroep.
 
 ## Wat de dienst nog meer doet

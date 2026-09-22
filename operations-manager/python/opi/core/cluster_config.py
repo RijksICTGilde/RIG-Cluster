@@ -158,7 +158,7 @@ CLUSTER_CONFIG = {
             "passthrough_port": 8443,
             "api_host": "vlam-api.rijksweb.nl",
             "cluster_ip": "10.96.144.8",
-            "ca_bundle": "rijksdienst-ca.pem",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
@@ -249,16 +249,22 @@ CLUSTER_CONFIG = {
             "deployment": "productie",
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
-            "port": 8081,
+            # Poort 8082 en niet 8081. Beide termineren, maar 8081 gaat naar
+            # `vlam-api.rijksweb.nl` en dat adres is bij SSC-ICT uitgezet: op 2026-09-21
+            # gemeten geeft het geen antwoord meer (verbinding wordt na de TCP-handshake
+            # meteen gesloten), terwijl `vlam-api.overheid-i.nl` 200 geeft. 8082 gaat naar
+            # het nieuwe adres. 8081 blijft in de proxy bestaan zolang er afnemers op
+            # kunnen staan, maar een nieuwe afnemer moet er niet meer op uitkomen.
+            "port": 8082,
             # HET DOORLUS-PAD (RC-167). Poort 8443 van dezelfde proxy lust de TLS-sessie
             # door zonder te termineren: de afnemer praat dan zelf met VLAM en verifieert
             # zelf. Drie waarden maken dat bruikbaar, en ze horen bij elkaar:
             #
             #   passthrough_port  waar de doorlus luistert;
             #   api_host          de naam die in de URL staat, want TLS vergelijkt de
-            #                     hostnaam uit de URL met het certificaat. `rijksweb.nl` is
-            #                     de naam waar de proxy zelf op uitkomt (SNI-ACL, cert), en
-            #                     daarmee de naam waar deze keten op gebouwd is;
+            #                     hostnaam uit de URL met het certificaat. Dit is sinds
+            #                     2026-09-21 het overheid-i-adres; de SNI-ACL van de
+            #                     doorlus liet beide namen al door;
             #   cluster_ip        waar die naam heen moet wijzen. hostAliases neemt een
             #                     ADRES, geen servicenaam, en de Service-template van ZAD
             #                     zet geen clusterIP, dus dit is het dynamisch toegewezen
@@ -271,10 +277,15 @@ CLUSTER_CONFIG = {
             # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
             # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
             # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
+            # De bundel bevat sinds 2026-09-21 TWEE ketens, want de twee adressen hebben
+            # verschillende uitgevers: rijksweb komt onder de Rijksdienst Root CA van
+            # SSC-ICT, overheid-i onder DigiCert Global Root G2. Tot die datum ontbrak dit
+            # bestand in het pakket, en dan geeft _passthrough() None terug: de doorlus
+            # heeft daardoor nooit aangestaan.
             "passthrough_port": 8443,
-            "api_host": "vlam-api.rijksweb.nl",
+            "api_host": "vlam-api.overheid-i.nl",
             "cluster_ip": "172.30.254.144",
-            "ca_bundle": "rijksdienst-ca.pem",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
