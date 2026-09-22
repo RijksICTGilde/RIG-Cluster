@@ -13,7 +13,7 @@ from opi.services.catalog.shared.storage import DEFAULT_STORAGE_SIZE, StorageCon
 from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SEQUENCE_EDITABLE
 from opi.services.catalog.temp_storage.variables import TempStorageVariables
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 
 
 class TempStorageService(Service):
@@ -24,7 +24,6 @@ class TempStorageService(Service):
         help_template="temp_storage/help.md",
         icon="klok",
         color="oranje",
-        binding=ServiceBinding.COMPONENT,
         # De kleinste maat die voor echt gebruik iets voorstelt, en een waarde die in de
         # keuzelijst van het formulier staat (StorageSizeOptionsProvider). Wie meer nodig
         # heeft zet het bij; een startwaarde hoort niet groter te zijn dan wat de meeste

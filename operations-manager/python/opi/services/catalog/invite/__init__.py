@@ -58,7 +58,7 @@ from opi.services.catalog.base import ConfigLayer, DetailPageSection, ProjectPag
 from opi.services.catalog.events import on
 from opi.services.catalog.invite.config_model import InviteConfig
 from opi.services.services import ConfigAdvice, ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceType, UIEvent
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,9 @@ class InviteService(Service):
         help_template="invite/help.md",
         icon="envelop",
         color="lichtblauw",
-        # Niet per component en niet per deployment: een uitnodiging geldt voor het
-        # Keycloak-realm van het project. Stond op COMPONENT omdat er geen andere waarde
-        # was, met als gevolg dat de dienst in de componentkeuze verscheen en de UI meldde
-        # dat je hem per component kiest.
-        binding=ServiceBinding.PROJECT,
+        # Een uitnodiging geldt voor het Keycloak-realm van het project, dus er valt per
+        # component niets aan te vinken.
+        selectable_per_component=False,
         variables=[],
         # Path-syntax requirement: auto-selects keycloak, locks it in the UI, and validates
         # at submit that keycloak is present. An invite assigns a realm role, so keycloak

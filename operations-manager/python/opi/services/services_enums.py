@@ -71,32 +71,6 @@ class ServiceType(Enum):
     ALIASES = "aliases"
 
 
-class ServiceBinding(Enum):
-    """Whether a service is chosen per component or shared per deployment.
-
-    This is about *selection*: does an individual component tick this service, or does
-    the whole deployment get it at once. It says nothing about where the service's
-    settings live -- that is ``ConfigLayer`` (``opi/services/catalog/base.py``), and the
-    two genuinely differ: keycloak binds per component (each component decides whether it
-    sits behind login) while its configuration is one realm for the whole project, so its
-    config lives at ``ConfigLayer.PROJECT``. Named ``binding`` rather than ``scope``
-    because "scope" read like an answer to "where do I configure this", which it never
-    was; ``instructions/services.md`` states the split.
-
-    A closed set, so a typo is a pyright error, not a runtime surprise. Rendered
-    values go through ``.value`` (a bare Enum renders as ``ServiceBinding.COMPONENT``).
-    """
-
-    COMPONENT = "component"
-    DEPLOYMENT = "deployment"
-    #: Niet gebonden: de dienst geldt voor het project als geheel en verschijnt dus niet in
-    #: de keuze per component of per deployment. Toegevoegd omdat die keuze er niet was:
-    #: invite koos noodgedwongen COMPONENT ("binding is not meaningful here, but the field
-    #: is required"), waarna de UI meldde dat je hem per component kiest en de dienst ook
-    #: echt in de componentkeuze verscheen, terwijl een uitnodiging bij het project hoort.
-    PROJECT = "project"
-
-
 class CleanupStrategy(Enum):
     """How a service's server-side resources are cleaned up on removal.
 

@@ -23,7 +23,7 @@ from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         help_template="postgresql_database/help.md",
         icon="database",
         color="donkerblauw",
-        binding=ServiceBinding.DEPLOYMENT,
+        shared_per_deployment=True,
         secret_class="DatabaseSecret",
         variables=[var.value for var in DatabaseVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,

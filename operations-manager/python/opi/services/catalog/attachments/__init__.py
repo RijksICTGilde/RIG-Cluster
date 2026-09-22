@@ -27,7 +27,7 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.events import on
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -60,7 +60,6 @@ class AttachmentsService(Service):
         help_template="attachments/help.md",
         icon="paperclip",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
     )
     # Component-level config is a list of couplings; the project-level entry holds the
