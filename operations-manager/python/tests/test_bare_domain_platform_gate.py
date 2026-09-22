@@ -29,9 +29,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from opi.connectors.subdomain import BARE_DOMAIN_PLATFORM_MESSAGE, validate_bare_domain_allowed
+from opi.connectors.subdomain import (
+    BARE_DOMAIN_PLATFORM_MESSAGE,
+    get_project_allowed_domain_config,
+    validate_bare_domain_allowed,
+)
 from opi.core.project_schema import ProjectIntegrityError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError, FieldWarning
+from opi.forms.editables.hooks import DomainRequestHook
 from opi.manager import project_manager
 from opi.manager.project_validation import validate_project_structure
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
@@ -328,3 +333,43 @@ class TestBeidePublicatiepuntenHangenAanDeGoedkeuring:
         guards = self._guards("ingress-bare-domain")
         assert guards, "de kaal-domein-ingress is niet gevonden"
         assert any("is_deployment_domain_approved" in guard for guard in guards)
+
+
+class TestDeHeleGangDoorHetScherm:
+    """De weg die de beheerder van ``ubbw-0i1`` niet kon lopen, van scherm tot publicatie."""
+
+    @pytest.mark.asyncio
+    async def test_aanvinken_levert_een_aanvraag_op_en_nog_geen_apex(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        project = _project({**_FOREIGN_SHAPE, "domain-format": "component-deployment-project"})
+        project["deployments"][0]["_request-domain"] = True
+
+        with (
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch.object(DomainConfigEnforcer, "_check_bare_domain_availability", new=AsyncMock()),
+        ):
+            # De stap komt erdoor, ...
+            await DomainConfigEnforcer().enforce(project, {"project_name": "demo"})
+            # ... en bij het opslaan schrijft de haak de aanvraag weg.
+            await DomainRequestHook().execute(project, {})
+
+            entry = get_project_allowed_domain_config(project, "victim.nl")
+            assert entry is not None and entry["status"] == "requested"
+
+            # De tweede gang door hetzelfde scherm, nu zonder vinkje, komt er ook door.
+            del project["deployments"][0]["_request-domain"]
+            await DomainConfigEnforcer().enforce(project, {"project_name": "demo"})
+
+        # En tot de goedkeuring er is levert publicatie geen apex op.
+        assert "victim.nl" not in get_deployment_hostnames(
+            component_names=["frontend"],
+            deployment_name="productie",
+            project_name="demo",
+            ingress_postfix=".kind",
+            base_domain="victim.nl",
+            domain_format="component-deployment-project",
+            expose_on_bare_domain="frontend",
+            project_data=project,
+            cluster="local",
+        )
