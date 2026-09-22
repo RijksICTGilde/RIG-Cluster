@@ -1,10 +1,4 @@
-"""Toetsen op de opgeslagen wachtwoordvormen: base64+age, age en plain.
-
-Sleutel en cijfertekst komen uit een wegwerpsleutelpaar. Hier stond eerst het paar uit de
-odcn-production-configmap met de echte private sleutel eronder: dat opende niet alleen deze
-toets maar elke waarde in de boom die met die sleutel versleuteld is, en pytest drukt bij
-een rode assertie de ontsleutelde waarde af.
-"""
+"""Toetsen op de opgeslagen wachtwoordvormen: base64+age, age en plain."""
 
 import base64
 import shutil
@@ -36,8 +30,6 @@ def versleuteld_wachtwoord(age_sleutelpaar: tuple[str, str]) -> str:
 
 
 class TestAgePasswordDecryption:
-    """Test Age encryption/decryption functionality with the stored password formats."""
-
     def test_parse_password_with_prefix(self, versleuteld_wachtwoord: str):
         """Test password prefix parsing."""
         # Test base64+age prefix

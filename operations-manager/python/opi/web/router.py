@@ -1586,12 +1586,11 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
         #
-        # NAAST ELKAAR, NIET ERACHTER. Elke ontsleuteling is een eigen `age`-proces (zie
-        # opi/utils/age.py), en die stonden hier in een lus achter elkaar te wachten: een
-        # project met achttien deployments betaalde achttien keer een procesfork op ELKE
-        # tabwissel, netjes een voor een. De aanroepen zijn onderling onafhankelijk - elke
-        # taak schrijft in zijn eigen dict - dus asyncio.gather zet ze naast elkaar zonder
-        # dat er iets aan de uitkomst verandert.
+        # NAAST ELKAAR, NIET ERACHTER. De aanroepen zijn onderling onafhankelijk (elke taak
+        # schrijft in zijn eigen dict), dus asyncio.gather zet ze naast elkaar. Dat stond
+        # hier toen elke ontsleuteling nog een eigen `age`-fork was en een project met
+        # achttien deployments er achttien betaalde op ELKE tabwissel; die fork is met
+        # RC-218 verdwenen (opi/utils/age.py ontsleutelt in het proces).
         async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
             houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
 
