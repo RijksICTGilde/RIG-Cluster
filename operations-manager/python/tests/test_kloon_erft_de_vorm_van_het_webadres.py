@@ -82,8 +82,12 @@ def _project(source_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857") -> dict[str, Any]:
-    """Kloon ``productie`` naar ``clone_name`` en geef de nieuwe deployment terug."""
+async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857", **requested: str) -> dict[str, Any]:
+    """Kloon ``productie`` naar ``clone_name`` en geef de nieuwe deployment terug.
+
+    ``requested`` is wat de beller zelf meegeeft (``domain_format``, ``subdomain``), dus
+    naast wat er van de bron komt.
+    """
     pm = _make_manager()
     pm.get_contents = AsyncMock(return_value=project_data)
     pm.get_name = AsyncMock(return_value=PROJECT)
@@ -99,6 +103,7 @@ async def _clone(project_data: dict[str, Any], clone_name: str = "pr-857") -> di
                 SimpleNamespace(reference="api", image=f"ghcr.io/org/api:{clone_name}"),
             ],
             clone_from="productie",
+            **requested,
         )
 
     assert result["success"] is True, result
@@ -209,3 +214,30 @@ class TestEenVormDieZijnNaamNodigHeeftReistNietMee:
         clone = await _clone(project_data)
 
         assert clone.get("services") is None
+
+
+class TestDeEigenVraagVanDeBellerWint:
+    """De nieuwe grendel gaat over de vorm die de kloon ERFT, niet over de vorm die hij VRAAGT.
+
+    De eigen aanvraag wordt na het wissen teruggeschreven, dus ze staat los van de bron.
+    """
+
+    async def test_de_gevraagde_vorm_wint_van_die_van_de_bron(self) -> None:
+        project_data = _project({"domain-format": "deployment-project"})
+
+        clone = await _clone(project_data, domain_format="component-deployment-project")
+
+        assert get_domain_setting(clone, DomainSetting.DOMAIN_FORMAT) == "component-deployment-project"
+        assert _hostnames(project_data, clone) == {
+            f"spa-pr-857-{PROJECT}.kind",
+            f"api-pr-857-{PROJECT}.kind",
+        }
+
+    async def test_een_gevraagde_vorm_die_op_de_naam_leunt_blijft_staan(self) -> None:
+        """Hij leunt op een naam die de beller er zelf bij levert, dus er valt niets weg."""
+        project_data = _project({"domain-format": "deployment-project"})
+
+        clone = await _clone(project_data, domain_format="component-subdomain", subdomain="pr-857")
+
+        assert get_domain_setting(clone, DomainSetting.DOMAIN_FORMAT) == "component-subdomain"
+        assert _hostnames(project_data, clone) == {"spa-pr-857.kind", "api-pr-857.kind"}
