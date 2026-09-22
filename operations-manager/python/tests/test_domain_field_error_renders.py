@@ -111,7 +111,7 @@ class TestAnErrorWithoutAFieldGoesToTheGeneralBar:
         html = _render_section_html(
             section,
             {"deployments": [{"name": "main"}, {"name": "stable"}]},
-            errors={f"deployments[{1}]": ["Kaal domein is alleen beschikbaar voor een eigen domein"]},
+            errors={"deployments[1]": ["Kaal domein is alleen beschikbaar voor een eigen domein"]},
             locked_services=None,
         )
 
