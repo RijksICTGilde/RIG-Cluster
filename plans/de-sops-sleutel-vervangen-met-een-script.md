@@ -18,30 +18,54 @@ sleutel A  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CONTENT)
    +-- 19 SOPS-bestanden in deze repo (alle echte; zie hieronder over de 2 andere)
    |
    +-- config.age-private-key van ELK project
-          (age.py:486 ontsleutelt die met SOPS_AGE_PRIVATE_KEY)
-          |
-          +-- alles binnen dat project: Keycloak-wachtwoorden, api-key,
-                user-env-vars, de age:base64-waarden
+   |      (age.py:486 ontsleutelt die met SOPS_AGE_PRIVATE_KEY)
+   |      |
+   |      +-- alles binnen dat project: Keycloak-wachtwoorden, api-key,
+   |            user-env-vars, de age:base64-waarden
+   |
+   +-- repositories[].password van ELK project
+          de GitHub-PAT, in base64+age-vorm. Gemeten: git.py:134 gebruikt
+          decrypt_password_smart_auto_sync, en die leest get_global_private_key(),
+          dus de PLATFORMsleutel en NIET de sleutel van het project.
 ```
 
 De twee overige `.sops.yaml`-bestanden staan in `sops-sandbox/` en horen bij een wegwerpsleutel die in diezelfde map ligt. Dat is een oefenmap met een DISCLAIMER, en een commit van 14 augustus legt vast dat hij weg mag. De echte sandboxsleutel (`security/sandbox-key.txt`) komt in geen enkel gecommit bestand voor. Het script moet dus op recipient werken en niet op "alle sops-bestanden", en `sops-sandbox/` kan beter verdwijnen dan meegenomen worden.
 
 De sleutelwaarde zelf staat nergens in git: `bootstrap/.../deployment.yaml` verwijst met `secretKeyRef` naar het secret `sops-age-key`, en `sops-plugin.sh` leest datzelfde secret. Het is een bootstrapwaarde die alleen in Kubernetes leeft. De drie treffers op `AGE-SECRET-KEY` in de Taskfile en de plugin zijn vormcontroles, geen waarden.
 
-## De volgorde, en waarom hij zo moet
+## De cutover kan overlappend, en dat verandert alles
 
-De projectbestanden zijn de harde afhankelijkheid. Trek je A in voordat elk `config.age-private-key` is omgezet, dan kan OPI geen enkel project meer openen. Daarom:
+Gemeten: een age-blob kan **meerdere recipients** dragen. `age -r A -r B` levert iets op dat met A en met B te openen is, beide getoetst. Daarmee hoeft er geen moment te bestaan waarop alleen de nieuwe sleutel werkt.
+
+Even belangrijk is wie de sleutel wanneer leest:
+
+| consument | leest | bij een wissel |
+|---|---|---|
+| sops-plugin naast ArgoCD | `kubectl get secret` bij **elke render** | pakt de nieuwe vanzelf, geen herstart |
+| operations-manager | env-var uit datzelfde secret | **pod moet herstarten** |
+| ontwikkelaar lokaal | `security/key.txt` | bestand vervangen |
+
+Dat geeft drie blokken, waarvan alleen het middelste kort is:
 
 ```
-1. B aanmaken
-2. B TOEVOEGEN aan de 19 sops-bestanden   (A blijft geldig)
-3. B uitdelen aan de drie consumenten      (A blijft geldig)
-4. elk projectbestand: age-private-key van A naar B
-5. A VERWIJDEREN uit de 19 sops-bestanden
-6. A uit het cluster en van schijf
+VOORBEREIDING   (dagen van tevoren mag, niets gaat stuk, alles blijft op A werken)
+  1. B aanmaken in security/new.txt          (A staat in security/old.txt)
+  2. de 19 sops-bestanden: sops rotate --add-age B     -> A en B werken
+  3. elk projectbestand: age-private-key opnieuw versleutelen voor A EN B
+  4. beide repos committen en pushen
+
+CUTOVER         (seconden, en terugdraaibaar)
+  5. het k8s secret sops-age-key vervangen door B
+  6. de operations-manager herstarten
+     (de sops-plugin pakt B bij zijn volgende render vanzelf op)
+
+NAZORG          (later, rustig, pas als alles aantoonbaar op B draait)
+  7. sops rotate --rm-age A over de 19 bestanden
+  8. de projectbestanden: A als recipient eraf
+  9. A uit het cluster, uit security/, en van elke laptop
 ```
 
-Tot stap 5 werkt alles met beide sleutels, dus er is geen moment waarop iets stukgaat. De winst komt pas bij stap 5, en dat is geen reden om stap 4 over te slaan.
+Tot en met stap 6 is elke stap terug te draaien door het secret terug te zetten: alles is immers nog met A te openen. De onomkeerbaarheid begint pas bij 7, en daar is geen haast bij. Dat is precies de eigenschap die "het moet in één keer goed" wegneemt.
 
 ## `updatekeys` is hier niet genoeg
 
@@ -54,10 +78,11 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 
 ## Wat er gebouwd moet worden
 
-1. **`task rotate-sops-key`, droogloop als standaard.** Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
+1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. De scripts lezen `security/old.txt` en `security/new.txt` en nemen nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt een van de twee, dan stopt het script met een duidelijke melding. *Verify:* een droogloop zonder `new.txt` weigert en noemt het pad.
+2. **`task rotate-sops-key`, droogloop als standaard.** Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
 2. **Fase toevoegen: `--add-key B`.** `sops rotate -i --add-age B` over die 19. *Verify:* elk bestand is daarna met A én met B te ontsleutelen, en de ciphertext van de waarden is veranderd.
-3. **De drie consumenten bijwerken.** Het secret `sops-age-key` in het cluster, de sops-plugin die ArgoCD gebruikt, en `security/key.txt` lokaal. Dit is de enige stap die het script niet alleen kan: het secret moet in het cluster komen. Lever hem als aparte taak met een controle achteraf (OPI leest een sops-bestand, ArgoCD rendert een applicatie). *Verify:* beide draaien op B terwijl A nog bestaat.
-4. **`task rotate-project-keys`.** Loopt over de projectbestanden in de projects-repo, ontsleutelt `config.age-private-key` met A, versleutelt met B, en schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`). Idempotent: een project dat al om is, wordt overgeslagen. Per project een eigen commit, zodat een fout halverwege niet de hele repo raakt. *Verify:* een omgezet project is leesbaar met B, en een nog niet omgezet project blijft leesbaar met A.
+3. **`task set-sops-key-secret`.** Zet de inhoud van `security/new.txt` in het secret `sops-age-key` van de doelnamespace, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
+4. **`task rotate-project-keys`.** Loopt over de projectbestanden en zet **twee** velden om, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
 5. **Fase verwijderen: `--remove-key A`.** `sops rotate -i --rm-age A`. Pas draaien als stap 4 over alle projecten klaar is; het script weigert als er nog projecten op A staan. *Verify:* geen bestand noemt de publieke sleutel van A meer, en ontsleutelen met A faalt.
 6. **De vaste sleutels uit de tests.** Dit is niet één bestand. Een scan van de werkboom vindt er **vijf**:
 
@@ -70,7 +95,8 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
    | `sops-sandbox/sops-key.txt` | de oefensleutel |
 
    Alleen de eerste is de echte, maar de andere vier zijn de reden dat hij niet opviel: een sleutel in een testbestand was hier normaal. Een scanner die op `AGE-SECRET-KEY-` alarmeert geeft in de huidige boom vier meldingen die niemand hoeft op te lossen, en wordt daarom genegeerd. **Eerst de boom schoon, dan pas de grendel**, anders bouw je een alarm waar iedereen omheen leert leven. Sleutels horen in een fixture die er ter plekke een maakt. *Verify:* een scan op de werkboom geeft nul treffers, en de tests slagen.
-7. **Een grendel die dit structureel tegenhoudt.** Zie de eigen sectie hieronder; dit is meer dan een regel in een hook.
+7. **`task replace-git-pat`, een eigen script naast het vorige.** Vervangt de waarde van `repositories[].password` door een nieuwe PAT, in elk projectbestand en in de eigen configmap. Dit is een andere handeling dan stap 4: daar blijft de waarde gelijk en verandert de sleutel, hier blijft de sleutel gelijk en verandert de waarde. Ze delen wel de lees- en schrijfweg, dus bouw die één keer. Draait ná de sleutelrotatie, zodat de nieuwe PAT meteen alleen nog onder B zit. *Verify:* een project kan na afloop zijn repository benaderen met de nieuwe PAT, en de oude waarde komt nergens meer voor.
+8. **Een grendel die dit structureel tegenhoudt.** Zie de eigen sectie hieronder; dit is meer dan een regel in een hook.
 
 ## Scanning: waarom een pre-commit hook hier niet volstaat
 
@@ -92,6 +118,20 @@ Daarom drie lagen, waarvan alleen de tweede en derde bindend zijn:
 
 Issue #94 vraagt al om CI secret-scanning (gitleaks of trufflehog). Dat ticket is hiermee niet langer optioneel.
 
+## Testen: tegen echte projectbestanden, niet tegen fixtures
+
+Er staat een kopie van oudere projectbestanden op `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects` onder `projects/`. Gemeten: **45 bestanden, alle 45 met `age-private-key` en `age-public-key`**, en 34 met een `password:` in age-vorm. Dat is de testset, en die is representatiever dan welke fixture dan ook.
+
+De toets die telt is niet "het script draait zonder fout" maar **"er is niets veranderd wat niet veranderd mocht worden"**:
+
+- **Ontsleutel elk bestand voor en na, en vergelijk de PLATTE inhoud.** Die moet identiek zijn, op de twee omgezette velden na. Een vergelijking van de ciphertext zegt niets, want die verandert altijd.
+- **Tel de velden.** Evenveel deployments, componenten, services en env-vars voor als na. Een YAML-ronde door een parser kan stil dingen laten vallen: commentaar, ankers, lege waarden, de volgorde van sleutels.
+- **Toets op beide sleutels.** Na de voorbereidingsfase moet elk omgezet bestand met A én met B te openen zijn.
+- **Draai hem twee keer.** De tweede keer hoort niets te doen en dat te melden.
+- **Laat er een kapot bestand tussen zitten.** Een project met een onleesbare waarde moet worden overgeslagen met een melding, niet de hele ronde afbreken en niet half weggeschreven worden.
+
+Pas als dat op alle 45 goed gaat, mag hetzelfde script de echte repo aanraken.
+
 ## Assertie
 
 ```bash
@@ -112,7 +152,6 @@ Klaar als:
 
 ## Wat hierna komt, en nu bewust niet meegaat
 
-- **De GitHub-PAT vervangen**, in de eigen configmap en in elk projectbestand. Die tokens zijn per project met de projectsleutel versleuteld, dus dat is een eigen ronde met een eigen script, ná deze.
 - **De onderliggende wachtwoorden roteren** van de 19 secrets. Her-versleutelen maakt niet onbekend wat gelezen kon worden.
 - **De sleutel splitsen** in een infradeel en een projectdeel, zodat de renderer naast ArgoCD niet langer elk projectgeheim kan openen. Zie `de-age-sleutel-roteren-en-splitsen.md`.
 - **De uitkomst van de historie-scan.** Wat die oplevert bepaalt of er meer geroteerd moet worden dan nu voorzien.
