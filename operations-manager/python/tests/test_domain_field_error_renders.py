@@ -224,3 +224,35 @@ class TestDeModalStapZetHemInDeBalk:
 
         assert gezien["global_errors"] == ["Een aangepast domein is geselecteerd maar niet ingevuld"]
         assert gezien["errors"] == {}, "de melding hoort niet ook nog op het groepspad te blijven staan"
+
+
+class TestEenRijFoutInEenReeksBlijftStaan:
+    """De valkuil die de browsertoets ving: een reeks tekent zijn rijen, de kaart niet.
+
+    ``_build_fields_from_editables`` zet alleen de REEKS zelf in zijn kaart
+    (``components``); elk veld van een rij hangt als kind onder die reeks en draagt zijn
+    eigen melding. Een vergelijking op de sleutels van die kaart zag ``components[0]/name``
+    daarom aan voor een pad zonder veld, en haalde de verplicht-melding van de
+    componentenstap weg: het veld werd niet meer rood en de cursor landde nergens.
+    """
+
+    def test_de_verplicht_melding_van_een_component_wordt_niet_weggehaald(self):
+        from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+
+        errors = {"components[0]/name": ["Dit veld is verplicht"]}
+
+        orphans = _create_renderer().take_unrendered_errors(COMPONENTS_SECTION.editables, {"components": [{}]}, errors)
+
+        assert orphans == []
+        assert list(errors) == ["components[0]/name"]
+
+    def test_een_rij_die_er_niet_is_heeft_ook_geen_veld(self):
+        """De tegenkant: een melding op een rij die niemand tekent heeft geen veld."""
+        from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
+
+        errors = {"components[7]/name": ["Dit veld is verplicht"]}
+
+        orphans = _create_renderer().take_unrendered_errors(COMPONENTS_SECTION.editables, {"components": [{}]}, errors)
+
+        assert orphans == ["Dit veld is verplicht"]
+        assert errors == {}
