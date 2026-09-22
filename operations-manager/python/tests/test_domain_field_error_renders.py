@@ -8,9 +8,12 @@ of silently anchoring it to the invisible deployment-group path.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi.responses import HTMLResponse
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
-from opi.forms.visualizers.wizard_sections import build_domain_section
+from opi.forms.visualizers.flows import build_domain_edit_flow
+from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION, build_domain_section
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
+from opi.web import router_detail_edit, router_wizard
 from opi.web.router_detail_edit import _create_renderer, _render_section_html
 
 
@@ -159,6 +162,38 @@ class TestAnErrorWithoutAFieldGoesToTheGeneralBar:
         assert orphans == []
         assert list(errors) == [field]
 
+    def test_two_errors_are_sorted_one_by_one(self):
+        """Beide soorten in één inzending: alleen de melding zonder veld gaat naar de balk.
+
+        Eén sonde per pad, niet één voor de hele inzending: anders maakt het getekende
+        subdomeinveld ook het groepspad "getekend" en verdwijnt die melding opnieuw.
+        """
+        section = build_domain_section(1, edit_mode=True)
+        field = domain_setting_path(DomainSetting.SUBDOMAIN, 1)
+        errors = {
+            "deployments[1]": ["Kaal domein is alleen beschikbaar voor een eigen domein"],
+            field: ["Een subdomein is vereist voor het gekozen URL-formaat"],
+        }
+        yaml_data = {
+            "deployments": [
+                {"name": "main"},
+                {
+                    "name": "stable",
+                    "services": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {"base-domain": "rijksapp.dev", "domain-format": "subdomain"},
+                        }
+                    ],
+                },
+            ],
+        }
+
+        orphans = _create_renderer().take_unrendered_errors(section.editables, yaml_data, errors, edit_mode=True)
+
+        assert orphans == ["Kaal domein is alleen beschikbaar voor een eigen domein"]
+        assert list(errors) == [field]
+
 
 class TestDeModalStapZetHemInDeBalk:
     """Dezelfde weg als in productie: de stap die niet verdergaat moet zeggen waarom.
@@ -190,9 +225,6 @@ class TestDeModalStapZetHemInDeBalk:
 
     @pytest.mark.asyncio
     async def test_de_melding_komt_in_global_errors(self):
-        from opi.forms.visualizers.flows import build_domain_edit_flow
-        from opi.web import router_detail_edit as router
-
         flow = build_domain_edit_flow(1)
         state = MagicMock()
         state.flow_id = flow.flow_id
@@ -210,13 +242,13 @@ class TestDeModalStapZetHemInDeBalk:
             return "<div></div>"
 
         with (
-            patch.object(router, "require_project_edit_access"),
-            patch.object(router, "_get_wizard_token", return_value="token"),
-            patch.object(router, "get_modal_state_by_token", return_value=state),
-            patch.object(router, "get_flow", return_value=flow),
-            patch.object(router, "_render_modal_step", side_effect=_vang),
+            patch.object(router_detail_edit, "require_project_edit_access"),
+            patch.object(router_detail_edit, "_get_wizard_token", return_value="token"),
+            patch.object(router_detail_edit, "get_modal_state_by_token", return_value=state),
+            patch.object(router_detail_edit, "get_flow", return_value=flow),
+            patch.object(router_detail_edit, "_render_modal_step", side_effect=_vang),
         ):
-            await router.modal_wizard_submit_step(request, "demo", flow.flow_id, "domain-edit-1")
+            await router_detail_edit.modal_wizard_submit_step(request, "demo", flow.flow_id, "domain-edit-1")
 
         assert gezien["global_errors"] == ["Een aangepast domein is geselecteerd maar niet ingevuld"]
         assert gezien["errors"] == {}, "de melding hoort niet ook nog op het groepspad te blijven staan"
@@ -232,8 +264,6 @@ class TestEenRijFoutInEenReeksBlijftStaan:
     """
 
     def test_de_verplicht_melding_van_een_component_wordt_niet_weggehaald(self):
-        from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
-
         errors = {"components[0]/name": ["Dit veld is verplicht"]}
 
         orphans = _create_renderer().take_unrendered_errors(COMPONENTS_SECTION.editables, {"components": [{}]}, errors)
@@ -243,11 +273,135 @@ class TestEenRijFoutInEenReeksBlijftStaan:
 
     def test_een_rij_die_er_niet_is_heeft_ook_geen_veld(self):
         """De tegenkant: een melding op een rij die niemand tekent heeft geen veld."""
-        from opi.forms.visualizers.wizard_sections import COMPONENTS_SECTION
-
         errors = {"components[7]/name": ["Dit veld is verplicht"]}
 
         orphans = _create_renderer().take_unrendered_errors(COMPONENTS_SECTION.editables, {"components": [{}]}, errors)
 
         assert orphans == ["Dit veld is verplicht"]
         assert errors == {}
+
+
+class TestDeWizardstapZetHemInDeBalk:
+    """Dezelfde melding, op de andere route die hem moet tonen.
+
+    De aanmaakwizard en de bewerkmodal lopen allebei door ``take_unrendered_errors``; de
+    vormtoets die hier stond ("pad eindigt op ``]``") liet een virtueel dienstpad zonder
+    veld gewoon verdwijnen.
+    """
+
+    @staticmethod
+    def _submission() -> dict:
+        """Een eigen domein gekozen, het invulveld leeg gelaten."""
+        return {
+            "deployments": [
+                {
+                    "_services-config": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {"base-domain": "__custom__", "domain-format": "subdomain", "subdomain": "web"},
+                        }
+                    ]
+                }
+            ],
+            "_goto": "next",
+        }
+
+    @pytest.mark.asyncio
+    async def test_de_melding_komt_in_global_errors(self):
+        state = MagicMock()
+        state.flow_id = "create-project"
+        state.project_name = None
+        state.is_edit = False
+        state.get_merged_data.return_value = {"name": "demo", "deployments": [{"name": "main"}]}
+
+        request = MagicMock()
+        request.json = AsyncMock(return_value=self._submission())
+
+        gezien: dict = {}
+
+        def _vang(*args, **kwargs):
+            gezien.update(kwargs)
+            return {}
+
+        with (
+            patch.object(router_wizard, "get_wizard_state", return_value=state),
+            patch.object(router_wizard, "_render_step_html", return_value="<div></div>"),
+            patch.object(router_wizard, "_build_step_context", side_effect=_vang),
+            patch.object(router_wizard, "_step_response", return_value=HTMLResponse("")),
+        ):
+            await router_wizard.submit_step(request, "create-project", "domains")
+
+        assert gezien["global_errors"] == ["Een aangepast domein is geselecteerd maar niet ingevuld"]
+        assert gezien["errors"] == {}, "de melding hoort niet ook nog op het groepspad te blijven staan"
+
+
+class TestDeKaalDomeinMeldingBereiktDeGebruiker:
+    """De melding moet niet alleen een veld hebben, hij moet ook op het scherm komen.
+
+    Dit is de route uit de melding zelf (``modal-edit-domain-1``). Een ``FieldWarning``
+    houdt de stap niet tegen, dus hij reist mee naar de volgende stap, waar
+    ``_render_modal_step`` alle veldwaarschuwingen samenvoegt tot de "Let op"-balk.
+    """
+
+    @staticmethod
+    def _submission() -> dict:
+        """Een eigen domein, het kale domein aangevinkt, en nog geen aanvraag."""
+        return {
+            "deployments": [
+                {
+                    "base-domain:custom": "uitbetrouwbarebron.nl",
+                    "_services-config": [
+                        {
+                            "reference": "publish-on-web",
+                            "config": {
+                                "base-domain": "__custom__",
+                                "domain-format": "component-deployment-project",
+                                "expose-component-on-bare-domain": "frontend",
+                            },
+                        }
+                    ],
+                }
+            ]
+        }
+
+    @pytest.mark.asyncio
+    async def test_de_waarschuwing_gaat_mee_naar_het_scherm(self):
+        flow = build_domain_edit_flow(1)
+        state = MagicMock()
+        state.flow_id = flow.flow_id
+        state.base_data = {}
+        state.get_merged_data.return_value = {
+            "name": "demo",
+            "components": [{"name": "frontend"}],
+            "deployments": [{"name": "main"}, {"name": "stable", "components": [{"reference": "frontend"}]}],
+        }
+
+        request = MagicMock()
+        request.headers.get.return_value = "application/json"
+        request.json = AsyncMock(return_value=self._submission())
+
+        gezien: dict = {}
+
+        def _vang(*args, **kwargs):
+            gezien.update(kwargs)
+            return "<div></div>"
+
+        with (
+            patch.object(router_detail_edit, "require_project_edit_access"),
+            patch.object(router_detail_edit, "_get_wizard_token", return_value="token"),
+            patch.object(router_detail_edit, "get_modal_state_by_token", return_value=state),
+            patch.object(router_detail_edit, "get_flow", return_value=flow),
+            patch.object(router_detail_edit, "_render_modal_step", side_effect=_vang),
+            patch.object(router_detail_edit, "save_modal_state_by_token"),
+            patch("opi.forms.editables.enforcers.get_supported_base_domains", return_value={"rijksapp.dev"}),
+            patch.object(DomainConfigEnforcer, "_check_bare_domain_availability", new=AsyncMock()),
+        ):
+            await router_detail_edit.modal_wizard_submit_step(request, "demo", flow.flow_id, "domain-edit-1")
+
+        assert not gezien.get("errors"), "een waarschuwing hoort de stap niet tegen te houden"
+        meldingen = [msg for msgs in (gezien["warnings"] or {}).values() for msg in msgs]
+        assert meldingen == [
+            "Het kale domein van 'uitbetrouwbarebron.nl' kan pas gebruikt worden als het domein is goedgekeurd. "
+            "Vink 'Domein aanvragen' aan."
+        ]
+        assert list(gezien["warnings"]) == [domain_setting_path(DomainSetting.BARE_DOMAIN_COMPONENT, 1)]
