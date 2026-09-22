@@ -536,9 +536,8 @@ def page_data(slug: str) -> dict[str, Any]:
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Alle zichtbare diensten uit de ECHTE registry, met wie ze afneemt.
 
-    Bewust de registry en geen eigen lijst: naam, omschrijving, icoon, kleur en
-    hulptekst staan daar al, en een tweede lijst ernaast gaat vroeg of laat afwijken van
-    wat de applicatie werkelijk aanbiedt.
+    Bewust de registry en geen eigen lijst: een tweede lijst ernaast gaat vroeg of laat
+    afwijken van wat de applicatie werkelijk aanbiedt.
     """
     from opi.services.services import ServiceAdapter
     from opi.web.navigation_lotc import to_nldd_icon
