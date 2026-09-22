@@ -67,6 +67,20 @@ NAZORG          (later, rustig, pas als alles aantoonbaar op B draait)
 
 Tot en met stap 6 is elke stap terug te draaien door het secret terug te zetten: alles is immers nog met A te openen. De onomkeerbaarheid begint pas bij 7, en daar is geen haast bij. Dat is precies de eigenschap die "het moet in één keer goed" wegneemt.
 
+## Drie vormen, drie wegen, een script
+
+Niet alles wat aan de platformsleutel hangt is een SOPS-bestand. `sops rotate` raakt alleen de eerste rij:
+
+| vorm | waar | hoe om te zetten |
+|---|---|---|
+| SOPS-bestand | de 19 in `bootstrap/` en `infrastructure/` | `sops rotate -i --add-age` |
+| `base64+age:` in een env-regel | `configmap.yaml` van odcn-production en local: `GIT_PROJECTS_SERVER_PASSWORD` en `GIT_ARGO_APPLICATIONS_PASSWORD` | ontsleutel, versleutel opnieuw, base64, terugschrijven |
+| `base64+age:` in een projectbestand | per project `config.age-private-key` en `repositories[].password` | idem, via het gevalideerde schrijfpad |
+
+De tweede rij is het gat dat je noemde. Een age-blok is meerregelig en past niet in een `KEY=value`-env-regel, vandaar de base64-omweg. Er is tooling om zo'n waarde te MAKEN (`task encrypt-value-age-base64`), maar niet om hem om te zetten. Dat recrypt-stuk moet er dus bij, en het is dezelfde lees-ontsleutel-versleutel-schrijf-lus als rij drie: bouw hem één keer en laat beide wegen hem gebruiken.
+
+Let op het verschil tussen omzetten en opnieuw genereren. `task generate-env-secrets-for-operations-manager` leest `security/key.txt` en bouwt het SOPS-secret uit `operations-manager/python/.env.<cluster>.secrets`, een plaintext bron die lokaal staat en niet in git. Voor dat ene bestand is hernoemen van `newkey.txt` naar `key.txt` plus die taak draaien inderdaad genoeg, precies zoals je zei. Voor de configmap en de projectbestanden gaat dat niet op: daar is geen plaintext bron, alleen de ciphertext zelf, en die moet je dus echt recrypten.
+
 ## `updatekeys` is hier niet genoeg
 
 Gemeten op een echt bestand. SOPS versleutelt de inhoud met een data key en versleutelt alleen die data key per recipient.
@@ -79,7 +93,7 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 ## Wat er gebouwd moet worden
 
 1. **Sleutels op schijf, in `security/`.** Die map is untracked en is al de plek waar `key.txt` en `sandbox-key.txt` staan. De scripts lezen `security/old.txt` en `security/new.txt` en nemen nooit een sleutel als argument, zodat er geen sleutel in shellgeschiedenis, procestabel of een logregel belandt. Ontbreekt een van de twee, dan stopt het script met een duidelijke melding. *Verify:* een droogloop zonder `new.txt` weigert en noemt het pad.
-2. **`task rotate-sops-key`, droogloop als standaard.** Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
+2. **`task rotate-sops-key`, droogloop als standaard.** Zet de 19 SOPS-bestanden om EN de `base64+age:`-waarden in de twee configmaps, want die laatste zijn geen SOPS-bestanden en worden anders vergeten. Leest welke bestanden welke recipient dragen en meldt wat er zou gebeuren. Hij moet de sandboxsleutel met rust laten, dus hij werkt per recipient en niet op "alle sops-bestanden". *Verify:* de droogloop noemt 19 bestanden, niet 21, en wijzigt niets.
 2. **Fase toevoegen: `--add-key B`.** `sops rotate -i --add-age B` over die 19. *Verify:* elk bestand is daarna met A én met B te ontsleutelen, en de ciphertext van de waarden is veranderd.
 3. **`task set-sops-key-secret`.** Zet de inhoud van `security/new.txt` in het secret `sops-age-key` van de doelnamespace, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
 4. **`task rotate-project-keys`.** Loopt over de projectbestanden en zet **twee** velden om, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
@@ -95,7 +109,19 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
    | `sops-sandbox/sops-key.txt` | de oefensleutel |
 
    Alleen de eerste is de echte, maar de andere vier zijn de reden dat hij niet opviel: een sleutel in een testbestand was hier normaal. Een scanner die op `AGE-SECRET-KEY-` alarmeert geeft in de huidige boom vier meldingen die niemand hoeft op te lossen, en wordt daarom genegeerd. **Eerst de boom schoon, dan pas de grendel**, anders bouw je een alarm waar iedereen omheen leert leven. Sleutels horen in een fixture die er ter plekke een maakt. *Verify:* een scan op de werkboom geeft nul treffers, en de tests slagen.
-7. **`task replace-git-pat`, een eigen script naast het vorige.** Vervangt de waarde van `repositories[].password` door een nieuwe PAT, in elk projectbestand en in de eigen configmap. Dit is een andere handeling dan stap 4: daar blijft de waarde gelijk en verandert de sleutel, hier blijft de sleutel gelijk en verandert de waarde. Ze delen wel de lees- en schrijfweg, dus bouw die één keer. Draait ná de sleutelrotatie, zodat de nieuwe PAT meteen alleen nog onder B zit. *Verify:* een project kan na afloop zijn repository benaderen met de nieuwe PAT, en de oude waarde komt nergens meer voor.
+7. **De PAT-vervanging is dezelfde lus met een andere ingang.** Er is precies één verschil tussen de twee handelingen:
+
+   ```
+   lees veld -> ontsleutel met A -> [waarde behouden OF vervangen] -> versleutel voor A+B -> schrijf
+                                              ^                ^
+                                          recrypt          nieuwe PAT
+   ```
+
+   Bouw die lus één keer, met een optionele nieuwe waarde. Zonder waarde is het een recrypt, met waarde een vervanging. Dat levert `task rotate-project-keys` en `task replace-git-pat` op als twee ingangen op dezelfde motor, en het betekent dat je elk projectbestand **één keer** hoeft aan te raken in plaats van twee keer. Minder commits, minder gelegenheid om iets te laten vallen.
+
+   **Randvoorwaarde, en die is hard: de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste bestand wordt geschreven.** Anders verliest een project zijn repositorytoegang op het moment dat zijn bestand is omgezet, en de rest nog niet. Dus dezelfde overlap als bij de sleutel: maak de nieuwe PAT aan, laat beide geldig zijn, zet alle bestanden om, en trek de oude pas daarna in.
+
+   **De afweging om ze samen te draaien.** Voordeel is één ronde over de projectbestanden. Nadeel is dat een fout in de PAT-vervanging ook de sleutelrotatie meesleept, en dat je ze niet los kunt terugdraaien. Mijn voorstel: bouw ze als één motor met twee ingangen, maar laat de eerste echte ronde alleen de sleutel doen. Is die aantoonbaar goed gegaan, dan is de PAT-ronde een herhaling van iets dat al gewerkt heeft. *Verify:* een project kan na afloop zijn repository benaderen met de nieuwe PAT, en de oude waarde komt in geen enkel bestand meer voor.
 8. **Een grendel die dit structureel tegenhoudt.** Zie de eigen sectie hieronder; dit is meer dan een regel in een hook.
 
 ## Scanning: waarom een pre-commit hook hier niet volstaat
