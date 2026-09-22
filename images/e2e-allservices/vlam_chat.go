@@ -32,7 +32,7 @@ const vlamChatPath = "/v1/chat/completions"
 const vlamChatTimeout = 5 * time.Minute
 
 // vlamProbeTargetID is the /status key the probe spec gives the vlam target. Used only
-// to pre-fill the model field with what the last probe round saw.
+// to fill the model list on the form with what the last probe round saw.
 const vlamProbeTargetID = "vlam"
 
 // defaultChatQuestion is a throwaway question: short to answer, and it costs the far
@@ -44,19 +44,19 @@ func vlamBound() bool {
 	return present("VLAM_API_URL")
 }
 
-// vlamLastModel returns the model id the last probe round saw, or "" when the probe has
-// not run yet or VLAM listed no models.
-func vlamLastModel(cache *resultCache) string {
+// vlamModels returns the model ids the last probe round saw, or nil when the probe has
+// not run yet or VLAM listed none.
+func vlamModels(cache *resultCache) []string {
 	results, _, _ := cache.snapshot()
 	for _, r := range results {
 		if r.ID != vlamProbeTargetID {
 			continue
 		}
-		if id, ok := r.Detail["first_model"].(string); ok {
-			return id
+		if ids, ok := r.Detail["model_ids"].([]string); ok {
+			return ids
 		}
 	}
-	return ""
+	return nil
 }
 
 // chatRequest is the smallest OpenAI-shaped body that asks one question. No streaming
