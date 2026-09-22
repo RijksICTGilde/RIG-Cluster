@@ -46,12 +46,17 @@ from secret_scan import (  # noqa: E402
 
 needs_age = pytest.mark.skipif(shutil.which("age-keygen") is None, reason="requires the age-keygen binary")
 
-#: A JWT with a real header and a harmless payload, built once so no live token is needed.
-FAKE_JWT = (
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
-    ".eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJwcm9qOmRlZmF1bHQ6dGVzdCJ9"
-    ".c2lnbmF0dXJlLWlzLW5vdC1jaGVja2VkLWhlcmU"
-)
+#: Every sample below is COMPOSED from pieces rather than written out, so no literal that the
+#: scanner recognises exists in this file. That is not decoration: the scan covers the whole tree,
+#: this file included, and the first version of it failed its own last test on two sample tokens.
+#:
+#: The alternative -- an inline "ignore this line" marker -- was rejected. It would be the one
+#: bypass in a guard whose entire point is that ``--no-verify`` must not get past it, and a marker
+#: that exists gets used. Composing the samples costs a little readability and adds no way out.
+_JWT_HEADER = "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
+FAKE_JWT = _JWT_HEADER + ".eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJwcm9qOmRlZmF1bHQ6dGVzdCJ9.c2lnbmF0dXJl"
+FAKE_SLACK_TOKEN = "xox" + "b-1234567890-abcdefghij"
+FAKE_AWS_KEY = "AKI" + "AIOSFODNN7EXAMPLE"
 
 
 # ---------------------------------------------------------------------------
@@ -116,12 +121,12 @@ def test_the_public_half_is_not_a_finding() -> None:
 @pytest.mark.parametrize(
     ("text", "kind"),
     [
-        (f'token = "ghp_{"a" * 36}"', "github-pat"),
-        (f'token = "github_pat_{"b" * 60}"', "github-pat"),
-        (f'token = "ghs_{"c" * 36}"', "github-token"),
+        (f'token = "gh{"p"}_{"a" * 36}"', "github-pat"),
+        (f'token = "github{"_pat_"}{"b" * 60}"', "github-pat"),
+        (f'token = "gh{"s"}_{"c" * 36}"', "github-token"),
         (f'export ARGOCD_TOKEN="{FAKE_JWT}"', "kubeconfig-token"),
-        ('key = "xoxb-1234567890-abcdefghij"', "slack-token"),
-        ('id = "AKIAIOSFODNN7EXAMPLE"', "aws-access-key"),
+        (f'key = "{FAKE_SLACK_TOKEN}"', "slack-token"),
+        (f'id = "{FAKE_AWS_KEY}"', "aws-access-key"),
     ],
 )
 def test_each_token_shape_is_a_finding(text: str, kind: str) -> None:
@@ -163,9 +168,10 @@ def test_a_pem_header_without_a_real_body_is_not_a_finding(text: str) -> None:
 @needs_age
 def test_a_jwt_shaped_string_without_a_real_header_is_not_a_finding() -> None:
     """Three dot-separated chunks starting with eyJ, but the header is not a JWT header."""
-    assert scan_text("eyJub3RhaGVhZGVy.eyJub3RhcGF5bG9hZA.c2lnbmF0dXJl\n", "somewhere.md") == []
+    not_a_header = "eyJ" + "ub3RhaGVhZGVy"
+    assert scan_text(f"{not_a_header}.eyJub3RhcGF5bG9hZA.c2lnbmF0dXJl\n", "somewhere.md") == []
     assert looks_like_a_jwt(FAKE_JWT)
-    assert not looks_like_a_jwt("eyJub3RhaGVhZGVy.x.y")
+    assert not looks_like_a_jwt(f"{not_a_header}.x.y")
 
 
 @needs_age
