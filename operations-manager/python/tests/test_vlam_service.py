@@ -7,9 +7,9 @@ Five things carry the design, and each one is a way this could fail silently:
    consumer, days after the change.
 2. **Availability is refused at the SAVE path, not only on the wizard card.** The API and
    a hand-written project file never see a card.
-3. **The project's selection is what switches the contribution on.** The service is
-   deployment-bound, so no component ever ticks it; a component-scoped activation would
-   answer "no" for every component forever and nothing would ever be contributed.
+3. **The component's own tick is what switches the contribution on** (RC-213). Until
+   then the PROJECT's selection did, and every component of every deployment carried the
+   address and the egress rule, including the ones whose owner never asked for them.
 4. **The variable is ADDED to the component's own variables**, not put in their place.
 5. **Switching the service off removes the policy**, which is the prune prefix on the
    filename plus the service returning nothing.
