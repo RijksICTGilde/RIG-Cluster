@@ -68,10 +68,8 @@ class TestUitwisselbaarMetHetBinary:
 
     @pytest.mark.asyncio
     async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, age_sleutelpaar):
-        """Een detailpagina opent per component het ``user-env-vars``-blok in een keer.
-
-        Niet-ascii loopt hier over ``decode("utf-8")``; het regeleinde aan het eind valt
-        weg, want beide varianten strippen hun uitkomst, ook de oude.
+        """Niet-ascii loopt over ``decode("utf-8")``; het regeleinde aan het eind valt weg,
+        want beide varianten strippen hun uitkomst, ook de oude.
         """
         publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt("WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9\n", publiek)
@@ -81,11 +79,7 @@ class TestUitwisselbaarMetHetBinary:
         )
 
     def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, age_sleutelpaar):
-        """De meting waar de versleutelkant later op kan rusten.
-
-        Die kant is hier niet omgezet: pyrage 1.4.0 kent geen armor-uitvoer en de
-        opgeslagen vorm is armored.
-        """
+        """De meting waar de versleutelkant later op kan rusten."""
         publiek, prive = age_sleutelpaar
         blok = pyrage.encrypt(KLARE_TEKST.encode(), [pyrage.x25519.Recipient.from_str(publiek)])
 
@@ -175,10 +169,9 @@ class TestRandenVanDeInvoer:
 
     @pytest.mark.asyncio
     async def test_sleutel_met_een_regeleinde_erachter_opent(self, age_sleutelpaar):
-        """``age -d -i`` opent een sleutelbestand met een regeleinde erachter (gemeten: exit 0).
-
-        De sleutel komt uit een k8s-secret of een omgevingsvariabele, dus die vorm komt
-        in productie voor; ``Identity.from_str`` weigert hem met ``IdentityError``.
+        """``age -d -i`` opende een sleutelbestand met een regeleinde erachter (gemeten: exit 0),
+        en die vorm komt voor: de sleutel bereikt OPI via een omgevingsvariabele uit een
+        k8s-secret. ``Identity.from_str`` weigert hem met ``IdentityError``.
         """
         publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
@@ -188,11 +181,9 @@ class TestRandenVanDeInvoer:
 
     @pytest.mark.asyncio
     async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, age_sleutelpaar):
-        """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort
-        doorlaat moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar.
-
-        Wijder dan het binary, dat op een blok met witruimte ervoor afketste met
-        "unexpected intro".
+        """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort doorlaat
+        moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar. Wijder dan het
+        binary, dat op een blok met witruimte ervoor afketste met "unexpected intro".
         """
         publiek, prive = age_sleutelpaar
         omrand = "\n  " + _binary_versleutelt(KLARE_TEKST, publiek).strip() + "\n\n"

@@ -497,7 +497,8 @@ def age_sleutelpaar() -> tuple[str, str]:
     """Een wegwerpsleutelpaar van age-keygen, in de vorm die in projectbestanden staat.
 
     Toetsen die echt ontsleutelen maken hun eigen paar: een werkende private sleutel in de
-    repo opent ook de versleutelde waarden die elders in de boom staan.
+    repo opent ook de versleutelde waarden die elders in de boom staan, en pytest drukt bij
+    een rode assertie de ontsleutelde waarde af.
     """
     if shutil.which("age-keygen") is None:
         pytest.skip("age-keygen is nodig voor een wegwerpsleutelpaar")
