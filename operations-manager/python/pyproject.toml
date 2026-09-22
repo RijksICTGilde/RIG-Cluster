@@ -74,6 +74,11 @@ dependencies = [
     "opentelemetry-instrumentation-logging>=0.48b0",
     "jsonschema>=4.26.0",
     "starlette==0.50.0",
+    # Binding op de Rust-implementatie van age. Ontsleutelen loopt hiermee in het proces
+    # in plaats van via een fork van het age-binary per veld; zie
+    # features/age-ontsleuteling-in-proces.md. Het binary blijft nodig voor versleutelen
+    # en voor SOPS.
+    "pyrage>=1.4.0",
 ]
 
 [dependency-groups]
@@ -294,6 +299,9 @@ authorized_licenses = [
 # andere lotc-packages; de licentie is daarmee UNKNOWN terwijl de repo MIT is.
 [tool.liccheck.authorized_packages]
 lotc-forms = "*"
+# pyrage levert geen license-metadata in zijn wheel, dus liccheck leest UNKNOWN; de
+# repo is MIT (https://github.com/woodruffw/pyrage/blob/main/LICENSE).
+pyrage = "*"
 
 [tool.ruff.lint.flake8-type-checking]
 # Both FastAPI and Pydantic read these annotations at runtime -- FastAPI to build the
