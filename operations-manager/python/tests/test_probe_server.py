@@ -22,28 +22,42 @@ die wordt door het besturingssysteem bediend ongeacht wat asyncio doet.
 from __future__ import annotations
 
 import asyncio
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 
 import pytest
+from opi.core import probe_server
 from opi.core.probe_server import start_probe_server, stop_probe_server
-
-#: Een eigen poort per test, zodat een achtergebleven server uit een andere test niet
-#: stilzwijgend het antwoord geeft.
-POORT_ALTIJD = 8231
-POORT_PADEN = 8232
 
 #: Langer dan de timeout van de probe in de deployment (5 seconden), zodat dit werkelijk
 #: het geval nabootst waarin het misging.
 BLOKKADE_SECONDEN = 7.0
 
 
+def _vrije_poort() -> int:
+    """Een poort die op dit moment vrij is, in plaats van een vast nummer.
+
+    Met vaste nummers viel deze module om zodra iets anders op de machine die poort al
+    had: ``start_probe_server`` slikt die OSError bewust (de FastAPI-endpoints bestaan
+    nog), dus de toets zag alleen een geweigerde verbinding en meldde een omgevingsbotsing
+    als bevinding.
+    """
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
 @pytest.fixture
 def probeserver():
-    def _start(poort: int):
+    def _start(poort: int | None = None) -> int:
+        poort = _vrije_poort() if poort is None else poort
         start_probe_server(poort)
+        draait = probe_server._server
+        gepakt = draait.server_address[1] if draait is not None else None
+        assert gepakt == poort, f"de probeserver luistert niet op poort {poort} maar op {gepakt}"
         return poort
 
     yield _start
@@ -62,7 +76,7 @@ def _haal(poort: int, pad: str, timeout: float = 5.0) -> tuple[int, float]:
 
 def test_de_probe_antwoordt_terwijl_de_eventloop_vaststaat(probeserver) -> None:
     """De kern van deze module. Blokkeert de loop langer dan de probetimeout."""
-    poort = probeserver(POORT_ALTIJD)
+    poort = probeserver()
     gemeten: list[tuple[int, float]] = []
 
     def vraag_op() -> None:
@@ -91,7 +105,7 @@ def test_de_paden_die_kubernetes_gebruikt(probeserver) -> None:
     readyz geeft hier 503: in een kale test draait geen enkele dienst, en dan is "niet
     gereed" het juiste antwoord. Dat hij ANTWOORDT is wat deze test vastlegt.
     """
-    poort = probeserver(POORT_PADEN)
+    poort = probeserver()
 
     assert _haal(poort, "/healthz")[0] == 200
     assert _haal(poort, "/health")[0] == 200
@@ -101,7 +115,7 @@ def test_de_paden_die_kubernetes_gebruikt(probeserver) -> None:
 
 def test_twee_keer_starten_is_geen_fout(probeserver) -> None:
     """De lifespan kan bij een herstart opnieuw langskomen; dat mag niet omvallen."""
-    poort = probeserver(POORT_PADEN + 10)
+    poort = probeserver()
     start_probe_server(poort)
 
     assert _haal(poort, "/healthz")[0] == 200
