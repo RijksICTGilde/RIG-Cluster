@@ -971,11 +971,9 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
-        # Fouten op een pad dat deze stap niet tekent (een enforcer op een GROUP landt op
-        # ``deployments[0]``) hebben geen veld om in te verschijnen en gaan naar de
-        # algemene balk. Welke paden getekend worden vraagt de renderer zelf, want een
-        # vormtoets op het pad kent de velden niet: hij hield "deployments[0]" wel tegen
-        # en een virtueel dienstpad zonder veld niet.
+        # Een fout op een pad dat deze stap niet tekent gaat naar de algemene balk. De
+        # vormtoets die hier stond zag niet welke paden een veld hebben: hij hield
+        # "deployments[0]" wel tegen en een virtueel dienstpad zonder veld niet.
         group_errors = _create_renderer().take_unrendered_errors(
             section.editables, submitted_yaml, errors, edit_mode=edit_mode
         )

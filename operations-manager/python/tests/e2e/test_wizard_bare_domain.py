@@ -136,8 +136,7 @@ class TestHetKaleDomeinOpEenEigenDomeinHoudtDeStapNietTegen:
         kaal.select_option(value="frontend")
         auth_page.wait_for_load_state("networkidle")
 
-        # De aanvraag zelf: het vinkje dat de weigering moest oplossen maar er nooit aan
-        # toe kwam, want de kaal-domeincontrole stond ervoor.
+        # Het vinkje dat de weigering moest oplossen maar er nooit aan toe kwam.
         zet_aan(aanvinkvakje_eindigend_op(auth_page, "_request-domain").first, True)
         auth_page.wait_for_load_state("networkidle")
 

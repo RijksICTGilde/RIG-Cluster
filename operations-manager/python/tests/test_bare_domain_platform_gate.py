@@ -1,22 +1,12 @@
 """Wie het kale domein mag gebruiken, en waar dat wordt afgedwongen.
 
 Een kaal-domein-ingress claimt de APEX van een basisdomein, plus het Let's
-Encrypt-certificaat erop, vanuit één tenant-namespace. Op een platformdomein neemt dat de
-domeinnaam af van elke andere tenant op het cluster, en op het domein van een andere
-tenant neemt het diens domein over: hun DNS wijst al naar dit cluster, want zo serveren
-ze hun subdomeinen.
+Encrypt-certificaat erop, vanuit één tenant-namespace. Dat mag alleen op een domein dat
+het project zelf meebrengt.
 
-De regel zelf staat dus vast. Wat deze toetsen pinnen is WAAR hij bijt, en dat is sinds
-RC-216 niet meer overal hetzelfde:
-
-- **opslaan mag.** Een kaal domein op een eigen domein dat nog op goedkeuring wacht mag
-  in het projectbestand staan, en het formulier laat de gebruiker er in één keer langs
-  met een waarschuwing bij het vinkje. Daarvoor liep hij vast op een ``ValueError`` op
-  het groepspad, die nergens rendert: de knop leek stuk (RIG-Cluster#179).
-- **toepassen mag niet.** Tot de goedkeuring er is levert publicatie geen apex op, niet
-  van het eigen domein en niet van de clusterzone.
-- **het platformdomein weigert hard**, met of zonder aanvraag. Geen goedkeuring maakt de
-  apex van een platformdomein van één project.
+De regel zelf staat vast; wat deze toetsen pinnen is WAAR hij bijt, en dat is sinds
+RC-216 niet meer overal hetzelfde: opslaan mag met een openstaande aanvraag, toepassen
+pas na de goedkeuring, en het platformdomein weigert hard.
 
 De shape die dit alles moet raken is die van de config-PUT
 (``PUT /api/v2/projects/{p}/services/publish-on-web/deployments/{d}/config``): een
@@ -96,8 +86,7 @@ class TestEnforcerRefusesBareDomainOnPlatformDomain:
             await DomainConfigEnforcer().enforce(_project(config), {"project_name": "demo"})
 
     async def test_an_aanvraag_does_not_unlock_it(self):
-        """De helft die nooit verzacht. Het vinkje opent de weg naar een EIGEN domein; de
-        apex van een platformdomein is van iedereen op het cluster en blijft dicht.
+        """De helft die nooit verzacht: het vinkje opent de weg naar een EIGEN domein.
 
         Dit is de toets die betrapt dat de uitgang uit RC-216 te ver is doorgeschoten."""
         config = {**_PUT_SHAPE, "domain-format": "component-deployment-project"}
@@ -135,9 +124,7 @@ class TestEnforcerSendsAnUnapprovedDomainToTheAanvraag:
     """Een domein dat dit project (nog) niet heeft is geen fout maar een aanvraag.
 
     De melding hoort bij het vinkje dat hem veroorzaakt, en hij houdt de stap niet tegen:
-    hij is een ``FieldWarning``. Daarvoor was het een ``ValueError`` op het groepspad
-    ``deployments[N]``, waar geen veld staat, dus stond de gebruiker voor een knop die
-    niets deed."""
+    hij is een ``FieldWarning``."""
 
     async def test_without_a_domain_format(self):
         with (
@@ -306,11 +293,10 @@ class TestValidateBareDomainAllowed:
 class TestBeidePublicatiepuntenHangenAanDeGoedkeuring:
     """De twee plekken die de apex echt claimen, gelezen uit de bron.
 
-    ``register_bare_domain`` zet de claim in het register en de kaal-domein-ingress vraagt
-    er een certificaat op aan. Ze staan midden in ``process_project``, dat git, SOPS,
-    Keycloak en een database nodig heeft, dus ze zijn hier niet te draaien. Wat wel te
-    meten is, is dat geen van beide bereikbaar is zonder ``is_deployment_domain_approved``
-    in de voorwaarde: haal de grendel weg en deze toets wordt rood.
+    Ze staan midden in ``process_project``, dat git, SOPS, Keycloak en een database nodig
+    heeft, dus ze zijn hier niet te draaien. Wat wel te meten is, is dat geen van beide
+    bereikbaar is zonder ``is_deployment_domain_approved`` in de voorwaarde: haal de
+    grendel weg en deze toets wordt rood.
     """
 
     @staticmethod
@@ -355,7 +341,8 @@ class TestDeHeleGangDoorHetScherm:
             await DomainRequestHook().execute(project, {})
 
             entry = get_project_allowed_domain_config(project, "victim.nl")
-            assert entry is not None and entry["status"] == "requested"
+            assert entry is not None
+            assert entry["status"] == "requested"
 
             # De tweede gang door hetzelfde scherm, nu zonder vinkje, komt er ook door.
             del project["deployments"][0]["_request-domain"]

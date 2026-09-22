@@ -251,17 +251,13 @@ class DomainConfigEnforcer:
         #
         # Dezelfde goedkeuring als de domein- en subdomeinblokken verderop, dus dezelfde
         # afhandeling. Alleen het platformdomein weigert onvoorwaardelijk: die apex is van
-        # iedereen op het cluster, en geen goedkeuring maakt hem van één project.
+        # iedereen op het cluster.
         #
-        # Een openstaande aanvraag mag door omdat het CLAIMEN elders wordt tegengehouden:
-        # tot de goedkeuring er is levert publicatie geen apex op (``get_deployment_hostnames``,
-        # de registratie en de apex-ingress hangen alle drie aan ``is_deployment_domain_approved``)
-        # en houdt ``apply_domain_approval_fallback`` de deployment op het clusteradres.
-        # Refuseren hoorde hier ook niet thuis: de aanvraag die het zou oplossen wordt pas
-        # bij PRE_SAVE geschreven, dus die weigering had geen uitgang (RIG-Cluster#179).
-        #
-        # De waarschuwing wordt vastgehouden en niet hier geheven: een FieldWarning sluit
-        # de enforcer af, en de reserveringscheck verderop moet nog hard kunnen weigeren.
+        # Een openstaande aanvraag mag door omdat het CLAIMEN elders wordt tegengehouden
+        # (``is_deployment_domain_approved`` op het publicatiepad). Weigeren had hier geen
+        # uitgang: de aanvraag die het zou oplossen wordt pas bij PRE_SAVE geschreven
+        # (RIG-Cluster#179). De waarschuwing wordt daarom vastgehouden, om dezelfde reden
+        # als ``certificate_note`` hieronder.
         bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_field = domain_setting_path(DomainSetting.BARE_DOMAIN_COMPONENT, self.deployment_index)
         bare_domain_note: str | None = None
@@ -275,14 +271,14 @@ class DomainConfigEnforcer:
                 if bare_status is None and dep.get("_request-domain"):
                     pass  # De aanvraag is onderweg; DomainRequestHook schrijft hem bij het opslaan
                 elif bare_status == "requested":
-                    pass  # Al aangevraagd
+                    pass
                 elif bare_status == "denied":
                     if self.denied_blocks:
                         raise FieldError(bare_field, bare_domain_not_owned_message(actual_domain))
                 else:
                     bare_domain_note = (
                         f"Het kale domein van '{actual_domain}' kan pas gebruikt worden als het domein is "
-                        "goedgekeurd. Vink 'Domein aanvragen' aan om dat aan te vragen."
+                        "goedgekeurd. Vink 'Domein aanvragen' aan."
                     )
             await self._check_bare_domain_availability(actual_domain, context, bare_field)
 
@@ -299,10 +295,9 @@ class DomainConfigEnforcer:
 
         domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
         if not domain_format:
-            # Eerste uitgang voor de vastgehouden waarschuwing, en de enige die de
-            # config-PUT bereikt: die kan een kaal domein zetten zonder ooit een formaat
-            # te kiezen. Hij gaat voor op de certificaatnotitie, want hij gaat over het
-            # veld dat de gebruiker zojuist aanvinkte.
+            # Uitgang voor de vastgehouden waarschuwing, en de enige die de config-PUT
+            # bereikt. Vóór de certificaatnotitie, want hij gaat over het veld dat de
+            # gebruiker zojuist aanvinkte.
             if bare_domain_note:
                 raise FieldWarning(bare_field, bare_domain_note)
             if certificate_note:
@@ -413,9 +408,8 @@ class DomainConfigEnforcer:
                         msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
                         raise FieldError(domain_field, msg)
                 else:
-                    # De kaal-domeinmelding wint hier, want hij noemt dezelfde goedkeuring
-                    # en zegt er bij wat hem tegenhoudt. Eén waarschuwing komt eruit: de
-                    # eerste sluit de enforcer af.
+                    # De kaal-domeinmelding wint, want hij noemt dezelfde goedkeuring en
+                    # zegt erbij wat hem tegenhoudt.
                     warning = bare_domain_note or f"Gebruik van het domein '{actual_domain}' is op aanvraag."
                     field = bare_field if bare_domain_note else domain_field
                     raise FieldWarning(field, f"{warning} {certificate_note}" if certificate_note else warning)

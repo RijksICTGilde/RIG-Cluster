@@ -62,8 +62,7 @@ class IdentityTranslator:
         return key
 
 
-#: Herkenbaar en vertaalbaar-veilig: de vertaler laat een onbekende sleutel staan, dus een
-#: sonde komt er ongewijzigd uit. Zie ``FormRenderer.take_unrendered_errors``.
+#: De vertaler laat een onbekende sleutel staan, dus een sonde komt er ongewijzigd uit.
 _PROBE = "zad-probe-veld-"
 
 
@@ -336,16 +335,14 @@ class FormRenderer:
         """Remove the errors no field on this screen carries, and return their messages.
 
         An error keyed to a path this form does not draw has nowhere to appear, so the step
-        refuses to advance and says nothing. An enforcer raising a plain ``ValueError``
-        lands on the GROUP path (``deployments[1]``), which is a container and never an
-        input; that has now cost two invisible messages (RIG-Cluster#179).
+        refuses to advance and says nothing. That has now cost two invisible messages
+        (RIG-Cluster#179).
 
-        Which paths are drawn is not derived from the paths but MEASURED: each one is
-        offered to the renderer as a unique probe message, and whatever comes back on a
-        field was drawn. Comparing paths cannot answer it -- a virtualized field is keyed
-        by its virtual spelling while its errors are read under the real one, and a
-        sequence keys only the sequence itself while every row child carries its own.
-        Reading the field tree the renderer builds is the only spelling-proof answer.
+        Which paths are drawn is MEASURED, not derived from the paths: each one is offered
+        to the renderer as a unique probe message, and whatever comes back on a field was
+        drawn. Comparing paths cannot answer it: a virtualized field is keyed by its virtual
+        spelling while its errors are read under the real one, and a sequence keys only the
+        sequence itself while every row child carries its own.
         """
         paths = list(errors)
         probes = {path: [f"{_PROBE}{index}"] for index, path in enumerate(paths)}

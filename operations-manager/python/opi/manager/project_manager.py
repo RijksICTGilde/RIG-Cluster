@@ -5698,9 +5698,7 @@ class ProjectManager:
         bare_domain_registered = False
         # Opslaan mag, toepassen niet: het formulier laat een kaal domein op een nog niet
         # goedgekeurd eigen domein door (RC-216), dus de goedkeuring hangt hier, aan
-        # dezelfde voorwaarde als het rootadres. Zolang die er niet is houdt deze
-        # deployment ook geen registratie op de apex: de tak eronder ruimt hem op,
-        # dezelfde weg als wanneer het vinkje uitgaat.
+        # dezelfde voorwaarde als het rootadres.
         if (
             expose_on_bare_domain
             and base_domain
@@ -5724,7 +5722,7 @@ class ProjectManager:
             bare_domain_registered = True
             logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
         elif base_domain:
-            # Bare domain deselected, or not (yet) approved — clean up any existing registration
+            # Bare domain deselected, or not (yet) approved: clean up any existing registration
             if expose_on_bare_domain:
                 logger.warning(
                     "Bare domain '%s' not applied for deployment '%s': the domain is not approved for project '%s'",
