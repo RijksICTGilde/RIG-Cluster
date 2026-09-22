@@ -96,7 +96,7 @@ Documentatie: `features/domain-restrictions.md`. Dit is een wijziging aan een be
 
 ### 1. Een expliciete beheerlijst in de cluster config, en de functies die hem lezen
 
-Per cluster komt er een lijst van de zones die ZAD zelf bedient: `managed_zones`, BINNEN het `domains`-blok, naast `supported_domains`. Niet als tweede sleutel op clusterniveau: het blok gaat al over "welke domeinen horen bij dit cluster", en dit is een tweede antwoord op diezelfde vraag. De naam is gekozen, niet ter discussie.
+Per cluster komt er een lijst van de zones die ZAD zelf bedient: `managed_zones`, BINNEN het `domains`-blok, direct na `supported_domains`. Niet als tweede sleutel op clusterniveau: het blok gaat al over "welke domeinen horen bij dit cluster", en dit is een tweede antwoord op diezelfde vraag. De naam is gekozen, niet ter discussie.
 
 `CLUSTER_CONFIG` heeft drie clusters (`cluster_config.py:15`, `:93` en `:181`, met hun `domains`-blok op `:83`, `:166` en `:282`), en dit is de volledige inhoud die erin komt. Neem hem letterlijk over:
 
@@ -112,12 +112,14 @@ Waarom een eigen lijst en niet afleiden uit wat er al staat: `supported_domains`
 
 Waarom hij toch niet kan wegdrijven van de rest: er komt een test bij die eist dat de `ingress_postfix`-zone van elk cluster door zijn eigen `managed_zones` gedekt wordt, en dat elk domein uit `supported_domains` dat ook is. Vergeet iemand een nieuwe zone, dan valt die test om in plaats van dat er stil een gat ontstaat. Dat is het punt waarop een tweede lijst wél mag bestaan: hij is expliciet EN afgedekt.
 
-Daarbovenop twee functies in `opi/core/cluster_config.py`, bij de andere domein-opzoekers:
+Daarbovenop twee functies in `opi/core/cluster_config.py`, bij de andere domein-opzoekers, beide bovenop `get_cluster_domains_config()` en niet rechtstreeks op `CLUSTER_CONFIG`:
 
-- `get_managed_zones(cluster_name: str) -> list[str]`, die de lijst leest en een lege lijst teruggeeft als het blok ontbreekt;
+- `get_managed_zones(cluster_name: str) -> list[str]`, die de lijst leest en een lege lijst teruggeeft als het blok of de sleutel ontbreekt, in dezelfde vorm als `get_supported_domain_names()` ernaast;
 - `is_platform_domain(cluster_name: str, domain: str) -> bool`, die de suffix-walk over die lijst doet.
 
-`get_external_dns_target_for_hostname()` doet zo'n walk al, maar filtert eerst op entries die een `external_dns_target` HEBBEN. Op `kind`, `local` en `sandbox.rijksapp.dev` ontbreekt die sleutel, dus hergebruiken zoals hij is zou die zones tot eigen domein verklaren. Haal de walk daarom naar een eigen hulpfunctie (langste eerst) en laat beide hem gebruiken, waarbij external-dns zijn filter houdt en zijn eigen lijst blijft lezen. Twee losse walks naast elkaar is hoe de ene over een jaar wel een suffix matcht en de andere niet.
+**Waarom `is_platform_domain` geen dubbeling is van `is_domain_supported` (`cluster_config.py:1264`).** Die laatste is een lidmaatschapstest op `supported_domains` en zegt volgens zijn eigen docstring "check if a cluster OFFERS a specific base domain". Dat is de aanbodvraag. Deze nieuwe functie stelt de beheervraag: valt deze naam binnen een zone die wij bedienen. Voor `team.rijks.app` verschillen die antwoorden, en voor `rig.prd1.gn2.quattro.rijksapps.nl` ook. Gebruik `is_domain_supported` dus niet voor de reserveringscheck, en breid hem ook niet op: aan het aanbod hangen `issuer` en `supports_dots`, en die moeten aan exact lidmaatschap blijven hangen.
+
+**De suffix-walk komt één keer te bestaan.** `get_external_dns_target_for_hostname()` (`:1308`) doet hem al, maar filtert eerst op entries die een `external_dns_target` HEBBEN; op `kind`, `local` en `sandbox.rijksapp.dev` ontbreekt die sleutel, dus hergebruiken zoals hij is zou die zones tot eigen domein verklaren. Haal daarom de kern eruit als hulpfunctie met de vorm `_longest_matching_zone(hostname: str, zones: list[str]) -> str | None` (langste eerst, dan `hostname == zone or hostname.endswith("." + zone)`). `is_platform_domain` geeft hem `get_managed_zones()`; external-dns geeft hem de domeinnamen van zijn gefilterde entries en zoekt met de teruggegeven zone zijn eigen entry op. Zo houdt external-dns zijn filter en zijn eigen lijst, en bestaat de matchregel op één plek. Twee losse walks naast elkaar is hoe de ene over een jaar wel een suffix matcht en de andere niet.
 
 ### 2. De reserveringscheck wordt domein-bewust
 
