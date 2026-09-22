@@ -22,15 +22,6 @@ pytestmark = pytest.mark.skipif(
 KLARE_TEKST = "een geheim\nmet twee regels"
 
 
-@pytest.fixture
-def sleutelpaar() -> tuple[str, str]:
-    """Een sleutelpaar van age-keygen, dus precies de vorm die in projectbestanden staat."""
-    uitvoer = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True).stdout
-    prive = next(r for r in uitvoer.splitlines() if r.startswith("AGE-SECRET-KEY-"))
-    publiek = next(r for r in uitvoer.splitlines() if "public key:" in r).split(": ", 1)[1].strip()
-    return publiek, prive
-
-
 def _binary_versleutelt(klare_tekst: str, publieke_sleutel: str) -> str:
     return subprocess.run(
         ["age", "--armor", "-r", publieke_sleutel],
@@ -55,9 +46,9 @@ def _binary_ontsleutelt(blok: bytes, prive_sleutel: str) -> subprocess.Completed
 
 class TestUitwisselbaarMetHetBinary:
     @pytest.mark.asyncio
-    async def test_blok_van_het_binary_opent_in_het_proces(self, sleutelpaar):
+    async def test_blok_van_het_binary_opent_in_het_proces(self, age_sleutelpaar):
         """Wat het binary schreef moet de nieuwe weg lezen: alle bestaande bestanden zijn zo gemaakt."""
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         assert is_age_encrypted(blok)
@@ -65,9 +56,9 @@ class TestUitwisselbaarMetHetBinary:
         assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_blok_van_opi_blijft_leesbaar_voor_het_binary(self, sleutelpaar):
+    async def test_blok_van_opi_blijft_leesbaar_voor_het_binary(self, age_sleutelpaar):
         """OPI schrijft nog met het binary; de heenweg en de terugweg blijven op elkaar passen."""
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         blok = await encrypt_age_content(KLARE_TEKST, publiek)
 
         gelezen = _binary_ontsleutelt(blok.encode(), prive)
@@ -76,26 +67,26 @@ class TestUitwisselbaarMetHetBinary:
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, sleutelpaar):
+    async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, age_sleutelpaar):
         """Een detailpagina opent per component het ``user-env-vars``-blok in een keer.
 
         Niet-ascii loopt hier over ``decode("utf-8")``; het regeleinde aan het eind valt
         weg, want beide varianten strippen hun uitkomst, ook de oude.
         """
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt("WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9\n", publiek)
 
         assert (
             await decrypt_age_content(blok, prive) == "WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9"
         )
 
-    def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, sleutelpaar):
+    def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, age_sleutelpaar):
         """De meting waar de versleutelkant later op kan rusten.
 
         Die kant is hier niet omgezet: pyrage 1.4.0 kent geen armor-uitvoer en de
         opgeslagen vorm is armored.
         """
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         blok = pyrage.encrypt(KLARE_TEKST.encode(), [pyrage.x25519.Recipient.from_str(publiek)])
 
         gelezen = _binary_ontsleutelt(blok, prive)
@@ -105,8 +96,8 @@ class TestUitwisselbaarMetHetBinary:
 
 class TestGeenSubprocessOpHetLeespad:
     @pytest.mark.asyncio
-    async def test_ontsleutelen_start_geen_proces(self, sleutelpaar):
-        publiek, prive = sleutelpaar
+    async def test_ontsleutelen_start_geen_proces(self, age_sleutelpaar):
+        publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         def ontploft(*args, **kwargs):
@@ -120,8 +111,8 @@ class TestGeenSubprocessOpHetLeespad:
             assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_prive_sleutel_gaat_niet_naar_schijf(self, sleutelpaar):
-        publiek, prive = sleutelpaar
+    async def test_prive_sleutel_gaat_niet_naar_schijf(self, age_sleutelpaar):
+        publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         def ontploft(*args, **kwargs):
@@ -134,8 +125,8 @@ class TestGeenSubprocessOpHetLeespad:
 
 class TestFoutgedrag:
     @pytest.mark.asyncio
-    async def test_verkeerde_sleutel_faalt_luid(self, sleutelpaar):
-        publiek, _ = sleutelpaar
+    async def test_verkeerde_sleutel_faalt_luid(self, age_sleutelpaar):
+        publiek, _ = age_sleutelpaar
         andere_prive = next(
             r
             for r in subprocess.run(["age-keygen"], capture_output=True, text=True, check=True).stdout.splitlines()
@@ -147,31 +138,31 @@ class TestFoutgedrag:
             await decrypt_age_content(blok, andere_prive)
 
     @pytest.mark.asyncio
-    async def test_onleesbare_invoer_faalt_luid(self, sleutelpaar):
-        _, prive = sleutelpaar
+    async def test_onleesbare_invoer_faalt_luid(self, age_sleutelpaar):
+        _, prive = age_sleutelpaar
 
         with pytest.raises(Exception, match="Age decryption failed"):
             await decrypt_age_content("geen age-blok", prive)
 
     @pytest.mark.asyncio
-    async def test_kapotte_sleutel_faalt_luid(self, sleutelpaar):
-        publiek, _ = sleutelpaar
+    async def test_kapotte_sleutel_faalt_luid(self, age_sleutelpaar):
+        publiek, _ = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         with pytest.raises(Exception, match="Age decryption failed"):
             await decrypt_age_content(blok, "AGE-SECRET-KEY-GEENGELDIGESLEUTEL")
 
     @pytest.mark.asyncio
-    async def test_ontbrekende_invoer_blijft_een_valuefout(self, sleutelpaar):
-        _, prive = sleutelpaar
+    async def test_ontbrekende_invoer_blijft_een_valuefout(self, age_sleutelpaar):
+        _, prive = age_sleutelpaar
 
         with pytest.raises(ValueError, match="Missing encrypted content or private key"):
             await decrypt_age_content("", prive)
         with pytest.raises(ValueError, match="Missing encrypted content or private key"):
             await decrypt_age_content("iets", "")
 
-    def test_sync_geeft_none_bij_een_fout(self, sleutelpaar):
-        publiek, _ = sleutelpaar
+    def test_sync_geeft_none_bij_een_fout(self, age_sleutelpaar):
+        publiek, _ = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         assert decrypt_age_content_sync(blok, "AGE-SECRET-KEY-GEENGELDIGESLEUTEL") is None
@@ -183,27 +174,27 @@ class TestRandenVanDeInvoer:
     """De twee ``strip()``-aanroepen in ``_decrypt_in_process``: pyrage is strenger dan het binary."""
 
     @pytest.mark.asyncio
-    async def test_sleutel_met_een_regeleinde_erachter_opent(self, sleutelpaar):
+    async def test_sleutel_met_een_regeleinde_erachter_opent(self, age_sleutelpaar):
         """``age -d -i`` opent een sleutelbestand met een regeleinde erachter (gemeten: exit 0).
 
         De sleutel komt uit een k8s-secret of een omgevingsvariabele, dus die vorm komt
         in productie voor; ``Identity.from_str`` weigert hem met ``IdentityError``.
         """
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
         assert await decrypt_age_content(blok, prive + "\n") == KLARE_TEKST
         assert decrypt_age_content_sync(blok, prive + "\n") == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, sleutelpaar):
+    async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, age_sleutelpaar):
         """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort
         doorlaat moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar.
 
         Wijder dan het binary, dat op een blok met witruimte ervoor afketste met
         "unexpected intro".
         """
-        publiek, prive = sleutelpaar
+        publiek, prive = age_sleutelpaar
         omrand = "\n  " + _binary_versleutelt(KLARE_TEKST, publiek).strip() + "\n\n"
 
         assert is_age_encrypted(omrand)
