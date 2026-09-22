@@ -557,11 +557,7 @@ class TestDomainConfigEnforcerReceivesFullData:
 
 
 class TestEnforcerAppliesReservedNamesPerDomain:
-    """De reserveringslijst hangt aan het domein, en dat weet alleen de enforcer.
-
-    De blinde controle in de veldvalidator won altijd: ``test`` op een EIGEN domein werd
-    geweigerd.
-    """
+    """De reserveringslijst hangt aan het domein, en dat weet alleen de enforcer."""
 
     @staticmethod
     def _yaml(base_domain: str, subdomain: str) -> dict:

@@ -376,14 +376,9 @@ class DomainConfigEnforcer:
                     raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
 
         # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
-        # veldvalidator krijgt het basisdomein niet mee. De fout hangt aan het
-        # subdomeinveld, anders rendert hij op het onzichtbare groepspad.
-        #
-        # Een leeg basisdomein is hier geen "geen domein": het is de ingress_postfix-zone
-        # van het cluster, en dat is juist een van onze eigen zones. ``actual_domain`` is
-        # daar bewust None (er valt niets goed te keuren), dus los de staart hier apart op
-        # in plaats van op None te wachten, zoals ``apply_domain_approval_fallback`` dat
-        # ook doet. Op None afgaan liet 'admin' op de clusterstandaard gewoon door.
+        # veldvalidator krijgt het basisdomein niet mee. Een leeg basisdomein is hier geen
+        # "geen domein" maar de clusterstandaard, en dat is juist een van onze eigen
+        # zones: op ``actual_domain is None`` afgaan liet 'admin' daar gewoon door.
         if subdomain and "{subdomain}" in template:
             reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
             is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
