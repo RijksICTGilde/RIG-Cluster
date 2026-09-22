@@ -69,6 +69,19 @@ def test_de_vijf_zonder_vinkje_declareren_dat(service_type: ServiceType) -> None
 
 
 @pytest.mark.parametrize("service_type", list(SERVICES), ids=lambda s: s.value)
+def test_de_declaratie_bepaalt_het_vinkje_in_de_keuzelijst(service_type: ServiceType) -> None:
+    """De andere helft van de regel, gemeten op de lijst die de gebruiker krijgt.
+
+    De declaratie klopt hebben is niet hetzelfde als hem gelezen zien worden: de picker
+    kan hem overslaan zonder dat een van de toetsen hierboven iets merkt.
+    """
+    aangeboden = [option["value"] for option in FilteredServiceOptionsProvider([service_type.value]).get_options()]
+    if SERVICES[service_type].definition.selectable_per_component:
+        return
+    assert aangeboden == [], f"{service_type.value} staat in de componentkeuze terwijl hij er niet te kiezen is"
+
+
+@pytest.mark.parametrize("service_type", list(SERVICES), ids=lambda s: s.value)
 def test_de_rest_van_de_catalogus_houdt_de_standaard(service_type: ServiceType) -> None:
     """Pin de hele verzameling, niet alleen de vijf: zo wordt een zesde dienst die de
     waarde krijgt een bewuste wijziging in dit bestand en geen bijwerking."""
