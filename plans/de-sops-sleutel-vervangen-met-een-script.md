@@ -174,7 +174,7 @@ Een shell-schil om een Python-kern is een optie, maar dan onderhoud je twee tale
 Het script moet tegen echte data getest worden, en dat kan niet zonder A. Beide helften zitten al in de repo, dus het plan verwijst ernaar in plaats van ze te kopieren. Dat scheelt een extra vindplaats op het moment dat we er juist een aan het opruimen zijn.
 
 - **De private sleutel**: `operations-manager/python/tests/test_age_password_decryption.py`, regel 21. Dat die daar staat is de aanleiding van deze taak. Zet hem lokaal in `security/old_key.txt`; die map is untracked.
-- **De publieke sleutel**: staat als `recipient` in elk van de 19 SOPS-bestanden, en in de `age-public-key` van elk projectbestand. Geen geheim, en al helemaal niet nieuw.
+- **De publieke sleutel van het PLATFORM**: staat als `recipient` in elk van de 19 SOPS-bestanden. Geen geheim, en niet nieuw. Let op: dit is NIET de `age-public-key` uit een projectbestand. Elk project heeft zijn eigen sleutelpaar, gemeten: 44 unieke waarden over 45 bestanden, en geen enkele gelijk aan die van het platform. Het platform staat erboven, want het ontsleutelt de PRIVATE sleutel van elk project.
 - **De testbestanden**: `https://git.claude.robbertuittenbroek.nl/robbert/rig-cluster-projects` onder `projects/`, 45 stuks, allemaal met beide velden.
 
 Daarmee kan de bouwer de volledige ronde draaien en verifieren zonder dat er iets buiten de repo nodig is, en zonder dat er iets bij komt.
