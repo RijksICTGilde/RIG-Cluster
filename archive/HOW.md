@@ -158,7 +158,7 @@ live-server --port=9093
 
 Refresh argo application (refresh is trigger git retrieval):
 
-export ARGOCD_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJwcm9qOmRlZmF1bHQ6YXV0b21hdGlvbi1zZXJ2aWNlIiwibmJmIjoxNzUxMzYzMDgxLCJpYXQiOjE3NTEzNjMwODEsImp0aSI6Ijk0NGM2N2UwLTVkODItNDg5MC1iODE3LTdjMTRkZTIzY2Y3OSJ9.6-QhOIDAuTrc5plu617UVq-MRQ94l2OxyEW13nL-kmg"
+export ARGOCD_TOKEN="<een ArgoCD-projecttoken; haal hem op met `argocd proj role create-token default automation-service`>"
 
 # List applications
 curl -X GET \

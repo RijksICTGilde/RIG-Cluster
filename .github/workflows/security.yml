@@ -35,6 +35,29 @@ jobs:
       - name: Run pip-audit
         run: uv run pip-audit --strict --desc --skip-editable -s osv
 
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # De scan vraagt age-keygen: een AGE-kandidaat telt alleen als EEN GELDIGE sleutel, want
+      # de testsuite draagt ~20 plaatshouders (AGE-SECRET-KEY-1TEST en familie). Zonder die
+      # controle meldt de scan die allemaal, en een alarm met bekende meldingen erin wordt
+      # genegeerd.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # De hele BOOM van de branch en niet alleen de diff: iets dat via een omweg binnenkomt
+      # (een rebase, een merge, een commit met --no-verify) valt zo alsnog op. Dit is de laag
+      # die bindt, want CI kent geen --no-verify.
+      - name: Scan the branch tree for committed secrets
+        run: python scripts/scan-secrets.py
+
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest

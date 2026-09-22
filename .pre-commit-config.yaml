@@ -45,6 +45,18 @@ repos:
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
 
+      # Laag 1 van de geheimengrendel: lokaal en vriendelijk. Vangt het eerlijke ongeluk en
+      # kost niets. Blijft met --no-verify te omzeilen, en dat is geaccepteerd omdat laag 2 in
+      # CI (.github/workflows/security.yml, job secret-scan) de hele boom scant en geen
+      # --no-verify kent. Zie scripts/secret_scan.py voor de drie lagen.
+      #
+      # Alleen de gestageerde bestanden hier, want dit moet snel zijn; CI doet de hele boom.
+      - id: secret-scan
+        name: secret-scan
+        entry: python3 scripts/scan-secrets.py --files
+        language: system
+        pass_filenames: true
+
       - id: djlint
         name: djlint
         entry: uv run --directory operations-manager/python djlint --lint opi/templates_lotc/
