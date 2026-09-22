@@ -603,10 +603,7 @@ class TestEnforcerAppliesReservedNamesPerDomain:
 
     @pytest.mark.asyncio
     async def test_a_reserved_name_blocks_instead_of_asking_for_approval(self, monkeypatch):
-        """Zonder allowlist-entry geeft de aanvraagcheck eronder een FieldWarning, en die
-        laat de inzending door. De reservering moet er dus voor komen, anders komt 'admin'
-        op rijks.app alsnog door het formulier.
-        """
+        """De blokkade wint van de aanvraagwaarschuwing: 'admin' op rijks.app komt er niet door."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
@@ -652,10 +649,7 @@ class TestEnforcerAppliesReservedNamesPerDomain:
 
     @pytest.mark.asyncio
     async def test_a_reserved_name_on_the_cluster_default_is_refused(self, monkeypatch):
-        """Een leeg basisdomein IS de postfix-zone: de clusterstandaard levert
-        admin.rig.prd1.gn2.quattro.rijksapps.nl op. De enforcer rekent daar met
-        actual_domain=None, dus een check die op die waarde wacht laat 'admin' door.
-        """
+        """Een leeg basisdomein IS de postfix-zone: dit levert admin.rig.prd1.gn2.quattro.rijksapps.nl op."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
@@ -690,12 +684,7 @@ class TestEnforcerAppliesReservedNamesPerDomain:
 
     @pytest.mark.asyncio
     async def test_a_reserved_name_on_a_subzone_is_refused_before_the_approval_warning(self, monkeypatch):
-        """De stand waarin een eigen domein altijd begint: nog geen allowlist-entry.
-
-        De aanvraagcheck heft dan een niet-blokkerende FieldWarning, en die sluit de
-        enforcer af. Staat de reservering daarachter, dan komt 'admin' op onze eigen zone
-        gewoon door het formulier.
-        """
+        """De stand waarin een eigen domein altijd begint: nog geen allowlist-entry."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
@@ -718,9 +707,7 @@ class TestEnforcerAppliesReservedNamesPerDomain:
 
     @pytest.mark.asyncio
     async def test_a_reserved_name_on_the_postfix_zone_is_refused_before_the_approval_warning(self, monkeypatch):
-        """Dezelfde ongekeurde stand op de clusterzone: die staat niet in supported_domains,
-        dus de aanvraagcheck bijt er ook.
-        """
+        """Dezelfde ongekeurde stand op de clusterzone: ook die staat niet in supported_domains."""
         from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
 
         monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
