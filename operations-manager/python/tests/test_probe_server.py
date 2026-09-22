@@ -52,8 +52,8 @@ def _vrije_poort() -> int:
 
 @pytest.fixture
 def probeserver():
-    def _start(poort: int | None = None) -> int:
-        poort = _vrije_poort() if poort is None else poort
+    def _start() -> int:
+        poort = _vrije_poort()
         start_probe_server(poort)
         draait = probe_server._server
         gepakt = draait.server_address[1] if draait is not None else None
