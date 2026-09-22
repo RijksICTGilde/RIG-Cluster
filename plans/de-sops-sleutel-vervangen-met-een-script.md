@@ -99,7 +99,9 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 4. **`task set-sops-key-secret`.** Zet de inhoud van `security/new.txt` in het secret `sops-age-key` van de doelnamespace, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
 5. **`task rotate-project-keys`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. In de voorbereidingsfase versleutelt hij voor A **en** B tegelijk, zodat oud en nieuw allebei werken. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met A en met B, en beide velden zijn meegegaan.
 6. **Fase verwijderen: `--remove-key A`.** `sops rotate -i --rm-age A`. Pas draaien als stap 5 over alle projecten klaar is; het script weigert als er nog projecten op A staan. *Verify:* geen bestand noemt de publieke sleutel van A meer, en ontsleutelen met A faalt.
-7. **De vaste sleutels uit de tests.** Dit is niet één bestand. Een scan van de werkboom vindt er **vijf**:
+7. **De vaste sleutels uit de tests, en pas NA stap 6.** De volgorde is hier een besluit en geen detail. Zolang A nog geldig is, is het testbestand de enige plek die verraadt dat er iets te halen valt, en een losse commit die precies die regel weghaalt zet daar een pijl naar. De sleutel staat er al bijna een jaar, dus een paar dagen extra verandert niets aan de blootstelling; hem waardeloos maken wel. Dus: eerst roteren, A intrekken, en pas daarna opruimen, als onderdeel van een ronde die alle vijf de bestanden raakt en dus over "dezelfde sleutel voor alle tests" gaat in plaats van over één regel.
+
+   Dit is niet één bestand. Een scan van de werkboom vindt er **vijf**:
 
    | bestand | sleutel |
    |---|---|
@@ -109,7 +111,7 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
    | `tests/test_sops_skip_unchanged.py` | twee andere |
    | `sops-sandbox/sops-key.txt` | de oefensleutel |
 
-   Alleen de eerste is de echte, maar de andere vier zijn de reden dat hij niet opviel: een sleutel in een testbestand was hier normaal. Een scanner die op `AGE-SECRET-KEY-` alarmeert geeft in de huidige boom vier meldingen die niemand hoeft op te lossen, en wordt daarom genegeerd. **Eerst de boom schoon, dan pas de grendel**, anders bouw je een alarm waar iedereen omheen leert leven. Sleutels horen in een fixture die er ter plekke een maakt. *Verify:* een scan op de werkboom geeft nul treffers, en de tests slagen.
+   Alleen de eerste is de echte, en die is op dat moment al vervangen. De andere vier zijn de reden dat hij niet opviel: een sleutel in een testbestand was hier normaal. Een scanner die op `AGE-SECRET-KEY-` alarmeert geeft in de huidige boom vier meldingen die niemand hoeft op te lossen, en wordt daarom genegeerd. **Eerst de boom schoon, dan pas de grendel**, anders bouw je een alarm waar iedereen omheen leert leven. Sleutels horen in een fixture die er ter plekke een maakt. *Verify:* een scan op de werkboom geeft nul treffers, en de tests slagen.
 8. **De PAT-vervanging is dezelfde lus met een andere ingang.** Er is precies één verschil tussen de twee handelingen:
 
    ```
