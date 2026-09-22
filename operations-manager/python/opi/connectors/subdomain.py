@@ -565,14 +565,13 @@ SUBDOMAIN_MAX_LENGTH = 63
 SUBDOMAIN_MIN_LENGTH = 1
 SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
 
-# A reserved name gets the same wording as a taken one: telling the two apart makes the
-# reserved list enumerable from the outside.
+# The wording stays generic and never says "reserved": a message that sets a reserved name
+# apart from a taken one makes the list probeable from outside.
 RESERVED_MESSAGE_NL = "Subdomein '{subdomain}' is niet beschikbaar"
 RESERVED_MESSAGE_EN = "Subdomain '{subdomain}' is not available"
 
-# Reserved subdomains that cannot be registered on a zone WE serve. On a tenant's own
-# domain the list does not apply: it is their zone and their choice, and nothing on the
-# platform side is protected by blocking a name there. See validate_subdomain_for_domain.
+# Reserved subdomains that cannot be registered on a zone we serve ourselves. Why the list
+# stops at our own zones: validate_subdomain_for_domain.
 # This list includes:
 # - Standard infrastructure subdomains (www, api, mail, etc.)
 # - Security-sensitive subdomains that could be used for phishing/abuse
@@ -833,8 +832,7 @@ class BaseDomainValidationError(SubdomainError):
 def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str | None]:
     """Validate a subdomain for DNS compatibility.
 
-    This is the form check only. Whether the name is reserved depends on the base domain,
-    which this function does not receive; ``validate_subdomain_for_domain`` adds it.
+    Form rules only; ``validate_subdomain_for_domain`` adds the reserved list.
 
     Args:
         subdomain: The subdomain to validate
@@ -896,9 +894,8 @@ def validate_subdomain_for_domain(
 ) -> tuple[bool, str | None]:
     """Validate a subdomain for the base domain it is asked for.
 
-    The form rules from ``validate_subdomain`` always apply. The reserved list applies on
-    top of them only within a zone this cluster serves: on a tenant's own domain a name
-    like ``test`` is theirs to use, and refusing it protected nothing.
+    The reserved list applies only within a zone this cluster serves: on a tenant's own
+    domain a name like ``test`` is theirs to use, and refusing it protected nothing.
 
     Args:
         subdomain: The subdomain to validate

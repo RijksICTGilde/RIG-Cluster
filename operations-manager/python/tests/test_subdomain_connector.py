@@ -97,10 +97,8 @@ class TestValidateSubdomain:
         assert is_valid is True  # Gets lowercased to my-app which is valid
 
     def test_a_reserved_name_passes_the_form_rules(self):
-        """De vormcontrole kent het basisdomein niet en oordeelt dus niet over reservering.
-
-        ``www`` is een geldige DNS-naam. Of hij mag, hangt af van het domein, en dat is wat
-        ``validate_subdomain_for_domain`` erbij haalt.
+        """``www`` is een geldige DNS-naam. Of hij mag, hangt af van het domein, en dat
+        weet alleen ``validate_subdomain_for_domain``.
         """
         for subdomain in ["www", "api", "admin", "mail", "test"]:
             is_valid, error = validate_subdomain(subdomain)
@@ -118,8 +116,7 @@ class TestValidateSubdomainForDomain:
     """De reserveringslijst geldt op onze eigen zones, niet op het domein van een tenant.
 
     De aanleiding: ubbw-0i1 vroeg ``test.uitbetrouwbarebron.nl`` aan, zijn EIGEN domein, en
-    kreeg tweemaal "niet beschikbaar" omdat ``test`` in de lijst staat. Aan de platformkant
-    beschermt die weigering niets: wij zetten geen enkele hostnaam in de zone van die tenant.
+    kreeg tweemaal "niet beschikbaar" omdat ``test`` in de lijst staat.
     """
 
     @pytest.mark.parametrize("subdomain", ["admin", "www", "api", "test"])
@@ -130,8 +127,8 @@ class TestValidateSubdomainForDomain:
         assert error == f"Subdomein '{subdomain}' is niet beschikbaar"
 
     def test_the_message_stays_generic(self):
-        """Zonder het woord "gereserveerd" en niet te onderscheiden van "al in gebruik":
-        wie die tekst specifieker maakt, maakt de lijst aftastbaar."""
+        """Zonder het woord "gereserveerd": wie die tekst specifieker maakt, maakt de
+        lijst aftastbaar."""
         _, error = validate_subdomain_for_domain("admin", "rijks.app", "odcn-production")
         assert "gereserveerd" not in error.lower()
         assert "reserved" not in error.lower()
@@ -224,9 +221,8 @@ class TestSubdomainValidationInRegister:
         """Het publicatiepad is de andere helft: repareer je alleen het formulier, dan komt
         de naam door de wizard en klapt het uitrollen alsnog hier.
 
-        De naam komt voorbij de validatie en strandt pas op de beschikbaarheidscheck, die
-        hier nee zegt. Die andere uitzondering is juist het bewijs: de reservering bijt niet
-        meer, de check erna wel.
+        De naam strandt pas op de beschikbaarheidscheck, en die andere uitzondering is juist
+        het bewijs: de reservering bijt niet meer, de check erna wel.
         """
         connector = SubdomainConnector()
 

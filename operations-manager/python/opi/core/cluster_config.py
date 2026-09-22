@@ -85,11 +85,9 @@ CLUSTER_CONFIG = {
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
-            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat is
-            # een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden (op
-            # odcn-production is de ingress_postfix-zone precies dat geval). De
-            # gereserveerde subdomeinen gelden alleen hierbinnen; op het domein van een
-            # tenant is het hun zone en hun keuze.
+            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat
+            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden
+            # (op odcn-production is de ingress_postfix-zone precies dat geval).
             "managed_zones": ["kind", "local"],
         },
         # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
@@ -1324,9 +1322,8 @@ def get_managed_zones(cluster_name: str) -> list[str]:
 def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
     """Return the most specific zone the hostname falls under, or None.
 
-    Longest zone first, so a name under both ``rijks.app`` and ``team.rijks.app`` matches
-    the latter. One walk for every caller: two of them side by side is how the one grows a
-    suffix rule the other lacks.
+    One walk for both callers: two of them side by side is how one grows a suffix rule the
+    other lacks.
     """
     for zone in sorted(zones, key=len, reverse=True):
         if hostname == zone or hostname.endswith("." + zone):
@@ -1339,8 +1336,7 @@ def is_platform_domain(cluster_name: str, domain: str) -> bool:
     Check if a domain falls within a zone this cluster serves.
 
     This is the management question, not the offer question ``is_domain_supported``
-    answers: ``team.rijks.app`` is not a domain the cluster offers, but it does sit in our
-    registrable zone, and the cluster's own postfix zone is ours without being offered at all.
+    answers: ``team.rijks.app`` is not offered and is still ours.
 
     Args:
         cluster_name: Name of the cluster

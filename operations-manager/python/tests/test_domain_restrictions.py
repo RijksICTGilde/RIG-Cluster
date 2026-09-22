@@ -559,9 +559,8 @@ class TestDomainConfigEnforcerReceivesFullData:
 class TestEnforcerAppliesReservedNamesPerDomain:
     """De reserveringslijst hangt aan het domein, en dat weet alleen de enforcer.
 
-    De veldvalidator krijgt het basisdomein niet mee, dus de blinde controle die daar zat
-    won altijd: ``test`` op een EIGEN domein werd geweigerd met dezelfde tekst als
-    "al in gebruik".
+    De blinde controle in de veldvalidator won altijd: ``test`` op een EIGEN domein werd
+    geweigerd.
     """
 
     @staticmethod

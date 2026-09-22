@@ -375,10 +375,9 @@ class DomainConfigEnforcer:
                     warning = f"Gebruik van het domein '{actual_domain}' is op aanvraag."
                     raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
 
-        # De gereserveerde namen, hier en niet bij het veld zelf: de veldvalidator krijgt
-        # het basisdomein niet mee en kan het onderscheid structureel niet maken, terwijl
-        # deze enforcer actual_domain en cluster al berekend heeft. De fout hangt aan het
-        # subdomeinveld, zodat hij daar rendert en niet op het onzichtbare groepspad.
+        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
+        # veldvalidator krijgt het basisdomein niet mee. De fout hangt aan het
+        # subdomeinveld, anders rendert hij op het onzichtbare groepspad.
         if subdomain and actual_domain and "{subdomain}" in template:
             is_valid, error_msg = validate_subdomain_for_domain(subdomain, actual_domain, cluster)
             if not is_valid and error_msg:
