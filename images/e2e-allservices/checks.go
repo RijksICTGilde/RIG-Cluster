@@ -514,7 +514,12 @@ func checkVlam(ctx context.Context) checkResult {
 	}
 	detail["models"] = len(doc.Data)
 	if len(doc.Data) > 0 {
-		detail["first_model"] = doc.Data[0].ID
+		// Every id, not just the first: the "Test VLAM" form offers these as its choices.
+		ids := make([]string, 0, len(doc.Data))
+		for _, m := range doc.Data {
+			ids = append(ids, m.ID)
+		}
+		detail["model_ids"] = ids
 	}
 	return checkResult{ok: true, detail: detail}
 }
