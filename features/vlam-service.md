@@ -13,12 +13,12 @@ van hangt (de proxy, de RON-koppeling, de CA-keten) is beheer van het `vlam-wt8`
 
 ## Wat je krijgt
 
-Zet je de dienst aan, dan krijgt **elk component van elke deployment** van je project:
+Vink je de dienst aan op een component, dan krijgt **dat component**:
 
 | | |
 |---|---|
 | `VLAM_API_URL` | het adres van de interne VLAM-proxy, bijvoorbeeld `http://productie-vlam-proxy-intern.rig-prd-vlam-wt8.svc.cluster.local:8081` |
-| een uitgaande netwerkregel | van de pods van je deployment naar precies die ene proxy-pod |
+| een uitgaande netwerkregel | van de pods van dat component naar precies die ene proxy-pod |
 
 En op een cluster dat het **doorlus-pad** aanbiedt (RC-167) daarnaast:
 
