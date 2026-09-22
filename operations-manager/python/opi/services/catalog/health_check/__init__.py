@@ -17,7 +17,7 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ManifestContribution, Service
 from opi.services.catalog.health_check.config_model import HealthCheckConfig
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 
 
 class HealthCheckService(Service):
@@ -33,7 +33,6 @@ class HealthCheckService(Service):
         help_template="health_check/help.md",
         icon="stethoscoop",
         color="rood",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
     )
     config_model = HealthCheckConfig

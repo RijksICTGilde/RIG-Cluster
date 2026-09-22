@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from opi.core.buttons import check_button_variant
 from opi.services.config_lists import find_patchable_list
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.catalog.base import ConfigLayer
@@ -385,15 +385,33 @@ class ServiceDefinition:
     Definition of a service with all its properties and configuration.
 
     This class encapsulates all information about a service including
-    its metadata, binding, variables, and optional configurations.
+    its metadata, variables, and optional configurations.
     """
 
     name: str
     description: str
     icon: str
     color: str
-    binding: ServiceBinding
     variables: list[VariableDefinition] = field(default_factory=list)
+    selectable_per_component: bool = True
+    """Whether each component switches this service on and off for itself.
+
+    False means the project-level selection is the whole answer and the service decides
+    for itself where it works, so it gets no checkbox in the per-component services
+    picker and its manifest contribution reads the PROJECT's services list. A default,
+    because for most of the catalog the answer is obvious; the exceptions declare it.
+
+    Distinct from ``Service.component_selection_follows_config``, which also removes the
+    checkbox but says the opposite thing: there IS a per-component choice and it lives in
+    the service's own config field. ``instructions/services.md`` states the split.
+    """
+    shared_per_deployment: bool = False
+    """Whether one provision of this service serves a whole deployment.
+
+    Every component of the deployment that ticks it gets the same credentials to the same
+    database, bucket or cache. Says nothing about who ticks it: postgres is shared per
+    deployment AND selected per component.
+    """
     secret_class: str | None = None
     # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
@@ -546,18 +564,6 @@ class ServiceAdapter:
         return ServiceType(value)
 
     @classmethod
-    def is_component_service(cls, service: ServiceType) -> bool:
-        """Check if a service is component-specific."""
-        definition = cls.get_service_definition(service)
-        return definition is not None and definition.binding is ServiceBinding.COMPONENT
-
-    @classmethod
-    def is_deployment_service(cls, service: ServiceType) -> bool:
-        """Check if a service is deployment-shared."""
-        definition = cls.get_service_definition(service)
-        return definition is not None and definition.binding is ServiceBinding.DEPLOYMENT
-
-    @classmethod
     def get_component_flag(cls, service: ServiceType) -> str | None:
         """Get the component flag name for a service if it has one."""
         definition = cls.get_service_definition(service)
@@ -568,16 +574,6 @@ class ServiceAdapter:
         """Get storage configuration for a storage service."""
         definition = cls.get_service_definition(service)
         return definition.storage_config if definition is not None else None
-
-    @classmethod
-    def filter_component_services(cls, services: list[ServiceType]) -> list[ServiceType]:
-        """Filter services to only include component-specific ones."""
-        return [service for service in services if cls.is_component_service(service)]
-
-    @classmethod
-    def filter_deployment_services(cls, services: list[ServiceType]) -> list[ServiceType]:
-        """Filter services to only include deployment-shared ones."""
-        return [service for service in services if cls.is_deployment_service(service)]
 
     @classmethod
     def get_backupable_labels(cls) -> list[dict[str, str]]:
