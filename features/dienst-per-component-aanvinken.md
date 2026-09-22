@@ -13,7 +13,8 @@ publish-on-web, keycloak, postgresql-database, send-email, sleep-mode, invite,
 cross-domain-access, vlam
 ```
 
-Vier daarvan hoorden er niet.
+Drie daarvan deden niets. Bij de vierde, `vlam`, besliste het vinkje evenmin iets: de
+projectkeuze deelde de dienst aan elk component uit.
 
 ## Het model
 
@@ -45,11 +46,10 @@ niet). `hidden` slaat alleen op de projectkaart.
 ## Twee declaraties, één vraag
 
 `component_selection_follows_config` haalt hetzelfde vinkje weg om de andere reden: daar
-is wél een keuze per component, maar die zit in het eigen configuratieveld. Ze mogen niet
-samengevouwen worden, want hun gevolgen elders verschillen. De picker stelt er één
-afgeleide vraag over, `offers_component_checkbox(service)` in
-`opi/services/catalog/base.py`, zodat er één plek is waar de twee feiten samenkomen.
-Beide declaraties naast elkaar, met wat er verder aan hangt: `instructions/services.md`.
+is wél een keuze per component, maar die zit in het eigen configuratieveld. De picker
+stelt er één afgeleide vraag over, `offers_component_checkbox(service)` in
+`opi/services/catalog/base.py`. Waarom ze niet samengevouwen mogen worden, en wat er
+verder aan hangt: `instructions/services.md`.
 
 ## Gedeeld per deployment is een derde feit
 
@@ -66,10 +66,8 @@ dienstkaart toont daarom twee chips.
 
 Vlam was de enige dienst met `manifest_activated_by_project = True`. Gevolg: de
 projectkeuze alleen gaf elk component van elke deployment de VLAM-variabelen, en de
-egress-NetworkPolicy selecteerde de hele deployment. Gemeten in productie op `bouwm-6gn`:
-`component-2` vinkte vlam aan, `component-1` niet, en toch droeg `main-component-1`
-gewoon `VLAM_API_URL` en viel het onder `vlam-main-network-policy` met podSelector
-`{deployment: main, project: bouwm-6gn}`.
+egress-NetworkPolicy selecteerde de hele deployment, ook waar niemand erom vroeg (gemeten
+in productie op `bouwm-6gn`, zie `features/vlam-service.md`).
 
 Toegang hoort per component. Dus:
 

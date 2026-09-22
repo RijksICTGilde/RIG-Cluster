@@ -195,9 +195,9 @@ which is how a user came to expect a keycloak settings screen per component.
 It is a *default*, `True`, and the exceptions declare themselves (RC-213). Its predecessor
 `binding` was required without one, and five services filled something in because the field
 had to be filled: sleep-mode, invite and cross-domain-access each got a component checkbox
-that provably did nothing. `False` means the service decides for itself where it works:
-sleep-mode picks its deployments with `match:`, an invitation belongs to the project's
-Keycloak realm, and a cross-domain rule names its own component in `to.component`.
+that provably did nothing. `False` means the service decides for itself where it works,
+the way sleep-mode picks its deployments with `match:`; which services declare it and why
+is `features/dienst-per-component-aanvinken.md`.
 
 **Anything that tells a user where to configure something reads the layers**, via
 `service.config_layers()` / `service.config_form_section(layer)`, never the selection.
