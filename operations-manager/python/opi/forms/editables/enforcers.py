@@ -10,6 +10,7 @@ from opi.connectors.subdomain import (
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
     validate_bare_domain_allowed,
+    validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
 from opi.core.cluster_config import get_domain_supports_dots
@@ -373,6 +374,15 @@ class DomainConfigEnforcer:
                 else:
                     warning = f"Gebruik van het domein '{actual_domain}' is op aanvraag."
                     raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
+
+        # De gereserveerde namen, hier en niet bij het veld zelf: de veldvalidator krijgt
+        # het basisdomein niet mee en kan het onderscheid structureel niet maken, terwijl
+        # deze enforcer actual_domain en cluster al berekend heeft. De fout hangt aan het
+        # subdomeinveld, zodat hij daar rendert en niet op het onzichtbare groepspad.
+        if subdomain and actual_domain and "{subdomain}" in template:
+            is_valid, error_msg = validate_subdomain_for_domain(subdomain, actual_domain, cluster)
+            if not is_valid and error_msg:
+                raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:

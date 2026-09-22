@@ -14,6 +14,7 @@ from opi.core.cluster_config import (
     CLUSTER_CONFIG,
     get_ingress_postfix,
     is_domain_subdomain_restricted,
+    is_platform_domain,
 )
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
@@ -564,7 +565,14 @@ SUBDOMAIN_MAX_LENGTH = 63
 SUBDOMAIN_MIN_LENGTH = 1
 SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
 
-# Reserved subdomains that cannot be registered
+# A reserved name gets the same wording as a taken one: telling the two apart makes the
+# reserved list enumerable from the outside.
+RESERVED_MESSAGE_NL = "Subdomein '{subdomain}' is niet beschikbaar"
+RESERVED_MESSAGE_EN = "Subdomain '{subdomain}' is not available"
+
+# Reserved subdomains that cannot be registered on a zone WE serve. On a tenant's own
+# domain the list does not apply: it is their zone and their choice, and nothing on the
+# platform side is protected by blocking a name there. See validate_subdomain_for_domain.
 # This list includes:
 # - Standard infrastructure subdomains (www, api, mail, etc.)
 # - Security-sensitive subdomains that could be used for phishing/abuse
@@ -825,6 +833,9 @@ class BaseDomainValidationError(SubdomainError):
 def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str | None]:
     """Validate a subdomain for DNS compatibility.
 
+    This is the form check only. Whether the name is reserved depends on the base domain,
+    which this function does not receive; ``validate_subdomain_for_domain`` adds it.
+
     Args:
         subdomain: The subdomain to validate
         language: Language for error messages ("nl" for Dutch, "en" for English)
@@ -836,28 +847,22 @@ def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str 
         - Must be 1-63 characters
         - Must contain only lowercase letters, numbers, and hyphens
         - Cannot start or end with a hyphen
-        - Cannot be a reserved subdomain
     """
     # Dutch error messages (default)
-    # NOTE: "reserved" uses the same message as "taken" to prevent information disclosure
-    # (attackers should not be able to enumerate which subdomains are reserved vs in-use)
     messages_nl = {
         "empty": "Subdomein mag niet leeg zijn",
         "too_short": f"Subdomein moet minimaal {SUBDOMAIN_MIN_LENGTH} teken(s) bevatten",
         "too_long": f"Subdomein mag maximaal {SUBDOMAIN_MAX_LENGTH} tekens bevatten",
-        "reserved": "Subdomein '{subdomain}' is niet beschikbaar",  # Generic to prevent enumeration
         "start_hyphen": "Subdomein mag niet beginnen met een koppelteken",
         "end_hyphen": "Subdomein mag niet eindigen met een koppelteken",
         "invalid_chars": "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten",
     }
 
     # English error messages
-    # NOTE: "reserved" uses the same message as "taken" to prevent information disclosure
     messages_en = {
         "empty": "Subdomain cannot be empty",
         "too_short": f"Subdomain must be at least {SUBDOMAIN_MIN_LENGTH} character(s)",
         "too_long": f"Subdomain cannot exceed {SUBDOMAIN_MAX_LENGTH} characters",
-        "reserved": "Subdomain '{subdomain}' is not available",  # Generic to prevent enumeration
         "start_hyphen": "Subdomain cannot start with a hyphen",
         "end_hyphen": "Subdomain cannot end with a hyphen",
         "invalid_chars": "Subdomain can only contain lowercase letters (a-z), numbers (0-9), and hyphens (-)",
@@ -876,14 +881,40 @@ def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str 
     if len(subdomain_lower) > SUBDOMAIN_MAX_LENGTH:
         return False, messages["too_long"]
 
-    if subdomain_lower in RESERVED_SUBDOMAINS:
-        return False, messages["reserved"].format(subdomain=subdomain_lower)
-
     if not SUBDOMAIN_PATTERN.match(subdomain_lower):
         if subdomain_lower.startswith("-"):
             return False, messages["start_hyphen"]
         if subdomain_lower.endswith("-"):
             return False, messages["end_hyphen"]
         return False, messages["invalid_chars"]
+
+    return True, None
+
+
+def validate_subdomain_for_domain(
+    subdomain: str, base_domain: str, cluster: str, language: str = "nl"
+) -> tuple[bool, str | None]:
+    """Validate a subdomain for the base domain it is asked for.
+
+    The form rules from ``validate_subdomain`` always apply. The reserved list applies on
+    top of them only within a zone this cluster serves: on a tenant's own domain a name
+    like ``test`` is theirs to use, and refusing it protected nothing.
+
+    Args:
+        subdomain: The subdomain to validate
+        base_domain: The base domain it is asked for (e.g., "rijks.app")
+        cluster: The cluster deciding, whose managed zones define "ours"
+        language: Language for error messages ("nl" for Dutch, "en" for English)
+
+    Returns:
+        Tuple of (is_valid, error_message). If valid, error_message is None.
+    """
+    is_valid, error_message = validate_subdomain(subdomain, language)
+    if not is_valid:
+        return False, error_message
+
+    if subdomain.lower() in RESERVED_SUBDOMAINS and is_platform_domain(cluster, base_domain.lower()):
+        message = RESERVED_MESSAGE_NL if language == "nl" else RESERVED_MESSAGE_EN
+        return False, message.format(subdomain=subdomain.lower())
 
     return True, None
