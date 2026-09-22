@@ -109,9 +109,10 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    clear_domain_settings,
+    clear_domain_name_settings,
     custom_domain_certificate_note,
     get_domain_setting,
+    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
@@ -153,6 +154,7 @@ from opi.utils.env_vars import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
+    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
@@ -7554,14 +7556,25 @@ class ProjectManager:
                         # A clone uses its own (target) domain setup, never the source's:
                         # it must land on the default cluster domain rather than inherit
                         # the source's DNS config, or two deployments claim the same
-                        # hostnames. domain-format in particular must be dropped: a
-                        # dot-based format (e.g. component.subdomain) inherited without
-                        # the source's base-domain resolves onto the cluster wildcard,
-                        # producing a multi-label host the single-label wildcard cert
-                        # cannot cover. The web address now travels inside the source's
+                        # hostnames. The web address travels inside the source's
                         # `services` block, so it is removed AFTER the copy -- excluding
                         # the old root key names would be a silent no-op.
-                        clear_domain_settings(new_deployment)
+                        #
+                        # The SHAPE stays: a clone that drops it does not keep the
+                        # platform default of the day its source was set up, it picks up
+                        # the default of the day it is processed (RC-217).
+                        #
+                        # Unless the shape cannot stand without the name it is about to
+                        # lose: a dotted format needs a dots-capable base-domain, and a
+                        # {subdomain} format renders the empty string without one. Dropped
+                        # first, so clearing the names also tidies away a service entry
+                        # that has nothing left in it.
+                        if (
+                            get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
+                            not in SELF_CONTAINED_FORMAT_IDS
+                        ):
+                            pop_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
+                        clear_domain_name_settings(new_deployment)
 
                         # The caller's own request was written before that copy and got
                         # overwritten by it. Write it again; it must beat the source.
