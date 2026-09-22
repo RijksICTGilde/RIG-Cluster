@@ -77,10 +77,6 @@ class SecretHolder:
     namespace: str
     public_key: str | None
 
-    @property
-    def readable(self) -> bool:
-        return self.public_key is not None
-
 
 def public_key_from_secret_data(encoded: str) -> str | None:
     """The public half of the key inside a secret's base64 ``key`` field, or None."""

@@ -15,11 +15,11 @@ from httpx import ASGITransport, AsyncClient
 from opi.utils.sops import generate_sops_key_pair
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterator
+    from collections.abc import AsyncGenerator, Callable, Iterator
 
 
 @pytest.fixture(scope="session")
-def make_age_keypair() -> Any:
+def make_age_keypair() -> Callable[[], tuple[str, str]]:
     """A factory that mints a throwaway AGE keypair, generated for this test run only.
 
     A fixed key in a test file is what put the platform key rotation on the list: four of them
@@ -34,6 +34,7 @@ def make_age_keypair() -> Any:
     Requires the ``age-keygen`` binary. Tests that use this should skip without it, the way
     ``test_sops_skip_unchanged`` and the rotation tests do.
     """
+
     def make() -> tuple[str, str]:
         """Returns (private_key, public_key)."""
         return generate_sops_key_pair()
@@ -42,7 +43,7 @@ def make_age_keypair() -> Any:
 
 
 @pytest.fixture(scope="session")
-def age_keypair(make_age_keypair: Any) -> tuple[str, str]:
+def age_keypair(make_age_keypair: Callable[[], tuple[str, str]]) -> tuple[str, str]:
     """One throwaway AGE keypair as ``(private_key, public_key)``, for the whole run."""
     return make_age_keypair()
 
