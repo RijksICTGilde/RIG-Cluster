@@ -21,7 +21,7 @@ from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
-from opi.services.config_location import binding_label, project_step_config_hint
+from opi.services.config_location import project_step_config_hint, selection_labels
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
@@ -1919,7 +1919,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "ServiceAdapter": ServiceAdapter,
                 # How a service is chosen, and -- when it has no project-wide settings --
                 # where it IS configured. Both derived from the registry (RC-33).
-                "service_binding_label": binding_label,
+                "service_selection_labels": selection_labels,
                 "service_config_hint": project_step_config_hint,
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,

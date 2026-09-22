@@ -514,9 +514,9 @@ def collect_manifest_contributions(
 
     Which services are asked depends on where their selection lives. Most read the
     COMPONENT's own ``services`` list -- each component decides whether it sits behind
-    login, gets database credentials, is scraped. A service that is deployment-bound and
-    has no per-component choice to make reads the PROJECT's list instead
-    (``manifest_activated_by_project``); no component ever ticks such a service, so a
+    login, gets database credentials, is scraped. A service that declares
+    ``selectable_per_component=False`` has no per-component choice to make and reads the
+    PROJECT's list instead; no component ever ticks such a service, so a
     component-scoped question would answer "no" for every component forever.
 
     Module-level so both halves of that rule can be measured without building a whole
@@ -526,7 +526,8 @@ def collect_manifest_contributions(
         provider.contribute_manifest_context(ctx)
         for provider in manifest_services()
         if any(
-            service_type.value in (project_services if provider.manifest_activated_by_project else component_services)
+            service_type.value
+            in (component_services if provider.definition.selectable_per_component else project_services)
             for service_type in provider.manifest_activation_types()
         )
     ]

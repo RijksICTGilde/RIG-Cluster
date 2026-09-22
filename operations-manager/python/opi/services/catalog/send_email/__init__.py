@@ -61,7 +61,7 @@ from opi.services.catalog.base import (
 from opi.services.catalog.send_email.config_model import SendEmailConfig
 from opi.services.catalog.send_email.variables import SendEmailVariables
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.naming import generate_network_policy_name, generate_unique_name
 from opi.utils.secrets import SendEmailSecret
 
@@ -126,9 +126,6 @@ class SendEmailService(Service):
         help_template="send_email/help.md",
         icon="envelop",
         color="donkerblauw",
-        # Per component: elk onderdeel beslist zelf of het de SMTP-gegevens krijgt. De
-        # configuratie is er maar een, op projectniveau -- net als bij keycloak.
-        binding=ServiceBinding.COMPONENT,
         secret_class="SendEmailSecret",
         variables=[var.value for var in SendEmailVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
@@ -277,7 +274,7 @@ class SendEmailService(Service):
             return []
 
         deployment_name = ctx.deployment["name"]
-        components = self._components_using_service(ctx)
+        components = self.components_using_service(ctx)
         if not components:
             return []
 
@@ -302,25 +299,3 @@ class SendEmailService(Service):
             )
             for component in components
         ]
-
-    def _components_using_service(self, ctx: DeploymentManifestContext) -> list[str]:
-        """The names of this deployment's components that ticked send-email, sorted.
-
-        Read from the project's component definitions (that is where a component's
-        ``services`` list lives), restricted to the components this deployment actually
-        rolls out.
-        """
-        local: set[str] = {
-            component.get("reference")
-            for component in ctx.deployment.get("components", []) or []
-            if isinstance(component, dict) and component.get("reference")
-        }
-        using: set[str] = set()
-        for component in ctx.project_data.get("components", []) or []:
-            name = component.get("name")
-            if name not in local:
-                continue
-            names = [service_entry_name(entry) for entry in component.get("services", []) or []]
-            if self.service_type.value in names:
-                using.add(name)
-        return sorted(using)

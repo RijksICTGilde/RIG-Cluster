@@ -64,7 +64,7 @@ Adding a service touches exactly three places:
 1. `opi/services/services_enums.py` - a `ServiceType` member. This is the typed identity,
    used with Pyright coverage across the codebase.
 2. `catalog/<name>/__init__.py` - a `ServiceDefinition` as the class attribute
-   `definition`: display name, description, icon, colour, binding, the variables it exposes
+   `definition`: display name, description, icon, colour, the variables it exposes
    to an app, and optionally `requires`, `backup_label`, `cleanup_strategy`. This is what the
    `/services` page renders. `ServiceAdapter.SERVICE_DEFINITIONS` is assembled from what the
    services declare, in `ServiceType` order; there is no shared list to add to. A subclass
@@ -175,28 +175,57 @@ config_path(ConfigLayer.COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", "tls")
 | `DEPLOYMENT` | `deployments[*]/services{<svc>}` | Per-deployment state, usually OPI-managed |
 | `DEPLOYMENT_COMPONENT` | `deployments[*]/components[*]/services{<svc>}` | Per-deployment override of a component setting |
 
-### Binding is not a config layer
+### Selection is not a config layer
 
-`ServiceDefinition.binding` (`ServiceBinding.COMPONENT` / `DEPLOYMENT`) and `ConfigLayer`
-look like the same question and are not:
+`ServiceDefinition.selectable_per_component` and `ConfigLayer` look like the same question
+and are not:
 
 | | Answers | Read it for |
 |---|---|---|
-| `binding` | Does an individual component tick this service, or does a whole deployment get it at once | Selection: the per-component services checkbox group, "is this component-bound" checks |
+| `selectable_per_component` | Does an individual component switch this service on and off for itself, or does the project's own choice settle it | Selection: the per-component services checkbox group, and where the manifest contribution reads its selection |
 | `config_layers()` | At which levels of the project file this service carries settings | Configuration: which screen a setting is edited on |
 
-They genuinely disagree, so neither is a stand-in for the other. keycloak binds per
+They genuinely disagree, so neither is a stand-in for the other. keycloak is ticked per
 component (each component decides whether it sits behind login) while its configuration is
 one realm for the whole project, so its config lives at `ConfigLayer.PROJECT` and nowhere
 else. The field was called `scope` until RC-33, which read like an answer to "where do I
 configure this" -- and the project-details card rendered it as literally "Component scope",
 which is how a user came to expect a keycloak settings screen per component.
 
+It is a *default*, `True`, and the exceptions declare themselves (RC-213). `False` means
+the service decides for itself where it works, the way sleep-mode picks its deployments
+with `match:`. Which services declare it and why, and what its required predecessor
+`binding` drifted into, is `features/dienst-per-component-aanvinken.md`.
+
 **Anything that tells a user where to configure something reads the layers**, via
-`service.config_layers()` / `service.config_form_section(layer)`, never `binding`.
+`service.config_layers()` / `service.config_form_section(layer)`, never the selection.
 `opi/services/config_location.py` holds the derived, user-facing phrasing
-(`project_step_config_hint`, `binding_label`); `tests/test_service_config_location.py`
+(`project_step_config_hint`, `selection_labels`); `tests/test_service_config_location.py`
 locks which of the two is the source of truth, with keycloak as the counterexample.
+
+### The two declarations that take the checkbox away
+
+Two different facts both remove a service's checkbox from the per-component picker, and
+they must not be folded together:
+
+| declaration | means | example |
+|---|---|---|
+| `component_selection_follows_config` | there IS a per-component choice, but it lives in the service's own config field with its "none" option | image-registries |
+| `selectable_per_component = False` | there is no per-component choice; the service decides for itself where it works | sleep-mode |
+
+Their consequences elsewhere differ, which is why they stay apart. The first also drives
+the emptying (`_prune_service_map_entry`, `ServiceAdapter.remove_service_config`) and the
+skip in `_strip_removed_services_from_components`; the second decides where the manifest
+contribution reads its selection. The picker asks one derived question,
+`offers_component_checkbox(service)` (`catalog/base.py`), so there is one place where the
+two meet. `tests/test_dienst_kiest_zijn_componentvinkje.py` holds the catalogue to it:
+`selectable_per_component = False` means no config on the component layers, and a service
+that carries such config keeps the default. image-registries does, and loses its checkbox
+to the other declaration.
+
+A third, separate fact is `shared_per_deployment`: one provision serves a whole deployment.
+It says nothing about who ticks the service, and a service can carry both
+(`features/dienst-per-component-aanvinken.md`).
 
 That module is also the answer to a service that carries no project-level config at all.
 The project-wide services step can only show sections for `ConfigLayer.PROJECT`, so ticking
@@ -291,10 +320,10 @@ definition with `hidden=True`** (`providers.py:116`). So:
 - `hidden=True`: no card anywhere. The service can only be switched on by editing the project
   file, by an API call, or by a cluster-wide default the service owns itself.
 
-`hidden=True` is a legitimate choice (`platform` is implicit, `namespace-redis` is a variant
-picked by policy, sleep-mode is driven by a cluster default plus a `match` pattern), but it
-is a *decision*, not a default you inherit. If a user is supposed to enable your service,
-`hidden` must stay `False` and you owe the user a configuration screen as well.
+`hidden=True` is a legitimate choice (`namespace-postgresql-database` and `namespace-redis`
+are variants picked by policy), but it is a *decision*, not a default you inherit. If a user
+is supposed to enable your service, `hidden` must stay `False` and you owe the user a
+configuration screen as well.
 
 The card itself is rendered by the `service_block` macro in
 `opi/templates_lotc/widgets/_macros.html.j2` - icon, name, description and help button - and the
@@ -988,12 +1017,12 @@ harder for its owner to see what the pod was told.
 
 **Who switches the contribution on.** By default the COMPONENT's own `services` list: each
 component decides whether it sits behind login, gets database credentials, is scraped. A
-service that is deployment-bound and has no per-component choice to make sets
-`manifest_activated_by_project = True` and is switched on by the PROJECT's selection --
-without it such a service never contributes at all, because no component ever ticks it.
-The two halves of that rule live in `collect_manifest_contributions` /
-`apply_manifest_contributions` (`opi/manager/project_manager.py`), module-level so they
-can be measured without building a whole deployment.
+service that declares `selectable_per_component = False` has no per-component choice to
+make and is switched on by the PROJECT's selection instead -- without that such a service
+never contributes at all, because no component ever ticks it. The two halves of that rule
+live in `collect_manifest_contributions` / `apply_manifest_contributions`
+(`opi/manager/project_manager.py`), module-level so they can be measured without building
+a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
