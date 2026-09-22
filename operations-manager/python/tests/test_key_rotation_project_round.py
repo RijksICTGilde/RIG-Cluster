@@ -31,10 +31,19 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
+    Fingerprint,
+    MissingKey,
     decrypt_field,
     opens_with,
 )
-from project_rotation import broken, find_repo_root, run_round  # noqa: E402
+from project_rotation import (  # noqa: E402
+    broken,
+    find_repo_root,
+    main_replace_pat,
+    main_rotate_keys,
+    read_pat,
+    run_round,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
 
@@ -280,3 +289,198 @@ def test_find_repo_root_returns_none_outside_a_repository(tmp_path: Path) -> Non
     outside = tmp_path / "loose"
     outside.mkdir()
     assert find_repo_root(outside) is None
+
+
+# ---------------------------------------------------------------------------
+# the two entry points
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_key_entry_point_refuses_a_directory_that_is_not_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    code = await main_rotate_keys(["--projects", str(tmp_path / "absent")])
+    assert code == 2
+    assert "not a directory" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_the_key_entry_point_refuses_the_same_key_twice(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    private, _public = generate_sops_key_pair()
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"{private}\n")
+    (tmp_path / "projects").mkdir()
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(tmp_path / "projects"),
+            "--old-key",
+            str(key_file),
+            "--new-key",
+            str(key_file),
+        ]
+    )
+
+    assert code == 2
+    assert "the same key" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_the_key_entry_point_dry_run_writes_no_fingerprint(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A dry run must leave nothing behind, the fingerprint file included."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    await _write_project(projects_repo / "projects", "een", old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--dry-run",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    assert not fingerprint.exists()
+    assert "Dry run: nothing was changed." in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_the_key_entry_point_exits_red_on_an_unreadable_file(projects_repo: Path, tmp_path: Path) -> None:
+    """A silent skip would read as success to whatever runs this next."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    path = await _write_project(projects_repo / "projects", "kapot", old_public)
+    text = path.read_text()
+    path.write_text(text.replace(text.split("password: ")[1].split("\n")[0], f"{BASE64_AGE_PREFIX}QUJDREVG"))
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--dry-run",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+        ]
+    )
+
+    assert code == 1
+
+
+@pytest.mark.asyncio
+async def test_the_key_entry_point_writes_the_fingerprint_it_will_be_checked_against(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "fingerprint.json"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    written = fingerprint.read_text()
+    assert len(Fingerprint.load(fingerprint).fields) == 2
+    assert "ghp_repository_token" not in written
+    assert "AGE-SECRET-KEY-" not in written
+
+
+def test_the_pat_is_read_from_a_file(tmp_path: Path) -> None:
+    (tmp_path / "pat.txt").write_text("ghp_from_a_file\n")
+    assert read_pat(str(tmp_path / "pat.txt")) == "ghp_from_a_file"
+
+
+def test_an_empty_pat_file_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "pat.txt").write_text("\n")
+    with pytest.raises(MissingKey):
+        read_pat(str(tmp_path / "pat.txt"))
+
+
+def test_the_pat_is_asked_for_without_echo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """getpass and not input: a typed PAT must not end up in a terminal scrollback either."""
+    asked: list[str] = []
+
+    def fake_getpass(prompt: str) -> str:
+        asked.append(prompt)
+        return "ghp_typed"
+
+    monkeypatch.setattr("project_rotation.getpass.getpass", fake_getpass)
+    assert read_pat(None) == "ghp_typed"
+    assert len(asked) == 1
+    assert "not echoed" in asked[0]
+
+
+def test_an_empty_typed_pat_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("project_rotation.getpass.getpass", lambda _prompt: "   ")
+    with pytest.raises(MissingKey):
+        read_pat(None)
+
+
+@pytest.mark.asyncio
+async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(projects_repo: Path, tmp_path: Path) -> None:
+    """End to end over the entry point: the announced difference passes the content check."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    path = await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await main_replace_pat(
+        [
+            "--ja",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ]
+    )
+
+    assert code == 0
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_brand_new"
+    assert await opens_with(data["config"]["age-private-key"], new_private)

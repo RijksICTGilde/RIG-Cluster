@@ -38,6 +38,8 @@ either way -- that is the failure where a rotation leaves a secret in plain form
 
 from __future__ import annotations
 
+import argparse
+import getpass
 import logging
 import subprocess
 import sys
@@ -48,8 +50,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from key_rotation import (  # type: ignore[reportMissingImports]
     Fingerprint,
+    MissingKey,
     ProjectRound,
+    ask_for_path,
     public_key_of,
+    read_key,
     rotate_project_file,
 )
 
@@ -209,3 +214,197 @@ def broken(result: RoundResult) -> list[ProjectRound]:
         for round_report in result.skipped
         if round_report.skipped is not None and not round_report.skipped.startswith(harmless)
     ]
+
+
+# -------------------------------------------------------------------------
+# entry point 1: the key rotation
+# -------------------------------------------------------------------------
+
+
+REPO = Path(__file__).resolve().parents[1]
+CANONICAL_NEW = REPO / "security" / "key.txt"
+CANONICAL_OLD = REPO / "security" / "old_key.txt"
+KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
+PAT_FINGERPRINT = REPO / "security" / "projects-pat-fingerprint.json"
+
+
+ROTATE_KEYS_DESCRIPTION = """Move the project files to the new platform key.
+
+This is the fourth and largest place the platform key occurs: 45 files in the projects repo, each
+with TWO fields on the platform key -- config.age-private-key and every repositories[].password.
+A project where only the first was converted can no longer reach its own repository, which is why
+both always go together.
+
+Point --projects at a LOCAL CLONE of the projects repo. This writes and commits there and pushes
+nothing: the cutover verifies while nothing has been pushed yet, and then the operator pushes.
+
+Never with sed, awk or str.replace. Measured while the plan was written: a text replacement over
+these 45 files left 56 of the 90 fields silently on the old key, without an error. This loads and
+writes through opi.utils.yaml_util, the canonical round-trip writer.
+"""
+
+PAT_DESCRIPTION = """Replace the GitHub PAT in every project file: the same round, one argument more.
+
+config.age-private-key is only re-encrypted here, never replaced; the new PAT goes into
+repositories[].password, so its fingerprint hash has to differ at exactly those fields.
+
+Hard precondition: the new PAT must already be valid on GitHub before the first file is written,
+with the old one still valid too. Otherwise a project loses its repository access the moment its
+file is converted while the rest is not. GitHub happily knows two valid tokens at once, which is
+the one thing a key cannot do -- hence no overlap phase for the key and one for the PAT.
+
+Advice on ordering: let the first real round do only the key. Once that has demonstrably gone
+well, the PAT round is a repeat of something that already worked, and the two stay revertible
+separately.
+"""
+
+
+def build_key_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=ROTATE_KEYS_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--projects", required=True, help="directory holding the project .yaml files")
+    parser.add_argument("--dry-run", action="store_true", help="say what would happen and stop")
+    parser.add_argument("--ja", action="store_true", help="take every default and skip the confirmation")
+    parser.add_argument("--no-commit", action="store_true", help="write the files but make no commits")
+    parser.add_argument("--old-key", default=str(CANONICAL_OLD))
+    parser.add_argument("--new-key", default=str(CANONICAL_NEW))
+    parser.add_argument("--fingerprint", default=str(KEY_FINGERPRINT))
+    return parser
+
+
+async def main_rotate_keys(argv: list[str] | None = None) -> int:
+    """The key rotation entry point: recrypt both platform fields, keep every plaintext."""
+    arguments = build_key_parser().parse_args(argv)
+    directory = Path(arguments.projects)
+    if not directory.is_dir():
+        print(f"FAIL not a directory: {directory}", file=sys.stderr)
+        return 2
+
+    reader = (lambda _question: "") if arguments.ja else input
+    try:
+        old_private = read_key(ask_for_path("old key", arguments.old_key, reader=reader))
+        new_private = read_key(ask_for_path("new key", arguments.new_key, reader=reader))
+    except MissingKey as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+    if public_key_of(old_private) == public_key_of(new_private):
+        print("FAIL the old and the new key are the same key", file=sys.stderr)
+        return 2
+
+    count = len(list(directory.glob("*.yaml")))
+    print(f"\n{count} project files in {directory}")
+
+    preview = await run_round(directory, old_private, new_private, dry_run=True, commit=False)
+    report(preview, dry_run=True)
+
+    if arguments.dry_run:
+        print("\nDry run: nothing was changed.")
+        return 1 if broken(preview) else 0
+
+    if not arguments.ja and input("\nRun this? [no]: ").strip().lower() not in YES_WORDS:
+        print("Nothing changed.")
+        return 0
+
+    result = await run_round(directory, old_private, new_private, dry_run=False, commit=not arguments.no_commit)
+    report(result, dry_run=False)
+    result.fingerprint_before.save(arguments.fingerprint)
+    print(f"\nFingerprint of {result.fields} fields -> {arguments.fingerprint}")
+
+    problems = broken(result)
+    if problems:
+        print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
+        return 1
+    if result.fingerprint_before.compare(result.fingerprint_after):
+        return 1
+
+    print(f"\nDone. Check `git log --oneline` and `git diff --stat HEAD~{len(result.committed)}` in the clone,")
+    print(f"then push. After that: scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}")
+    return 0
+
+
+# -------------------------------------------------------------------------
+# entry point 2: the PAT replacement, the same round with one argument more
+# -------------------------------------------------------------------------
+
+
+def read_pat(path_argument: str | None) -> str:
+    """Take the new PAT from a file, or ask for it without echo."""
+    if path_argument:
+        value = Path(path_argument).read_text().strip()
+        if not value:
+            raise MissingKey(f"no PAT in {path_argument}")
+        return value
+    value = getpass.getpass("new GitHub PAT (not echoed): ").strip()
+    if not value:
+        raise MissingKey("no PAT entered")
+    return value
+
+
+def build_pat_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=PAT_DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--projects", required=True, help="directory holding the project .yaml files")
+    parser.add_argument("--pat-file", help="file holding the new PAT; without it you are asked, without echo")
+    parser.add_argument("--dry-run", action="store_true", help="say what would happen and stop")
+    parser.add_argument("--ja", action="store_true", help="take every default and skip the confirmation")
+    parser.add_argument("--no-commit", action="store_true", help="write the files but make no commits")
+    parser.add_argument("--old-key", default=str(CANONICAL_OLD))
+    parser.add_argument("--new-key", default=str(CANONICAL_NEW))
+    parser.add_argument("--fingerprint", default=str(PAT_FINGERPRINT))
+    return parser
+
+
+async def main_replace_pat(argv: list[str] | None = None) -> int:
+    """The PAT entry point: the same round, with the repository password replaced as well."""
+    arguments = build_pat_parser().parse_args(argv)
+    directory = Path(arguments.projects)
+    if not directory.is_dir():
+        print(f"FAIL not a directory: {directory}", file=sys.stderr)
+        return 2
+
+    reader = (lambda _question: "") if arguments.ja else input
+    try:
+        old_private = read_key(ask_for_path("old key", arguments.old_key, reader=reader))
+        new_private = read_key(ask_for_path("new key", arguments.new_key, reader=reader))
+        new_pat = read_pat(arguments.pat_file)
+    except (MissingKey, OSError) as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+    if public_key_of(old_private) == public_key_of(new_private):
+        print("FAIL the old and the new key are the same key", file=sys.stderr)
+        return 2
+
+    print(f"\n{len(list(directory.glob('*.yaml')))} project files in {directory}")
+    print("The repository password is REPLACED; config.age-private-key is only re-encrypted.")
+    print("Its fingerprint hash therefore has to differ at exactly the password fields.")
+
+    preview = await run_round(directory, old_private, new_private, new_pat=new_pat, dry_run=True, commit=False)
+    report(preview, dry_run=True)
+
+    if arguments.dry_run:
+        print("\nDry run: nothing was changed.")
+        return 1 if broken(preview) else 0
+
+    print("\nIs the new PAT ALREADY valid on GitHub, with the old one still valid too?")
+    print("If not, every converted project loses its repository access until the round is done.")
+    if not arguments.ja and input("Confirm and run? [no]: ").strip().lower() not in YES_WORDS:
+        print("Nothing changed.")
+        return 0
+
+    result = await run_round(
+        directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
+    )
+    report(result, dry_run=False)
+    result.fingerprint_before.save(arguments.fingerprint)
+    print(f"\nFingerprint of {result.fields} fields -> {arguments.fingerprint}")
+
+    problems = broken(result)
+    if problems:
+        print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
+        return 1
+    if result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields):
+        return 1
+
+    print("\nDone. Push the clone, check that a project can reach its repository, and only then")
+    print("revoke the old PAT on GitHub.")
+    return 0
