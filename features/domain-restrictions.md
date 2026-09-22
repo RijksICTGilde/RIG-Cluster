@@ -12,7 +12,7 @@ ZAD restricts which subdomains and custom domains can be used in project deploym
 
 ## Subdomain Restrictions
 
-All platform domains (e.g., `rijks.app`, `rijksapps.nl`) have `restricted_subdomains: true` in the cluster configuration. When a domain is restricted, projects must explicitly list which subdomains they are allowed to use.
+All platform domains (e.g., `rijks.app`, `rijksapp.nl`) have `restricted_subdomains: true` in the cluster configuration. When a domain is restricted, projects must explicitly list which subdomains they are allowed to use.
 
 ### Configuration
 
@@ -51,7 +51,7 @@ domains:
 - If no `allowed-subdomains` entry exists for the domain, the wizard shows a warning and offers a checkbox to request the subdomain.
 - Requesting a subdomain creates an entry with `status: requested`. Only approved subdomains are valid for deployment.
 - Matching is case-insensitive.
-- Reserved subdomains (www, api, admin, etc.) are still rejected regardless of allow-list.
+- Reserved subdomains (www, api, admin, test, etc.) are still rejected regardless of allow-list, but only on a zone ZAD serves itself: the cluster's `managed_zones`, and anything under them. On a project's own domain the list does not apply, because nothing on the platform side is protected by blocking a name in someone else's zone.
 
 ## Custom Domains
 
@@ -118,9 +118,11 @@ The `supports-dots` field controls whether dot-separated domain formats (like `c
 
 1. **Cluster config** (`cluster_config.py`): Each domain entry has `restricted_subdomains: true/false`. Helper functions: `is_domain_subdomain_restricted()`, `get_restricted_subdomain_domains()`.
 
+   The same `domains` block also holds `managed_zones`: the DNS zones the cluster serves itself. `supported_domains` is the list of domains the cluster OFFERS, and a zone can be ours without being offered, which is the case for the cluster's own `ingress_postfix` zone. `is_platform_domain()` answers the management question with a suffix match, so `team.rijks.app` counts as ours while `ux-onderzoeken.rijksapps.nl` does not.
+
 2. **Project YAML model** (`project_file.py`): `DomainsModel` with `AllowedSubdomainEntry` and `CustomDomainEntry` Pydantic models.
 
-3. **Validation helpers** (`subdomain.py`): `is_subdomain_allowed_for_project()` and `is_domain_allowed_for_project()` check restrictions against project data.
+3. **Validation helpers** (`subdomain.py`): `is_subdomain_allowed_for_project()` and `is_domain_allowed_for_project()` check restrictions against project data. `validate_subdomain()` holds the DNS form rules only; `validate_subdomain_for_domain()` adds the reserved list for the base domain it is given. Both the form and the publication path (`SubdomainConnector.register()`, `register_or_update_for_deployment()`) use the latter, so a name cannot pass the wizard and then fail at deploy time.
 
 4. **Enforcer** (`enforcers.py`): `DomainConfigEnforcer` checks subdomain restrictions and custom domain approval during form submission. It has access to the full project YAML data.
 
