@@ -10,7 +10,13 @@ Run with: uv run pytest tests/e2e/test_wizard_bare_domain.py -v --timeout=60
 from typing import TYPE_CHECKING
 
 import pytest
-from tests.e2e.helpers.wizard import WizardHelper
+from tests.e2e.helpers.wizard import (
+    WizardHelper,
+    aanvinkvakje_eindigend_op,
+    veldbesturing,
+    veldbesturing_eindigend_op,
+    zet_aan,
+)
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -99,3 +105,54 @@ class TestBareDomainDropdownVisibility:
                 # First option should be the 'no bare domain' option
                 first_value = options.first.get_attribute("value")
                 assert first_value == "", "First option should be empty (no bare domain)"
+
+
+class TestHetKaleDomeinOpEenEigenDomeinHoudtDeStapNietTegen:
+    """De klacht zelf, in de browser: "klikken op 'Volgende' ... werkt gewoon niet".
+
+    Een eigen domein kiezen, het kale domein aanvinken, het domein aanvragen en
+    doorklikken liep vast op de kaal-domeincontrole, die vóór de aanvraag stond en dus
+    geen uitgang liet (RIG-Cluster#179). Op de basiscommit blijft deze test op de stap
+    'Webadres' staan met "Kaal domein is alleen beschikbaar voor een eigen domein".
+    """
+
+    def test_de_stap_gaat_door_met_de_aanvraag_aangevinkt(self, app_server: str, auth_page: Page) -> None:
+        wizard = WizardHelper(auth_page, app_server)
+        wizard.open_create_wizard()
+        _navigate_to_domain_step(wizard)
+        auth_page.wait_for_load_state("networkidle")
+        vertrekstap = wizard.get_current_step_title()
+
+        veldbesturing_eindigend_op(auth_page, "config/base-domain").first.select_option(value="__custom__")
+        auth_page.wait_for_load_state("networkidle")
+
+        eigen_domein = veldbesturing(auth_page, "deployments[0]/base-domain:custom").first
+        eigen_domein.fill("uitbetrouwbarebron.nl")
+        eigen_domein.press("Tab")
+        auth_page.wait_for_load_state("networkidle")
+
+        kaal = veldbesturing_eindigend_op(auth_page, "config/expose-component-on-bare-domain").first
+        kaal.wait_for(state="visible", timeout=10000)
+        kaal.select_option(value="frontend")
+        auth_page.wait_for_load_state("networkidle")
+
+        # De aanvraag zelf: het vinkje dat de weigering moest oplossen maar er nooit aan
+        # toe kwam, want de kaal-domeincontrole stond ervoor.
+        zet_aan(aanvinkvakje_eindigend_op(auth_page, "_request-domain").first, True)
+        auth_page.wait_for_load_state("networkidle")
+
+        # De opzet zelf, want een leeggelopen veld meet niets: beide waarden staan er nog.
+        assert (
+            veldbesturing(auth_page, "deployments[0]/base-domain:custom").first.input_value() == "uitbetrouwbarebron.nl"
+        )
+        assert veldbesturing_eindigend_op(auth_page, "config/expose-component-on-bare-domain").first.input_value() == (
+            "frontend"
+        )
+
+        wizard.click_next()
+        auth_page.wait_for_load_state("networkidle")
+
+        assert wizard.get_current_step_title() != vertrekstap, (
+            f"de wizard staat nog op '{vertrekstap}': {wizard.get_validation_error_texts()}"
+        )
+        assert not wizard.has_validation_errors()
