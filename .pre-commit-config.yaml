@@ -45,12 +45,9 @@ repos:
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
 
-      # Laag 1 van de geheimengrendel: lokaal en vriendelijk. Vangt het eerlijke ongeluk en
-      # kost niets. Blijft met --no-verify te omzeilen, en dat is geaccepteerd omdat laag 2 in
-      # CI (.github/workflows/security.yml, job secret-scan) de hele boom scant en geen
-      # --no-verify kent. Zie scripts/secret_scan.py voor de drie lagen.
-      #
-      # Alleen de gestageerde bestanden hier, want dit moet snel zijn; CI doet de hele boom.
+      # Laag 1 van de geheimengrendel, en de omzeilbare: alleen de gestageerde bestanden, want
+      # dit moet snel zijn. De bindende laag is de job secret-scan in security.yml, die de hele
+      # boom scant. Zie features/sops-sleutel-vervangen.md.
       - id: secret-scan
         name: secret-scan
         entry: python3 scripts/scan-secrets.py --files

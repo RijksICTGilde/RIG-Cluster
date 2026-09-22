@@ -1,18 +1,8 @@
 """The engine under the key rotation: one loop, four places, one fingerprint.
 
-The platform AGE key holds more than SOPS files. ``sops rotate`` touches the first row of
-this table and does not see the other three:
+The whole story, with the measurements, is in ``features/sops-sleutel-vervangen.md``.
 
-==========================  ========================================================
-form                        where
-==========================  ========================================================
-SOPS file                   ``bootstrap/`` and ``infrastructure/``
-``base64+age:`` env line    the two ``configmap.yaml``, ``operations-manager/python/.env``
-``base64+age:`` or block    per project file ``config.age-private-key`` and
-                            ``repositories[].password``
-==========================  ========================================================
-
-There is a single operation under the last two rows, and it lives here once:
+There is a single operation under every place that is not a SOPS file, and it lives here once:
 
     read field -> decrypt with A -> [keep value OR replace it] -> encrypt for B -> write
                                              ^              ^
@@ -22,22 +12,11 @@ There is a single operation under the last two rows, and it lives here once:
 it is a replacement plus a recrypt. Two entry points sit on it: the key rotation
 (``rotate-project-keys.py``) and the PAT replacement (``replace-git-pat.py``).
 
-**Why ``rotate`` and not ``updatekeys``.** SOPS encrypts the content with a data key and
-encrypts only that data key per recipient. ``sops updatekeys`` swaps the recipients and
-leaves the data key in place, so whoever once held A can lift the data key out of an old
-copy and still open an updated file. ``sops rotate`` mints a new data key. This module
-therefore only ever uses ``rotate``.
-
 **Why by recipient and not by filename.** ``sops_files_for()`` selects on the recipient in
 the metadata, so a file encrypted for any other key is not touched. The alternative is a path
 exclusion list, and that silently falls behind the moment a file is added. This is not
 hypothetical: the tree held a practice key in ``sops-sandbox/`` with two files of its own until
 this rotation removed it, and the sandbox and developer keys are still separate keys.
-
-**Why the verification hashes the PLAINTEXT.** The ciphertext changes on every conversion,
-so comparing it says nothing. The plaintext does not change, so its sha256 says everything:
-still readable, unchanged, and nothing lost. The fingerprint file never holds a secret --
-only a path, a field name and a hash.
 """
 
 from __future__ import annotations
@@ -120,9 +99,7 @@ class ConversionFailed(RuntimeError):
     """A field does not open with the old key, or does not open with the new one afterwards."""
 
 
-# ---------------------------------------------------------------------------
 # keys
-# ---------------------------------------------------------------------------
 
 
 def read_key(path: str | Path) -> str:
@@ -176,9 +153,7 @@ def ask_for_path(question: str, default: str | Path, *, reader: Any = input) -> 
     return path
 
 
-# ---------------------------------------------------------------------------
 # the one loop
-# ---------------------------------------------------------------------------
 
 
 def form_of(value: object) -> Form | None:
@@ -278,9 +253,7 @@ async def opens_with(value: str, private_key: str) -> bool:
     return await decrypt_field(value, private_key) is not None
 
 
-# ---------------------------------------------------------------------------
 # fingerprint
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -328,9 +301,7 @@ class Fingerprint:
         return objections
 
 
-# ---------------------------------------------------------------------------
 # place 1: SOPS files
-# ---------------------------------------------------------------------------
 
 
 def sops_files(tree: str | Path) -> list[Path]:
@@ -400,9 +371,7 @@ def sops_rotate(path: str | Path, old_public_key: str, new_public_key: str, old_
         raise ConversionFailed(f"sops rotate failed on {path}: {process.stderr.strip()}")
 
 
-# ---------------------------------------------------------------------------
 # places 2 and 3: loose base64+age: values in an env line
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -463,18 +432,11 @@ def write_env_value(path: str | Path, line_number: int, old_value: str, new_valu
         raise
 
 
-# ---------------------------------------------------------------------------
 # place 4: project files
-# ---------------------------------------------------------------------------
 
 
 def project_fields(data: dict[str, Any]) -> list[tuple[str, str]]:
-    """The project-file fields that hang off the platform key.
-
-    Two per file, not one: ``config.age-private-key`` and every
-    ``repositories[].password``. A project where only the first was converted can no longer
-    reach its own repository.
-    """
+    """The ``(field name, ciphertext)`` pairs in a project file that hang off the platform key."""
     fields: list[tuple[str, str]] = []
     private_key = (data.get("config") or {}).get("age-private-key")
     if isinstance(private_key, str) and form_of(private_key) is not None:
@@ -559,12 +521,10 @@ async def rotate_project_file(
     public half -- without B, "already done" cannot be told apart from "broken", and a second
     round would then silently skip good files.
 
-    A file with an unreadable value is skipped with a message and NOT half written; the whole
-    round must not abort there, because the projects after it would then be left standing.
+    A file with an unreadable value is skipped with a message and NOT half written.
 
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
-    only re-encrypted. That is the same loop with a different entry point, so each project
-    file is touched once instead of twice.
+    only re-encrypted.
     """
     path = Path(path)
     round_report = ProjectRound(path=path)
@@ -623,19 +583,15 @@ async def rotate_project_file(
         return round_report
 
     if not dry_run:
-        # save_yaml_to_path and not write_text: it dumps to a temporary file in the same
-        # directory and moves it into place with os.replace, so a reader sees either the old file
-        # or the complete new one. "Not half written" is a promise this round makes, and a torn
-        # project file is the one outcome worse than a skipped one. Same canonical writer either
-        # way -- both go through yaml_util._create_yaml_writer.
+        # save_yaml_to_path and not write_text: it dumps to a temporary file and moves it into
+        # place, so a reader sees either the old file or the complete new one. A torn project
+        # file is the one outcome worse than a skipped one.
         save_yaml_to_path(str(path), data)
         round_report.rewritten = True
     return round_report
 
 
-# ---------------------------------------------------------------------------
 # the final check
-# ---------------------------------------------------------------------------
 
 
 @dataclass

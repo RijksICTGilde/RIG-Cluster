@@ -8,8 +8,8 @@
 
 Exit code 0 when clean, 1 when there is a finding, so CI and the hook can both hang off it.
 
-The reasoning behind the three layers, and why an AGE candidate only counts when ``age-keygen``
-accepts it, is in ``secret_scan.py``.
+Why an AGE candidate only counts when ``age-keygen`` accepts it is in ``secret_scan.py``; the
+three layers of the guard are in ``features/sops-sleutel-vervangen.md``.
 """
 
 from __future__ import annotations
@@ -47,8 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     if shutil.which("age-keygen") is None:
-        print("FAIL age-keygen is not on PATH; without it a real AGE key cannot be told", file=sys.stderr)
-        print("apart from the ~20 placeholders in the tests, and the scan would be noise.", file=sys.stderr)
+        print("FAIL age-keygen is not on PATH, and without it a real AGE key cannot be told", file=sys.stderr)
+        print("apart from a placeholder. Install age and run again.", file=sys.stderr)
         return 2
 
     tree = Path(arguments.tree)

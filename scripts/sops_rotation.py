@@ -1,8 +1,9 @@
 """Replace the platform AGE key in this repo: the SOPS files and the loose values.
 
-This is the entry point for the first three places the platform key occurs in THIS repo. The
-fourth, the project files, lives in ``rotate-project-keys.py``; those sit in a different repo
-and belong to a round of their own, with its own commits.
+This is the entry point for everything in THIS repo: the SOPS files, the loose ``base64+age:``
+values and the project file in ``projects/``. The project files in the zad-projects repo live in
+``rotate-project-keys.py``; those sit in a different repo and belong to a round of their own,
+with its own commits.
 
     scripts/rotate-sops-key.py --dry-run             # says what it would do, changes nothing
     scripts/rotate-sops-key.py                       # same questions, runs after confirmation
@@ -13,15 +14,12 @@ and belong to a round of their own, with its own commits.
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
 
 **No key on the command line.** The tool asks for the PATHS of the keys, with a default on
-every question, and reads them from ``security/`` -- that directory is untracked. A key as an
-argument lands in the shell history, in the process table and in every log that records the
-command.
+every question, and reads them from the untracked ``security/``.
 
 **What the fingerprint is.** Per encrypted field the sha256 of the PLAINTEXT, recorded before
-the conversion and measured again afterwards. The ciphertext changes on every conversion and
-therefore says nothing; the plaintext does not change and says everything. The file never
-holds a secret -- only a path, a field name and a hash. It defaults to
-``security/fingerprint.json``, so outside version control.
+the conversion and measured again afterwards, so you can show that nothing changed but the
+key. It holds no secret, only a path, a field name and a hash, and it defaults to
+``security/fingerprint.json``, outside version control.
 """
 
 from __future__ import annotations
@@ -74,26 +72,23 @@ ENV_FILES = (
     "operations-manager/python/.env",
 )
 
-#: The fixed location of the keys, as a full path. Relative would be "security/key.txt", and
-#: that is only correct when you happen to invoke from the repo root -- while the ordinary
-#: working directory for this project is operations-manager/python.
 #: This repo carries a project file of its own, and it holds a repository password on the platform
 #: key -- measured, one field. It is a project file, so ``rotate_project_file`` converts it, but it
 #: lives HERE, so this tool owns it: pointing rotate-project-keys.py at a clone of zad-projects
 #: would never reach it, and the final check would pass with a field still on the old key.
 OWN_PROJECTS = REPO / "projects"
 
+#: Full paths, not relative: the ordinary working directory for this project is
+#: operations-manager/python, so "security/key.txt" only resolves from the repo root.
 CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
 DEFAULT_FINGERPRINT = REPO / "security" / "fingerprint.json"
 YES_WORDS = {"ja", "j", "yes", "y"}
 
-# A failed decryption is the EXPECTED outcome here: the final check specifically demands that
-# the old key opens nothing, and the plan tells "already converted" from "broken" by trying.
-# ``opi.utils.age`` logs such an attempt at ERROR, which in this context produces a stream of
-# alarming lines on a successful rotation. The verdict is in this script's output, not in that
-# log. ``opi.utils.sops`` is silenced for the same reason: it reports a sops decrypt that did
-# not fit the key, which is what the final check is asking for.
+# A failed decryption is the EXPECTED outcome here: the final check demands that the old key
+# opens nothing, and "already converted" is told from "broken" by trying. Both modules log such
+# an attempt at ERROR, which would put a stream of alarming lines on a successful rotation. The
+# verdict is in this script's output, not in that log.
 for _noisy in ("opi.utils.age", "opi.utils.sops"):
     logging.getLogger(_noisy).setLevel(logging.CRITICAL)
 
@@ -340,17 +335,17 @@ def expected_count(paths: list[Path]) -> int | None:
 def rename_keys(old: Path, new: Path, *, yes: bool) -> None:
     """Put the keys under their fixed names, so no manual step is left over.
 
-    ``security/key.txt`` always means "this is the key". Measured: 84 references to that path
-    in the Taskfile, in CLAUDE.md and in the installation documentation. If the new key were
-    to get a different name, all of those would have to move with it. So the old one shifts to
-    ``old_key.txt`` and the new one takes over the fixed name.
+    ``security/key.txt`` always means "this is the key", and the Taskfile, CLAUDE.md and the
+    installation documentation reference that path dozens of times. A new key under a new name
+    would drag all of those with it, so the old one shifts to ``old_key.txt`` and the new one
+    takes over the fixed name.
     """
     if old.resolve() == CANONICAL_OLD.resolve() and new.resolve() == CANONICAL_NEW.resolve():
         print("Keys already sit under their fixed names.")
         return
     print(f"\nRenaming: {old} -> {CANONICAL_OLD} and {new} -> {CANONICAL_NEW}")
     if not yes and input("Do it? [no]: ").strip().lower() not in YES_WORDS:
-        print("Not renamed. Do this by hand, or 84 references keep pointing at the old key.")
+        print("Not renamed. Do this by hand, or every reference to security/key.txt stays on the old key.")
         return
     if old.resolve() != CANONICAL_OLD.resolve():
         old.replace(CANONICAL_OLD)

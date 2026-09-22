@@ -254,7 +254,7 @@ async def test_the_final_check_fails_when_the_count_does_not_match(tmp_path: Pat
 
 
 def test_renaming_is_a_no_op_when_the_keys_already_sit_in_place(capsys: pytest.CaptureFixture) -> None:
-    """84 references point at security/key.txt, so the name is the migration."""
+    """The repo references security/key.txt everywhere, so the name is the migration."""
     tool.CANONICAL_OLD.parent.mkdir(parents=True, exist_ok=True)
     if not tool.CANONICAL_OLD.is_file() or not tool.CANONICAL_NEW.is_file():
         pytest.skip("no local security/ keys to check the no-op path against")

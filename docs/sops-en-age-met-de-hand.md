@@ -5,10 +5,8 @@ versleutelen of wil begrijpen wat de Taskfile en de CMP-plugin doen. In het norm
 je dit niet: `task generate-age-key` maakt de sleutel en `task generate-env-secrets-for-operations-manager`
 maakt het SOPS-secret. Dit doc is er voor het geval je eronder wilt kijken.
 
-Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo.
-Die map is verwijderd omdat er een geldige AGE-sleutel in stond (`sops-key.txt`), en een sleutel
-in versiebeheer is precies wat de geheimenscan (`scripts/scan-secrets.py`) hoort tegen te
-houden. Een alarm met vier bekende meldingen erin is geen alarm.
+Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo. Die
+map is verwijderd omdat er een geldige AGE-sleutel in stond (`sops-key.txt`).
 
 ## 1. Een AGE-sleutelpaar maken
 
@@ -42,11 +40,9 @@ kubectl apply -f sops-secret.yaml
 Het hele bestand en niet alleen de sleutelregel: `bootstrap/rig-system/kustomize/sops-plugin.sh`
 haalt er met `grep '^AGE-SECRET-KEY-'` de regel uit.
 
-Let op dat dit secret in MEER dan een namespace staat. De plugin leest het in de namespace van
-de ArgoCD-applicatie die hij rendert, en OPI schrijft per project een EIGEN sleutel onder
-dezelfde naam in de projectnamespace. Wissel je de platformsleutel, gebruik dan
-`scripts/set-sops-key-secret.py`: dat script selecteert op sleutel en niet op naam, en laat de
-projectsleutels dus staan. Zie `features/sops-sleutel-vervangen.md`.
+Dit secret staat in MEER dan een namespace, en niet overal met dezelfde sleutel erin. Wissel je
+de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`: dat selecteert op sleutel en
+niet op naam. Zie `features/sops-sleutel-vervangen.md`.
 
 ## 3. Een geheim versleutelen
 
@@ -82,6 +78,5 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
 - Gebruik per omgeving een eigen sleutelpaar: `security/key.txt` (platform),
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).
 - **`sops updatekeys` is geen sleutelwissel.** Dat wisselt de recipients en laat de data key
-  staan, dus wie de oude sleutel ooit had kan die data key uit een oude kopie halen en opent het
-  bijgewerkte bestand nog steeds. `sops rotate` maakt een nieuwe data key. Gemeten op een echt
-  bestand: bij `updatekeys` bleef de versleutelde waarde byte-voor-byte gelijk, bij `rotate` niet.
+  staan, dus wie de oude sleutel ooit had opent het bijgewerkte bestand nog steeds. Gebruik
+  `sops rotate`; de meting staat in `features/sops-sleutel-vervangen.md`.

@@ -1,15 +1,8 @@
 """The round over the project files: one pass, one commit per project, one fingerprint.
 
-Two entry points share this module, because there is exactly one difference between the two
-jobs:
-
-    read field -> decrypt with A -> [keep value OR replace it] -> encrypt for B -> write
-                                             ^              ^
-                                          recrypt       new PAT
-
-``rotate-project-keys.py`` calls this without a PAT, ``replace-git-pat.py`` with one. That is
-why each project file is touched ONCE instead of twice: fewer commits, fewer chances to drop
-something.
+Two entry points share this module: ``rotate-project-keys.py`` calls it without a PAT,
+``replace-git-pat.py`` with one. Both run the same loop -- ``convert_value()`` in
+``key_rotation.py`` -- so each project file is touched ONCE instead of twice.
 
 **Why a local clone and not ``save_and_commit_project``.** The plan names that method as the
 only validated write path, and it is -- for OPI. This tool deviates, for two measured reasons:
@@ -28,12 +21,9 @@ checks ``ProjectStore._validate`` runs, in the same order) and writes through
 ``dump_yaml_to_string``, the same canonical dumper. The operator pushes the clone once the
 fingerprint has been verified.
 
-**Why validation warns rather than blocks.** Measured on the 45 test project files: 44 fail the
-CURRENT schema (2.8) because they are older snapshots that OPI migrates when it reads them.
-Refusing on that would block the whole rotation over drift that has nothing to do with the key.
-So a file that was already invalid stays convertible with a warning; a file that becomes
-invalid BECAUSE of the conversion is skipped. ``find_plaintext_secret_violations`` stays hard
-either way -- that is the failure where a rotation leaves a secret in plain form in git.
+**Why validation warns rather than blocks.** A file that was already invalid stays convertible
+with a warning; a file that becomes invalid BECAUSE of the conversion is skipped. The
+measurement behind that is in ``validate_project_data()``.
 """
 
 from __future__ import annotations
@@ -87,8 +77,7 @@ def git_commit_one(repo: Path, relative: Path, message: str) -> bool:
     """Commit exactly one file in the clone. Returns False when there was nothing to commit.
 
     One commit per project, so the history says which project changed and a single bad file
-    can be reverted on its own. No push: the cutover verifies before anything leaves the
-    machine.
+    can be reverted on its own.
     """
     add = subprocess.run(  # noqa: S603
         ["git", "-C", str(repo), "add", "--", str(relative)],  # noqa: S607
@@ -222,9 +211,7 @@ def broken(result: RoundResult) -> list[ProjectRound]:
     ]
 
 
-# -------------------------------------------------------------------------
 # entry point 1: the key rotation
-# -------------------------------------------------------------------------
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -243,16 +230,9 @@ both always go together.
 
 Point --projects at a LOCAL CLONE of the projects repo. This writes and commits there and pushes
 nothing: the cutover verifies while nothing has been pushed yet, and then the operator pushes.
-
-Never with sed, awk or str.replace. Measured while the plan was written: a text replacement over
-these 45 files left 56 of the 90 fields silently on the old key, without an error. This loads and
-writes through opi.utils.yaml_util, the canonical round-trip writer.
 """
 
 PAT_DESCRIPTION = """Replace the GitHub PAT in every project file: the same round, one argument more.
-
-config.age-private-key is only re-encrypted here, never replaced; the new PAT goes into
-repositories[].password, so its fingerprint hash has to differ at exactly those fields.
 
 Hard precondition: the new PAT must already be valid on GitHub before the first file is written,
 with the old one still valid too. Otherwise a project loses its repository access the moment its
@@ -329,9 +309,7 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
     return 0
 
 
-# -------------------------------------------------------------------------
 # entry point 2: the PAT replacement, the same round with one argument more
-# -------------------------------------------------------------------------
 
 
 def read_pat(path_argument: str | None) -> str:

@@ -1,35 +1,15 @@
 """Scan a tree, a set of files, or the whole git history for committed secrets.
 
-There should never have been a commit with a secret in it. That is the requirement, and the
-obvious answer -- a pre-commit hook -- is the one that does not work here: ``--no-verify`` is
-standing practice in this project, because pre-commit stashes everything unstaged and knocks over
-other sessions working in the same checkout. A guard one flag gets past, that everyone gets past
-daily, is not a guard.
-
-So there are three layers, of which only the second and third bind:
-
-1. **local and friendly** -- the pre-commit hook. Catches the honest accident and costs nothing.
-   Still bypassable, and that is accepted as long as layer 2 exists.
-2. **CI, binding** -- a job on every push and every pull request that fails the build. This is
-   the layer that counts, because it knows no ``--no-verify``. It scans the whole TREE of the
-   branch and not only the diff, so something that arrives by a detour still shows up.
-3. **on the server** -- GitHub push protection on the public repo. Note the limit: the default
-   patterns cover known token shapes such as a GitHub PAT, but ``AGE-SECRET-KEY-`` is not among
-   them. That needs a custom pattern, and whether that is available depends on the plan. Find out
-   before relying on it.
+This is layer 1 and layer 2 of the guard described in ``features/sops-sleutel-vervangen.md``: the
+pre-commit hook and the CI job both call ``scan-secrets.py``, which calls this module. Only the CI
+job binds -- ``--no-verify`` is standing practice in this project, because pre-commit stashes
+everything unstaged and knocks over other sessions working in the same checkout.
 
 **Why a valid AGE key and not the string ``AGE-SECRET-KEY-``.** The tree holds roughly twenty
 placeholders (``AGE-SECRET-KEY-1TEST``, ``AGE-SECRET-KEY-FAKE``, ``AGE-SECRET-KEY-1PLAINTEXT``)
 which are neither secret nor removable without making those tests worse. A scanner that alarms on
 the prefix produces findings nobody has to fix, and an alarm everyone learns to walk around is no
-alarm. So an AGE candidate is only a finding when ``age-keygen -y`` accepts it: a real key. That
-is the difference between a guard and noise, and it is why the tree had to be cleaned first --
-before this, the scan would have reported four findings, three of them known and harmless.
-
-**What is scanned.** Not only AGE keys. GitHub PATs (``ghp_``, ``github_pat_``, and the other
-``gh*_`` shapes), the ``age:``/``base64+age:`` form ZAD writes itself, private keys in PEM form,
-and kubeconfig/service-account tokens. The patterns for our own shapes have to come from us: no
-off-the-shelf scanner knows them.
+alarm. So an AGE candidate is only a finding when ``age-keygen -y`` accepts it: a real key.
 """
 
 from __future__ import annotations
@@ -74,9 +54,6 @@ class Finding:
 @cache
 def age_key_is_real(candidate: str) -> bool:
     """Whether ``age-keygen -y`` accepts this as a private key.
-
-    This is the whole reason the guard is believable. Without it every placeholder in the test
-    suite is a finding, and a scan with known findings in it gets ignored.
 
     Cached, and that is what makes the history sweep finishable: one subprocess per DISTINCT
     candidate instead of one per occurrence. The history holds every old version of every test
@@ -263,8 +240,6 @@ def blob_texts(tree: Path, blobs: list[tuple[str, str]]) -> Iterator[tuple[str, 
             # "<sha> missing" carries no payload. Every other answer does, and it MUST be read
             # even when it is uninteresting: leaving a tree's bytes in the pipe desynchronises the
             # stream, and the next readline() then blocks forever on a header that never comes.
-            # That is not theory -- it hung the first version of this sweep for nine minutes at
-            # five seconds of CPU.
             if len(header) < 3:
                 continue
             size = int(header[2])

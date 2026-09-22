@@ -1,8 +1,8 @@
 # De SOPS-sleutel vervangen
 
-De platform-AGE-sleutel zit op vier plekken, en `sops rotate` ziet er maar een van. Dit is het
-gereedschap dat alle vier omzet, aantoont dat er niets anders is veranderd, en aantoont dat de
-oude sleutel daarna niets meer opent. De volgende keer is het een commando.
+De platform-AGE-sleutel zit niet alleen in de SOPS-bestanden, en `sops rotate` ziet alleen die.
+Dit is het gereedschap dat elke vindplaats omzet, aantoont dat er niets anders is veranderd, en
+aantoont dat de oude sleutel daarna niets meer opent. De volgende keer is het een commando.
 
 ## Wat de sleutel vasthoudt
 
@@ -53,10 +53,8 @@ alleen in Kubernetes leeft.
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
 | `scripts/scan-secrets.py` | de grendel: weigert een commit, een branch of een historie met een geheim |
 
-De logica staat in `key_rotation.py` (de motor), `project_rotation.py` (de ronde over de
-projectbestanden, met beide ingangen), `sops_rotation.py` en `sops_key_secret.py`. De
-streepjesnamen hierboven zijn dunne ingangen; een streepje is niet importeerbaar en de toetsen
-moeten bij de logica kunnen.
+De streepjesnamen hierboven zijn dunne ingangen; de logica staat in modules ernaast. Zie
+`scripts/README.md`.
 
 ## Gebruik
 
@@ -84,7 +82,7 @@ git -C /tmp/zad-projects diff --stat HEAD~45
 scripts/set-sops-key-secret.py --dry-run
 scripts/set-sops-key-secret.py
 
-# 6. de eindtoets over alle vier de vindplaatsen
+# 6. de eindtoets over alle vindplaatsen
 scripts/rotate-sops-key.py --assert-old-key-dead \
   --projects /tmp/zad-projects/projects \
   --projects-fingerprint security/projects-fingerprint.json
@@ -127,7 +125,7 @@ nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cuto
 
 ## De eindtoets: de rotatie is pas klaar als de oude sleutel niets meer opent
 
-`--assert-old-key-dead` loopt over alle vier de vindplaatsen en eist per veld:
+`--assert-old-key-dead` loopt over elke vindplaats en eist per veld:
 
 - **ontsleutelen met de oude sleutel faalt.** Een enkele treffer betekent dat er iets is
   overgeslagen, en die noemt hij bij naam.
@@ -275,9 +273,9 @@ precies het punt van AGE -- maar met `--inventory` wel op te vragen, als inventa
 die een rotatie moet raken.
 
 `scripts/scan-secrets.py --history` loopt elke blob die ooit in de repo heeft bestaan na. Dat is
-een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden. Een
-sleutelwissel verandert niets aan de historie -- zolang die bestaat is elke oude versie te openen
-met de sleutel waarvoor hij versleuteld was.
+een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden. De
+uitkomst van de eenmalige scan over beide repo's staat in
+`docs/geheimenscan-historie-2026-09-22.md`.
 
 ## Sleutels in toetsen: geen vaste, maar een gemaakte
 

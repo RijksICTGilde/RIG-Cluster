@@ -6,36 +6,19 @@ name typed out in full.
     scripts/set-sops-key-secret.py --dry-run     # says which namespaces, and which it leaves alone
     scripts/set-sops-key-secret.py               # asks for the cluster name, then does it
 
-**Who reads the key, and what a swap costs them:**
-
-=========================  =============================  =========================
-consumer                   reads                          on a swap
-=========================  =============================  =========================
-sops-plugin next to ArgoCD ``kubectl get secret`` on       picks up the new one by
-                           EVERY render                    itself, no restart
-operations-manager         env var from that same secret   **pod must restart**
-developer, locally         ``security/key.txt``            replace the file
-=========================  =============================  =========================
-
 **``sops-age-key`` is NOT one secret in one namespace, and this is the trap.** The plan names
 ``rig-prd-operations``. Measured on the sandbox cluster: **12 namespaces** hold a secret by that
-name. Two of them (``rig-system`` and ``rig-ron``) carry the same key -- the platform key -- and
-the other ten each carry a DIFFERENT one, because OPI writes a per-project SOPS key into every
-project namespace (``store_project_sops_key_in_namespace``). Overwriting every ``sops-age-key``
-would therefore replace ten projects' own keys with the platform key and make their secrets
-unreadable.
+name. Two of them (``rig-system`` and ``rig-ron``) carry the platform key -- ``sops-plugin.sh``
+reads the secret in ``${ARGOCD_APP_NAMESPACE}``, the namespace of the application being rendered,
+so the RON renderer needs its own copy -- and the other ten each carry a DIFFERENT one, because
+OPI writes a per-project SOPS key into every project namespace
+(``store_project_sops_key_in_namespace``). Overwriting every ``sops-age-key`` would therefore
+replace ten projects' own keys with the platform key and make their secrets unreadable.
 
 So the selection is by KEY and not by name, exactly like the file side selects by recipient: this
 tool reads each secret, derives its public half, and only replaces the ones that currently hold
 the OLD platform key. Everything else is listed as left alone, with its own public key next to
 it, so the operator can see what was skipped and why.
-
-**Why more than one namespace even for the platform key.** ``sops-plugin.sh`` reads
-``sops-age-key`` in ``${ARGOCD_APP_NAMESPACE}`` -- the namespace of the ArgoCD application being
-rendered, not a fixed one. ``overlays/odcn-production/namespace-ron.yaml`` and
-``argocd-application-ron-infrastructure.yaml`` say in so many words that the RON namespace needs
-it too, and ``sandbox:create-sops-age-secret`` creates it in both for the same reason. Writing to
-one namespace only would leave the RON renderer on the old key.
 
 **The secret holds the whole key file, not just the key line.** ``--from-file=key=<path>``, and
 ``sops-plugin.sh`` greps ``^AGE-SECRET-KEY-`` out of it. This tool keeps that shape.
@@ -151,10 +134,8 @@ async def write_secret(namespace: str, key_file: Path) -> None:
 async def restart_operations_manager(namespace: str) -> bool:
     """Restart the operations-manager so it rereads its env var. Returns False when absent.
 
-    The sops-plugin needs no restart: it reads the secret on every render. The
-    operations-manager gets the key as an env var from ``secretKeyRef``, which is resolved once
-    when the pod starts, so without this it keeps using the old key until something else
-    restarts it.
+    The key arrives as an env var from ``secretKeyRef``, which is resolved once when the pod
+    starts, so without this it keeps using the old key until something else restarts it.
     """
     kubectl = create_kubectl_connector()
     _out, _err, code = await kubectl.run_command(["get", "deployment", DEPLOYMENT, "-n", namespace])

@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 """Replace the platform AGE key in this repo: the SOPS files and the loose values.
 
-The logic lives in ``sops_rotation.py`` next to this file. This entry point only exists so the tool
-can be called by the name the plan uses; a hyphen in a filename is not importable, and the
-tests need to reach the logic directly.
+The logic lives in ``sops_rotation.py`` next to this file; see ``scripts/README.md``.
 """
 
 from __future__ import annotations

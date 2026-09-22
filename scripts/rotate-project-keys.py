@@ -7,9 +7,7 @@
 Point it at a LOCAL CLONE of the projects repo. It writes and commits there and pushes nothing:
 the cutover verifies while nothing has been pushed yet, and then the operator pushes the clone.
 
-The logic lives in ``project_rotation.py`` next to this file, which holds the round both entry
-points share. This file only exists so the tool can be called by the name the plan uses; a hyphen
-in a filename is not importable, and the tests need to reach the logic directly.
+The logic lives in ``project_rotation.py`` next to this file; see ``scripts/README.md``.
 """
 
 from __future__ import annotations
