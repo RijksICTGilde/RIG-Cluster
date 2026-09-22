@@ -1938,10 +1938,9 @@ def apply_domain_approval_fallback(
         return domain_format, base_domain
 
     # Not approved — fall back to safe format on cluster domain. The log names the address
-    # that lapses, not just the domain: it is the one line that explains why a deployment
-    # is answering on the cluster address, and the reader is looking for the address they
-    # expected. The owner hears the same thing on the deployment page, where
-    # ``collect_deployment_approval_notices`` says it in their own words.
+    # that lapses, because that is what someone wondering where their address went will
+    # search for. The owner hears it on the deployment page instead, in their own words
+    # (``collect_deployment_approval_notices``).
     cluster_domain = ingress_postfix.lstrip(".")
     logger.warning(
         "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
