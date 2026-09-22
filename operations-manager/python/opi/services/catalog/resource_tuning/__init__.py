@@ -10,7 +10,7 @@ from __future__ import annotations
 from opi.services.catalog.base import DeploymentObservationContext, ObservationOutcome, Service
 from opi.services.catalog.events import on
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ActionEvent, ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ActionEvent, ServiceKind, ServiceType
 
 
 class ResourceTuningService(Service):
@@ -24,7 +24,7 @@ class ResourceTuningService(Service):
         help_template="resource_tuning/help.md",
         icon="grafiek",
         color="grijs-600",
-        binding=ServiceBinding.DEPLOYMENT,
+        selectable_per_component=False,
         variables=[],
         # Always on, never in the project file -> a system service (kind=SYSTEM also
         # keeps it out of the picker, so no explicit hidden is needed).

@@ -13,12 +13,12 @@ van hangt (de proxy, de RON-koppeling, de CA-keten) is beheer van het `vlam-wt8`
 
 ## Wat je krijgt
 
-Zet je de dienst aan, dan krijgt **elk component van elke deployment** van je project:
+Vink je de dienst aan op een component, dan krijgt **dat component**:
 
 | | |
 |---|---|
 | `VLAM_API_URL` | het adres van de interne VLAM-proxy, bijvoorbeeld `http://productie-vlam-proxy-intern.rig-prd-vlam-wt8.svc.cluster.local:8081` |
-| een uitgaande netwerkregel | van de pods van je deployment naar precies die ene proxy-pod |
+| een uitgaande netwerkregel | van de pods van dat component naar precies die ene proxy-pod |
 
 En op een cluster dat het **doorlus-pad** aanbiedt (RC-167) daarnaast:
 
@@ -76,7 +76,7 @@ pad aanbieden, de applicatie laat kiezen, en per taal in `help.md` uitleggen hoe
 zet.
 
 Dat verschil zit ook in de code: `VariableDefinition.conditional` markeert de twee doorlus-variabelen
-als "hangt aan het cluster, niet aan de binding", zodat de e2e-probe ze niet in elke pod eist.
+als "hangt aan het cluster, niet aan de selectie", zodat de e2e-probe ze niet in elke pod eist.
 
 ### Het ClusterIP is een geconfigureerde waarde, en dat is een aanvaard risico
 
@@ -216,10 +216,10 @@ een platformbeheerde opzet, dan verandert alleen dat blok.
 | | |
 |---|---|
 | variabele | `ManifestContribution.env_vars` — additief, dus de eigen variabelen van het component blijven staan. Geen geheim: een intern adres versleutelen maakt het alleen onleesbaar voor de eigenaar. |
-| netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per deployment, egress-only, `podSelector` op `deployment` + `project`. Opent ELKE poort van de proxy waarvoor de afnemer een adres kreeg (`VlamEndpoint.ports`) — een adres dat de netwerkregel niet opent is een time-out |
+| netwerkregel | `contribute_deployment_manifests`, één `NetworkPolicy` per aangevinkt component, egress-only, `podSelector` op `app`. Opent ELKE poort van de proxy waarvoor de afnemer een adres kreeg (`VlamEndpoint.ports`): een adres dat de netwerkregel niet opent is een time-out |
 | alias en bestand | `template_vars["host_aliases"]` (override, niets anders zet die sleutel) en `ManifestContribution.secret_mounts` (additief) plus een `SecretFileSpec` met de inhoud van de bundel |
 | uitzetten | de bestandsnaam draagt het prune-voorvoegsel `{deployment}-vlam-`, dus de generieke opruiming haalt de regel weg zodra de dienst niet meer bijdraagt |
-| aanzetten | de PROJECTselectie, niet een vinkje per component (`manifest_activated_by_project`) — de dienst is deployment-gebonden, dus geen enkel component vinkt hem ooit aan |
+| aanzetten | het vinkje op het component (RC-213). Tot dan gold de PROJECTselectie voor elk component van elke deployment: op `bouwm-6gn` droeg `main-component-1` `VLAM_API_URL` en viel het onder de egress-regel zonder dat ooit te hebben gevraagd |
 
 ## Wat er in cross-domain-access voor bij moest
 
