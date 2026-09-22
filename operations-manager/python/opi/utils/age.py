@@ -7,9 +7,9 @@ import base64
 import contextlib
 import logging
 import subprocess
-import tempfile
 from typing import Any, cast
 
+import pyrage
 from opi.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -20,9 +20,25 @@ def get_global_private_key() -> str:
     return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
 
 
+def _decrypt_in_process(encrypted_content: str, private_key: str) -> str:
+    """Decrypt an age payload inside this process, without starting the age binary.
+
+    pyrage is a binding on the Rust implementation of age and reads both stored forms,
+    so blocks written by the binary open unchanged. Two things follow that the subprocess
+    route could not give: no fork per decrypted field (OPI has been OOMKilled by
+    subprocess fan-out before), and the private key stays in memory instead of being
+    written to a tempfile for the binary to read.
+    """
+    identity = pyrage.x25519.Identity.from_str(private_key.strip())
+    return pyrage.decrypt(encrypted_content.strip().encode(), [identity]).decode("utf-8").strip()
+
+
 async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     """
     Decrypt age-encrypted content using the provided private key.
+
+    Stays async while nothing is awaited: every caller awaits it, and the signature is
+    what keeps them unchanged.
 
     Args:
         encrypted_content: The age-encrypted content (including BEGIN/END markers)
@@ -34,31 +50,11 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
     if not encrypted_content or not private_key:
         raise ValueError("Missing encrypted content or private key for decryption")
 
-    # Write private key to a temporary file to avoid shell injection
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
-        key_file.write(private_key)
-        key_file.flush()
-
-        from opi.core.metrics import track_subprocess_memory
-
-        process = await asyncio.create_subprocess_exec(
-            "age",
-            "-d",
-            "-i",
-            key_file.name,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        async with track_subprocess_memory("age"):
-            stdout, stderr = await process.communicate(input=encrypted_content.encode())
-
-    if process.returncode != 0:
-        error_msg = stderr.decode("utf-8").strip()
-        logger.error(f"Age decryption failed: {error_msg}")
-        raise Exception(f"Age decryption failed: {error_msg}")
-
-    return stdout.decode("utf-8").strip()
+    try:
+        return _decrypt_in_process(encrypted_content, private_key)
+    except (pyrage.DecryptError, pyrage.IdentityError) as e:
+        logger.error(f"Age decryption failed: {e}")
+        raise Exception(f"Age decryption failed: {e}") from e
 
 
 async def _encrypt_with_age_and_base64encode_as_prefixed_string(client_secret: str, public_key: str | None) -> str:
@@ -168,27 +164,12 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
         logger.error(f"Private key provided: {bool(private_key)}")
         return None
 
-    # Write private key to a temporary file to avoid shell injection
-    logger.debug("Running age decryption command (sync)")
-
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".key", delete=True) as key_file:
-        key_file.write(private_key)
-        key_file.flush()
-
-        process = subprocess.run(
-            ["age", "-d", "-i", key_file.name],
-            input=encrypted_content,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"Age decryption failed with return code {process.returncode}: {error_msg}")
+    try:
+        decrypted_content = _decrypt_in_process(encrypted_content, private_key)
+    except (pyrage.DecryptError, pyrage.IdentityError) as e:
+        logger.error(f"Age decryption failed (sync): {e}")
         return None
 
-    decrypted_content = process.stdout.strip()
     logger.info(f"Successfully decrypted age content (sync) - result length: {len(decrypted_content)}")
     return decrypted_content
 

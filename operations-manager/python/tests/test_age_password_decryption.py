@@ -3,10 +3,17 @@ Test Age password decryption using the GIT_PROJECTS_SERVER_PASSWORD from configm
 """
 
 import base64
-from unittest.mock import patch
 
 import pytest
-from opi.utils.age import decrypt_password_smart_sync, is_age_encrypted, parse_password_with_prefix
+from opi.utils.age import (
+    decrypt_age_content_sync,
+    decrypt_password_smart_sync,
+    is_age_encrypted,
+    parse_password_with_prefix,
+)
+
+#: Een sleutel die het versleutelde wachtwoord in deze toetsen niet opent.
+ANDERE_PRIVATE_KEY = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
 
 
 class TestAgePasswordDecryption:
@@ -62,38 +69,22 @@ class TestAgePasswordDecryption:
         assert is_age_encrypted("plain text") is False
         assert is_age_encrypted("") is False
 
-    @patch("subprocess.run")
-    def test_decrypt_password_smart_sync_base64_age(self, mock_subprocess):
-        """Test decryption of base64+age password from configmap."""
-        # Mock successful age decryption
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "decrypted_password_123"
-        mock_subprocess.return_value.stderr = ""
+    def test_decrypt_password_smart_sync_base64_age(self):
+        """Test decryption of base64+age password from configmap.
 
-        # Test decryption
+        Ontsleutelen loopt in het proces, dus er is geen subprocess-aanroep meer om na te
+        bootsen; deze toets doet de echte ontsleuteling.
+        """
         result = decrypt_password_smart_sync(self.encrypted_password, self.private_key)
 
-        # Verify subprocess was called with age command
-        assert mock_subprocess.called
-        call_args = mock_subprocess.call_args[0][0]
-        assert call_args[0] == "age"
-        assert "-d" in call_args
-        assert "-i" in call_args
+        assert len(result) == 40
+        assert not result.startswith("base64+age:")
 
-        # Verify result
-        assert result == "decrypted_password_123"
-
-    @patch("subprocess.run")
-    def test_decrypt_password_smart_sync_failure(self, mock_subprocess):
+    def test_decrypt_password_smart_sync_failure(self):
         """Test handling of decryption failure."""
-        # Mock failed age decryption
-        mock_subprocess.return_value.returncode = 1
-        mock_subprocess.return_value.stdout = ""
-        mock_subprocess.return_value.stderr = "age: error: decryption failed"
-
         # API now raises ValueError on decryption failure
         with pytest.raises(ValueError, match="Failed to decrypt"):
-            decrypt_password_smart_sync(self.encrypted_password, self.private_key)
+            decrypt_password_smart_sync(self.encrypted_password, ANDERE_PRIVATE_KEY)
 
     def test_decrypt_password_smart_sync_no_key(self):
         """Test behavior when no private key is provided."""
@@ -109,26 +100,17 @@ class TestAgePasswordDecryption:
         # Should return the content without prefix
         assert result == "simple_password"
 
-    @patch("subprocess.run")
-    def test_configmap_password_integration(self, mock_subprocess):
-        """Integration test using actual configmap password format."""
-        # Mock successful decryption
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "github_pat_12345"
-        mock_subprocess.return_value.stderr = ""
+    def test_configmap_password_integration(self):
+        """Beide opgeslagen vormen van hetzelfde geheim leveren dezelfde waarde op.
 
-        # Use the exact password from configmap
+        De configmap draagt de base64+age-vorm, met daarin het armored blok. Ze horen tot
+        op de letter hetzelfde te openen, ongeacht via welke ingang je binnenkomt.
+        """
         configmap_password = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NBMEsyOHpaRVJ4WjI5Wk1qVnVRVk5QCldFcE1VMHd3TVhOUE4yRjFUM1pTSzJNNVRtTjRiM1JOWTNkbkNtaExOM0Z4THpjdk4wMU9kbUl4V1hWRkwwMHoKZEN0MEwwZHJjVkZaVVRCS09FUklaM05RSzNWRlVHY0tMUzB0SUZOQ1FVTTNaMVUwTUdKM2VUWXhlQzlUYjI5WgpabXhUV205QlJHdHBVRXhVVmxOM04xSlBValJoVjBrS3Q5NmxiY1NPcUxUaEVndnI2N1BrM2k0SUJWNmo4bVBvCkFUVGFIdjNDTUtjTVFPckRjSjRaMmlsTDZDZ0IvUlV3KzVHM21CWi9BMGYxbjVIZHFZZlhmTGk4c2xZNzM0OFMKRFE9PQotLS0tLUVORCBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQo="
 
         # Test decryption with key from security/key.txt
         result = decrypt_password_smart_sync(configmap_password, self.private_key)
+        armored = base64.b64decode(configmap_password.removeprefix("base64+age:")).decode("utf-8")
 
-        # Verify the process
-        assert mock_subprocess.called
-        assert result == "github_pat_12345"
-
-        # Verify the age command structure
-        call_args = mock_subprocess.call_args[0][0]
-        assert call_args[0] == "age"
-        assert "-d" in call_args
-        assert "-i" in call_args
+        assert is_age_encrypted(armored)
+        assert decrypt_age_content_sync(armored, self.private_key) == result
