@@ -24,15 +24,29 @@ from unittest.mock import patch
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
+from opi.utils.yaml_util import load_yaml_from_path
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import sops_rotation as tool  # noqa: E402
-from key_rotation import Fingerprint, sha256_of  # noqa: E402
+from key_rotation import Fingerprint, opens_with, sha256_of  # noqa: E402
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
+
+
+@pytest.fixture(autouse=True)
+def no_own_projects(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Point the repo's own ``projects/`` at an empty directory for every test here.
+
+    This repo really does carry a project file with a platform-keyed field, so without this every
+    test below would also measure that one and the numbers would move whenever it changes. The
+    tests that are ABOUT that directory override this with their own.
+    """
+    empty = tmp_path_factory.mktemp("no-projects")
+    with patch.object(tool, "OWN_PROJECTS", empty):
+        yield empty
 
 
 async def _env_file(path: Path, values: dict[str, str], public_key: str) -> Path:
@@ -103,7 +117,7 @@ async def test_the_round_converts_the_env_line_in_place(tmp_path: Path) -> None:
 
     with patch.object(tool, "sops_files_for", return_value=[]):
         plan = await tool.build_plan([path], old_private, new_private, old_public)
-        await tool.run_rotation(plan, old_private, old_public, new_public)
+        await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
 
     after = path.read_text()
     assert after != before
@@ -143,7 +157,7 @@ async def test_the_fingerprint_covers_the_same_set_before_and_after_a_partial_ro
         plan = await tool.build_plan([path], old_private, new_private, old_public)
         assert len(plan.env) == 1
         assert len(plan.already) == 1
-        await tool.run_rotation(plan, old_private, old_public, new_public)
+        await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
 
     after, closed_after = await tool.fingerprint_now([], tool.all_env_fields([path]), new_private)
     assert closed_after == []
@@ -403,3 +417,95 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
     assert code == 0
     assert not old_file.exists()
     assert "Old key removed" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# this repo's own projects/ directory
+# ---------------------------------------------------------------------------
+
+
+async def _own_project(directory: Path, name: str, public_key: str) -> Path:
+    """A project file as it sits in this repo's ``projects/``: one repository password."""
+    block = await encrypt_age_content("ghp_repository_token", public_key)
+    path = directory / f"{name}.yaml"
+    path.write_text(
+        "schema-version: 2\n"
+        f"name: {name}\n"
+        "repositories:\n"
+        "  - name: main-repo\n"
+        "    url: https://github.com/example/app.git\n"
+        "    username: git\n"
+        f"    password: {BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}\n"
+    )
+    return path
+
+
+@pytest.mark.asyncio
+async def test_this_repos_own_project_file_is_part_of_the_plan(tmp_path: Path) -> None:
+    """Measured: projects/simple-example.yaml holds a repository password on the platform key.
+
+    It is a project file, so the engine converts it, but it lives HERE. Pointing
+    rotate-project-keys.py at a clone of zad-projects would never reach it.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    own = tmp_path / "projects"
+    own.mkdir()
+    await _own_project(own, "simple-example", old_public)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "OWN_PROJECTS", own),
+    ):
+        plan = await tool.build_plan([], old_private, new_private, old_public)
+
+    assert [report.path.name for report in plan.projects] == ["simple-example.yaml"]
+    assert plan.projects[0].fields == ["repositories[0].password"]
+    assert plan.total == 1
+
+
+@pytest.mark.asyncio
+async def test_this_repos_own_project_file_is_converted_and_fingerprinted(tmp_path: Path) -> None:
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    own = tmp_path / "projects"
+    own.mkdir()
+    path = await _own_project(own, "simple-example", old_public)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "OWN_PROJECTS", own),
+    ):
+        before, closed_before = await tool.fingerprint_now([], [], old_private, new_private)
+        plan = await tool.build_plan([], old_private, new_private, old_public)
+        await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
+        after, closed_after = await tool.fingerprint_now([], [], old_private, new_private)
+
+    assert closed_before == []
+    assert closed_after == []
+    assert len(before.fields) == 1
+    assert before.compare(after) == []
+    data = load_yaml_from_path(str(path))
+    assert await opens_with(data["repositories"][0]["password"], new_private)
+    assert not await opens_with(data["repositories"][0]["password"], old_private)
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_walks_this_repos_own_project_file(tmp_path: Path) -> None:
+    """Without this the final check would pass with a field in this repo still on the old key."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    own = tmp_path / "projects"
+    own.mkdir()
+    await _own_project(own, "simple-example", old_public)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "OWN_PROJECTS", own),
+    ):
+        check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
+
+    assert check.counted == 1
+    assert not check.clean
+    assert check.still_opens_with_old[0].endswith("#repositories[0].password")

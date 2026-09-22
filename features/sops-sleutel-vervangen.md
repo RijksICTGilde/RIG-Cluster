@@ -22,9 +22,17 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
    |      en die staat hier versleuteld in
    |
    +-- repositories[].password van ELK project
-          de GitHub-PAT. Gemeten: `git.py` gebruikt `decrypt_password_smart_auto_sync`,
-          en die leest `get_global_private_key()` -- dus de PLATFORMsleutel en NIET de
-          sleutel van het project.
+   |      de GitHub-PAT. Gemeten: `git.py` gebruikt `decrypt_password_smart_auto_sync`,
+   |      en die leest `get_global_private_key()` -- dus de PLATFORMsleutel en NIET de
+   |      sleutel van het project.
+   |
+   +-- projects/simple-example.yaml in DEZE repo
+          een vijfde vindplaats die het plan niet noemt. Gemeten door elk versleuteld
+          veld in tests/ en projects/ met de platformsleutel te proberen: exact een
+          treffer, een repositories[].password. Het is een projectbestand, dus de motor
+          zet het om, maar het staat HIER: `rotate-project-keys.py` op een clone van
+          zad-projects komt er nooit langs. `rotate-sops-key.py` doet het daarom mee,
+          en de eindtoets loopt het na.
 ```
 
 Gemeten over de 45 projectbestanden: precies deze twee velden gaan open met de platformsleutel
@@ -39,7 +47,7 @@ alleen in Kubernetes leeft.
 
 | script | doet |
 |---|---|
-| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden en de 6 losse waarden in DEZE repo |
+| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 6 losse waarden en `projects/` in DEZE repo |
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
 | `scripts/replace-git-pat.py` | dezelfde ronde, met de PAT er ook vervangen |
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |

@@ -1,0 +1,69 @@
+# scripts/ (repowortel)
+
+Gereedschap dat op de REPOSITORY werkt en niet op een draaiende OPI. Dat is het verschil met
+`operations-manager/python/scripts/`: die tools praten met een cluster, met Keycloak of met een
+projectbestand in de zad-projects-repo, en draaien vanuit `operations-manager/python`. Deze staan
+hier omdat ze paden in de repowortel aanraken (`bootstrap/`, `infrastructure/`, `security/`,
+`projects/`, de historie) en dus vanaf de wortel horen te worden aangeroepen.
+
+## De sleutelrotatie
+
+Zie `features/sops-sleutel-vervangen.md` voor het hele verhaal, inclusief de metingen.
+
+| ingang | doet |
+|---|---|
+| `rotate-sops-key.py` | de SOPS-bestanden, de losse `base64+age:`-waarden en `projects/` in deze repo; `--verify` en `--assert-old-key-dead` |
+| `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
+| `replace-git-pat.py` | dezelfde ronde, met de GitHub-PAT er ook vervangen |
+| `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
+
+De logica zit in modules ernaast, want een streepje in een bestandsnaam is niet importeerbaar en
+de toetsen moeten bij de logica kunnen:
+
+| module | wat erin staat |
+|---|---|
+| `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vier vindplaatsen, de vingerafdruk, de eindtoets |
+| `sops_rotation.py` | de ronde over deze repo |
+| `project_rotation.py` | de ronde over de projectbestanden, met beide ingangen (sleutel en PAT) |
+| `sops_key_secret.py` | het cluster-secret |
+
+Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
+`test_sops_rotation_round.py`, `test_set_sops_key_secret.py`.
+
+## De geheimenscan
+
+| bestand | doet |
+|---|---|
+| `scan-secrets.py` | de ingang: een boom, een lijst bestanden, of de hele historie |
+| `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
+
+Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
+in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`. De uitkomst van de eenmalige
+historie-scan staat in `docs/geheimenscan-historie-2026-09-22.md`.
+
+## De rest
+
+| bestand | doet |
+|---|---|
+| `project_decrypt.py` | schrijft een projectbestand uit met alles ontsleuteld, om te kunnen nagaan hoe een project is ingericht |
+| `generate_probe_spec.py` | genereert de probe-spec die `test_probe_spec_drift.py` vastpint |
+| `orphan_deployments.py` | vindt deployments zonder project |
+| `build-preflight.sh` | weigert een bouw te starten met te weinig vrij geheugen |
+| `pod-resources.sh`, `resourcequota-compare.sh` | resourceoverzichten uit het cluster |
+| `renew-sandbox-cert.sh`, `certbot/` | het wildcard-certificaat voor de sandbox vernieuwen |
+| `sandbox-forward.sh`, `traffic-generator.sh` | hulpjes rond een lopende sandbox |
+
+## Aanroepen
+
+Vanaf de repowortel, met de venv van OPI voor de Python-scripts die `opi` importeren:
+
+```bash
+cd operations-manager/python && uv run python ../../scripts/rotate-sops-key.py --dry-run
+```
+
+`scan-secrets.py` heeft `opi` niet nodig en draait op een kale Python 3 (dat is wat de CI-job en
+de pre-commit hook doen):
+
+```bash
+python3 scripts/scan-secrets.py
+```

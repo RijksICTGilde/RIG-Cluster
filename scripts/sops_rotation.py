@@ -37,10 +37,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from key_rotation import (  # type: ignore[reportMissingImports]
+    ConversionFailed,
     EnvField,
     FinalCheck,
     Fingerprint,
     MissingKey,
+    ProjectRound,
     ask_for_path,
     check_sops_file,
     check_value,
@@ -52,6 +54,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     project_fields,
     public_key_of,
     read_key,
+    rotate_project_file,
     sha256_of,
     sops_files_for,
     sops_plaintext,
@@ -74,6 +77,12 @@ ENV_FILES = (
 #: The fixed location of the keys, as a full path. Relative would be "security/key.txt", and
 #: that is only correct when you happen to invoke from the repo root -- while the ordinary
 #: working directory for this project is operations-manager/python.
+#: This repo carries a project file of its own, and it holds a repository password on the platform
+#: key -- measured, one field. It is a project file, so ``rotate_project_file`` converts it, but it
+#: lives HERE, so this tool owns it: pointing rotate-project-keys.py at a clone of zad-projects
+#: would never reach it, and the final check would pass with a field still on the old key.
+OWN_PROJECTS = REPO / "projects"
+
 CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
 DEFAULT_FINGERPRINT = REPO / "security" / "fingerprint.json"
@@ -133,6 +142,22 @@ def sops_on_either_recipient(old_public: str, new_public: str) -> list[Path]:
     return list(seen)
 
 
+def own_project_fields() -> list[tuple[str, str]]:
+    """The platform-keyed fields in this repo's own ``projects/``, as ``(fingerprint key, value)``.
+
+    Same shape as an env field for the fingerprint's purposes: a name and a ciphertext.
+    """
+    found: list[tuple[str, str]] = []
+    if not OWN_PROJECTS.is_dir():
+        return found
+    for path in sorted(OWN_PROJECTS.glob("*.yaml")):
+        data = load_yaml_from_path(str(path))
+        if not isinstance(data, dict):
+            continue
+        found.extend((f"{path}#{name}", value) for name, value in project_fields(data))
+    return found
+
+
 async def fingerprint_now(
     sops_paths: list[Path], fields: list[EnvField], *private_keys: str
 ) -> tuple[Fingerprint, list[str]]:
@@ -164,6 +189,14 @@ async def fingerprint_now(
                 break
         else:
             closed.append(env_fingerprint_key(field_))
+    for name, value in own_project_fields():
+        for key in private_keys:
+            plain = await decrypt_field(value, key)
+            if plain is not None:
+                fingerprint.set(name, sha256_of(plain))
+                break
+        else:
+            closed.append(name)
     return fingerprint, closed
 
 
@@ -181,12 +214,13 @@ class RotationPlan:
 
     sops: list[Path] = field(default_factory=list)
     env: list[EnvField] = field(default_factory=list)
+    projects: list[ProjectRound] = field(default_factory=list)
     already: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.sops) + len(self.env)
+        return len(self.sops) + len(self.env) + sum(len(report.fields) for report in self.projects)
 
 
 async def build_plan(paths: list[Path], old_private: str, new_private: str, old_public: str) -> RotationPlan:
@@ -208,6 +242,14 @@ async def build_plan(paths: list[Path], old_private: str, new_private: str, old_
                 plan.already.append(env_fingerprint_key(field_))
             else:
                 plan.closed.append(env_fingerprint_key(field_))
+    for path in sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []:
+        report = await rotate_project_file(path, old_private, new_private, dry_run=True)
+        if report.fields:
+            plan.projects.append(report)
+        elif report.skipped and report.skipped.startswith("already converted"):
+            plan.already.append(f"{path}#(project fields)")
+        elif report.skipped and not report.skipped.startswith("no encrypted platform fields"):
+            plan.closed.append(f"{path}: {report.skipped}")
     return plan
 
 
@@ -219,14 +261,23 @@ def show_plan(plan: RotationPlan) -> None:
     print(f"\n{len(plan.env)} loose base64+age: values on the old key:")
     for field_ in plan.env:
         print(f"  recrypt      {short(field_.path)}:{field_.line_number}  {field_.name}")
+    if plan.projects:
+        print(f"\n{len(plan.projects)} project files in this repo's own projects/:")
+        for report in plan.projects:
+            print(f"  recrypt      {short(report.path)}  {', '.join(report.fields)}")
     for name in plan.already:
         print(f"  already      {name}")
     for name in plan.closed:
         print(f"  FAIL opens with neither key: {name}")
-    print(f"\nTo do: {len(plan.sops)} files + {len(plan.env)} loose values = {plan.total} fields")
+    own = sum(len(report.fields) for report in plan.projects)
+    print(
+        f"\nTo do: {len(plan.sops)} files + {len(plan.env)} loose values + {own} project fields = {plan.total} fields"
+    )
 
 
-async def run_rotation(plan: RotationPlan, old_private: str, old_public: str, new_public: str) -> None:
+async def run_rotation(
+    plan: RotationPlan, old_private: str, new_private: str, old_public: str, new_public: str
+) -> None:
     for path in plan.sops:
         sops_rotate(path, old_public, new_public, old_private)
         print(f"  converted  {short(path)}")
@@ -234,6 +285,11 @@ async def run_rotation(plan: RotationPlan, old_private: str, old_public: str, ne
         conversion = await convert_value(field_.value, old_private, new_public)
         write_env_value(field_.path, field_.line_number, field_.value, conversion.new_value)
         print(f"  converted  {short(field_.path)}:{field_.line_number} {field_.name}")
+    for planned in plan.projects:
+        report = await rotate_project_file(planned.path, old_private, new_private, dry_run=False)
+        if not report.rewritten:
+            raise ConversionFailed(f"{planned.path} was not written: {report.skipped}")
+        print(f"  converted  {short(report.path)}  {', '.join(report.fields)}")
 
 
 async def run_final_check(
@@ -256,6 +312,8 @@ async def run_final_check(
     for path in env_paths():
         for field_ in env_fields(path):
             await check_value(env_fingerprint_key(field_), field_.value, old_private, new_private, check)
+    for name, value in own_project_fields():
+        await check_value(name, value, old_private, new_private, check)
     if projects is not None:
         for path in sorted(projects.glob("*.yaml")):
             data = load_yaml_from_path(str(path))
@@ -421,7 +479,7 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"  {len(fingerprint_before.fields)} fields -> {fingerprint_path}")
 
     print("\nConverting...")
-    await run_rotation(plan, old_private, old_public, new_public)
+    await run_rotation(plan, old_private, new_private, old_public, new_public)
 
     print("\nChecking with the new key...")
     fingerprint_after, closed = await fingerprint_now(
