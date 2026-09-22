@@ -106,11 +106,13 @@ class CrossDomainAccessService(Service):
         help_template="cross_domain_access/help.md",
         icon="netwerk",
         color="donkerblauw",
-        # The rules apply per deployment (each gets its own NetworkPolicy); the effect
-        # lives entirely in generated manifests, so there is nothing server-side to clean
-        # up -- the generic manifest prune removes the policy files when the service is off.
+        # De componentkeuze bestaat wel, maar zit in de regel zelf (``to.component`` /
+        # ``from.component``) en dat is configuratie. Een vinkje voegt er niets aan toe.
         selectable_per_component=False,
         variables=[],
+        # Het effect leeft volledig in gegenereerde manifesten, dus er is niets
+        # server-side op te ruimen: de generieke manifestprune haalt de policybestanden
+        # weg zodra de dienst uit gaat.
         cleanup_strategy=CleanupStrategy.NONE,
     )
     config_model = CrossDomainAccessConfig

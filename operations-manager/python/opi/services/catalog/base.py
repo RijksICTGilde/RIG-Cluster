@@ -826,6 +826,7 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
+
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
     #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
     #: included) by ``__init_subclass__``, so participation cannot drift from
