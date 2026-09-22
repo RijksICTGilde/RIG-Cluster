@@ -397,16 +397,13 @@ class ServiceDefinition:
     """Whether each component switches this service on and off for itself.
 
     False means the project-level selection is the whole answer and the service decides
-    for itself where it works, so it gets no checkbox in the per-component services
-    picker and its manifest contribution reads the PROJECT's services list. A default,
-    because for most of the catalog the answer is obvious; the exceptions declare it.
+    for itself where it works.
     """
     shared_per_deployment: bool = False
     """Whether one provision of this service serves a whole deployment.
 
     Every component of the deployment that ticks it gets the same credentials to the same
-    database, bucket or cache. Says nothing about who ticks it: postgres is shared per
-    deployment AND selected per component.
+    database, bucket or cache. Says nothing about who ticks it: postgres is both.
     """
     secret_class: str | None = None
     # TODO: specific definitions should not be here
