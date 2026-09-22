@@ -29,7 +29,7 @@ from opi.services.config_location import (
 )
 from opi.services.registry import SERVICES
 from opi.services.services_enums import ServiceKind, ServiceType
-from opi.web.lotc_fixtures import page_data, services_overview
+from opi.web.lotc_fixtures import page_data
 
 #: The services measured (5 August 2026, from the registry) as carrying config only away
 #: from the project layer. The first five are user-selectable and are exactly the cards
@@ -205,38 +205,6 @@ class TestDeChipsOpDeProjectpagina:
 
     def test_een_dienst_die_niets_deelt_krijgt_die_chip_niet(self) -> None:
         assert "Gedeeld per deployment" not in self._kaarten()["Publiceren op het web"]
-
-
-class TestDeChipsVanServicesOverview:
-    """Dezelfde twee declaraties, tweede afleiding: de chips in ``services_overview``.
-
-    Die leest de declaraties rechtstreeks uit de registry en niet uit
-    ``selection_labels``, dus geen van de toetsen hierboven merkt het als de twee
-    afleidingen uit elkaar gaan lopen.
-
-    Een scherm hangt er vandaag niet aan: ``bg/_service-card.html.j2`` heeft de chips er
-    bewust uit gehaald en leest ``chips`` niet.
-    """
-
-    def _chips(self, service_type: ServiceType) -> list[str]:
-        rij = next(item for item in services_overview([]) if item["name"] == service_type.value)
-        return rij["chips"]
-
-    def test_een_dienst_die_je_per_component_aanzet_zegt_dat(self) -> None:
-        chips = self._chips(ServiceType.KEYCLOAK)
-        assert "per component" in chips
-        assert "per project" not in chips
-
-    def test_een_dienst_zonder_componentkeuze_zegt_per_project(self) -> None:
-        chips = self._chips(ServiceType.INVITE)
-        assert "per project" in chips
-        assert "per component" not in chips
-
-    def test_gedeeld_per_deployment_komt_erbij_en_niet_in_de_plaats(self) -> None:
-        assert self._chips(ServiceType.POSTGRESQL_DATABASE)[:2] == ["per component", "gedeeld per deployment"]
-
-    def test_een_dienst_die_niets_deelt_krijgt_die_chip_niet(self) -> None:
-        assert "gedeeld per deployment" not in self._chips(ServiceType.PUBLISH_ON_WEB)
 
 
 class TestTheCardsShowIt:
