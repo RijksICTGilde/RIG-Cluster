@@ -84,9 +84,7 @@ scripts/set-sops-key-secret.py --dry-run
 scripts/set-sops-key-secret.py
 
 # 6. de eindtoets over alle vindplaatsen
-scripts/rotate-sops-key.py --assert-old-key-dead \
-  --projects /tmp/zad-projects/projects \
-  --projects-fingerprint security/projects-fingerprint.json
+scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects
 
 # 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
 git clone <zad-projects> /tmp/zad-projects-pat
@@ -157,10 +155,18 @@ nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cuto
   overgeslagen, en die noemt hij bij naam.
 - **ontsleutelen met de nieuwe sleutel slaagt.** Anders is er iets omgezet naar een sleutel die
   niemand heeft.
-- **de telling klopt** met de SOM van beide vingerafdrukken (deze repo + de projecten).
+- **de telling klopt** met de SOM van beide vingerafdrukken (deze repo + de projecten). De
+  tweede is die van `rotate-project-keys.py`; `--projects-fingerprint` wijst standaard naar
+  `security/projects-fingerprint.json`, precies waar dat script hem schrijft, en telt mee zodra
+  dat bestand er staat. Zonder die som zou de telling alleen deze repo dekken terwijl de toets
+  vier vindplaatsen loopt, en dan valt een rotatie waar niets mis is alsnog rood uit.
 
 Zonder `--projects` loopt hij de vierde vindplaats niet na, en dat zegt hij. `--remove-old-key`
 weigert daarom zonder `--projects`: er kan dan een project op de oude sleutel staan.
+
+`--remove-old-key` haalt `security/old_key.txt` weg, en `--verify` moet daarna blijven werken.
+Die stand vraagt de oude sleutel dus niet op: hij meet met de nieuwe, en de oude speelt alleen
+mee in de bestandsselectie. Ontbreekt hij, dan zegt het script dat en gaat het door.
 
 ## `sops rotate`, niet `updatekeys`
 

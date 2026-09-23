@@ -465,6 +465,49 @@ async def test_the_key_entry_point_writes_the_fingerprint_it_will_be_checked_aga
     assert "AGE-SECRET-KEY-" not in written
 
 
+@pytest.mark.asyncio
+async def test_a_second_key_round_leaves_the_fingerprint_of_the_first_alone(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    """Running the tool twice is a promise of this tool, and the second run converts nothing.
+
+    Saving the fingerprint unconditionally then overwrote the record of the first round with
+    zero fields. That record is what ``--assert-old-key-dead`` compares its count against, so
+    the harmless second round was what made the final check fail afterwards -- measured: round
+    one 6 fields, round two 0, and step 6 red with the right flag.
+
+    This goes through the entry point on purpose: ``run_round`` sits UNDER the layer that saves.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [
+        "--ja",
+        "--projects",
+        str(projects_repo / "projects"),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
+
+    first = await main_rotate_keys(arguments)
+    after_the_first_round = fingerprint.read_text()
+    second = await main_rotate_keys(arguments)
+
+    assert first == 0
+    assert second == 0
+    assert len(Fingerprint.load(fingerprint).fields) == 2
+    assert fingerprint.read_text() == after_the_first_round
+
+
 def test_the_pat_is_read_from_a_file(tmp_path: Path) -> None:
     (tmp_path / "pat.txt").write_text("ghp_from_a_file\n")
     assert read_pat(str(tmp_path / "pat.txt")) == "ghp_from_a_file"
@@ -601,6 +644,48 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
     )
     assert broken(second, pat_round=True) == []
     assert load_yaml_from_path(str(path))["repositories"][0]["password"] == ciphertext_after_the_first_round
+
+
+@pytest.mark.asyncio
+async def test_a_second_pat_round_leaves_the_fingerprint_of_the_first_alone(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    """The same guard on the other entry point: it saves its own fingerprint on the same line.
+
+    A second PAT round finds the token already in place and converts nothing, so an
+    unconditional save would replace the record of the real round with zero fields.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "pat-fingerprint.json"
+    arguments = [
+        "--ja",
+        "--projects",
+        str(projects_repo / "projects"),
+        "--pat-file",
+        str(tmp_path / "pat.txt"),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
+
+    first = await main_replace_pat(arguments)
+    after_the_first_round = fingerprint.read_text()
+    second = await main_replace_pat(arguments)
+
+    assert first == 0
+    assert second == 0
+    assert len(Fingerprint.load(fingerprint).fields) == 2
+    assert fingerprint.read_text() == after_the_first_round
 
 
 def test_already_converted_is_only_harmless_in_the_key_round() -> None:

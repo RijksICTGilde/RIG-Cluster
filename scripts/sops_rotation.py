@@ -14,7 +14,9 @@ with its own commits.
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
 
 **No key on the command line.** The tool asks for the PATHS of the keys, with a default on
-every question, and reads them from the untracked ``security/``.
+every question, and reads them from the untracked ``security/``. ``--verify`` is the exception
+to needing both: it reads with the new key, so it keeps working after ``--remove-old-key`` has
+deleted the old one.
 
 **What the fingerprint is.** Per encrypted field the sha256 of the PLAINTEXT, recorded before
 the conversion and measured again afterwards, so you can show that nothing changed but the
@@ -83,6 +85,13 @@ OWN_PROJECTS = REPO / "projects"
 CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
 DEFAULT_FINGERPRINT = REPO / "security" / "fingerprint.json"
+
+#: Where ``rotate-project-keys.py`` writes ITS fingerprint. The final check walks four places,
+#: converted by two tools with a fingerprint each, so the count it compares against is the SUM.
+#: This is a default and not a required flag because the documented step 8 (--remove-old-key)
+#: is a bare command: without it the count would cover this repo alone and a rotation where
+#: nothing is wrong would fail on "count differs".
+DEFAULT_PROJECTS_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
 YES_WORDS = {"ja", "j", "yes", "y"}
 
 # A failed decryption is the EXPECTED outcome here: the final check demands that the old key
@@ -124,14 +133,21 @@ def all_env_fields(paths: list[Path]) -> list[EnvField]:
     return [field_ for path in paths for field_ in env_fields(path)]
 
 
-def sops_on_either_recipient(old_public: str, new_public: str) -> list[Path]:
+def sops_on_either_recipient(old_public: str | None, new_public: str) -> list[Path]:
     """The SOPS files sitting on either recipient, each once.
 
     The fingerprint has to cover the same set on both sides of the conversion, and a file
     moves from one recipient to the other while it is being rotated.
+
+    ``old_public`` may be None: ``--verify`` runs months later, when the old key file is gone.
+    The selection is then the new recipient alone, which after a completed rotation is the same
+    set -- and a file left behind on the old recipient shows up as "does not open with the new
+    key" through the fingerprint, which is the finding either way.
     """
     seen: dict[Path, None] = {}
     for public in (old_public, new_public):
+        if public is None:
+            continue
         for path in sops_files_for(REPO, public):
             seen.setdefault(path, None)
     return list(seen)
@@ -195,16 +211,30 @@ async def fingerprint_now(
     return fingerprint, closed
 
 
-def ask_for_keys(arguments: argparse.Namespace) -> tuple[Path, str, Path, str]:
+def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -> tuple[Path, str | None, Path, str]:
     """Ask for the two key files and hand back both the answered paths and the private halves.
 
     The paths come along because the last two actions, renaming and deleting the old key, act on
     a FILE and not on its contents.
+
+    ``old_optional`` is for ``--verify`` alone, and it is not a nicety: the documented step 8
+    (``--remove-old-key``) DELETES ``security/old_key.txt``, while both the plan and the
+    documentation promise that ``--verify`` still works months later. It measures with the new
+    key; the old public half only widens the file selection. Demanding a file that the previous
+    step removed would make that promise exit 2.
     """
     reader = (lambda _question: "") if arguments.ja else input
-    old = ask_for_path("old key", arguments.old_key, reader=reader)
+    old_path = Path(arguments.old_key)
+    old_private: str | None = None
+    try:
+        old_path = ask_for_path("old key", arguments.old_key, reader=reader)
+        old_private = read_key(old_path)
+    except MissingKey:
+        if not old_optional:
+            raise
+        print(f"NOTE no old key at {old_path}: checking with the new key alone.")
     new = ask_for_path("new key", arguments.new_key, reader=reader)
-    return old, read_key(old), new, read_key(new)
+    return old_path, old_private, new, read_key(new)
 
 
 @dataclass
@@ -323,6 +353,32 @@ async def run_final_check(
     return check
 
 
+async def run_verify(
+    fingerprint_path: Path, paths: list[Path], old_public: str | None, new_public: str, new_private: str
+) -> int:
+    """Check the recorded fingerprint against what the new key reads today.
+
+    Stands on its own, months after the rotation, which is why ``old_public`` may be None: by
+    then the old key file is gone (step 8 removes it) and nothing is measured with it anyway.
+    """
+    if not fingerprint_path.is_file():
+        print(f"FAIL no fingerprint to check against: {fingerprint_path}", file=sys.stderr)
+        return 2
+    wanted = Fingerprint.load(fingerprint_path)
+    measured, closed = await fingerprint_now(
+        sops_on_either_recipient(old_public, new_public), all_env_fields(paths), new_private
+    )
+    objections = wanted.compare(measured)
+    for name in closed:
+        print(f"FAIL does not open with the new key: {name}")
+    for objection in objections:
+        print(f"FAIL {objection}")
+    if objections or closed:
+        return 1
+    print(f"CLEAN {len(measured.fields)} fields readable with the new key and unchanged in content")
+    return 0
+
+
 def expected_count(paths: list[Path]) -> int | None:
     """The total number of fields across the fingerprints that exist, or None when there is none.
 
@@ -380,7 +436,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fingerprint", default=str(DEFAULT_FINGERPRINT))
     parser.add_argument(
         "--projects-fingerprint",
-        help="the fingerprint rotate-project-keys.py wrote, so the final check's count adds up",
+        default=str(DEFAULT_PROJECTS_FINGERPRINT),
+        help="the fingerprint rotate-project-keys.py wrote, so the final check's count adds up; "
+        "counts as soon as the file is there",
     )
     parser.add_argument(
         "--projects",
@@ -392,21 +450,31 @@ def build_parser() -> argparse.ArgumentParser:
 async def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
 
+    # Only --verify reads without the old key, and only when it is the mode that will run:
+    # --rename and --remove-old-key act on the old key FILE, the final check measures with it.
+    old_optional = arguments.verify and not (
+        arguments.rename or arguments.assert_old_key_dead or arguments.remove_old_key
+    )
     try:
-        old_path, old_private, new_path, new_private = ask_for_keys(arguments)
+        old_path, old_private, new_path, new_private = ask_for_keys(arguments, old_optional=old_optional)
     except MissingKey as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
 
-    old_public = public_key_of(old_private)
     new_public = public_key_of(new_private)
-    if old_public == new_public:
-        print("FAIL the old and the new key are the same key", file=sys.stderr)
-        return 2
-
     projects = Path(arguments.projects) if arguments.projects else None
     fingerprint_path = Path(arguments.fingerprint)
     paths = env_paths()
+
+    if old_private is None:
+        # Guaranteed by old_optional above: this is --verify with the old key already gone.
+        # Everything below this point acts on the old key, so it also narrows the type.
+        return await run_verify(fingerprint_path, paths, None, new_public, new_private)
+
+    old_public = public_key_of(old_private)
+    if old_public == new_public:
+        print("FAIL the old and the new key are the same key", file=sys.stderr)
+        return 2
 
     if arguments.rename:
         rename_keys(old_path, new_path, yes=arguments.ja)
@@ -415,9 +483,7 @@ async def main(argv: list[str] | None = None) -> int:
     if arguments.assert_old_key_dead or arguments.remove_old_key:
         if projects is None:
             print("NOTE without --projects the final check does not walk the fourth place.")
-        fingerprints = [fingerprint_path]
-        if arguments.projects_fingerprint:
-            fingerprints.append(Path(arguments.projects_fingerprint))
+        fingerprints = [fingerprint_path, Path(arguments.projects_fingerprint)]
         expected = expected_count(fingerprints) if projects is not None else None
         check = await run_final_check(old_private, new_private, old_public, new_public, projects, expected)
         for line in check.lines():
@@ -437,22 +503,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 0
 
     if arguments.verify:
-        if not fingerprint_path.is_file():
-            print(f"FAIL no fingerprint to check against: {fingerprint_path}", file=sys.stderr)
-            return 2
-        wanted = Fingerprint.load(fingerprint_path)
-        measured, closed = await fingerprint_now(
-            sops_on_either_recipient(old_public, new_public), all_env_fields(paths), new_private
-        )
-        objections = wanted.compare(measured)
-        for name in closed:
-            print(f"FAIL does not open with the new key: {name}")
-        for objection in objections:
-            print(f"FAIL {objection}")
-        if objections or closed:
-            return 1
-        print(f"CLEAN {len(measured.fields)} fields readable with the new key and unchanged in content")
-        return 0
+        return await run_verify(fingerprint_path, paths, old_public, new_public, new_private)
 
     plan = await build_plan(paths, old_private, new_private, old_public)
     show_plan(plan)

@@ -50,6 +50,10 @@ from key_rotation import (  # noqa: E402
     sops_recipients,
     sops_rotate,
 )
+from project_rotation import KEY_FINGERPRINT  # noqa: E402
+
+#: The real default, taken before the autouse fixture below patches it away for every test.
+REAL_PROJECTS_FINGERPRINT = tool.DEFAULT_PROJECTS_FINGERPRINT
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
 
@@ -91,6 +95,20 @@ def no_own_projects(tmp_path_factory: pytest.TempPathFactory) -> Path:
     empty = tmp_path_factory.mktemp("no-projects")
     with patch.object(tool, "OWN_PROJECTS", empty):
         yield empty
+
+
+@pytest.fixture(autouse=True)
+def no_projects_fingerprint(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Point the default projects fingerprint at a path that does not exist.
+
+    ``--projects-fingerprint`` defaults to ``security/projects-fingerprint.json``, and on a
+    machine that has really run a rotation that file is there. Without this, every final check
+    below would take ITS field count as the expected one and go red on a number no test set up.
+    The test that is ABOUT that default overrides this with its own.
+    """
+    absent = tmp_path_factory.mktemp("no-projects-fingerprint") / "projects-fingerprint.json"
+    with patch.object(tool, "DEFAULT_PROJECTS_FINGERPRINT", absent):
+        yield absent
 
 
 async def _env_file(path: Path, values: dict[str, str], public_key: str) -> Path:
@@ -503,6 +521,76 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
     assert "Old key removed" in capsys.readouterr().out
 
 
+@pytest.mark.asyncio
+async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The documented command is bare, so the projects fingerprint has to arrive by DEFAULT.
+
+    The final check walks four places, converted by two tools with a fingerprint each, so the
+    number it compares against is the SUM. Documented step 8 is
+    ``--remove-old-key --projects <clone>/projects`` and names no fingerprint, so without a
+    default the expected count covers this repo alone: a rotation where nothing is wrong ends on
+    "count differs" and leaves the old key in place. Measured on the real repo: 118 fields walked
+    against 28 recorded.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    old_file = tmp_path / "old_key.txt"
+    old_file.write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, new_public)
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    block = await encrypt_age_content("ghp_token", new_public)
+    (projects / "een.yaml").write_text(
+        "name: een\nrepositories:\n  - name: main-repo\n    password: "
+        f"{BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}\n"
+    )
+    repo_fingerprint = tmp_path / "fingerprint.json"
+    Fingerprint(fields={"this-repo#one-env-value": "1"}).save(repo_fingerprint)
+    projects_fingerprint = tmp_path / "projects-fingerprint.json"
+    command = [
+        "--ja",
+        "--remove-old-key",
+        "--projects",
+        str(projects),
+        "--old-key",
+        str(old_file),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(repo_fingerprint),
+    ]
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[env_path]),
+        patch.object(tool, "DEFAULT_PROJECTS_FINGERPRINT", projects_fingerprint),
+    ):
+        # The count check really runs: with only this repo's fingerprint on disk the two fields
+        # walked are one more than it recorded, and the old key stays.
+        without = await tool.main(command)
+        assert "FAIL count differs from the fingerprint: 2 now, 1 before" in capsys.readouterr().out
+        Fingerprint(fields={f"{projects}/een.yaml#repositories[0].password": "2"}).save(projects_fingerprint)
+        with_the_default = await tool.main(command)
+
+    assert without == 1
+    assert with_the_default == 0
+    assert "CLEAN the old key opens nothing" in capsys.readouterr().out
+    assert not old_file.exists()
+
+
+def test_the_default_projects_fingerprint_is_the_file_the_projects_round_writes() -> None:
+    """The two halves have to name the SAME file, or the default counts nothing.
+
+    The test above patches the default to a temporary path, so it proves that the default is
+    read and counted -- not that it points where ``rotate-project-keys.py`` puts its fingerprint.
+    That agreement is the whole reason the documented bare command adds up.
+    """
+    assert REAL_PROJECTS_FINGERPRINT == KEY_FINGERPRINT
+
+
 # ---------------------------------------------------------------------------
 # this repo's own projects/ directory
 # ---------------------------------------------------------------------------
@@ -840,6 +928,49 @@ async def test_verify_says_clean_long_after_the_round_and_red_when_a_file_drifte
         assert await tool.main(["--ja", "--verify", *arguments]) == 1
 
     assert f"FAIL does not open with the new key: {sops_path}#<sops-document>" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Step 8 deletes ``security/old_key.txt``, and ``--verify`` has to survive that.
+
+    Plan and documentation both promise this check still runs months later, and it reads with the
+    NEW key alone: the old public half only widens the file selection, and after a completed
+    rotation nothing sits on that recipient. Demanding the file the previous step removed turned
+    the promise into exit 2 "file does not exist".
+
+    Second half: the relaxation is for ``--verify`` and nothing else. The final check MEASURES
+    with the old key, so there it stays a hard requirement.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(
+        tmp_path / ".env",
+        {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
+        old_public,
+    )
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *arguments]) == 0
+        (tmp_path / "old_key.txt").unlink()
+        capsys.readouterr()
+
+        code = await tool.main(["--ja", "--verify", *arguments])
+        printed = capsys.readouterr().out
+        still_demanded = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+
+    assert code == 0
+    assert "NOTE no old key at" in printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+    assert still_demanded == 2
+    assert "file does not exist" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio

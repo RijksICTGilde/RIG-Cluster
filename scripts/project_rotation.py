@@ -196,6 +196,21 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
         print(f"\nContent check: {result.fields} fields {kept}.")
 
 
+def save_fingerprint(result: RoundResult, path: str) -> None:
+    """Write the fingerprint, but only when this round actually converted something.
+
+    A round that finds nothing left to do is the CORRECT outcome of running the tool twice, and
+    saving there would overwrite the record of the first round with zero fields. The final check
+    compares its count against that record, so the second, harmless round would be what makes
+    ``--assert-old-key-dead`` fail afterwards.
+    """
+    if not result.fields:
+        print(f"\nNothing converted, so {path} is left as it was.")
+        return
+    result.fingerprint_before.save(path)
+    print(f"\nFingerprint of {result.fields} fields -> {path}")
+
+
 def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound]:
     """The skips that are a real problem, as opposed to "nothing left to do here".
 
@@ -300,8 +315,7 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
 
     result = await run_round(directory, old_private, new_private, dry_run=False, commit=not arguments.no_commit)
     report(result, dry_run=False)
-    result.fingerprint_before.save(arguments.fingerprint)
-    print(f"\nFingerprint of {result.fields} fields -> {arguments.fingerprint}")
+    save_fingerprint(result, arguments.fingerprint)
 
     problems = broken(result)
     if problems:
@@ -385,8 +399,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
         directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
     )
     report(result, dry_run=False)
-    result.fingerprint_before.save(arguments.fingerprint)
-    print(f"\nFingerprint of {result.fields} fields -> {arguments.fingerprint}")
+    save_fingerprint(result, arguments.fingerprint)
 
     problems = broken(result, pat_round=True)
     if problems:
