@@ -29,7 +29,6 @@ measurement behind that is in ``validate_project_data()``.
 from __future__ import annotations
 
 import argparse
-import getpass
 import logging
 import subprocess
 import sys
@@ -40,12 +39,11 @@ from typing import TYPE_CHECKING
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from argo_rotation import (  # type: ignore[reportMissingImports]
-    Pairing,
+    ArgoPlan,
     plan_argo_round,
     write_repository_secret,
 )
 from key_rotation import (  # type: ignore[reportMissingImports]
-    PROJECT_FIELD_PRIVATE_KEY,
     Fingerprint,
     LooseValue,
     MissingKey,
@@ -90,6 +88,11 @@ class RoundResult:
     fingerprint_before: Fingerprint = field(default_factory=Fingerprint)
     fingerprint_after: Fingerprint = field(default_factory=Fingerprint)
     replaced_fields: list[str] = field(default_factory=list)
+    #: Passwords re-encrypted but not replaced, one line each, path and reason included.
+    kept: list[str] = field(default_factory=list)
+    #: Fields that open with neither key. Named, because a count of "converted" says nothing
+    #: about them and they are the third of the three numbers the dry run has to keep apart.
+    unreadable: list[str] = field(default_factory=list)
     committed: list[str] = field(default_factory=list)
 
     @property
@@ -160,6 +163,7 @@ async def run_round(
     old_private: str,
     new_private: str,
     *,
+    current_pat: str | None = None,
     new_pat: str | None = None,
     dry_run: bool = True,
     commit: bool = True,
@@ -180,22 +184,24 @@ async def run_round(
             old_private,
             new_private,
             new_public_key=new_public,
+            current_pat=current_pat,
             new_pat=new_pat,
             dry_run=dry_run,
         )
+        # Both lists are filled on a skipped file too: a password left alone is a finding
+        # whether or not the file had something else to convert, and so is an unreadable field.
+        result.kept.extend(report.kept)
+        result.unreadable.extend(report.unreadable)
         if report.skipped is not None:
             result.skipped.append(report)
             continue
         result.converted.append(report)
         result.fingerprint_before.fields.update(report.fingerprint_before.fields)
         result.fingerprint_after.fields.update(report.fingerprint_after.fields)
-        if new_pat is not None:
-            # Everything EXCEPT the project key: that one is only ever re-encrypted, never
-            # replaced. Derived from the field name rather than sniffed for ".password", so a
-            # future field cannot land on the replaced list by accident.
-            result.replaced_fields.extend(
-                key for key in report.fingerprint_before.fields if not key.endswith(f"#{PROJECT_FIELD_PRIVATE_KEY}")
-            )
+        # Exactly the fields whose PLAINTEXT was replaced, as the conversion itself reported
+        # them. Naming every password instead would excuse from the content check the very
+        # passwords the round deliberately left alone.
+        result.replaced_fields.extend(report.replaced)
         if report.rewritten and repo_root is not None:
             # The commits land in zad-projects next to OPI's own ("auto-tune: adjust
             # resources ..."), so they follow that wording rather than this repo's.
@@ -219,6 +225,16 @@ def report(result: RoundResult, directory: Path, *, dry_run: bool) -> None:
     print(f"\n{len(result.skipped)} project files skipped:")
     for round_report in result.skipped:
         print(f"  {display(round_report.path, directory)}: {round_report.skipped}")
+    if result.kept:
+        # Named one by one rather than counted: "2 left alone" is a number an operator can
+        # read past, and these two are precisely the fields that need a decision made by hand.
+        print(f"\n{len(result.kept)} repository passwords re-encrypted but NOT replaced:")
+        for line in result.kept:
+            print(f"  {line}")
+    if result.unreadable:
+        print(f"\n{len(result.unreadable)} fields open with neither key:")
+        for line in result.unreadable:
+            print(f"  FAIL {line}")
     if result.committed:
         print(f"\n{len(result.committed)} commits made, one per project. Nothing pushed.")
 
@@ -293,9 +309,23 @@ def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound
     why the mode comes in here: "already converted" answers the key question and says nothing
     about the token, so it drops off the list in the PAT round and the skips that name the
     password take its place.
+
+    A password left alone because it is not the current PAT belongs on the harmless side, and
+    that is a decision rather than an oversight. It is the round doing what it was asked; the
+    exit code says whether the round could do its work, and this file it could. After the key
+    round every field already sits on the new key, so such a project has nothing else to
+    convert and lands here rather than among the converted -- an exit 1 would then report
+    failure on exactly the fields the round correctly declined to touch. They are named
+    instead, twice: in this round's own report and in the three-number summary. The argo half
+    treats its drift the same way, for the same reason.
     """
     harmless = (
-        ("no encrypted platform fields", "no repository password", "the repository password already holds this PAT")
+        (
+            "no encrypted platform fields",
+            "no repository password",
+            "the repository password already holds this PAT",
+            "the repository password is not the current PAT",
+        )
         if pat_round
         else ("already converted", "no encrypted platform fields")
     )
@@ -358,6 +388,9 @@ class LooseField:
     field_: LooseValue
     plaintext: str
     opening_key: str
+    #: Whether it was the OLD key that opened it, so this value still has to move to B even
+    #: when its plaintext is left alone.
+    on_old_key: bool = False
 
     @property
     def name(self) -> str:
@@ -373,6 +406,8 @@ class LooseRound:
     closed: list[str] = field(default_factory=list)
     converted: list[str] = field(default_factory=list)
     already: list[str] = field(default_factory=list)
+    #: Carriers left alone because their plaintext is not the current PAT, with the reason.
+    kept: list[str] = field(default_factory=list)
 
 
 async def classify_loose_values(paths: list[Path], old_private: str, new_private: str) -> LooseRound:
@@ -384,10 +419,12 @@ async def classify_loose_values(paths: list[Path], old_private: str, new_private
     """
     result = LooseRound()
     for field_ in all_loose_values(paths):
-        for key in (old_private, new_private):
+        for index, key in enumerate((old_private, new_private)):
             plaintext = await decrypt_field(field_.value, key)
             if plaintext is not None:
-                entry = LooseField(field_=field_, plaintext=plaintext, opening_key=key)
+                # By position and not by comparing the key strings: the two are refused when
+                # they are equal, but "which one opened it" must not hang on that refusal.
+                entry = LooseField(field_=field_, plaintext=plaintext, opening_key=key, on_old_key=index == 0)
                 (result.carriers if is_github_token(plaintext) else result.others).append(entry)
                 break
         else:
@@ -395,16 +432,33 @@ async def classify_loose_values(paths: list[Path], old_private: str, new_private
     return result
 
 
-async def run_loose_round(result: LooseRound, new_public: str, new_pat: str, *, dry_run: bool) -> dict[str, str]:
-    """Put the new token in every loose value that carries the old one. Returns the new hashes.
+async def run_loose_round(
+    result: LooseRound, new_public: str, current_pat: str, new_pat: str, *, dry_run: bool
+) -> dict[str, str]:
+    """Put the new token in every loose value that carries the CURRENT one. Returns the new hashes.
+
+    The same conditional the other two places apply, for the same reason: "the plaintext is a
+    GitHub token" is a shape, and a shape does not say which token. A value holding an older one
+    keeps its plaintext and is named in ``kept`` -- but it is still RE-ENCRYPTED when it sits on
+    the old key, because the two halves are separate promises: the round declines to change the
+    content, not to finish the key rotation. Leaving it on A would fail the final check on a
+    field the round deliberately did not replace.
 
     The hashes go back into this repo's own record through ``update_record``: this is the one
-    round where a plaintext is supposed to change.
+    round where a plaintext is supposed to change. A kept value is not in there, and must not
+    be: its plaintext is the same, so its hash is too.
     """
     updates: dict[str, str] = {}
     for entry in result.carriers:
         if entry.plaintext == new_pat:
             result.already.append(entry.name)
+            continue
+        if entry.plaintext != current_pat:
+            result.kept.append(f"{entry.name}: a GitHub token that is not the current PAT, so it was left as it is")
+            if entry.on_old_key:
+                conversion = await convert_value(entry.field_.value, entry.opening_key, new_public)
+                if not dry_run:
+                    write_loose_value(entry.field_, conversion.new_value)
             continue
         conversion = await convert_value(entry.field_.value, entry.opening_key, new_public, new_plaintext=new_pat)
         if not dry_run:
@@ -423,11 +477,13 @@ def report_loose(result: LooseRound, *, dry_run: bool) -> None:
     repositories down without saying a word.
     """
     verb = "would replace" if dry_run else "replaced"
-    print(f"\n{len(result.converted)} loose values {verb} (they carry a GitHub token):")
+    print(f"\n{len(result.converted)} loose values {verb} (they carry the current PAT):")
     for name in result.converted:
         print(f"  {name}")
     for name in result.already:
         print(f"  already holds this token: {name}")
+    for name in result.kept:
+        print(f"  left as it is: {name}")
     print(f"\n{len(result.others)} loose values left alone (no GitHub token in the plaintext):")
     for entry in result.others:
         print(f"  {entry.name}")
@@ -445,38 +501,55 @@ async def run_argo_round(
     new_private: str,
     *,
     dry_run: bool,
-    expected: str | None = None,
-) -> tuple[Pairing, list[str], list[str]]:
-    """Bring every ArgoCD repository secret back in step with the project file it came from.
+    current_pat: str | None = None,
+    new_pat: str | None = None,
+) -> tuple[ArgoPlan, list[str]]:
+    """Bring every ArgoCD repository secret back in step, and replace the token it holds.
 
-    The value is taken from the project file and not from the new PAT: these secrets are DERIVED,
-    so whatever the project round decided about a repository is what lands here. A repository the
-    project round did not convert -- its password absent, ``plain:``, or in another form -- keeps
-    its own value, exactly as OPI would write it. The whole sandbox is that shape.
+    Without a PAT the value comes from the project file: these secrets are DERIVED, so whatever
+    the project round decided about a repository is what lands here. A repository the project
+    round did not convert -- its password absent, ``plain:``, or in another form -- keeps its own
+    value, exactly as OPI would write it. The whole sandbox is that shape.
 
-    ``expected`` is only for the dry run; ``plan_argo_round`` says why.
+    With a PAT the decision is the secret's own password against the current token, the same
+    conditional the project round applies; ``plan_argo_round`` says why deriving would undo it.
+    That also settles the dry run: the answer no longer depends on whether the project files
+    have been written yet, so the preview and the real run measure the same thing.
 
-    Returns the pairing, the secrets converted, and the fields that opened with neither key.
+    Returns the plan and the lines naming what was written.
     """
-    pairing, todo, closed = await plan_argo_round(clone, directory, old_private, new_private, expected=expected)
+    plan = await plan_argo_round(clone, directory, old_private, new_private, current_pat=current_pat, new_pat=new_pat)
     converted: list[str] = []
-    for secret, repository, password in todo:
+    for secret, repository, password in plan.todo:
         if not dry_run:
             write_repository_secret(secret, password)
         converted.append(f"{display(secret.path, clone)} <- {display(repository.path, directory)}")
-    return pairing, converted, closed
+    return plan, converted
 
 
-def report_argo(
-    pairing: Pairing, converted: list[str], closed: list[str], clone: Path, directory: Path, *, dry_run: bool
-) -> None:
-    """Print the argo round: what moved, what is not ours, and both sides of the coupling."""
+def report_argo(plan: ArgoPlan, converted: list[str], clone: Path, directory: Path, *, dry_run: bool) -> None:
+    """Print the argo round: what moved, what was left, what is not ours, and the coupling."""
+    pairing = plan.pairing
+    closed = plan.closed
     verb = "would update" if dry_run else "updated"
     print(f"\n{len(converted)} ArgoCD repository secrets {verb} in {clone}:")
     for line in converted:
         print(f"  {line}")
     if not converted and pairing.pairs:
         print(f"  none: all {len(pairing.pairs)} already hold what their project file holds")
+    if plan.kept:
+        print(f"\n{len(plan.kept)} repository secrets left as they are:")
+        for secret, repository, reason in plan.kept:
+            print(
+                f"  {display(secret.path, clone)} ({secret.name}): {reason}"
+                f" -- derived from {display(repository.path, directory)}#{repository.field_name}"
+            )
+    if plan.drift:
+        # Measured on the clone as it stands, so this is the drift that was ALREADY there and
+        # not a report on what this round just wrote.
+        print(f"\n{len(plan.drift)} repository secrets disagree with their project file:")
+        for line in plan.drift:
+            print(f"  {line}")
     if pairing.ssh_form:
         print(f"\n{len(pairing.ssh_form)} repository secrets on an SSH key, untouched by a PAT round:")
         for secret in pairing.ssh_form:
@@ -501,18 +574,20 @@ def report_argo(
         print(f"  FAIL opens with neither key: {display(path, clone)}")
 
 
-def argo_problems(pairing: Pairing, closed: list[str]) -> list[str]:
+def argo_problems(plan: ArgoPlan) -> list[str]:
     """The argo findings that stop the round, as lines.
 
     A secret no project file accounts for is one: nothing maintains its password, this round
     cannot derive a value for it, and after the old token is withdrawn it hands ArgoCD a dead
     credential. The other direction -- a project repository without a secret -- is reported but
-    does not stop; see ``report_argo``.
+    does not stop; see ``report_argo``. Drift does not stop the round either: the round no
+    longer flattens it, and what a differing secret should hold is a decision for a person.
     """
+    pairing = plan.pairing
     return (
         [f"no project file accounts for {secret.path} ({secret.name})" for secret in pairing.secrets_without_project]
         + [f"opens with neither key: {path}" for path in pairing.unreadable]
-        + [f"opens with neither key: {name}" for name in closed]
+        + [f"opens with neither key: {name}" for name in plan.closed]
     )
 
 
@@ -529,6 +604,11 @@ CANONICAL_OLD = REPO / "security" / "old_key.txt"
 #: the password fields as the ones that are MEANT to differ and the key field next to them
 #: still has to be unchanged.
 KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
+#: The two tokens, on disk in the same untracked ``security/`` the keys live in and answered
+#: the same way. Two files and not one: the round replaces only what IS the current PAT, so it
+#: has to be told what that is instead of assuming every value it can read is it.
+CANONICAL_PAT_CURRENT = REPO / "security" / "pat_current.txt"
+CANONICAL_PAT_NEW = REPO / "security" / "pat_new.txt"
 #: The record ``rotate-sops-key.py`` keeps for THIS repo. The PAT round does not write it, it
 #: CORRECTS the entries of the loose values whose plaintext it replaces -- see ``update_record``.
 REPO_FINGERPRINT = REPO / "security" / "fingerprint.json"
@@ -648,20 +728,43 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
     return 0
 
 
-# entry point 2: the PAT replacement, the same round with one argument more
+# entry point 2: the PAT replacement, the same round with the two tokens added
 
 
-def read_pat(path_argument: str | None) -> str:
-    """Take the new PAT from a file, or ask for it without echo."""
-    if path_argument:
-        value = Path(path_argument).read_text().strip()
-        if not value:
-            raise MissingKey(f"no PAT in {path_argument}")
-        return value
-    value = getpass.getpass("new GitHub PAT (not echoed): ").strip()
+def read_pat(path: str | Path) -> str:
+    """Take a PAT out of a file, the same shape the key files have.
+
+    A file and not a prompt, and never an argument: a token on the command line lands in the
+    shell history and in the process table, exactly as a key would. ``ask_for_path`` asks where
+    the file is with a default and refuses when it is not there, so the two PATs are answered
+    the way ``old_key.txt`` and ``key.txt`` are.
+    """
+    value = Path(path).read_text().strip()
     if not value:
-        raise MissingKey("no PAT entered")
+        raise MissingKey(f"no PAT in {path}")
     return value
+
+
+def report_pat_totals(project: RoundResult, loose: LooseRound, plan: ArgoPlan, *, dry_run: bool) -> None:
+    """The round in three numbers, counted apart over all three places.
+
+    One number cannot carry this. "58 fields converted" is true of a round that replaced 58
+    tokens and of one that replaced 56 and left two older ones alone, and the difference between
+    those two is the whole question the operator has to answer before revoking anything. So:
+    what was replaced, what was kept (and where), and what could not be read at all.
+    """
+    verb = "would be" if dry_run else "were"
+    replaced = len(project.replaced_fields) + len(loose.converted) + len(plan.todo)
+    kept = len(project.kept) + len(loose.kept) + len(plan.kept)
+    unreadable = len(project.unreadable) + len(loose.closed) + len(plan.closed) + len(plan.pairing.unreadable)
+    print("\nThe PAT round in three numbers, over the project files, this repo and the argo clone:")
+    print(f"  {replaced} fields {verb} replaced with the new PAT")
+    print(f"  {kept} fields {verb} left as they are (their value is not the current PAT)")
+    print(f"  {unreadable} fields open with neither key")
+    for line in [*project.kept, *loose.kept]:
+        print(f"  kept: {line}")
+    for secret, repository, reason in plan.kept:
+        print(f"  kept: {secret.path} ({secret.name}): {reason} -- from {repository.path}#{repository.field_name}")
 
 
 def build_pat_parser() -> argparse.ArgumentParser:
@@ -672,7 +775,18 @@ def build_pat_parser() -> argparse.ArgumentParser:
         required=True,
         help="clone of zad-argo-user-applications, holding the ArgoCD repository secrets",
     )
-    parser.add_argument("--pat-file", help="file holding the new PAT; without it you are asked, without echo")
+    parser.add_argument(
+        "--pat-current-file",
+        default=str(CANONICAL_PAT_CURRENT),
+        help="file holding the PAT that is being replaced; only fields holding THIS value are replaced",
+    )
+    parser.add_argument(
+        "--pat-new-file",
+        "--pat-file",
+        dest="pat_new_file",
+        default=str(CANONICAL_PAT_NEW),
+        help="file holding the new PAT (--pat-file is the old name for this)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="say what would happen and stop")
     parser.add_argument("--ja", action="store_true", help="take every default and skip the confirmation")
     parser.add_argument("--no-commit", action="store_true", help="write the files but make no commits")
@@ -704,12 +818,18 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     try:
         old_private = read_key(ask_for_path("old key", arguments.old_key, reader=reader))
         new_private = read_key(ask_for_path("new key", arguments.new_key, reader=reader))
-        new_pat = read_pat(arguments.pat_file)
+        current_pat = read_pat(ask_for_path("current PAT", arguments.pat_current_file, reader=reader))
+        new_pat = read_pat(ask_for_path("new PAT", arguments.pat_new_file, reader=reader))
     except (MissingKey, OSError) as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
     if public_key_of(old_private) == public_key_of(new_private):
         print("FAIL the old and the new key are the same key", file=sys.stderr)
+        return 2
+    if current_pat == new_pat:
+        # The same refusal the keys get, and for the same reason: a round with nothing to move
+        # to would report every field as "already holds this PAT" and read as a finished round.
+        print("FAIL the current and the new PAT are the same token", file=sys.stderr)
         return 2
     new_public = public_key_of(new_private)
 
@@ -717,21 +837,25 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     if refusal:
         return refusal
     print(f"\n{len(found)} project files in {directory}")
-    print("The repository password is REPLACED; config.age-private-key is only re-encrypted.")
-    print("Its fingerprint hash therefore has to differ at exactly the password fields.")
+    print("A repository password is replaced only where it IS the current PAT; anything else is")
+    print("re-encrypted with its value untouched and named below. config.age-private-key is")
+    print("never replaced, so its fingerprint hash has to stay identical.")
 
-    preview = await run_round(directory, old_private, new_private, new_pat=new_pat, dry_run=True, commit=False)
+    preview = await run_round(
+        directory, old_private, new_private, current_pat=current_pat, new_pat=new_pat, dry_run=True, commit=False
+    )
     report(preview, directory, dry_run=True)
 
     loose_preview = await classify_loose_values(loose_paths(), old_private, new_private)
-    await run_loose_round(loose_preview, new_public, new_pat, dry_run=True)
+    await run_loose_round(loose_preview, new_public, current_pat, new_pat, dry_run=True)
     report_loose(loose_preview, dry_run=True)
 
-    argo_preview, argo_converted, argo_closed = await run_argo_round(
-        argo, directory, old_private, new_private, dry_run=True, expected=new_pat
+    argo_preview, argo_converted = await run_argo_round(
+        argo, directory, old_private, new_private, dry_run=True, current_pat=current_pat, new_pat=new_pat
     )
-    report_argo(argo_preview, argo_converted, argo_closed, argo, directory, dry_run=True)
-    blocking = argo_problems(argo_preview, argo_closed) + [f"opens with neither key: {n}" for n in loose_preview.closed]
+    report_argo(argo_preview, argo_converted, argo, directory, dry_run=True)
+    report_pat_totals(preview, loose_preview, argo_preview, dry_run=True)
+    blocking = argo_problems(argo_preview) + [f"opens with neither key: {n}" for n in loose_preview.closed]
 
     if arguments.dry_run:
         print("\nDry run: nothing was changed.")
@@ -756,7 +880,13 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
         return 0
 
     result = await run_round(
-        directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
+        directory,
+        old_private,
+        new_private,
+        current_pat=current_pat,
+        new_pat=new_pat,
+        dry_run=False,
+        commit=not arguments.no_commit,
     )
     report(result, directory, dry_run=False)
     drifted = await save_fingerprint(
@@ -764,16 +894,20 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     )
 
     loose_result = await classify_loose_values(loose_paths(), old_private, new_private)
-    updates = await run_loose_round(loose_result, new_public, new_pat, dry_run=False)
+    updates = await run_loose_round(loose_result, new_public, current_pat, new_pat, dry_run=False)
     report_loose(loose_result, dry_run=False)
     record_objections = update_record(arguments.repo_fingerprint, updates)
     for objection in record_objections:
         print(f"FAIL {objection}", file=sys.stderr)
 
-    # After the project files: the value written here is the one that now stands in them.
-    pairing, converted, closed = await run_argo_round(argo, directory, old_private, new_private, dry_run=False)
-    report_argo(pairing, converted, closed, argo, directory, dry_run=False)
-    argo_left = argo_problems(pairing, closed)
+    # The same question the preview asked: the secret's own password against the current token,
+    # which does not depend on the project files having been written first.
+    plan, converted = await run_argo_round(
+        argo, directory, old_private, new_private, dry_run=False, current_pat=current_pat, new_pat=new_pat
+    )
+    report_argo(plan, converted, argo, directory, dry_run=False)
+    report_pat_totals(result, loose_result, plan, dry_run=False)
+    argo_left = argo_problems(plan)
     for line in argo_left:
         print(f"FAIL {line}", file=sys.stderr)
 
@@ -791,5 +925,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     print("Push all three, check that a project can reach its repository and that ArgoCD still")
     print("renders, and only then revoke the old PAT on GitHub. The final check proves the rest:")
     print("  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead")
-    print(f"  --projects {directory} --argo-applications {argo} --pat-file <the new PAT>")
+    print(f"  --projects {directory} --argo-applications {argo}")
+    print(f"  --pat-current-file {arguments.pat_current_file} --pat-new-file {arguments.pat_new_file}")
+    print("The current-PAT half of that check is the one that says the old token is dead.")
     return 0

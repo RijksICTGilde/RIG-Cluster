@@ -12,9 +12,9 @@ Zie `features/sops-sleutel-vervangen.md` voor het hele verhaal, inclusief de met
 
 | ingang | doet |
 |---|---|
-| `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead`, die laatste met `--pat-file` ook over de TOKEN |
+| `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead`, die laatste met `--pat-new-file` ook over de TOKEN en met `--pat-current-file` over de vraag of de vervangen token nog ergens ontsleutelt |
 | `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
-| `replace-git-pat.py` | de PAT-ronde, en die is even breed als de sleutelronde: de projectbestanden, de losse waarden die de token DRAGEN, en de ArgoCD repository-secrets (`--argo-applications`, verplicht) |
+| `replace-git-pat.py` | de PAT-ronde, en die is even breed als de sleutelronde: de projectbestanden, de losse waarden die de token DRAGEN, en de ArgoCD repository-secrets (`--argo-applications`, verplicht). Neemt TWEE tokenbestanden (`security/pat_current.txt` en `security/pat_new.txt`) en vervangt alleen waar de waarde de huidige token IS |
 | `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
 
 De logica zit in modules ernaast, want een streepje in een bestandsnaam is niet importeerbaar en

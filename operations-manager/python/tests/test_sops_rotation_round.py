@@ -2709,7 +2709,8 @@ async def test_the_final_check_without_a_pat_file_says_it_only_measured_the_key(
 
     printed = capsys.readouterr().out
     assert code == 0
-    assert "NOTE without --pat-file this is a check on the KEY only." in printed
+    assert "NOTE without --pat-new-file this is a check on the KEY only." in printed
+    assert "NOTE without --pat-current-file nothing here proves the OLD PAT is gone." in printed
     assert "CLEAN the old key opens nothing, the new key opens everything" in printed
     assert "every GitHub token is the new one" not in printed
 
@@ -2771,7 +2772,7 @@ async def test_a_git_server_password_is_not_held_to_the_github_token(
     assert "and every GitHub token is the new one" in printed
     # And the NOTE about the half that was NOT measured stays silent, or the verdict above
     # would be read as covering less than it does.
-    assert "NOTE without --pat-file" not in printed
+    assert "NOTE without --pat-new-file" not in printed
 
 
 @pytest.mark.asyncio
@@ -2792,7 +2793,72 @@ async def test_a_pat_file_outside_the_final_check_is_refused(tmp_path: Path, cap
     )
 
     assert code == 2
-    assert "--pat-file belongs to --assert-old-key-dead" in capsys.readouterr().err
+    assert "a PAT file belongs to --assert-old-key-dead" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_catches_a_field_that_still_decrypts_to_the_current_pat(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The real "the old PAT is dead" assertion, and it is not the same as the shape rule.
+
+    The stored token here is deliberately NOT a shape the scanner rules recognise, so
+    ``holds_another_token`` stays silent and the tree reads CLEAN on every other half: the key
+    round did its work, the value sits on the new key, and nothing calls it a GitHub token.
+    Only equality with the token that was supposed to be replaced can see it -- which is why
+    this half exists next to the other one rather than inside it.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": current}, new_public)
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    project = await _project_file(projects, "een", new_public, token=current)
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
+        without = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert without == 0, "every other half is happy, which is exactly the problem"
+    assert code == 1
+    assert f"FAIL still decrypts to the current PAT: {env_path}#PROJECT_REPO_PASSWORD" in printed
+    assert f"FAIL still decrypts to the current PAT: {project}#repositories[0].password" in printed
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The counter-check: the same tree with the token replaced reads clean, and SAYS so.
+
+    Without this the test above would pass just as well on a check that reports every field,
+    and the verdict line is what the operator revokes the old token on.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "the-new-one"}, new_public)
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "and nothing decrypts to the current PAT any more" in printed
+    assert "NOTE without --pat-current-file" not in printed
 
 
 @pytest.mark.asyncio

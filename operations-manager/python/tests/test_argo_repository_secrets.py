@@ -294,13 +294,13 @@ async def test_a_project_password_that_is_not_on_the_platform_key_is_reported_an
     project_file.write_text(project_file.read_text().replace(BASE64_AGE_PREFIX, "plain:", 1))
     before = raw_hashes(clone)
 
-    pairing, converted, closed = await round_tool.run_argo_round(
+    plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
-    round_tool.report_argo(pairing, converted, closed, clone, projects, dry_run=False)
+    round_tool.report_argo(plan, converted, clone, projects, dry_run=False)
 
-    assert round_tool.argo_problems(pairing, closed) == []
-    assert [s.path for s, _r in pairing.without_platform_password] == [secret]
+    assert round_tool.argo_problems(plan) == []
+    assert [s.path for s, _r in plan.pairing.without_platform_password] == [secret]
     assert converted == []
     assert raw_hashes(clone) == before
     assert "holds no platform-key password" in capsys.readouterr().out
@@ -314,24 +314,70 @@ async def test_the_dry_run_previews_the_round_the_operator_is_about_to_start(
     """The preview runs BEFORE the project files are written, and has to say so truthfully.
 
     In the ordinary case both sides still hold the old token when the dry run looks: the project
-    round has not run yet. Comparing against the project file as it stands would then report
-    "nothing to do" for a round that is about to convert every secret in the clone -- and the dry
-    run is the thing the operator reads before starting the irreversible half.
+    round has not run yet. The decision is therefore taken on the SECRET's own password against
+    the current token, not on the project file -- so the preview and the real run measure the
+    same thing, whichever order they run in. Deriving from the project file needed a separate
+    "pretend it already says the new token" argument for the preview, and that argument is what
+    hid real drift: every secret differed from it, so every secret read as ordinary work.
     """
     platform_private, platform_public = platform_keys
     projects, clone, _secret = await a_pair(
         tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
     )
 
-    _pairing, blind, _closed = await round_tool.run_argo_round(
-        clone, projects, platform_private, platform_private, dry_run=True
+    _plan, before_the_project_round = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=True, current_pat=OLD_TOKEN, new_pat=NEW_TOKEN
     )
-    _pairing, previewed, _closed = await round_tool.run_argo_round(
-        clone, projects, platform_private, platform_private, dry_run=True, expected=NEW_TOKEN
+    # The state the project round leaves behind: the file already says the new token.
+    project_file = projects / "een.yaml"
+    project_file.write_text(
+        project_file.read_text().replace(
+            await _encrypted(OLD_TOKEN, platform_public), await _encrypted(NEW_TOKEN, platform_public)
+        )
+    )
+    _plan, after_the_project_round = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=True, current_pat=OLD_TOKEN, new_pat=NEW_TOKEN
     )
 
-    assert blind == [], "both sides agree today, so a preview without the token sees nothing"
-    assert len(previewed) == 1
+    assert len(before_the_project_round) == 1
+    assert after_the_project_round == before_the_project_round
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_a_secret_on_another_token_keeps_it_and_is_named_with_its_drift(
+    tmp_path: Path, platform_keys: tuple[str, str], capsys: pytest.CaptureFixture
+) -> None:
+    """The live case this conditional exists for, on the argo side.
+
+    Measured against the real clones: two of the 67 repository secrets hold a value the other 65
+    do not, on the same GitHub URL, and for one of them the project file says something else
+    again -- drift that was already there. The old round derived the value from the project file
+    and would have written over both without a word, and the drift with it. Now the secret keeps
+    its password, and both facts are printed: what was left alone, and what disagrees.
+    """
+    platform_private, platform_public = platform_keys
+    older_token = "ghp_" + "x" * 36
+    projects, clone, secret = await a_pair(
+        tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=older_token
+    )
+    before = raw_hashes(clone)
+
+    plan, converted = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=False, current_pat=OLD_TOKEN, new_pat=NEW_TOKEN
+    )
+    round_tool.report_argo(plan, converted, clone, projects, dry_run=False)
+    printed = capsys.readouterr().out
+
+    assert converted == []
+    assert [s.path for s, _r, _reason in plan.kept] == [secret]
+    assert decrypted(secret, platform_private)["stringData"]["password"] == older_token
+    assert raw_hashes(clone) == before
+    assert "its password is not the current PAT" in printed
+    # The drift was there before this round and is reported as such, not flattened into silence.
+    assert len(plan.drift) == 1
+    assert "disagrees with its project file" in printed
+    assert round_tool.argo_problems(plan) == [], "drift is a finding for a person, not a stop"
 
 
 @needs_sops
@@ -341,7 +387,7 @@ async def test_a_dry_run_writes_nothing(tmp_path: Path, platform_keys: tuple[str
     projects, clone, secret = await a_pair(tmp_path, platform_private, platform_public)
     before = raw_hashes(clone)
 
-    _pairing, converted, _closed = await round_tool.run_argo_round(
+    _plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=True
     )
 
@@ -364,7 +410,7 @@ async def test_a_second_round_rewrites_nothing_at_all(tmp_path: Path, platform_k
     await round_tool.run_argo_round(clone, projects, platform_private, platform_private, dry_run=False)
     after_first = raw_hashes(clone)
 
-    _pairing, converted, _closed = await round_tool.run_argo_round(
+    _plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
@@ -451,10 +497,10 @@ async def test_a_secret_no_project_accounts_for_stops_the_round(tmp_path: Path, 
     )
     before = raw_hashes(clone)
 
-    pairing, _converted, closed = await round_tool.run_argo_round(
+    plan, _converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=True
     )
-    problems = round_tool.argo_problems(pairing, closed)
+    problems = round_tool.argo_problems(plan)
 
     assert len(problems) == 1
     assert "weggegooid-main-repo" in problems[0]
@@ -482,13 +528,11 @@ async def test_a_project_without_a_secret_is_named_but_does_not_stop_the_round(
     projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
     await write_project(projects, "nooit-verwerkt", platform_public, token=NEW_TOKEN)
 
-    pairing, converted, closed = await round_tool.run_argo_round(
-        clone, projects, platform_private, platform_private, dry_run=True
-    )
-    round_tool.report_argo(pairing, converted, closed, clone, projects, dry_run=True)
+    plan, converted = await round_tool.run_argo_round(clone, projects, platform_private, platform_private, dry_run=True)
+    round_tool.report_argo(plan, converted, clone, projects, dry_run=True)
 
-    assert round_tool.argo_problems(pairing, closed) == []
-    assert [r.project for r in pairing.repositories_without_secret] == ["nooit-verwerkt"]
+    assert round_tool.argo_problems(plan) == []
+    assert [r.project for r in plan.pairing.repositories_without_secret] == ["nooit-verwerkt"]
     printed = capsys.readouterr().out
     assert "nooit-verwerkt/main-repo" in printed
     assert "nooit-verwerkt-main-repo" in printed, "the names it was looked up under, so the miss is checkable"
@@ -521,11 +565,11 @@ async def test_the_infrastructure_secret_of_the_same_repository_is_matched_too(
         platform_public,
     )
 
-    pairing, converted, closed = await round_tool.run_argo_round(
+    plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
-    assert round_tool.argo_problems(pairing, closed) == []
+    assert round_tool.argo_problems(plan) == []
     assert len(converted) == 2
     assert decrypted(secret, platform_private)["stringData"]["password"] == NEW_TOKEN
     assert decrypted(infrastructure, platform_private)["stringData"]["password"] == NEW_TOKEN
@@ -627,13 +671,13 @@ async def test_another_kind_of_sops_file_in_the_clone_is_left_out_of_the_round(
     assert application.is_file(), "the other manifest has to be a SOPS file, or this proves nothing"
 
     secrets, unreadable = read_repository_secrets(clone, platform_private)
-    pairing, converted, closed = await round_tool.run_argo_round(
+    plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
     assert [s.path for s in secrets] == [secret]
     assert unreadable == []
-    assert round_tool.argo_problems(pairing, closed) == []
+    assert round_tool.argo_problems(plan) == []
     assert len(converted) == 1
 
 
@@ -664,14 +708,14 @@ async def test_a_secret_that_opens_with_neither_key_stops_the_round(
         stranger_public,
     )
 
-    pairing, _converted, closed = await round_tool.run_argo_round(
+    plan, _converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=True
     )
     check = FinalCheck()
     await check_repository_secrets(clone, projects, platform_private, platform_private, check)
 
-    assert pairing.unreadable == [lost]
-    assert f"opens with neither key: {lost}" in round_tool.argo_problems(pairing, closed)
+    assert plan.pairing.unreadable == [lost]
+    assert f"opens with neither key: {lost}" in round_tool.argo_problems(plan)
     assert not check.clean
     assert [line for line in check.argo_drift if "opens with neither key" in line] == [
         f"opens with neither key: {lost}"
@@ -787,6 +831,7 @@ async def a_round_to_run(
     (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     (tmp_path / "pat.txt").write_text(f"{NEW_TOKEN}\n")
+    (tmp_path / "pat-current.txt").write_text(f"{OLD_TOKEN}\n")
     record = Fingerprint()
     record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(OLD_TOKEN))
     record.save(tmp_path / "repo-fingerprint.json")
@@ -799,6 +844,8 @@ async def a_round_to_run(
         str(clone),
         "--pat-file",
         str(tmp_path / "pat.txt"),
+        "--pat-current-file",
+        str(tmp_path / "pat-current.txt"),
         "--old-key",
         str(tmp_path / "old_key.txt"),
         "--new-key",
@@ -929,10 +976,68 @@ async def test_a_repository_without_credentials_renders_a_secret_the_round_leave
     assert decrypted(secret, platform_private)["stringData"]["password"] is None
     before = raw_hashes(clone)
 
-    pairing, converted, closed = await round_tool.run_argo_round(
+    plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
-    assert [s.credential_form for s in pairing.ssh_form] == ["no credentials"]
-    assert (pairing.pairs, converted, closed) == ([], [], [])
+    assert [s.credential_form for s in plan.pairing.ssh_form] == ["no credentials"]
+    assert (plan.pairing.pairs, converted, plan.closed) == ([], [], [])
     assert raw_hashes(clone) == before
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_drift_that_was_already_there_survives_the_round_and_the_final_check_reports_it(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """The shape the review measured, end to end: the round no longer flattens existing drift.
+
+    A secret on an older token whose project file says something else again. The old round
+    derived the secret's value from the project file, so it wrote the drift away and the final
+    check -- which asks the same question afterwards -- found nothing left to report. Now the
+    secret keeps its value, so the disagreement is still there to be found, and the check reads
+    the measurement against the project file rather than the worklist it would have written.
+    """
+    platform_private, platform_public = platform_keys
+    older_token = "ghp_" + "x" * 36
+    projects, clone, secret = await a_pair(
+        tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=older_token
+    )
+
+    await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=False, current_pat=OLD_TOKEN, new_pat=NEW_TOKEN
+    )
+    check = FinalCheck()
+    await check_repository_secrets(clone, projects, platform_private, platform_private, check)
+
+    assert decrypted(secret, platform_private)["stringData"]["password"] == older_token
+    assert not check.clean
+    assert [line for line in check.argo_drift if "disagrees with its project file" in line] != []
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_an_argo_secret_that_still_holds_the_current_pat_fails_the_final_check(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """The third of the three places, on the assertion that says the old token is dead.
+
+    A secret the round skipped sits on the platform key perfectly well and hands ArgoCD the
+    withdrawn credential at the next sync. Equality with the token that was replaced is the only
+    thing that sees it.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, _secret = await a_pair(
+        tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
+    )
+
+    clean = FinalCheck()
+    await check_repository_secrets(clone, projects, platform_private, platform_private, clean)
+    with_current = FinalCheck()
+    await check_repository_secrets(
+        clone, projects, platform_private, platform_private, with_current, current_pat=OLD_TOKEN
+    )
+
+    assert clean.clean, "both sides agree, so every other half is happy"
+    assert not with_current.clean
+    assert with_current.still_holds_current_pat != []

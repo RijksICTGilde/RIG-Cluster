@@ -13,11 +13,18 @@ a different repo and belong to a round of their own, with its own commits.
 
 Paste those lines whole: ``scripts/README.md`` says why the launcher is part of the command.
 
-The final check answers two questions, and the second one needs a flag. Without ``--pat-file``
-it is about the KEY alone: the old one opens nothing, the new one opens everything. A field
-can satisfy that and still hold the withdrawn GitHub token, because re-encrypting changes the
-key and not the content. ``--pat-file`` adds that half, over the loose values, the project
-files and the ArgoCD repository secrets at once. ``replace-git-pat.py`` is what writes them.
+The final check answers three questions, and two of them need a flag. Without one it is about
+the KEY alone: the old one opens nothing, the new one opens everything. A field can satisfy
+that and still hold the withdrawn GitHub token, because re-encrypting changes the key and not
+the content. ``--pat-new-file`` adds the question "is every GitHub token the new one", over the
+loose values, the project files and the ArgoCD repository secrets at once.
+
+``--pat-current-file`` adds the sharper one underneath: no field, in any of those three places,
+may still decrypt to the token that was replaced. That is the real "the old PAT is dead"
+assertion, and it is not the same as the one above -- that one recognises a token by its SHAPE,
+so a token shape the scanner rules do not carry slips past it, while equality with the value
+that was replaced needs no shape at all. ``replace-git-pat.py`` is what writes them, and it
+takes the same two files.
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
@@ -452,6 +459,7 @@ async def run_final_check(
     trees: list[Path] | None = None,
     argo: Path | None = None,
     pat: str | None = None,
+    current_pat: str | None = None,
 ) -> FinalCheck:
     """A must fail everywhere, B must succeed everywhere, and the count must match.
 
@@ -470,24 +478,26 @@ async def run_final_check(
     a count built from the same glob report CLEAN over everything that glob does not see.
     """
     trees = trees if trees is not None else [REPO]
-    check = FinalCheck(expected=expected, token_checked=pat is not None)
+    check = FinalCheck(expected=expected, token_checked=pat is not None, current_pat_checked=current_pat is not None)
     for path in sops_on_either_recipient(old_public, new_public, trees):
         check_sops_file(path, old_private, new_private, check)
     for path in loose_paths():
         for field_ in loose_values(path):
-            await check_value(loose_fingerprint_key(field_), field_.value, old_private, new_private, check, pat)
+            await check_value(
+                loose_fingerprint_key(field_), field_.value, old_private, new_private, check, pat, current_pat
+            )
     for name, value in own_project_fields():
-        await check_value(name, value, old_private, new_private, check, pat)
+        await check_value(name, value, old_private, new_private, check, pat, current_pat)
     if projects is not None:
         for path in project_files(projects):
             data = load_yaml_from_path(str(path))
             if not isinstance(data, dict):
                 continue
             for field_name, value in project_fields(data):
-                await check_value(f"{path}#{field_name}", value, old_private, new_private, check, pat)
+                await check_value(f"{path}#{field_name}", value, old_private, new_private, check, pat, current_pat)
         check.outside_coverage.extend(str(path) for path in project_coverage_gaps(projects))
         if argo is not None:
-            await check_repository_secrets(argo, projects, old_private, new_private, check, pat)
+            await check_repository_secrets(argo, projects, old_private, new_private, check, pat, current_pat)
     check.outside_coverage.extend(short(path) for path in coverage_gaps(trees))
     await check_exceptions(old_private, check)
     return check
@@ -654,8 +664,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="directory with project files, so the final check and --verify walk the fourth place too",
     )
     parser.add_argument(
+        "--pat-new-file",
         "--pat-file",
+        dest="pat_new_file",
         help="file holding the new GitHub PAT, so the final check measures the token as well",
+    )
+    parser.add_argument(
+        "--pat-current-file",
+        help="file holding the PAT that was replaced; the final check then proves no field"
+        " decrypts to it any more, which is the real 'the old PAT is dead' assertion",
     )
     parser.add_argument(
         "--argo-applications",
@@ -665,7 +682,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def note_places_left_out(projects: Path | None, argo: Path | None, pat: str | None) -> None:
+def note_places_left_out(
+    projects: Path | None, argo: Path | None, pat: str | None, current_pat: str | None = None
+) -> None:
     """Which of the places the final check does not walk, because its flag was left off."""
     if projects is None:
         print("NOTE without --projects the final check does not walk the fourth place.")
@@ -676,8 +695,12 @@ def note_places_left_out(projects: Path | None, argo: Path | None, pat: str | No
         print("NOTE the ArgoCD repository secrets are only held against their project files")
         print("when --projects is given too; they are DERIVED from those files.")
     if pat is None:
-        print("NOTE without --pat-file this is a check on the KEY only. A field can sit on the")
-        print("new key and still carry the withdrawn token; that half is not measured here.")
+        print("NOTE without --pat-new-file this is a check on the KEY only. A field can sit on")
+        print("the new key and still carry the withdrawn token; that half is not measured here.")
+    if current_pat is None:
+        print("NOTE without --pat-current-file nothing here proves the OLD PAT is gone. The")
+        print("token half above asks whether a value is a GitHub token that is not the new one,")
+        print("which depends on the shape; equality with the token that was replaced does not.")
 
 
 def note_argo_left_out_of_the_record(argo: Path | None) -> None:
@@ -716,15 +739,18 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
 
-    if arguments.pat_file and not (arguments.assert_old_key_dead or arguments.remove_old_key):
+    if (arguments.pat_new_file or arguments.pat_current_file) and not (
+        arguments.assert_old_key_dead or arguments.remove_old_key
+    ):
         # Reading it anyway and doing nothing with it is worse than refusing: the operator who
         # passed it believes the token was measured, and that belief is what decides whether the
         # old one gets revoked.
-        print("FAIL --pat-file belongs to --assert-old-key-dead (or --remove-old-key).", file=sys.stderr)
+        print("FAIL a PAT file belongs to --assert-old-key-dead (or --remove-old-key).", file=sys.stderr)
         print("The converting round replaces no token; replace-git-pat.py does that.", file=sys.stderr)
         return 2
     try:
-        pat = read_pat(arguments.pat_file) if arguments.pat_file else None
+        pat = read_pat(arguments.pat_new_file) if arguments.pat_new_file else None
+        current_pat = read_pat(arguments.pat_current_file) if arguments.pat_current_file else None
     except (MissingKey, OSError) as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
@@ -767,11 +793,11 @@ async def main(argv: list[str] | None = None) -> int:
         return run_rename(old_path, new_path, yes=arguments.ja)
 
     if arguments.assert_old_key_dead or arguments.remove_old_key:
-        note_places_left_out(projects, argo, pat)
+        note_places_left_out(projects, argo, pat, current_pat)
         fingerprints = [fingerprint_path, projects_fingerprint]
         expected = expected_count(fingerprints) if projects is not None else None
         check = await run_final_check(
-            old_private, new_private, old_public, new_public, projects, expected, trees, argo, pat
+            old_private, new_private, old_public, new_public, projects, expected, trees, argo, pat, current_pat
         )
         for line in check.lines():
             print(line)

@@ -223,22 +223,74 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 #    De argo-clone hoort erbij en is verplicht: het repo-wachtwoord staat daar als PLATTE
 #    waarde IN het sops-bestand, dus een PAT-ronde zonder die vlag laat ArgoCD op de
 #    ingetrokken token staan. Zie "De PAT-ronde raakt drie plekken".
-#    Zet de nieuwe token eerst in security/new-pat.txt -- die map staat in .gitignore, en de
-#    eindtoets van 7b heeft hem ook nodig. Zonder --pat-file vraagt het script erom zonder echo
+#    TWEE tokenbestanden, in dezelfde vorm als old_key.txt / key.txt: security/pat_current.txt
+#    is de token die vervangen wordt en security/pat_new.txt die ervoor in de plaats komt. Dat
+#    zijn ook de defaults, dus zonder vlag vraagt het script er met die paden naar. Alleen een
+#    veld dat de HUIDIGE token bevat wordt vervangen; de rest gaat mee naar sleutel B met zijn
+#    waarde intact en wordt bij pad gemeld. Zie "Vervangen is voorwaardelijk"
 rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
 rm -rf /tmp/zad-argo && git clone <zad-argo-user-applications> /tmp/zad-argo
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt --dry-run
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --dry-run
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 
-# 7b. de eindtoets MET de token erbij. Zonder --pat-file gaat hij alleen over de SLEUTEL, en
-#     een veld kan keurig op de nieuwe sleutel staan en de ingetrokken token bevatten
-uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt
+# 7b. de eindtoets MET beide tokens erbij. Zonder --pat-new-file gaat hij alleen over de
+#     SLEUTEL, en een veld kan keurig op de nieuwe sleutel staan en de ingetrokken token
+#     bevatten. --pat-current-file is de scherpste van de twee: geen enkel veld, op geen van
+#     de drie plekken, ontsleutelt dan nog naar de token die vervangen is
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-new-file security/pat_new.txt --pat-current-file security/pat_current.txt
 
 # 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg. Daarna ook
-#    security/new-pat.txt opruimen: de token staat dan waar hij hoort
+#    de twee tokenbestanden opruimen: de token staat dan waar hij hoort
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
-rm -f security/new-pat.txt
+rm -f security/pat_current.txt security/pat_new.txt
 ```
+
+### Vervangen is voorwaardelijk
+
+De PAT-ronde vervangt een waarde alleen waar die waarde de HUIDIGE token IS. Daarom twee
+tokenbestanden in plaats van een: zonder de huidige token heeft de ronde niets om tegen te
+vergelijken en is "voorwaardelijk" alleen een andere naam voor de blinde variant. Beide worden
+als pad met een default gevraagd, net als de sleutels, en een bestand dat er niet is wordt
+geweigerd met dat pad in de melding. Onder de ingang weigert de motor hetzelfde: een nieuwe
+token zonder huidige is daar een fout en geen stilzwijgende terugval. Twee dezelfde tokens
+worden ook geweigerd, zoals twee dezelfde sleutels.
+
+Gemeten tegen de echte repos is dat geen randgeval. De 58 projectwachtwoorden dragen vandaag
+allemaal dezelfde waarde, maar de 67 argo-repository-secrets die eruit zijn afgeleid niet: 65
+dragen die waarde en twee iets anders, allebei op dezelfde GitHub-URL -- vrijwel zeker een
+oudere token. Voor een van die twee zegt het projectbestand het ene en het secret het andere: er
+stond al drift.
+
+Dat de projectbestanden vandaag uniform zijn maakt de voorwaarde daar niet overbodig: niets
+houdt die helft uniform, en een onvoorwaardelijke ronde vervangt wat hij kan lezen. Hij schrijft
+de nieuwe token over die drie gevallen heen zonder een woord, en plet de drift mee. Wat er nu
+gebeurt:
+
+| de waarde van het veld | wat de ronde doet |
+|---|---|
+| is de huidige token | vervangen door de nieuwe, en meteen omgesleuteld naar sleutel B |
+| is de nieuwe token al | niets; de ronde is hier al geweest |
+| is iets anders | waarde ongemoeid, alleen omsleutelen naar B waar hij nog op A staat, en het veld melden met pad en reden |
+| opent met geen van beide sleutels | melden, en het bestand niet half schrijven |
+
+De rechterkolom gaat over de velden die zelf versleuteld zijn: de projectbestanden en de losse
+waarden in deze repo. Een argo-repository-secret draagt zijn wachtwoord als PLATTE waarde IN een
+sops-bestand, dus daar is er geen veld om apart om te sleutelen -- de sleutelronde heeft dat
+bestand al verplaatst. De voorwaarde zelf is er dezelfde: is het de huidige token, dan de nieuwe
+erin, anders blijft hij staan en wordt hij gemeld.
+
+Bij de argo-secrets betekent dat ook dat de waarde NIET meer uit het projectbestand wordt
+afgeleid zodra er een token in het spel is: afleiden zou de voorwaarde via de achterdeur
+ongedaan maken, want het projectbestand houdt zijn oudere token nu juist vast. Wat het secret en zijn projectbestand van elkaar vinden wordt apart gemeten en
+apart gemeld, tegen het bestand zelf en nooit tegen een waarde die de ronde nog moet schrijven.
+Dat laatste was precies de fout: in de droogloop werd vergeleken met de token die geschreven
+ging worden, dus verschilde elk secret en viel het ene dat echt afweek niet op.
+
+De droogloop telt daarom drie getallen apart, over de drie plekken samen: wat vervangen wordt,
+wat blijft staan (met de paden erbij) en wat met geen van beide sleutels opent. Een getal kan
+dit niet dragen -- "58 velden omgezet" klopt zowel voor een ronde die 58 tokens verving als voor
+een die er 56 verving en twee oudere liet staan, en dat verschil is de hele vraag die je
+beantwoordt voordat je de oude token intrekt.
 
 ### De PAT-ronde raakt drie plekken
 
@@ -284,12 +336,16 @@ praat ArgoCD met een token die niet meer bestaat, en dat merk je pas bij de eers
 
 De ronde schrijft daar wat OPI zelf zou schrijven, en niet iets wat erop lijkt:
 
-* de waarde komt uit het PROJECTBESTAND, niet uit `--pat-file`. Deze secrets zijn AFGELEID, dus
-  wat de projectronde over een repository besloot is wat hier terechtkomt -- inclusief het
-  besluit om hem met rust te laten. Een wachtwoord dat ontbreekt, `plain:` is of in een andere
-  vorm staat hangt niet aan de platformsleutel, de projectronde slaat hem over, en dan valt er
-  hier niets af te leiden en blijft het secret staan. Dat is geen randgeval: het is de vorm van
-  de hele sandbox, waar elk project `plain:`-inloggegevens voor Forgejo draagt;
+* **zonder token** komt de waarde uit het PROJECTBESTAND. Deze secrets zijn AFGELEID, dus wat de
+  sleutelronde over een repository besloot is wat hier terechtkomt -- inclusief het besluit om
+  hem met rust te laten. Een wachtwoord dat ontbreekt, `plain:` is of in een andere vorm staat
+  hangt niet aan de platformsleutel, de projectronde slaat hem over, en dan valt er hier niets
+  af te leiden en blijft het secret staan. Dat is geen randgeval: het is de vorm van de hele
+  sandbox, waar elk project `plain:`-inloggegevens voor Forgejo draagt;
+* **met een token** gaat het besluit over het wachtwoord van het secret ZELF, dezelfde
+  voorwaarde als bij de projectbestanden: is het de huidige token, dan de nieuwe erin; is het
+  iets anders, dan blijft het staan en wordt het gemeld. Afleiden zou die voorwaarde via de
+  achterdeur ongedaan maken, want het projectbestand houdt zijn oudere token nu juist vast;
 * alleen `stringData.password` verandert. Het document gaat door dezelfde YAML-schrijver als de
   rest van het gereedschap, dus annotaties, labels, aanhalingstekens en volgorde komen eruit
   zoals ze erin gingen;
@@ -325,15 +381,23 @@ echte clone en niet beredeneerd:
 **De eindtoets moet dit kunnen zien.** `--assert-old-key-dead` bewijst dat de oude SLEUTEL niets
 meer opent, en dat blijft waar na een PAT-ronde die de argo-clone oversloeg: die bestanden zijn
 door de sleutelronde herversleuteld en hun wachtwoord is nooit aangeraakt. De toets meldde dus
-CLEAN terwijl ArgoCD stilstond. Er zijn daarom twee helften bij gekomen:
+CLEAN terwijl ArgoCD stilstond. Er zijn daarom drie helften bij gekomen:
 
 * met `--projects` en `--argo-applications` samen wordt elk repository-secret naast het
   projectbestand gelegd waar het uit komt. Verschillen ze, dan is dat een bevinding met beide
-  paden erbij;
-* met `--pat-file` wordt elke platte tekst die de VORM van een GitHub-token heeft ook aan die
-  ene token gehouden, op alle drie de plekken. Dat is wat "de oude token staat nergens meer" van
-  een gevolgtrekking een meting maakt. Zonder die vlag zegt de toets dat zelf: hij drukt af dat
-  hij alleen over de sleutel gaat.
+  paden erbij. Die vergelijking gaat tegen het BESTAND, nooit tegen een waarde die de ronde nog
+  moet schrijven: hij las eerder de werklijst, en een werklijst is wat de ronde zou SCHRIJVEN,
+  dus daarmee toetste hij de ronde aan zijn eigen werk;
+* met `--pat-new-file` wordt elke platte tekst die de VORM van een GitHub-token heeft ook aan
+  die ene token gehouden, op alle drie de plekken;
+* met `--pat-current-file` de scherpste van de drie: geen enkel veld mag nog ONTSLEUTELEN naar
+  de token die vervangen is. Dat is een andere vraag dan de regel hierboven -- die herkent een
+  token aan zijn vorm, dus een vorm die de scannerregels niet kennen glipt erlangs, terwijl
+  gelijkheid met de vervangen waarde helemaal geen vorm nodig heeft. Dit is wat "de oude token
+  is dood" van een gevolgtrekking een meting maakt.
+
+Zonder die vlaggen zegt de toets dat zelf: hij drukt per ontbrekende helft af waar hij niets
+over heeft gemeten.
 
 **Waarom de PAT-ronde in de EERSTE ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen
 in een keer: de motor onder beide is dezelfde lus en `replace-git-pat.py` zet de sleutel en het
@@ -349,7 +413,9 @@ Twee dingen die daaruit volgen:
   op de oude. Ze mogen niet dezelfde zijn, dus `security/old_key.txt` moet nog bestaan -- vandaar
   dat het weghalen daarvan stap 8 is en niet stap 7;
 * een tweede PAT-ronde doet niets: een wachtwoord dat het meegegeven token al draagt blijft staan,
-  ciphertext en al.
+  ciphertext en al. Draai je hem een derde keer met weer een nieuwe token, dan is de HUIDIGE
+  token die van de vorige ronde -- de twee bestanden schuiven mee, net als `old_key.txt` en
+  `key.txt`.
 
 **Randvoorwaarde, en die is hard:** de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste
 bestand wordt geschreven, met de oude er nog naast (zie "Geen dubbele recipients" voor waarom dat

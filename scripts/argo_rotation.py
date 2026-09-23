@@ -269,40 +269,75 @@ def pair_up(secrets: list[RepositorySecret], repositories: list[ProjectRepositor
     return pairing
 
 
+@dataclass
+class ArgoPlan:
+    """What the round would do here, measured on the clone as it stands BEFORE anything is written."""
+
+    pairing: Pairing
+    #: The secrets to write, with the password that goes in.
+    todo: list[tuple[RepositorySecret, ProjectRepository, str]] = field(default_factory=list)
+    #: Secrets left alone because their password is not the current PAT, with the reason.
+    kept: list[tuple[RepositorySecret, ProjectRepository, str]] = field(default_factory=list)
+    #: Secrets whose password differs from the project file they were derived from. Measured
+    #: against the file itself and never against a value the round is about to write, which is
+    #: what makes this the BEGIN state rather than a report on the round's own work.
+    drift: list[str] = field(default_factory=list)
+    #: Project fields that opened with neither key: no value can be derived from them.
+    closed: list[str] = field(default_factory=list)
+
+
 async def plan_argo_round(
-    clone: Path, projects: Path, *private_keys: str, expected: str | None = None
-) -> tuple[Pairing, list[tuple[RepositorySecret, ProjectRepository, str]], list[str]]:
-    """What the round would do: the pairing, the secrets whose password differs, and the failures.
+    clone: Path, projects: Path, *private_keys: str, current_pat: str | None = None, new_pat: str | None = None
+) -> ArgoPlan:
+    """What the round would do: the pairing, what to write, what to leave, and the failures.
 
-    ``expected`` is what the DRY RUN needs and the real run must not have. The PAT round writes
-    the project files first and then these secrets, so a preview that reads the project files as
-    they stand right now compares against the OLD token and reports "nothing to do" for a round
-    that is about to convert every one of them. With ``expected`` the preview compares against
-    the value the project round is about to write instead. The run itself leaves it off and
-    derives from the file, so a project that the round skipped does not drag its secret along.
+    **Without a PAT** this is the derivation check: a secret has to say what its project file
+    says, and one that does not goes on the worklist to be brought back in step. That is the
+    shape the key round and the final check use.
 
-    Third value: the fields that opened with neither key. Those cannot produce a value to write,
-    and writing the rest anyway would leave the clone half converted.
+    **With a PAT** the decision moves to the secret's OWN password, and it is the same
+    conditional the project round applies: equal to the current PAT, replace; anything else,
+    leave the value exactly as it is and name it in ``kept``. Deriving the value from the
+    project file would reintroduce the blind write through the back door -- the project round
+    now leaves an older token in place, and a secret carrying yet another value would be
+    overwritten with whatever its project file ended up holding.
+
+    ``drift`` is measured either way and always against the project file itself. It used to be
+    read off the worklist, which in the PAT round was compared against the token that was about
+    to be written: every secret differed, so the one pair that really disagreed with its project
+    file was invisible in exactly the run that was supposed to show it.
     """
+    if (current_pat is None) != (new_pat is None):
+        raise ConversionFailed("a PAT round here needs both the current and the new PAT, or neither")
     secrets, unreadable = read_repository_secrets(clone, *private_keys)
     pairing = pair_up(secrets, project_repositories(projects))
     pairing.unreadable = unreadable
+    plan = ArgoPlan(pairing=pairing)
 
-    todo: list[tuple[RepositorySecret, ProjectRepository, str]] = []
-    closed: list[str] = []
     for secret, repository in pairing.pairs:
-        plaintext = expected
+        plaintext = None
+        for key in private_keys:
+            plaintext = await decrypt_field(repository.ciphertext or "", key)
+            if plaintext is not None:
+                break
         if plaintext is None:
-            for key in private_keys:
-                plaintext = await decrypt_field(repository.ciphertext or "", key)
-                if plaintext is not None:
-                    break
-        if plaintext is None:
-            closed.append(f"{repository.path}#{repository.field_name}")
+            plan.closed.append(f"{repository.path}#{repository.field_name}")
             continue
         if secret.password != plaintext:
-            todo.append((secret, repository, plaintext))
-    return pairing, todo, closed
+            plan.drift.append(
+                f"ArgoCD repository secret disagrees with its project file: {secret.path}"
+                f" ({secret.name}, derived from {repository.path}#{repository.field_name})"
+            )
+        # The guard above makes the two halves of this condition the same question; both are
+        # named so the value that gets written is a plain ``str`` and never a stand-in for None.
+        if current_pat is None or new_pat is None:
+            if secret.password != plaintext:
+                plan.todo.append((secret, repository, plaintext))
+        elif secret.password == current_pat:
+            plan.todo.append((secret, repository, new_pat))
+        elif secret.password != new_pat:
+            plan.kept.append((secret, repository, "its password is not the current PAT"))
+    return plan
 
 
 def write_repository_secret(secret: RepositorySecret, password: str) -> None:
@@ -341,7 +376,13 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
 
 
 async def check_repository_secrets(
-    clone: Path, projects: Path, old_private: str, new_private: str, check: FinalCheck, pat: str | None = None
+    clone: Path,
+    projects: Path,
+    old_private: str,
+    new_private: str,
+    check: FinalCheck,
+    pat: str | None = None,
+    current_pat: str | None = None,
 ) -> None:
     """The final check's argo half: every repository secret still says what its project file says.
 
@@ -351,26 +392,28 @@ async def check_repository_secrets(
     while ArgoCD held a withdrawn token and every sync of every project would have failed.
 
     The comparison is against the project file rather than against the token, for the same reason
-    the round writes from the project file: these secrets are derived, and a repository that does
-    not use the shared token has its own password there quite legitimately. With ``pat`` the
-    password is ALSO held to the new token when it is one, which is what makes "the old token is
-    in no argo secret" a measurement instead of an inference.
+    the round derives from the project file: these secrets are derived, and a repository that
+    does not use the shared token has its own password there quite legitimately. It reads
+    ``plan.drift``, which is measured against the file, and not the worklist -- a worklist is
+    what the round would WRITE, so holding the clone to it after the round is holding the round
+    to its own work.
+
+    With ``pat`` the password is ALSO held to the new token when it is one, and with
+    ``current_pat`` to the sharper rule underneath: it must not still BE the token the round
+    was supposed to replace. That is what makes "the old token is in no argo secret" a
+    measurement instead of an inference.
     """
-    pairing, todo, closed = await plan_argo_round(clone, projects, old_private, new_private)
-    for secret, repository, _password in todo:
-        check.argo_drift.append(
-            f"ArgoCD repository secret disagrees with its project file: {secret.path}"
-            f" ({secret.name}, derived from {repository.path}#{repository.field_name})"
-        )
-    for secret in pairing.secrets_without_project:
+    plan = await plan_argo_round(clone, projects, old_private, new_private)
+    check.argo_drift.extend(plan.drift)
+    for secret in plan.pairing.secrets_without_project:
         check.argo_drift.append(f"no project file accounts for this ArgoCD repository secret: {secret.path}")
-    for path in pairing.unreadable:
+    for path in plan.pairing.unreadable:
         check.argo_drift.append(f"opens with neither key: {path}")
-    for name in closed:
+    for name in plan.closed:
         check.argo_drift.append(f"opens with neither key: {name}")
-    if pat is None:
+    if pat is None and current_pat is None:
         return
-    for secret, _repository in pairing.pairs:
+    for secret, _repository in plan.pairing.pairs:
         password = secret.password
         if password is not None:
-            check_token(f"{secret.path} ({secret.name})", password, pat, check)
+            check_token(f"{secret.path} ({secret.name})", password, pat, check, current_pat)

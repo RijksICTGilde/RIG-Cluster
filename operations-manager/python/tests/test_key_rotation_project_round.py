@@ -42,6 +42,7 @@ from key_rotation import (  # noqa: E402
     Fingerprint,
     MissingKey,
     ProjectRound,
+    ask_for_path,
     decrypt_field,
     opens_with,
     set_project_field,
@@ -100,8 +101,18 @@ def _loose_values_out_of_the_way(tmp_path: Path) -> Iterator[None]:
         yield
 
 
-async def _pat_round(arguments: list[str], argo: Path) -> int:
-    """Drive the PAT entry point with the argo clone it demands."""
+async def _pat_round(arguments: list[str], argo: Path, current: str = "ghp_repository_token") -> int:
+    """Drive the PAT entry point with the argo clone and the current token it demands.
+
+    ``current`` defaults to the token every test project is written with, so a round that does
+    not name one still measures the ordinary case: the stored value IS what is being replaced.
+    A round that comes after another passes the previous round's new token here, because that
+    is what the files hold by then.
+    """
+    if "--pat-current-file" not in arguments:
+        path = argo.parent / "pat-current.txt"
+        path.write_text(current + "\n")
+        arguments = [*arguments, "--pat-current-file", str(path)]
     return await main_replace_pat([*arguments, "--argo-applications", str(argo)])
 
 
@@ -355,7 +366,9 @@ async def test_a_yaml_without_encrypted_platform_fields_is_no_problem_in_either_
     (directory / "leeg.yaml").write_text("schema-version: 2\nname: leeg\n")
 
     key_round = await run_round(directory, old_private, new_private, dry_run=False)
-    pat_round = await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+    pat_round = await run_round(
+        directory, old_private, new_private, current_pat="ghp_repository_token", new_pat="ghp_new", dry_run=False
+    )
 
     assert [report.skipped for report in key_round.skipped] == ["no encrypted platform fields in this file"]
     assert broken(key_round) == []
@@ -392,7 +405,9 @@ async def test_a_pat_round_replaces_the_password_and_keeps_the_project_key(
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
 
-    result = await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+    result = await run_round(
+        directory, old_private, new_private, current_pat="ghp_repository_token", new_pat="ghp_new", dry_run=False
+    )
 
     assert result.replaced_fields == [f"{path}#repositories[0].password"]
     # The announced difference is accepted; an unannounced one would not be.
@@ -673,24 +688,52 @@ def test_an_empty_pat_file_is_refused(tmp_path: Path) -> None:
         read_pat(str(tmp_path / "pat.txt"))
 
 
-def test_the_pat_is_asked_for_without_echo(monkeypatch: pytest.MonkeyPatch) -> None:
-    """getpass and not input: a typed PAT must not end up in a terminal scrollback either."""
-    asked: list[str] = []
+def test_a_pat_file_that_is_not_there_names_the_path(tmp_path: Path) -> None:
+    """The same refusal the key files get, and it has to name the path.
 
-    def fake_getpass(prompt: str) -> str:
-        asked.append(prompt)
-        return "ghp_typed"
-
-    monkeypatch.setattr("project_rotation.getpass.getpass", fake_getpass)
-    assert read_pat(None) == "ghp_typed"
-    assert len(asked) == 1
-    assert "not echoed" in asked[0]
+    Both PATs are answered as a path with a default, exactly like ``old_key.txt`` and
+    ``key.txt``. A token passed as an argument or typed at a prompt is a token in the shell
+    history or the scrollback, and the ordinary mistake with a file is that it sits elsewhere.
+    """
+    with pytest.raises(MissingKey, match=str(tmp_path / "pat_current.txt")):
+        ask_for_path("current PAT", tmp_path / "pat_current.txt", reader=lambda _question: "")
 
 
-def test_an_empty_typed_pat_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("project_rotation.getpass.getpass", lambda _prompt: "   ")
-    with pytest.raises(MissingKey):
-        read_pat(None)
+@pytest.mark.asyncio
+async def test_the_pat_round_refuses_a_current_and_a_new_token_that_are_the_same(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
+) -> None:
+    """The mirror of "the old and the new key are the same key".
+
+    With one token in both files every field reads as "already holds this PAT" and the round
+    exits over a collection it never touched -- which is the answer the old token gets revoked
+    on.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", old_public)
+    (tmp_path / "pat.txt").write_text("ghp_repository_token\n")
+
+    code = await _pat_round(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+        ],
+        argo_clone,
+    )
+
+    assert code == 2
+    assert "the current and the new PAT are the same token" in capsys.readouterr().err
 
 
 @pytest.mark.asyncio
@@ -794,9 +837,13 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
 
-    await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+    await run_round(
+        directory, old_private, new_private, current_pat="ghp_repository_token", new_pat="ghp_new", dry_run=False
+    )
     ciphertext_after_the_first_round = load_yaml_from_path(str(path))["repositories"][0]["password"]
-    second = await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+    second = await run_round(
+        directory, old_private, new_private, current_pat="ghp_repository_token", new_pat="ghp_new", dry_run=False
+    )
 
     assert second.converted == []
     assert (
@@ -956,20 +1003,63 @@ async def test_every_repository_password_gets_the_new_pat_and_not_just_the_first
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     directory = projects_repo / "projects"
-    path = await _write_project(directory, "een", old_public, passwords=("ghp_first_repo", "ghp_second_repo"))
+    path = await _write_project(directory, "een", old_public, passwords=("ghp_shared_token", "ghp_shared_token"))
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
 
-    result = await run_round(directory, old_private, new_private, new_pat="ghp_brand_new", dry_run=False)
+    result = await run_round(
+        directory, old_private, new_private, current_pat="ghp_shared_token", new_pat="ghp_brand_new", dry_run=False
+    )
 
     assert result.replaced_fields == [
         f"{path}#repositories[0].password",
         f"{path}#repositories[1].password",
     ]
+    assert result.kept == []
     assert not result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields)
     data = load_yaml_from_path(str(path))
     for index in (0, 1):
         assert await decrypt_field(data["repositories"][index]["password"], new_private) == "ghp_brand_new"
+
+
+@pytest.mark.asyncio
+async def test_one_repository_on_an_older_token_keeps_it_while_its_neighbour_is_replaced(
+    projects_repo: Path,
+) -> None:
+    """The decision is per FIELD, not per file: one repository moves, the other keeps its value.
+
+    This is the live shape the whole conditional exists for. A project can hold two
+    repositories on two different tokens, and a round that decides per file would either flatten
+    the older one or skip the file and leave the current token in place. Both fields are
+    re-encrypted; only the one holding the current PAT has its plaintext replaced.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public, passwords=("ghp_the_current_token", "ghp_an_older_token"))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    result = await run_round(
+        directory,
+        old_private,
+        new_private,
+        current_pat="ghp_the_current_token",
+        new_pat="ghp_brand_new",
+        dry_run=False,
+    )
+
+    assert result.replaced_fields == [f"{path}#repositories[0].password"]
+    assert result.kept == [
+        f"{path}#repositories[1].password: the plaintext is not the current PAT, so it was left as it is"
+    ]
+    # The content check has to pass with exactly that list excused: naming both passwords would
+    # excuse the one that was supposed to stay put, and naming neither would fail the round.
+    assert not result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields)
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_brand_new"
+    assert await decrypt_field(data["repositories"][1]["password"], new_private) == "ghp_an_older_token"
+    assert await decrypt_field(data["repositories"][1]["password"], old_private) is None
 
 
 @pytest.mark.asyncio
@@ -1135,7 +1225,7 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
     after_the_first = Fingerprint.load(fingerprint).fields
     capsys.readouterr()
 
-    assert await _pat_round([*arguments, "--pat-file", str(second)], argo_clone) == 0
+    assert await _pat_round([*arguments, "--pat-file", str(second)], argo_clone, "ghp_the_first_new_token") == 0
     after_the_second = Fingerprint.load(fingerprint).fields
     printed = capsys.readouterr().out
 
@@ -1430,7 +1520,7 @@ async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
 
     # Perfectly readable with the new key, so no decryption test can see this. Only the record can.
     await _put_another_project_key_in(path, new_public)
-    code = await _pat_round([*arguments, "--pat-file", str(second)], argo_clone)
+    code = await _pat_round([*arguments, "--pat-file", str(second)], argo_clone, "ghp_the_first_new_token")
     printed = capsys.readouterr().out
 
     assert code == 1
@@ -1853,3 +1943,101 @@ def test_the_documented_quarterly_round_swaps_the_script_and_adds_the_argo_clone
         assert substituted.projects == as_written.projects
         assert substituted.fingerprint == as_written.fingerprint
         assert substituted.dry_run == as_written.dry_run
+
+
+@pytest.mark.asyncio
+async def test_the_dry_run_counts_replaced_kept_and_unreadable_apart(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
+) -> None:
+    """Three numbers, not one, and the kept fields named with their path.
+
+    One number cannot carry this. "58 fields converted" is true of a round that replaced 58
+    tokens and of one that replaced 56 and left two older ones alone, and the difference is the
+    whole question the operator answers before revoking anything. So the dry run says what would
+    be replaced, what would be left (and where), and what opens with neither key.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "gewoon", old_public, passwords=("ghp_the_current_token",))
+    older = await _write_project(directory, "ouder", old_public, passwords=("ghp_an_older_token",))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await _pat_round(
+        [
+            "--ja",
+            "--dry-run",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ],
+        argo_clone,
+        "ghp_the_current_token",
+    )
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    assert "1 fields would be replaced with the new PAT" in printed
+    assert "1 fields would be left as they are (their value is not the current PAT)" in printed
+    assert "0 fields open with neither key" in printed
+    assert f"kept: {older}#repositories[0].password" in printed
+
+
+@pytest.mark.asyncio
+async def test_a_project_whose_password_is_not_the_current_pat_does_not_fail_the_round(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
+) -> None:
+    """The state after the key round: everything on the new key, one project on an older token.
+
+    Such a project has nothing left to convert, so it is SKIPPED rather than converted -- and a
+    skip that counts as broken would make the round exit 1 on exactly the field it correctly
+    declined to touch. The operator would then be told the round failed, on a collection where
+    everything went as designed. It is named twice instead and the round exits 0.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    directory = projects_repo / "projects"
+    # Written on the NEW key from the start: the key round has already been here.
+    path = await _write_project(directory, "ouder", new_public, passwords=("ghp_an_older_token",))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await _pat_round(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ],
+        argo_clone,
+        "ghp_the_current_token",
+    )
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    assert "the repository password is not the current PAT" in printed
+    assert f"kept: {path}#repositories[0].password" in printed
+    # And the value really is still there, untouched by a round that reported success.
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_an_older_token"

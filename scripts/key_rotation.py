@@ -12,6 +12,14 @@ There is a single operation under every place that is not a SOPS file, and it li
 it is a replacement plus a recrypt. Two entry points sit on it: the key rotation
 (``rotate-project-keys.py``) and the PAT replacement (``replace-git-pat.py``).
 
+**Which of the two branches a field takes is decided on its PLAINTEXT.** The PAT round is
+given the token it replaces as well as the one it writes, and replaces only where the two
+match; every other value takes the recrypt branch with its content untouched and is named in
+the report. Measured on the live repos, that is not a corner case: of the 67 ArgoCD repository
+secrets two carry a value the other 65 do not, and for one of those two the project file says
+something else again -- drift that was already there. An unconditional round writes over all
+three of those without a word.
+
 **Why by recipient and not by filename.** ``sops_files_for()`` selects on the recipient in
 the metadata, so a file encrypted for any other key is not touched. The alternative is a path
 exclusion list, and that silently falls behind the moment a file is added. This is not
@@ -826,18 +834,34 @@ class ProjectRound:
     fingerprint_after: Fingerprint = field(default_factory=Fingerprint)
     rewritten: bool = False
     validation_was_already_red: str | None = None
+    #: Fingerprint keys of the fields whose PLAINTEXT was replaced. Only those may differ
+    #: between the two fingerprints, so the list has to name exactly them: a password that was
+    #: merely re-encrypted and landed here would be EXCUSED from the content check, and one
+    #: that was replaced and did not would fail it.
+    replaced: list[str] = field(default_factory=list)
+    #: Passwords that were re-encrypted but NOT replaced, because their plaintext is not the
+    #: current PAT. One line per field, with the path and the reason.
+    kept: list[str] = field(default_factory=list)
+    #: Fields that open with neither key, named for the round's own tally.
+    unreadable: list[str] = field(default_factory=list)
 
 
-def nothing_to_do(total: int, on_new_key: int, passwords: int, *, new_pat: str | None) -> str:
+def nothing_to_do(total: int, on_new_key: int, passwords: int, *, new_pat: str | None, kept: int = 0) -> str:
     """Why this file needs no work, in the terms of the round that is actually running.
 
     "Already converted" used to cover both rounds; in the PAT round it reads as reassurance
     while the file may still hold the old token. ``broken()`` judges the two sets separately.
+
+    A file whose password is not the current PAT gets its own wording, for the same reason:
+    "already holds this PAT" would be a false statement about a value the round deliberately
+    did not touch, and the operator has to be able to tell those two apart by reading.
     """
     if new_pat is None:
         return f"already converted ({on_new_key} of {total} fields sit on the new key)"
     if not passwords:
         return "no repository password to replace"
+    if kept:
+        return f"the repository password is not the current PAT, so it was left as it is ({kept} of {passwords})"
     return f"the repository password already holds this PAT ({on_new_key} of {total} fields sit on the new key)"
 
 
@@ -847,6 +871,7 @@ async def rotate_project_file(
     new_private_key: str,
     *,
     new_public_key: str | None = None,
+    current_pat: str | None = None,
     new_pat: str | None = None,
     dry_run: bool = True,
 ) -> ProjectRound:
@@ -863,13 +888,27 @@ async def rotate_project_file(
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
     only re-encrypted.
 
-    The worklist therefore cannot be settled by the key alone: the documented order runs the
-    key round first, so by then every password already sits on B while still holding the OLD
-    token, and a gate on "does this still open with A?" makes that second round a silent no-op.
+    **The replacement is conditional, and that is not a nicety.** A password is replaced only
+    when its plaintext IS ``current_pat``. Measured against the live repos the project files are
+    uniform today -- all 58 passwords carry the same value -- but the ArgoCD secrets derived
+    from them are not: two of 67 carry something else, on the same GitHub URL, so almost
+    certainly an older token. Nothing makes the project files the half that stays uniform, and
+    an unconditional round replaces whatever it can read. Anything that is not the current PAT
+    is therefore only RE-ENCRYPTED, keeps its plaintext, and is named in ``kept`` with its path
+    and the reason.
+
+    Hence ``current_pat`` is required as soon as ``new_pat`` is given: a PAT round with
+    nothing to compare against is the unconditional round under another name.
+
+    The worklist cannot be settled by the key alone: the documented order runs the key round
+    first, so by then every password already sits on B while still holding the OLD token, and
+    a gate on "does this still open with A?" makes that second round a silent no-op.
     """
     path = Path(path)
     round_report = ProjectRound(path=path)
     new_public_key = new_public_key or public_key_of(new_private_key)
+    if new_pat is not None and current_pat is None:
+        raise ConversionFailed("a PAT round needs the current PAT: without it every value is replaced blindly")
 
     data = load_yaml_from_path(str(path))
     if not isinstance(data, dict):
@@ -881,32 +920,48 @@ async def rotate_project_file(
         round_report.skipped = "no encrypted platform fields in this file"
         return round_report
 
-    todo: list[tuple[str, str, str]] = []
+    todo: list[tuple[str, str, str, str | None]] = []
     on_new_key = 0
     passwords = 0
     for field_name, value in fields:
         is_password = field_name != PROJECT_FIELD_PRIVATE_KEY
         if is_password:
             passwords += 1
-        if await opens_with(value, old_private_key):
-            todo.append((field_name, value, old_private_key))
-            continue
-        plain = await decrypt_field(value, new_private_key)
-        if plain is None:
-            round_report.skipped = f"{field_name} opens with neither key"
-            return round_report
-        on_new_key += 1
-        if new_pat is not None and is_password and plain != new_pat:
-            todo.append((field_name, value, new_private_key))
+        # Decrypt before deciding, both here and in the argo round: the decision is about the
+        # VALUE, and a field that opens with the old key needs its plaintext just as much as
+        # one that already sits on the new key.
+        plaintext = await decrypt_field(value, old_private_key)
+        on_old_key = plaintext is not None
+        if plaintext is None:
+            plaintext = await decrypt_field(value, new_private_key)
+            if plaintext is None:
+                round_report.unreadable.append(f"{path}#{field_name}")
+                round_report.skipped = f"{field_name} opens with neither key"
+                return round_report
+            on_new_key += 1
+
+        replacement: str | None = None
+        if new_pat is not None and is_password:
+            if plaintext == new_pat:
+                pass  # already the new token; only the key half can still be outstanding
+            elif plaintext == current_pat:
+                replacement = new_pat
+            else:
+                round_report.kept.append(
+                    f"{path}#{field_name}: the plaintext is not the current PAT, so it was left as it is"
+                )
+        if replacement is not None or on_old_key:
+            todo.append((field_name, value, old_private_key if on_old_key else new_private_key, replacement))
 
     if not todo:
-        round_report.skipped = nothing_to_do(len(fields), on_new_key, passwords, new_pat=new_pat)
+        round_report.skipped = nothing_to_do(
+            len(fields), on_new_key, passwords, new_pat=new_pat, kept=len(round_report.kept)
+        )
         return round_report
 
     round_report.validation_was_already_red = await validate_project_data(data)
 
-    for field_name, value, opening_key in todo:
-        replacement = new_pat if (new_pat is not None and field_name != PROJECT_FIELD_PRIVATE_KEY) else None
+    for field_name, value, opening_key, replacement in todo:
         try:
             conversion = await convert_value(value, opening_key, new_public_key, new_plaintext=replacement)
         except Exception as e:  # age and base64 each raise their own type
@@ -915,6 +970,8 @@ async def rotate_project_file(
         key = f"{path}#{field_name}"
         round_report.fingerprint_before.set(key, conversion.sha256_before)
         round_report.fingerprint_after.set(key, conversion.sha256_after)
+        if conversion.replaced:
+            round_report.replaced.append(key)
         round_report.fields.append(field_name)
         set_project_field(data, field_name, conversion.new_value)
 
@@ -954,12 +1011,21 @@ class FinalCheck:
     #: still hold the withdrawn token, and then the round reports CLEAN while every project
     #: created after it gets a dead credential.
     holds_another_token: list[str] = field(default_factory=list)
+    #: Fields whose plaintext IS the current PAT. This is the "the old PAT is dead" half, and
+    #: it is a different question from the one above: ``holds_another_token`` asks whether a
+    #: value is a GitHub token that is not the new one, which depends on the token SHAPE, while
+    #: this one is plain equality with the token that was supposed to be replaced. The key half
+    #: cannot see either: a value sits on the new key perfectly and still hands out the
+    #: withdrawn token.
+    still_holds_current_pat: list[str] = field(default_factory=list)
     #: ArgoCD repository secrets whose password no longer equals the project file they were
     #: derived from, and the coupling findings next to them.
     argo_drift: list[str] = field(default_factory=list)
     #: True when a token was supplied to check against, so the verdict can say which halves it
     #: covers instead of reading as a full CLEAN over a question it never asked.
     token_checked: bool = False
+    #: The same, for the current PAT: without it the verdict must not claim the old token is gone.
+    current_pat_checked: bool = False
     counted: int = 0
     expected: int | None = None
 
@@ -970,6 +1036,7 @@ class FinalCheck:
             and not self.does_not_open_with_new
             and not self.outside_coverage
             and not self.holds_another_token
+            and not self.still_holds_current_pat
             and not self.argo_drift
             and self.count_matches
         )
@@ -990,11 +1057,14 @@ class FinalCheck:
         # worse of the two: without it the verdict below reads CLEAN over an incomplete walk.
         out.extend(f"FAIL carries ciphertext and nothing converts it: {name}" for name in self.outside_coverage)
         out.extend(f"FAIL holds a GitHub token that is not the new one: {name}" for name in self.holds_another_token)
+        out.extend(f"FAIL still decrypts to the current PAT: {name}" for name in self.still_holds_current_pat)
         out.extend(f"FAIL {name}" for name in self.argo_drift)
         if self.clean:
             verdict = "CLEAN the old key opens nothing, the new key opens everything"
             if self.token_checked:
                 verdict += ", and every GitHub token is the new one"
+            if self.current_pat_checked:
+                verdict += ", and nothing decrypts to the current PAT any more"
             out.append(verdict)
         return out
 
@@ -1016,15 +1086,17 @@ async def check_value(
     new_private_key: str,
     check: FinalCheck,
     pat: str | None = None,
+    current_pat: str | None = None,
 ) -> None:
-    """One loose value: A must fail, B must succeed -- and with ``pat``, the CONTENT is judged too.
+    """One loose value: A must fail, B must succeed -- and with a token, the CONTENT is judged too.
 
     The key half and the token half are different questions about the same field, and the second
-    one is the reason this argument exists: a value re-encrypted for the new key still holds
+    one is the reason these arguments exist: a value re-encrypted for the new key still holds
     whatever plaintext it held, so a PAT round that skipped this field leaves a withdrawn token
-    behind while every key check says CLEAN. Only a plaintext that IS a GitHub token is judged,
-    by ``is_github_token``; the git-server passwords sitting on the same key are not the PAT and
-    must not be held to it.
+    behind while every key check says CLEAN. With ``pat`` only a plaintext that IS a GitHub token
+    is judged, by ``is_github_token``; the git-server passwords sitting on the same key are not
+    the PAT and must not be held to it. ``current_pat`` asks the sharper question underneath,
+    which needs no shape at all -- see ``check_token``.
     """
     check.counted += 1
     if await opens_with(value, old_private_key):
@@ -1033,17 +1105,25 @@ async def check_value(
     if plaintext is None:
         check.does_not_open_with_new.append(name)
         return
-    if pat is not None:
-        check_token(name, plaintext, pat, check)
+    if pat is not None or current_pat is not None:
+        check_token(name, plaintext, pat, check, current_pat)
 
 
-def check_token(name: str, plaintext: str, pat: str, check: FinalCheck) -> None:
+def check_token(name: str, plaintext: str, pat: str | None, check: FinalCheck, current_pat: str | None = None) -> None:
     """Hold one decrypted value to the token it has to carry, when it carries one at all.
 
     Shared by the three places the PAT round writes, so "the old token is nowhere" is one rule
     measured three times rather than three spellings of it.
+
+    Two rules, and they do not overlap. ``pat`` says a GitHub token that is not the new one is
+    a finding -- which depends on the token being RECOGNISED as one, so a token shape the
+    scanner rules do not carry slips past it. ``current_pat`` is plain equality with the value
+    the round was supposed to replace, and needs no shape: that is the real "the old PAT is
+    dead" measurement, and the one the round's own conditional replacement can be held to.
     """
-    if is_github_token(plaintext) and plaintext != pat:
+    if current_pat is not None and plaintext == current_pat:
+        check.still_holds_current_pat.append(name)
+    if pat is not None and is_github_token(plaintext) and plaintext != pat:
         check.holds_another_token.append(name)
 
 

@@ -700,7 +700,9 @@ async def test_a_pat_replacement_touches_only_the_repository_password(
     path = tmp_path / "proefproject.yaml"
     await _write_project(path, public_a, project_pair)
 
-    report = await rotate_project_file(path, private_a, private_b, new_pat="ghp_brand_new", dry_run=False)
+    report = await rotate_project_file(
+        path, private_a, private_b, current_pat="ghp_repository_token", new_pat="ghp_brand_new", dry_run=False
+    )
 
     assert report.rewritten
     data = load_yaml_from_path(str(path))
@@ -710,6 +712,65 @@ async def test_a_pat_replacement_touches_only_the_repository_password(
     key_key = f"{path}#{PROJECT_FIELD_PRIVATE_KEY}"
     assert report.fingerprint_before.fields[key_key] == report.fingerprint_after.fields[key_key]
     assert report.fingerprint_before.fields[repo_key] != report.fingerprint_after.fields[repo_key]
+    # Exactly the password, and named by the conversion rather than derived from the field
+    # name: this list is what EXCUSES a hash from the content check, so a key on it would let
+    # the project key drift unnoticed and a password missing from it would fail a good round.
+    assert report.replaced == [repo_key]
+    assert report.kept == []
+
+
+@pytest.mark.asyncio
+async def test_a_password_that_is_not_the_current_pat_is_recrypted_and_kept(
+    tmp_path: Path, key_pair_a: tuple[str, str], key_pair_b: tuple[str, str]
+) -> None:
+    """The conditional replacement, at the field where the decision is made.
+
+    Measured on the live repos: the 58 project passwords are uniform today, but the 67 ArgoCD
+    secrets derived from them are not -- two carry another value on the same GitHub URL, so
+    almost certainly an older token. Nothing makes the project files the half that stays
+    uniform, and the round used to write the new PAT over whatever it could read. Now the value
+    survives, the key half still happens, and the field is named with its path.
+    """
+    private_a, public_a = key_pair_a
+    private_b, _public_b = key_pair_b
+    path = tmp_path / "proefproject.yaml"
+    await _write_project(path, public_a, generate_sops_key_pair())
+
+    report = await rotate_project_file(
+        path, private_a, private_b, current_pat="ghp_a_different_token", new_pat="ghp_brand_new", dry_run=False
+    )
+
+    assert report.rewritten
+    data = load_yaml_from_path(str(path))
+    # The value is untouched and the KEY moved anyway: those are two separate promises.
+    assert await decrypt_field(data["repositories"][0]["password"], private_b) == "ghp_repository_token"
+    assert await decrypt_field(data["repositories"][0]["password"], private_a) is None
+    repo_key = f"{path}#repositories[0].password"
+    assert report.replaced == []
+    assert report.kept == [f"{repo_key}: the plaintext is not the current PAT, so it was left as it is"]
+    assert report.fingerprint_before.fields[repo_key] == report.fingerprint_after.fields[repo_key]
+
+
+@pytest.mark.asyncio
+async def test_a_pat_round_without_the_current_pat_is_refused(
+    tmp_path: Path, key_pair_a: tuple[str, str], key_pair_b: tuple[str, str]
+) -> None:
+    """Without something to compare against, "conditional" is the unconditional round renamed.
+
+    A default of None that simply falls back to replacing everything would leave the old
+    behaviour reachable from every caller that forgets the argument, and that is precisely how
+    it got there.
+    """
+    private_a, public_a = key_pair_a
+    private_b, _public_b = key_pair_b
+    path = tmp_path / "proefproject.yaml"
+    await _write_project(path, public_a, generate_sops_key_pair())
+    before = path.read_text()
+
+    with pytest.raises(ConversionFailed, match="needs the current PAT"):
+        await rotate_project_file(path, private_a, private_b, new_pat="ghp_brand_new", dry_run=False)
+
+    assert path.read_text() == before
 
 
 @pytest.mark.asyncio

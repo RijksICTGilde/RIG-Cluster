@@ -84,7 +84,7 @@ async def test_the_carrier_is_replaced_and_the_git_server_password_is_not(tmp_pa
     )
 
     result = await classify_loose_values([path], old_private, new_private)
-    await run_loose_round(result, new_public, NEW_TOKEN, dry_run=False)
+    await run_loose_round(result, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
 
     assert [entry.field_.name for entry in result.carriers] == ["PROJECT_REPO_PASSWORD"]
     assert [entry.field_.name for entry in result.others] == ["GIT_PROJECTS_SERVER_PASSWORD"]
@@ -101,7 +101,7 @@ async def test_the_replaced_value_moves_to_the_new_key_as_well(tmp_path: Path) -
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
 
     result = await classify_loose_values([path], old_private, new_private)
-    await run_loose_round(result, new_public, NEW_TOKEN, dry_run=False)
+    await run_loose_round(result, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
 
     value = path.read_text().split("=", 1)[1].strip()
     assert await decrypt_field(value, new_private) == NEW_TOKEN
@@ -116,7 +116,7 @@ async def test_a_dry_run_writes_nothing(tmp_path: Path) -> None:
     before = path.read_text()
 
     result = await classify_loose_values([path], old_private, new_private)
-    updates = await run_loose_round(result, new_public, NEW_TOKEN, dry_run=True)
+    updates = await run_loose_round(result, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=True)
 
     assert result.converted == [f"{path}#PROJECT_REPO_PASSWORD"]
     assert updates, "the dry run still has to say which record entries would move"
@@ -134,11 +134,11 @@ async def test_a_second_round_leaves_the_value_where_it_is(tmp_path: Path) -> No
     new_private, new_public = generate_sops_key_pair()
     path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": OLD_TOKEN})
     first = await classify_loose_values([path], old_private, new_private)
-    await run_loose_round(first, new_public, NEW_TOKEN, dry_run=False)
+    await run_loose_round(first, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
     after_first = path.read_text()
 
     second = await classify_loose_values([path], old_private, new_private)
-    await run_loose_round(second, new_public, NEW_TOKEN, dry_run=False)
+    await run_loose_round(second, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
 
     assert second.converted == []
     assert second.already == [f"{path}#PROJECT_REPO_PASSWORD"]
@@ -181,7 +181,7 @@ async def test_the_repo_record_is_corrected_for_exactly_the_replaced_fields(tmp_
         recorded.set(entry.name, sha256_of(entry.plaintext))
     recorded.save(record)
 
-    updates = await run_loose_round(before, new_public, NEW_TOKEN, dry_run=False)
+    updates = await run_loose_round(before, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
     assert update_record(record, updates) == []
 
     written = Fingerprint.load(record)
@@ -216,3 +216,55 @@ def test_a_tree_without_a_record_is_not_an_error_and_gets_no_record_written(tmp_
 
     assert update_record(record, {f"{tmp_path}/config.py#PROJECT_REPO_PASSWORD": "0" * 64}) == []
     assert not record.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_carrier_holding_an_older_token_is_left_alone(tmp_path: Path) -> None:
+    """A GitHub token that is not the CURRENT one keeps its value and is named, not overwritten.
+
+    "The plaintext is a GitHub token" is a shape, and a shape does not say which token. Without
+    the comparison against the current PAT this value is silently replaced -- measured on the
+    live repos, two of the 67 ArgoCD secrets are exactly that case -- and the operator has no
+    way of knowing an older credential was flattened rather than rotated.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    older_token = "ghp_" + "x" * 36
+    path = await _env_file(tmp_path / "config.py", old_public, {"PROJECT_REPO_PASSWORD": older_token})
+
+    result = await classify_loose_values([path], old_private, new_private)
+    updates = await run_loose_round(result, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
+
+    assert [entry.field_.name for entry in result.carriers] == ["PROJECT_REPO_PASSWORD"]
+    assert result.converted == []
+    assert result.kept == [
+        f"{path}#PROJECT_REPO_PASSWORD: a GitHub token that is not the current PAT, so it was left as it is"
+    ]
+    # Two separate promises: the CONTENT is left alone, and the KEY still moves. A value kept on
+    # the old key would fail the final check on a field the round deliberately did not replace.
+    value = path.read_text().split("=", 1)[1].strip()
+    assert await decrypt_field(value, new_private) == older_token
+    assert await decrypt_field(value, old_private) is None
+    # And nothing goes into the record: the plaintext did not change, so neither did its hash.
+    assert updates == {}
+
+
+@pytest.mark.asyncio
+async def test_a_kept_value_that_already_sits_on_the_new_key_is_not_rewritten_at_all(tmp_path: Path) -> None:
+    """The counter-check on the half above: no plaintext to change AND no key to move is a no-op.
+
+    Without this, re-encrypting every kept value unconditionally would pass the test above just
+    as well -- and it would rewrite files on every run of a round that decided to change nothing,
+    which reads as "something happened here" in a repo people watch.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    older_token = "ghp_" + "x" * 36
+    path = await _env_file(tmp_path / "config.py", new_public, {"PROJECT_REPO_PASSWORD": older_token})
+    before = path.read_text()
+
+    result = await classify_loose_values([path], old_private, new_private)
+    await run_loose_round(result, new_public, OLD_TOKEN, NEW_TOKEN, dry_run=False)
+
+    assert len(result.kept) == 1
+    assert path.read_text() == before
