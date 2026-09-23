@@ -38,6 +38,8 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from secret_scan import (  # noqa: E402
+    BASE64_BLOB,
+    RULES,
     Finding,
     age_key_is_real,
     decoded_blobs,
@@ -64,6 +66,29 @@ _JWT_HEADER = "eyJ" + "hbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
 FAKE_JWT = _JWT_HEADER + ".eyJpc3MiOiJhcmdvY2QiLCJzdWIiOiJwcm9qOmRlZmF1bHQ6dGVzdCJ9.c2lnbmF0dXJl"
 FAKE_SLACK_TOKEN = "xox" + "b-1234567890-abcdefghij"
 FAKE_AWS_KEY = "AKI" + "AIOSFODNN7EXAMPLE"
+
+#: The shortest first segment the JWT rule accepts. ``{"alg":11}`` base64url-encodes to fourteen
+#: characters and the rule wants ``eyJ`` plus ten; a shorter header (``{"alg":1}``) encodes to
+#: twelve, which the rule rightly leaves alone.
+SHORTEST_JWT = "eyJ" + "hbGciOjExfQ" + "." + "b" * 10 + "." + "c" * 5
+
+#: The SHORTEST string each alarm rule accepts, which is what the base64 threshold has to sit
+#: under. A roomy example value proves nothing about that boundary: ``FAKE_SLACK_TOKEN`` encodes to
+#: thirty-six characters and clears any plausible threshold, while the shortest token its own rule
+#: accepts encodes to exactly twenty -- and at the threshold of twenty-four this scanner shipped
+#: with, that one came back CLEAN inside a Kubernetes secret.
+#:
+#: ``age-private-key`` is deliberately absent: the only thing that rule accepts is a key
+#: ``age-keygen -y`` agrees with, so its length is not ours to choose, and
+#: ``test_a_key_inside_a_kubernetes_secret_is_a_finding`` covers it through base64 already.
+SHORTEST_ALARM_SHAPES: tuple[tuple[str, str], ...] = (
+    ("github-pat", "gh" + "p_" + "a" * 36),
+    ("github-pat", "github" + "_pat_" + "b" * 50),
+    ("github-token", "gh" + "s_" + "c" * 36),
+    ("kubeconfig-token", SHORTEST_JWT),
+    ("slack-token", "xox" + "b-" + "d" * 10),
+    ("aws-access-key", "AKI" + "A" + "E" * 16),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -259,25 +284,61 @@ def test_a_key_inside_a_kubernetes_secret_is_a_finding() -> None:
 
 
 @needs_age
-@pytest.mark.parametrize(
-    ("kind", "secret"),
-    [
-        ("github-pat", "ghp_" + "b" * 36),
-        ("slack-token", FAKE_SLACK_TOKEN),
-        ("aws-access-key", FAKE_AWS_KEY),
-    ],
-)
+@pytest.mark.parametrize(("kind", "secret"), SHORTEST_ALARM_SHAPES)
 def test_every_alarm_rule_reaches_through_base64(kind: str, secret: str) -> None:
     """Not only the AGE rule: the pass runs the whole alarm set over the decoded text.
 
     A base64 layer that covered one rule would be the next half-guard -- a token in a secret's
     ``data`` is the same manifest with a different field.
+
+    Parametrised on the SHORTEST shape each rule accepts, and encoding the BARE value, because
+    that is the case the base64 threshold decides. The first version used example values and
+    encoded ``token: `` along with them; every sample cleared the threshold by a wide margin, so
+    this test passed green while a minimum-length Slack token in a secret's ``data`` was CLEAN.
+
+    The plain assertion comes first on purpose. Without it a sample could stop being a shape the
+    rule accepts at all and the base64 half would still pass -- proving that a rule which alarms
+    on nothing alarms on nothing through base64 too.
     """
-    encoded = base64.b64encode(f"token: {secret}\n".encode()).decode()
+    assert [finding.kind for finding in scan_text(f"token: {secret}\n", "somewhere.md")] == [kind]
 
-    findings = scan_text(f"data:\n  token: {encoded}\n", "secret.yaml")
+    encoded = base64.b64encode(secret.encode()).decode()
 
-    assert [finding.kind for finding in findings] == [kind]
+    assert [finding.kind for finding in scan_text(f"data:\n  token: {encoded}\n", "secret.yaml")] == [kind]
+
+
+def test_the_base64_threshold_sits_exactly_on_the_shortest_shape_the_rules_accept() -> None:
+    """The number in ``BASE64_BLOB``, pinned from both sides so it cannot drift back up.
+
+    The test above goes red if the threshold rises, but only for the shapes that are in the table.
+    This one pins the relationship itself: the threshold IS the shortest encoding -- it matches a
+    run of exactly that length and not one character less -- so moving the number either way is
+    red here even if the table is never read again.
+    """
+    encoded = {kind: base64.b64encode(secret.encode()).decode() for kind, secret in SHORTEST_ALARM_SHAPES}
+    for kind, blob in encoded.items():
+        assert BASE64_BLOB.fullmatch(blob), f"{kind}: {len(blob)} characters does not reach the threshold"
+
+    shortest = min(len(blob) for blob in encoded.values())
+
+    assert shortest == 20, f"the shortest encoding is now {shortest}; the threshold has to follow"
+    assert BASE64_BLOB.fullmatch("A" * shortest) is not None
+    assert BASE64_BLOB.search("A" * (shortest - 1)) is None
+
+
+def test_every_alarm_rule_has_a_shortest_shape_on_record() -> None:
+    """Which is what makes the threshold above measured rather than remembered.
+
+    Both tests above only see the shapes in ``SHORTEST_ALARM_SHAPES``. A rule added to ``RULES``
+    without an entry there would be a shape nobody compared against the threshold -- and a rule
+    shorter than the Slack one would silently reopen exactly the gap this round closed. So the
+    table is required to hold one entry per rule, with ``age-private-key`` the single documented
+    exception because its length is fixed by ``age-keygen``.
+    """
+    on_record = {kind for kind, _secret in SHORTEST_ALARM_SHAPES} | {"age-private-key"}
+
+    assert on_record == {kind for kind, _pattern, _hint in RULES}
+    assert len(SHORTEST_ALARM_SHAPES) + 1 == len(RULES), "one shortest shape per rule, not per kind"
 
 
 @needs_age

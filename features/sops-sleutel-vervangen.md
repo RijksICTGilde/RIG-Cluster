@@ -579,7 +579,11 @@ stap 2 een maken, en de historie draagt er een: `sops-sandbox/sops-secret-for-in
 hield de oefensleutel base64 vast, en tot deze ronde viel alleen het platte `sops-key.txt` ernaast op.
 
 Daarom wordt elke regel twee keer gelezen: zoals hij staat, en met elke base64-reeks erop
-uitgepakt. Eén laag diep, want een geheim onder twee rondes base64 is geen vorm die hier ontstaat.
+uitgepakt. Die reeksen beginnen bij twintig tekens, en dat getal komt niet uit de lucht: het is
+precies waar de KORTSTE vorm die het alarm kent op uitkomt, een Slack-token van vijftien tekens.
+Elke andere vorm codeert langer -- de eerstvolgende is een AWS-access-key op zevenentwintig
+tekens plus een opvulteken.
+Eén laag diep, want een geheim onder twee rondes base64 is geen vorm die hier ontstaat.
 Een melding uit de uitgepakte lezing houdt het regelnummer van de GECODEERDE regel, want dat is de
 regel die uit de commit moet. De ciphertextinventaris draait alleen op de platte lezing: een
 base64-reeks die naar ciphertext uitpakt is diezelfde ciphertext, en zou anders dubbel tellen.

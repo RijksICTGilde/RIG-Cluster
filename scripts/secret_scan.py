@@ -130,10 +130,20 @@ def looks_like_a_jwt(candidate: str) -> bool:
     return isinstance(header, dict) and "alg" in header
 
 
-#: A base64 run long enough to hide something. Twenty-four characters decode to eighteen bytes,
-#: which is under every shape in ``RULES`` but one: a Slack token is ``xox[abprs]-`` plus ten
-#: characters, fifteen in all, and fifteen bytes fit in twenty base64 characters.
-BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
+#: A base64 run long enough to hide something, measured against the SHORTEST shape ``RULES``
+#: accepts rather than picked as a round number. That shape is a Slack token -- ``xox[abprs]-``
+#: plus ten characters, fifteen in all -- and fifteen bytes encode to exactly twenty base64
+#: characters. Every other shape encodes longer: the next shortest is an AWS access key id at
+#: twenty bytes, twenty-seven characters and a padding character. The count here is of the
+#: character class only, which is why the padding sits outside the repetition.
+#:
+#: It stood at twenty-four, and there that Slack token came back CLEAN inside a Kubernetes secret
+#: while the same token in plain text alarmed -- the same half-guard the base64 pass exists to
+#: close. Twenty adds only runs of exactly twenty characters, because twenty-one through
+#: twenty-three are not valid base64 lengths, and such a run still has to decode to text before it
+#: reaches a rule. Measured over ``git ls-files`` of this repository, the drop added no findings
+#: and not one decoded run.
+BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
 
 
 def decoded_blobs(line: str) -> list[str]:
