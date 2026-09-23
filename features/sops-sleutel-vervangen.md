@@ -9,11 +9,8 @@ De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 * 8.24.01 vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het
   sleutelbeheer en "hoe geregistreerd wordt waar welke cryptografie toegepast wordt". De
   vindplaatsenlijst hieronder is die registratie; de dekkingsgrendel onder "De vorm is niet de
-  vindplaats" houdt hem eerlijk. Die grendel heeft zelf geen sleutel nodig, maar zijn toetsen
-  staan in de rotatiemodules, en die slaan op moduleniveau over als `age` niet op je PATH staat:
-  gemeten in deze boom slaan dan alle 167 over en blijven alleen de twee CI-wiringtoetsen groen.
-  In CI draait hij dus wel elke ronde mee, omdat de runner `age` en `sops` installeert, en
-  `tests/test_rotation_ci_wiring.py` houdt dat zo.
+  vindplaats" houdt hem eerlijk, en in CI draait hij elke toetsronde mee omdat de runner `age` en
+  `sops` installeert en `tests/test_rotation_ci_wiring.py` dat vasthoudt.
 * 8.24.02 vraagt dat is vastgesteld waar cryptografische beheersmaatregelen worden ingezet, wie
   verantwoordelijk is "en hoe ze actueel worden gehouden". Dat laatste ontbrak: een AGE-sleutel
   kent geen verlooptijd, een token dwingt zijn eigen vervanging af.
@@ -25,7 +22,7 @@ veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
 Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid: het omzetten, de
 vingerafdruk en de eindtoets zijn geautomatiseerd, dus een ronde hoeft niet op het kwartaal te
 wachten. De rest is handwerk en blijft dat: de renderlus en de commitinspectie van VERIFY-1, de
-push en de secretwissel van APPLY, en de rooktest van VERIFY-2. Waarom die grens er zit en geen
+push en de handmatige sync van APPLY, en de rooktest van VERIFY-2. Waarom die grens er zit en geen
 achterstand is, staat onder "De oefenronde".
 
 ## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding

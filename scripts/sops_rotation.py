@@ -214,9 +214,7 @@ def coverage_gaps(trees: list[Path] | None = None) -> list[Path]:
     missing: three committed values sat outside every place the tool walked and
     ``--assert-old-key-dead`` reported CLEAN over them.
 
-    It needs no key, so every dry run runs it. Its TESTS do need one: they live in the rotation
-    modules, which skip whole without ``age`` on the PATH, so they run every round in CI and not
-    necessarily on a workstation.
+    It needs no key, so every dry run runs it.
 
     Over EVERY tree of ``sops_trees()`` and not this repo alone: the argo clone used to be the
     one tree whose coverage was reasoned about instead of measured, while ``--remove-old-key``

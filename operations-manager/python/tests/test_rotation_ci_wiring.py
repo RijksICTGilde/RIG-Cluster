@@ -30,10 +30,8 @@ def _triggers(workflow: dict) -> dict | list | str:
 def _steps_that_run(workflow: dict, job: str | None = None) -> list[str]:
     """Every ``run:`` of a step that is not switched off by a falsy ``if``.
 
-    Without ``job`` this walks EVERY job, which is what a sweep over the whole file wants. With
-    a job name it walks that job alone, and a ``KeyError`` if it is gone: an install that a
-    guard needs has to sit in the job that runs the tests, and a workflow-wide sweep calls the
-    same install wired up when it has moved to a job where pytest never runs.
+    Without ``job`` this walks EVERY job, which is what a sweep over the whole file wants; with a
+    job name it walks that job alone, and raises ``KeyError`` if it is gone.
     """
     jobs = workflow.get("jobs", {})
     selected = [jobs[job]] if job is not None else list(jobs.values())
@@ -57,8 +55,8 @@ def test_ci_installs_age_and_sops_so_the_rotation_guards_actually_run() -> None:
     and 167 rotation tests skip under a summary that says passed.
     """
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
-    # Steps that really run, in the job that runs pytest: a step behind a falsy condition
-    # installs nothing, and an install in another job installs nothing for these tests.
+    # A step behind a falsy condition installs nothing, and reading only the "run" lines would
+    # call that wired up.
     installs = _steps_that_run(workflow, job="test")
 
     assert any(re.search(r"\bage\b", command) for command in installs), (
