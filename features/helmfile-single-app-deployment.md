@@ -225,7 +225,7 @@ MIJNBUREAU_MASTER_PASSWORD=<encrypted>
 1. **Operations Manager** processes `mb-docs-helmfile.yaml`:
    - Clones mijn-bureau-infra repository
    - Creates custom `helmfile.yaml.gotmpl` from project definition
-   - Generates `values.sops.yaml` with service credentials
+   - Generates `values.sops.yaml` with service credentials and the external-dns target
    - Creates service secret manifests
    - Creates kustomization.yaml with resources
    - Encrypts all sensitive files with SOPS
