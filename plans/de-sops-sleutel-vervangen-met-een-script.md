@@ -1,8 +1,14 @@
-# De SOPS-sleutel vervangen, met een script dat het twee keer kan
+# De sleutel en het token vervangen, met een script dat het elk kwartaal kan
 
 Status: plan, 22 september 2026. Niet gebouwd. Vervangt de brede opzet in `de-age-sleutel-roteren-en-splitsen.md`, die als fase 3 blijft staan.
 
-Aanleiding: **age kent geen verlooptijd.** Een sleutel is geldig tot je hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door. Andere geheimen hebben dat wel: een GitHub-token verloopt vanzelf en dwingt zo zijn eigen vervanging af. Een AGE-sleutel niet. Deze taak levert het gereedschap dat die handeling kort en voorspelbaar maakt, en het ritme waarin hij gedraaid wordt.
+Aanleiding: **de GitHub-PAT verloopt.** Die moet dus vervangen worden, in de configuratie van het platform en in elk projectbestand dat hem draagt. Dat is een geplande handeling met een datum erop, en precies het moment om de AGE-sleutel mee te nemen.
+
+Want die kent geen verlooptijd. Een token dwingt zijn eigen vervanging af zodra het verloopt; een AGE-sleutel blijft geldig tot iemand hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door.
+
+De twee vallen samen omdat het **dezelfde ronde** is: dezelfde bestanden, dezelfde lus, dezelfde verificatie. `replace-git-pat.py` en `rotate-project-keys.py` zijn twee ingangen op een motor. De sleutel meenemen in een PAT-vervanging die er toch komt, kost bijna niets extra.
+
+Deze taak levert dat gereedschap, en het ritme waarin het gedraaid wordt.
 
 ## Het ritme: elk kwartaal, tegelijk met de tokens
 
