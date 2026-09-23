@@ -41,6 +41,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 import sops_rotation as tool  # noqa: E402
 from key_rotation import (  # noqa: E402
+    AGE_KEY_MARKER,
     ConversionFailed,
     Fingerprint,
     env_fields,
@@ -990,7 +991,7 @@ async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
         still_demanded = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
 
     assert code == 0
-    assert "NOTE no old key at" in printed
+    assert f"NOTE file does not exist: {tmp_path / 'old_key.txt'}" in printed
     assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
     assert still_demanded == 2
     assert "file does not exist" in capsys.readouterr().err
@@ -1195,3 +1196,77 @@ async def test_renaming_follows_the_answered_path_not_the_default(
     assert not answered_old.exists()
     assert not answered_new.exists()
     assert "Renamed." in output
+
+
+@pytest.mark.asyncio
+async def test_the_note_about_a_missing_old_key_names_the_answered_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The third action on an answered path, and the one that only PRINTS a path.
+
+    ``--verify`` is allowed to run without the old key, and says so in a NOTE. That note named
+    ``arguments.old_key``, which is the argparse default: an operator who answers the prompt
+    with another name was told the tool had looked in ``security/old_key.txt`` -- a file that in
+    this test exists and holds a perfectly good key. Same class as the two above, and invisible
+    to every other test because they all pass ``--old-key`` and then answer and default coincide.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(
+        tmp_path / ".env",
+        {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
+        old_public,
+    )
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "fingerprint.json")]
+    answered_old = tmp_path / "mijn-oude-sleutel.txt"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *arguments]) == 0
+        capsys.readouterr()
+        with patch("builtins.input", side_effect=[str(answered_old), str(tmp_path / "key.txt")]):
+            code = await tool.main(["--verify", *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 0
+    assert f"NOTE file does not exist: {answered_old}" in printed
+    assert str(tmp_path / "old_key.txt") not in printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+
+
+@pytest.mark.asyncio
+async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``read_key`` has two failures and the NOTE flattened them into the wrong one.
+
+    A file that IS there but carries no key line is a different problem from a file that is
+    gone: the first is a file to look at, the second is the expected state after step 8. Reported
+    as "no old key at <path>" the operator reads it as gone and stops looking at the file that is
+    lying there. The exception already tells them apart, so it is the exception that gets printed.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(
+        tmp_path / ".env",
+        {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2", "GIT_ARGO_APPLICATIONS_PASSWORD": "x"},
+        old_public,
+    )
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "fingerprint.json")]
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *arguments]) == 0
+        (tmp_path / "old_key.txt").write_text("# a file of nothing but comments\n# no key line here\n")
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--verify", *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 0
+    assert f"NOTE no {AGE_KEY_MARKER} line in {tmp_path / 'old_key.txt'}" in printed
+    assert "no old key at" not in printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
