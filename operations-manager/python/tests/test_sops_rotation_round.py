@@ -55,6 +55,7 @@ from key_rotation import (  # noqa: E402
     opens_with,
     read_key,
     sha256_of,
+    sops_files,
     sops_files_for,
     sops_plaintext,
     sops_recipients,
@@ -766,6 +767,21 @@ def _pasteable_commands(doc: Path) -> list[str]:
     return commands
 
 
+def _outside_the_venv() -> dict[str, str]:
+    """The environment an operator has: no ``VIRTUAL_ENV``, and this venv's bin off ``PATH``.
+
+    Pytest itself runs inside the OPI environment, so a ``python3`` started from here would
+    resolve to the interpreter that already has pydantic, and a documented form that only works
+    for us would read as green.
+    """
+    environment = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
+    venv_bin = str(Path(sys.prefix) / "bin")
+    environment["PATH"] = os.pathsep.join(
+        entry for entry in environment.get("PATH", "").split(os.pathsep) if entry != venv_bin
+    )
+    return environment
+
+
 def _launcher_of(line: str) -> list[str]:
     """The tokens up to and including the script path: argv[0] and everything that carries it."""
     tokens = shlex.split(line)
@@ -783,9 +799,7 @@ def test_every_documented_command_line_starts_as_written() -> None:
     So this RUNS each unique invocation, with ``--help`` in place of the arguments, from the
     repository root the docs tell you to be in.
 
-    It runs them OUTSIDE this test's virtualenv. Pytest itself runs inside the OPI environment,
-    so a plain ``python3`` here would resolve to the interpreter that already has pydantic, and
-    the documented form that only works for us would read as green.
+    It runs them in ``_outside_the_venv()``, which says why that matters.
     """
     commands = [line for doc in COMMAND_DOCS for line in _pasteable_commands(doc)]
 
@@ -796,19 +810,13 @@ def test_every_documented_command_line_starts_as_written() -> None:
 
     assert scripts_covered == set(ENTRY_SCRIPTS), "an entry point lost its documented invocation"
 
-    outside_the_venv = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
-    venv_bin = str(Path(sys.prefix) / "bin")
-    outside_the_venv["PATH"] = os.pathsep.join(
-        entry for entry in outside_the_venv.get("PATH", "").split(os.pathsep) if entry != venv_bin
-    )
-
     for launcher in sorted(launchers):
         assert launcher[0] in {BARE_PYTHON, *shlex.split(LAUNCHER)[:1]}, f"unknown launcher: {launcher}"
         try:
             finished = subprocess.run(
                 [*launcher, "--help"],
                 cwd=tool.REPO,
-                env=outside_the_venv,
+                env=_outside_the_venv(),
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -819,6 +827,78 @@ def test_every_documented_command_line_starts_as_written() -> None:
             # without a shell it is an OSError. Both mean the same thing for the operator.
             pytest.fail(f"{shlex.join(launcher)} does not start: {refused}")
         assert finished.returncode == 0, f"{shlex.join(launcher)} does not start: {finished.stderr[-400:]}"
+
+
+def _documented_launchers() -> dict[str, set[str]]:
+    """Per entry point, the launcher the docs put in front of it."""
+    launchers: dict[str, set[str]] = {}
+    for doc in COMMAND_DOCS:
+        for line in _pasteable_commands(doc):
+            tokens = _launcher_of(line)
+            launchers.setdefault(tokens[-1].removeprefix("scripts/"), set()).add(shlex.join(tokens[:-1]))
+    return launchers
+
+
+def _committed_modes() -> dict[str, str]:
+    """The file modes a fresh clone of this branch gets, which is what an operator runs."""
+    listing = subprocess.run(
+        ["git", "ls-files", "-s", "scripts/"],
+        cwd=tool.REPO,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    entries: dict[str, str] = {}
+    for row in listing.stdout.splitlines():
+        mode, _, remainder = row.partition(" ")
+        entries[remainder.split("\t", 1)[1].removeprefix("scripts/")] = mode
+    return entries
+
+
+def test_a_shebang_only_sits_on_the_entry_a_bare_interpreter_can_finish() -> None:
+    """A shebang plus an exec bit is a promise that ``./scripts/<entry>.py`` runs. Most cannot.
+
+    Four of the five import ``opi`` through their module, so a bare interpreter gets as far as
+    ``ModuleNotFoundError``. That is why they are documented with a launcher in front of them --
+    and a shebang on such a file invites exactly the invocation the launcher exists to replace,
+    without anything in the paste saying it will not work. The one entry documented as
+    ``python3 scripts/...`` is the one that can keep the promise, so it carries both and is run
+    here by its own path to prove it.
+
+    The entry points are read from the tree and not from ``ENTRY_SCRIPTS``: a dash in the name is
+    what makes a file an entry rather than an importable module (``scripts/README.md``), so a
+    sixth one arriving cannot slip past this by not being in the list.
+    """
+    entries = {path.name for path in (tool.REPO / "scripts").glob("*-*.py")}
+
+    assert entries == set(ENTRY_SCRIPTS), "an entry point under scripts/ is missing from ENTRY_SCRIPTS"
+
+    launchers = _documented_launchers()
+    modes = _committed_modes()
+
+    for name in sorted(entries):
+        assert launchers.get(name), f"scripts/{name} has no documented invocation to judge it by"
+        assert len(launchers[name]) == 1, f"scripts/{name} is documented with two launchers: {launchers[name]}"
+        shebang = (tool.REPO / "scripts" / name).read_text().startswith("#!")
+        executable = modes[name] == "100755"
+
+        if launchers[name] == {BARE_PYTHON}:
+            assert shebang, f"scripts/{name} is documented as standalone but has no shebang"
+            assert executable, f"scripts/{name} is documented as standalone but is committed as {modes[name]}"
+            finished = subprocess.run(
+                [f"./scripts/{name}", "--help"],
+                cwd=tool.REPO,
+                env=_outside_the_venv(),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            assert finished.returncode == 0, f"./scripts/{name} does not start: {finished.stderr[-400:]}"
+        else:
+            assert not shebang, f"scripts/{name} needs {launchers[name]}, so a shebang on it is a dead end"
+            assert not executable, f"scripts/{name} needs {launchers[name]}, so the exec bit on it is a dead end"
 
 
 def test_the_scripts_hand_out_the_same_launcher_the_docs_do() -> None:
@@ -1363,6 +1443,35 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
     assert "operations-manager/python/.env" in tool.LOOSE_VALUE_FILES
     for path in tool.loose_paths():
         assert loose_values(path), f"{path} carries no base64+age: value any more"
+
+
+def test_the_feature_doc_counts_what_the_worklist_really_holds() -> None:
+    """The doc row that tells an operator what this entry covers, against the inventory itself.
+
+    That row said eight loose values while the tool printed nine, and a hand count was the only
+    thing that found it. A number in the doc is a claim about the worklist, so a file arriving in
+    ``LOOSE_VALUE_FILES`` or a new SOPS file in this tree has to be visible here.
+    """
+    rows = [
+        line
+        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
+        if line.startswith("| `scripts/rotate-sops-key.py`")
+    ]
+
+    assert len(rows) == 1, "the row that says what this entry covers is gone from the feature doc"
+
+    row = rows[0]
+    counted = {word: int(number) for number, word in re.findall(r"(\d+) (SOPS-bestanden|losse waarden)", row)}
+
+    assert set(counted) == {"SOPS-bestanden", "losse waarden"}, f"this row no longer counts both: {row}"
+
+    # Counted into locals first: a bare len(...) in the assert makes pytest print every
+    # LooseValue it found, ciphertext and all, over a number that is off by one.
+    sops_count = len(sops_files(tool.REPO))
+    loose_count = len(tool.all_loose_values(tool.loose_paths()))
+
+    assert counted["SOPS-bestanden"] == sops_count, f"update this row: {row}"
+    assert counted["losse waarden"] == loose_count, f"update this row: {row}"
 
 
 def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> None:
