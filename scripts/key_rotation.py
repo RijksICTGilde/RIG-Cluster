@@ -18,13 +18,9 @@ exclusion list, and that silently falls behind the moment a file is added. This 
 hypothetical: the tree held a practice key in ``sops-sandbox/`` with two files of its own until
 this rotation removed it, and the sandbox and developer keys are still separate keys.
 
-**The loose values do need a list, so they get a guard.** Outside a SOPS file nothing carries
-its recipient in the text, so there the worklist IS a list of paths -- and one that fell
-behind: three committed values (a Python setting default, a copy of it in a migration script,
-and a whole file that is one armored block) sat outside every place this tool walks, so the
-final check called the old key dead while it still opened them. ``files_with_ciphertext()``
-turns that list into something checkable: every tracked file holding REAL ciphertext is
-converted here or stands on an exception list, and the entry point fails on anything else.
+**The loose values do need a list, so they get a guard.** ``files_with_ciphertext()`` is the
+inventory that list is checked against; ``coverage_gaps()`` in the entry point is that check,
+and says why a list is unavoidable there.
 """
 
 from __future__ import annotations
@@ -510,11 +506,12 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 def is_real_ciphertext(value: str) -> bool:
     """Whether this really is AGE ciphertext, decided without any key.
 
-    The tree holds a few dozen values with the right SHAPE and no content: ``base64+age:AAAA``
-    in a test, a shortened block in a feature doc. Measured, they are the difference between
-    99 files and 34. A guard that counts those needs an exception list of entries nobody can
-    act on, and that is how a guard goes stale -- the same reason the secret scanner runs an
-    AGE candidate past ``age-keygen`` instead of alarming on the prefix.
+    The tree holds values with the right SHAPE and no content: ``base64+age:AAAA`` in a test,
+    a shortened block in a feature doc. Measured over this tree, 34 files carry real
+    ciphertext against 43 with only the shape, so skipping this check would put nine entries
+    nobody can act on next to the six real exceptions -- and that is how a guard goes stale,
+    the same reason the secret scanner runs an AGE candidate past ``age-keygen`` instead of
+    alarming on the prefix.
 
     So the armor is unwrapped and the AGE header is read: a real file opens with
     ``age-encryption.org/v1`` and carries a recipient stanza and a MAC line.
@@ -550,10 +547,7 @@ def encrypted_candidates(text: str) -> list[str]:
 def files_with_ciphertext(tree: str | Path) -> dict[Path, int]:
     """Every tracked file holding real AGE ciphertext, and how many values sit in it.
 
-    This is the inventory the coverage guard hangs off. Whatever is in here has to be reached
-    by one of the places this rotation converts, or stand on the tool's exception list -- so a
-    file carrying the platform key cannot sit outside the whole operation unnoticed, which is
-    what ``opi/core/config.py`` did.
+    This is the inventory ``coverage_gaps()`` hangs off.
 
     Tracked files and not the working tree: the untracked ``security/`` holds the real keys on
     purpose, and a scratch file is not what a rotation has to reach.

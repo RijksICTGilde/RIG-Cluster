@@ -75,14 +75,11 @@ REPO = Path(__file__).resolve().parents[1]
 #: ``.env`` is on it deliberately: that file really is loaded during local development, so
 #: without conversion that stops working the moment A goes away.
 #:
-#: The last three arrived through a review that measured the tree with the old key instead of
-#: reading this list. ``PROJECT_REPO_PASSWORD`` is not an example: it is read in
-#: ``opi/utils/project_utils.py`` and filled into ``opi/configs/project-template.yaml``, and
-#: only ``sandboxed-local`` overrides it -- ``odcn-production`` and ``local`` fall back to this
-#: default, so after step 5 production could no longer decrypt it. The migration script carries
-#: a copy of the same value. ``age-secret-github.txt`` is a whole file that is one armored
-#: block; it has been there since the initial commit and nothing in the tree names it, but it
-#: opens with the platform key, so leaving it behind would make the final check lie.
+#: The last three read like examples and are not. ``PROJECT_REPO_PASSWORD`` is the default
+#: ``odcn-production`` and ``local`` fall back to (only ``sandboxed-local`` overrides it), the
+#: migration script carries a copy of that same value, and ``age-secret-github.txt`` is a whole
+#: file that is one armored block which nothing in the tree names. All three open with the
+#: platform key.
 LOOSE_VALUE_FILES = (
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
@@ -94,11 +91,8 @@ LOOSE_VALUE_FILES = (
 
 #: Tracked files that hold real AGE ciphertext this rotation deliberately does NOT convert,
 #: with the reason. Anything carrying ciphertext that is neither converted nor named here is a
-#: coverage gap and stops the tool.
-#:
-#: Every entry is a CLAIM that the value does not sit on the platform key, and a claim is not a
-#: measurement. ``--assert-old-key-dead`` measures it: it opens these files with the old key
-#: too, and one that answers is reported by name.
+#: coverage gap and stops the tool. Every entry is a hand-written claim, and
+#: ``check_exceptions()`` holds it to that claim with the old key.
 COVERAGE_EXCEPTIONS = {
     "docs/doorloop-rc108/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
     "docs/doorloop-rc110/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",

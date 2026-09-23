@@ -445,12 +445,7 @@ def test_write_loose_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
 async def test_real_ciphertext_is_told_apart_from_a_value_with_only_the_shape(
     key_pair_a: tuple[str, str],
 ) -> None:
-    """What keeps the exception list short enough to stay true.
-
-    Measured over this tree: counting every value with the right SHAPE gives 99 files, reading
-    the AGE header gives 34. The difference is placeholders in tests and shortened blocks in
-    feature docs -- entries nobody can act on, and a list of those is how a guard goes stale.
-    """
+    """What keeps the exception list short enough to stay true: shape is not content."""
     private_key, public_key = key_pair_a
     assert await decrypt_age_content(await encrypt_age_content("hunter2", public_key), private_key) == "hunter2"
 

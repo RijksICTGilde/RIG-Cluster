@@ -262,7 +262,7 @@ async def test_fingerprint_now_reports_a_field_no_key_opens(tmp_path: Path) -> N
 
 
 def test_the_expected_count_is_the_sum_of_the_fingerprints_that_exist(tmp_path: Path) -> None:
-    """The final check walks four places, converted by two tools with a fingerprint each.
+    """The final check walks five places, converted by two tools with a fingerprint each.
 
     Passing only one of them would compare a part against a whole and always deviate.
     """
@@ -743,7 +743,7 @@ async def test_the_final_check_walks_this_repos_own_project_file(tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# the SOPS files themselves: the first of the four places, and the one the task is named after
+# the SOPS files themselves: the first of the five places, and the one the task is named after
 # ---------------------------------------------------------------------------
 
 
@@ -1176,13 +1176,7 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
 
 
 def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> None:
-    """Named one by one, because each one is a different SHAPE the env pattern walked past.
-
-    ``PROJECT_REPO_PASSWORD`` is a quoted Python literal and not an example: it is the default
-    ``odcn-production`` and ``local`` fall back to, so after the secret is swapped production can
-    no longer read it. The migration script holds a copy of the same value as a dict entry.
-    ``age-secret-github.txt`` is a whole file that is one armored block, with no key line at all.
-    """
+    """Named one by one, because each one is a different SHAPE the env pattern walked past."""
     found = {
         str(field_.path.relative_to(tool.REPO)): (field_.name, field_.line_number)
         for path in tool.loose_paths()
@@ -1196,11 +1190,6 @@ def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> Non
 
 def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> None:
     """The guard, measured against the real tree: this is what the worklist was missing.
-
-    The three values above sat outside every place the tool walked, so ``--assert-old-key-dead``
-    reported CLEAN over them. A list of paths cannot select on the recipient the way the SOPS
-    round does, so it gets checked instead: every tracked file holding REAL ciphertext is either
-    converted here or stands on ``COVERAGE_EXCEPTIONS`` with a reason.
 
     The two inner patches put the real tree back: ``no_coverage_sweep`` empties the inventory and
     ``no_own_projects`` points ``projects/`` elsewhere for every other test here, and this is the
@@ -1218,14 +1207,9 @@ def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> Non
 async def test_the_round_also_converts_the_argocd_repository_secrets(tmp_path: Path) -> None:
     """The fifth place, and it is in another repo: zad-argo-user-applications.
 
-    Measured in ``argo_manager.py``: the ArgoCD repository secrets are written with
-    ``encrypt_to_sops_files_or_fail(..., settings.SOPS_AGE_PUBLIC_KEY)``, so they sit on the
-    PLATFORM recipient, and the sops-plugin renders them with the very secret step 5 replaces.
-    Left on the old key they stop rendering the moment the new key is in the cluster -- and
-    nothing in this repo would show it, because they are not in this repo.
-
-    Selection stays on the recipient inside that clone: a file there on another key is not
-    touched, which is what the second SOPS file measures.
+    Why those secrets hang off the platform key is in ``sops_trees()``. Selection stays on the
+    recipient inside that clone: a file there on another key is not touched, which is what the
+    second SOPS file measures.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()

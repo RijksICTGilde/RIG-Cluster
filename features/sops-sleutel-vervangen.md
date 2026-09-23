@@ -43,7 +43,7 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
    |      sleutel van het project.
    |
    +-- projects/simple-example.yaml in DEZE repo
-          een vijfde vindplaats die het plan niet noemt. Gemeten door elk versleuteld
+          een vindplaats die het plan niet noemt. Gemeten door elk versleuteld
           veld in tests/ en projects/ met de platformsleutel te proberen: exact een
           treffer, een repositories[].password. Het is een projectbestand, dus de motor
           zet het om, maar het staat HIER: `rotate-project-keys.py` op een clone van
@@ -187,13 +187,9 @@ een project op de oude sleutel staan, of een ArgoCD repository-secret dat na de 
 rendert. Het weghalen van de sleutel is het punt waarna niets meer te repareren valt, dus een
 schoon oordeel over vier van de vijf plaatsen is geen reden om hem weg te gooien.
 
-Boven op die vijf loopt hij twee dingen na die over de DEKKING gaan en niet over een veld:
-
-- **een bestand met cijfertekst dat nergens wordt omgezet** is een FAIL, geen stilte. Dat is de
-  fout die deze sectie eerder liet passeren -- zie hieronder.
-- **de uitzonderingslijst** wordt met de oude sleutel gemeten. Elke regel daarop is een met de
-  hand geschreven bewering dat die cijfertekst aan een andere sleutel hangt, en met de hand
-  geschreven dekking is nu juist wat misging.
+Boven op die vijf loopt hij twee dingen na die over de DEKKING gaan en niet over een veld: een
+bestand met cijfertekst dat nergens wordt omgezet is een FAIL en geen stilte, en de
+uitzonderingslijst wordt met de oude sleutel nagemeten. Waarom allebei: zie hieronder.
 
 `--remove-old-key` haalt `security/old_key.txt` weg. `--verify` blijft daarna werken: die stand
 meet met de nieuwe sleutel en vraagt de oude niet op.
@@ -277,11 +273,12 @@ Twee dingen maken dat bruikbaar in plaats van een lijst die verslapt:
 
 **"Echte" cijfertekst, niet de vorm.** De armor wordt uitgepakt en de AGE-header gelezen: een echt
 bestand begint met `age-encryption.org/v1` en draagt een recipient-stanza en een MAC-regel.
-Gemeten op deze boom is dat het verschil tussen **99 bestanden en 34** -- de rest zijn
-plaatshouders in toetsen (`base64+age:AAAA`) en ingekorte blokken in feature-documentatie. Dat is
+Gemeten op deze boom: **34 bestanden** dragen echte cijfertekst, **43** dragen alleen de vorm --
+plaatshouders in toetsen (`base64+age:AAAA`) en ingekorte blokken in feature-documentatie. Zonder
+de kop-controle zouden die negen er als uitzondering bij moeten, naast de zes echte. Dat is
 dezelfde afweging als bij de scanner, die een AGE-kandidaat pas meldt als `age-keygen` hem
 accepteert: een uitzonderingslijst vol regels waar niemand iets mee kan is hoe een grendel stil
-verslapt. Zes uitzonderingen zijn te onderhouden, tachtig niet.
+verslapt.
 
 **De uitzonderingen worden nagemeten.** Elke regel op die lijst is een met de hand geschreven
 bewering dat die cijfertekst aan een andere sleutel hangt, en met de hand geschreven dekking is nu
