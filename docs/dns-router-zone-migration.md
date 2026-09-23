@@ -19,6 +19,7 @@ Confirmed before starting:
 - [x] `cluster_config.py` has `external_dns_target` per supported domain
 - [x] `manifests/ingress.yaml.jinja` emits the annotation
 - [x] `project_manager.py` passes the target at all three ingress sites
+- [x] `project_manager.py` passes the target into the helm values of the helmfile route
 - [x] `bootstrap/.../ingress-rijksapp.yaml` has the annotation hardcoded
 - [x] `infrastructure/.../keycloak/.../kustomization.yaml` patches it onto Keycloak
 - [x] `infrastructure/.../external-dns/controller/base/deployment.yaml` runs `--policy=sync`
@@ -31,68 +32,77 @@ v6 to list and delete DNS records. Reads `TRANSIP_ACCOUNT_NAME` and
 `TRANSIP_PRIVATE_KEY` from env. **Must be run from inside the production cluster**
 (TransIP API has IP whitelist; local execution returns 401).
 
-## Records to migrate (snapshot 2026-05-08)
+## Which records need what
 
-48 orphan CNAMEs total, in three categories.
+The snapshot that used to stand here (three fixed name lists, 2026-05-08) went stale
+within months: seven names it filed under "needs a project redeploy first"
+(`algoritmes`, `amt.bzk`, `assessments`, `desa`, `website.desa`, `task-registry`,
+`frontend-main-wies`) already carried the annotation when the migration was picked up
+again on 2026-09-23, and were simply deleted and came back correct. A list of names is
+not the thing to check. The question is:
 
-### Category A — Ready to delete (3)
+**Does the Ingress behind this name already carry
+`external-dns.alpha.kubernetes.io/target`?**
 
-Static ingresses with the new annotation already on the resource. Deleting these
-triggers external-dns to recreate them with the correct target within ~1 minute.
+Ask it per record, right before you delete:
 
-```
-keycloak.rijksapp.nl
-wies.rijksapp.nl
-zad.rijksapp.nl
-```
-
-### Category B — Needs project redeploy first (28)
-
-Ingress exists in cluster but the rendered manifest in git was produced before
-the template change, so the annotation is missing. Redeploy via OPI causes the
-new template to render the annotation onto the Ingress — only then is it safe
-to delete the orphan CNAME.
-
-```
-algoritmes.rijksapp.nl                    bouwmeester.rijks.app
-amt.bzk.rijksapp.nl                       component-1.bouwmeester.rijks.app
-assessments.rijksapp.nl                   component-2.bouwmeester.rijks.app
-desa.rijksapp.nl                          docs.regelrecht.rijks.app
-docs.rijksapp.nl                          editor.regelrecht.rijks.app
-frontend-main-wies.rijksapp.nl            grafana.regelrecht.rijks.app
-grist.rijksapp.nl                         harvester-admin.regelrecht.rijks.app
-static-docs.rijksapp.nl                   hello.robbert.rijks.app
-task-registry.rijksapp.nl                 landing.regelrecht.rijks.app
-website.desa.rijksapp.nl                  lawmaking.regelrecht.rijks.app
-                                          regelrecht.rijks.app
-gebruikersonderzoek-2026-03-moza.rijksapp.dev  registers.rijks.app
-moza.rijksapp.dev                         uitbetrouwbarebron.rijks.app
-proef.gebruikersonderzoek-2026-03-moza.rijksapp.dev  upload.regelrecht.rijks.app
-proef.moza.rijksapp.dev
+```bash
+# Every hostname in the cluster whose Ingress already carries the target annotation.
+kubectl get ingress -A -o json | python3 -c "
+import json, sys
+for i in json.load(sys.stdin)['items']:
+  ann = i.get('metadata',{}).get('annotations',{}) or {}
+  if ann.get('external-dns.alpha.kubernetes.io/target'):
+    for r in i.get('spec',{}).get('rules',[]):
+      print(r.get('host'))
+" | sort
 ```
 
-amt.rijksapp.nl was in this category and is now done — proven workflow.
+Three answers, three routes:
 
-### Category C — Truly orphaned, no in-cluster Ingress (17)
+| Answer | What to do |
+|---|---|
+| Annotation present | Delete the orphan CNAME. external-dns recreates it with the right target plus TXT marker within ~70s. |
+| Ingress exists, annotation missing | Get the annotation onto the Ingress first (see below), verify it is really there, then delete. |
+| No Ingress for this name at all | Truly orphaned. Delete as cleanup; external-dns will not recreate it. Verify it is genuinely abandoned first (old PR builds, deleted projects, test fixtures). |
 
-No active project owns these. external-dns will not recreate them after deletion.
-Pure cleanup. Verify each is genuinely abandoned before deleting (some look like
-old PR builds, deleted projects, test fixtures).
+### Getting the annotation onto an Ingress
 
-```
-frontend-productie-wies.rijksapp.nl       editor.pr129.rijks.app
-frontend-production-wies.rijksapp.nl      editor.pr130.rijks.app
-                                          editor.pr133.rijks.app
-bado.rijks.app                            *.regelrecht-regel-k4c.rijks.app  (6 records)
-component-1.bado.rijks.app                hello.robbert.rijks.app — keep? (Robbert's test domain)
-belang.rijks.app
-deletemij.rijks.app
-component-1.deletemij.rijks.app
-test.moza.rijksapp.dev
-```
+For a project whose manifests OPI renders itself, an OPI reprocess is enough: the
+current `manifests/ingress.yaml.jinja` emits the annotation, so the re-rendered Ingress
+carries it.
 
-Note: `hello.robbert.rijks.app` is also listed under Category B above because it
-*does* have an Ingress; verify before treating it as orphan.
+For a project whose manifests are rendered by an external chart (a helmfile deployment:
+`docs`, `static-docs`, `grist`), a reprocess was **not** enough for a long time, and
+nothing in this runbook said so: the category lists it used to carry filed those names
+under "needs a project redeploy first" like any other. OPI passed the target at its own
+three ingress sites only, so the helmfile route never saw it and external-dns kept writing the
+CNAME to the OCP-router hostname. RC-225 closed that gap: OPI now writes the target into
+`cluster.ingress.annotations` of the helm values, which every ingress block of the
+mijn-bureau charts reads. Since then a reprocess works for these projects too, but only
+after that change is deployed to the cluster you are migrating.
+
+Either way: an OPI reprocess and a green ArgoCD sync are not proof. Look at the Ingress
+itself with the query above. `mb-docs-helmfile-production` in particular fails its
+ArgoCD sync on an unrelated broken Kyverno policy, so "sync succeeded" carries no
+information there at all.
+
+## Two traps
+
+Both were walked into on 2026-09-23.
+
+**A name can carry two CNAMEs at once.** `algoritmes` had the broken record *and* a
+hand-made good one pointing at `router.rijksapp.nl`. Deleting only the broken one leaves
+a record that looks migrated but has no TXT ownership marker, so it still lives outside
+external-dns and will not follow the next Ingress change. After every delete, check the
+marker, not just the target. The Verification section below has the three lookups.
+
+**The zone is the truth, not the cluster inventory.** The dry-run listed 12 records in
+`rijksapp.nl` while the cluster only accounted for 10. The two extra,
+`frontend-productie-wies.rijksapp.nl` and `frontend-production-wies.rijksapp.nl`, have
+no Ingress and show up in no kubectl query whatsoever. Always start from the zone
+listing (Step 2), and use the cluster only to classify what the zone hands you. These
+two are awaiting a decision and stay put for now.
 
 ## Procedure
 
@@ -134,67 +144,70 @@ for zone in rijksapp.nl rijks.app rijksapp.dev; do
 done
 ```
 
-Compare the output against the lists above. The set may have changed since the
-snapshot.
+This listing is the work list: the zone knows about records the cluster does not
+(see the second trap above). Classify every name it returns with the annotation query
+from "Which records need what", and handle each one on its own route.
 
-### Step 3 — Delete Category A (the 3 ready ones)
+### Step 3 — Delete the names whose Ingress already carries the annotation
+
+Per name from Step 2 that the annotation query lists:
 
 ```bash
-for name in keycloak wies zad; do
-  run_in_pod --zone rijksapp.nl --name "$name" --type CNAME --yes
+ZONE=rijksapp.nl
+NAMES="name-a name-b"          # the labels, without the zone
+
+for name in $NAMES; do
+  run_in_pod --zone "$ZONE" --name "$name" --type CNAME --yes
   sleep 5
 done
 ```
 
-Wait ~70s, then verify external-dns recreated them with the new target:
+`--name` deletes every CNAME on that name, which is what you want: a name can carry
+two (first trap above). Wait ~70s, then verify external-dns recreated them with the
+new target:
 
 ```bash
-for h in keycloak.rijksapp.nl wies.rijksapp.nl zad.rijksapp.nl; do
-  printf "%-30s " "$h"
-  curl -sS "https://dns.google/resolve?name=$h&type=A" | \
+for name in $NAMES; do
+  printf "%-30s " "$name.$ZONE"
+  curl -sS "https://dns.google/resolve?name=$name.$ZONE&type=A" | \
     python3 -c "import json,sys; d=json.load(sys.stdin); print('Status', d['Status'], 'AD', d.get('AD'))"
 done
 ```
 
-Expected: `Status 0 AD True` for all three.
+Expected: `Status 0 AD True` for all of them. Then check the TXT markers per name
+(Verification below): `Status 0` also holds for a hand-made record that external-dns
+does not own.
 
-### Step 4 — Delete Category C (the truly orphaned ones)
+### Step 4 — Delete the names with no Ingress at all
 
-For each host in Category C, delete its CNAME. external-dns will not recreate
-since no Ingress claims the name. Pure cleanup.
+These external-dns will not recreate, since no Ingress claims the name. Pure cleanup.
 
 ```bash
-# Per zone, delete all matching orphans:
+# Per zone, list what is left:
 run_in_pod --zone rijksapp.nl --type CNAME \
   --target-equals 'router-rig.rig.prd1.gn2.quattro.rijksapps.nl.' --dry-run
-# Inspect the list — confirm none of the listed names belong to a redeploy-pending
-# project that you haven't redeployed yet — then drop --dry-run.
+# Inspect the list, confirm none of the names still needs its annotation first,
+# then drop --dry-run.
 ```
 
-Be careful: `--target-equals` filtering will match BOTH categories B (still has
-Ingress, no annotation yet) AND category C (no Ingress at all). Don't run a blunt
-bulk-delete on the whole zone until Category B is fully redeployed.
+Be careful: `--target-equals` matches the names that still have an Ingress without the
+annotation just as happily as the abandoned ones. Don't run a blunt bulk-delete on a
+whole zone while any name in it is still waiting for Step 5.
 
-Safer: enumerate the Category C hosts explicitly, one zone at a time.
+Safer: enumerate the abandoned hosts explicitly, one zone at a time.
 
-### Step 5 — Migrate Category B per project
+### Step 5 — Get the annotation onto the remaining Ingresses, then delete
 
-For each project still on the legacy CNAME:
+For each name that still has an Ingress without the annotation:
 
-1. Trigger an OPI reprocess (re-render of manifests with the new template).
-2. Verify the Ingress in cluster now has `external-dns.alpha.kubernetes.io/target`:
-   ```bash
-   kubectl get ingress -A -o json | python3 -c "
-   import json, sys
-   for i in json.load(sys.stdin)['items']:
-     ann = i.get('metadata',{}).get('annotations',{}) or {}
-     if ann.get('external-dns.alpha.kubernetes.io/target'):
-       for r in i.get('spec',{}).get('rules',[]):
-         print(r.get('host'))
-   " | sort
-   ```
+1. Get the annotation onto the Ingress. For an OPI-rendered project that is an OPI
+   reprocess; for a helmfile project it is an OPI reprocess on a cluster that runs
+   RC-225 or later. See "Getting the annotation onto an Ingress" above.
+2. Verify the Ingress in cluster now really has the annotation, with the query from
+   "Which records need what". This is the gate: a green ArgoCD sync is not one, and for
+   `mb-docs-helmfile-production` it is not even available.
 3. Delete the orphan CNAME(s) for that project's hostnames using the script.
-4. Wait ~70s and verify Google resolves to the new target.
+4. Wait ~70s, verify Google resolves to the new target, and check the TXT markers.
 
 ### Step 6 — Cleanup
 
@@ -242,3 +255,7 @@ curl -sS "https://dns.google/resolve?name=$HOST&type=A"
 
 When all three TXT/CNAME entries exist with `heritage=external-dns,owner=default`,
 external-dns owns the record. Future Ingress changes will flow through automatically.
+
+The CNAME lookup must return exactly one line. Two lines means a hand-made record is
+still sitting next to the one external-dns wrote, and the TXT markers say nothing about
+which of the two answers a resolver gets.
