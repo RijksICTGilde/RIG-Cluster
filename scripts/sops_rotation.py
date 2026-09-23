@@ -11,8 +11,7 @@ a different repo and belong to a round of their own, with its own commits.
     uv run --project operations-manager/python python scripts/rotate-sops-key.py --verify              # check the fingerprint, months later too
     uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all five places
 
-The launcher is not decoration: this module imports ``opi``, so it only runs inside the OPI
-environment. ``scripts/README.md`` says why, and every documented line carries it.
+Paste those lines whole: ``scripts/README.md`` says why the launcher is part of the command.
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.

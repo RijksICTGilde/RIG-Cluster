@@ -80,9 +80,7 @@ dat een fout in het script. De losse handelingen eronder staan in
 `docs/sops-en-age-met-de-hand.md`.
 
 De regels hieronder draai je vanaf de repowortel en je plakt ze heel: het voorvoegsel hoort bij
-het commando, want de vier rotatie-ingangen importeren `opi` en draaien alleen in de omgeving van
-OPI. `scan-secrets.py` is de uitzondering en draait op een kale `python3`. Waarom dat zo is staat
-in `scripts/README.md`.
+het commando. Waarom, en waarom `scan-secrets.py` er anders uitziet, staat in `scripts/README.md`.
 
 De ronde heeft vier fasen, en de grens die telt zit tussen VERIFY-1 en APPLY. Tot daar raakt niets
 productie en blijft alles op de oude sleutel werken, dus afbreken kost niet meer dan een paar

@@ -731,7 +731,7 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
         assert arguments.argo_applications, f"the final check walks the fifth place: {line}"
 
 
-#: The five entry points under ``scripts/``. Every one of them carries a documented invocation.
+#: The five entry points under ``scripts/``.
 ENTRY_SCRIPTS = (
     "rotate-sops-key.py",
     "rotate-project-keys.py",
@@ -778,13 +778,10 @@ def _launcher_of(line: str) -> list[str]:
 def test_every_documented_command_line_starts_as_written() -> None:
     """A documented command is a claim about argv[0] too, not only about its flags.
 
-    Four of the five entry points import ``opi``, so ``scripts/rotate-sops-key.py`` on its own
-    stops on ModuleNotFoundError -- and on a fresh clone, where the file carries no exec bit,
-    before that on exit 126. Parsing the flags of such a line says nothing: it is the launcher in
-    front of them that decides whether the paste runs. So this RUNS each unique invocation, with
-    ``--help`` in place of the arguments, from the repository root the docs tell you to be in.
-
-    An operator runs these docs by hand, so nothing else would catch it.
+    Parsing the flags says nothing about whether the paste runs: that is decided by the launcher
+    in front of them, and an operator runs these lines by hand, so nothing else would catch it.
+    So this RUNS each unique invocation, with ``--help`` in place of the arguments, from the
+    repository root the docs tell you to be in.
 
     It runs them OUTSIDE this test's virtualenv. Pytest itself runs inside the OPI environment,
     so a plain ``python3`` here would resolve to the interpreter that already has pydantic, and

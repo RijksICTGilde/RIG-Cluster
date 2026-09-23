@@ -1,13 +1,8 @@
 """The operator's script in the feature doc, split into the launcher and the flags.
 
-Four of the five entry points under ``scripts/`` import ``opi``, so they only run inside the OPI
-environment: a bare ``scripts/rotate-sops-key.py`` line stops on ``ModuleNotFoundError``. Every
-documented invocation of those four therefore carries :data:`LAUNCHER`, and ``scan-secrets.py``
--- which imports nothing of OPI -- carries :data:`BARE_PYTHON` instead.
-
-The tests that read those lines have to step over that prefix before they can hand the rest to an
-argument parser. One module owns it, so a change to the prefix cannot leave one test file reading
-a list that is silently empty.
+The tests that read those lines have to step over the launcher before they can hand the rest to
+an argument parser. One module owns it, so a change to the prefix cannot leave one test file
+reading a list that is silently empty. Why there is a launcher at all: ``scripts/README.md``.
 """
 
 from __future__ import annotations

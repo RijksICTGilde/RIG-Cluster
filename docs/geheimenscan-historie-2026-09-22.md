@@ -9,13 +9,11 @@ met de sleutel waarvoor hij versleuteld was, en een sleutelwissel verandert daar
 hier in staat moet dus als GELEKT behandeld worden, ongeacht of het uit de huidige boom is
 verdwenen.
 
-**De wijzers staan er niet bij, en dat is een besluit.** Deze repo gaat naar GitHub, en het
-intrekken van wat hieronder staat zijn handelingen op een draaiend cluster die nog openstaan. Een
-lijst met de exacte paden, de identifiers en de intrekcommando's is op dat moment een kaart naar
-iets wat nog geldig is. Die lijst is daarom via het interne kanaal gedeeld
-(`rc221-geheimenscan-historie-vindplaatsen.md`) en staat op de PR van RC-221; hier staat wat er
-gemeten is en wat eruit volgt. Is alles uit die lijst ingetrokken, dan mag hij alsnog hierbij,
-want dan wijst hij naar niets meer.
+**De wijzers staan er niet bij, en dat is een besluit.** Deze repo gaat naar GitHub, en zolang
+de vondsten hieronder niet ingetrokken zijn is een lijst met de exacte paden, de identifiers en
+de intrekcommando's een kaart naar iets wat nog geldig is. Die lijst staat daarom op het interne
+kanaal (`rc221-geheimenscan-historie-vindplaatsen.md`) en op de PR van RC-221; hier staat wat er
+gemeten is en wat eruit volgt. Is alles ingetrokken, dan mag hij alsnog hierbij.
 
 Herhaalbaar met:
 
