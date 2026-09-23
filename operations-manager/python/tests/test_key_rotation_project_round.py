@@ -60,12 +60,7 @@ users:
 clusters:
   - odcn-production
 repositories:
-  - name: main-repo
-    url: https://github.com/example/app.git
-    username: git
-    password: {repo_password}
-    branch: main
-    path: .
+{repositories}
 components:
   - name: component-1
     type: single
@@ -91,15 +86,40 @@ def _indent(value: str, spaces: int = 4) -> str:
     return "\n".join(" " * spaces + line for line in value.splitlines())
 
 
-async def _write_project(directory: Path, name: str, platform_public: str) -> Path:
-    """One project file shaped like the real ones: block-scalar key, one-line repo password."""
+async def _repositories(platform_public: str, passwords: tuple[str | None, ...]) -> str:
+    """The ``repositories:`` block, one entry per element of ``passwords``.
+
+    ``None`` is a repository that carries no password at all. That is not a contrived shape:
+    two of the three repositories in this repo's own ``projects/simple-example.yaml`` look
+    exactly like that, and a project made only of them has nothing for the PAT round to do.
+    """
+    lines: list[str] = []
+    for index, password in enumerate(passwords):
+        lines.append(f"  - name: {'main-repo' if index == 0 else f'repo-{index + 1}'}")
+        lines.append("    url: https://github.com/example/app.git")
+        if password is not None:
+            block = await encrypt_age_content(password, platform_public)
+            lines.append("    username: git")
+            lines.append(f"    password: {BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}")
+        lines.append("    branch: main")
+        lines.append("    path: .")
+    return "\n".join(lines)
+
+
+async def _write_project(
+    directory: Path,
+    name: str,
+    platform_public: str,
+    *,
+    passwords: tuple[str | None, ...] = ("ghp_repository_token",),
+) -> Path:
+    """One project file shaped like the real ones: block-scalar key, one-line repo passwords."""
     project_private, project_public = generate_sops_key_pair()
-    block = await encrypt_age_content("ghp_repository_token", platform_public)
     path = directory / f"{name}.yaml"
     path.write_text(
         PROJECT_TEMPLATE.format(
             name=name,
-            repo_password=f"{BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}",
+            repositories=await _repositories(platform_public, passwords),
             project_public=project_public,
             project_private=_indent(await encrypt_age_content(project_private, platform_public)),
         )
@@ -223,6 +243,28 @@ async def test_an_already_converted_file_is_not_a_problem(projects_repo: Path) -
     assert "already converted" in (second.skipped[0].skipped or "")
     assert broken(second) == []
     assert second.committed == []
+
+
+@pytest.mark.asyncio
+async def test_a_yaml_without_encrypted_platform_fields_is_no_problem_in_either_round(
+    projects_repo: Path,
+) -> None:
+    """The round globs ``*.yaml``, so whatever else sits in that directory reaches it too.
+
+    Judged as a real problem it would make every round exit 1 over a file that has nothing to
+    convert, in both the key round and the PAT round.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    (directory / "leeg.yaml").write_text("schema-version: 2\nname: leeg\n")
+
+    key_round = await run_round(directory, old_private, new_private, dry_run=False)
+    pat_round = await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+
+    assert [report.skipped for report in key_round.skipped] == ["no encrypted platform fields in this file"]
+    assert broken(key_round) == []
+    assert broken(pat_round, pat_round=True) == []
 
 
 @pytest.mark.asyncio
@@ -566,3 +608,117 @@ def test_already_converted_is_only_harmless_in_the_key_round() -> None:
 
     assert broken(result) == []
     assert len(broken(result, pat_round=True)) == 1
+
+
+# ---------------------------------------------------------------------------
+# the shapes the key round leaves behind for the PAT round
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_round(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The documented order over a project that has nothing for the PAT round to replace.
+
+    Its skip has to count as harmless, or the last step of the cutover ends on "FAIL 1 project
+    files were skipped with a real problem" while nothing is wrong -- the same false verdict as
+    the one the previous round fixed, with the sign flipped.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    path = await _write_project(projects_repo / "projects", "een", old_public, passwords=(None,))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    keys = [
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--projects",
+        str(projects_repo / "projects"),
+        "--ja",
+    ]
+
+    key_round = await main_rotate_keys([*keys, "--fingerprint", str(tmp_path / "key-fingerprint.json")])
+    after_the_key_round = path.read_text()
+    pat_round = await main_replace_pat(
+        [*keys, "--pat-file", str(tmp_path / "pat.txt"), "--fingerprint", str(tmp_path / "pat-fingerprint.json")]
+    )
+
+    assert (key_round, pat_round) == (0, 0)
+    assert "no repository password to replace" in capsys.readouterr().out
+    assert path.read_text() == after_the_key_round
+    assert await opens_with(load_yaml_from_path(str(path))["config"]["age-private-key"], new_private)
+
+
+@pytest.mark.asyncio
+async def test_the_pat_dry_run_exits_clean_once_the_round_is_done(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A dry run is what the operator uses to check before running, and afterwards to check again.
+
+    It judges the preview with the same eyes as the round itself: the skips a finished PAT round
+    produces are harmless, so the rerun has to say so instead of reporting a problem.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    path = await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    keys = [
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--projects",
+        str(projects_repo / "projects"),
+        "--ja",
+        "--pat-file",
+        str(tmp_path / "pat.txt"),
+    ]
+    await main_replace_pat([*keys, "--fingerprint", str(tmp_path / "pat-fingerprint.json")])
+    after_the_round = path.read_text()
+    dry_fingerprint = tmp_path / "dry-fingerprint.json"
+
+    code = await main_replace_pat([*keys, "--dry-run", "--fingerprint", str(dry_fingerprint)])
+
+    assert code == 0
+    assert "Dry run: nothing was changed." in capsys.readouterr().out
+    assert not dry_fingerprint.exists()
+    assert path.read_text() == after_the_round
+
+
+@pytest.mark.asyncio
+async def test_every_repository_password_gets_the_new_pat_and_not_just_the_first(
+    projects_repo: Path,
+) -> None:
+    """A project with more than one repository: the token is per repository, so all of them move.
+
+    One left behind is invisible in the round's own output -- it converts, it commits, it exits
+    0 -- and shows up as a project that cannot reach that one repository after the old PAT is
+    revoked.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public, passwords=("ghp_first_repo", "ghp_second_repo"))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    result = await run_round(directory, old_private, new_private, new_pat="ghp_brand_new", dry_run=False)
+
+    assert result.replaced_fields == [
+        f"{path}#repositories[0].password",
+        f"{path}#repositories[1].password",
+    ]
+    assert not result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields)
+    data = load_yaml_from_path(str(path))
+    for index in (0, 1):
+        assert await decrypt_field(data["repositories"][index]["password"], new_private) == "ghp_brand_new"
