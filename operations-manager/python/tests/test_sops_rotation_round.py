@@ -715,7 +715,7 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     final_checks = [line for line in documented if "--assert-old-key-dead" in line or "--remove-old-key" in line]
 
     assert len(documented) >= 5, "the documented run disappeared from the feature doc"
-    assert len(final_checks) == 2, "step 6 and step 8 are both final checks"
+    assert len(final_checks) == 3, "VERIFY-1 and VERIFY-2 both run step 6, and step 8 is the third"
     for line in documented:
         arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
         assert arguments.projects_fingerprint == str(tool.DEFAULT_PROJECTS_FINGERPRINT)
@@ -1662,3 +1662,35 @@ async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_f
     assert f"NOTE no {AGE_KEY_MARKER} line in {tmp_path / 'old_key.txt'}" in printed
     assert "no old key at" not in printed
     assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+
+
+def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_in_its_own() -> None:
+    """The doc is the cutover plan, and the phase a command sits in is what it promises.
+
+    The boundary that matters is between VERIFY-1 and APPLY: everything before it lives in
+    throwaway clones, everything after it is a swap in a live cluster. A command that drifts
+    across it turns "nothing has left this machine" into a lie, and nothing else reads this doc.
+    The final check appears twice on purpose -- once as the go/no-go before the push and once
+    after the cutover -- which is what the count above allows for.
+    """
+    text = (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text()
+    headings = ["### PREPARE", "### VERIFY-1", "### APPLY", "### VERIFY-2", "### Daarna"]
+    starts = [text.index(heading) for heading in headings]
+
+    assert starts == sorted(starts), "the phases run out of order"
+
+    phase = dict(zip(headings, [text[a:b] for a, b in zip(starts, [*starts[1:], len(text)], strict=True)], strict=True))
+
+    assert "scripts/rotate-project-keys.py --projects" in phase["### PREPARE"]
+    assert "scripts/set-sops-key-secret.py" not in phase["### PREPARE"], "the swap is not a preparation"
+    assert "--assert-old-key-dead" in phase["### VERIFY-1"], "the go/no-go check is the point of VERIFY-1"
+    assert "kustomize build" in phase["### VERIFY-1"], "a full render is checked before ArgoCD gets to try it"
+    assert "scripts/set-sops-key-secret.py" in phase["### APPLY"]
+    assert "--assert-old-key-dead" in phase["### VERIFY-2"]
+    assert "--remove-old-key" in phase["### Daarna"], "throwing the old key away is not part of the cutover"
+
+    # The round ends by printing what is left to do, in these same phases. Rename a heading
+    # here and that closing list is the one thing that would have gone stale without saying so.
+    closing = Path(tool.__file__).read_text()
+    for heading in headings[:-1]:
+        assert heading.removeprefix("### ") in closing, f"the script stopped naming {heading}"

@@ -710,9 +710,11 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"  {len(fingerprint_after.fields)} fields readable with the new key and unchanged in content")
 
-    print("\nDone. Still to do:")
-    print("  1. scripts/rotate-project-keys.py on a fresh clone of the projects repo")
-    print("  2. commit and push, only once step 1 has been verified")
-    print("  3. scripts/set-sops-key-secret.py, and restart the operations-manager")
-    print("  4. scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects")
+    print("\nDone, and nothing has left this machine yet. The rest of PREPARE, then:")
+    print("  PREPARE   scripts/rotate-project-keys.py on a fresh clone of the projects repo,")
+    print("            and commit here and in the argo clone without pushing")
+    print("  VERIFY-1  scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects")
+    print("            --argo-applications <clone>, and kustomize build over that argo clone")
+    print("  APPLY     push all three repos, then scripts/set-sops-key-secret.py")
+    print("  VERIFY-2  that same final check, plus the smoke test in the feature doc")
     return 0

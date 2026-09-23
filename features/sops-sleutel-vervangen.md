@@ -79,6 +79,13 @@ erbij, zodat je ze ook met de hand kunt draaien; wijkt een script af van wat hie
 dat een fout in het script. De losse handelingen eronder staan in
 `docs/sops-en-age-met-de-hand.md`.
 
+De ronde heeft vier fasen, en de grens die telt zit tussen VERIFY-1 en APPLY. Tot daar raakt niets
+productie en blijft alles op de oude sleutel werken, dus afbreken kost niet meer dan een paar
+weggegooide clones. Daarna is het een kort venster waarin de bestanden en het cluster allebei om
+moeten.
+
+### PREPARE -- herversleutelen, en niets versturen
+
 ```bash
 # 1. sleutel B maken en de namen op hun plek zetten. --generate-new-key roept age-keygen zelf
 #    aan; --rename vraagt naar de twee paden (antwoord security/key.txt en security/nieuw.txt)
@@ -95,19 +102,88 @@ scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
 git clone <zad-projects> /tmp/zad-projects
 scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
+```
 
-# 4. verifieren TERWIJL er nog niets gepusht is
-scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
+Stap 2 laat zijn wijzigingen in de werkboom staan, in deze repo en in `/tmp/zad-argo`: commit ze
+daar allebei zelf, zonder push. Stap 3 commit wel, een commit per project, ook zonder push. Na
+deze fase staan alle drie de repo's klaar en is er nog niets vertrokken.
+
+### VERIFY-1 -- het go/no-go moment, voor de push
+
+```bash
+# 4. alle drie de repo's nalopen TERWIJL er nog niets gepusht is
+scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 git -C /tmp/zad-projects log --oneline | head
 git -C /tmp/zad-projects diff --stat HEAD~45
 
-# 5. pushen, alle drie de repos, en METEEN daarna het secret wisselen
+# en: de argo-clone moet een VOLLEDIGE render geven en niet een halve. Dit is wat de plugin
+# doet: dezelfde vlaggen, en dezelfde mappenkeuze als KUSTOMIZE_FOLDERS=subfolders
+export SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)"
+find /tmp/zad-argo -mindepth 2 -name kustomization.yaml -exec dirname {} \; | sort -u |
+  while read -r folder; do
+    kustomize build --enable-alpha-plugins --enable-exec --enable-helm "$folder" > /dev/null ||
+      echo "RENDER FAALT: $folder"
+  done
+unset SOPS_AGE_KEY
+```
+
+Dezelfde eindtoets als na de cutover, maar nu tegen de bestanden op schijf: elk veld in alle drie
+de repo's gaat open met de nieuwe sleutel, geen enkel veld nog met de oude, de platte inhoud is
+per veld ongewijzigd en de telling klopt met de som van beide vingerafdrukken. Hij praat niet met
+het cluster, dus hij mag hier al.
+
+De kustomize-lus dekt iets anders dan de vingerafdruk: een bestand kan prima ontsleutelen en de
+render toch laten stranden of leeglopen. Hij vraagt `kustomize` en `ksops` op je PATH, precies de
+twee die de plugin ook gebruikt (`bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`).
+Blijft de uitvoer leeg, dan rendert elke map.
+
+Gaat hier iets rood, dan gooi je de clones weg en begin je opnieuw. Er is nog niets gepusht.
+
+### APPLY -- het korte venster
+
+```bash
+# 5. pushen, alle drie de repo's, en METEEN daarna het secret wisselen
 scripts/set-sops-key-secret.py --dry-run
 scripts/set-sops-key-secret.py
 
-# 6. de eindtoets over alle vindplaatsen
-scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+# en ArgoCD de eerste render met de nieuwe sleutel laten doen terwijl je kijkt
+kubectl annotate application production-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
+kubectl annotate application user-applications -n rig-system argocd.argoproj.io/refresh=hard --overwrite
+```
 
+`set-sops-key-secret.py` doet zelf de herstart, en die kost **geen nieuwe image**. De sleutel komt
+via `env.valueFrom.secretKeyRef` bij OPI binnen
+(`bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml:117`), op de vaste naam
+`sops-age-key`; er staat geen `secretGenerator` in `bootstrap/`, dus ook geen hash-achtervoegsel
+dat het manifest zou veranderen. Een `kubectl rollout restart deployment/operations-manager` is
+genoeg, en dat is precies wat het script draait, met `rollout status` erachter. Geen bouw, geen
+nieuwe tag.
+
+De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de
+wissel is het bewijs dat het goed staat. Forceer hem dus nu, terwijl je meekijkt, in plaats van
+hem bij de eerstvolgende willekeurige sync tegen te komen.
+
+### VERIFY-2 -- werkt alles nog
+
+```bash
+# 6. de rooktest en de eindtoets
+kubectl -n rig-system get applications -o wide
+kubectl -n rig-prd-operations rollout status deployment/operations-manager
+scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+```
+
+Drie dingen moeten kloppen, en ze raken elk een andere lezer van de sleutel: **ArgoCD rendert**
+(elke Application Synced en Healthy, geen `ComparisonError`), **OPI leest een sops-bestand** (open
+een projectdetailpagina in het portaal, want die ontsleutelt `config.age-private-key`), en **een
+project haalt zijn repository op** (draai een deployment-actie op een project, want die leest
+`repositories[].password`).
+
+De eindtoets erachter is de harde: de oude sleutel opent niets meer. Wat hij precies eist staat
+hieronder onder "De eindtoets".
+
+### Daarna
+
+```bash
 # 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
 git clone <zad-projects> /tmp/zad-projects-pat
 scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
@@ -167,7 +243,16 @@ aantal velden voor en na moet gelijk zijn -- een veld dat stil verdwijnt tijdens
 valt hier door de mand). Bij een PAT-vervanging hoort de hash juist te verschillen, en dan alleen
 bij de wachtwoordvelden; het script noemt ze vooraf.
 
-`--verify` werkt los, dus je kunt maanden later nog nagaan of alles nog klopt.
+`--verify` werkt los en vraagt de oude sleutel niet op, dus je kunt maanden later nog nagaan of
+alles nog klopt -- ook als de clones van toen allang weg zijn:
+
+```bash
+git clone <zad-argo-user-applications> /tmp/zad-argo
+scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
+```
+
+De clone hoort erbij: de vingerafdruk van stap 2 dekt deze repo EN de argo-applicatierepo, dus
+zonder `--argo-applications` mist hij elk veld daaruit en meldt hij dat als "field disappeared".
 
 Een ronde over de projectbestanden mag stranden op een onleesbaar bestand: de rest wordt wel
 gedaan en het script gaat rood. Repareer dat bestand en draai dezelfde ronde nog een keer.
