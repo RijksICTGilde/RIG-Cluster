@@ -2,11 +2,30 @@
 
 Status: plan, 22 september 2026. Niet gebouwd. Vervangt de brede opzet in `de-age-sleutel-roteren-en-splitsen.md`, die als fase 3 blijft staan.
 
-Aanleiding: de platform-AGE-sleutel is blootgesteld geweest. Deze taak levert de vervanging van sleutel A door sleutel B, en levert die als **gereedschap** op, niet als een reeks handmatige stappen. De volgende keer is het één commando.
+Aanleiding: **age kent geen verlooptijd.** Een sleutel is geldig tot je hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door. Deze taak levert het gereedschap dat die handeling van een dag naar een uur brengt, en het ritme waarin hij gedraaid wordt.
 
-**Toon.** Dit is onderhoud, geen incident. Commitberichten, branchnaam en PR-tekst beschrijven wat er gebeurt ("de sops-sleutel wordt vervangen"), niet waarom het urgent is. Geen verwijzing naar blootstelling, geen sleutelvormige strings in de tekst, ook niet als voorbeeld.
+## Het ritme: jaarlijks, en op aanleiding
 
-**Basis.** Deze taak bouwt op `main_github` en niet op `main`. Die branch staat op Forgejo en is identiek aan wat er nu op GitHub staat (`e999eb98a`), zodat de fix daar terecht kan komen zonder de 425 commits die nog niet gepubliceerd zijn.
+**Op aanleiding is het sterkere signaal.** Een vertrekkende collega, een verdenking, een repository die publiek blijkt: dan roteer je dezelfde dag, en daarvoor moet het gereedschap er zijn. Dat is de eigenlijke reden dat dit bestaat.
+
+**Periodiek: jaarlijks.** Niet vaker, en dat is een afweging en geen slordigheid. Wat frequenter roteren oplevert is uitsluitend de tijd dat een ONBEKEND lek blijft werken: bij twee maanden gemiddeld een maand, bij een jaar gemiddeld zes. Daar staat tegenover dat een aanvaller die de sleutel heeft hem binnen minuten gebruikt en niet na vijf maanden, en dat oude cijfertekst in de git-historie met de oude sleutel leesbaar blijft, hoe vaak je ook roteert. Rotatie beperkt de houdbaarheid van een lek, niet de schade van het eerste gebruik.
+
+Daar staat een reële kostenkant tegenover: elke rotatie raakt drie repositories, alle projectbestanden, het clustersecret en een herstart van de operations-manager, met een APPLY-venster waarin een fout het platform raakt. Zes van die operaties per jaar is een groter risico dan de blootstelling die ze wegnemen. Stel het getal definitief vast na de eerste echte ronde, als bekend is hoe lang hij duurt en wat er misging.
+
+## De droogloop: automatiseer de oefening, niet de ingreep
+
+De vier fasen splitsen precies op de plek waar automatisering veilig is:
+
+| fase | raakt iets | geautomatiseerd |
+|---|---|---|
+| PREPARE | nee, alleen lokaal | **ja** |
+| VERIFY-1 | nee, leest alleen | **ja** |
+| APPLY | ja: cluster en drie repositories | **nee, mensenwerk** |
+| VERIFY-2 | nee | ja |
+
+Laat PREPARE en VERIFY-1 **maandelijks in CI** draaien op een wegwerpsleutel, en gooi het resultaat weg. Dat bewijst elke maand dat het gereedschap nog werkt, dat elke vindplaats nog gevonden wordt, en dat er geen nieuwe vindplaats is bijgekomen die niemand heeft aangemeld. Dat laatste is de fout die dit traject veroorzaakte, en de droogloop is de enige bewaking die hem vangt voordat het uitmaakt.
+
+APPLY blijft met de hand, met iemand die meekijkt. Een geautomatiseerde apply die 's nachts faalt legt het platform plat terwijl niemand het alarm leest.
 
 ## Wat de sleutel vasthoudt
 
@@ -103,7 +122,7 @@ Wie A ooit had, heeft de data key uit een oude kopie kunnen halen, en die opent 
 4. **`set-sops-key-secret.py`.** Zet de inhoud van `security/key.txt` in het secret `sops-age-key` van `rig-prd-operations`, en herstart daarna de operations-manager zodat die zijn env-var opnieuw leest. De sops-plugin heeft geen herstart nodig. De taak vraagt om bevestiging met de clusternaam erin, want dit is de enige onomkeerbare handeling van de cutover. *Verify:* OPI leest na de herstart een sops-bestand, en ArgoCD rendert een applicatie zonder fout.
 5. **`rotate-project-keys.py`: de projectbestanden omzetten.** Dit is de grootste ronde: 45 bestanden in de projects-repo. Per bestand **twee** velden, niet één: `config.age-private-key` en `repositories[].password`. Allebei hangen ze aan de platformsleutel, en een project waarvan alleen het eerste is omgezet kan zijn eigen repository niet meer benaderen. Versleutelt voor B alleen; A verdwijnt uit het bestand. Schrijft terug via het enige gevalideerde schrijfpad (`save_and_commit_project`), idempotent, met een commit per project. *Verify:* een omgezet project is leesbaar met B en niet meer met A, en beide velden zijn meegegaan.
 6. **De eindtoets: `--assert-old-key-dead`.** Loopt over alle vier de vindplaatsen en eist dat ontsleutelen met A overal faalt en met B overal slaagt. Zie de eigen sectie hierboven. *Verify:* de toets is schoon, en een opzettelijk overgeslagen bestand laat hem falen.
-7. **De vaste sleutels uit de tests, en pas NA stap 6.** De volgorde is hier een besluit en geen detail. Zolang A nog geldig is, is het testbestand de enige plek die verraadt dat er iets te halen valt, en een losse commit die precies die regel weghaalt zet daar een pijl naar. De sleutel staat er al bijna een jaar, dus een paar dagen extra verandert niets aan de blootstelling; hem waardeloos maken wel. Dus: eerst roteren, A intrekken, en pas daarna opruimen, als onderdeel van een ronde die alle vijf de bestanden raakt en dus over "dezelfde sleutel voor alle tests" gaat in plaats van over één regel.
+7. **De vaste sleutels uit de tests.** Wie gaat roteren, kan geen sleutels hardgecodeerd in tests laten staan: die verlopen niet mee en pinnen een waarde vast die juist zou moeten kunnen wisselen. Dit hoort dus bij deze taak en niet erbuiten. Doe het in een ronde die alle vijf de bestanden raakt, zodat het over "een gedeelde sleutel voor alle tests" gaat en niet over losse regels.
 
    Dit is niet één bestand. Een scan van de werkboom vindt er **vijf**:
 
