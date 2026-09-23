@@ -398,6 +398,36 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     assert "main" in triggers["push"]["branches"]
 
 
+def test_every_flag_the_docs_hand_an_operator_exists_on_the_scanner() -> None:
+    """The invocations live in four files outside the scanner, and a paste is only as good as its flags.
+
+    The history run moved to ``scripts/README.md`` when the document holding its output left the
+    repository, so the one command that takes a quarter of an hour to find out is documented in
+    a file the parser knows nothing about. Renaming a flag keeps the option list above green --
+    it is measured against the parser -- and leaves every documented line wrong.
+    """
+    options = {option for action in _scan_secrets_module().build_parser()._actions for option in action.option_strings}
+    sources = (
+        _REPO_ROOT / "scripts" / "README.md",
+        _REPO_ROOT / "features" / "sops-sleutel-vervangen.md",
+        _REPO_ROOT / ".pre-commit-config.yaml",
+        _REPO_ROOT / ".github" / "workflows" / "security.yml",
+    )
+
+    seen = 0
+    for source in sources:
+        for line in source.read_text().splitlines():
+            if "scan-secrets.py" not in line:
+                continue
+            # Up to the trailing "# een andere clone": a comment is prose, not an argument.
+            arguments = line.split("scan-secrets.py", 1)[1].split("#", 1)[0]
+            for flag in re.findall(r"--[a-z][a-z-]*", arguments):
+                seen += 1
+                assert flag in options, f"{source.name} documents {flag}, which the scanner does not have"
+
+    assert seen >= 4, "the documented invocations lost their flags, so this checks nothing"
+
+
 def _scan_secrets_module():
     """The hyphenated CLI, loaded by path and registered so its own module-level code can run."""
     existing = sys.modules.get("scan_secrets")

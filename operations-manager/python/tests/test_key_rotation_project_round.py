@@ -1153,6 +1153,66 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
 
 
 @pytest.mark.asyncio
+async def test_the_combined_quarterly_round_leaves_the_final_check_everything_step_7_would_have(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Step 3 of a quarterly round: the PAT entry alone, on files that still sit on the old key.
+
+    The documented FIRST round runs the key round and then the PAT round, and it is the second
+    of those that leaves the record the final check counts. A quarterly round drops step 7, so
+    this single pass has to do both halves and leave that record itself -- with the project key
+    only re-encrypted, the password replaced, and the old key opening neither.
+
+    Both rounds are documented without ``--fingerprint``, so this runs on the default as well.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_the_quarterly_token\n")
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    project_key_before = await decrypt_field(load_yaml_from_path(str(path))["config"]["age-private-key"], old_private)
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    with patch.object(round_tool, "KEY_FINGERPRINT", fingerprint):
+        quarterly = await main_replace_pat(
+            ["--ja", "--projects", str(directory), *keys, "--pat-file", str(tmp_path / "pat.txt")]
+        )
+    capsys.readouterr()
+
+    data = load_yaml_from_path(str(path))
+    assert quarterly == 0
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_the_quarterly_token"
+    assert not await opens_with(data["repositories"][0]["password"], old_private)
+    assert await decrypt_field(data["config"]["age-private-key"], new_private) == project_key_before
+    assert not await opens_with(data["config"]["age-private-key"], old_private)
+
+    with (
+        patch.object(final_check_tool, "sops_files_for", return_value=[]),
+        patch.object(final_check_tool, "loose_paths", return_value=[]),
+        patch.object(final_check_tool, "files_with_ciphertext", return_value={}),
+        patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+        patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
+    ):
+        repo_record = tmp_path / "fingerprint.json"
+        Fingerprint().save(repo_record)
+        arguments = ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(repo_record)]
+        verify = await final_check_tool.main([*arguments, "--verify"])
+        printed = capsys.readouterr().out
+        final_check = await final_check_tool.main([*arguments, "--assert-old-key-dead"])
+
+    assert verify == 0, "the record the quarterly round leaves is the one --verify reads"
+    assert "content changed" not in printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+    assert final_check == 0
+    assert "2 fields checked" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
 async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -1707,3 +1767,26 @@ def test_the_documented_project_rounds_parse_and_share_one_record() -> None:
     # One record naming every field by its PATH, so two rounds on two clone locations share no
     # name at all and the comparison between them silently checks nothing.
     assert len(clones) == 1, f"step 3 and step 7 have to run on the same clone location: {sorted(clones)}"
+
+
+def test_the_documented_quarterly_round_swaps_the_script_and_nothing_else() -> None:
+    """Step 3 says a quarterly round runs those same two lines with ``replace-git-pat.py``.
+
+    "Dezelfde vlaggen, dezelfde clone" is a claim about the OTHER parser. A flag that only the
+    key round knows turns that substitution into "unrecognized arguments" on the day someone
+    follows the doc, and step 7 -- which the same sentence declares redundant -- is by then the
+    round that would have caught it.
+    """
+    key_lines = documented_lines("rotate-project-keys.py")
+
+    assert len(key_lines) == 2, "step 3 is a dry run and then the real one"
+
+    for line in key_lines:
+        as_written = build_key_parser().parse_args(flags(line))
+        try:
+            substituted = build_pat_parser().parse_args(flags(line))
+        except SystemExit:
+            pytest.fail(f"replace-git-pat.py does not take step 3 as documented: {line}")
+        assert substituted.projects == as_written.projects
+        assert substituted.fingerprint == as_written.fingerprint
+        assert substituted.dry_run == as_written.dry_run

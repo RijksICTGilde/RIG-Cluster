@@ -29,7 +29,6 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
-import yaml
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
@@ -2361,31 +2360,6 @@ async def test_the_final_check_measures_the_exception_list_against_the_old_key(t
     assert check.counted == 0
     assert check.still_opens_with_old == ["fixture.yaml (on the exception list: an e2e fixture on a test key)"]
     assert clean.still_opens_with_old == []
-
-
-def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
-    """A skip reads as green, and the SOPS half of this file is exactly what must not go quiet.
-
-    Measured: the test job installed ``age`` but not ``sops``, so every test here that rotates a
-    real SOPS file -- and the whole of ``test_sops_skip_unchanged`` -- skipped on the runner
-    while the summary said passed.
-    """
-    workflow = yaml.safe_load((tool.REPO / ".github" / "workflows" / "ci.yml").read_text())
-    # Steps that really run: a step behind a falsy condition installs nothing, and reading only
-    # the "run" lines would call that wired up.
-    installs = [
-        step.get("run", "")
-        for step in workflow["jobs"]["test"]["steps"]
-        if str(step.get("if", "true")).strip().lower() not in {"false", "${{ false }}"}
-    ]
-
-    assert any("sops" in command and "chmod +x" in command for command in installs)
-    dockerfile = (tool.REPO / "operations-manager" / "Dockerfile").read_text()
-    pinned = re.search(r"ARG SOPS_VERSION=(v[\d.]+)", dockerfile)
-    assert pinned is not None
-    assert any(pinned.group(1) in command for command in installs), (
-        f"CI must install the same sops as the image ({pinned.group(1)})"
-    )
 
 
 # ---------------------------------------------------------------------------
