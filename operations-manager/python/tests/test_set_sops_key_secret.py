@@ -13,6 +13,7 @@ checks cover the guards that make the step safe to rerun and hard to run by acci
 from __future__ import annotations
 
 import base64
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -427,3 +428,23 @@ async def test_an_unreachable_cluster_stops_before_anything_is_touched(
 
     assert code == 2
     assert "connection refused" in capsys.readouterr().err
+
+
+def test_the_documented_secret_swap_parses() -> None:
+    """Step 5 of the operator's script in the feature doc, which nothing else reads.
+
+    It is documented without ``--confirm-cluster``, so the run asks for the cluster name and
+    an operator cannot swap the secret of the wrong cluster by pasting a line. A renamed flag
+    would leave the line in the doc with nothing saying it no longer runs.
+    """
+    documented = [
+        line.strip()
+        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
+        if line.strip().startswith("scripts/set-sops-key-secret.py")
+    ]
+
+    assert len(documented) == 2, "step 5 is a dry run and then the real one"
+    assert sum("--dry-run" in line for line in documented) == 1, "the dry run comes first"
+    for line in documented:
+        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        assert arguments.confirm_cluster is None, f"the cluster name is asked, not pasted: {line}"

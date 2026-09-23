@@ -15,6 +15,7 @@ The keys come from ``generate_sops_key_pair`` per test. There is no fixed key in
 from __future__ import annotations
 
 import base64
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,8 +42,12 @@ from key_rotation import (  # noqa: E402
     sha256_of,
 )
 from project_rotation import (  # noqa: E402
+    KEY_FINGERPRINT,
+    PAT_FINGERPRINT,
     RoundResult,
     broken,
+    build_key_parser,
+    build_pat_parser,
     find_repo_root,
     main_replace_pat,
     main_rotate_keys,
@@ -930,3 +935,90 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     assert "count differs" not in printed
     assert "CLEAN the old key opens nothing, the new key opens everything" in printed
     assert step_8 == 0
+
+
+@pytest.mark.asyncio
+async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_count(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A stray .yaml in the directory: the round names it, the fingerprint leaves it out.
+
+    ``fingerprint_all`` and the final check both walk ``*.yaml`` and both pass over whatever
+    does not parse into a mapping. They have to pass over the SAME files, or the count of the
+    one is measured against a different collection than the other and step 8 fails on a
+    rotation where nothing is wrong. The round does report it: a file it cannot read, in the
+    directory it is converting, is something to look at rather than something to walk past.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    for name in ("een", "twee"):
+        await _write_project(directory, name, old_public)
+    (directory / "notes.yaml").write_text("")
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    code = await main_rotate_keys(["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)])
+    round_output = capsys.readouterr().out
+    recorded = Fingerprint.load(fingerprint)
+    with (
+        patch.object(final_check_tool, "sops_files_for", return_value=[]),
+        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+        patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
+    ):
+        step_8 = await final_check_tool.main(
+            [
+                "--ja",
+                "--assert-old-key-dead",
+                "--projects",
+                str(directory),
+                *keys,
+                "--fingerprint",
+                str(tmp_path / "no-fingerprint-for-this-repo.json"),
+            ]
+        )
+    printed = capsys.readouterr().out
+
+    assert code == 1
+    assert "notes.yaml: not a readable project file" in round_output
+    assert len(recorded.fields) == 4
+    assert [name for name in recorded.fields if "notes.yaml" in name] == []
+    assert "4 fields checked" in printed
+    assert "count differs" not in printed
+    assert step_8 == 0
+
+
+def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() -> None:
+    """The half of the operator's script in the feature doc that this module owns.
+
+    ``test_every_documented_invocation_parses_and_the_final_check_walks_the_projects`` walks the
+    ``rotate-sops-key.py`` lines; these four were read by nothing. Neither round is documented
+    with ``--fingerprint``, so both run on their default, and the key round's default is the
+    file the final check counts -- which is what makes the bare step-8 command add up. The PAT
+    round writes to a file of its own on purpose: it converts the passwords alone, so counting
+    it would halve the total.
+    """
+    documented = [
+        line.strip()
+        for line in (final_check_tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
+        if line.strip().startswith(("scripts/rotate-project-keys.py", "scripts/replace-git-pat.py"))
+    ]
+    key_lines = [line for line in documented if "rotate-project-keys.py" in line]
+    pat_lines = [line for line in documented if "replace-git-pat.py" in line]
+
+    assert len(key_lines) == 2, "step 3 is a dry run and then the real one"
+    assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"
+    for line in key_lines:
+        arguments = build_key_parser().parse_args(shlex.split(line)[1:])
+        assert arguments.fingerprint == str(KEY_FINGERPRINT)
+        assert arguments.projects, f"the round has nowhere to look: {line}"
+    for line in pat_lines:
+        arguments = build_pat_parser().parse_args(shlex.split(line)[1:])
+        assert arguments.fingerprint == str(PAT_FINGERPRINT)
+        assert arguments.projects, f"the round has nowhere to look: {line}"
+    assert KEY_FINGERPRINT != PAT_FINGERPRINT
