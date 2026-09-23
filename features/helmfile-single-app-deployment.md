@@ -178,6 +178,41 @@ Service credentials are:
 3. Injected into `values.sops.yaml` for helmfile
 4. Applied to cluster via KSOPS generator
 
+### External-DNS Target
+
+The ingresses of a helmfile deployment come from the chart, not from OPI's
+`manifests/ingress.yaml.jinja`, so the `external-dns.alpha.kubernetes.io/target`
+annotation that OPI puts on its own ingresses does not reach them. Without it,
+external-dns writes a CNAME to the cluster's OCP-router hostname, and that crosses a
+zone boundary: Google Public DNS answers such a name with SERVFAIL (EDE 12, "invalid
+denial of existence"), while Cloudflare and Quad9 accept it, so only part of the
+visitors sees the outage.
+
+OPI therefore writes the target into the generated helm values, at the hook the
+mijn-bureau charts read for their ingress annotations:
+
+```yaml
+cluster:
+    ingress:
+        annotations:
+            external-dns.alpha.kubernetes.io/target: router.rijksapp.nl
+```
+
+The value comes from `get_external_dns_target_for_hostname` for the deployment's own
+hostname (`subdomain` plus `base-domain` of the `publish-on-web` service). Details:
+
+- A hostname in the cluster's own postfix zone gets no annotation; it gets its DNS from
+  the OpenShift router and needs no explicit target.
+- The values are merged as a base, so annotations already in the project's `helm-values`
+  block (for example `cert-manager.io/issuer` or the HAProxy ip_whitelist) stay, and a
+  target set there explicitly wins.
+- One shared annotation map covers every ingress of the chart. That is enough because a
+  deployment publishes within one zone: `docs.rijksapp.nl` and `static-docs.rijksapp.nl`
+  share `router.rijksapp.nl`.
+
+Migrating an existing record to the new target is a separate, manual step, described in
+`../docs/dns-router-zone-migration.md`.
+
 ### Environment Variables for CMP
 
 The `.cmp-env` file passes environment-specific configuration to helmfile:
