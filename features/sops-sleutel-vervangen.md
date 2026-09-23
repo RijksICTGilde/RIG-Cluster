@@ -107,7 +107,7 @@ alleen in Kubernetes leeft.
 |---|---|
 | `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 9 losse waarden en `projects/` in DEZE repo, plus met `--argo-applications` de SOPS-bestanden in een clone van zad-argo-user-applications |
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
-| `scripts/replace-git-pat.py` | dezelfde ronde, met de PAT er ook vervangen |
+| `scripts/replace-git-pat.py` | de PAT-ronde: dezelfde projectbestanden, plus de losse waarden die de token DRAGEN en de ArgoCD repository-secrets |
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
 | `scripts/scan-secrets.py` | de grendel: weigert een commit, een branch of een historie met een geheim |
 
@@ -145,8 +145,9 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --a
 
 # 3. de projectbestanden, op een VERSE clone. Dit is de EERSTE ronde, dus alleen de sleutel; de
 #    PAT volgt in stap 7. In een kwartaalronde draai je deze twee regels met replace-git-pat.py
-#    in plaats van rotate-project-keys.py -- dezelfde vlaggen, dezelfde clone -- en vervalt
-#    stap 7. Zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat".
+#    in plaats van rotate-project-keys.py -- dezelfde clone, en met --argo-applications erbij,
+#    want de PAT-ronde is breder dan de sleutelronde -- en vervalt stap 7. Zie "Waarom de
+#    PAT-ronde in de EERSTE ronde achteraan staat" en "De PAT-ronde raakt drie plekken".
 git clone <zad-projects> /tmp/zad-projects
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
@@ -230,13 +231,119 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 # 7. de PAT-vervanging van de EERSTE ronde: dezelfde ronde, een ingang verder -- en pas NU.
 #    Een kwartaalronde deed dit al in stap 3 en slaat deze stap over. Verse clone, want er
 #    kan sinds stap 3 gepusht zijn, maar op DEZELFDE plek: de opname noemt elk veld bij zijn pad
+#    De argo-clone hoort erbij en is verplicht: het repo-wachtwoord staat daar als PLATTE
+#    waarde IN het sops-bestand, dus een PAT-ronde zonder die vlag laat ArgoCD op de
+#    ingetrokken token staan. Zie "De PAT-ronde raakt drie plekken".
+#    Zet de nieuwe token eerst in security/new-pat.txt -- die map staat in .gitignore, en de
+#    eindtoets van 7b heeft hem ook nodig. Zonder --pat-file vraagt het script erom zonder echo
 rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --dry-run
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects
+rm -rf /tmp/zad-argo && git clone <zad-argo-user-applications> /tmp/zad-argo
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt --dry-run
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt
 
-# 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg
+# 7b. de eindtoets MET de token erbij. Zonder --pat-file gaat hij alleen over de SLEUTEL, en
+#     een veld kan keurig op de nieuwe sleutel staan en de ingetrokken token bevatten
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-file security/new-pat.txt
+
+# 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg. Daarna ook
+#    security/new-pat.txt opruimen: de token staat dan waar hij hoort
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+rm -f security/new-pat.txt
 ```
+
+### De PAT-ronde raakt drie plekken
+
+De sleutelronde en de PAT-ronde stellen twee verschillende vragen over dezelfde velden, en de
+tweede is breder dan hij eruitziet. Een veld dat netjes op de nieuwe sleutel staat kan de
+INGETROKKEN token nog steeds bevatten: herversleutelen verandert de sleutel, niet de inhoud. Er
+zijn drie plekken waar die inhoud staat, en alle drie moeten mee.
+
+| plek | wat er staat | hoe de ronde hem vindt |
+|---|---|---|
+| de projectbestanden | `repositories[].password`, versleuteld voor de platformsleutel | dezelfde lus als de sleutelronde |
+| deze repo | drie van de zes losse waarden DRAGEN de token; de andere drie zijn de git-serverwachtwoorden van het platform zelf | per waarde gemeten op de PLATTE TEKST, niet op een lijstje bestandsnamen |
+| een clone van zad-argo-user-applications | het repo-wachtwoord staat als PLATTE waarde in het sops-bestand | `--argo-applications`, en die vlag is verplicht |
+
+**De losse waarden: waarom een meting en geen lijstje.** `LOOSE_VALUE_FILES` heeft zes
+bestanden, met negen versleutelde waarden erin, en ze hangen allemaal aan de platformsleutel.
+Maar ze dragen niet allemaal hetzelfde: `GIT_PROJECTS_SERVER_PASSWORD` en
+`GIT_ARGO_APPLICATIONS_PASSWORD` in de twee configmaps en in `.env` zijn de eigen
+git-serverwachtwoorden van het platform. Daar een GitHub-PAT overheen schrijven haalt OPI's
+toegang tot zijn eigen drie repositories onderuit. De ronde beslist daarom per waarde: hij
+ontsleutelt hem en kijkt of de platte tekst de VORM van een GitHub-token heeft, met dezelfde
+regels die `scripts/secret_scan.py` gebruikt. Een handgeschreven lijstje "deze drie bestanden
+dragen de token" is precies de vorm die eerder is weggevallen; die regels staan al ergens
+opgeschreven, dus ze worden daar gelezen.
+
+Wat hij dan vindt zijn `PROJECT_REPO_PASSWORD` in `opi/core/config.py` -- de default waar
+`odcn-production` en `local` op terugvallen, en die via `project-template.yaml` naar
+`repositories[].password` van ELK NIEUW project gaat -- diezelfde waarde nog eens in
+`operations-manager/python/scripts/migrate_project_to_production.py`, en
+`projects/age-secret-github.txt`. Slaat de ronde die over, dan staan alle BESTAANDE projecten
+goed en krijgt het eerstvolgende NIEUWE project alsnog de ingetrokken token. Dat valt pas op bij
+de eerstvolgende projectaanmaak, en dan is de oude token al ingetrokken.
+
+De ronde schrijft die drie hashes ook terug in de opname van deze repo (`--repo-fingerprint`).
+Doet hij dat niet, dan meldt de eerstvolgende `--verify` drie keer "content changed" over een
+vervanging waar hij zelf om gevraagd heeft.
+
+**De argo-clone: afgeleid, niet onderhouden.** `argo_manager.prepare_repository_variables` zet
+het repo-wachtwoord ONTSLEUTELD in het repository-secret, en `encrypt_to_sops_files_or_fail`
+versleutelt dat bestand daarna voor de platformsleutel. De sleutelronde raakt die bestanden dus
+wel, maar alleen hun sleutel: de token erin blijft staan. Na een PAT-ronde zonder deze stap
+praat ArgoCD met een token die niet meer bestaat, en dat merk je pas bij de eerstvolgende sync.
+
+De ronde schrijft daar wat OPI zelf zou schrijven, en niet iets wat erop lijkt:
+
+* de waarde komt uit het PROJECTBESTAND, niet uit `--pat-file`. Deze secrets zijn AFGELEID, dus
+  wat de projectronde over een repository besloot is wat hier terechtkomt -- inclusief het
+  besluit om hem met rust te laten. Een wachtwoord dat ontbreekt, `plain:` is of in een andere
+  vorm staat hangt niet aan de platformsleutel, de projectronde slaat hem over, en dan valt er
+  hier niets af te leiden en blijft het secret staan. Dat is geen randgeval: het is de vorm van
+  de hele sandbox, waar elk project `plain:`-inloggegevens voor Forgejo draagt;
+* alleen `stringData.password` verandert. Het document gaat door dezelfde YAML-schrijver als de
+  rest van het gereedschap, dus annotaties, labels, aanhalingstekens en volgorde komen eruit
+  zoals ze erin gingen;
+* het terugschrijven gaat door `encrypt_to_sops_files`, letterlijk de functie waar
+  `argo_manager` mee versleutelt, naar de recipient die het bestand al draagt. Deze ronde
+  verplaatst geen sleutels; dat is het werk van de sleutelronde.
+
+**Een SSH-sleutel is geen PAT.** `argo_manager` kiest `argo-repository.yaml.jinja` voor een
+repository die niet op HTTPS staat, en dat sjabloon schrijft `sshPrivateKey` en helemaal geen
+`password`. Zo'n secret blijft ongemoeid, en dat wordt gemeten op het ONTSLEUTELDE document en
+niet afgeleid uit de bestandsnaam: de naam zegt welk sjabloon het geschreven heeft, en dit gaat
+over een credential.
+
+**De koppeling, en waarom maar een van de twee richtingen de ronde stopt.** Een secret heet naar
+het project en de repository waar het uit komt (`generate_argocd_repository_secret_name`, plus
+`generate_infrastructure_application_name` voor de infrastructuurvariant), dus de twee kanten
+zijn op NAAM te koppelen. De twee richtingen zijn niet symmetrisch, en dat is gemeten op een
+echte clone en niet beredeneerd:
+
+* **een secret waar geen projectbestand bij hoort STOPT de ronde**, bij naam genoemd. Niets
+  onderhoudt dat wachtwoord, de ronde kan er geen waarde voor afleiden, en na het intrekken van
+  de oude token geeft het ArgoCD een dode credential. Gemeten op de echte clone: 0 gevallen;
+* **een projectrepository zonder secret stopt de ronde NIET.** Gemeten op diezelfde clone hebben
+  5 van de 11 projecten geen eigen map, waarvan er 4 wel een deployment hebben op precies de
+  cluster die de clone draagt. OPI schrijft die bestanden namelijk wanneer hij een project
+  VERWERKT, en die projecten zijn sindsdien niet verwerkt. Dat is een normale stand en geen
+  drift. Ze worden bij naam gemeld en geteld -- stil overslaan is hoe de vijfde vindplaats
+  eerder wegviel -- maar een stop zou de ronde weigeren op iets wat klopt, en de enige
+  reparatie ervoor is elk project opnieuw verwerken. Dat is precies wat een sleutelwissel niet mag uitlokken: het sleept elke andere
+  openstaande wijziging mee naar productie en maakt van een gerichte handeling een brede uitrol.
+
+**De eindtoets moet dit kunnen zien.** `--assert-old-key-dead` bewijst dat de oude SLEUTEL niets
+meer opent, en dat blijft waar na een PAT-ronde die de argo-clone oversloeg: die bestanden zijn
+door de sleutelronde herversleuteld en hun wachtwoord is nooit aangeraakt. De toets meldde dus
+CLEAN terwijl ArgoCD stilstond. Er zijn daarom twee halves bij gekomen:
+
+* met `--projects` en `--argo-applications` samen wordt elk repository-secret naast het
+  projectbestand gelegd waar het uit komt. Verschillen ze, dan is dat een bevinding met beide
+  paden erbij;
+* met `--pat-file` wordt elke platte tekst die de VORM van een GitHub-token heeft ook aan die
+  ene token gehouden, op alle drie de plekken. Dat is wat "de oude token staat nergens meer" van
+  een gevolgtrekking een meting maakt. Zonder die vlag zegt de toets dat zelf: hij drukt af dat
+  hij alleen over de sleutel gaat.
 
 **Waarom de PAT-ronde in de EERSTE ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen
 in een keer: de motor onder beide is dezelfde lus en `replace-git-pat.py` zet de sleutel en het

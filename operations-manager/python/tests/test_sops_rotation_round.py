@@ -45,6 +45,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 import sops_rotation as tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     AGE_KEY_MARKER,
+    LOOSE_VALUE_FILES,
     ConversionFailed,
     FinalCheck,
     Fingerprint,
@@ -789,6 +790,9 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     every line here into a SystemExit, instead of leaving a doc that has gone stale without
     anything saying so.
 
+    Step 7b is the one that carries ``--pat-file``, and it is the only one that can: it runs
+    AFTER the PAT round, and before that the fields still hold the old token quite correctly.
+
     This reads the FLAGS. Whether the command in front of them starts at all is a claim of its
     own, and ``test_every_documented_command_line_starts_as_written`` runs it.
     """
@@ -796,7 +800,9 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     final_checks = [line for line in documented if "--assert-old-key-dead" in line or "--remove-old-key" in line]
 
     assert len(documented) >= 5, "the documented run disappeared from the feature doc"
-    assert len(final_checks) == 3, "the final check runs in VERIFY-1 and again in VERIFY-2, plus step 8"
+    assert len(final_checks) == 4, (
+        "the final check runs in VERIFY-1, in VERIFY-2, once more after the PAT round (7b) and in step 8"
+    )
     for line in documented:
         arguments = tool.build_parser().parse_args(flags(line))
         assert arguments.projects_fingerprint == str(tool.DEFAULT_PROJECTS_FINGERPRINT)
@@ -1920,10 +1926,10 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
     that value would stay on the old key. This is the assertion that turns such a move into a
     red test instead of a silent miss.
     """
-    missing = [name for name in tool.LOOSE_VALUE_FILES if not (tool.REPO / name).is_file()]
+    missing = [name for name in LOOSE_VALUE_FILES if not (tool.REPO / name).is_file()]
 
     assert missing == []
-    assert "operations-manager/python/.env" in tool.LOOSE_VALUE_FILES
+    assert "operations-manager/python/.env" in LOOSE_VALUE_FILES
     for path in tool.loose_paths():
         assert loose_values(path), f"{path} carries no base64+age: value any more"
 
@@ -2601,3 +2607,112 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
     closing = Path(tool.__file__).read_text()
     for heading in headings[:-1]:
         assert heading.removeprefix("### ") in closing, f"the script stopped naming {heading}"
+
+
+# ---------------------------------------------------------------------------
+# the final check's token half: the old KEY being dead says nothing about the old TOKEN
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_without_a_pat_file_says_it_only_measured_the_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A field can sit on the new key and hold the withdrawn token, and this half cannot see it.
+
+    So the verdict has to say which question it answered. Without that line CLEAN reads as "the
+    rotation is done", and the operator revokes a token that is still in three places.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "o" * 36}, old_public)
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
+        await tool.main(["--ja", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 0
+    assert "NOTE without --pat-file this is a check on the KEY only." in printed
+    assert "CLEAN the old key opens nothing, the new key opens everything" in printed
+    assert "every GitHub token is the new one" not in printed
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_with_a_pat_file_catches_a_token_left_behind(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The same tree, the same key round, one flag more -- and now it is not clean.
+
+    This is the loose-value half of "the old token is nowhere". ``PROJECT_REPO_PASSWORD`` is the
+    default every NEW project inherits, so a round that left it behind is invisible until the
+    next project is created and then hands it a revoked credential.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "o" * 36}, old_public)
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
+        await tool.main(["--ja", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-file", str(pat_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert "FAIL holds a GitHub token that is not the new one" in printed
+    assert "PROJECT_REPO_PASSWORD" in printed
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_a_git_server_password_is_not_held_to_the_github_token(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The other side of the same rule, and the one that would break the platform's own git.
+
+    ``GIT_PROJECTS_SERVER_PASSWORD`` sits on the same key in the same files and is not a GitHub
+    token at all. Holding it to ``--pat-file`` would report a finding on every rotation, and the
+    obvious "fix" for that finding is to overwrite OPI's own Forgejo credentials.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
+        await tool.main(["--ja", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-file", str(pat_file), *arguments])
+
+    assert code == 0, capsys.readouterr().out
+    assert "and every GitHub token is the new one" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_a_pat_file_outside_the_final_check_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The converting round replaces no token, so accepting the flag there would mislead.
+
+    Whoever passes it believes the token was measured, and that belief is what decides whether
+    the old one is revoked. A flag that is read and then ignored is the quietest way to get that
+    decision wrong.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+
+    code = await tool.main(
+        ["--ja", "--dry-run", "--pat-file", str(pat_file), *_key_files(tmp_path, old_private, new_private)]
+    )
+
+    assert code == 2
+    assert "--pat-file belongs to --assert-old-key-dead" in capsys.readouterr().err

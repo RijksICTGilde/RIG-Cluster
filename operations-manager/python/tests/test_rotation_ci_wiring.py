@@ -24,11 +24,13 @@ _FEATURE_DOC = _REPO_ROOT / "features" / "sops-sleutel-vervangen.md"
 #: The entry points that convert something or touch the cluster.
 _ROTATION_SCRIPTS = ("rotate-sops-key.py", "rotate-project-keys.py", "replace-git-pat.py", "set-sops-key-secret.py")
 
-#: The three modules that carry the rotation guards, and that skip whole without ``age``.
+#: The modules that carry the rotation guards, and that skip whole without ``age``.
 _ROTATION_MODULES = (
     "tests/test_sops_rotation_round.py",
     "tests/test_key_rotation_project_round.py",
     "tests/test_key_rotation_engine.py",
+    "tests/test_argo_repository_secrets.py",
+    "tests/test_pat_loose_values.py",
 )
 
 

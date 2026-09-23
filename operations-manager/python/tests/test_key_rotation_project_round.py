@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -26,6 +27,9 @@ from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 from tests.documented_commands import documented_lines, flags
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -57,6 +61,41 @@ from project_rotation import (  # noqa: E402
 )
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
+
+
+@pytest.fixture
+def argo_clone(tmp_path: Path) -> Path:
+    """A clone of zad-argo-user-applications holding no repository secret yet.
+
+    ``replace-git-pat.py`` demands the flag, because a round that leaves those files behind
+    leaves ArgoCD talking to the withdrawn token and nothing says so. An empty clone is the
+    honest shape for a test about the project files: every project repository then turns up
+    under "no secret in this clone", which is reported by name and does not stop the round --
+    measured on the real clone, where 4 of the 11 projects look exactly like that. The argo half
+    has its own tests, in ``test_argo_repository_secrets.py``, against a real clone.
+    """
+    clone = tmp_path / "zad-argo-user-applications"
+    clone.mkdir()
+    return clone
+
+
+@pytest.fixture(autouse=True)
+def _loose_values_out_of_the_way() -> Iterator[None]:
+    """Keep the PAT round's loose-value pass off this repo's own files.
+
+    ``loose_paths()`` resolves against the REAL working tree, and those nine values sit on the
+    platform key, which no test has. Left alone, every PAT round in this file would report nine
+    fields that open with neither key and stop on the environment instead of measuring the code.
+    The pass itself is tested in ``test_argo_repository_secrets.py``, on files the test writes.
+    """
+    with patch.object(round_tool, "loose_paths", return_value=[]):
+        yield
+
+
+async def _pat_round(arguments: list[str], argo: Path) -> int:
+    """Drive the PAT entry point with the argo clone it demands."""
+    return await main_replace_pat([*arguments, "--argo-applications", str(argo)])
+
 
 PROJECT_TEMPLATE = """\
 schema-version: 2
@@ -647,7 +686,9 @@ def test_an_empty_typed_pat_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(projects_repo: Path, tmp_path: Path) -> None:
+async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(
+    projects_repo: Path, tmp_path: Path, argo_clone: Path
+) -> None:
     """End to end over the entry point: the announced difference passes the content check."""
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -658,7 +699,7 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(proje
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
 
-    code = await main_replace_pat(
+    code = await _pat_round(
         [
             "--ja",
             "--projects",
@@ -671,7 +712,8 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(proje
             str(tmp_path / "key.txt"),
             "--fingerprint",
             str(tmp_path / "pat-fingerprint.json"),
-        ]
+        ],
+        argo_clone,
     )
 
     assert code == 0
@@ -686,7 +728,9 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(proje
 
 
 @pytest.mark.asyncio
-async def test_the_pat_round_still_replaces_after_the_key_round(projects_repo: Path, tmp_path: Path) -> None:
+async def test_the_pat_round_still_replaces_after_the_key_round(
+    projects_repo: Path, tmp_path: Path, argo_clone: Path
+) -> None:
     """The order the plan advises, driven through both entry points in turn.
 
     Without the worklist looking at the token, the second round hands back "already converted",
@@ -711,14 +755,15 @@ async def test_the_pat_round_still_replaces_after_the_key_round(projects_repo: P
     ]
 
     key_round = await main_rotate_keys([*keys, "--fingerprint", str(tmp_path / "key-fingerprint.json")])
-    pat_round = await main_replace_pat(
+    pat_round = await _pat_round(
         [
             *keys,
             "--pat-file",
             str(tmp_path / "pat.txt"),
             "--fingerprint",
             str(tmp_path / "pat-fingerprint.json"),
-        ]
+        ],
+        argo_clone,
     )
 
     assert (key_round, pat_round) == (0, 0)
@@ -754,7 +799,9 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
 
 
 @pytest.mark.asyncio
-async def test_a_second_pat_round_records_the_same_fields_as_the_first(projects_repo: Path, tmp_path: Path) -> None:
+async def test_a_second_pat_round_records_the_same_fields_as_the_first(
+    projects_repo: Path, tmp_path: Path, argo_clone: Path
+) -> None:
     """The same guard on the other entry point, which saves its own fingerprint on the same line.
 
     A second PAT round finds the token already in place, so it converts nothing either -- and
@@ -784,9 +831,9 @@ async def test_a_second_pat_round_records_the_same_fields_as_the_first(projects_
         str(fingerprint),
     ]
 
-    first = await main_replace_pat(arguments)
+    first = await _pat_round(arguments, argo_clone)
     after_the_first_round = Fingerprint.load(fingerprint).fields
-    second = await main_replace_pat(arguments)
+    second = await _pat_round(arguments, argo_clone)
 
     assert first == 0
     assert second == 0
@@ -809,7 +856,7 @@ def test_already_converted_is_only_harmless_in_the_key_round() -> None:
 
 @pytest.mark.asyncio
 async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_round(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """The documented order over a project that has nothing for the PAT round to replace.
 
@@ -837,8 +884,9 @@ async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_
 
     key_round = await main_rotate_keys([*keys, "--fingerprint", str(tmp_path / "key-fingerprint.json")])
     after_the_key_round = path.read_text()
-    pat_round = await main_replace_pat(
-        [*keys, "--pat-file", str(tmp_path / "pat.txt"), "--fingerprint", str(tmp_path / "pat-fingerprint.json")]
+    pat_round = await _pat_round(
+        [*keys, "--pat-file", str(tmp_path / "pat.txt"), "--fingerprint", str(tmp_path / "pat-fingerprint.json")],
+        argo_clone,
     )
 
     assert (key_round, pat_round) == (0, 0)
@@ -849,7 +897,7 @@ async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_
 
 @pytest.mark.asyncio
 async def test_the_pat_dry_run_exits_clean_once_the_round_is_done(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """A dry run is what the operator uses to check before running, and afterwards to check again.
 
@@ -875,11 +923,11 @@ async def test_the_pat_dry_run_exits_clean_once_the_round_is_done(
         "--pat-file",
         str(tmp_path / "pat.txt"),
     ]
-    await main_replace_pat([*keys, "--fingerprint", str(tmp_path / "pat-fingerprint.json")])
+    await _pat_round([*keys, "--fingerprint", str(tmp_path / "pat-fingerprint.json")], argo_clone)
     after_the_round = path.read_text()
     dry_fingerprint = tmp_path / "dry-fingerprint.json"
 
-    code = await main_replace_pat([*keys, "--dry-run", "--fingerprint", str(dry_fingerprint)])
+    code = await _pat_round([*keys, "--dry-run", "--fingerprint", str(dry_fingerprint)], argo_clone)
 
     assert code == 0
     assert "Dry run: nothing was changed." in capsys.readouterr().out
@@ -1050,7 +1098,7 @@ async def test_a_changed_plaintext_stops_the_next_round_instead_of_overwriting_t
 
 @pytest.mark.asyncio
 async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_key_not_to(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """The comparison against the record is the same one, minus the fields that are MEANT to move.
 
@@ -1075,11 +1123,11 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
     second.write_text("ghp_the_second_new_token\n")
     arguments = ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)]
 
-    assert await main_replace_pat([*arguments, "--pat-file", str(first)]) == 0
+    assert await _pat_round([*arguments, "--pat-file", str(first)], argo_clone) == 0
     after_the_first = Fingerprint.load(fingerprint).fields
     capsys.readouterr()
 
-    assert await main_replace_pat([*arguments, "--pat-file", str(second)]) == 0
+    assert await _pat_round([*arguments, "--pat-file", str(second)], argo_clone) == 0
     after_the_second = Fingerprint.load(fingerprint).fields
     printed = capsys.readouterr().out
 
@@ -1094,7 +1142,7 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
 
 @pytest.mark.asyncio
 async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share_one_record(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """Step 3, then step 7, then the check the feature doc promises still works months later.
 
@@ -1123,7 +1171,7 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
     with patch.object(round_tool, "KEY_FINGERPRINT", fingerprint):
         assert await main_rotate_keys(["--ja", "--projects", str(directory), *keys]) == 0
         after_the_key_round = Fingerprint.load(fingerprint).fields
-        assert await main_replace_pat(["--ja", "--projects", str(directory), *keys, "--pat-file", str(pat)]) == 0
+        assert await _pat_round(["--ja", "--projects", str(directory), *keys, "--pat-file", str(pat)], argo_clone) == 0
     after_the_pat_round = Fingerprint.load(fingerprint).fields
     capsys.readouterr()
 
@@ -1154,7 +1202,7 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
 
 @pytest.mark.asyncio
 async def test_the_combined_quarterly_round_leaves_the_final_check_everything_step_7_would_have(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """Step 3 of a quarterly round: the PAT entry alone, on files that still sit on the old key.
 
@@ -1179,8 +1227,8 @@ async def test_the_combined_quarterly_round_leaves_the_final_check_everything_st
     keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
 
     with patch.object(round_tool, "KEY_FINGERPRINT", fingerprint):
-        quarterly = await main_replace_pat(
-            ["--ja", "--projects", str(directory), *keys, "--pat-file", str(tmp_path / "pat.txt")]
+        quarterly = await _pat_round(
+            ["--ja", "--projects", str(directory), *keys, "--pat-file", str(tmp_path / "pat.txt")], argo_clone
         )
     capsys.readouterr()
 
@@ -1267,7 +1315,7 @@ async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
 @pytest.mark.parametrize("entry_point", ["the key round", "the PAT round"])
 @pytest.mark.asyncio
 async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it(
-    projects_repo: Path, tmp_path: Path, entry_point: str
+    projects_repo: Path, tmp_path: Path, entry_point: str, argo_clone: Path
 ) -> None:
     """Every key in the record is "<path>#<field>", and ``--verify`` compares those NAMES.
 
@@ -1309,7 +1357,7 @@ async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it
     if entry_point == "the key round":
         code = await main_rotate_keys(arguments)
     else:
-        code = await main_replace_pat([*arguments, "--pat-file", str(pat_file)])
+        code = await _pat_round([*arguments, "--pat-file", str(pat_file)], argo_clone)
 
     assert code == 0
     assert set(Fingerprint.load(fingerprint).fields) == {
@@ -1333,7 +1381,7 @@ async def _put_another_project_key_in(path: Path, public_key: str) -> None:
 
 @pytest.mark.asyncio
 async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
-    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """``replaced`` excuses the passwords from the comparison. It excuses nothing else.
 
@@ -1368,13 +1416,13 @@ async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
         str(fingerprint),
     ]
 
-    assert await main_replace_pat([*arguments, "--pat-file", str(first)]) == 0
+    assert await _pat_round([*arguments, "--pat-file", str(first)], argo_clone) == 0
     recorded = fingerprint.read_text()
     capsys.readouterr()
 
     # Perfectly readable with the new key, so no decryption test can see this. Only the record can.
     await _put_another_project_key_in(path, new_public)
-    code = await main_replace_pat([*arguments, "--pat-file", str(second)])
+    code = await _pat_round([*arguments, "--pat-file", str(second)], argo_clone)
     printed = capsys.readouterr().out
 
     assert code == 1
@@ -1666,7 +1714,7 @@ async def test_a_repository_password_in_a_block_scalar_goes_along_and_stays_one(
 
 @pytest.mark.asyncio
 async def test_both_entry_points_refuse_a_directory_without_a_project_file(
-    tmp_path: Path, capsys: pytest.CaptureFixture
+    tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
 ) -> None:
     """An existing directory holding no project file at all: a wrong clone, an empty one.
 
@@ -1684,8 +1732,8 @@ async def test_both_entry_points_refuse_a_directory_without_a_project_file(
     keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
 
     key_round = await main_rotate_keys(["--ja", "--projects", str(clone), *keys])
-    pat_round = await main_replace_pat(
-        ["--ja", "--projects", str(clone), *keys, "--pat-file", str(tmp_path / "pat.txt")]
+    pat_round = await _pat_round(
+        ["--ja", "--projects", str(clone), *keys, "--pat-file", str(tmp_path / "pat.txt")], argo_clone
     )
 
     printed = capsys.readouterr().err
@@ -1769,22 +1817,29 @@ def test_the_documented_project_rounds_parse_and_share_one_record() -> None:
     assert len(clones) == 1, f"step 3 and step 7 have to run on the same clone location: {sorted(clones)}"
 
 
-def test_the_documented_quarterly_round_swaps_the_script_and_nothing_else() -> None:
+def test_the_documented_quarterly_round_swaps_the_script_and_adds_the_argo_clone() -> None:
     """Step 3 says a quarterly round runs those same two lines with ``replace-git-pat.py``.
 
-    "Dezelfde vlaggen, dezelfde clone" is a claim about the OTHER parser. A flag that only the
-    key round knows turns that substitution into "unrecognized arguments" on the day someone
-    follows the doc, and step 7 -- which the same sentence declares redundant -- is by then the
-    round that would have caught it.
+    "Dezelfde clone, en met --argo-applications erbij" is a claim about the OTHER parser, and it
+    has two halves. Every flag step 3 writes has to be one the PAT parser knows, or the
+    substitution is "unrecognized arguments" on the day someone follows the doc; and the ONE
+    thing it has to add is the argo clone, because a PAT round without it leaves ArgoCD on the
+    withdrawn token. Step 7 -- which the same sentence declares redundant for a quarterly round
+    -- is by then not there to catch either.
     """
     key_lines = documented_lines("rotate-project-keys.py")
+    argo = ["--argo-applications", "/tmp/zad-argo"]
 
     assert len(key_lines) == 2, "step 3 is a dry run and then the real one"
 
     for line in key_lines:
         as_written = build_key_parser().parse_args(flags(line))
+        with pytest.raises(SystemExit):
+            # The measured difference between the two rounds, pinned: substituting the script
+            # WITHOUT the extra flag is refused rather than quietly skipping the argo clone.
+            build_pat_parser().parse_args(flags(line))
         try:
-            substituted = build_pat_parser().parse_args(flags(line))
+            substituted = build_pat_parser().parse_args([*flags(line), *argo])
         except SystemExit:
             pytest.fail(f"replace-git-pat.py does not take step 3 as documented: {line}")
         assert substituted.projects == as_written.projects

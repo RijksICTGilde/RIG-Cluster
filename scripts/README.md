@@ -12,9 +12,9 @@ Zie `features/sops-sleutel-vervangen.md` voor het hele verhaal, inclusief de met
 
 | ingang | doet |
 |---|---|
-| `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead` |
+| `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead`, die laatste met `--pat-file` ook over de TOKEN |
 | `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
-| `replace-git-pat.py` | dezelfde ronde, met de GitHub-PAT er ook vervangen |
+| `replace-git-pat.py` | de PAT-ronde, en die is even breed als de sleutelronde: de projectbestanden, de losse waarden die de token DRAGEN, en de ArgoCD repository-secrets (`--argo-applications`, verplicht) |
 | `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
 
 De logica zit in modules ernaast, want een streepje in een bestandsnaam is niet importeerbaar en
@@ -24,11 +24,13 @@ de toetsen moeten bij de logica kunnen:
 |---|---|
 | `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vindplaatsen, de vingerafdruk, de eindtoets, en de inventaris waar de dekkingsgrendel op hangt |
 | `sops_rotation.py` | de ronde over deze repo |
-| `project_rotation.py` | de ronde over de projectbestanden, met beide ingangen (sleutel en PAT) |
+| `project_rotation.py` | de ronde over de projectbestanden, met beide ingangen (sleutel en PAT), en de twee plekken die de PAT-ronde er verder bij heeft |
+| `argo_rotation.py` | de ArgoCD repository-secrets: ze lezen, aan hun projectbestand koppelen, en terugschrijven zoals `argo_manager` dat doet |
 | `sops_key_secret.py` | het cluster-secret |
 
 Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
-`test_sops_rotation_round.py`, `test_set_sops_key_secret.py`.
+`test_sops_rotation_round.py`, `test_argo_repository_secrets.py`, `test_pat_loose_values.py`,
+`test_set_sops_key_secret.py`.
 
 ## De geheimenscan
 

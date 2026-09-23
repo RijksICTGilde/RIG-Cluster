@@ -70,9 +70,21 @@ from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
 # "which files does git track, and which are worth reading" is the scanner's question and it is
 # answered there. A second copy here would drift away from the one CI runs.
-from secret_scan import scannable, tracked_files  # type: ignore[reportMissingImports]  # noqa: E402
+from secret_scan import RULES, scannable, tracked_files  # type: ignore[reportMissingImports]  # noqa: E402
+
+#: The repository root. Every path this module resolves outside of an argument -- the loose
+#: value files below -- hangs off it.
+REPO = Path(__file__).resolve().parents[1]
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
+
+#: The GitHub token shapes, taken straight from the scanner's rule set. The PAT round has to
+#: decide per loose value whether it carries the SHARED GitHub token or something else -- the
+#: two configmaps and ``.env`` hold the Forgejo git-server passwords on the same key, and
+#: replacing those with a GitHub PAT would take the platform's own git access down. A
+#: hand-written list of "the three files that hold the token" is exactly the shape that fell
+#: away before, so the question is answered by measuring the plaintext instead.
+GITHUB_TOKEN_RULES = tuple(pattern for kind, pattern, _hint in RULES if kind.startswith("github"))
 
 #: The two project-file fields that hang off the PLATFORM key. Measured across the 53
 #: project files: only these two open with the platform key. ``api-key``,
@@ -413,6 +425,35 @@ def replace_record(fingerprint: Fingerprint, path: str | Path, *, replaced: Iter
     return []
 
 
+def update_record(path: str | Path, updates: dict[str, str]) -> list[str]:
+    """Write new hashes for the named fields into an existing record, leaving the rest alone.
+
+    The PAT round replaces three plaintexts that sit in THIS repo's record, the one the key
+    round wrote. Without this the very next ``rotate-sops-key.py --verify`` reports "content
+    changed" on all three with nothing wrong -- the same trap the projects record had before the
+    two rounds started sharing it, where the verify objected to every password it had itself
+    asked to be replaced.
+
+    Only the named fields move. A name the record does not hold is refused rather than added:
+    that would mean the round wrote in a place the record does not cover, which is a coverage
+    finding and not a bookkeeping detail. No record at all is not an error -- a PAT round may
+    run in a tree where no key round has recorded anything.
+
+    Returns the objections, empty when there are none.
+    """
+    recorded = Path(path)
+    if not recorded.is_file():
+        return []
+    fingerprint = Fingerprint.load(recorded)
+    unknown = sorted(name for name in updates if name not in fingerprint.fields)
+    if unknown:
+        return [f"not in {path}, so this round wrote outside what it records: {name}" for name in unknown]
+    for name, digest in updates.items():
+        fingerprint.set(name, digest)
+    fingerprint.save(recorded)
+    return []
+
+
 # place 1: SOPS files
 
 
@@ -585,6 +626,62 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 
 
 # the coverage guard: what carries ciphertext, and does anything reach it
+
+
+#: The files outside the SOPS tree that carry a loose encrypted value. They are easily
+#: forgotten, because ``sops rotate`` does not see them, and this list is the one part of the
+#: worklist that cannot select on the recipient: outside a SOPS file the text does not say
+#: which key it belongs to. So the list is checked instead -- see ``coverage_gaps()``.
+#:
+#: ``.env`` is on it deliberately: that file really is loaded during local development, so
+#: without conversion that stops working the moment A goes away.
+#:
+#: The last three read like examples and are not. ``PROJECT_REPO_PASSWORD`` is the default
+#: ``odcn-production`` and ``local`` fall back to (only ``sandboxed-local`` overrides it), the
+#: migration script carries a copy of that same value, and ``age-secret-github.txt`` is a whole
+#: file that is one armored block which nothing in the tree names. All three open with the
+#: platform key.
+#:
+#: It lives here and not in ``sops_rotation`` because BOTH rounds walk it. The key round
+#: re-encrypts every value on the list; the PAT round replaces the ones that hold the shared
+#: GitHub token, and skips the git-server passwords next to them -- see ``is_github_token``.
+LOOSE_VALUE_FILES = (
+    "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
+    "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
+    "operations-manager/python/.env",
+    "operations-manager/python/opi/core/config.py",
+    "operations-manager/python/scripts/migrate_project_to_production.py",
+    "projects/age-secret-github.txt",
+)
+
+
+def loose_fingerprint_key(field_: LooseValue) -> str:
+    """The name one loose value goes under in the fingerprint."""
+    return f"{field_.path}#{field_.name}"
+
+
+def loose_paths() -> list[Path]:
+    """The files of ``LOOSE_VALUE_FILES`` that exist in this working tree."""
+    return [REPO / name for name in LOOSE_VALUE_FILES if (REPO / name).is_file()]
+
+
+def all_loose_values(paths: list[Path]) -> list[LooseValue]:
+    """Every loose encrypted value in the named files, as they stand NOW."""
+    return [field_ for path in paths for field_ in loose_values(path)]
+
+
+def is_github_token(plaintext: str) -> bool:
+    """Whether a decrypted value is a GitHub token, by the shapes the secret scanner knows.
+
+    This is what tells the three PAT carriers from the three loose values next to them. The two
+    configmaps and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
+    ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the platform's OWN git-server credentials on
+    the same platform key; writing a GitHub PAT over those would take OPI's access to its three
+    repositories away. Measured on the plaintext rather than settled by a list of file names,
+    because a list is what has to be kept right by hand and the shapes are already written down
+    once, in ``secret_scan.RULES``.
+    """
+    return any(pattern.search(plaintext) for pattern in GITHUB_TOKEN_RULES)
 
 
 def is_real_ciphertext(value: str) -> bool:
@@ -856,6 +953,17 @@ class FinalCheck:
     still_opens_with_old: list[str] = field(default_factory=list)
     does_not_open_with_new: list[str] = field(default_factory=list)
     outside_coverage: list[str] = field(default_factory=list)
+    #: Fields whose plaintext is a GitHub token that is not the one ``--pat-file`` names. The
+    #: key half of this check cannot see these: a value can sit on the new key perfectly and
+    #: still hold the withdrawn token, and then the round reports CLEAN while every project
+    #: created after it gets a dead credential.
+    holds_another_token: list[str] = field(default_factory=list)
+    #: ArgoCD repository secrets whose password no longer equals the project file they were
+    #: derived from, and the coupling findings next to them.
+    argo_drift: list[str] = field(default_factory=list)
+    #: True when a token was supplied to check against, so the verdict can say which halves it
+    #: covers instead of reading as a full CLEAN over a question it never asked.
+    token_checked: bool = False
     counted: int = 0
     expected: int | None = None
 
@@ -865,6 +973,8 @@ class FinalCheck:
             not self.still_opens_with_old
             and not self.does_not_open_with_new
             and not self.outside_coverage
+            and not self.holds_another_token
+            and not self.argo_drift
             and self.count_matches
         )
 
@@ -883,8 +993,13 @@ class FinalCheck:
         # A gap is not "a field is wrong" but "a field was never looked at", and that is the
         # worse of the two: without it the verdict below reads CLEAN over an incomplete walk.
         out.extend(f"FAIL carries ciphertext and nothing converts it: {name}" for name in self.outside_coverage)
+        out.extend(f"FAIL holds a GitHub token that is not the new one: {name}" for name in self.holds_another_token)
+        out.extend(f"FAIL {name}" for name in self.argo_drift)
         if self.clean:
-            out.append("CLEAN the old key opens nothing, the new key opens everything")
+            verdict = "CLEAN the old key opens nothing, the new key opens everything"
+            if self.token_checked:
+                verdict += ", and every GitHub token is the new one"
+            out.append(verdict)
         return out
 
 
@@ -898,13 +1013,42 @@ def check_sops_file(path: Path, old_private_key: str, new_private_key: str, chec
         check.does_not_open_with_new.append(name)
 
 
-async def check_value(name: str, value: str, old_private_key: str, new_private_key: str, check: FinalCheck) -> None:
-    """One loose value: A must fail, B must succeed."""
+async def check_value(
+    name: str,
+    value: str,
+    old_private_key: str,
+    new_private_key: str,
+    check: FinalCheck,
+    pat: str | None = None,
+) -> None:
+    """One loose value: A must fail, B must succeed -- and with ``pat``, the CONTENT is judged too.
+
+    The key half and the token half are different questions about the same field, and the second
+    one is the reason this argument exists: a value re-encrypted for the new key still holds
+    whatever plaintext it held, so a PAT round that skipped this field leaves a withdrawn token
+    behind while every key check says CLEAN. Only a plaintext that IS a GitHub token is judged,
+    by ``is_github_token``; the git-server passwords sitting on the same key are not the PAT and
+    must not be held to it.
+    """
     check.counted += 1
     if await opens_with(value, old_private_key):
         check.still_opens_with_old.append(name)
-    if not await opens_with(value, new_private_key):
+    plaintext = await decrypt_field(value, new_private_key)
+    if plaintext is None:
         check.does_not_open_with_new.append(name)
+        return
+    if pat is not None:
+        check_token(name, plaintext, pat, check)
+
+
+def check_token(name: str, plaintext: str, pat: str, check: FinalCheck) -> None:
+    """Hold one decrypted value to the token it has to carry, when it carries one at all.
+
+    Shared by the three places the PAT round writes, so "the old token is nowhere" is one rule
+    measured three times rather than three spellings of it.
+    """
+    if is_github_token(plaintext) and plaintext != pat:
+        check.holds_another_token.append(name)
 
 
 if __name__ == "__main__":
