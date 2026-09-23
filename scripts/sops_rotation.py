@@ -58,6 +58,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     loose_values,
     opens_with,
     project_fields,
+    project_files,
     public_key_of,
     read_key,
     rotate_project_file,
@@ -167,6 +168,13 @@ def all_loose_values(paths: list[Path]) -> list[LooseValue]:
 
 
 def own_project_paths() -> list[Path]:
+    """This repo's own project files. Flat on purpose, unlike the clone's ``project_files()``.
+
+    ``projects/ideas/`` holds sketches that are not project files, and this repo's ciphertext is
+    already measured against ``coverage_gaps()`` -- so a project file appearing in a
+    subdirectory here is a named gap that stops the round, not a silent miss. The clone has no
+    such inventory of its own, which is why the selection there is the recursive one.
+    """
     return sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []
 
 
@@ -191,6 +199,23 @@ def coverage_gaps() -> list[Path]:
         *(REPO / name for name in COVERAGE_EXCEPTIONS),
     }
     return sorted(path for path in files_with_ciphertext(REPO) if path not in covered)
+
+
+def project_coverage_gaps(projects: Path) -> list[Path]:
+    """The same check as ``coverage_gaps()``, over the clone the project round walked.
+
+    That round has the problem this repo does not: its whole selection is one walk of that tree,
+    and the fingerprint it compares against is measured by that same walk. Both halves therefore
+    agree over an incomplete one -- 90 fields converted, 90 recorded, CLEAN -- while a
+    subdirectory of project files kept opening with the old key. This is the half that does not
+    come out of the walk: git says which files the tree tracks, and any of them holding real
+    ciphertext that the selection does not reach is a gap.
+
+    No exception list of its own. Every tracked file under the directory either is a project
+    file the round converts, or it is the finding.
+    """
+    covered = set(project_files(projects))
+    return sorted(path for path in files_with_ciphertext(projects) if path not in covered)
 
 
 def sops_trees(argo_applications: Path | None) -> list[Path]:
@@ -436,6 +461,11 @@ async def run_final_check(
     carries ciphertext and is converted by nothing at all (``coverage_gaps()``), and a file on
     the exception list whose reason turns out to be wrong (``check_exceptions``). Without those
     the verdict is about the fields the tool happens to know, not about the old key.
+
+    With ``--projects`` the same inventory runs over that clone (``project_coverage_gaps()``).
+    That is the one measurement here that does not come out of the selection the round used, and
+    it is what this check was missing: a walk and a count built from the same glob report CLEAN
+    over everything that glob does not see.
     """
     trees = trees if trees is not None else [REPO]
     check = FinalCheck(expected=expected)
@@ -447,12 +477,13 @@ async def run_final_check(
     for name, value in own_project_fields():
         await check_value(name, value, old_private, new_private, check)
     if projects is not None:
-        for path in sorted(projects.glob("*.yaml")):
+        for path in project_files(projects):
             data = load_yaml_from_path(str(path))
             if not isinstance(data, dict):
                 continue
             for field_name, value in project_fields(data):
                 await check_value(f"{path}#{field_name}", value, old_private, new_private, check)
+        check.outside_coverage.extend(str(path) for path in project_coverage_gaps(projects))
     check.outside_coverage.extend(short(path) for path in coverage_gaps())
     await check_exceptions(old_private, check)
     return check
@@ -612,6 +643,17 @@ async def main(argv: list[str] | None = None) -> int:
     argo = Path(arguments.argo_applications) if arguments.argo_applications else None
     if argo is not None and not argo.is_dir():
         print(f"FAIL no such directory: {argo}", file=sys.stderr)
+        return 2
+    if projects is not None and not projects.is_dir():
+        print(f"FAIL no such directory: {projects}", file=sys.stderr)
+        return 2
+    if projects is not None and not project_files(projects):
+        # The mirror of the line above, and the sharper of the two: a directory that exists but
+        # holds no project file makes the final check walk the fourth place over nothing and
+        # report CLEAN -- which is the answer the operator deletes the old key on.
+        print(f"FAIL no project files under {projects}", file=sys.stderr)
+        print("Nothing there matches *.yaml, so the fourth place would be walked over nothing.", file=sys.stderr)
+        print("Check the path: the documented one is <clone>/projects.", file=sys.stderr)
         return 2
     trees = sops_trees(argo)
     fingerprint_path = Path(arguments.fingerprint)

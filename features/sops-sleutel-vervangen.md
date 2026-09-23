@@ -51,9 +51,18 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
           en de eindtoets loopt het na.
 ```
 
-Gemeten over de 45 projectbestanden: precies deze twee velden gaan open met de platformsleutel
-(45 + 45 = 90 velden). De 136 andere versleutelde velden hangen aan de sleutel van het project
-zelf.
+Gemeten over de 53 projectbestanden: precies deze twee velden gaan open met de platformsleutel
+(53 + 53 = 106 velden). De 214 andere versleutelde waarden in diezelfde bestanden hangen aan de
+sleutel van het project zelf.
+
+**Het zijn er 53 en niet 45.** De projects-repo houdt een eerdere ronde in `projects/local-old/`:
+8 bestanden met 16 platformvelden. Een platte `glob('*.yaml')` laat die staan, en de ronde meldt
+dat niet, want de vingerafdruk waar hij tegen vergelijkt komt uit diezelfde selectie -- 90 tegen
+90, CLEAN, terwijl de oude sleutel die 16 velden gewoon opent. Het gereedschap selecteert daarom
+met `rglob`, en de eindtoets meet er een inventaris naast die NIET uit die selectie komt: git
+zegt welke bestanden de boom bijhoudt, en elk bestand daarvan met echte cijfertekst dat de
+selectie niet raakt is een gat. Dat dekt ook een `.yml`, een bestand zonder extensie en een map
+die er vandaag nog niet is.
 
 De sleutelwaarde staat nergens in git: `deployment.yaml` verwijst met `secretKeyRef` naar het
 secret `sops-age-key`, en `sops-plugin.sh` leest datzelfde secret. Het is een bootstrapwaarde die
@@ -116,7 +125,7 @@ daar allebei zelf, zonder push. Stap 3 commit wel, een commit per project, ook z
 # 4. alle drie de repo's nalopen TERWIJL er nog niets gepusht is
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 git -C /tmp/zad-projects log --oneline | head
-git -C /tmp/zad-projects diff --stat HEAD~45
+git -C /tmp/zad-projects diff --stat origin/HEAD
 
 # en: de argo-clone moet een VOLLEDIGE render geven en niet een halve. Dit is wat de plugin
 # doet: dezelfde vlaggen, en dezelfde mappenkeuze als KUSTOMIZE_FOLDERS=subfolders
@@ -399,23 +408,24 @@ werk dan bij een overlapfase, en dat is de prijs van de keuze hierboven.
 ## Waarom Python en niet shell
 
 De SOPS-kant zou prima in shell kunnen. De projectbestanden niet, en dat gaf de doorslag. Gemeten
-op de 45 bestanden:
+op de 53 bestanden:
 
-- alle 45 dragen de sleutel als meerregelige YAML block scalar, waar de inspringing en de
+- alle 53 dragen de sleutel als meerregelige YAML block scalar, waar de inspringing en de
   chomping-indicator exact moeten kloppen;
 - in datzelfde bestand staat `repositories[].password` op EEN regel, 34 keer als `base64+age:` en
-  11 keer als armored blok -- twee vormen door elkaar;
-- 3 van de 45 hebben commentaar, dat een naieve YAML-ronde weggooit.
+  19 keer als armored blok -- twee vormen door elkaar;
+- 5 van de 53 hebben commentaar, dat een naieve YAML-ronde weggooit.
 
-Tijdens het schrijven van het plan is de omzetting een keer met tekstvervanging geprobeerd:
-**56 van de 90 velden bleven stil op de oude sleutel staan**, zonder foutmelding. Raak de
+Tijdens het schrijven van het plan is de omzetting een keer met tekstvervanging geprobeerd, toen
+nog over de platte 45: **56 van de 90 velden bleven stil op de oude sleutel staan**, zonder
+foutmelding. Raak de
 projectbestanden dus nooit met sed, awk of `str.replace` aan. Het gereedschap laadt en schrijft
 via `opi.utils.yaml_util`, de canonieke round-trip-schrijver, en zet een meerregelige waarde terug
 als `LiteralScalarString`.
 
 ## Validatie: waarschuwen, niet blokkeren
 
-Gemeten: **44 van de 45 projectbestanden voldoen niet aan het huidige schema (2.8)**. Ze zijn
+Gemeten: **52 van de 53 projectbestanden voldoen niet aan het huidige schema (2.8)**. Ze zijn
 ouder en worden pas bij lezen door OPI gemigreerd. Weigeren op die bestaande afwijking zou de hele
 rotatie blokkeren op iets dat niets met de sleutel te maken heeft.
 

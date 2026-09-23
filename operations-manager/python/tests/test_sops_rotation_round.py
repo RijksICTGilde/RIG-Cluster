@@ -82,6 +82,19 @@ def _sops_file(directory: Path, name: str, body: str, public_key: str) -> Path:
     return directory / f"{name}.sops.yaml"
 
 
+async def _project_file(directory: Path, name: str, public_key: str) -> Path:
+    """One project file with a repository password on the given key.
+
+    ``--projects`` refuses a directory without a single project file, so a test that points at an
+    empty one measures that refusal instead of what it came for.
+    """
+    block = await encrypt_age_content("ghp_token", public_key)
+    encoded = base64.b64encode(block.encode()).decode()
+    path = directory / f"{name}.yaml"
+    path.write_text(f"name: {name}\nrepositories:\n  - name: main-repo\n    password: {BASE64_AGE_PREFIX}{encoded}\n")
+    return path
+
+
 def _encrypted_values(path: Path) -> list[str]:
     return _ENC_VALUE.findall(path.read_text())
 
@@ -324,6 +337,73 @@ async def test_the_final_check_walks_the_project_files_when_given_a_directory(tm
     assert without.counted == 0
     assert with_projects.counted == 1
     assert with_projects.still_opens_with_old[0].endswith("#repositories[0].password")
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_walks_a_project_file_in_a_subdirectory(tmp_path: Path) -> None:
+    """The fourth place is a tree, not a flat directory, and the verdict has to cover the tree.
+
+    Both halves are here because they are the two readings of the same run. With the selection
+    as it is, the nested file is counted and named as still opening with the old key; with it
+    flattened -- which is what the projects repo's ``local-old/`` ran into -- the same run
+    reports CLEAN over a field the old key opens. The second half is the FIELD walk alone: the
+    inventory that would also catch it is emptied for every test here by ``no_coverage_sweep``,
+    and has its own test below.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    projects = tmp_path / "projects"
+    (projects / "local-old").mkdir(parents=True)
+    await _project_file(projects, "hier", new_public)
+    await _project_file(projects / "local-old", "oud", old_public)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+    ):
+        walked = await tool.run_final_check(old_private, new_private, old_public, new_public, projects, None)
+        with patch.object(tool, "project_files", lambda directory: sorted(Path(directory).glob("*.yaml"))):
+            flat = await tool.run_final_check(old_private, new_private, old_public, new_public, projects, None)
+
+    assert walked.counted == 2
+    assert not walked.clean
+    assert walked.still_opens_with_old == [f"{projects}/local-old/oud.yaml#repositories[0].password"]
+    assert flat.counted == 1
+    assert flat.clean
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_names_a_projects_file_no_selection_reaches(tmp_path: Path) -> None:
+    """The one measurement in this check that does not come out of the selection it checks.
+
+    A walk and a count built from the same glob agree with each other over everything that glob
+    does not see. So the projects clone gets the same inventory this repo gets: git says which
+    files the tree tracks, and a tracked file carrying real ciphertext that no project-file
+    selection reaches is a gap -- whatever it is called.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    await _project_file(projects, "hier", new_public)
+    stray = await _project_file(projects, "oud", new_public)
+    stray = stray.rename(projects / "oud.yml")
+
+    def only_the_projects_tree(tree: Path) -> dict[Path, int]:
+        return files_with_ciphertext(tree) if tree == projects else {}
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "files_with_ciphertext", side_effect=only_the_projects_tree),
+    ):
+        check = await tool.run_final_check(old_private, new_private, old_public, new_public, projects, None)
+
+    assert check.counted == 1
+    assert check.still_opens_with_old == []
+    assert check.outside_coverage == [str(stray)]
+    assert not check.clean
+    assert f"FAIL carries ciphertext and nothing converts it: {stray}" in check.lines()
 
 
 @pytest.mark.asyncio
@@ -594,12 +674,13 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
     old_file.write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     projects = tmp_path / "projects"
     projects.mkdir()
+    await _project_file(projects, "een", new_public)
     argo = tmp_path / "zad-argo-user-applications"
     argo.mkdir()
 
@@ -1607,6 +1688,35 @@ async def test_a_clone_path_that_is_not_there_stops_the_run_instead_of_walking_n
 
 
 @pytest.mark.asyncio
+async def test_projects_is_refused_when_it_holds_no_project_file(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The mirror of the refusal ``--argo-applications`` already had, on both shapes.
+
+    A path that does not exist was refused; a path that exists and holds no project file was
+    not, and that one is the sharper of the two -- it walks the fourth place over nothing and
+    reports CLEAN, which is the answer the operator deletes the old key on.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    clone = tmp_path / "zad-projects"
+    (clone / "projects").mkdir(parents=True)
+    keys = _key_files(tmp_path, old_private, new_private)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+    ):
+        absent = await tool.main(["--ja", "--assert-old-key-dead", *keys, "--projects", str(tmp_path / "typo")])
+        empty = await tool.main(["--ja", "--assert-old-key-dead", *keys, "--projects", str(clone)])
+
+    printed = capsys.readouterr().err
+    assert absent == 2
+    assert empty == 2
+    assert f"FAIL no such directory: {tmp_path / 'typo'}" in printed
+    assert f"FAIL no project files under {clone}" in printed
+    assert "Check the path: the documented one is <clone>/projects." in printed
+
+
+@pytest.mark.asyncio
 @needs_sops
 async def test_verify_measures_the_argo_clone_too_and_says_so_when_it_is_left_out(
     tmp_path: Path, capsys: pytest.CaptureFixture
@@ -1652,12 +1762,13 @@ async def test_the_old_key_does_not_go_away_while_the_argocd_secrets_are_unwalke
     away.
     """
     old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
     old_file.write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     projects = tmp_path / "projects"
     projects.mkdir()
+    await _project_file(projects, "een", new_public)
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
@@ -1848,13 +1959,14 @@ async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
     action of the plan.
     """
     old_private, _old_public = generate_sops_key_pair()
-    new_private, _new_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
     answered_old.write_text(f"{old_private}\n")
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
     answered_new.write_text(f"{new_private}\n")
     projects = tmp_path / "projects"
     projects.mkdir()
+    await _project_file(projects, "een", new_public)
     argo = tmp_path / "zad-argo-user-applications"
     argo.mkdir()
 

@@ -10,7 +10,7 @@ only validated write path, and it is -- for OPI. This tool deviates, for two mea
 * it writes through ``GitConnector``, whose ``_parse_git_url`` accepts ``git://``, ``ssh://``,
   ``https://`` and the ``git@host:path`` shorthand and raises ``ValueError: Unsupported Git URL
   format`` on anything else. A ``file://`` URL is therefore not addressable, so the tool could
-  not be tested against the 45-file test set the plan requires, and running it would push to
+  not be tested against the projects test set the plan requires, and running it would push to
   the live remote per project with no dry run in between;
 * the plan's own cutover says "VERIFY while nothing has been pushed yet" and only then
   "commit and push". A method that pushes per project contradicts that order.
@@ -45,8 +45,10 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     ProjectRound,
     ask_for_path,
     decrypt_field,
+    files_with_ciphertext,
     load_yaml_from_path,
     project_fields,
+    project_files,
     public_key_of,
     read_key,
     rotate_project_file,
@@ -123,6 +125,18 @@ def find_repo_root(directory: Path) -> Path | None:
     return Path(result.stdout.strip())
 
 
+def display(path: Path, directory: Path) -> str:
+    """The file as the operator has to recognise it: with its subdirectory, when it has one.
+
+    The bare name would do while the selection was flat. It no longer is, and two project files
+    with the same name in different subdirectories would print as one line twice.
+    """
+    try:
+        return str(path.relative_to(directory))
+    except ValueError:
+        return str(path)
+
+
 async def run_round(
     directory: Path,
     old_private: str,
@@ -142,7 +156,7 @@ async def run_round(
     new_public = public_key_of(new_private)
     repo_root = find_repo_root(directory) if commit and not dry_run else None
 
-    for path in sorted(directory.glob("*.yaml")):
+    for path in project_files(directory):
         report = await rotate_project_file(
             path,
             old_private,
@@ -170,12 +184,12 @@ async def run_round(
             what = "sops key and git password" if new_pat is not None else "sops key"
             message = f"key-rotation: update {what} for {path.stem}"
             if git_commit_one(repo_root, path.relative_to(repo_root), message):
-                result.committed.append(path.name)
+                result.committed.append(display(path, directory))
 
     return result
 
 
-def report(result: RoundResult, *, dry_run: bool) -> None:
+def report(result: RoundResult, directory: Path, *, dry_run: bool) -> None:
     """Print the round, converted files first and the reasons for every skip after."""
     verb = "would convert" if dry_run else "converted"
     print(f"\n{len(result.converted)} project files {verb} ({result.fields} fields):")
@@ -183,10 +197,10 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
         note = ""
         if round_report.validation_was_already_red:
             note = "  [pre-existing schema drift, left as it was]"
-        print(f"  {round_report.path.name}: {', '.join(round_report.fields)}{note}")
+        print(f"  {display(round_report.path, directory)}: {', '.join(round_report.fields)}{note}")
     print(f"\n{len(result.skipped)} project files skipped:")
     for round_report in result.skipped:
-        print(f"  {round_report.path.name}: {round_report.skipped}")
+        print(f"  {display(round_report.path, directory)}: {round_report.skipped}")
     if result.committed:
         print(f"\n{len(result.committed)} commits made, one per project. Nothing pushed.")
 
@@ -211,7 +225,7 @@ async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerpr
     """
     fingerprint = Fingerprint()
     closed: list[str] = []
-    for path in sorted(directory.glob("*.yaml")):
+    for path in project_files(directory):
         data = load_yaml_from_path(str(path))
         if not isinstance(data, dict):
             continue
@@ -266,6 +280,48 @@ def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound
     ]
 
 
+def coverage_gaps(directory: Path) -> list[Path]:
+    """Tracked files under the directory carrying real ciphertext that this round does not walk.
+
+    The round's own numbers cannot answer this. The worklist and the fingerprint come out of the
+    same selection, so whatever that selection misses is missing from both and the two agree with
+    each other -- which is how a flat glob converted 90 fields, recorded 90 and left 16 in a
+    subdirectory opening with the old key, under a final check that said CLEAN. This asks the tree
+    what it holds instead, so a ``.yml``, a file without an extension or a directory nobody thought
+    of stops the round rather than passing through it unseen.
+    """
+    covered = set(project_files(directory))
+    return sorted(path for path in files_with_ciphertext(directory) if path not in covered)
+
+
+def worklist(directory: Path) -> tuple[list[Path], int]:
+    """The files this round walks, and the exit code that says not to start. 0 means go.
+
+    Both refusals are mirrors of the one ``--argo-applications`` already gets. An existing
+    directory holding no project file at all used to be a silent exit 0 over "0 project files",
+    and that reads as a finished round to whoever runs the step after it -- a wrong clone, a
+    directory one level too deep, an empty one. A tracked file carrying ciphertext that the
+    selection does not reach is the other half; it stops the round for the reason
+    ``coverage_gaps()`` gives, with the exit code the SOPS round uses for the same finding.
+    """
+    found = project_files(directory)
+    if not found:
+        print(f"FAIL no project files under {directory}", file=sys.stderr)
+        print("Nothing there matches *.yaml, so this round would convert nothing and exit 0.", file=sys.stderr)
+        print("Check the path: the documented one is <clone>/projects.", file=sys.stderr)
+        return [], 2
+    gaps = coverage_gaps(directory)
+    if gaps:
+        # Same wording as the SOPS round's stop on the same finding, so an operator who has seen
+        # one recognises the other.
+        print("STOPPED a tracked file carries ciphertext this round does not walk:", file=sys.stderr)
+        for path in gaps:
+            print(f"  {display(path, directory)}", file=sys.stderr)
+        print("Converting anyway ends in a count that matches over an incomplete walk.", file=sys.stderr)
+        return [], 1
+    return found, 0
+
+
 # entry point 1: the key rotation
 
 
@@ -278,13 +334,14 @@ PAT_FINGERPRINT = REPO / "security" / "projects-pat-fingerprint.json"
 
 ROTATE_KEYS_DESCRIPTION = """Move the project files to the new platform key.
 
-This is the fourth and largest place the platform key occurs: 45 files in the projects repo, each
-with TWO fields on the platform key -- config.age-private-key and every repositories[].password.
-A project where only the first was converted can no longer reach its own repository, which is why
-both always go together.
+This is the fourth and largest place the platform key occurs: 53 files in the projects repo, 8 of
+them in a subdirectory, each with TWO fields on the platform key -- config.age-private-key and
+every repositories[].password. A project where only the first was converted can no longer reach
+its own repository, which is why both always go together.
 
-Point --projects at a LOCAL CLONE of the projects repo. This writes and commits there and pushes
-nothing: the cutover verifies while nothing has been pushed yet, and then the operator pushes.
+Point --projects at the projects/ directory in a LOCAL CLONE of the projects repo, not at the
+clone itself. This writes and commits there and pushes nothing: the cutover verifies while
+nothing has been pushed yet, and then the operator pushes.
 """
 
 PAT_DESCRIPTION = """Replace the GitHub PAT in every project file: the same round, one argument more.
@@ -333,11 +390,13 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
         print("FAIL the old and the new key are the same key", file=sys.stderr)
         return 2
 
-    count = len(list(directory.glob("*.yaml")))
-    print(f"\n{count} project files in {directory}")
+    found, refusal = worklist(directory)
+    if refusal:
+        return refusal
+    print(f"\n{len(found)} project files in {directory}")
 
     preview = await run_round(directory, old_private, new_private, dry_run=True, commit=False)
-    report(preview, dry_run=True)
+    report(preview, directory, dry_run=True)
 
     if arguments.dry_run:
         print("\nDry run: nothing was changed.")
@@ -348,7 +407,7 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
         return 0
 
     result = await run_round(directory, old_private, new_private, dry_run=False, commit=not arguments.no_commit)
-    report(result, dry_run=False)
+    report(result, directory, dry_run=False)
     await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
 
     problems = broken(result)
@@ -358,8 +417,13 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
     if result.fingerprint_before.compare(result.fingerprint_after):
         return 1
 
-    print(f"\nDone. Check `git log --oneline` and `git diff --stat HEAD~{len(result.committed)}` in the clone,")
-    print("then push. After that, from the repository root:")
+    if result.committed:
+        print(f"\nDone. Check `git log --oneline` and `git diff --stat HEAD~{len(result.committed)}` in the clone,")
+        print("then push. After that, from the repository root:")
+    else:
+        # The second round of a rotation that went well: everything already sits on the new key,
+        # so there is nothing to look at and nothing to push. "HEAD~0" is the whole working tree.
+        print("\nDone. Nothing was left to convert, so there is nothing to commit or push. Still:")
     print(
         f"  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}"
     )
@@ -415,12 +479,15 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
         print("FAIL the old and the new key are the same key", file=sys.stderr)
         return 2
 
-    print(f"\n{len(list(directory.glob('*.yaml')))} project files in {directory}")
+    found, refusal = worklist(directory)
+    if refusal:
+        return refusal
+    print(f"\n{len(found)} project files in {directory}")
     print("The repository password is REPLACED; config.age-private-key is only re-encrypted.")
     print("Its fingerprint hash therefore has to differ at exactly the password fields.")
 
     preview = await run_round(directory, old_private, new_private, new_pat=new_pat, dry_run=True, commit=False)
-    report(preview, dry_run=True)
+    report(preview, directory, dry_run=True)
 
     if arguments.dry_run:
         print("\nDry run: nothing was changed.")
@@ -435,7 +502,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     result = await run_round(
         directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
     )
-    report(result, dry_run=False)
+    report(result, directory, dry_run=False)
     await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
 
     problems = broken(result, pat_round=True)

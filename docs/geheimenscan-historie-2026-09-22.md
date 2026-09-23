@@ -62,7 +62,7 @@ De echte sandbox- en developersleutels (`security/sandbox-key.txt`,
 
 ## De projects-repo: 93.927 objecten, 11 vindplaatsen
 
-Gemeten op `rig-cluster-projects` (de kopie met de 45 oudere projectbestanden die ook de testset
+Gemeten op `rig-cluster-projects` (de kopie met de 53 oudere projectbestanden die ook de testset
 van RC-221 is).
 
 **12 verschillende projectsleutels stonden in PLATTE TEKST in de historie**, in 11 projectbestanden,
@@ -85,7 +85,7 @@ versleuteld was in dat project op dat moment: de api-key, de Keycloak-wachtwoord
 heeft de inhoud.
 
 **Wat de reikwijdte begrenst.** Nagemeten: **geen enkel van de 11 projecten bestaat nog**. Ze
-komen niet voor in de huidige 45 projectbestanden. De namen lezen als een reeks wegwerpprojecten
+komen niet voor in de huidige 53 projectbestanden, `projects/local-old/` meegeteld. De namen lezen als een reeks wegwerpprojecten
 uit een testronde. Er valt dus niets meer te roteren voor deze projecten; wat er wel uit volgt is
 dat de onderliggende waarden die ze deelden met iets dat nog leeft (bijvoorbeeld een
 registry-wachtwoord of een PAT die over projecten heen gebruikt werd) niet meer geheim zijn.
@@ -97,7 +97,7 @@ registry-wachtwoord of een PAT die over projecten heen gebruikt werd) niet meer 
    sleutel die er toch al naast staat.
 2. De productie-`zad-projects` is hier NIET gescand: dit is de kopie op de interne Forgejo. De
    scan hoort nog een keer over de echte repo te lopen, met hetzelfde commando.
-3. Of de huidige 45 projectbestanden ooit ook zo'n platte fase hebben gehad. In de gescande
+3. Of de huidige 53 projectbestanden ooit ook zo'n platte fase hebben gehad. In de gescande
    historie staan ze er niet bij, maar deze kopie begint niet bij de eerste commit van de
    productierepo.
 

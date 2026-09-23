@@ -74,7 +74,7 @@ from secret_scan import scannable, tracked_files  # type: ignore[reportMissingIm
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 
-#: The two project-file fields that hang off the PLATFORM key. Measured across the 45
+#: The two project-file fields that hang off the PLATFORM key. Measured across the 53
 #: project files: only these two open with the platform key. ``api-key``,
 #: ``keycloak[].password``, ``user-env-vars``, ``configuration``, the attachments and
 #: ``registries[].password`` hang off the project's own key, which itself sits encrypted in
@@ -603,6 +603,23 @@ def files_with_ciphertext(tree: str | Path) -> dict[Path, int]:
 # place 4: project files
 
 
+def project_files(directory: str | Path) -> list[Path]:
+    """Every project file under the directory, the ones in a subdirectory included.
+
+    ``rglob`` and not ``glob``, and that is the whole point of the function. The projects repo
+    keeps an earlier round under ``projects/local-old/``: 8 files carrying 16 platform fields,
+    which a flat selection leaves on the old key. Nothing in the round says so either, because
+    the fingerprint it compares against is written by this same selection -- 90 against 90,
+    CLEAN. The independent half is ``files_with_ciphertext()`` over that same tree, which asks
+    the tree instead of the worklist and therefore also covers a ``.yml``, a file with no
+    extension and a directory that did not exist when this was written.
+
+    ``.git`` is skipped so that pointing the tool at a clone root instead of at its
+    ``projects/`` walks the work tree and not the object store.
+    """
+    return sorted(path for path in Path(directory).rglob("*.yaml") if ".git" not in path.parts)
+
+
 def project_fields(data: dict[str, Any]) -> list[tuple[str, str]]:
     """The ``(field name, ciphertext)`` pairs in a project file that hang off the platform key."""
     fields: list[tuple[str, str]] = []
@@ -638,7 +655,7 @@ async def validate_project_data(data: dict[str, Any]) -> str | None:
     """The two validations ``ProjectStore`` runs before every write, in the same order.
 
     Returns None when clean, otherwise the message. The caller decides what a message
-    means: 44 of the 45 measured project files do not satisfy the CURRENT schema (2.8)
+    means: 52 of the 53 measured project files do not satisfy the CURRENT schema (2.8)
     because they are older and only get migrated when OPI reads them. That pre-existing
     drift must not block a key rotation; drift that appears AFTER the conversion must.
     """

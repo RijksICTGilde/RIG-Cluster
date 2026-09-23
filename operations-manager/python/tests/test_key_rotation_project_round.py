@@ -31,6 +31,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import project_rotation as round_tool  # noqa: E402
 import sops_rotation as final_check_tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
@@ -997,6 +998,208 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
     assert "4 fields checked" in printed
     assert "count differs" not in printed
     assert step_8 == 0
+
+
+@pytest.mark.asyncio
+async def test_the_round_walks_a_project_file_in_a_subdirectory(projects_repo: Path, tmp_path: Path) -> None:
+    """The projects repo keeps an earlier round under ``projects/local-old/``: 8 files, 16 fields.
+
+    A flat selection converts none of them and the round says nothing, because the fingerprint it
+    compares against is written by that same selection: both sides count the same incomplete set
+    and agree with each other. So the file in the subdirectory is the measurement here -- it has
+    to be converted AND to stand in the record the final check counts.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    (directory / "local-old").mkdir()
+    await _write_project(directory, "hier", old_public)
+    nested = await _write_project(directory / "local-old", "oud", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    recorded = Fingerprint.load(fingerprint)
+    assert len(recorded.fields) == 4
+    assert [name for name in recorded.fields if "local-old" in name] != []
+    converted = load_yaml_from_path(str(nested))
+    assert await opens_with(converted["config"]["age-private-key"], new_private)
+    assert not await opens_with(converted["config"]["age-private-key"], old_private)
+
+
+@pytest.mark.asyncio
+async def test_a_flat_selection_is_stopped_by_the_coverage_guard(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The counter-check on the selection, and on the guard that does not come out of it.
+
+    Flatten ``project_files`` back to a plain glob and the round's own numbers still add up --
+    one file converted, one file recorded, "unchanged". What sees it is the inventory: git
+    tracks the nested file, it carries real ciphertext, and no worklist names it. That stops the
+    round before a byte is written, rather than ending in a count that matches over half a walk.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    (directory / "local-old").mkdir()
+    await _write_project(directory, "hier", old_public)
+    nested = await _write_project(directory / "local-old", "oud", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+
+    with patch.object(round_tool, "project_files", lambda directory: sorted(Path(directory).glob("*.yaml"))):
+        code = await main_rotate_keys(
+            [
+                "--ja",
+                "--projects",
+                str(directory),
+                "--old-key",
+                str(tmp_path / "old_key.txt"),
+                "--new-key",
+                str(tmp_path / "key.txt"),
+                "--fingerprint",
+                str(fingerprint),
+            ]
+        )
+
+    assert code == 1
+    assert "local-old/oud.yaml" in capsys.readouterr().err
+    assert not fingerprint.exists()
+    assert await opens_with(load_yaml_from_path(str(nested))["config"]["age-private-key"], old_private)
+
+
+@pytest.mark.asyncio
+async def test_a_tracked_file_with_ciphertext_outside_the_selection_stops_the_round(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``.yml`` is the shape the selection does not reach, and the guard is not the selection.
+
+    A path list can only ever name what someone thought of. This one is checked against what git
+    says the tree holds, so a second extension, a file without one and a directory nobody knew
+    about all come out the same way: named, and the round does not start.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "hier", old_public)
+    block = await encrypt_age_content("ghp_token", old_public)
+    (directory / "oud.yml").write_text(
+        "name: oud\nrepositories:\n  - name: main-repo\n    password: "
+        f"{BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}\n"
+    )
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(tmp_path / "projects-fingerprint.json"),
+        ]
+    )
+
+    assert code == 1
+    assert "oud.yml" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_both_entry_points_refuse_a_directory_without_a_project_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An existing directory holding no project file at all: a wrong clone, an empty one.
+
+    That used to be a silent exit 0 over "0 project files", which reads as a finished round to
+    whoever runs the step after it. A path that does not EXIST was refused already; this is the
+    mirror of that, and of the refusal ``--argo-applications`` got in an earlier round. The
+    other half of the same mistake is covered by the walk rather than by a refusal: ``<clone>``
+    instead of ``<clone>/projects`` now finds the files one level down.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_new_token\n")
+    clone = tmp_path / "zad-projects"
+    (clone / "projects").mkdir(parents=True)
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    key_round = await main_rotate_keys(["--ja", "--projects", str(clone), *keys])
+    pat_round = await main_replace_pat(
+        ["--ja", "--projects", str(clone), *keys, "--pat-file", str(tmp_path / "pat.txt")]
+    )
+
+    printed = capsys.readouterr().err
+    assert key_round == 2
+    assert pat_round == 2
+    assert printed.count(f"FAIL no project files under {clone}") == 2
+    assert "Check the path: the documented one is <clone>/projects." in printed
+
+
+@pytest.mark.asyncio
+async def test_a_second_round_does_not_point_at_head_0(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A round that converted nothing has nothing to look at before pushing.
+
+    The closing advice names the commits this round made, and the second round makes none:
+    ``git diff --stat HEAD~0`` is the whole working tree against itself, which reads as "check
+    this" and shows nothing whatever went wrong.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    arguments = [
+        "--ja",
+        "--projects",
+        str(projects_repo / "projects"),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(tmp_path / "fingerprint.json"),
+    ]
+
+    assert await main_rotate_keys(arguments) == 0
+    assert "git diff --stat HEAD~1" in capsys.readouterr().out
+    assert await main_rotate_keys(arguments) == 0
+
+    second = capsys.readouterr().out
+    assert "HEAD~" not in second
+    assert "nothing to commit or push" in second
+    assert "--assert-old-key-dead" in second
 
 
 def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() -> None:
