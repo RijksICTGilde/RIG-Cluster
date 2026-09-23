@@ -2,13 +2,14 @@
 
 Status: plan, 22 september 2026. Niet gebouwd. Vervangt de brede opzet in `de-age-sleutel-roteren-en-splitsen.md`, die als fase 3 blijft staan.
 
-Aanleiding: **de GitHub-PAT verloopt.** Die moet dus vervangen worden, in de configuratie van het platform en in elk projectbestand dat hem draagt. Dat is een geplande handeling met een datum erop, en precies het moment om de AGE-sleutel mee te nemen.
+Aanleiding: de GitHub-PAT verloopt en moet vervangen worden. We nemen die rotatie als aanleiding om tegelijk de AGE-sleutel te roteren en er een terugkerende handeling van te maken. Het is dezelfde ronde: dezelfde bestanden, dezelfde lus, dezelfde verificatie.
 
-Want die kent geen verlooptijd. Een token dwingt zijn eigen vervanging af zodra het verloopt; een AGE-sleutel blijft geldig tot iemand hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door.
+Daarmee voldoen we beter aan BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 
-De twee vallen samen omdat het **dezelfde ronde** is: dezelfde bestanden, dezelfde lus, dezelfde verificatie. `replace-git-pat.py` en `rotate-project-keys.py` zijn twee ingangen op een motor. De sleutel meenemen in een PAT-vervanging die er toch komt, kost bijna niets extra.
+* **8.24.01** vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het sleutelbeheer en *"hoe geregistreerd wordt waar welke cryptografie toegepast wordt"*. De vindplaatsenlijst in dit plan is die registratie, en de droogloop houdt hem eerlijk.
+* **8.24.02** vraagt dat voor alle cryptografische beheersmaatregelen is vastgesteld waar ze worden ingezet, wie ervoor verantwoordelijk is *"en hoe ze actueel worden gehouden"*. Dat laatste is precies wat hier ontbrak: een AGE-sleutel kent geen verlooptijd, dus zonder handeling blijft hij geldig. Een token dwingt zijn eigen vervanging af, een sleutel niet.
 
-Deze taak levert dat gereedschap, en het ritme waarin het gedraaid wordt.
+Deze taak levert het gereedschap en het ritme.
 
 ## Het ritme: elk kwartaal, tegelijk met de tokens
 
