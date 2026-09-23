@@ -19,9 +19,11 @@ job that silently stops calling the scan is the other way this rots:
 
 from __future__ import annotations
 
+import ast
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -341,6 +343,44 @@ def test_the_pre_commit_hook_calls_the_scan() -> None:
     assert len(scan_hooks) == 1
     assert "scripts/scan-secrets.py" in scan_hooks[0]["entry"]
     assert scan_hooks[0]["pass_filenames"] is True
+
+
+def test_every_script_parses_on_the_oldest_python_the_hook_may_meet() -> None:
+    """Layer 1 runs on whatever ``python3`` the developer has, so newer syntax refuses every commit.
+
+    The hook is ``entry: python3 scripts/scan-secrets.py --files`` with ``language: system``: no
+    venv, no pinned interpreter. Syntax that only 3.14 accepts -- ``except A, B:`` is the one that
+    bit here -- turns the hook into a ``SyntaxError`` that refuses every commit until someone
+    works out that the guard itself is broken. Neither gate catches it: ``ruff format`` calls the
+    file formatted either way, and the ruff hooks in ``.pre-commit-config.yaml`` are limited to
+    ``^operations-manager/python/``, so nothing runs ruff over ``scripts/`` on its own.
+
+    The floor comes out of ``scripts/.ruff.toml`` rather than being written here twice, so the
+    pin and this check cannot drift apart. That pin is a statement about the whole directory, so
+    every script is measured against it.
+    """
+
+    def version_of(text: str) -> tuple[int, int]:
+        """``py312`` as ``(3, 12)``."""
+        target = tomllib.loads(text)
+        setting = target.get("target-version") or target["tool"]["ruff"]["target-version"]
+        return int(setting[2]), int(setting[3:])
+
+    floor = version_of((_SCRIPTS_DIR / ".ruff.toml").read_text())
+    venv = version_of((_REPO_ROOT / "operations-manager" / "python" / "pyproject.toml").read_text())
+    assert floor < venv, "the pin only guards anything while it sits below the version the venv pins"
+
+    scripts = sorted(_SCRIPTS_DIR.glob("*.py"))
+    assert scripts, f"nothing matched in {_SCRIPTS_DIR}, so this would pass on an empty set"
+
+    broken: list[str] = []
+    for script in scripts:
+        try:
+            ast.parse(script.read_text(), filename=str(script), feature_version=floor)
+        except SyntaxError as e:
+            broken.append(f"{script.name}:{e.lineno}: {e.msg}")
+
+    assert broken == [], f"not parseable on python {floor[0]}.{floor[1]}:\n" + "\n".join(broken)
 
 
 def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:

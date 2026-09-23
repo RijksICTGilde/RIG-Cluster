@@ -327,6 +327,42 @@ async def test_the_run_writes_only_where_the_old_platform_key_sits(
 
 
 @pytest.mark.asyncio
+async def test_the_secret_is_written_from_the_answered_key_file_not_the_default(tmp_path: Path) -> None:
+    """What goes into the cluster is the file the operator named in the prompt.
+
+    Every other test here hands the paths in as flags, so the argparse default and the answer
+    coincide and a run that read ``arguments.new_key`` instead of the validated path would stay
+    green. In the rotation script that exact slip made ``--rename`` and ``--remove-old-key`` act
+    on the wrong file; here it would put a different key into ``sops-age-key`` on a production
+    cluster, which is the one step of the cutover that cannot be taken back.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    answered_old = tmp_path / "mijn-oude-sleutel.txt"
+    answered_old.write_text(f"{old_private}\n")
+    answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
+    answered_new.write_text(f"{new_private}\n")
+    written: list[tuple[str, Path]] = []
+
+    async def record_write(namespace: str, path: Path) -> None:
+        written.append((namespace, path))
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="odcn-production")),
+        patch.object(
+            tool, "find_holders", AsyncMock(return_value=[tool.SecretHolder("rig-prd-operations", old_public)])
+        ),
+        patch.object(tool, "write_secret", record_write),
+        patch.object(tool, "restart_operations_manager", AsyncMock(return_value=True)),
+        patch("builtins.input", side_effect=[str(answered_old), str(answered_new), "odcn-production"]),
+    ):
+        code = await tool.main([])
+
+    assert code == 0
+    assert written == [("rig-prd-operations", answered_new)]
+
+
+@pytest.mark.asyncio
 async def test_a_second_run_finds_nothing_to_do_and_writes_nothing(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

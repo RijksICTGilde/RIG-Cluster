@@ -341,6 +341,33 @@ def test_renaming_moves_both_files_into_place(tmp_path: Path, capsys: pytest.Cap
     assert "Renamed." in capsys.readouterr().out
 
 
+def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_path: Path) -> None:
+    """The documented step 1 has the old key sitting on the name the new one is about to take.
+
+    ``features/sops-sleutel-vervangen.md`` tells the operator to answer ``security/key.txt`` and
+    ``security/nieuw.txt``, so the answered old key IS ``CANONICAL_NEW``. Move the new one first
+    and it overwrites the old key before the old key has been copied anywhere: A is gone, and
+    with it every field that has not been converted yet. The two moves above never overlap, so
+    only this arrangement measures the order.
+    """
+    security = tmp_path / "security"
+    security.mkdir()
+    answered_old = security / "key.txt"
+    answered_old.write_text("old\n")
+    answered_new = security / "nieuw.txt"
+    answered_new.write_text("new\n")
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", security / "old_key.txt"),
+        patch.object(tool, "CANONICAL_NEW", security / "key.txt"),
+    ):
+        tool.rename_keys(answered_old, answered_new, yes=True)
+
+    assert (security / "old_key.txt").read_text() == "old\n"
+    assert (security / "key.txt").read_text() == "new\n"
+    assert not answered_new.exists()
+
+
 def test_renaming_does_nothing_without_a_yes(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     old = tmp_path / "elsewhere-old.txt"
     new = tmp_path / "elsewhere-new.txt"
@@ -893,6 +920,11 @@ def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
     assert any(pinned.group(1) in command for command in installs), (
         f"CI must install the same sops as the image ({pinned.group(1)})"
     )
+
+
+# ---------------------------------------------------------------------------
+# the two actions that work on a FILE: through main(), on an answered path
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
