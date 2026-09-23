@@ -1,27 +1,10 @@
 """De helmfile-route geeft de external-dns target mee aan de chart.
 
-OPI zet ``external-dns.alpha.kubernetes.io/target`` op elke ingress die het zelf
-rendert, zodat external-dns een CNAME binnen onze eigen zone schrijft. De
-ingresses van een helmfile-deployment komen uit de chart, niet uit
-``manifests/ingress.yaml.jinja``, dus die annotatie bereikte ze niet. Het gevolg
-was een CNAME naar de router-hostname van ODC-Noord, en zo'n verwijzing over de
-zonegrens overleeft de DNSSEC-validatie bij Google niet: ``docs.rijksapp.nl``
-gaf SERVFAIL met EDE 12.
-
-De charts van mijn-bureau lezen hun ingress-annotaties uit
-``cluster.ingress.annotations``. Dat blok wordt gevuld door de helm-waarden die
-``_process_helmfile_deployment`` wegschrijft, en daar zet deze wijziging de
-target bij.
-
-Vastgezet:
-
-1. Een hostname in een zone met een geconfigureerde ``external_dns_target``
-   levert die target op, afgeleid uit ``base-domain`` plus ``subdomain`` van de
-   publish-on-web-dienst.
-2. Een hostname in de eigen postfix-zone van het cluster levert niets op, en
-   laat het blok verder ongemoeid.
-3. Zet de deployment de annotatie zelf, dan wint die waarde.
-4. Annotaties die er al stonden blijven naast de nieuwe staan.
+De ingresses van een helmfile-deployment komen uit de chart, niet uit
+``manifests/ingress.yaml.jinja``, dus de target-annotatie bereikte ze niet. Het
+gevolg was een CNAME naar de router-hostname van ODC-Noord, en zo'n verwijzing
+over de zonegrens overleeft de DNSSEC-validatie bij Google niet:
+``docs.rijksapp.nl`` gaf SERVFAIL met EDE 12.
 
 Git, SOPS-encryptie en de secret-generatie zijn gemockt; de clusterconfiguratie
 en de hostname-afleiding zijn echt, want die dragen het oordeel.

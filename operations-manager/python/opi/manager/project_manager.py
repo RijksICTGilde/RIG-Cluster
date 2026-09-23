@@ -217,9 +217,6 @@ logger = logging.getLogger(__name__)
 # absorbs the bursts a busy pipeline produces without masking a genuine, persistent clash.
 _UPSERT_CONFLICT_RETRIES = 5
 
-# Waar external-dns de CNAME-bestemming van een ingress leest. ``manifests/ingress.yaml.jinja``
-# zet hem op elke ingress die OPI zelf rendert; de helmfile-route moet hem via de
-# chart-waarden meegeven, want daar rendert de chart de ingresses.
 _EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
 
 
@@ -4903,14 +4900,12 @@ class ProjectManager:
         # Add namespace to context for alias resolution
         context["NAMESPACE"] = prefixed_namespace
 
-        # De chart rendert de ingresses van een helmfile-deployment zelf, dus de
-        # target-annotatie die manifests/ingress.yaml.jinja meegeeft bereikt ze niet. Zonder
-        # die annotatie schrijft external-dns een CNAME naar de router-hostname van het
-        # cluster, en zo'n verwijzing over de zonegrens overleeft de DNSSEC-validatie bij
-        # Google niet (docs.rijksapp.nl gaf SERVFAIL met EDE 12).
-        # De hostname is die van de deployment zelf, dezelfde die _get_helm_values_context
-        # hierboven al voor de aliassen samenstelt. publish-on-web geeft er per deployment
-        # een, dus de ene gedeelde annotatiemap kan niet tussen twee zones klem komen.
+        # De chart rendert de ingresses van een helmfile-deployment zelf, dus de annotatie uit
+        # manifests/ingress.yaml.jinja bereikt ze niet. Zonder target schrijft external-dns een
+        # CNAME naar de router-hostname van het cluster, en zo'n verwijzing over de zonegrens
+        # overleeft de DNSSEC-validatie bij Google niet (docs.rijksapp.nl gaf SERVFAIL, EDE 12).
+        # De chart rendert meer hostnames dan deze ene (docs en static-docs) uit dezelfde
+        # annotatiemap: dat gaat goed zolang ze in dezelfde zone zitten.
         helmfile_hostname = context.get("PUBLIC_HOSTNAME")
         external_dns_target = (
             get_external_dns_target_for_hostname(cluster_name, helmfile_hostname) if helmfile_hostname else None
@@ -4982,8 +4977,7 @@ class ProjectManager:
             merged_values = self._deep_merge_dicts(base_values, deployment_values)
 
             # Als basis gemerged, niet eroverheen: bestaande annotaties blijven staan en een
-            # target die de projectvalues zelf zetten houdt het laatste woord, net als elke
-            # andere waarde in dit pad.
+            # target uit de projectvalues wint, net als elke andere waarde in dit pad.
             if external_dns_target:
                 merged_values = self._deep_merge_dicts(
                     {"cluster": {"ingress": {"annotations": {_EXTERNAL_DNS_TARGET_ANNOTATION: external_dns_target}}}},
