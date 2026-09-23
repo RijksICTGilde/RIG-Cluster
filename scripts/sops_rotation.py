@@ -63,6 +63,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     ask_for_new_key,
     ask_for_path,
     check_sops_file,
+    check_token,
     check_value,
     convert_value,
     decrypt_field,
@@ -76,6 +77,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     opens_with,
     project_fields,
     project_files,
+    project_plain_passwords,
     public_key_of,
     read_key,
     replace_record,
@@ -474,6 +476,12 @@ async def run_final_check(
     With ``--projects`` the same inventory runs over that clone (``project_coverage_gaps()``),
     and there it is the only half that does not come out of the walk the round used: a walk and
     a count built from the same glob report CLEAN over everything that glob does not see.
+
+    The token half reaches one field more than the key half does. ``project_fields()`` selects
+    on ciphertext, so a ``repositories[].password`` stored in the clear falls outside it, and
+    the coverage inventory does not report it either -- plain text is not ciphertext. Held to
+    the key that is right; held to the token it is a withdrawn credential sitting in a project
+    file, which the verdict would otherwise call CLEAN.
     """
     trees = trees if trees is not None else [REPO]
     check = FinalCheck(expected=expected, token_checked=pat is not None, current_pat_checked=current_pat is not None)
@@ -493,6 +501,13 @@ async def run_final_check(
                 continue
             for field_name, value in project_fields(data):
                 await check_value(f"{path}#{field_name}", value, old_private, new_private, check, pat, current_pat)
+            if pat is not None or current_pat is not None:
+                # The token half only, and deliberately outside ``check_value``: these fields
+                # hold no ciphertext, so there is no key question to ask about them and nothing
+                # converted them -- counting them would put the total the fingerprint has to
+                # match out by exactly their number. See ``project_plain_passwords``.
+                for field_name, plaintext in project_plain_passwords(data):
+                    check_token(f"{path}#{field_name}", plaintext, pat, check, current_pat)
         check.outside_coverage.extend(str(path) for path in project_coverage_gaps(projects))
         if argo is not None:
             await check_repository_secrets(argo, projects, old_private, new_private, check, pat, current_pat)

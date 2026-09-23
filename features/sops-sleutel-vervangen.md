@@ -135,8 +135,14 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --a
 # 3. de projectbestanden, op een VERSE clone. Dit is de EERSTE ronde, dus alleen de sleutel; de
 #    PAT volgt in stap 7. In een kwartaalronde draai je deze twee regels met replace-git-pat.py
 #    in plaats van rotate-project-keys.py -- dezelfde clone, en met --argo-applications erbij,
-#    want de PAT-ronde is breder dan de sleutelronde -- en vervalt stap 7. Zie "Waarom de
-#    PAT-ronde in de EERSTE ronde achteraan staat" en "De PAT-ronde raakt drie plekken".
+#    want de PAT-ronde is breder dan de sleutelronde -- en vervalt stap 7. De vervanging is dan
+#    al gebeurd voordat stap 4 en stap 6 draaien, dus die twee eindtoetsen krijgen er in een
+#    kwartaalronde ook --pat-new-file security/pat_new.txt --pat-current-file
+#    security/pat_current.txt bij; zonder die twee vlaggen gaan ze alleen over de SLEUTEL en
+#    meet geen enkele gedocumenteerde toets van zo'n ronde de token. In de EERSTE ronde horen
+#    ze er juist niet bij: daar is de huidige token op dat moment nog overal de waarde, en
+#    --pat-current-file zou terecht elk veld rood melden. Zie "Waarom de PAT-ronde in de
+#    EERSTE ronde achteraan staat" en "De PAT-ronde raakt drie plekken".
 git clone <zad-projects> /tmp/zad-projects
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
@@ -238,9 +244,11 @@ uv run --project operations-manager/python python scripts/replace-git-pat.py --p
 #     plekken, nog naar de vervangen token ontsleutelt
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-new-file security/pat_new.txt --pat-current-file security/pat_current.txt
 
-# 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg. Daarna ook
-#    de twee tokenbestanden opruimen: de token staat dan waar hij hoort
-uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+# 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg. Met dezelfde
+#    twee tokenbestanden als in 7b: dit is de laatste toets voor de oude sleutel verdwijnt, en
+#    een herhaling die MINDER meet dan de vorige keer zegt niets over wat er sinds 7b nog
+#    gepusht is. Daarna pas de twee tokenbestanden opruimen: de token staat dan waar hij hoort
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-new-file security/pat_new.txt --pat-current-file security/pat_current.txt
 rm -f security/pat_current.txt security/pat_new.txt
 ```
 
@@ -530,6 +538,23 @@ schoon oordeel over vier van de vijf plaatsen is geen reden om hem weg te gooien
 Boven op die vijf loopt hij twee dingen na die over de DEKKING gaan en niet over een veld: een
 bestand met cijfertekst dat nergens wordt omgezet is een FAIL en geen stilte, en de
 uitzonderingslijst wordt met de oude sleutel nagemeten. Waarom allebei: zie hieronder.
+
+**Met de tokenvlaggen erbij reikt de toets een veld VERDER dan de ronde.**
+`--pat-current-file` zegt dat niets meer naar de vervangen token ontsleutelt, en dat is een
+absoluut oordeel, terwijl de ronde zelf alleen kijkt naar wat op de platformsleutel staat. Twee
+vormen vallen daarbuiten en worden hier toch gemeten:
+
+- een `repositories[].password` dat in een projectbestand in de KLARE tekst staat (`plain:`).
+  Er is niets aan te ontsleutelen, dus de sleutelhelft heeft er terecht niets mee te maken, en
+  de dekkingsinventaris ziet hem ook niet, want klare tekst is geen cijfertekst. Staat de
+  ingetrokken token daar, dan is hij er net zo goed;
+- het bijbehorende ArgoCD repository-secret. Dat valt in `without_platform_password` omdat het
+  PROJECTBESTAND zijn wachtwoord niet op de platformsleutel draagt, maar het secret zelf draagt
+  een doodgewoon wachtwoord in klare tekst, net als alle andere. Dat is de vorm van de hele
+  sandbox, en het oordeel gaat over het secret en niet over het projectbestand.
+
+Geteld worden ze geen van beide: ze zijn nooit omgezet, staan dus niet in de vingerafdruk, en
+meetellen zou het getal dat moet kloppen precies met hun aantal laten afwijken.
 
 `--remove-old-key` haalt `security/old_key.txt` weg. `--verify` blijft daarna werken: die stand
 meet met de nieuwe sleutel en vraagt de oude niet op.

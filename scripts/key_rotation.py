@@ -71,6 +71,7 @@ from opi.utils.age import (  # noqa: E402
     decrypt_age_content,
     encrypt_age_content,
     is_age_encrypted,
+    parse_password_with_prefix,
 )
 from opi.utils.sops import _decrypt_sops_with_key  # noqa: E402
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
@@ -778,6 +779,34 @@ def project_fields(data: dict[str, Any]) -> list[tuple[str, str]]:
         if isinstance(password, str) and form_of(password) is not None:
             fields.append((PROJECT_FIELD_REPO_PASSWORD.format(index=index), password))
     return fields
+
+
+def project_plain_passwords(data: dict[str, Any]) -> list[tuple[str, str]]:
+    """The ``repositories[].password`` values holding no ciphertext at all, as (name, plaintext).
+
+    The counterpart of ``project_fields()``, and it exists for the TOKEN half alone.
+    ``project_fields()`` selects on ``form_of()``, which is the right filter for the key
+    question -- a value with nothing encrypted in it has nothing to re-encrypt, and the round
+    rightly walks past it. But that same filter makes a password stored as ``plain:<token>``
+    invisible to the check underneath, and ``project_coverage_gaps()`` does not see it either,
+    because plain text is not ciphertext. The verdict this feeds is absolute -- nothing
+    decrypts to the current PAT any more -- and a token lying there in the clear is that token
+    just as much as an encrypted one is.
+
+    ``parse_password_with_prefix`` and not a ``plain:`` strip of our own: it is the function
+    OPI reads these values with, so ``age:``, ``base64+age:`` and the bare auto-detected form
+    are separated from the plain one exactly once. Only the plain answer comes out here; the
+    other three are ciphertext and belong to ``project_fields()``.
+    """
+    found: list[tuple[str, str]] = []
+    for index, repository in enumerate(data.get("repositories") or []):
+        password = repository.get("password") if isinstance(repository, dict) else None
+        if not isinstance(password, str) or not password or form_of(password) is not None:
+            continue
+        form, plaintext = parse_password_with_prefix(password)
+        if form == "plain" and plaintext:
+            found.append((PROJECT_FIELD_REPO_PASSWORD.format(index=index), plaintext))
+    return found
 
 
 def set_project_field(data: dict[str, Any], field_name: str, new_value: str) -> None:

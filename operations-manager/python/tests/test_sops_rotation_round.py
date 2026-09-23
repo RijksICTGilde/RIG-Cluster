@@ -2878,6 +2878,48 @@ async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
 
 @pytest.mark.asyncio
 @needs_sops
+async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The second half of the gap the review found, on the project side this time.
+
+    ``project_fields()`` selects on ``form_of()``, so a password stored in the clear is not in
+    the walk at all, and ``project_coverage_gaps()`` does not report it either -- plain text is
+    not ciphertext. For the KEY question both are right: there is nothing there to re-encrypt.
+    But the verdict ``--pat-current-file`` prints is absolute, and a withdrawn token lying in a
+    project file in the clear is that token.
+
+    The counted total is the other half. These fields were never converted, so they are not in
+    the fingerprint, and counting them would make the count that has to match disagree by
+    exactly their number.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    converted = await _project_file(projects, "een", new_public)
+    plain = projects / "twee.yaml"
+    plain.write_text(f"name: twee\nrepositories:\n  - name: main-repo\n    password: plain:{current}\n")
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        without = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert without == 0, "the key half is happy: there is no ciphertext here at all"
+    assert code == 1
+    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[0].password" in printed
+    assert "1 fields checked" in printed, f"only {converted} is converted, so only that one counts"
+
+
+@pytest.mark.asyncio
+@needs_sops
 async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:

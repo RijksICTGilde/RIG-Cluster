@@ -26,7 +26,7 @@ import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
-from tests.documented_commands import documented_lines, flags
+from tests.documented_commands import FEATURE_DOC, documented_lines, flags
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1929,7 +1929,8 @@ def test_the_documented_pat_round_and_its_final_check_share_the_same_two_token_f
     That such a check is documented at all is the other half. ``--pat-new-file`` recognises a
     token by its SHAPE and ``--pat-current-file`` is plain equality with the value that was
     replaced; only the second says the old token is gone. "At least one", not "exactly one":
-    running it again a day later with the same two files is more measurement, not less.
+    running it again a day later with the same two files is more measurement, not less. WHICH
+    of them has to carry the tokens is the test below; that is the half this one cannot see.
     """
     pat_lines = documented_lines("replace-git-pat.py")
     assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"
@@ -1957,6 +1958,60 @@ def test_the_documented_pat_round_and_its_final_check_share_the_same_two_token_f
     for parsed in with_both_tokens:
         assert (REPO / parsed.pat_current_file).resolve() == CANONICAL_PAT_CURRENT.resolve()
         assert (REPO / parsed.pat_new_file).resolve() == CANONICAL_PAT_NEW.resolve()
+
+
+def test_every_documented_final_check_after_the_replacement_carries_both_tokens() -> None:
+    """Which of the four documented final checks measures the token, and which one may not.
+
+    "At least one" is satisfied by a single line, and it was: of the four, only the one directly
+    under the PAT round carried the tokens. The last one -- the run a day later that DELETES the
+    old key -- did not, so the repeat measured less than the run it repeats, and whatever was
+    pushed in between was never held to the token at all.
+
+    The other two belong to the first round, where the replacement has not happened yet and
+    ``--pat-current-file`` would rightly call every field a finding. A quarterly round runs them
+    AFTER the replacement, though, and then they have to carry the tokens too -- so the doc has
+    to say so at the step that makes the swap, or a quarterly round documents four final checks
+    and measures the token in none of them.
+    """
+    removals = [line for line in documented_lines("rotate-sops-key.py") if "--remove-old-key" in line]
+    assert removals, "the documented step that deletes the old key left the feature doc"
+    for line in removals:
+        parsed = final_check_tool.build_parser().parse_args(flags(line))
+        missing = [
+            flag
+            for flag, value in (
+                ("--pat-current-file", parsed.pat_current_file),
+                ("--pat-new-file", parsed.pat_new_file),
+            )
+            if not value
+        ]
+        assert missing == [], (
+            f"the last check before the old key is deleted measures less than the one before it, "
+            f"it is missing {missing}: {line}"
+        )
+        assert (REPO / parsed.pat_current_file).resolve() == CANONICAL_PAT_CURRENT.resolve()
+        assert (REPO / parsed.pat_new_file).resolve() == CANONICAL_PAT_NEW.resolve()
+
+    lines = FEATURE_DOC.read_text().splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith("# 3."))
+    comment = "\n".join(_leading_comment(lines, start))
+    assert "replace-git-pat.py" in comment, "step 3 is where the quarterly round swaps the script"
+    for flag in ("--pat-new-file", "--pat-current-file"):
+        assert flag in comment, (
+            f"step 3 does not say a quarterly round hands {flag} to the two final checks that "
+            "follow it, so those run after the replacement and never measure the token"
+        )
+
+
+def _leading_comment(lines: list[str], start: int) -> list[str]:
+    """The comment block that opens at ``start``, up to the first line that is not a comment."""
+    block: list[str] = []
+    for line in lines[start:]:
+        if not line.startswith("#"):
+            break
+        block.append(line)
+    return block
 
 
 def test_the_documented_quarterly_round_swaps_the_script_and_adds_the_argo_clone() -> None:

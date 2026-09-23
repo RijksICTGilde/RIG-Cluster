@@ -1105,3 +1105,38 @@ async def test_an_argo_secret_that_still_holds_the_current_pat_fails_the_final_c
     assert clean.clean, "both sides agree, so every other half is happy"
     assert not with_current.clean
     assert with_current.still_holds_current_pat != []
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_a_secret_whose_project_has_a_plain_password_is_held_to_the_token_too(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """The gap the review found: the token half ran over ``pairs`` and nothing else.
+
+    ``without_platform_password`` is split on the PROJECT file -- its password is ``plain:``, so
+    nothing can be derived for this secret and the round rightly leaves it alone. But the secret
+    itself carries an ordinary plaintext password like every other one, and here it is the
+    withdrawn token. The verdict says nothing decrypts to the current PAT any more, which is
+    absolute, so a secret in this list has to answer for it as well.
+
+    The shape is not a corner case: the doc names it as the form of the entire sandbox.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, _secret = await a_pair(
+        tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
+    )
+    project_file = projects / "een.yaml"
+    project_file.write_text(project_file.read_text().replace(BASE64_AGE_PREFIX, "plain:", 1))
+
+    plan = await argo_rotation.plan_argo_round(clone, projects, platform_private, platform_private)
+    check = FinalCheck()
+    await check_repository_secrets(
+        clone, projects, platform_private, platform_private, check, pat=NEW_TOKEN, current_pat=OLD_TOKEN
+    )
+
+    assert plan.pairing.pairs == [], "the pairing puts this secret outside the list the check used to walk"
+    assert plan.pairing.without_platform_password != []
+    assert not check.clean
+    assert check.still_holds_current_pat != []
+    assert check.holds_another_token != []

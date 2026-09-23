@@ -397,6 +397,13 @@ async def check_repository_secrets(
     ``current_pat`` to the sharper rule underneath: it must not still BE the token the round
     was supposed to replace. That is what makes "the old token is in no argo secret" a
     measurement instead of an inference.
+
+    That half runs over ``without_platform_password`` as well as over the pairs, and the reason
+    is that the two lists are split on the PROJECT file and the token question is about the
+    SECRET. A repository whose password is ``plain:`` carries nothing on the platform key, so
+    nothing can be derived for it -- but its secret holds an ordinary plaintext password like
+    every other one, and if that password is the withdrawn token then "nothing decrypts to the
+    current PAT any more" is false. The sandbox is that shape from end to end.
     """
     plan = await plan_argo_round(clone, projects, old_private, new_private)
     check.argo_drift.extend(plan.drift)
@@ -408,7 +415,7 @@ async def check_repository_secrets(
         check.argo_drift.append(f"opens with neither key: {name}")
     if pat is None and current_pat is None:
         return
-    for secret, _repository in plan.pairing.pairs:
+    for secret, _repository in [*plan.pairing.pairs, *plan.pairing.without_platform_password]:
         password = secret.password
         if password is not None:
             check_token(f"{secret.path} ({secret.name})", password, pat, check, current_pat)
