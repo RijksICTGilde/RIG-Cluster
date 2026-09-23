@@ -80,3 +80,10 @@ de PEP 758-vorm `except A, B:`. In `opi/` is dat prima -- daar is de interpreter
 `scan-secrets.py` draait op de `python3` die de ontwikkelaar toevallig heeft, en op 3.13 en ouder
 is die vorm een SyntaxError die elke commit weigert. `scripts/.ruff.toml` neemt daarom de hele
 OPI-config over en zet alleen de target-version omlaag, zodat de formatter de haakjes laat staan.
+
+Let op wat "de hele OPI-config" betekent: die geldt voor de HELE map en niet alleen voor
+`scan-secrets.py`. Elk bestand hier wordt dus beoordeeld met de strenge regelset van OPI, ook een
+script dat er al stond. Dat is waarom `orphan_deployments.py` een `# noqa: S603`/`S607` draagt op
+zijn git-aanroep, net als de rotatiemodules hiernaast. Geen enkele poort draait `ruff` over deze
+map -- de pre-commit hook staat op `^operations-manager/python/` en CI heeft geen ruff-stap -- dus
+draai hem hier met de hand: `cd operations-manager/python && uv run ruff check ../../scripts/`.
