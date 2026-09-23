@@ -27,16 +27,8 @@ achterstand is, staat onder "De oefenronde".
 
 ## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
 
-Het kwartaalmoment is het moment dat de PAT toch vervangen moet worden. Een aanleiding daarbuiten
-is een collega die weggaat, of het vermoeden dat een sleutel bekend is geworden.
-
-Voor de EERSTE ronde gaan de sleutel en de PAT niet samen: daar gaat de sleutel voorop en de PAT
-erachteraan; zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat". Zodra die ronde
-aantoonbaar goed is gegaan, is de kwartaalronde de gecombineerde.
-
-Tussen de rondes door KUNNEN PREPARE en VERIFY-1 maandelijks als oefening draaien, een ronde die
-niets omzet. Die is nog niet gebouwd: er staat geen geplande workflow die hem draait. Zie "De
-oefenronde" en "Wat hierna komt".
+Een aanleiding buiten het kwartaal om is een collega die weggaat, of het vermoeden dat een
+sleutel bekend is geworden.
 
 ## Wat de sleutel vasthoudt
 
