@@ -3,8 +3,7 @@
 Four properties carry the whole cutover, and a "it ran" check catches none of them:
 
 * a converted SOPS file opens with B, no longer opens with A, and its ciphertext CHANGED -- the
-  third is what separates ``sops rotate`` from ``sops updatekeys``, which leaves the data key
-  in place;
+  third is what separates ``sops rotate`` from ``sops updatekeys``;
 * the plan tells "to do" from "already done" from "broken" by MEASURING, which is what makes a
   second run a no-op rather than a failure on the fingerprint;
 * the fingerprint covers the same SET of fields before and after, or the comparison invents
@@ -58,8 +57,6 @@ pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires th
 #: marker per test rather than a second module-level skip.
 needs_sops = pytest.mark.skipif(shutil.which("sops") is None, reason="requires the sops binary")
 
-#: Every ENC[...] value in a SOPS file. ``sops rotate`` mints a new data key, so these must all
-#: differ afterwards; ``sops updatekeys`` would leave them byte-for-byte the same.
 _ENC_VALUE = re.compile(r"ENC\[[^\]]*\]")
 
 
@@ -584,11 +581,9 @@ SECRET_BODY = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: demo\nstringData
 def test_sops_rotate_moves_the_file_to_the_new_recipient_and_mints_a_new_data_key(tmp_path: Path) -> None:
     """The plan's verify clause for the conversion: B opens it, A does not, ciphertext changed.
 
-    The third assertion is the one that picks ``rotate`` over ``updatekeys``. SOPS encrypts the
-    content with a data key and encrypts only that data key per recipient: ``updatekeys`` swaps
-    the recipients and leaves the data key alone, so the ENC[...] values stay byte-for-byte the
-    same and anyone who once held A can still open the file with the data key out of an older
-    copy. ``rotate`` mints a new data key, which is why every value here has to differ.
+    The third assertion is the one that picks ``rotate`` over ``updatekeys``: that one leaves the
+    data key in place, so a holder of A opens the file with the data key out of an older copy.
+    The measurement is in features/sops-sleutel-vervangen.md.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -880,7 +875,7 @@ def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
 
     Measured: the test job installed ``age`` but not ``sops``, so every test here that rotates a
     real SOPS file -- and the whole of ``test_sops_skip_unchanged`` -- skipped on the runner
-    while the summary said passed. The version is pinned to the one the OPI image carries.
+    while the summary said passed.
     """
     workflow = yaml.safe_load((tool.REPO / ".github" / "workflows" / "ci.yml").read_text())
     # Steps that really run: a step behind a falsy condition installs nothing, and reading only

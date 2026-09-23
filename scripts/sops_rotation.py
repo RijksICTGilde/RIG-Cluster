@@ -198,10 +198,8 @@ async def fingerprint_now(
 def ask_for_keys(arguments: argparse.Namespace) -> tuple[Path, str, Path, str]:
     """Ask for the two key files and hand back both the answered paths and the private halves.
 
-    The paths come back along with the contents because the last two actions of the plan --
-    renaming and deleting the old key -- act on a FILE. Reading those from the argparse default
-    instead means an operator who answered the prompt with another path gets told the key was
-    removed while it is still on disk.
+    The paths come along because the last two actions, renaming and deleting the old key, act on
+    a FILE and not on its contents.
     """
     reader = (lambda _question: "") if arguments.ja else input
     old = ask_for_path("old key", arguments.old_key, reader=reader)

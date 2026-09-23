@@ -277,10 +277,9 @@ async def test_the_run_writes_only_where_the_old_platform_key_sits(
     """The selection has to survive into what is actually WRITTEN, not just into the listing.
 
     ``report_holders`` picking the right namespaces proves nothing on its own: a run that looped
-    over every holder instead of over the selected ones would keep that listing green while
-    replacing ten projects' own SOPS keys with the platform key -- measured, exactly the shape
-    of the trap this tool exists for. So this asserts the namespaces that were written and the
-    ones that were restarted, and that the others were touched by neither.
+    over every holder instead of over the selected ones would keep that listing green and still
+    overwrite the keys this tool exists to leave alone. So this asserts which namespaces were
+    written and restarted, and that the others were touched by neither.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -375,8 +374,7 @@ async def test_an_unreachable_cluster_stops_before_anything_is_touched(
     (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     connector = AsyncMock()
-    # The context lookup succeeds and the secret listing does not: without that listing there is
-    # no way to tell which namespaces carry the platform key.
+    # The context lookup succeeds, the secret listing does not.
     connector.run_command = AsyncMock(side_effect=[("odcn-production", "", 0), ("", "connection refused", 1)])
 
     with patch.object(tool, "create_kubectl_connector", return_value=connector):

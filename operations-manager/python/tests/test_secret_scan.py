@@ -287,12 +287,7 @@ def _repo_with(tmp_path: Path, files: dict[str, str]) -> Path:
 
 @needs_age
 def test_a_secret_deleted_from_the_tree_is_still_found_in_the_history(tmp_path: Path) -> None:
-    """The reason the sweep exists: removing the file does not remove the secret.
-
-    A clean working tree says nothing about what an old commit still holds, and a key rotation
-    does not change that either -- every old version stays openable with the key it was
-    encrypted for. What the sweep finds is what decides whether more has to be rotated.
-    """
+    """The reason the sweep exists: removing the file does not remove the secret."""
     private_key, _public_key = generate_sops_key_pair()
     repo = _repo_with(tmp_path, {"leaked.py": f'KEY = "{private_key}"\n'})
     (repo / "leaked.py").unlink()
@@ -310,15 +305,9 @@ def test_a_secret_deleted_from_the_tree_is_still_found_in_the_history(tmp_path: 
 def test_the_history_sweep_finishes_on_a_repository_that_has_subdirectories(tmp_path: Path) -> None:
     """The measured failure: a non-blob object left unread in the batch pipe desynchronises it.
 
-    ``git rev-list --objects --all`` names tree objects as well as blobs, and ``git cat-file
-    --batch`` writes a payload for every sha it is given. Skipping a tree without READING its
-    bytes leaves those bytes in the stream, and what the next read then finds where a header
-    should be depends on the repository: on this small one the tree content lands in the size
-    field, on the real 47k-object sweep it was a read that waited nine minutes for a header that
-    never came.
-
-    A subdirectory is the smallest shape that puts a tree in that list. Both outcomes fail this
-    test -- the garbage header raises, and the timeout catches the wait.
+    A subdirectory is the smallest shape that puts a tree object in the listing, so it takes one
+    to reproduce this at all. Both outcomes of the desynchronisation fail the test: garbage where
+    a header belongs raises, and the timeout catches the version that waited forever.
     """
     private_key, _public_key = generate_sops_key_pair()
     repo = _repo_with(

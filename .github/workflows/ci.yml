@@ -43,10 +43,9 @@ jobs:
       # de age-keygen binary op de runner.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
-      # Zonder sops slaan de toetsen die een ECHT sops-bestand roteren over, en dat zijn juist
-      # de bewakers van de sleutelwissel: test_sops_rotation_round (de sops-helft) en
-      # test_sops_skip_unchanged. Overslaan leest als groen. Zelfde versie als de OPI-image
-      # (SOPS_VERSION in operations-manager/Dockerfile), zodat CI en pod hetzelfde gedrag zien.
+      # Zonder sops slaan juist de bewakers van de sleutelwissel over, en overslaan leest als
+      # groen. Zelfde versie als de OPI-image (SOPS_VERSION in operations-manager/Dockerfile),
+      # zodat CI en pod hetzelfde gedrag zien.
       - name: Install sops
         run: |
           curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64
