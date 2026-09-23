@@ -588,12 +588,20 @@ def rename_keys(old: Path, new: Path, *, yes: bool) -> None:
     would drag all of those with it, so the old one shifts to ``old_key.txt`` and the new one
     takes over the fixed name.
 
-    ``Path.replace`` overwrites: a second rotation where the last step (the one that deletes
-    ``old_key.txt``) was skipped loses the previous key silently.
+    ``Path.replace`` overwrites, so a second rotation where step 8 (the one that deletes
+    ``old_key.txt``) was skipped would land on the previous round's old key and destroy the only
+    copy of it. It refuses instead, the way ``generate_key`` refuses to write over a key file:
+    while the old key still opens something, losing it is losing the way back.
     """
     if old.resolve() == CANONICAL_OLD.resolve() and new.resolve() == CANONICAL_NEW.resolve():
         print("Keys already sit under their fixed names.")
         return
+    if old.resolve() != CANONICAL_OLD.resolve() and CANONICAL_OLD.exists():
+        raise KeyExists(
+            f"refusing to overwrite an existing file: {CANONICAL_OLD}. That is the previous "
+            "rotation's old key. Step 8 (--remove-old-key) deletes it once the final check is "
+            "clean; move it aside yourself if that round was never finished."
+        )
     print(f"\nRenaming: {old} -> {CANONICAL_OLD} and {new} -> {CANONICAL_NEW}")
     if not yes and input("Do it? [no]: ").strip().lower() not in YES_WORDS:
         print("Not renamed. Do this by hand, or every reference to security/key.txt stays on the old key.")
@@ -603,6 +611,16 @@ def rename_keys(old: Path, new: Path, *, yes: bool) -> None:
     if new.resolve() != CANONICAL_NEW.resolve():
         new.replace(CANONICAL_NEW)
     print("Renamed.")
+
+
+def run_rename(old: Path, new: Path, *, yes: bool) -> int:
+    """The ``--rename`` stand: the refusal has to reach the exit code, not only the traceback."""
+    try:
+        rename_keys(old, new, yes=yes)
+    except KeyExists as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -747,8 +765,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
 
     if arguments.rename:
-        rename_keys(old_path, new_path, yes=arguments.ja)
-        return 0
+        return run_rename(old_path, new_path, yes=arguments.ja)
 
     if arguments.assert_old_key_dead or arguments.remove_old_key:
         note_places_left_out(projects, argo, pat)

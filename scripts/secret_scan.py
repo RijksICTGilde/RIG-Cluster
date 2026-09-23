@@ -33,14 +33,31 @@ if TYPE_CHECKING:
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 
-#: Binary and vendored paths a source scan has no business walking.
-SKIP_DIRECTORIES = frozenset(
-    {".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", "dist", "build"}
-)
+#: Directories a WALK has no business descending into, and nothing else. This list applies only to
+#: the ``rglob`` fallback in ``tracked_files``, for a tree that is not a git repository: caches and
+#: installed dependencies are not committed and not what a commit guard is about.
+#:
+#: It used to hold ``dist`` and ``build`` as well, and it used to apply to the ``git ls-files`` path
+#: too. That cost coverage on exactly the shape this guard exists for: this repository tracks 23
+#: files under ``presentation/reveal/dist/``, and a built bundle with a token baked into it is one
+#: of the most ordinary leak shapes there is. On the tracked path the list adds nothing anyway --
+#: git already hands over no untracked clutter -- so it no longer runs there at all.
+WALK_SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"})
+#: Suffixes that carry no readable text. ``.svg`` is deliberately NOT among them: it is XML, a
+#: token pasted into one is as readable as in any other file, and a suffix list is the wrong place
+#: to decide that a text file does not count. Content that really is binary still falls out on its
+#: own, one step later, where it is counted as unread rather than dropped.
 SKIP_SUFFIXES = frozenset(
-    {".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".pdf", ".jar", ".zip"}
+    {".png", ".jpg", ".jpeg", ".gif", ".ico", ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".pdf", ".jar", ".zip"}
 )
 MAX_BYTES = 2_000_000
+
+#: Why a file was passed over. These are counted and printed, because a scanner that reads less
+#: than it claims turns "CLEAN" into a statement about nothing.
+SKIP_BINARY = "binary or media suffix"
+SKIP_TOO_LARGE = "larger than the size limit"
+SKIP_NOT_TEXT = "not UTF-8 text"
+SKIP_UNREADABLE = "not a readable file"
 
 
 @dataclass(frozen=True)
@@ -201,30 +218,66 @@ def scan_text(text: str, path: str, *, include_ciphertext: bool = False) -> list
     return findings
 
 
-def scannable(path: Path) -> bool:
-    """Whether this path is worth reading: text, not vendored, not enormous."""
-    if any(part in SKIP_DIRECTORIES for part in path.parts):
-        return False
+def skip_reason(path: Path) -> str | None:
+    """Why this file will not be read, or ``None`` when it will be.
+
+    The whole filter, in one place and with a reason attached, so ``report`` can name what it
+    passed over. Nothing here is about WHERE a file sits: a path is skipped for what it is
+    (a font, a 2 MB CRD dump), never for the directory it happens to live in.
+    """
     if path.suffix.lower() in SKIP_SUFFIXES:
-        return False
+        return SKIP_BINARY
     try:
-        return path.is_file() and path.stat().st_size <= MAX_BYTES
+        if not path.is_file():
+            return SKIP_UNREADABLE
+        if path.stat().st_size > MAX_BYTES:
+            return SKIP_TOO_LARGE
     except OSError:
-        return False
+        return SKIP_UNREADABLE
+    return None
 
 
-def scan_files(paths: list[Path], *, include_ciphertext: bool = False) -> list[Finding]:
-    """Scan the given files. Unreadable or binary content is skipped, not guessed at."""
+@dataclass(frozen=True)
+class ScanResult:
+    """What a scan found AND what it actually opened.
+
+    The second half is not bookkeeping. A scan that silently drops files still prints "CLEAN", and
+    the operator reads that as a statement about everything handed to it. Carrying the skips out
+    of ``scan_files`` is what lets the verdict say how many files it is really about.
+    """
+
+    findings: list[Finding]
+    scanned: list[Path]
+    skipped: list[tuple[Path, str]]
+
+    def skips_per_reason(self) -> dict[str, int]:
+        """A count per reason, in the order the reasons are declared above."""
+        order = (SKIP_BINARY, SKIP_TOO_LARGE, SKIP_NOT_TEXT, SKIP_UNREADABLE)
+        counts = {reason: sum(1 for _path, why in self.skipped if why == reason) for reason in order}
+        return {reason: count for reason, count in counts.items() if count}
+
+
+def scan_files(paths: list[Path], *, include_ciphertext: bool = False) -> ScanResult:
+    """Scan the given files, and report which of them were read and which were passed over."""
     findings: list[Finding] = []
+    scanned: list[Path] = []
+    skipped: list[tuple[Path, str]] = []
     for path in paths:
-        if not scannable(path):
+        reason = skip_reason(path)
+        if reason is not None:
+            skipped.append((path, reason))
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except UnicodeDecodeError:
+            skipped.append((path, SKIP_NOT_TEXT))
             continue
+        except OSError:
+            skipped.append((path, SKIP_UNREADABLE))
+            continue
+        scanned.append(path)
         findings.extend(scan_text(text, str(path), include_ciphertext=include_ciphertext))
-    return findings
+    return ScanResult(findings=findings, scanned=scanned, skipped=skipped)
 
 
 def tracked_files(tree: Path) -> list[Path]:
@@ -240,7 +293,11 @@ def tracked_files(tree: Path) -> list[Path]:
         check=False,
     )
     if result.returncode != 0:
-        return [path for path in tree.rglob("*") if scannable(path)]
+        return [
+            path
+            for path in tree.rglob("*")
+            if path.is_file() and not any(part in WALK_SKIP_DIRECTORIES for part in path.parts)
+        ]
     return [tree / name for name in result.stdout.split("\0") if name]
 
 
@@ -342,8 +399,13 @@ def split_findings(findings: list[Finding]) -> tuple[list[Finding], list[Finding
     return alarms, inventory
 
 
-def report(findings: list[Finding], *, what: str) -> int:
-    """Print the findings and return the exit code: 0 when clean, 1 when there is an alarm."""
+def report(findings: list[Finding], *, what: str, skipped: dict[str, int] | None = None) -> int:
+    """Print the findings and return the exit code: 0 when clean, 1 when there is an alarm.
+
+    ``skipped`` is what the scan did NOT open, per reason. It is printed under both verdicts and
+    not only under FAIL: the moment "CLEAN" can cover fewer files than the operator handed over,
+    the count of the difference is part of the verdict rather than a footnote to it.
+    """
     alarms, inventory = split_findings(findings)
     unique = sorted({(f.path, f.line_number, f.kind, f.hint) for f in alarms})
 
@@ -354,6 +416,10 @@ def report(findings: list[Finding], *, what: str) -> int:
         print("\nA secret in version control has to be treated as leaked: rotate it, then remove it.")
     else:
         print(f"CLEAN no secrets found in {what}")
+
+    if skipped:
+        per_reason = ", ".join(f"{reason}: {count}" for reason, count in skipped.items())
+        print(f"Unread: {sum(skipped.values())} files were not opened ({per_reason})")
 
     if inventory:
         places = sorted({finding.path for finding in inventory})

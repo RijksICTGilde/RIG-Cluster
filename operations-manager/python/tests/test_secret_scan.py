@@ -39,7 +39,13 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from secret_scan import (  # noqa: E402
     BASE64_BLOB,
+    MAX_BYTES,
     RULES,
+    SKIP_BINARY,
+    SKIP_NOT_TEXT,
+    SKIP_SUFFIXES,
+    SKIP_TOO_LARGE,
+    WALK_SKIP_DIRECTORIES,
     Finding,
     age_key_is_real,
     decoded_blobs,
@@ -49,6 +55,7 @@ from secret_scan import (  # noqa: E402
     scan_files,
     scan_history,
     scan_text,
+    skip_reason,
     split_findings,
     tracked_files,
 )
@@ -400,9 +407,143 @@ def test_a_binary_suffix_is_skipped(tmp_path: Path) -> None:
     (tmp_path / "logo.png").write_text(private_key)
     (tmp_path / "config.yaml").write_text(private_key)
 
-    findings = scan_files([tmp_path / "logo.png", tmp_path / "config.yaml"])
+    result = scan_files([tmp_path / "logo.png", tmp_path / "config.yaml"])
 
-    assert [Path(finding.path).name for finding in findings] == ["config.yaml"]
+    assert [Path(finding.path).name for finding in result.findings] == ["config.yaml"]
+    assert [(path.name, why) for path, why in result.skipped] == [("logo.png", SKIP_BINARY)]
+
+
+@needs_age
+def test_a_built_bundle_is_scanned_like_any_other_tracked_file(tmp_path: Path) -> None:
+    """The measured hole: ``dist`` and ``build`` were skipped on the tracked path as well.
+
+    A bundle with a token baked into it is one of the most ordinary leak shapes there is, and this
+    repository really does track 23 files under ``presentation/reveal/dist/``. Both layers of the
+    guard call ``scan_files``, so a directory rule here took the finding away from both at once --
+    and said "CLEAN" while doing it.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    for name in ("dist/vendor.js", "build/out.txt", "node_modules/pkg/index.js", "src/app.py"):
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'KEY = "{private_key}"\n')
+    paths = [tmp_path / name for name in ("dist/vendor.js", "build/out.txt", "node_modules/pkg/index.js", "src/app.py")]
+
+    result = scan_files(paths)
+
+    assert sorted(Path(finding.path).name for finding in result.findings) == [
+        "app.py",
+        "index.js",
+        "out.txt",
+        "vendor.js",
+    ]
+    assert result.skipped == []
+
+
+def test_where_a_file_sits_is_never_a_reason_to_leave_it_unread(tmp_path: Path) -> None:
+    """``skip_reason`` judges what a file IS, never which directory it is in.
+
+    The counterpart of the test above, and the one that catches the repair being undone by hand:
+    the directory list may only be consulted while WALKING a tree that git cannot list.
+    """
+    for name in ("dist", "build", "node_modules", ".git"):
+        path = tmp_path / name / "thing.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("nothing secret\n")
+        assert skip_reason(path) is None, f"{name} is skipped for where it sits"
+
+    assert "dist" not in WALK_SKIP_DIRECTORIES
+    assert "build" not in WALK_SKIP_DIRECTORIES
+
+
+@needs_age
+def test_an_svg_is_text_and_is_read_like_any_other_file(tmp_path: Path) -> None:
+    """It sat on the media list between the PNGs, and it is the one entry there that is text.
+
+    A suffix list is the wrong place to decide that a readable file does not count: a key pasted
+    into XML reads exactly like a key pasted into YAML. Content that really is binary still falls
+    out one step later, where it is counted instead of dropped.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    (tmp_path / "diagram.svg").write_text(f"<svg><desc>{private_key}</desc></svg>\n")
+
+    result = scan_files([tmp_path / "diagram.svg"])
+
+    assert [finding.kind for finding in result.findings] == ["age-private-key"]
+    assert ".svg" not in SKIP_SUFFIXES
+
+
+def test_a_file_over_the_size_limit_is_left_unread_and_counted(tmp_path: Path) -> None:
+    """The size limit is a real hole in the guard, so it has to be a visible one.
+
+    Exactly on the limit is still read: the boundary is pinned here because nothing else pins it,
+    and a limit that drifts downwards takes coverage with it without a word.
+    """
+    (tmp_path / "at_the_limit.yaml").write_text("a" * MAX_BYTES)
+    (tmp_path / "over_the_limit.yaml").write_text("a" * (MAX_BYTES + 1))
+
+    result = scan_files([tmp_path / "at_the_limit.yaml", tmp_path / "over_the_limit.yaml"])
+
+    assert [path.name for path in result.scanned] == ["at_the_limit.yaml"]
+    assert [(path.name, why) for path, why in result.skipped] == [("over_the_limit.yaml", SKIP_TOO_LARGE)]
+
+
+def test_content_that_is_not_text_is_counted_as_unread_instead_of_dropped(tmp_path: Path) -> None:
+    """A binary file without a known suffix used to fall out of the scan in silence.
+
+    It still cannot be scanned -- there is nothing to read -- but it is now counted, which is the
+    difference between "CLEAN over everything" and "CLEAN over what could be opened".
+    """
+    (tmp_path / "blob.bin").write_bytes(b"\xff\xfe\x00\x01binary")
+
+    result = scan_files([tmp_path / "blob.bin", tmp_path / "gone.yaml"])
+
+    assert result.scanned == []
+    assert [why for _path, why in result.skipped] == [SKIP_NOT_TEXT, "not a readable file"]
+
+
+def test_the_verdict_says_how_many_files_were_passed_over(capsys: pytest.CaptureFixture) -> None:
+    """ "CLEAN" has to be a statement about a number the operator can check.
+
+    It printed ``len(paths)`` from BEFORE the filtering, so a clean verdict over the 2765 tracked
+    files of this repository was a statement about the 2604 it really opened. The numbers below
+    are that measurement. Under FAIL as well: a run that finds something is exactly the run where
+    the rest of the coverage matters.
+    """
+    skipped = {SKIP_BINARY: 143, SKIP_TOO_LARGE: 1, SKIP_NOT_TEXT: 8}
+
+    assert report([], what="2613 of 2765 tracked files", skipped=skipped) == 0
+    clean = capsys.readouterr().out
+    assert "CLEAN no secrets found in 2613 of 2765 tracked files" in clean
+    assert (
+        "Unread: 152 files were not opened "
+        "(binary or media suffix: 143, larger than the size limit: 1, not UTF-8 text: 8)" in clean
+    )
+
+    alarm = [Finding(path="notes.md", line_number=9, kind="github-pat", hint="token")]
+    assert report(alarm, what="2613 of 2765 tracked files", skipped=skipped) == 1
+    assert "Unread: 152 files" in capsys.readouterr().out
+
+
+@needs_age
+def test_the_whole_tree_scan_counts_what_it_read_and_not_what_it_was_handed(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The entry point both layers share, end to end: the hook and the CI job print this line."""
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "t@e.invalid"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "T"], check=True)
+    (tmp_path / "logo.png").write_text("not really a png\n")
+    (tmp_path / "notes.md").write_text("nothing secret\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "x"], check=True)
+    scan_module = _scan_secrets_module()
+
+    assert scan_module.main(["--tree", str(tmp_path)]) == 0
+
+    printed = capsys.readouterr().out
+    assert "1 of 2 tracked files" in printed
+    assert "Unread: 1 files were not opened (binary or media suffix: 1)" in printed
 
 
 @needs_age
@@ -425,7 +566,7 @@ def test_only_tracked_files_are_scanned(tmp_path: Path) -> None:
     paths = tracked_files(tmp_path)
 
     assert [path.name for path in paths] == ["committed.txt"]
-    assert scan_files(paths) == []
+    assert scan_files(paths).findings == []
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +596,7 @@ def test_a_secret_deleted_from_the_tree_is_still_found_in_the_history(tmp_path: 
     (repo / "leaked.py").unlink()
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "-am", "remove it"], check=True)
 
-    assert scan_files(tracked_files(repo)) == []
+    assert scan_files(tracked_files(repo)).findings == []
 
     findings = scan_history(repo)
 
@@ -554,7 +695,10 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     # On every push to main and on every pull request.
     triggers = workflow[True] if True in workflow else workflow["on"]
     assert "pull_request" in triggers
-    assert "main" in triggers["push"]["branches"]
+    # Both branches, and that second name is not decoration: the publicly published branch is
+    # ``main_github``, so a push straight to it used to reach the public repository without ever
+    # passing the layer that binds.
+    assert set(triggers["push"]["branches"]) >= {"main", "main_github"}
 
 
 def test_every_flag_the_docs_hand_an_operator_exists_on_the_scanner() -> None:
@@ -621,7 +765,7 @@ def test_this_repository_is_clean_right_now() -> None:
     First the tree, then the guard -- otherwise you build an alarm everyone learns to work around.
     This is the assertion that keeps it that way, and it is the same code CI runs.
     """
-    findings = scan_files(tracked_files(_REPO_ROOT))
+    findings = scan_files(tracked_files(_REPO_ROOT)).findings
 
     assert findings == [], "\n".join(str(finding) for finding in findings)
 

@@ -70,7 +70,7 @@ from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
 # "which files does git track, and which are worth reading" is the scanner's question and it is
 # answered there. A second copy here would drift away from the one CI runs.
-from secret_scan import RULES, scannable, tracked_files  # type: ignore[reportMissingImports]  # noqa: E402
+from secret_scan import RULES, skip_reason, tracked_files  # type: ignore[reportMissingImports]  # noqa: E402
 
 #: The repository root. Every path this module resolves outside of an argument -- the loose
 #: value files below -- hangs off it.
@@ -731,7 +731,7 @@ def files_with_ciphertext(tree: str | Path) -> dict[Path, int]:
     """
     found: dict[Path, int] = {}
     for path in tracked_files(Path(tree)):
-        if not scannable(path):
+        if skip_reason(path) is not None:
             continue
         try:
             text = path.read_text(encoding="utf-8")

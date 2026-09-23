@@ -474,6 +474,11 @@ uitzonderingslijst wordt met de oude sleutel nagemeten. Waarom allebei: zie hier
 `--remove-old-key` haalt `security/old_key.txt` weg. `--verify` blijft daarna werken: die stand
 meet met de nieuwe sleutel en vraagt de oude niet op.
 
+Die stap is ook wat de naam weer vrijmaakt voor de volgende ronde. Staat er nog een
+`old_key.txt` -- een ronde die nooit is afgemaakt -- dan weigert `--rename`, want hernoemen zou
+die sleutel overschrijven terwijl hij mogelijk nog iets opent. Haal hem dan eerst zelf weg of zet
+hem opzij.
+
 ## `sops rotate`, niet `updatekeys`
 
 SOPS versleutelt de inhoud met een data key en versleutelt alleen die data key per recipient.
@@ -637,9 +642,10 @@ dagelijks omzeilt, is geen grendel.
 1. **Lokaal en vriendelijk.** De pre-commit hook (`secret-scan` in `.pre-commit-config.yaml`)
    scant de gestageerde bestanden. Vangt het eerlijke ongeluk, kost niets, blijft omzeilbaar.
 2. **CI, bindend.** De job `secret-scan` in `.github/workflows/security.yml`, bij elke push naar
-   main en elke pull request. Scant de hele BOOM van de branch en niet alleen de diff, zodat iets
-   dat via een omweg binnenkomt alsnog opvalt. Dit is de laag die telt, want CI kent geen
-   `--no-verify`.
+   main of main_github en bij elke pull request. Scant de hele BOOM van de branch en niet alleen
+   de diff, zodat iets dat via een omweg binnenkomt alsnog opvalt -- op wat hij aantoonbaar niet
+   kan lezen na, en dat zegt hij er dan bij ("Wat er NIET gelezen wordt" hieronder). Dit is de
+   laag die telt, want CI kent geen `--no-verify`.
 3. **Op de server.** GitHub push protection op de publieke repo. Let op de grens: de
    standaardpatronen dekken bekende tokenvormen zoals een GitHub-PAT, maar `AGE-SECRET-KEY-` zit
    daar niet bij. Dat vraagt een eigen patroon, en of dat beschikbaar is hangt af van het
@@ -696,6 +702,36 @@ probleem:
 |---|---|
 | WAAR CRYPTOGRAFIE WORDT TOEGEPAST: de inventaris die de ronde omzet, hierboven | **ja** -- BIO2 8.24.01 vraagt letterlijk om die registratie |
 | WAAR GEHEIMEN IN DE HISTORIE STAAN: de uitkomst van `--history` | **nee** -- intern kanaal |
+
+### Wat er NIET gelezen wordt, en waarom dat in de melding staat
+
+Een scanner is zo goed als zijn eigen overslaglijst, en die van deze was tot deze ronde niet af te
+lezen aan wat hij zei. Hij las **2604 van de 2765 getrackte bestanden** en meldde
+`CLEAN no secrets found in 2765 tracked files`: dat getal kwam van voor de filtering.
+
+23 van die overgeslagen bestanden vielen weg op een MAP-regel die `dist/` en `build/` oversloeg,
+overgenomen uit een filesystem-walk waar hij `node_modules` buiten de deur houdt. Op de
+`git ls-files`-weg voegt zo'n regel niets toe -- git levert geen ongetrackte rommel -- en haalt
+hij alleen dekking weg, precies waar het pijn doet: deze repo trackt 23 bestanden onder
+`presentation/reveal/dist/`, en een gebouwde bundel met een ingebakken token is een van de
+gewoonste lekvormen die er is. Die map-regel geldt nu alleen nog voor de `rglob`-terugval, voor
+een boom die geen git-repo is. Of een bestand gelezen wordt hangt verder uitsluitend af van wat
+het IS, nooit van waar het staat.
+
+Wat er dan overblijft, staat onder de uitspraak in plaats van eronderdoor:
+
+```
+CLEAN no secrets found in 2613 of 2765 tracked files in /workspace
+Unread: 152 files were not opened (binary or media suffix: 143, larger than the size limit: 1, not UTF-8 text: 8)
+```
+
+Dat tweede getal is de grens van de grendel. Daarom staat hij vast in `test_secret_scan.py` -- een
+uitbreiding van de overslaglijst hoort geen dekking te kunnen weghalen zonder dat een toets rood
+wordt -- en daarom draagt elke overgeslagen categorie een reden. Nagemeten wat er in die 152 zit:
+151 zijn als UTF-8 helemaal niet te lezen (afbeeldingen, lettertypen, een jar, twee .docx), en de
+ene die dat wel is -- de 2,9 MB grote `bootstrap/crd/operator/argocd-operator-install.yaml` -- is
+met de hand door `scan_text` gehaald: 0 bevindingen. `.svg` stond ook op die suffixlijst en staat
+er niet meer op: dat is XML, en een token dat erin geplakt staat leest net zo goed als elders.
 
 ## Sleutels in toetsen: geen vaste, maar een gemaakte
 

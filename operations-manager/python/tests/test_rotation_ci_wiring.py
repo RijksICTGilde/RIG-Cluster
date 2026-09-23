@@ -82,6 +82,11 @@ def test_ci_installs_age_and_sops_so_the_rotation_guards_actually_run() -> None:
     assert any(pinned.group(1) in command for command in installs), (
         f"CI must install the same sops as the image ({pinned.group(1)})"
     )
+    # And against its checksum. A release tag is mutable by the publisher, so without this the
+    # moment of downloading decides which binary gets handed the secrets of this repository.
+    assert any("sops" in command and "sha256sum -c" in command for command in installs), (
+        "the sops download must be checked against a pinned sha256"
+    )
 
 
 def test_the_monthly_exercise_is_not_running_yet_and_the_doc_still_says_so() -> None:

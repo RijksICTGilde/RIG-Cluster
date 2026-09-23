@@ -2,7 +2,9 @@ name: Security Scanning
 
 on:
   push:
-    branches: [main]
+    # main_github erbij, want dat is de branch waar de publieke repo op staat en waar deze
+    # PR's base ligt. Alleen [main] liet een push daarheen langs de bindende laag komen.
+    branches: [main, main_github]
   pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC - catch newly disclosed CVEs

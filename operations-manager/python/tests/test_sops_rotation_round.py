@@ -502,6 +502,65 @@ def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_pat
     assert not answered_new.exists()
 
 
+def test_a_second_round_refuses_to_land_on_the_previous_old_key(tmp_path: Path) -> None:
+    """The round that was never finished still has its old key under the fixed name.
+
+    ``Path.replace`` overwrites without a word, so the second rotation would destroy the only
+    copy of the key the first one rotated away from -- while that key still opens whatever the
+    first round did not reach. Step 8 is what clears the name; until then the rename refuses.
+    """
+    security = tmp_path / "security"
+    security.mkdir()
+    left_behind = security / "old_key.txt"
+    left_behind.write_text("the key of the previous round\n")
+    answered_old = security / "key.txt"
+    answered_old.write_text("old\n")
+    answered_new = security / "nieuw.txt"
+    answered_new.write_text("new\n")
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", left_behind),
+        patch.object(tool, "CANONICAL_NEW", answered_old),
+        pytest.raises(tool.KeyExists, match="refusing to overwrite"),
+    ):
+        tool.rename_keys(answered_old, answered_new, yes=True)
+
+    assert left_behind.read_text() == "the key of the previous round\n"
+    assert answered_old.read_text() == "old\n"
+    assert answered_new.read_text() == "new\n"
+
+
+@pytest.mark.asyncio
+async def test_the_rename_that_refuses_ends_the_run_with_a_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """And the refusal has to reach the exit code, not only the exception.
+
+    ``--rename`` is called outside the try that catches the other key failures, so a raise here
+    would leave a traceback and an exit code the operator cannot act on.
+    """
+    security = tmp_path / "security"
+    security.mkdir()
+    left_behind = security / "old_key.txt"
+    left_behind.write_text("the key of the previous round\n")
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    old_key = security / "key.txt"
+    old_key.write_text(old_private)
+    new_key = security / "nieuw.txt"
+    new_key.write_text(new_private)
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", left_behind),
+        patch.object(tool, "CANONICAL_NEW", old_key),
+    ):
+        code = await tool.main(["--rename", "--ja", "--old-key", str(old_key), "--new-key", str(new_key)])
+
+    assert code == 2
+    assert "refusing to overwrite" in capsys.readouterr().err
+    assert left_behind.read_text() == "the key of the previous round\n"
+
+
 @pytest.mark.asyncio
 async def test_generating_the_new_key_makes_it_at_the_answered_path(tmp_path: Path) -> None:
     """Step 1 is one command: --rename makes the key too, instead of a hand-typed age-keygen.

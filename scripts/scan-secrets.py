@@ -65,12 +65,20 @@ def main(argv: list[str] | None = None) -> int:
     # fast on the staged files.
     if arguments.files is not None:
         paths = [Path(name) for name in arguments.files]
-        findings = scan_files(paths, include_ciphertext=arguments.inventory)
-        return report(findings, what=f"{len(paths)} staged files")
+        result = scan_files(paths, include_ciphertext=arguments.inventory)
+        return report(
+            result.findings,
+            what=f"{len(result.scanned)} of {len(paths)} staged files",
+            skipped=result.skips_per_reason(),
+        )
 
     paths = tracked_files(tree)
-    findings = scan_files(paths, include_ciphertext=arguments.inventory)
-    return report(findings, what=f"{len(paths)} tracked files in {tree}")
+    result = scan_files(paths, include_ciphertext=arguments.inventory)
+    return report(
+        result.findings,
+        what=f"{len(result.scanned)} of {len(paths)} tracked files in {tree}",
+        skipped=result.skips_per_reason(),
+    )
 
 
 if __name__ == "__main__":
