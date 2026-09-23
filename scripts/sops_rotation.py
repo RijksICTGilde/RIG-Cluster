@@ -210,10 +210,13 @@ def coverage_gaps(trees: list[Path] | None = None) -> list[Path]:
 
     The SOPS round selects on the recipient and takes care of itself, but the loose values
     cannot: outside a SOPS file the text does not say which key it belongs to, so there the
-    worklist is a list of paths. This is the check on that list. It needs no key, so it runs
-    on every dry run and in the test suite, and it is the thing that was missing: three
-    committed values sat outside every place the tool walked and ``--assert-old-key-dead``
-    reported CLEAN over them.
+    worklist is a list of paths. This is the check on that list, and it is the thing that was
+    missing: three committed values sat outside every place the tool walked and
+    ``--assert-old-key-dead`` reported CLEAN over them.
+
+    It needs no key, so every dry run runs it. Its TESTS do need one: they live in the rotation
+    modules, which skip whole without ``age`` on the PATH, so they run every round in CI and not
+    necessarily on a workstation.
 
     Over EVERY tree of ``sops_trees()`` and not this repo alone: the argo clone used to be the
     one tree whose coverage was reasoned about instead of measured, while ``--remove-old-key``

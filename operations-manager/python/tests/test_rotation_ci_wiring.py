@@ -27,12 +27,20 @@ def _triggers(workflow: dict) -> dict | list | str:
     return workflow[True] if True in workflow else workflow.get("on", {})
 
 
-def _steps_that_run(workflow: dict) -> list[str]:
-    """Every ``run:`` of a step that is not switched off by a falsy ``if``."""
+def _steps_that_run(workflow: dict, job: str | None = None) -> list[str]:
+    """Every ``run:`` of a step that is not switched off by a falsy ``if``.
+
+    Without ``job`` this walks EVERY job, which is what a sweep over the whole file wants. With
+    a job name it walks that job alone, and a ``KeyError`` if it is gone: an install that a
+    guard needs has to sit in the job that runs the tests, and a workflow-wide sweep calls the
+    same install wired up when it has moved to a job where pytest never runs.
+    """
+    jobs = workflow.get("jobs", {})
+    selected = [jobs[job]] if job is not None else list(jobs.values())
     return [
         step.get("run", "")
-        for job in workflow.get("jobs", {}).values()
-        for step in job.get("steps", [])
+        for definition in selected
+        for step in definition.get("steps", [])
         if str(step.get("if", "true")).strip().lower() not in {"false", "${{ false }}"}
     ]
 
@@ -43,14 +51,19 @@ def test_ci_installs_age_and_sops_so_the_rotation_guards_actually_run() -> None:
     Measured twice. Without ``sops`` every test that rotates a real SOPS file skipped on the
     runner while the summary said passed; without ``age`` the three rotation modules skip whole,
     this guard along with them if it lives in one of them.
+
+    The job matters as much as the install. Measured: with both install steps moved from ``test``
+    to ``license-check`` a sweep over all jobs stays green, while the test job has neither binary
+    and 167 rotation tests skip under a summary that says passed.
     """
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
-    # Steps that really run: a step behind a falsy condition installs nothing, and reading only
-    # the "run" lines would call that wired up.
-    installs = _steps_that_run(workflow)
+    # Steps that really run, in the job that runs pytest: a step behind a falsy condition
+    # installs nothing, and an install in another job installs nothing for these tests.
+    installs = _steps_that_run(workflow, job="test")
 
     assert any(re.search(r"\bage\b", command) for command in installs), (
-        "without age the three rotation test modules skip whole, and a skip reads as green"
+        "the job 'test' must install age: without it the three rotation test modules skip whole, "
+        "and a skip reads as green"
     )
     assert any("sops" in command and "chmod +x" in command for command in installs)
     dockerfile = (_REPO_ROOT / "operations-manager" / "Dockerfile").read_text()

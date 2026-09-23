@@ -1,4 +1,4 @@
-# De sleutel en het token vervangen, met een script dat alle stappen automatiseert en dus te allen tijde gebruikt kan worden
+# De sleutel en het token vervangen, met een script dat omzet en aantoont dat de oude sleutel niets meer opent
 
 De GitHub-PAT verloopt en moet vervangen worden. We nemen die rotatie als aanleiding om tegelijk
 de AGE-sleutel te roteren en er een terugkerende handeling van te maken. Het is dezelfde ronde:
@@ -9,8 +9,11 @@ De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 * 8.24.01 vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het
   sleutelbeheer en "hoe geregistreerd wordt waar welke cryptografie toegepast wordt". De
   vindplaatsenlijst hieronder is die registratie; de dekkingsgrendel onder "De vorm is niet de
-  vindplaats" houdt hem eerlijk, en die heeft geen sleutel nodig en draait dus in elke toetsronde
-  mee.
+  vindplaats" houdt hem eerlijk. Die grendel heeft zelf geen sleutel nodig, maar zijn toetsen
+  staan in de rotatiemodules, en die slaan op moduleniveau over als `age` niet op je PATH staat:
+  gemeten in deze boom slaan dan alle 167 over en blijven alleen de twee CI-wiringtoetsen groen.
+  In CI draait hij dus wel elke ronde mee, omdat de runner `age` en `sops` installeert, en
+  `tests/test_rotation_ci_wiring.py` houdt dat zo.
 * 8.24.02 vraagt dat is vastgesteld waar cryptografische beheersmaatregelen worden ingezet, wie
   verantwoordelijk is "en hoe ze actueel worden gehouden". Dat laatste ontbrak: een AGE-sleutel
   kent geen verlooptijd, een token dwingt zijn eigen vervanging af.
@@ -19,8 +22,11 @@ Het gereedschap hoort erbij, omdat de platform-AGE-sleutel niet alleen in de SOP
 `sops rotate` alleen die ziet: dit zet elke vindplaats om, toont aan dat er niets anders is
 veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
 
-Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid: elke stap is
-geautomatiseerd, dus de ronde is te allen tijde te draaien.
+Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid: het omzetten, de
+vingerafdruk en de eindtoets zijn geautomatiseerd, dus een ronde hoeft niet op het kwartaal te
+wachten. De rest is handwerk en blijft dat: de renderlus en de commitinspectie van VERIFY-1, de
+push en de secretwissel van APPLY, en de rooktest van VERIFY-2. Waarom die grens er zit en geen
+achterstand is, staat onder "De oefenronde".
 
 ## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
 
@@ -472,8 +478,9 @@ juist wat misging. `--assert-old-key-dead` opent ze daarom ook met de OUDE sleut
 die antwoordt. Ze tellen niet mee in het veldenaantal: ze zijn nooit omgezet, dus ze staan niet in
 de vingerafdruk, en meetellen zou de telling met precies het aantal excuses laten afwijken.
 
-De grendel heeft geen sleutel nodig, dus hij draait op elke droogloop en in de toetsen. De
-nameting van de uitzonderingen heeft er wel een, en die hoort bij de eindtoets.
+De grendel heeft zelf geen sleutel nodig, dus hij draait op elke droogloop. Zijn toetsen hebben er
+wel een nodig: die staan in de rotatiemodules en slaan zonder `age` op je PATH in een keer over.
+De nameting van de uitzonderingen heeft ook een sleutel nodig, en die hoort bij de eindtoets.
 
 ## Wie de sleutel wanneer leest
 
