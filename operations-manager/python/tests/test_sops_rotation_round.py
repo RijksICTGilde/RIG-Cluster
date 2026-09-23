@@ -33,6 +33,7 @@ from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from contextlib import AbstractContextManager
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
@@ -43,8 +44,11 @@ import sops_rotation as tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     AGE_KEY_MARKER,
     ConversionFailed,
+    FinalCheck,
     Fingerprint,
-    env_fields,
+    decrypt_field,
+    files_with_ciphertext,
+    loose_values,
     opens_with,
     sha256_of,
     sops_files_for,
@@ -100,6 +104,20 @@ def no_own_projects(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def no_coverage_sweep() -> Iterator[None]:
+    """Give the coverage guard an empty inventory for every test here.
+
+    ``coverage_gaps()`` reads the REAL tree, and the tests below point the tool's file selection
+    at a temporary one. Without this every final check would report the repo's own six loose-value
+    files as uncovered, because the selection they patched no longer names them. The logic that
+    decides what "covered" means stays live; only the inventory is emptied, and the tests that are
+    ABOUT the guard bring their own.
+    """
+    with patch.object(tool, "files_with_ciphertext", return_value={}):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def no_projects_fingerprint(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Point the default projects fingerprint at a path that does not exist.
 
@@ -113,12 +131,15 @@ def no_projects_fingerprint(tmp_path_factory: pytest.TempPathFactory) -> Path:
         yield absent
 
 
+async def _base64_value(plaintext: str, public_key: str) -> str:
+    """One ``base64+age:`` value, made the way ZAD makes them."""
+    block = await encrypt_age_content(plaintext, public_key)
+    return f"{BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}"
+
+
 async def _env_file(path: Path, values: dict[str, str], public_key: str) -> Path:
     """An env file shaped like the real ones: a ``KEY=base64+age:...`` line per value."""
-    lines = []
-    for key, plaintext in values.items():
-        block = await encrypt_age_content(plaintext, public_key)
-        lines.append(f"{key}={BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}")
+    lines = [f"{key}={await _base64_value(plaintext, public_key)}" for key, plaintext in values.items()]
     path.write_text("\n".join([*lines, "PLAIN_VALUE=not-a-secret", ""]))
     return path
 
@@ -132,7 +153,7 @@ async def test_the_plan_lists_a_field_that_still_sits_on_the_old_key(tmp_path: P
     with patch.object(tool, "sops_files_for", return_value=[]):
         plan = await tool.build_plan([path], old_private, new_private, old_public)
 
-    assert [field.key for field in plan.env] == ["GIT_PROJECTS_SERVER_PASSWORD"]
+    assert [field.key for field in plan.loose] == ["GIT_PROJECTS_SERVER_PASSWORD"]
     assert plan.already == []
     assert plan.closed == []
     assert plan.total == 1
@@ -152,7 +173,7 @@ async def test_the_plan_calls_an_already_converted_field_done(tmp_path: Path) ->
     with patch.object(tool, "sops_files_for", return_value=[]):
         plan = await tool.build_plan([path], old_private, new_private, "age1irrelevant")
 
-    assert plan.env == []
+    assert plan.loose == []
     assert plan.total == 0
     assert [name.endswith("#GIT_ARGO_APPLICATIONS_PASSWORD") for name in plan.already] == [True]
 
@@ -168,7 +189,7 @@ async def test_the_plan_reports_a_field_that_opens_with_neither_key(tmp_path: Pa
     with patch.object(tool, "sops_files_for", return_value=[]):
         plan = await tool.build_plan([path], old_private, new_private, "age1irrelevant")
 
-    assert plan.env == []
+    assert plan.loose == []
     assert len(plan.closed) == 1
 
 
@@ -187,7 +208,7 @@ async def test_the_round_converts_the_env_line_in_place(tmp_path: Path) -> None:
     assert after != before
     assert "PLAIN_VALUE=not-a-secret" in after
     assert len(after.splitlines()) == len(before.splitlines())
-    fields = tool.all_env_fields([path])
+    fields = tool.all_loose_values([path])
     measured, closed = await tool.fingerprint_now([], fields, new_private)
     assert closed == []
     assert set(measured.fields.values()) == {sha256_of("first"), sha256_of("second")}
@@ -212,18 +233,18 @@ async def test_the_fingerprint_covers_the_same_set_before_and_after_a_partial_ro
         f"B_PASSWORD={BASE64_AGE_PREFIX}{base64.b64encode(new_block.encode()).decode()}\n"
     )
 
-    fields = tool.all_env_fields([path])
+    fields = tool.all_loose_values([path])
     before, closed_before = await tool.fingerprint_now([], fields, old_private, new_private)
     assert closed_before == []
     assert len(before.fields) == 2
 
     with patch.object(tool, "sops_files_for", return_value=[]):
         plan = await tool.build_plan([path], old_private, new_private, old_public)
-        assert len(plan.env) == 1
+        assert len(plan.loose) == 1
         assert len(plan.already) == 1
         await tool.run_rotation(plan, old_private, new_private, old_public, new_public)
 
-    after, closed_after = await tool.fingerprint_now([], tool.all_env_fields([path]), new_private)
+    after, closed_after = await tool.fingerprint_now([], tool.all_loose_values([path]), new_private)
     assert closed_after == []
     assert before.compare(after) == []
 
@@ -234,7 +255,7 @@ async def test_fingerprint_now_reports_a_field_no_key_opens(tmp_path: Path) -> N
     new_private, _new_public = generate_sops_key_pair()
     path = await _env_file(tmp_path / ".env", {"A_PASSWORD": "x"}, stranger_public)
 
-    measured, closed = await tool.fingerprint_now([], tool.all_env_fields([path]), new_private)
+    measured, closed = await tool.fingerprint_now([], tool.all_loose_values([path]), new_private)
 
     assert measured.fields == {}
     assert len(closed) == 1
@@ -264,7 +285,7 @@ async def test_the_final_check_names_a_skipped_env_field(tmp_path: Path) -> None
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[path]),
+        patch.object(tool, "loose_paths", return_value=[path]),
     ):
         check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
 
@@ -280,6 +301,8 @@ async def test_the_final_check_walks_the_project_files_when_given_a_directory(tm
     new_private, new_public = generate_sops_key_pair()
     projects = tmp_path / "projects"
     projects.mkdir()
+    argo = tmp_path / "zad-argo-user-applications"
+    argo.mkdir()
     block = await encrypt_age_content("ghp_token", old_public)
     (projects / "een.yaml").write_text(
         "name: een\nrepositories:\n  - name: main-repo\n    password: "
@@ -288,7 +311,7 @@ async def test_the_final_check_walks_the_project_files_when_given_a_directory(tm
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
     ):
         without = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
         with_projects = await tool.run_final_check(old_private, new_private, old_public, new_public, projects, None)
@@ -307,7 +330,7 @@ async def test_the_final_check_fails_when_the_count_does_not_match(tmp_path: Pat
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[path]),
+        patch.object(tool, "loose_paths", return_value=[path]),
     ):
         check = await tool.run_final_check(old_private, new_private, "age1a", "age1b", None, 2)
 
@@ -467,7 +490,7 @@ async def test_removing_the_old_key_is_refused_without_the_project_files(
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
     ):
         code = await tool.main(
             [
@@ -498,10 +521,12 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     projects = tmp_path / "projects"
     projects.mkdir()
+    argo = tmp_path / "zad-argo-user-applications"
+    argo.mkdir()
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
     ):
         code = await tool.main(
             [
@@ -509,6 +534,8 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
                 "--remove-old-key",
                 "--projects",
                 str(projects),
+                "--argo-applications",
+                str(argo),
                 "--old-key",
                 str(old_file),
                 "--new-key",
@@ -542,6 +569,8 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, new_public)
     projects = tmp_path / "projects"
     projects.mkdir()
+    argo = tmp_path / "zad-argo-user-applications"
+    argo.mkdir()
     block = await encrypt_age_content("ghp_token", new_public)
     (projects / "een.yaml").write_text(
         "name: een\nrepositories:\n  - name: main-repo\n    password: "
@@ -555,6 +584,8 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
         "--remove-old-key",
         "--projects",
         str(projects),
+        "--argo-applications",
+        str(argo),
         "--old-key",
         str(old_file),
         "--new-key",
@@ -565,7 +596,7 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[env_path]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
         patch.object(tool, "DEFAULT_PROJECTS_FINGERPRINT", projects_fingerprint),
     ):
         # The count check really runs: with only this repo's fingerprint on disk the two fields
@@ -596,9 +627,10 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
 
     Both final-check commands there are bare: no ``--projects-fingerprint``, so the count only
     adds up through the default, which the two tests above pin. And without ``--projects`` the
-    fourth place is not walked, which makes ``--remove-old-key`` refuse. A flag that is renamed
-    or dropped from the parser turns every line here into a SystemExit, instead of leaving a doc
-    that has gone stale without anything saying so.
+    fourth place is not walked and without ``--argo-applications`` the fifth, which makes
+    ``--remove-old-key`` refuse on either. A flag that is renamed or dropped from the parser turns
+    every line here into a SystemExit, instead of leaving a doc that has gone stale without
+    anything saying so.
     """
     documented = [
         line.strip()
@@ -615,6 +647,7 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     for line in final_checks:
         arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
         assert arguments.projects, f"the final check walks the fourth place: {line}"
+        assert arguments.argo_applications, f"the final check walks the fifth place: {line}"
 
 
 # ---------------------------------------------------------------------------
@@ -699,7 +732,7 @@ async def test_the_final_check_walks_this_repos_own_project_file(tmp_path: Path)
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
         patch.object(tool, "OWN_PROJECTS", own),
     ):
         check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
@@ -824,7 +857,7 @@ async def test_the_final_check_names_a_sops_file_that_was_skipped(tmp_path: Path
     forgotten = _sops_file(tmp_path, "forgotten", SECRET_BODY, old_public)
     sops_rotate(done, old_public, new_public, old_private)
 
-    with _selecting_from(tmp_path), patch.object(tool, "env_paths", return_value=[]):
+    with _selecting_from(tmp_path), patch.object(tool, "loose_paths", return_value=[]):
         check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
 
     assert check.counted == 2
@@ -843,7 +876,7 @@ async def test_the_final_check_is_clean_once_every_sops_file_is_over(tmp_path: P
     for name in ("een", "twee"):
         sops_rotate(_sops_file(tmp_path, name, SECRET_BODY, old_public), old_public, new_public, old_private)
 
-    with _selecting_from(tmp_path), patch.object(tool, "env_paths", return_value=[]):
+    with _selecting_from(tmp_path), patch.object(tool, "loose_paths", return_value=[]):
         check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, 2)
 
     assert check.counted == 2
@@ -881,7 +914,7 @@ async def test_a_dry_run_names_both_places_and_writes_nothing(tmp_path: Path, ca
     before = (sops_path.read_text(), env_path.read_text())
     fingerprint = tmp_path / "fingerprint.json"
 
-    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+    with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[env_path]):
         code = await tool.main(
             ["--ja", "--dry-run", *_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
         )
@@ -889,7 +922,7 @@ async def test_a_dry_run_names_both_places_and_writes_nothing(tmp_path: Path, ca
     assert code == 0
     printed = capsys.readouterr().out
     assert "1 SOPS files on the old recipient" in printed
-    assert "1 loose base64+age: values on the old key" in printed
+    assert "1 loose encrypted values on the old key" in printed
     assert "= 2 fields" in printed
     assert "Dry run: nothing was changed." in printed
     assert (sops_path.read_text(), env_path.read_text()) == before
@@ -908,7 +941,7 @@ async def test_the_whole_round_converts_both_places_and_leaves_a_checkable_finge
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
 
-    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+    with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[env_path]):
         code = await tool.main(["--ja", *arguments])
         capsys.readouterr()
         again = await tool.main(["--ja", *arguments])
@@ -918,12 +951,64 @@ async def test_the_whole_round_converts_both_places_and_leaves_a_checkable_finge
     assert "Nothing to do: no field sits on the old key any more." in capsys.readouterr().out
     assert sops_recipients(sops_path) == [new_public]
     assert sops_plaintext(sops_path, old_private) is None
-    assert not await opens_with(tool.all_env_fields([env_path])[0].value, old_private)
+    assert not await opens_with(tool.all_loose_values([env_path])[0].value, old_private)
 
     written = fingerprint.read_text()
     assert len(Fingerprint.load(fingerprint).fields) == 2
     assert "hunter2" not in written
     assert "AGE-SECRET-KEY-" not in written
+
+
+@pytest.mark.asyncio
+async def test_a_full_round_converts_a_python_literal_and_a_whole_file_block(tmp_path: Path) -> None:
+    """The two shapes the worklist used to walk past, through the tool as the operator runs it.
+
+    Both halves matter and they fail differently. A Python literal has to keep the line it sits
+    on -- the quotes, the type annotation, the lines around it -- because the file is source code
+    that still has to import. A whole-file block has no line to anchor to at all and is rewritten
+    entire, and it has to come back as an armored block: a value that switched storage form is
+    itself a change, and nothing downstream would read it.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    source = tmp_path / "config.py"
+    source.write_text(
+        "class Settings:\n"
+        '    PROJECT_REPO_USERNAME: str = "git"\n'
+        f'    PROJECT_REPO_PASSWORD: str = "{await _base64_value("hunter2", old_public)}"\n'
+        '    PROJECT_REPO_BRANCH: str = "main"\n'
+    )
+    whole = tmp_path / "age-secret-github.txt"
+    whole.write_text(f"{await encrypt_age_content('ghp_a-second-token', old_public)}\n")
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[source, whole]),
+    ):
+        code = await tool.main(
+            [
+                "--ja",
+                *_key_files(tmp_path, old_private, new_private),
+                "--fingerprint",
+                str(tmp_path / "fingerprint.json"),
+            ]
+        )
+
+    assert code == 0
+    lines = source.read_text().splitlines()
+    assert lines[1] == '    PROJECT_REPO_USERNAME: str = "git"'
+    assert lines[2].startswith('    PROJECT_REPO_PASSWORD: str = "base64+age:')
+    assert lines[2].endswith('"')
+    assert lines[3] == '    PROJECT_REPO_BRANCH: str = "main"'
+
+    converted = tool.all_loose_values([source, whole])
+    assert [field_.name for field_ in converted] == ["PROJECT_REPO_PASSWORD", "<file>"]
+    assert [await decrypt_field(field_.value, new_private) for field_ in converted] == [
+        "hunter2",
+        "ghp_a-second-token",
+    ]
+    assert [await opens_with(field_.value, old_private) for field_ in converted] == [False, False]
+    assert whole.read_text().startswith("-----BEGIN AGE ENCRYPTED FILE-----")
 
 
 @pytest.mark.asyncio
@@ -942,7 +1027,7 @@ async def test_verify_says_clean_long_after_the_round_and_red_when_a_file_drifte
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
 
-    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+    with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[env_path]):
         assert await tool.main(["--ja", *arguments]) == 0
         capsys.readouterr()
 
@@ -980,7 +1065,7 @@ async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[env_path]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
     ):
         assert await tool.main(["--ja", *arguments]) == 0
         (tmp_path / "old_key.txt").unlink()
@@ -1018,7 +1103,7 @@ async def test_verify_without_the_old_key_still_names_a_file_that_stayed_on_the_
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
 
-    with _selecting_from(tree), patch.object(tool, "env_paths", return_value=[]):
+    with _selecting_from(tree), patch.object(tool, "loose_paths", return_value=[]):
         assert await tool.main(["--ja", *arguments]) == 0
         assert len(Fingerprint.load(fingerprint).fields) == 2
         # the file drifts back onto the old recipient: what a skipped file looks like afterwards
@@ -1054,7 +1139,7 @@ async def test_verify_is_red_on_a_file_that_is_not_in_the_fingerprint_and_opens_
     fingerprint = tmp_path / "fingerprint.json"
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
 
-    with _selecting_from(sops_path.parent), patch.object(tool, "env_paths", return_value=[env_path]):
+    with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[env_path]):
         assert await tool.main(["--ja", *arguments]) == 0
         # A file that arrives AFTER the fingerprint was taken and was never converted: it is
         # walked (the old recipient is part of the selection) but the new key does not open it.
@@ -1074,20 +1159,264 @@ async def test_verify_is_red_on_a_file_that_is_not_in_the_fingerprint_and_opens_
 # ---------------------------------------------------------------------------
 
 
-def test_every_configured_env_file_is_really_there_and_holds_an_encrypted_value() -> None:
+def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypted_value() -> None:
     """The row that gets forgotten: ``sops rotate`` does not see a loose ``base64+age:`` value.
 
-    ``env_paths()`` drops a path that does not exist, so a moved or renamed configmap costs the
+    ``loose_paths()`` drops a path that does not exist, so a moved or renamed configmap costs the
     tool a file WITHOUT any complaint -- the round would pass, the final check would pass, and
     that value would stay on the old key. This is the assertion that turns such a move into a
     red test instead of a silent miss.
     """
-    missing = [name for name in tool.ENV_FILES if not (tool.REPO / name).is_file()]
+    missing = [name for name in tool.LOOSE_VALUE_FILES if not (tool.REPO / name).is_file()]
 
     assert missing == []
-    assert "operations-manager/python/.env" in tool.ENV_FILES
-    for path in tool.env_paths():
-        assert env_fields(path), f"{path} carries no base64+age: value any more"
+    assert "operations-manager/python/.env" in tool.LOOSE_VALUE_FILES
+    for path in tool.loose_paths():
+        assert loose_values(path), f"{path} carries no base64+age: value any more"
+
+
+def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> None:
+    """Named one by one, because each one is a different SHAPE the env pattern walked past.
+
+    ``PROJECT_REPO_PASSWORD`` is a quoted Python literal and not an example: it is the default
+    ``odcn-production`` and ``local`` fall back to, so after the secret is swapped production can
+    no longer read it. The migration script holds a copy of the same value as a dict entry.
+    ``age-secret-github.txt`` is a whole file that is one armored block, with no key line at all.
+    """
+    found = {
+        str(field_.path.relative_to(tool.REPO)): (field_.name, field_.line_number)
+        for path in tool.loose_paths()
+        for field_ in loose_values(path)
+    }
+
+    assert found["operations-manager/python/opi/core/config.py"] == ("PROJECT_REPO_PASSWORD", 238)
+    assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 66)
+    assert found["projects/age-secret-github.txt"] == ("<file>", None)
+
+
+def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> None:
+    """The guard, measured against the real tree: this is what the worklist was missing.
+
+    The three values above sat outside every place the tool walked, so ``--assert-old-key-dead``
+    reported CLEAN over them. A list of paths cannot select on the recipient the way the SOPS
+    round does, so it gets checked instead: every tracked file holding REAL ciphertext is either
+    converted here or stands on ``COVERAGE_EXCEPTIONS`` with a reason.
+
+    The two inner patches put the real tree back: ``no_coverage_sweep`` empties the inventory and
+    ``no_own_projects`` points ``projects/`` elsewhere for every other test here, and this is the
+    one test that is about what the repo really holds.
+    """
+    with (
+        patch.object(tool, "files_with_ciphertext", files_with_ciphertext),
+        patch.object(tool, "OWN_PROJECTS", tool.REPO / "projects"),
+    ):
+        assert tool.coverage_gaps() == []
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_round_also_converts_the_argocd_repository_secrets(tmp_path: Path) -> None:
+    """The fifth place, and it is in another repo: zad-argo-user-applications.
+
+    Measured in ``argo_manager.py``: the ArgoCD repository secrets are written with
+    ``encrypt_to_sops_files_or_fail(..., settings.SOPS_AGE_PUBLIC_KEY)``, so they sit on the
+    PLATFORM recipient, and the sops-plugin renders them with the very secret step 5 replaces.
+    Left on the old key they stop rendering the moment the new key is in the cluster -- and
+    nothing in this repo would show it, because they are not in this repo.
+
+    Selection stays on the recipient inside that clone: a file there on another key is not
+    touched, which is what the second SOPS file measures.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    other_private, other_public = generate_sops_key_pair()
+    clone = tmp_path / "zad-argo-user-applications"
+    clone.mkdir()
+    ours = _sops_file(clone, "argo-repository-main-repo", SECRET_BODY, old_public)
+    theirs = _sops_file(clone, "someone-elses", SECRET_BODY, other_public)
+
+    with patch.object(tool, "loose_paths", return_value=[]), patch.object(tool, "REPO", tmp_path / "empty-repo"):
+        code = await tool.main(
+            [
+                "--ja",
+                *_key_files(tmp_path, old_private, new_private),
+                "--fingerprint",
+                str(tmp_path / "fingerprint.json"),
+                "--argo-applications",
+                str(clone),
+            ]
+        )
+
+    assert code == 0
+    assert sops_recipients(ours) == [new_public]
+    assert sops_plaintext(ours, old_private) is None
+    assert sops_plaintext(ours, new_private) is not None
+    assert sops_recipients(theirs) == [other_public]
+    assert sops_plaintext(theirs, other_private) is not None
+
+
+@pytest.mark.asyncio
+async def test_the_old_key_does_not_go_away_while_the_argocd_secrets_are_unwalked(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Same refusal ``--projects`` already had, for the same reason: an unwalked place.
+
+    ``--remove-old-key`` is the point of no return -- afterwards nothing can decrypt what was
+    left behind. A clean verdict over four of the five places is not a reason to throw the key
+    away.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    old_file = tmp_path / "old_key.txt"
+    old_file.write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    projects = tmp_path / "projects"
+    projects.mkdir()
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+    ):
+        code = await tool.main(
+            [
+                "--ja",
+                "--remove-old-key",
+                "--projects",
+                str(projects),
+                "--old-key",
+                str(old_file),
+                "--new-key",
+                str(tmp_path / "key.txt"),
+                "--fingerprint",
+                str(tmp_path / "absent.json"),
+            ]
+        )
+
+    printed = capsys.readouterr()
+    assert code == 1
+    assert "REFUSED the old key does not go away without --argo-applications" in printed.err
+    assert "without --argo-applications the final check does not walk the ArgoCD" in printed.out
+    assert old_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_coverage_gap_stops_the_round_before_a_byte_is_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Converting over a gap is worse than not converting: it ends in a CLEAN that is not true.
+
+    The round would succeed, the fingerprint would add up over the fields the tool knows, and
+    ``--assert-old-key-dead`` would report the old key dead while it still opened the file
+    nobody walked. So the gap stops the run, and the file it stops on keeps its old value.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    before = env_path.read_text()
+    outsider = tmp_path / "forgotten.py"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+        patch.object(tool, "files_with_ciphertext", return_value={outsider: 1}),
+    ):
+        code = await tool.main(
+            [
+                "--ja",
+                *_key_files(tmp_path, old_private, new_private),
+                "--fingerprint",
+                str(tmp_path / "fingerprint.json"),
+            ]
+        )
+
+    printed = capsys.readouterr()
+    assert code == 1
+    assert "carries ciphertext and nothing converts it" in printed.out
+    assert "STOPPED a tracked file carries ciphertext that nothing here converts." in printed.err
+    assert "LOOSE_VALUE_FILES" in printed.err
+    assert env_path.read_text() == before
+    assert not (tmp_path / "fingerprint.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap(tmp_path: Path) -> None:
+    """The half that matters most: the verdict has to be about the tree, not about the worklist."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    outsider = tmp_path / "forgotten.py"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "files_with_ciphertext", return_value={outsider: 1}),
+    ):
+        check = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None)
+
+    assert not check.clean
+    assert check.outside_coverage == [str(outsider)]
+    assert any("carries ciphertext and nothing converts it" in line for line in check.lines())
+    assert "CLEAN the old key opens nothing, the new key opens everything" not in check.lines()
+
+
+def test_a_new_file_with_real_ciphertext_is_a_gap_until_it_is_covered(tmp_path: Path) -> None:
+    """The class, not the three instances: the next such file has to stop the tool by itself."""
+    newcomer = tmp_path / "new-thing.py"
+
+    with patch.object(tool, "files_with_ciphertext", return_value={newcomer: 1}):
+        assert tool.coverage_gaps() == [newcomer]
+
+        with patch.object(tool, "loose_paths", return_value=[newcomer]):
+            assert tool.coverage_gaps() == []
+
+        relative = "somewhere/new-thing.py"
+        with patch.object(tool, "COVERAGE_EXCEPTIONS", {relative: "on a test key"}):
+            assert tool.coverage_gaps() == [newcomer]
+            with patch.object(tool, "files_with_ciphertext", return_value={tool.REPO / relative: 1}):
+                assert tool.coverage_gaps() == []
+
+
+def test_every_exception_names_a_file_that_is_really_there_and_really_holds_ciphertext() -> None:
+    """An exception for a file that moved is an excuse with nothing behind it.
+
+    The entry would keep standing, nobody would notice, and the file it once described could come
+    back under another name outside the coverage -- which is the whole failure this guard exists
+    for.
+    """
+    for name, reason in tool.COVERAGE_EXCEPTIONS.items():
+        path = tool.REPO / name
+        assert path.is_file(), f"{name} is on the exception list but not in the tree"
+        assert reason.strip(), f"{name} stands on the exception list without a reason"
+        assert path in files_with_ciphertext(tool.REPO), f"{name} no longer carries ciphertext"
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_measures_the_exception_list_against_the_old_key(tmp_path: Path) -> None:
+    """Every exception is a hand-written CLAIM, and hand-written coverage is what went wrong.
+
+    So the one key that can settle it does: an excused file that turns out to open with the old
+    key is named, and it does not disappear into the field count -- it was never converted, so
+    counting it would put the fingerprint comparison off by exactly the number of excuses.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    # Indented, like the block scalar an e2e fixture really holds: the armor has to be
+    # de-indented before it can be opened at all.
+    block = await encrypt_age_content("hunter2", old_public)
+    excused = tmp_path / "fixture.yaml"
+    excused.write_text("password: |\n" + "".join(f"  {line}\n" for line in block.splitlines()))
+
+    check = FinalCheck()
+    with (
+        patch.object(tool, "REPO", tmp_path),
+        patch.object(tool, "COVERAGE_EXCEPTIONS", {"fixture.yaml": "an e2e fixture on a test key"}),
+    ):
+        await tool.check_exceptions(old_private, check)
+        clean = FinalCheck()
+        await tool.check_exceptions(new_private, clean)
+
+    assert check.counted == 0
+    assert check.still_opens_with_old == ["fixture.yaml (on the exception list: an e2e fixture on a test key)"]
+    assert clean.still_opens_with_old == []
 
 
 def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
@@ -1140,10 +1469,12 @@ async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
     answered_new.write_text(f"{new_private}\n")
     projects = tmp_path / "projects"
     projects.mkdir()
+    argo = tmp_path / "zad-argo-user-applications"
+    argo.mkdir()
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
         patch("builtins.input", side_effect=[str(answered_old), str(answered_new)]),
     ):
         code = await tool.main(
@@ -1151,6 +1482,8 @@ async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
                 "--remove-old-key",
                 "--projects",
                 str(projects),
+                "--argo-applications",
+                str(argo),
                 "--fingerprint",
                 str(tmp_path / "absent.json"),
             ]
@@ -1222,7 +1555,7 @@ async def test_the_note_about_a_missing_old_key_names_the_answered_path(
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[env_path]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
     ):
         assert await tool.main(["--ja", *arguments]) == 0
         capsys.readouterr()
@@ -1258,7 +1591,7 @@ async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_f
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
-        patch.object(tool, "env_paths", return_value=[env_path]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
     ):
         assert await tool.main(["--ja", *arguments]) == 0
         (tmp_path / "old_key.txt").write_text("# a file of nothing but comments\n# no key line here\n")

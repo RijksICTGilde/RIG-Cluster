@@ -12,7 +12,7 @@ Zie `features/sops-sleutel-vervangen.md` voor het hele verhaal, inclusief de met
 
 | ingang | doet |
 |---|---|
-| `rotate-sops-key.py` | de SOPS-bestanden, de losse `base64+age:`-waarden en `projects/` in deze repo; `--verify` en `--assert-old-key-dead` |
+| `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead` |
 | `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
 | `replace-git-pat.py` | dezelfde ronde, met de GitHub-PAT er ook vervangen |
 | `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
@@ -22,7 +22,7 @@ de toetsen moeten bij de logica kunnen:
 
 | module | wat erin staat |
 |---|---|
-| `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vier vindplaatsen, de vingerafdruk, de eindtoets |
+| `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vindplaatsen, de vingerafdruk, de eindtoets, en de inventaris waar de dekkingsgrendel op hangt |
 | `sops_rotation.py` | de ronde over deze repo |
 | `project_rotation.py` | de ronde over de projectbestanden, met beide ingangen (sleutel en PAT) |
 | `sops_key_secret.py` | het cluster-secret |

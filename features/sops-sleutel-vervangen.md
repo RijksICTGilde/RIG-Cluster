@@ -11,10 +11,26 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
    |
    +-- 21 SOPS-bestanden in bootstrap/ en infrastructure/
    |
-   +-- 6 losse base64+age:-waarden in een env-regel
+   +-- 8 losse base64+age:-waarden, en NIET alleen in een env-regel
    |      de twee configmap.yaml (odcn-production en local) en
    |      operations-manager/python/.env, elk met GIT_PROJECTS_SERVER_PASSWORD
-   |      en GIT_ARGO_APPLICATIONS_PASSWORD
+   |      en GIT_ARGO_APPLICATIONS_PASSWORD -- dat zijn er 6. De andere twee staan
+   |      als PYTHON-literal: opi/core/config.py:238 (de default van
+   |      PROJECT_REPO_PASSWORD) en scripts/migrate_project_to_production.py:66,
+   |      dezelfde waarde. Zie "De vorm is niet de vindplaats" hieronder.
+   |
+   +-- projects/age-secret-github.txt
+   |      een heel bestand dat EEN age-blok is, zonder sleutelregel om aan te haken.
+   |      Staat er sinds de eerste commit en niets in de boom noemt hem, maar hij
+   |      opent met de platformsleutel, dus hij gaat mee.
+   |
+   +-- de ArgoCD repository-secrets in zad-argo-user-applications
+   |      SOPS-bestanden in een ANDERE repo. Gemeten: argo_manager.py:267 en :790
+   |      schrijven ze met encrypt_to_sops_files_or_fail(..., SOPS_AGE_PUBLIC_KEY),
+   |      dus op de PLATFORMsleutel, en de sops-plugin naast ArgoCD rendert ze met
+   |      precies het secret dat stap 5 vervangt. Blijven ze achter, dan stopt het
+   |      renderen op het moment dat de nieuwe sleutel in het cluster staat.
+   |      --argo-applications <clone> neemt ze mee.
    |
    +-- config.age-private-key van ELK project
    |      daaronder hangt alles binnen dat project: Keycloak-wachtwoorden, api-key,
@@ -47,7 +63,7 @@ alleen in Kubernetes leeft.
 
 | script | doet |
 |---|---|
-| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 6 losse waarden en `projects/` in DEZE repo |
+| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 8 losse waarden en `projects/` in DEZE repo, plus met `--argo-applications` de SOPS-bestanden in een clone van zad-argo-user-applications |
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
 | `scripts/replace-git-pat.py` | dezelfde ronde, met de PAT er ook vervangen |
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
@@ -65,9 +81,10 @@ age-keygen -o security/nieuw.txt
 # en het script schuift ze naar old_key.txt en key.txt
 scripts/rotate-sops-key.py --rename
 
-# 2. deze repo: eerst kijken, dan doen
-scripts/rotate-sops-key.py --dry-run
-scripts/rotate-sops-key.py
+# 2. deze repo EN de argo-applicatierepo: eerst kijken, dan doen
+git clone <zad-argo-user-applications> /tmp/zad-argo
+scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo --dry-run
+scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
 
 # 3. de projectbestanden, op een VERSE clone
 git clone <zad-projects> /tmp/zad-projects
@@ -75,16 +92,16 @@ scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
 
 # 4. verifieren TERWIJL er nog niets gepusht is
-scripts/rotate-sops-key.py --verify
+scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
 git -C /tmp/zad-projects log --oneline | head
 git -C /tmp/zad-projects diff --stat HEAD~45
 
-# 5. pushen, beide repos, en METEEN daarna het secret wisselen
+# 5. pushen, alle drie de repos, en METEEN daarna het secret wisselen
 scripts/set-sops-key-secret.py --dry-run
 scripts/set-sops-key-secret.py
 
 # 6. de eindtoets over alle vindplaatsen
-scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects
+scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 
 # 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
 git clone <zad-projects> /tmp/zad-projects-pat
@@ -92,7 +109,7 @@ scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
 scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects
 
 # 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg
-scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects
+scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
 **Waarom de PAT-ronde stap 7 is en niet stap 3.** Ze kunnen in een keer: de motor onder beide is
@@ -164,8 +181,19 @@ nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cuto
   tweede komt van `rotate-project-keys.py`: `--projects-fingerprint` wijst standaard naar
   `security/projects-fingerprint.json`, precies waar dat script hem schrijft.
 
-Zonder `--projects` loopt hij de vierde vindplaats niet na, en dat zegt hij. `--remove-old-key`
-weigert daarom zonder `--projects`: er kan dan een project op de oude sleutel staan.
+Zonder `--projects` loopt hij de vierde vindplaats niet na, en zonder `--argo-applications` de
+vijfde niet, en allebei zegt hij dat. `--remove-old-key` weigert daarom zonder beide: er kan dan
+een project op de oude sleutel staan, of een ArgoCD repository-secret dat na de wissel niet meer
+rendert. Het weghalen van de sleutel is het punt waarna niets meer te repareren valt, dus een
+schoon oordeel over vier van de vijf plaatsen is geen reden om hem weg te gooien.
+
+Boven op die vijf loopt hij twee dingen na die over de DEKKING gaan en niet over een veld:
+
+- **een bestand met cijfertekst dat nergens wordt omgezet** is een FAIL, geen stilte. Dat is de
+  fout die deze sectie eerder liet passeren -- zie hieronder.
+- **de uitzonderingslijst** wordt met de oude sleutel gemeten. Elke regel daarop is een met de
+  hand geschreven bewering dat die cijfertekst aan een andere sleutel hangt, en met de hand
+  geschreven dekking is nu juist wat misging.
 
 `--remove-old-key` haalt `security/old_key.txt` weg. `--verify` blijft daarna werken: die stand
 meet met de nieuwe sleutel en vraagt de oude niet op.
@@ -213,6 +241,56 @@ Twee keer dezelfde vondst, en het is de belangrijkste regel in dit gereedschap:
 `set-sops-key-secret.py` leest daarom elk secret, leidt de publieke helft af, en raakt alleen de
 namespaces aan die de OUDE platformsleutel dragen. De rest komt in de uitvoer te staan als "left
 alone", met zijn eigen publieke sleutel ernaast.
+
+## De vorm is niet de vindplaats, en de lijst is gegrendeld
+
+Buiten een SOPS-bestand draagt cijfertekst zijn recipient niet in de tekst. Selecteren op sleutel
+kan daar dus niet, en daar is de werklijst dan ook wat hij nergens anders is: een lijst paden. Die
+liep achter. Een review mat de boom met de oude sleutel in plaats van deze lijst te lezen, en vond
+drie gecommitte waarden die buiten ELKE vindplaats stonden -- zodat `--assert-old-key-dead` CLEAN
+meldde terwijl de oude sleutel ze gewoon opende:
+
+| wat | waarom het niet opviel |
+|---|---|
+| `opi/core/config.py:238` | een quoted PYTHON-literal. Het patroon was `^KEY=base64+age:...$`, en dat is een env-regel |
+| `scripts/migrate_project_to_production.py:66` | dezelfde waarde als dict-entry, `"password": "base64+age:..."` |
+| `projects/age-secret-github.txt` | een heel bestand dat EEN age-blok is: geen sleutelregel om een naam aan te ontlenen, geen regel om op te vervangen |
+
+`config.py` is daarvan de harde: `PROJECT_REPO_PASSWORD` is geen voorbeeld. Hij wordt gelezen in
+`opi/utils/project_utils.py` en ingevuld in `opi/configs/project-template.yaml`, en alleen
+`sandboxed-local` zet hem over (`plain:admin1234`). `odcn-production` en `local` vallen terug op
+deze default, dus na stap 5 kan productie die waarde niet meer ontsleutelen en faalt de eerste
+projectaanmaak.
+
+Het gereedschap kent nu beide vormen -- een `base64+age:`-waarde waar hij ook op zijn regel staat,
+en een bestand dat zelf het blok is -- maar dat repareert de drie gevallen, niet de klasse. De
+grendel daarvoor:
+
+```
+elk getrackt bestand met ECHTE cijfertekst
+   -> wordt omgezet door een van de vindplaatsen
+   OF staat op COVERAGE_EXCEPTIONS met een reden
+   anders: FAIL, en de ronde begint niet eens
+```
+
+Twee dingen maken dat bruikbaar in plaats van een lijst die verslapt:
+
+**"Echte" cijfertekst, niet de vorm.** De armor wordt uitgepakt en de AGE-header gelezen: een echt
+bestand begint met `age-encryption.org/v1` en draagt een recipient-stanza en een MAC-regel.
+Gemeten op deze boom is dat het verschil tussen **99 bestanden en 34** -- de rest zijn
+plaatshouders in toetsen (`base64+age:AAAA`) en ingekorte blokken in feature-documentatie. Dat is
+dezelfde afweging als bij de scanner, die een AGE-kandidaat pas meldt als `age-keygen` hem
+accepteert: een uitzonderingslijst vol regels waar niemand iets mee kan is hoe een grendel stil
+verslapt. Zes uitzonderingen zijn te onderhouden, tachtig niet.
+
+**De uitzonderingen worden nagemeten.** Elke regel op die lijst is een met de hand geschreven
+bewering dat die cijfertekst aan een andere sleutel hangt, en met de hand geschreven dekking is nu
+juist wat misging. `--assert-old-key-dead` opent ze daarom ook met de OUDE sleutel en noemt er een
+die antwoordt. Ze tellen niet mee in het veldenaantal: ze zijn nooit omgezet, dus ze staan niet in
+de vingerafdruk, en meetellen zou de telling met precies het aantal excuses laten afwijken.
+
+De grendel heeft geen sleutel nodig, dus hij draait op elke droogloop en in de toetsen. De
+nameting van de uitzonderingen heeft er wel een, en die hoort bij de eindtoets.
 
 ## Wie de sleutel wanneer leest
 

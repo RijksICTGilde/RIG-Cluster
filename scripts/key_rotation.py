@@ -1,4 +1,4 @@
-"""The engine under the key rotation: one loop, four places, one fingerprint.
+"""The engine under the key rotation: one loop, five places, one fingerprint.
 
 The whole story, with the measurements, is in ``features/sops-sleutel-vervangen.md``.
 
@@ -17,6 +17,14 @@ the metadata, so a file encrypted for any other key is not touched. The alternat
 exclusion list, and that silently falls behind the moment a file is added. This is not
 hypothetical: the tree held a practice key in ``sops-sandbox/`` with two files of its own until
 this rotation removed it, and the sandbox and developer keys are still separate keys.
+
+**The loose values do need a list, so they get a guard.** Outside a SOPS file nothing carries
+its recipient in the text, so there the worklist IS a list of paths -- and one that fell
+behind: three committed values (a Python setting default, a copy of it in a migration script,
+and a whole file that is one armored block) sat outside every place this tool walks, so the
+final check called the old key dead while it still opened them. ``files_with_ciphertext()``
+turns that list into something checkable: every tracked file holding REAL ciphertext is
+converted here or stands on an exception list, and the entry point fails on anything else.
 """
 
 from __future__ import annotations
@@ -39,10 +47,14 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 # Make ``opi`` importable regardless of the working directory: the package lives in
-# operations-manager/python, a sibling of this scripts/ directory.
+# operations-manager/python, a sibling of this scripts/ directory. The second entry is this
+# directory itself, for the scanner module next door.
 _OPI_ROOT = Path(__file__).resolve().parents[1] / "operations-manager" / "python"
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
 
 from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
     find_plaintext_secret_violations,
@@ -60,6 +72,10 @@ from opi.utils.sops import _decrypt_sops_with_key  # noqa: E402
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
 from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
+# "which files does git track, and which are worth reading" is the scanner's question and it is
+# answered there. A second copy here would drift away from the one CI runs.
+from secret_scan import scannable, tracked_files  # type: ignore[reportMissingImports]  # noqa: E402
+
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 
 #: The two project-file fields that hang off the PLATFORM key. Measured across the 45
@@ -71,11 +87,27 @@ AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 PROJECT_FIELD_PRIVATE_KEY = "config.age-private-key"
 PROJECT_FIELD_REPO_PASSWORD = "repositories[{index}].password"  # noqa: S105 - a field path, not a password
 
-#: Env lines carrying an encrypted value: ``KEY=base64+age:<base64>``. The value is base64
-#: and therefore always a single line, which is what makes a line-scoped replacement safe
-#: here -- unlike a project file, where ``age-private-key`` is a multi-line block scalar and
-#: text replacement silently produces the wrong indentation.
-_ENV_LINE = re.compile(rf"^(?P<key>[A-Z0-9_]+)=(?P<value>{re.escape(BASE64_AGE_PREFIX)}[A-Za-z0-9+/=]+)\s*$")
+#: A ``base64+age:<base64>`` value wherever it sits on a line. NOT anchored to ``KEY=value``:
+#: the same platform-keyed value also stands in a Python literal
+#: (``PROJECT_REPO_PASSWORD: str = "base64+age:..."``) and in a dict entry
+#: (``"password": "base64+age:..."``), and an env-shaped pattern walked straight past both.
+#: The value is base64 and therefore always a single line, which is what makes a line-scoped
+#: replacement safe here -- unlike a project file, where ``age-private-key`` is a multi-line
+#: block scalar and text replacement silently produces the wrong indentation.
+_LOOSE_VALUE = re.compile(rf"(?P<value>{re.escape(BASE64_AGE_PREFIX)}[A-Za-z0-9+/=]{{20,}})")
+
+#: The name a loose value goes under: the first identifier on its line. That is the env key in
+#: ``GIT_PROJECTS_SERVER_PASSWORD=...``, the setting in ``PROJECT_REPO_PASSWORD: str = "..."``
+#: and the dict key in ``"password": "..."``.
+_NAME_BEFORE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+
+#: The ASCII armor around an AGE file, as it stands in a text file. The body may be indented
+#: (a YAML block scalar), so it is de-indented before anything is decoded.
+_ARMOR = re.compile(
+    r"-----BEGIN AGE ENCRYPTED FILE-----[ \t]*\n"
+    r"(?P<body>(?:[ \t]*[A-Za-z0-9+/=]+[ \t]*\n)+)"
+    r"[ \t]*-----END AGE ENCRYPTED FILE-----"
+)
 
 
 class Form(StrEnum):
@@ -371,65 +403,173 @@ def sops_rotate(path: str | Path, old_public_key: str, new_public_key: str, old_
         raise ConversionFailed(f"sops rotate failed on {path}: {process.stderr.strip()}")
 
 
-# places 2 and 3: loose base64+age: values in an env line
+# places 2 and 3: loose encrypted values, outside a SOPS file and outside a project file
 
 
 @dataclass(frozen=True)
-class EnvField:
-    """One ``KEY=base64+age:...`` line, with the line number needed to write it back."""
+class LooseValue:
+    """One encrypted value in a plain text file, with what is needed to write it back.
+
+    ``line_number`` is the line the value sits on; ``None`` means the file IS the value -- a
+    whole armored AGE block and nothing else, the shape ``projects/age-secret-github.txt``
+    has. Those are the only two shapes that can be written back from text without risk. An
+    armored block EMBEDDED in a larger file carries its own indentation (a YAML block
+    scalar), and replacing that span would re-emit it flush left; that shape belongs to the
+    SOPS round or to ``rotate_project_file``, and the coverage guard says so by name.
+    """
 
     path: Path
     key: str
     value: str
-    line_number: int
+    line_number: int | None
 
     @property
     def name(self) -> str:
         return self.key
 
 
-def env_fields(path: str | Path) -> list[EnvField]:
-    """Every env line with a ``base64+age:`` value in a text file.
+def _de_indent(block: str) -> str:
+    """The armored block with every line's leading whitespace removed.
+
+    Base64 tolerates whitespace, but ``age`` does not accept an indented armor. This is a
+    READ path only -- an indented block is never written back through here.
+    """
+    return "\n".join(line.strip() for line in block.splitlines())
+
+
+def loose_values(path: str | Path) -> list[LooseValue]:
+    """Every encrypted value in a text file that can be converted line by line.
 
     Works on text and not on YAML, the two ``configmap.yaml`` included: there the env
     content sits in a literal block scalar, and a YAML round trip would re-emit that whole
-    block. The value is base64 and therefore always a single line, so a line-scoped
-    replacement touches exactly that one field.
+    block.
+
+    Two shapes come out. A ``base64+age:`` value is base64 and therefore always a single
+    line, so a line-scoped replacement touches exactly that one field -- wherever on the line
+    it sits, which is what brings a Python literal like ``opi/core/config.py``'s
+    ``PROJECT_REPO_PASSWORD`` in alongside an env line. A file that is nothing but an armored
+    block is the value itself and is rewritten whole.
+
+    A name that repeats within one file gets its line number appended: the fingerprint is a
+    dict keyed on ``path#name``, and two fields under one key would drop one of them silently.
     """
     path = Path(path)
-    found: list[EnvField] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        match = _ENV_LINE.match(line.strip())
-        if match:
-            found.append(EnvField(path=path, key=match.group("key"), value=match.group("value"), line_number=number))
+    text = path.read_text(encoding="utf-8")
+    found: list[LooseValue] = []
+    used: set[str] = set()
+    for number, line in enumerate(text.splitlines(), start=1):
+        for match in _LOOSE_VALUE.finditer(line):
+            before = _NAME_BEFORE.search(line[: match.start()])
+            key = before.group(0) if before else f"line{number}"
+            if key in used:
+                key = f"{key}:{number}"
+            used.add(key)
+            found.append(LooseValue(path=path, key=key, value=match.group("value"), line_number=number))
+    if not found and is_age_encrypted(text.strip()):
+        found.append(LooseValue(path=path, key="<file>", value=text.strip(), line_number=None))
     return found
 
 
-def write_env_value(path: str | Path, line_number: int, old_value: str, new_value: str) -> None:
-    """Replace exactly one value on exactly one line, leaving the indentation intact.
+def write_loose_value(field_: LooseValue, new_value: str) -> None:
+    """Replace exactly one value, leaving everything around it intact.
 
     Written through a temporary file in the same directory and moved into place with
-    ``os.replace``, for the same reason the YAML writer does it: a torn ``configmap.yaml`` or
-    ``.env`` is worse than an unconverted one, and it would be discovered by a deployment rather
-    than by this tool.
+    ``os.replace``, for the same reason the YAML writer does it: a torn ``configmap.yaml``,
+    ``config.py`` or ``.env`` is worse than an unconverted one, and it would be discovered by a
+    deployment rather than by this tool.
     """
-    path = Path(path)
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    index = line_number - 1
-    if old_value not in lines[index]:
-        raise ConversionFailed(f"{path}:{line_number} no longer holds the expected value")
-    lines[index] = lines[index].replace(old_value, new_value)
+    path = field_.path
+    if field_.line_number is None:
+        text = path.read_text(encoding="utf-8")
+        if field_.value not in text:
+            raise ConversionFailed(f"{path} no longer holds the expected value")
+        content = text.replace(field_.value, new_value)
+    else:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        index = field_.line_number - 1
+        if field_.value not in lines[index]:
+            raise ConversionFailed(f"{path}:{field_.line_number} no longer holds the expected value")
+        lines[index] = lines[index].replace(field_.value, new_value)
+        content = "".join(lines)
 
     handle, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as target:
-            target.write("".join(lines))
+            target.write(content)
             target.flush()
             os.fsync(target.fileno())
         os.replace(temporary, path)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+
+
+# the coverage guard: what carries ciphertext, and does anything reach it
+
+
+def is_real_ciphertext(value: str) -> bool:
+    """Whether this really is AGE ciphertext, decided without any key.
+
+    The tree holds a few dozen values with the right SHAPE and no content: ``base64+age:AAAA``
+    in a test, a shortened block in a feature doc. Measured, they are the difference between
+    99 files and 34. A guard that counts those needs an exception list of entries nobody can
+    act on, and that is how a guard goes stale -- the same reason the secret scanner runs an
+    AGE candidate past ``age-keygen`` instead of alarming on the prefix.
+
+    So the armor is unwrapped and the AGE header is read: a real file opens with
+    ``age-encryption.org/v1`` and carries a recipient stanza and a MAC line.
+    """
+    form = form_of(value)
+    if form is None:
+        return False
+    try:
+        armored = _to_block(value, form)
+    except (ValueError, UnicodeDecodeError):
+        return False
+    match = _ARMOR.search(armored)
+    if not match:
+        return False
+    try:
+        raw = base64.b64decode("".join(match.group("body").split()))
+    except ValueError:
+        return False
+    return raw.startswith(b"age-encryption.org/v1\n") and b"\n-> " in raw and b"\n--- " in raw
+
+
+def encrypted_candidates(text: str) -> list[str]:
+    """Every value in a text that has the shape of AGE ciphertext, real or not.
+
+    Both storage forms, and the armored blocks come out de-indented so an embedded one (a
+    YAML block scalar) can still be read.
+    """
+    found = [match.group("value") for match in _LOOSE_VALUE.finditer(text)]
+    found.extend(_de_indent(match.group(0)) for match in _ARMOR.finditer(text))
+    return found
+
+
+def files_with_ciphertext(tree: str | Path) -> dict[Path, int]:
+    """Every tracked file holding real AGE ciphertext, and how many values sit in it.
+
+    This is the inventory the coverage guard hangs off. Whatever is in here has to be reached
+    by one of the places this rotation converts, or stand on the tool's exception list -- so a
+    file carrying the platform key cannot sit outside the whole operation unnoticed, which is
+    what ``opi/core/config.py`` did.
+
+    Tracked files and not the working tree: the untracked ``security/`` holds the real keys on
+    purpose, and a scratch file is not what a rotation has to reach.
+    """
+    found: dict[Path, int] = {}
+    for path in tracked_files(Path(tree)):
+        if not scannable(path):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        count = sum(1 for candidate in encrypted_candidates(text) if is_real_ciphertext(candidate))
+        if count:
+            found[path] = count
+    return found
 
 
 # place 4: project files
@@ -620,16 +760,22 @@ async def rotate_project_file(
 
 @dataclass
 class FinalCheck:
-    """The result of ``--assert-old-key-dead`` over all four places."""
+    """The result of ``--assert-old-key-dead`` over all five places, plus the coverage list."""
 
     still_opens_with_old: list[str] = field(default_factory=list)
     does_not_open_with_new: list[str] = field(default_factory=list)
+    outside_coverage: list[str] = field(default_factory=list)
     counted: int = 0
     expected: int | None = None
 
     @property
     def clean(self) -> bool:
-        return not self.still_opens_with_old and not self.does_not_open_with_new and self.count_matches
+        return (
+            not self.still_opens_with_old
+            and not self.does_not_open_with_new
+            and not self.outside_coverage
+            and self.count_matches
+        )
 
     @property
     def count_matches(self) -> bool:
@@ -643,6 +789,9 @@ class FinalCheck:
             )
         out.extend(f"FAIL STILL opens with the old key: {name}" for name in self.still_opens_with_old)
         out.extend(f"FAIL does NOT open with the new key: {name}" for name in self.does_not_open_with_new)
+        # A gap is not "a field is wrong" but "a field was never looked at", and that is the
+        # worse of the two: without it the verdict below reads CLEAN over an incomplete walk.
+        out.extend(f"FAIL carries ciphertext and nothing converts it: {name}" for name in self.outside_coverage)
         if self.clean:
             out.append("CLEAN the old key opens nothing, the new key opens everything")
         return out

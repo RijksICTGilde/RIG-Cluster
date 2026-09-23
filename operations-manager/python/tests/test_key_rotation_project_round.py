@@ -502,7 +502,11 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
     capsys.readouterr()
     with (
         patch.object(final_check_tool, "sops_files_for", return_value=[]),
-        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "loose_paths", return_value=[]),
+        # The coverage guard reads the REAL tree; the three patches around it point the check at
+        # this temporary one. Without an empty inventory every loose-value file of the repo itself
+        # would come out as "nothing converts it", because the selection no longer names them.
+        patch.object(final_check_tool, "files_with_ciphertext", return_value={}),
         patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
         patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
     ):
@@ -910,7 +914,11 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     capsys.readouterr()
     with (
         patch.object(final_check_tool, "sops_files_for", return_value=[]),
-        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "loose_paths", return_value=[]),
+        # The coverage guard reads the REAL tree; the three patches around it point the check at
+        # this temporary one. Without an empty inventory every loose-value file of the repo itself
+        # would come out as "nothing converts it", because the selection no longer names them.
+        patch.object(final_check_tool, "files_with_ciphertext", return_value={}),
         patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
         patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
     ):
@@ -967,7 +975,11 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
     recorded = Fingerprint.load(fingerprint)
     with (
         patch.object(final_check_tool, "sops_files_for", return_value=[]),
-        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "loose_paths", return_value=[]),
+        # The coverage guard reads the REAL tree; the three patches around it point the check at
+        # this temporary one. Without an empty inventory every loose-value file of the repo itself
+        # would come out as "nothing converts it", because the selection no longer names them.
+        patch.object(final_check_tool, "files_with_ciphertext", return_value={}),
         patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
         patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
     ):

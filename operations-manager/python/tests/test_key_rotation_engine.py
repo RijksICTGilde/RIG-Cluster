@@ -22,6 +22,7 @@ import base64
 import shutil
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, decrypt_age_content, encrypt_age_content
@@ -42,8 +43,11 @@ from key_rotation import (  # noqa: E402
     check_value,
     convert_value,
     decrypt_field,
-    env_fields,
+    encrypted_candidates,
+    files_with_ciphertext,
     form_of,
+    is_real_ciphertext,
+    loose_values,
     opens_with,
     plaintext_secrets,
     project_fields,
@@ -55,7 +59,7 @@ from key_rotation import (  # noqa: E402
     sops_files,
     sops_files_for,
     sops_recipients,
-    write_env_value,
+    write_loose_value,
 )
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
@@ -335,42 +339,153 @@ def test_selection_reads_the_flat_recipient_form_too(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# env lines
+# loose values
 # ---------------------------------------------------------------------------
 
+#: A stand-in with the right SHAPE and no content, long enough to pass the length floor the
+#: pattern puts on a value so prose about ``base64+age:`` is not a hit.
+SHAPED = "base64+age:QUJDREVGR0hJSktMTU5PUFFSUw=="
+SHAPED_TOO = "base64+age:WFlaMDEyMzQ1Njc4OWFiY2RlZg=="
 
-def test_env_fields_finds_the_value_inside_a_yaml_literal_block(tmp_path: Path) -> None:
+
+def test_loose_values_finds_the_value_inside_a_yaml_literal_block(tmp_path: Path) -> None:
     """The configmap keeps its env content in a block scalar; the scan is line based."""
     path = tmp_path / "configmap.yaml"
     path.write_text(
         "data:\n  .env: |\n    CLUSTER_MANAGER=odcn-production\n"
-        "    GIT_PROJECTS_SERVER_PASSWORD=base64+age:QUJD\n"
+        f"    GIT_PROJECTS_SERVER_PASSWORD={SHAPED}\n"
         "    GIT_PROJECTS_SERVER_BRANCH=main\n"
     )
-    found = env_fields(path)
+    found = loose_values(path)
     assert [(f.key, f.line_number) for f in found] == [("GIT_PROJECTS_SERVER_PASSWORD", 4)]
 
 
-def test_env_fields_ignores_a_plain_value(tmp_path: Path) -> None:
+def test_loose_values_finds_the_value_in_a_python_literal(tmp_path: Path) -> None:
+    """The shape that was outside the tool until a review measured the tree with the old key.
+
+    ``opi/core/config.py`` holds the platform-keyed default of ``PROJECT_REPO_PASSWORD`` as a
+    quoted Python literal, and the migration script next to it holds the same value as a dict
+    entry. An env-shaped pattern (``^KEY=value$``) matched neither.
+    """
+    path = tmp_path / "config.py"
+    path.write_text(f'    PROJECT_REPO_PASSWORD: str = "{SHAPED}"\n    OTHER = 1\n')
+    assert [(f.key, f.line_number) for f in loose_values(path)] == [("PROJECT_REPO_PASSWORD", 1)]
+
+
+def test_loose_values_names_a_dict_entry_after_its_key(tmp_path: Path) -> None:
+    path = tmp_path / "migrate.py"
+    path.write_text(f'        "password": "{SHAPED}",\n')
+    assert [f.key for f in loose_values(path)] == ["password"]
+
+
+def test_loose_values_keeps_two_values_on_one_name_apart(tmp_path: Path) -> None:
+    """The fingerprint is a dict on ``path#name``; a repeated name would drop one silently."""
+    path = tmp_path / "two.py"
+    path.write_text(f'"password": "{SHAPED}",\n"password": "{SHAPED_TOO}",\n')
+    assert [f.key for f in loose_values(path)] == ["password", "password:2"]
+
+
+def test_loose_values_reads_a_file_that_is_one_armored_block(tmp_path: Path) -> None:
+    """``projects/age-secret-github.txt`` is the whole value and has no key line at all."""
+    path = tmp_path / "age-secret-github.txt"
+    path.write_text("-----BEGIN AGE ENCRYPTED FILE-----\nQUJDREVG\n-----END AGE ENCRYPTED FILE-----\n")
+    found = loose_values(path)
+    assert [(f.key, f.line_number) for f in found] == [("<file>", None)]
+
+
+def test_loose_values_ignores_a_plain_value(tmp_path: Path) -> None:
     path = tmp_path / ".env"
     path.write_text("GIT_PROJECTS_SERVER_PASSWORD=plain:hunter2\nOTHER=1\n")
-    assert env_fields(path) == []
+    assert loose_values(path) == []
 
 
-def test_write_env_value_keeps_the_indentation_and_the_other_lines(tmp_path: Path) -> None:
+def test_loose_values_ignores_prose_about_the_prefix(tmp_path: Path) -> None:
+    """A doc that names the form is not a value; the length floor is what tells them apart."""
+    path = tmp_path / "README.md"
+    path.write_text("The value is written as base64+age:<base64> in an env line.\n")
+    assert loose_values(path) == []
+
+
+def test_write_loose_value_keeps_the_indentation_and_the_other_lines(tmp_path: Path) -> None:
     path = tmp_path / "configmap.yaml"
-    path.write_text("data:\n  .env: |\n    A=base64+age:QUJD\n    B=keep-me\n")
+    path.write_text(f"data:\n  .env: |\n    A={SHAPED}\n    B=keep-me\n")
 
-    write_env_value(path, 3, "base64+age:QUJD", "base64+age:WFla")
+    field_ = loose_values(path)[0]
+    write_loose_value(field_, SHAPED_TOO)
 
-    assert path.read_text() == "data:\n  .env: |\n    A=base64+age:WFla\n    B=keep-me\n"
+    assert path.read_text() == f"data:\n  .env: |\n    A={SHAPED_TOO}\n    B=keep-me\n"
 
 
-def test_write_env_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
+def test_write_loose_value_rewrites_a_whole_file_block(tmp_path: Path) -> None:
+    path = tmp_path / "age-secret-github.txt"
+    path.write_text("-----BEGIN AGE ENCRYPTED FILE-----\nQUJDREVG\n-----END AGE ENCRYPTED FILE-----\n")
+
+    write_loose_value(
+        loose_values(path)[0], "-----BEGIN AGE ENCRYPTED FILE-----\nWFla\n-----END AGE ENCRYPTED FILE-----"
+    )
+
+    assert path.read_text().strip().splitlines()[1] == "WFla"
+
+
+def test_write_loose_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
     path = tmp_path / ".env"
-    path.write_text("A=base64+age:QUJD\n")
+    path.write_text(f"A={SHAPED}\n")
+    field_ = loose_values(path)[0]
+    path.write_text("A=something-else\n")
     with pytest.raises(ConversionFailed):
-        write_env_value(path, 1, "base64+age:SOMETHINGELSE", "base64+age:WFla")
+        write_loose_value(field_, SHAPED_TOO)
+
+
+# ---------------------------------------------------------------------------
+# the coverage guard
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_real_ciphertext_is_told_apart_from_a_value_with_only_the_shape(
+    key_pair_a: tuple[str, str],
+) -> None:
+    """What keeps the exception list short enough to stay true.
+
+    Measured over this tree: counting every value with the right SHAPE gives 99 files, reading
+    the AGE header gives 34. The difference is placeholders in tests and shortened blocks in
+    feature docs -- entries nobody can act on, and a list of those is how a guard goes stale.
+    """
+    private_key, public_key = key_pair_a
+    assert await decrypt_age_content(await encrypt_age_content("hunter2", public_key), private_key) == "hunter2"
+
+    assert is_real_ciphertext(await encrypt_age_content("hunter2", public_key))
+    assert is_real_ciphertext(
+        BASE64_AGE_PREFIX + base64.b64encode((await encrypt_age_content("hunter2", public_key)).encode()).decode()
+    )
+
+    assert not is_real_ciphertext(SHAPED)
+    assert not is_real_ciphertext("-----BEGIN AGE ENCRYPTED FILE-----\nQUJDREVG\n-----END AGE ENCRYPTED FILE-----")
+    assert not is_real_ciphertext("plain:hunter2")
+
+
+@pytest.mark.asyncio
+async def test_a_block_is_read_even_when_it_sits_indented_in_a_yaml_file(key_pair_a: tuple[str, str]) -> None:
+    """An e2e fixture keeps its block in a block scalar, and the guard has to be able to open it.
+
+    ``age`` refuses an indented armor, so without the de-indent every excused file would answer
+    "does not open with the old key" for the wrong reason -- and the check on the exception list
+    would be a check on nothing.
+    """
+    private_key, public_key = key_pair_a
+    block = await encrypt_age_content("hunter2", public_key)
+    indented = "password: |\n" + "".join(f"  {line}\n" for line in block.splitlines())
+
+    found = [candidate for candidate in encrypted_candidates(indented) if is_real_ciphertext(candidate)]
+
+    assert len(found) == 1
+    assert await decrypt_field(found[0], private_key) == "hunter2"
+
+
+def test_the_inventory_walks_tracked_files_and_not_the_working_tree(tmp_path: Path) -> None:
+    """``security/`` holds the real keys on purpose and is untracked; a scratch file is not a gap."""
+    with patch("key_rotation.tracked_files", return_value=[]):
+        assert files_with_ciphertext(tmp_path) == {}
 
 
 # ---------------------------------------------------------------------------

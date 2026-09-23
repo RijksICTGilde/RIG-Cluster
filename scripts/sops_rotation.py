@@ -1,14 +1,15 @@
 """Replace the platform AGE key in this repo: the SOPS files and the loose values.
 
-This is the entry point for everything in THIS repo: the SOPS files, the loose ``base64+age:``
-values and the project file in ``projects/``. The project files in the zad-projects repo live in
-``rotate-project-keys.py``; those sit in a different repo and belong to a round of their own,
-with its own commits.
+This is the entry point for everything in THIS repo: the SOPS files, the loose encrypted values
+and the project file in ``projects/``. With ``--argo-applications`` it also takes the ArgoCD
+repository secrets in a clone of zad-argo-user-applications, which sit on the platform recipient
+too. The project files in the zad-projects repo live in ``rotate-project-keys.py``; those sit in
+a different repo and belong to a round of their own, with its own commits.
 
     scripts/rotate-sops-key.py --dry-run             # says what it would do, changes nothing
     scripts/rotate-sops-key.py                       # same questions, runs after confirmation
     scripts/rotate-sops-key.py --verify              # check the fingerprint, months later too
-    scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all four places
+    scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all five places
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
@@ -36,9 +37,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from key_rotation import (  # type: ignore[reportMissingImports]
     ConversionFailed,
-    EnvField,
     FinalCheck,
     Fingerprint,
+    LooseValue,
     MissingKey,
     ProjectRound,
     ask_for_path,
@@ -46,31 +47,68 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     check_value,
     convert_value,
     decrypt_field,
-    env_fields,
+    encrypted_candidates,
+    files_with_ciphertext,
+    is_real_ciphertext,
     load_yaml_from_path,
+    loose_values,
     opens_with,
     project_fields,
     public_key_of,
     read_key,
     rotate_project_file,
     sha256_of,
+    sops_files,
     sops_files_for,
     sops_plaintext,
     sops_rotate,
-    write_env_value,
+    write_loose_value,
 )
 
 REPO = Path(__file__).resolve().parents[1]
 
-#: The files outside the SOPS tree that carry a ``base64+age:`` value in an env line. They
-#: are easily forgotten, because ``sops rotate`` does not see them. ``.env`` is on the list
-#: deliberately: that file really is loaded during local development, so without conversion
-#: that stops working the moment A goes away.
-ENV_FILES = (
+#: The files outside the SOPS tree that carry a loose encrypted value. They are easily
+#: forgotten, because ``sops rotate`` does not see them, and this list is the one part of the
+#: worklist that cannot select on the recipient: outside a SOPS file the text does not say
+#: which key it belongs to. So the list is checked instead -- see ``coverage_gaps()``.
+#:
+#: ``.env`` is on it deliberately: that file really is loaded during local development, so
+#: without conversion that stops working the moment A goes away.
+#:
+#: The last three arrived through a review that measured the tree with the old key instead of
+#: reading this list. ``PROJECT_REPO_PASSWORD`` is not an example: it is read in
+#: ``opi/utils/project_utils.py`` and filled into ``opi/configs/project-template.yaml``, and
+#: only ``sandboxed-local`` overrides it -- ``odcn-production`` and ``local`` fall back to this
+#: default, so after step 5 production could no longer decrypt it. The migration script carries
+#: a copy of the same value. ``age-secret-github.txt`` is a whole file that is one armored
+#: block; it has been there since the initial commit and nothing in the tree names it, but it
+#: opens with the platform key, so leaving it behind would make the final check lie.
+LOOSE_VALUE_FILES = (
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
     "operations-manager/python/.env",
+    "operations-manager/python/opi/core/config.py",
+    "operations-manager/python/scripts/migrate_project_to_production.py",
+    "projects/age-secret-github.txt",
 )
+
+#: Tracked files that hold real AGE ciphertext this rotation deliberately does NOT convert,
+#: with the reason. Anything carrying ciphertext that is neither converted nor named here is a
+#: coverage gap and stops the tool.
+#:
+#: Every entry is a CLAIM that the value does not sit on the platform key, and a claim is not a
+#: measurement. ``--assert-old-key-dead`` measures it: it opens these files with the old key
+#: too, and one that answers is reported by name.
+COVERAGE_EXCEPTIONS = {
+    "docs/doorloop-rc108/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
+    "docs/doorloop-rc110/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
+    "operations-manager/python/tests/e2e/fixtures/projects/test-project.yaml": "an e2e fixture on a test key",
+    "operations-manager/python/tests/e2e/fixtures/projects/test-project-detail.yaml": "an e2e fixture on a test key",
+    "operations-manager/python/tests/e2e/fixtures/projects/test-project-with-services.yaml": (
+        "an e2e fixture on a test key"
+    ),
+    "operations-manager/python/tests/e2e/test_lotc_niet_goedgekeurd_domein.py": "an e2e fixture on a test key",
+}
 
 #: This repo carries a project file of its own, and it holds a repository password on the platform
 #: key -- measured, one field. It is a project file, so ``rotate_project_file`` converts it, but it
@@ -116,21 +154,64 @@ def sops_fingerprint_key(path: Path) -> str:
     return f"{path}#<sops-document>"
 
 
-def env_fingerprint_key(field_: EnvField) -> str:
-    """The name one env line goes under in the fingerprint."""
+def loose_fingerprint_key(field_: LooseValue) -> str:
+    """The name one loose value goes under in the fingerprint."""
     return f"{field_.path}#{field_.name}"
 
 
-def env_paths() -> list[Path]:
-    return [REPO / name for name in ENV_FILES if (REPO / name).is_file()]
+def loose_paths() -> list[Path]:
+    return [REPO / name for name in LOOSE_VALUE_FILES if (REPO / name).is_file()]
 
 
-def all_env_fields(paths: list[Path]) -> list[EnvField]:
-    """Every ``base64+age:`` env line in the named files, as they stand NOW."""
-    return [field_ for path in paths for field_ in env_fields(path)]
+def all_loose_values(paths: list[Path]) -> list[LooseValue]:
+    """Every loose encrypted value in the named files, as they stand NOW."""
+    return [field_ for path in paths for field_ in loose_values(path)]
 
 
-def sops_on_either_recipient(old_public: str | None, new_public: str) -> list[Path]:
+def own_project_paths() -> list[Path]:
+    return sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []
+
+
+def coverage_gaps() -> list[Path]:
+    """Tracked files holding real ciphertext that no place of this rotation reaches.
+
+    The SOPS round selects on the recipient and takes care of itself, but the loose values
+    cannot: outside a SOPS file the text does not say which key it belongs to, so there the
+    worklist is a list of paths. This is the check on that list. It needs no key, so it runs
+    on every dry run and in the test suite, and it is the thing that was missing: three
+    committed values sat outside every place the tool walked and ``--assert-old-key-dead``
+    reported CLEAN over them.
+
+    A SOPS file counts as covered by having SOPS metadata, not by its recipient: a file on
+    another key is still a file ``sops rotate`` owns, and the recipient selection decides
+    whether it is touched.
+    """
+    covered = {
+        *sops_files(REPO),
+        *loose_paths(),
+        *own_project_paths(),
+        *(REPO / name for name in COVERAGE_EXCEPTIONS),
+    }
+    return sorted(path for path in files_with_ciphertext(REPO) if path not in covered)
+
+
+def sops_trees(argo_applications: Path | None) -> list[Path]:
+    """The trees whose SOPS files hang off the platform key.
+
+    This repo, and a clone of ``zad-argo-user-applications`` when one is given. That second one
+    is not this repo's business by name but by key: ``argo_manager.py`` writes the ArgoCD
+    repository secrets there with ``encrypt_to_sops_files_or_fail(..., SOPS_AGE_PUBLIC_KEY)``,
+    so they sit on the PLATFORM recipient, and the sops-plugin next to ArgoCD renders them with
+    the very secret step 5 replaces. Left behind, every one of them stops rendering the moment
+    the new key is in the cluster.
+
+    Selection stays on the recipient inside each tree, so pointing this at a clone that holds
+    files for other keys touches none of them.
+    """
+    return [REPO, *([argo_applications] if argo_applications is not None else [])]
+
+
+def sops_on_either_recipient(old_public: str | None, new_public: str, trees: list[Path]) -> list[Path]:
     """The SOPS files sitting on either recipient, each once.
 
     The fingerprint has to cover the same set on both sides of the conversion, and a file
@@ -144,20 +225,19 @@ def sops_on_either_recipient(old_public: str | None, new_public: str) -> list[Pa
     for public in (old_public, new_public):
         if public is None:
             continue
-        for path in sops_files_for(REPO, public):
-            seen.setdefault(path, None)
+        for tree in trees:
+            for path in sops_files_for(tree, public):
+                seen.setdefault(path, None)
     return list(seen)
 
 
 def own_project_fields() -> list[tuple[str, str]]:
     """The platform-keyed fields in this repo's own ``projects/``, as ``(fingerprint key, value)``.
 
-    Same shape as an env field for the fingerprint's purposes: a name and a ciphertext.
+    Same shape as a loose value for the fingerprint's purposes: a name and a ciphertext.
     """
     found: list[tuple[str, str]] = []
-    if not OWN_PROJECTS.is_dir():
-        return found
-    for path in sorted(OWN_PROJECTS.glob("*.yaml")):
+    for path in own_project_paths():
         data = load_yaml_from_path(str(path))
         if not isinstance(data, dict):
             continue
@@ -166,7 +246,7 @@ def own_project_fields() -> list[tuple[str, str]]:
 
 
 async def fingerprint_now(
-    sops_paths: list[Path], fields: list[EnvField], *private_keys: str
+    sops_paths: list[Path], fields: list[LooseValue], *private_keys: str
 ) -> tuple[Fingerprint, list[str]]:
     """Measure the plaintext of every named field, with the first key that fits.
 
@@ -192,10 +272,10 @@ async def fingerprint_now(
         for key in private_keys:
             plain = await decrypt_field(field_.value, key)
             if plain is not None:
-                fingerprint.set(env_fingerprint_key(field_), sha256_of(plain))
+                fingerprint.set(loose_fingerprint_key(field_), sha256_of(plain))
                 break
         else:
-            closed.append(env_fingerprint_key(field_))
+            closed.append(loose_fingerprint_key(field_))
     for name, value in own_project_fields():
         for key in private_keys:
             plain = await decrypt_field(value, key)
@@ -241,17 +321,20 @@ class RotationPlan:
     """What is left to do, and what turned out to be done. Both belong on screen."""
 
     sops: list[Path] = field(default_factory=list)
-    env: list[EnvField] = field(default_factory=list)
+    loose: list[LooseValue] = field(default_factory=list)
     projects: list[ProjectRound] = field(default_factory=list)
     already: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
+    gaps: list[Path] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.sops) + len(self.env) + sum(len(report.fields) for report in self.projects)
+        return len(self.sops) + len(self.loose) + sum(len(report.fields) for report in self.projects)
 
 
-async def build_plan(paths: list[Path], old_private: str, new_private: str, old_public: str) -> RotationPlan:
+async def build_plan(
+    paths: list[Path], old_private: str, new_private: str, old_public: str, trees: list[Path] | None = None
+) -> RotationPlan:
     """Decide per field whether it still needs converting, is done, or opens with neither key.
 
     That distinction is measured rather than assumed, and it is what makes a second round
@@ -261,16 +344,19 @@ async def build_plan(paths: list[Path], old_private: str, new_private: str, old_
     second round would call the already-converted values "to do" and then strand on the
     fingerprint.
     """
-    plan = RotationPlan(sops=sops_files_for(REPO, old_public))
+    trees = trees if trees is not None else [REPO]
+    plan = RotationPlan(
+        sops=[path for tree in trees for path in sops_files_for(tree, old_public)], gaps=coverage_gaps()
+    )
     for path in paths:
-        for field_ in env_fields(path):
+        for field_ in loose_values(path):
             if await opens_with(field_.value, old_private):
-                plan.env.append(field_)
+                plan.loose.append(field_)
             elif await opens_with(field_.value, new_private):
-                plan.already.append(env_fingerprint_key(field_))
+                plan.already.append(loose_fingerprint_key(field_))
             else:
-                plan.closed.append(env_fingerprint_key(field_))
-    for path in sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []:
+                plan.closed.append(loose_fingerprint_key(field_))
+    for path in own_project_paths():
         report = await rotate_project_file(path, old_private, new_private, dry_run=True)
         if report.fields:
             plan.projects.append(report)
@@ -286,9 +372,10 @@ def show_plan(plan: RotationPlan) -> None:
     print(f"\n{len(plan.sops)} SOPS files on the old recipient:")
     for path in plan.sops:
         print(f"  sops rotate  {short(path)}")
-    print(f"\n{len(plan.env)} loose base64+age: values on the old key:")
-    for field_ in plan.env:
-        print(f"  recrypt      {short(field_.path)}:{field_.line_number}  {field_.name}")
+    print(f"\n{len(plan.loose)} loose encrypted values on the old key:")
+    for field_ in plan.loose:
+        where = f":{field_.line_number}" if field_.line_number is not None else ""
+        print(f"  recrypt      {short(field_.path)}{where}  {field_.name}")
     if plan.projects:
         print(f"\n{len(plan.projects)} project files in this repo's own projects/:")
         for report in plan.projects:
@@ -297,9 +384,11 @@ def show_plan(plan: RotationPlan) -> None:
         print(f"  already      {name}")
     for name in plan.closed:
         print(f"  FAIL opens with neither key: {name}")
+    for path in plan.gaps:
+        print(f"  FAIL carries ciphertext and nothing converts it: {short(path)}")
     own = sum(len(report.fields) for report in plan.projects)
     print(
-        f"\nTo do: {len(plan.sops)} files + {len(plan.env)} loose values + {own} project fields = {plan.total} fields"
+        f"\nTo do: {len(plan.sops)} files + {len(plan.loose)} loose values + {own} project fields = {plan.total} fields"
     )
 
 
@@ -309,10 +398,11 @@ async def run_rotation(
     for path in plan.sops:
         sops_rotate(path, old_public, new_public, old_private)
         print(f"  converted  {short(path)}")
-    for field_ in plan.env:
+    for field_ in plan.loose:
         conversion = await convert_value(field_.value, old_private, new_public)
-        write_env_value(field_.path, field_.line_number, field_.value, conversion.new_value)
-        print(f"  converted  {short(field_.path)}:{field_.line_number} {field_.name}")
+        write_loose_value(field_, conversion.new_value)
+        where = f":{field_.line_number}" if field_.line_number is not None else ""
+        print(f"  converted  {short(field_.path)}{where} {field_.name}")
     for planned in plan.projects:
         report = await rotate_project_file(planned.path, old_private, new_private, dry_run=False)
         if not report.rewritten:
@@ -327,19 +417,26 @@ async def run_final_check(
     new_public: str,
     projects: Path | None,
     expected: int | None,
+    trees: list[Path] | None = None,
 ) -> FinalCheck:
     """A must fail everywhere, B must succeed everywhere, and the count must match.
 
     Walks the SOPS files on BOTH recipients. Walking only the new one would make a skipped
     file invisible: that one still sits on the old recipient and would fall outside the
     selection.
+
+    On top of the five places it settles the two halves of the coverage list: a file that
+    carries ciphertext and is converted by nothing at all (``coverage_gaps()``), and a file on
+    the exception list whose reason turns out to be wrong (``check_exceptions``). Without those
+    the verdict is about the fields the tool happens to know, not about the old key.
     """
+    trees = trees if trees is not None else [REPO]
     check = FinalCheck(expected=expected)
-    for path in sops_on_either_recipient(old_public, new_public):
+    for path in sops_on_either_recipient(old_public, new_public, trees):
         check_sops_file(path, old_private, new_private, check)
-    for path in env_paths():
-        for field_ in env_fields(path):
-            await check_value(env_fingerprint_key(field_), field_.value, old_private, new_private, check)
+    for path in loose_paths():
+        for field_ in loose_values(path):
+            await check_value(loose_fingerprint_key(field_), field_.value, old_private, new_private, check)
     for name, value in own_project_fields():
         await check_value(name, value, old_private, new_private, check)
     if projects is not None:
@@ -349,19 +446,47 @@ async def run_final_check(
                 continue
             for field_name, value in project_fields(data):
                 await check_value(f"{path}#{field_name}", value, old_private, new_private, check)
+    check.outside_coverage.extend(short(path) for path in coverage_gaps())
+    await check_exceptions(old_private, check)
     return check
 
 
+async def check_exceptions(old_private: str, check: FinalCheck) -> None:
+    """Hold the exception list to its own claim: none of it may open with the old key.
+
+    These files are excused from the conversion because their ciphertext belongs to another
+    key -- a sandbox key, a test key. That is a claim written by hand, and the whole point of
+    this check is that hand-written coverage is what went wrong. So it is measured here, with
+    the one key that can settle it.
+
+    Not counted: these fields were never converted, so they are not in the fingerprint, and
+    adding them would make the count that has to match disagree by exactly their number.
+    """
+    for name in sorted(COVERAGE_EXCEPTIONS):
+        path = REPO / name
+        if not path.is_file():
+            continue
+        for candidate in encrypted_candidates(path.read_text(encoding="utf-8")):
+            if is_real_ciphertext(candidate) and await opens_with(candidate, old_private):
+                check.still_opens_with_old.append(f"{name} (on the exception list: {COVERAGE_EXCEPTIONS[name]})")
+
+
 async def run_verify(
-    fingerprint_path: Path, paths: list[Path], old_public: str | None, new_public: str, new_private: str
+    fingerprint_path: Path,
+    paths: list[Path],
+    old_public: str | None,
+    new_public: str,
+    new_private: str,
+    trees: list[Path] | None = None,
 ) -> int:
     """Check the recorded fingerprint against what the new key reads today."""
+    trees = trees if trees is not None else [REPO]
     if not fingerprint_path.is_file():
         print(f"FAIL no fingerprint to check against: {fingerprint_path}", file=sys.stderr)
         return 2
     wanted = Fingerprint.load(fingerprint_path)
     measured, closed = await fingerprint_now(
-        sops_on_either_recipient(old_public, new_public), all_env_fields(paths), new_private
+        sops_on_either_recipient(old_public, new_public, trees), all_loose_values(paths), new_private
     )
     objections = wanted.compare(measured)
     for name in closed:
@@ -377,7 +502,7 @@ async def run_verify(
 def expected_count(paths: list[Path]) -> int | None:
     """The total number of fields across the fingerprints that exist, or None when there is none.
 
-    The final check walks four places, and those were converted by two tools with a
+    The final check walks five places, and those were converted by two tools with a
     fingerprint each. The count that has to match is therefore the SUM; passing only one of
     them compares a part against a whole and always yields a deviation.
     """
@@ -438,6 +563,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--projects",
         help="directory with project files, so the final check can walk the fourth place too",
     )
+    parser.add_argument(
+        "--argo-applications",
+        help="clone of zad-argo-user-applications: its ArgoCD repository secrets are SOPS files"
+        " on the PLATFORM recipient, and the plugin renders them with the secret step 5 replaces",
+    )
     return parser
 
 
@@ -457,12 +587,17 @@ async def main(argv: list[str] | None = None) -> int:
 
     new_public = public_key_of(new_private)
     projects = Path(arguments.projects) if arguments.projects else None
+    argo = Path(arguments.argo_applications) if arguments.argo_applications else None
+    if argo is not None and not argo.is_dir():
+        print(f"FAIL no such directory: {argo}", file=sys.stderr)
+        return 2
+    trees = sops_trees(argo)
     fingerprint_path = Path(arguments.fingerprint)
-    paths = env_paths()
+    paths = loose_paths()
 
     if old_private is None:
         # Guaranteed by old_optional above; everything past this point acts on the old key.
-        return await run_verify(fingerprint_path, paths, None, new_public, new_private)
+        return await run_verify(fingerprint_path, paths, None, new_public, new_private, trees)
 
     old_public = public_key_of(old_private)
     if old_public == new_public:
@@ -476,9 +611,12 @@ async def main(argv: list[str] | None = None) -> int:
     if arguments.assert_old_key_dead or arguments.remove_old_key:
         if projects is None:
             print("NOTE without --projects the final check does not walk the fourth place.")
+        if argo is None:
+            print("NOTE without --argo-applications the final check does not walk the ArgoCD")
+            print("repository secrets, and those render with the secret step 5 replaces.")
         fingerprints = [fingerprint_path, Path(arguments.projects_fingerprint)]
         expected = expected_count(fingerprints) if projects is not None else None
-        check = await run_final_check(old_private, new_private, old_public, new_public, projects, expected)
+        check = await run_final_check(old_private, new_private, old_public, new_public, projects, expected, trees)
         for line in check.lines():
             print(line)
         if not check.clean:
@@ -488,6 +626,10 @@ async def main(argv: list[str] | None = None) -> int:
                 print("REFUSED the old key does not go away without --projects: the fourth", file=sys.stderr)
                 print("place was not walked, so a project may still sit on the old key.", file=sys.stderr)
                 return 1
+            if argo is None:
+                print("REFUSED the old key does not go away without --argo-applications: the", file=sys.stderr)
+                print("ArgoCD repository secrets were not walked, and they sit on this key.", file=sys.stderr)
+                return 1
             if old_path.is_file():
                 old_path.unlink()
                 print(f"Old key removed: {old_path}")
@@ -496,12 +638,18 @@ async def main(argv: list[str] | None = None) -> int:
         return 0
 
     if arguments.verify:
-        return await run_verify(fingerprint_path, paths, old_public, new_public, new_private)
+        return await run_verify(fingerprint_path, paths, old_public, new_public, new_private, trees)
 
-    plan = await build_plan(paths, old_private, new_private, old_public)
+    plan = await build_plan(paths, old_private, new_private, old_public, trees)
     show_plan(plan)
     if plan.closed:
         print("\nSTOPPED there are fields that open with neither key.", file=sys.stderr)
+        return 1
+    if plan.gaps:
+        # Converting anyway would end in a CLEAN final check over an incomplete walk, which is
+        # worse than not converting: it is the answer that says the old key is dead when it is not.
+        print("\nSTOPPED a tracked file carries ciphertext that nothing here converts.", file=sys.stderr)
+        print("Put it in LOOSE_VALUE_FILES, or on COVERAGE_EXCEPTIONS with the reason.", file=sys.stderr)
         return 1
     if plan.total == 0:
         print("\nNothing to do: no field sits on the old key any more.")
@@ -517,7 +665,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     print("\nRecording the fingerprint of the plaintext...")
     fingerprint_before, closed = await fingerprint_now(
-        sops_on_either_recipient(old_public, new_public), all_env_fields(paths), old_private, new_private
+        sops_on_either_recipient(old_public, new_public, trees), all_loose_values(paths), old_private, new_private
     )
     if closed:
         for name in closed:
@@ -531,7 +679,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     print("\nChecking with the new key...")
     fingerprint_after, closed = await fingerprint_now(
-        sops_files_for(REPO, new_public), all_env_fields(paths), new_private
+        [path for tree in trees for path in sops_files_for(tree, new_public)], all_loose_values(paths), new_private
     )
     objections = fingerprint_before.compare(fingerprint_after)
     for name in closed:
