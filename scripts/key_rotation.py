@@ -78,12 +78,8 @@ REPO = Path(__file__).resolve().parents[1]
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 
-#: The GitHub token shapes, taken straight from the scanner's rule set. The PAT round has to
-#: decide per loose value whether it carries the SHARED GitHub token or something else -- the
-#: two configmaps and ``.env`` hold the Forgejo git-server passwords on the same key, and
-#: replacing those with a GitHub PAT would take the platform's own git access down. A
-#: hand-written list of "the three files that hold the token" is exactly the shape that fell
-#: away before, so the question is answered by measuring the plaintext instead.
+#: The GitHub token shapes, taken from the scanner's rule set rather than spelled out a second
+#: time here. What the PAT round decides with them is in ``is_github_token``.
 GITHUB_TOKEN_RULES = tuple(pattern for kind, pattern, _hint in RULES if kind.startswith("github"))
 
 #: The two project-file fields that hang off the PLATFORM key. Measured across the 53
@@ -673,7 +669,7 @@ def all_loose_values(paths: list[Path]) -> list[LooseValue]:
 def is_github_token(plaintext: str) -> bool:
     """Whether a decrypted value is a GitHub token, by the shapes the secret scanner knows.
 
-    This is what tells the three PAT carriers from the three loose values next to them. The two
+    This is what tells the three PAT carriers from the six loose values next to them. The two
     configmaps and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
     ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the platform's OWN git-server credentials on
     the same platform key; writing a GitHub PAT over those would take OPI's access to its three

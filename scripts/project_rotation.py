@@ -398,9 +398,8 @@ async def classify_loose_values(paths: list[Path], old_private: str, new_private
 async def run_loose_round(result: LooseRound, new_public: str, new_pat: str, *, dry_run: bool) -> dict[str, str]:
     """Put the new token in every loose value that carries the old one. Returns the new hashes.
 
-    The hashes go back into this repo's own record through ``update_record``; the plaintext of
-    these three fields really does change, and a record that still holds the old hash turns the
-    next ``--verify`` into three objections about a replacement it asked for itself.
+    The hashes go back into this repo's own record through ``update_record``: this is the one
+    round where a plaintext is supposed to change.
     """
     updates: dict[str, str] = {}
     for entry in result.carriers:
@@ -492,9 +491,8 @@ def report_argo(
         for repository in pairing.repositories_without_secret:
             print(f"  {repository.project}/{repository.repository} ({', '.join(repository.secret_names)})")
         print("  Those are projects OPI has not processed since; it writes these files then.")
-        print("  Not a stop: on the real clone 5 of the 11 look like this, 4 of them with a")
-        print("  deployment on the cluster that clone holds. The only repair is to reprocess")
-        print("  every project, which is what a key rotation must not set off.")
+        print("  Not a stop: the only repair is to reprocess every project, and that is what a")
+        print("  key rotation must not set off.")
     for name in closed:
         print(f"  FAIL opens with neither key: {name}")
     for secret in pairing.secrets_without_project:
@@ -532,9 +530,7 @@ CANONICAL_OLD = REPO / "security" / "old_key.txt"
 #: still has to be unchanged.
 KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
 #: The record ``rotate-sops-key.py`` keeps for THIS repo. The PAT round does not write it, it
-#: CORRECTS three entries in it: the loose values whose plaintext it replaces sit in that record
-#: with the hash of the old token, and a record that is left behind turns the next ``--verify``
-#: into three objections about a replacement the operator asked for.
+#: CORRECTS the entries of the loose values whose plaintext it replaces -- see ``update_record``.
 REPO_FINGERPRINT = REPO / "security" / "fingerprint.json"
 
 
@@ -674,9 +670,7 @@ def build_pat_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--argo-applications",
         required=True,
-        help="clone of zad-argo-user-applications: every ArgoCD repository secret in it carries"
-        " the repository password as PLAINTEXT inside the SOPS file, so a PAT round that skips"
-        " it leaves ArgoCD on the withdrawn token",
+        help="clone of zad-argo-user-applications, holding the ArgoCD repository secrets",
     )
     parser.add_argument("--pat-file", help="file holding the new PAT; without it you are asked, without echo")
     parser.add_argument("--dry-run", action="store_true", help="say what would happen and stop")

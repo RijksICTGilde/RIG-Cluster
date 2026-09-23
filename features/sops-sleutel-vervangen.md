@@ -19,16 +19,13 @@ Het gereedschap hoort erbij, omdat de platform-AGE-sleutel niet alleen in de SOP
 `sops rotate` alleen die ziet: dit zet elke vindplaats om, toont aan dat er niets anders is
 veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
 
-Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid: het omzetten, de
-vingerafdruk en de eindtoets zijn geautomatiseerd, dus een ronde hoeft niet op het kwartaal te
-wachten. De rest is handwerk en blijft dat: de renderlus en de commitinspectie van VERIFY-1, de
+Het ritme is een afspraak, het gereedschap is de mogelijkheid: het omzetten, de vingerafdruk
+en de eindtoets zijn geautomatiseerd, dus een ronde hoeft niet op het kwartaal te wachten. De rest is handwerk en blijft dat: de renderlus en de commitinspectie van VERIFY-1, de
 push en de handmatige sync van APPLY, en de rooktest van VERIFY-2. Waarom die grens er zit en geen
 achterstand is, staat onder "De oefenronde".
 
-## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
-
-Een aanleiding buiten het kwartaal om is een collega die weggaat, of het vermoeden dat een
-sleutel bekend is geworden.
+Preventief draait een ronde elk kwartaal. Een aanleiding daarbuiten is een collega die weggaat,
+of het vermoeden dat een sleutel bekend is geworden.
 
 ## Wat de sleutel vasthoudt
 
@@ -253,7 +250,7 @@ zijn drie plekken waar die inhoud staat, en alle drie moeten mee.
 | plek | wat er staat | hoe de ronde hem vindt |
 |---|---|---|
 | de projectbestanden | `repositories[].password`, versleuteld voor de platformsleutel | dezelfde lus als de sleutelronde |
-| deze repo | drie van de zes losse waarden DRAGEN de token; de andere drie zijn de git-serverwachtwoorden van het platform zelf | per waarde gemeten op de PLATTE TEKST, niet op een lijstje bestandsnamen |
+| deze repo | drie van de negen losse waarden DRAGEN de token; de andere zes zijn de git-serverwachtwoorden van het platform zelf | per waarde gemeten op de PLATTE TEKST, niet op een lijstje bestandsnamen |
 | een clone van zad-argo-user-applications | het repo-wachtwoord staat als PLATTE waarde in het sops-bestand | `--argo-applications`, en die vlag is verplicht |
 
 **De losse waarden: waarom een meting en geen lijstje.** `LOOSE_VALUE_FILES` heeft zes
@@ -321,13 +318,14 @@ echte clone en niet beredeneerd:
   VERWERKT, en die projecten zijn sindsdien niet verwerkt. Dat is een normale stand en geen
   drift. Ze worden bij naam gemeld en geteld -- stil overslaan is hoe de vijfde vindplaats
   eerder wegviel -- maar een stop zou de ronde weigeren op iets wat klopt, en de enige
-  reparatie ervoor is elk project opnieuw verwerken. Dat is precies wat een sleutelwissel niet mag uitlokken: het sleept elke andere
-  openstaande wijziging mee naar productie en maakt van een gerichte handeling een brede uitrol.
+  reparatie ervoor is elk project opnieuw verwerken. Dat is precies wat een sleutelwissel niet
+  mag uitlokken: het sleept elke andere openstaande wijziging mee naar productie en maakt van
+  een gerichte handeling een brede uitrol.
 
 **De eindtoets moet dit kunnen zien.** `--assert-old-key-dead` bewijst dat de oude SLEUTEL niets
 meer opent, en dat blijft waar na een PAT-ronde die de argo-clone oversloeg: die bestanden zijn
 door de sleutelronde herversleuteld en hun wachtwoord is nooit aangeraakt. De toets meldde dus
-CLEAN terwijl ArgoCD stilstond. Er zijn daarom twee halves bij gekomen:
+CLEAN terwijl ArgoCD stilstond. Er zijn daarom twee helften bij gekomen:
 
 * met `--projects` en `--argo-applications` samen wordt elk repository-secret naast het
   projectbestand gelegd waar het uit komt. Verschillen ze, dan is dat een bevinding met beide
@@ -678,11 +676,9 @@ stap 2 een maken, en de historie draagt er een: `sops-sandbox/sops-secret-for-in
 hield de oefensleutel base64 vast, en tot deze ronde viel alleen het platte `sops-key.txt` ernaast op.
 
 Daarom wordt elke regel twee keer gelezen: zoals hij staat, en met elke base64-reeks erop
-uitgepakt. Die reeksen beginnen bij twintig tekens, en dat getal komt niet uit de lucht: het is
-precies waar de KORTSTE vorm die het alarm kent op uitkomt, een Slack-token van vijftien tekens.
-Elke andere vorm codeert langer -- de eerstvolgende is een AWS-access-key op zevenentwintig
-tekens plus een opvulteken.
-Eén laag diep, want een geheim onder twee rondes base64 is geen vorm die hier ontstaat.
+uitgepakt. Die reeksen beginnen bij twintig tekens: precies waar de kortste vorm die het alarm
+kent op uitkomt, een Slack-token van vijftien tekens. Eén laag diep, want een geheim onder twee
+rondes base64 is geen vorm die hier ontstaat.
 Een melding uit de uitgepakte lezing houdt het regelnummer van de GECODEERDE regel, want dat is de
 regel die uit de commit moet. De ciphertextinventaris draait alleen op de platte lezing: een
 base64-reeks die naar ciphertext uitpakt is diezelfde ciphertext, en zou anders dubbel tellen.

@@ -11,13 +11,13 @@ a different repo and belong to a round of their own, with its own commits.
     uv run --project operations-manager/python python scripts/rotate-sops-key.py --verify              # check the fingerprint, months later too
     uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all five places
 
+Paste those lines whole: ``scripts/README.md`` says why the launcher is part of the command.
+
 The final check answers two questions, and the second one needs a flag. Without ``--pat-file``
 it is about the KEY alone: the old one opens nothing, the new one opens everything. A field
 can satisfy that and still hold the withdrawn GitHub token, because re-encrypting changes the
 key and not the content. ``--pat-file`` adds that half, over the loose values, the project
 files and the ArgoCD repository secrets at once. ``replace-git-pat.py`` is what writes them.
-
-Paste those lines whole: ``scripts/README.md`` says why the launcher is part of the command.
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
@@ -638,8 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--pat-file",
-        help="file holding the new GitHub PAT: the final check then also proves that no field"
-        " anywhere still carries a DIFFERENT GitHub token, which the key check cannot see",
+        help="file holding the new GitHub PAT, so the final check measures the token as well",
     )
     parser.add_argument(
         "--argo-applications",

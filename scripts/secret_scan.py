@@ -139,8 +139,8 @@ def looks_like_a_jwt(candidate: str) -> bool:
 #:
 #: It stood at twenty-four, and there that Slack token came back CLEAN inside a Kubernetes secret
 #: while the same token in plain text alarmed -- the same half-guard the base64 pass exists to
-#: close. Twenty adds only runs of exactly twenty characters, because twenty-one through
-#: twenty-three are not valid base64 lengths, and such a run still has to decode to text before it
+#: close. Twenty adds the runs that carry fifteen, sixteen and seventeen bytes (twenty-one
+#: characters is not a decodable length), and such a run still has to decode to text before it
 #: reaches a rule. Measured over ``git ls-files`` of this repository, the drop added no findings
 #: and not one decoded run.
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")

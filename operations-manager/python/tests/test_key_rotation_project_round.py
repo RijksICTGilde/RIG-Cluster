@@ -70,9 +70,8 @@ def argo_clone(tmp_path: Path) -> Path:
     ``replace-git-pat.py`` demands the flag, because a round that leaves those files behind
     leaves ArgoCD talking to the withdrawn token and nothing says so. An empty clone is the
     honest shape for a test about the project files: every project repository then turns up
-    under "no secret in this clone", which is reported by name and does not stop the round --
-    measured on the real clone, where 4 of the 11 projects look exactly like that. The argo half
-    has its own tests, in ``test_argo_repository_secrets.py``, against a real clone.
+    under "no secret in this clone", which is reported by name and does not stop the round. The
+    argo half has its own tests, in ``test_argo_repository_secrets.py``.
     """
     clone = tmp_path / "zad-argo-user-applications"
     clone.mkdir()

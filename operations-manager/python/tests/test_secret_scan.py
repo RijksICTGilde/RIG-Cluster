@@ -73,10 +73,9 @@ FAKE_AWS_KEY = "AKI" + "AIOSFODNN7EXAMPLE"
 SHORTEST_JWT = "eyJ" + "hbGciOjExfQ" + "." + "b" * 10 + "." + "c" * 5
 
 #: The SHORTEST string each alarm rule accepts, which is what the base64 threshold has to sit
-#: under. A roomy example value proves nothing about that boundary: ``FAKE_SLACK_TOKEN`` encodes to
-#: thirty-six characters and clears any plausible threshold, while the shortest token its own rule
-#: accepts encodes to exactly twenty -- and at the threshold of twenty-four this scanner shipped
-#: with, that one came back CLEAN inside a Kubernetes secret.
+#: under. A roomy example value proves nothing about that boundary: ``FAKE_SLACK_TOKEN`` encodes
+#: to thirty-six characters and clears any plausible threshold, while the shortest token its own
+#: rule accepts encodes to exactly twenty -- see ``BASE64_BLOB``.
 #:
 #: ``age-private-key`` is deliberately absent: the only thing that rule accepts is a key
 #: ``age-keygen -y`` agrees with, so its length is not ours to choose, and

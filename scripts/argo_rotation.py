@@ -1,51 +1,18 @@
 """The ArgoCD repository secrets in zad-argo-user-applications: the PAT round's third place.
 
-The key round already walks these files. They are SOPS files on the platform recipient, so
-``rotate-sops-key.py --argo-applications`` rotates them along with everything else. The PAT
-round asks a different question about the same files: their ``password`` is not ciphertext on
+The key round already walks these files: they are SOPS files on the platform recipient. The PAT
+round asks a different question about the same files. Their ``password`` is not ciphertext on
 the platform key but a PLAINTEXT value inside it, put there by
 ``argo_manager.prepare_repository_variables`` out of ``repositories[].password`` of the project
-file. Rotating the key leaves that value exactly as it was, so after a PAT round every one of
-these secrets still hands ArgoCD the revoked token -- and the final check says CLEAN, because
-the old KEY really does open nothing any more.
+file. Rotating the key leaves that value exactly as it was, so after a PAT round that skipped
+them every one of these secrets still hands ArgoCD the revoked token -- and the final check says
+CLEAN, because the old KEY really does open nothing any more.
 
-**Derived, not maintained.** OPI regenerates these secrets out of the project file whenever it
-processes that project. This round therefore writes what OPI itself would write, and nothing
-else:
-
-* the value comes from the project file, decrypted -- never straight from the new PAT.
-  Whatever the project round decided about a repository is what lands here, including the
-  decision to leave it alone: a password that is absent, ``plain:`` or in any other form is not
-  on the platform key, the project round skips it, and then there is nothing to derive and the
-  secret is left as it is. That is not a corner case -- it is the shape of the whole sandbox,
-  where every project carries ``plain:`` credentials for Forgejo;
-* only ``stringData.password`` changes. The document is round-tripped through the same YAML
-  writer the rest of the tool uses, so annotations, labels, quoting and key order come out as
-  they went in;
-* it is written back through ``encrypt_to_sops_files``, the exact function ``argo_manager``
-  encrypts with, onto the recipient the file already carries. This round does not move keys;
-  that is the key round's job, and doing both here would hide one inside the other.
-
-**The SSH form is not ours.** ``argo_manager`` picks ``argo-repository.yaml.jinja`` for a
-repository that is not HTTPS, and that template writes ``sshPrivateKey`` and no ``password`` at
-all -- the comment next to the call says "git SSH key/HTTPS-wachtwoord" for that reason. A
-secret without a ``password`` field is left alone, and that is measured on the decrypted
-document rather than assumed from the file name.
-
-**The coupling, and why only one direction stops the round.** A secret is named after the
-project and the repository it was derived from, so the two sides can be matched by name instead
-of by guesswork. The two directions are not symmetric, and that is measured on a real clone of
-zad-argo-user-applications rather than reasoned about:
-
-* a secret whose name matches no project repository is a finding that STOPS the round. Nothing
-  maintains that password, this round cannot derive a value for it, and it would sit there with
-  the revoked token after the old one is withdrawn;
-* a project repository with no secret is NOT a stop. On the real clone 5 of the 11 projects have
-  no directory of their own, 4 of them with a deployment on the very cluster that clone holds,
-  because OPI writes these files when it PROCESSES a project and those had not been processed
-  since. A stop there would refuse the round on a normal state -- and the one repair for it is
-  to reprocess every project, which is exactly what a key rotation must not set off. They are
-  named, counted and reported, because a silent skip is how the fifth place fell away earlier.
+These secrets are DERIVED: OPI regenerates them out of the project file whenever it processes
+that project, so this round writes what OPI itself would write and nothing else. What that
+means -- where the value comes from, why an SSH secret is left alone, why only one direction of
+the coupling stops the round -- is worked out in ``features/sops-sleutel-vervangen.md`` under
+"De PAT-ronde raakt drie plekken", and below, at the place each decision is made.
 """
 
 from __future__ import annotations
