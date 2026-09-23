@@ -74,12 +74,19 @@ De streepjesnamen hierboven zijn dunne ingangen; de logica staat in modules erna
 
 ## Gebruik
 
+**Dit document is de bron, de scripts zijn de uitvoering.** De stappen hieronder staan in de
+volgorde waarin ze moeten en met de reden erbij, zodat wie ze met de hand wil draaien dat kan
+zonder een script te openen. Wijkt een script af van wat hier staat, dan is dat een fout in het
+script. De losse handelingen eronder -- een sleutelpaar maken, de publieke helft afleiden, het
+k8s-secret zetten, met `sops` versleutelen en ontsleutelen -- staan in
+`docs/sops-en-age-met-de-hand.md`.
+
 ```bash
-# 1. sleutel B maken en de namen op hun plek zetten
-age-keygen -o security/nieuw.txt
-# --rename vraagt naar de twee paden: antwoord security/key.txt en security/nieuw.txt,
-# en het script schuift ze naar old_key.txt en key.txt
-scripts/rotate-sops-key.py --rename
+# 1. sleutel B maken en de namen op hun plek zetten. --generate-new-key roept age-keygen zelf
+#    aan; --rename vraagt naar de twee paden (antwoord security/key.txt en security/nieuw.txt)
+#    en schuift ze daarna naar old_key.txt en key.txt
+scripts/rotate-sops-key.py --rename --generate-new-key
+# met de hand: age-keygen -o security/nieuw.txt, en dan hetzelfde zonder --generate-new-key
 
 # 2. deze repo EN de argo-applicatierepo: eerst kijken, dan doen
 git clone <zad-argo-user-applications> /tmp/zad-argo
@@ -134,7 +141,10 @@ project aantoonbaar zijn repository haalt.
 
 Geen enkel script neemt een sleutel als argument. Ze vragen naar het PAD, met een default, en
 lezen uit `security/` -- die map staat in `.gitignore`. Een sleutel op de commandoregel belandt in
-de shellgeschiedenis, in de procestabel en in elk logboek dat het commando meeschrijft.
+de shellgeschiedenis, in de procestabel en in elk logboek dat het commando meeschrijft. Bij
+`--generate-new-key` draait die vraag om: het pad moet er juist NIET zijn. Een bestaand bestand is
+een weigering en geen overschrijving, want de default van die vraag is `security/key.txt` -- de
+sleutel die op dat moment alles nog opent, en waarvan geen kopie bestaat.
 
 Droogloop is de veilige stand: zonder `--ja` wordt er geen byte geschreven voordat je op
 "Run this?" ja hebt gezegd, en `--dry-run` stelt die vraag niet eens.

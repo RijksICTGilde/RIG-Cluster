@@ -39,9 +39,11 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     ConversionFailed,
     FinalCheck,
     Fingerprint,
+    KeyExists,
     LooseValue,
     MissingKey,
     ProjectRound,
+    ask_for_new_key,
     ask_for_path,
     check_sops_file,
     check_value,
@@ -281,7 +283,9 @@ async def fingerprint_now(
     return fingerprint, closed
 
 
-def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -> tuple[Path, str | None, Path, str]:
+def ask_for_keys(
+    arguments: argparse.Namespace, *, old_optional: bool = False, generate: bool = False
+) -> tuple[Path, str | None, Path, str]:
     """Ask for the two key files and hand back both the answered paths and the private halves.
 
     The paths come along because the last two actions, renaming and deleting the old key, act on
@@ -291,6 +295,11 @@ def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -
     ``security/old_key.txt``, while plan and documentation both promise that ``--verify`` still
     works months later. It measures with the new key, so demanding the file the previous step
     removed would turn that promise into exit 2.
+
+    ``generate`` turns the second question around: the new key does not have to be there, it is
+    MADE at the answered path. That takes the one manual ``age-keygen`` out of step 1, the step
+    where a mistyped path is most expensive. It refuses a path that already exists, so the
+    answer that would land on the key in use is a message and not a loss.
     """
     reader = (lambda _question: "") if arguments.ja else input
     old_path = Path(arguments.old_key)
@@ -306,7 +315,11 @@ def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -
         # that IS there but carries no key line fails too, which "no old key at" reported as an
         # absent file.
         print(f"NOTE {e}: checking with the new key alone.")
-    new = ask_for_path("new key", arguments.new_key, reader=reader)
+    if generate:
+        new = ask_for_new_key("new key (will be created)", arguments.new_key, reader=reader)
+        print(f"New key created: {new}")
+    else:
+        new = ask_for_path("new key", arguments.new_key, reader=reader)
     return old_path, old_private, new, read_key(new)
 
 
@@ -545,6 +558,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete the old key file, but only when the final check is clean",
     )
     parser.add_argument("--rename", action="store_true", help="put the keys under their fixed names and stop")
+    parser.add_argument(
+        "--generate-new-key",
+        action="store_true",
+        help="make the new key with age-keygen at the answered path, instead of reading it (needs --rename)",
+    )
     parser.add_argument("--old-key", default=str(CANONICAL_OLD))
     parser.add_argument("--new-key", default=str(CANONICAL_NEW))
     parser.add_argument("--fingerprint", default=str(DEFAULT_FINGERPRINT))
@@ -573,9 +591,20 @@ async def main(argv: list[str] | None = None) -> int:
     old_optional = arguments.verify and not (
         arguments.rename or arguments.assert_old_key_dead or arguments.remove_old_key
     )
+    if arguments.generate_new_key and not arguments.rename:
+        # Rotating onto a freshly made key that still sits under its own name would encrypt
+        # every field for a key that nothing in the repo points at: the Taskfile, CLAUDE.md and
+        # the install docs all read security/key.txt, and that still holds the old one. Making
+        # the key and shifting the names is one step, so the flags are too.
+        print("FAIL --generate-new-key goes with --rename: making the key and putting it under", file=sys.stderr)
+        print("its fixed name is one step. Without the rename nothing reads the new key.", file=sys.stderr)
+        return 2
+
     try:
-        old_path, old_private, new_path, new_private = ask_for_keys(arguments, old_optional=old_optional)
-    except MissingKey as e:
+        old_path, old_private, new_path, new_private = ask_for_keys(
+            arguments, old_optional=old_optional, generate=arguments.generate_new_key
+        )
+    except (MissingKey, KeyExists) as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
 

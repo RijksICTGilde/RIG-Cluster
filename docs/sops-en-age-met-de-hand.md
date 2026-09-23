@@ -5,6 +5,9 @@ versleutelen of wil begrijpen wat de Taskfile en de CMP-plugin doen. In het norm
 je dit niet: `task generate-age-key` maakt de sleutel en `task generate-env-secrets-for-operations-manager`
 maakt het SOPS-secret. Dit doc is er voor het geval je eronder wilt kijken.
 
+Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-vervangen.md` het
+stappenplan; daar staat de volgorde en waarom die zo is, hier de losse handelingen eronder.
+
 Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo. Die
 map is verwijderd omdat er een geldige AGE-sleutel in stond (`sops-key.txt`).
 

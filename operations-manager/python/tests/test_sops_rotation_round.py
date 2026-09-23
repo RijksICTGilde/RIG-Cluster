@@ -50,6 +50,7 @@ from key_rotation import (  # noqa: E402
     files_with_ciphertext,
     loose_values,
     opens_with,
+    read_key,
     sha256_of,
     sops_files_for,
     sops_plaintext,
@@ -408,6 +409,87 @@ def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_pat
     assert (security / "old_key.txt").read_text() == "old\n"
     assert (security / "key.txt").read_text() == "new\n"
     assert not answered_new.exists()
+
+
+@pytest.mark.asyncio
+async def test_generating_the_new_key_makes_it_at_the_answered_path(tmp_path: Path) -> None:
+    """Step 1 is one command: --rename makes the key too, instead of a hand-typed age-keygen.
+
+    The arrangement is the documented one -- the old key sits on ``security/key.txt`` and the
+    new one is answered as ``security/nieuw.txt``, a path that does NOT exist yet. Without the
+    flag that answer is a missing file and the run stops at exit 2, which is what makes this
+    test measure the generation rather than the rename it rides along with.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    security = tmp_path / "security"
+    security.mkdir()
+    answered_old = security / "key.txt"
+    answered_old.write_text(f"{old_private}\n")
+    answered_new = security / "nieuw.txt"
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", security / "old_key.txt"),
+        patch.object(tool, "CANONICAL_NEW", security / "key.txt"),
+        patch("builtins.input", side_effect=[str(answered_old), str(answered_new), "ja"]),
+    ):
+        code = await tool.main(["--rename", "--generate-new-key"])
+
+    assert code == 0
+    assert (security / "old_key.txt").read_text() == f"{old_private}\n"
+    assert read_key(security / "key.txt") != old_private
+    assert not answered_new.exists()
+
+
+@pytest.mark.asyncio
+async def test_generating_refuses_to_write_over_a_key_that_is_already_there(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The default answer for the new key IS the key in use, and that answer must not destroy it.
+
+    Take the default here and the platform key would be gone while every field in the repo still
+    hangs on it, with no copy anywhere -- the one mistake in this tool with no way back. So an
+    existing path is a refusal that names it, and the old key stays put.
+
+    ``age-keygen -o`` opens with O_EXCL and refuses this too, which is why the assert is on the
+    WORDS: without the tool's own rule the run still ends at exit 2 with the path in it, and
+    only the message tells "this is the key in use" from "the tool could not open a file".
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    security = tmp_path / "security"
+    security.mkdir()
+    answered_old = security / "key.txt"
+    answered_old.write_text(f"{old_private}\n")
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", security / "old_key.txt"),
+        patch.object(tool, "CANONICAL_NEW", security / "key.txt"),
+        patch("builtins.input", side_effect=[str(answered_old), str(answered_old)]),
+    ):
+        code = await tool.main(["--rename", "--generate-new-key"])
+
+    assert code == 2
+    error = capsys.readouterr().err
+    assert "refusing to overwrite" in error
+    assert str(answered_old) in error
+    assert answered_old.read_text() == f"{old_private}\n"
+
+
+@pytest.mark.asyncio
+async def test_generating_a_key_without_the_rename_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Making the key and giving it the fixed name is one step, so the flags are one step too.
+
+    A fresh key under its own name would otherwise be rotated onto while the Taskfile, CLAUDE.md
+    and the install docs all still read ``security/key.txt`` -- which holds the OLD key. The
+    refusal comes before the first question, so nothing is written and nothing is asked.
+    """
+    would_be = tmp_path / "nieuw.txt"
+
+    with patch("builtins.input", side_effect=AssertionError("must not ask")):
+        code = await tool.main(["--generate-new-key", "--new-key", str(would_be)])
+
+    assert code == 2
+    assert "--rename" in capsys.readouterr().err
+    assert not would_be.exists()
 
 
 def test_renaming_does_nothing_without_a_yes(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
