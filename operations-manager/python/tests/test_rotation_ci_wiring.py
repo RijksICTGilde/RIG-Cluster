@@ -1,7 +1,7 @@
 """The CI wiring around the key rotation: what has to run, and what does not run yet.
 
-The checks here read the workflow file and need neither ``age`` nor ``sops``, and that is why
-they are their own module. ``test_sops_rotation_round.py``, ``test_key_rotation_project_round.py`` and
+The checks here read files on disk -- the workflows and the feature doc -- and need neither
+``age`` nor ``sops``, and that is why they are their own module. ``test_sops_rotation_round.py``, ``test_key_rotation_project_round.py`` and
 ``test_key_rotation_engine.py`` all carry ``skipif(which("age") is None)`` at module level, so
 with ``age`` off the runner they go quiet in one move: measured on this tree, all 168 of them
 skip and nothing goes red. A guard against a silent skip may not sit behind that same skip.
@@ -159,9 +159,8 @@ def test_the_ci_test_job_really_collects_the_rotation_modules() -> None:
     here excludes ``slow``, and no test in this repo went red -- the same silent quiet the
     install check exists for, one step further down.
 
-    Both halves are measured with the step's own arguments: the paths it points at have to cover
-    the modules, and the marker expression has to leave them selected, which is a real collection
-    and not a reading of the markers.
+    Both halves are measured with the step's OWN arguments, and the marker half through a real
+    collection rather than a reading of the markers.
     """
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
     working_directory = workflow["jobs"]["test"].get("defaults", {}).get("run", {}).get("working-directory")

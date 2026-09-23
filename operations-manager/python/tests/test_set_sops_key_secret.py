@@ -108,8 +108,7 @@ def test_an_unreadable_secret_is_not_reported_as_a_project_key(capsys: pytest.Ca
 
     It may be the platform key in a shape this tool does not recognise, and then this run leaves
     the old key live in that namespace -- which the final check cannot see, because it measures
-    files and not cluster secrets. So it gets its own heading and a line telling the operator to
-    look, while the step is still reversible.
+    files and not cluster secrets.
     """
     old_private, old_public = generate_sops_key_pair()
     _new_private, new_public = generate_sops_key_pair()
@@ -167,8 +166,7 @@ async def test_the_manifest_never_travels_through_argv(tmp_path: Path) -> None:
     -c``. Measured on that call shape with a canary in the manifest: two hits across ``ps -eo
     args`` and ``/proc/<pid>/cmdline`` while the apply runs, zero with a file path instead.
 
-    So this checks the property and not the spelling: no call carries ``stdin_input``, and the
-    manifest text appears in no argument of any call. A future rewrite is free to reach the
+    So this checks the property and not the spelling: a future rewrite is free to reach the
     cluster differently as long as the key stays out of argv.
     """
     private, _public = generate_sops_key_pair()

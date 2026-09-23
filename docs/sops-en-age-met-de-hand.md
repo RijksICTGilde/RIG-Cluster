@@ -15,9 +15,9 @@ map is verwijderd: hij bevatte een eigen AGE-sleutelpaar voor ontwikkeldoeleinde
 ## 1. Een AGE-sleutelpaar maken
 
 `security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
-neerzetten om deze handelingen te doen. **Alle paden hieronder staan er daarom in.** Niet uit
-netheid: in de wortel van de repo is `sops-key.txt` niet genegeerd, en een `git add -A` neemt hem
-dan gewoon mee.
+neerzetten om deze handelingen te doen. **De sleutel en het secret-manifest hieronder gaan er
+daarom allebei in:** in de wortel van de repo is `sops-key.txt` niet genegeerd, en een
+`git add -A` neemt hem dan mee.
 
 Ook `security/` is een tussenoplossing: een sleutel hoort op termijn in een CI/CD-omgeving of een
 vault-achtige voorziening en niet in een map op een laptop. Waar precies is de vraag van het
@@ -47,10 +47,6 @@ kubectl create secret generic sops-age-key \
 
 kubectl apply -f security/sops-secret.yaml
 ```
-
-Ook dat manifest hoort in `security/`, en om dezelfde reden als de sleutel: een
-`kind: Secret` DRAAGT de sleutel, base64 eromheen. Dat is precies wat een lezer -- en tot deze
-taak ook de geheimenscanner -- over het hoofd ziet.
 
 Het hele bestand en niet alleen de sleutelregel: `bootstrap/rig-system/kustomize/sops-plugin.sh`
 haalt er met `grep '^AGE-SECRET-KEY-'` de regel uit.
@@ -90,8 +86,8 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
 
 - De private sleutel hoort nooit in git. Lokaal zet je hem voorlopig in `security/`, dat is
   gitignored -- zie hierboven waarom dat een tussenoplossing is en geen eindplek.
-- **Een `kind: Secret` telt als de sleutel zelf.** Base64 is geen versleuteling; `data.key`
-  bevat het sleutelbestand. Behandel zo'n manifest als het sleutelbestand.
+- **Een `kind: Secret` telt als de sleutel zelf.** Base64 is geen versleuteling: `data.key`
+  bevat het hele sleutelbestand.
 - De publieke helft is geen geheim en mag in documentatie en in de SOPS-metadata staan.
 - Gebruik per omgeving een eigen sleutelpaar: `security/key.txt` (platform),
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).

@@ -113,21 +113,12 @@ async def write_secret(namespace: str, key_file: Path) -> None:
     """Replace the secret in one namespace, keeping the whole key file as its value.
 
     The rendered manifest goes through a 0600 temporary FILE and ``apply -f <path>``, never
-    through ``stdin_input``. That is not a style choice. ``KubectlConnector.run_command`` builds a
-    heredoc around a stdin payload and hands the whole thing to ``create_subprocess_shell``, so
-    the manifest -- which is the entire key file, base64 encoded under ``data.key`` -- would stand
-    in the argv of ``/bin/sh -c`` and be readable by every local uid from ``ps`` and from
-    ``/proc/<pid>/cmdline`` for as long as the apply runs, once per namespace. Measured on that
-    call shape: the payload comes back out of both.
-
-    It is the very property this tool promises. ``key_rotation.ask_for_path`` refuses to take a
-    key as an argument *because* a key on a command line lands in the process table, and the
-    machine this runs on is a shared dev server with several sessions on it. With a file, argv
-    carries a PATH -- the same shape as the ``--from-file`` above it.
-
-    ``tempfile.mkstemp`` creates 0600 and outside the repository, so the file is neither readable
-    by another user nor commitable by accident, and the ``finally`` removes it even when the apply
-    raises.
+    through ``stdin_input``: ``KubectlConnector.run_command`` builds a heredoc around a stdin
+    payload and hands the whole thing to ``create_subprocess_shell``, so the manifest -- which is
+    the entire key file, base64 encoded under ``data.key`` -- would stand in the argv of
+    ``/bin/sh -c``, readable by every local uid from ``ps`` for as long as the apply runs. That is
+    the property ``key_rotation.ask_for_path`` refuses a key argument for, and the machine this
+    runs on is a shared dev server. With a file, argv carries a PATH.
     """
     kubectl = create_kubectl_connector()
     stdout, stderr, code = await kubectl.run_command(
@@ -203,12 +194,10 @@ def build_parser() -> argparse.ArgumentParser:
 def report_holders(holders: list[SecretHolder], old_public: str, new_public: str) -> list[SecretHolder]:
     """Print every holder, and return the ones that carry the old platform key.
 
-    A secret whose value yields no public key gets its OWN heading rather than being counted with
-    the project keys. "Carries a different key, left alone" is a statement about what is in it,
-    and about an unreadable one nothing is known: it may be the platform key in a shape this tool
-    does not recognise, in which case leaving it alone leaves the old key live in that namespace.
-    The final check measures FILES, so it would not catch that either. Saying it out loud is what
-    puts it in front of the operator while the step is still reversible.
+    A secret whose value yields no public key gets its OWN heading: "carries a different key" is
+    a statement about what is in it, and about an unreadable one nothing is known. It may be the
+    platform key in a shape this tool does not recognise, and the final check measures FILES, so
+    nothing downstream would catch that.
     """
     targets = [holder for holder in holders if holder.public_key == old_public]
     done = [holder for holder in holders if holder.public_key == new_public]

@@ -574,11 +574,9 @@ die een rotatie moet raken.
 En dat alles ook in base64. Een Kubernetes-secret codeert elke waarde, dus een manifest met de
 platformsleutel erin draagt geen `AGE-SECRET-KEY-` die een tekstscan ziet: gemeten stond dezelfde
 sleutel in een `.py` op exit 1 en in een `kind: Secret` onder `data.key` op CLEAN. Dat is geen
-bedachte vorm maar de moedertaal van deze repo, en `docs/sops-en-age-met-de-hand.md` laat je er in
-stap 2 een maken -- dat doc schrijft zijn sleutel en zijn manifest nu allebei naar `security/`,
-juist omdat in de wortel geen van beide genegeerd is. De historie draagt er ook een:
-`sops-sandbox/sops-secret-for-in-namespace.yaml` hield de oefensleutel base64 vast, en tot deze
-ronde viel alleen het platte `sops-key.txt` ernaast op.
+bedachte vorm maar de moedertaal van deze repo -- `docs/sops-en-age-met-de-hand.md` laat je er in
+stap 2 een maken, en de historie draagt er een: `sops-sandbox/sops-secret-for-in-namespace.yaml`
+hield de oefensleutel base64 vast, en tot deze ronde viel alleen het platte `sops-key.txt` ernaast op.
 
 Daarom wordt elke regel twee keer gelezen: zoals hij staat, en met elke base64-reeks erop
 uitgepakt. Eén laag diep, want een geheim onder twee rondes base64 is geen vorm die hier ontstaat.

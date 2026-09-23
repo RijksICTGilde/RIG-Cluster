@@ -12,12 +12,9 @@ the prefix produces findings nobody has to fix, and an alarm everyone learns to 
 alarm. So an AGE candidate is only a finding when ``age-keygen -y`` accepts it: a real key.
 
 **And it reads base64 as well as plain text.** A Kubernetes secret encodes every value, so a
-manifest carrying the platform key holds no ``AGE-SECRET-KEY-`` a plain-text scan can see --
-measured: the same key in a ``.py`` failed the scan, in a ``kind: Secret`` under ``data.key`` it
-came back CLEAN. Not a hypothetical shape: the history of this repository carries one. The sweep
-found ``sops-sandbox/sops-secret-for-in-namespace.yaml`` only once this pass existed, while the
-plain ``sops-key.txt`` beside it -- the same key -- had been showing up all along. So every
-base64 run on a line is decoded once and the decoded text goes past the same rules.
+manifest carrying the platform key holds no ``AGE-SECRET-KEY-`` a plain-text scan can see. Not a
+hypothetical shape: the history of this repository carries one, and the sweep found it only once
+this pass existed.
 """
 
 from __future__ import annotations
@@ -133,9 +130,9 @@ def looks_like_a_jwt(candidate: str) -> bool:
     return isinstance(header, dict) and "alg" in header
 
 
-#: A base64 run long enough to hide something. The shortest shape in ``RULES`` is an AWS access
-#: key id at twenty characters, which needs twenty-eight base64 characters of its own; below
-#: twenty-four -- eighteen bytes decoded -- no rule fits, so a shorter run cannot carry one.
+#: A base64 run long enough to hide something. Twenty-four characters decode to eighteen bytes,
+#: which is under every shape in ``RULES`` but one: a Slack token is ``xox[abprs]-`` plus ten
+#: characters, fifteen in all, and fifteen bytes fit in twenty base64 characters.
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
 
 
@@ -143,8 +140,7 @@ def decoded_blobs(line: str) -> list[str]:
     """Every base64 run on this line that decodes to text, decoded.
 
     One level deep and no further: a secret hidden under two rounds of base64 is not a shape this
-    repository produces, while re-scanning every decode of every decode is how a tree scan turns
-    into a coffee break. Runs that decode to bytes rather than text are dropped here, which is
+    repository produces. Runs that decode to bytes rather than text are dropped here, which is
     what keeps AGE and SOPS ciphertext -- base64 over a binary payload -- out of the second pass.
     """
     decoded: list[str] = []
