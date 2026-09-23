@@ -61,6 +61,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     project_files,
     public_key_of,
     read_key,
+    replace_record,
     rotate_project_file,
     sha256_of,
     sops_files,
@@ -672,6 +673,29 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def note_places_left_out(projects: Path | None, argo: Path | None) -> None:
+    """Which of the five places the final check does not walk, because its flag was left off."""
+    if projects is None:
+        print("NOTE without --projects the final check does not walk the fourth place.")
+    if argo is None:
+        print("NOTE without --argo-applications the final check does not walk the ArgoCD")
+        print("repository secrets, and those render with the secret step 5 replaces.")
+
+
+def note_argo_left_out_of_the_record(argo: Path | None) -> None:
+    """The same flag, in the run that RECORDS -- and there it is the sharper of the two.
+
+    The final check says which place it does not WALK. This run decides which fields the
+    fingerprint HOLDS, and every later check reads that record: leaving the flag off here and
+    passing it on a second run makes the ArgoCD fields new to the record, which is the one
+    difference the guard around it deliberately allows. Saying so only at the final check is
+    saying so after the record has been written.
+    """
+    if argo is None:
+        print("NOTE without --argo-applications this run leaves the ArgoCD repository secrets")
+        print("out of the conversion AND out of the fingerprint it records.")
+
+
 async def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
 
@@ -736,11 +760,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 0
 
     if arguments.assert_old_key_dead or arguments.remove_old_key:
-        if projects is None:
-            print("NOTE without --projects the final check does not walk the fourth place.")
-        if argo is None:
-            print("NOTE without --argo-applications the final check does not walk the ArgoCD")
-            print("repository secrets, and those render with the secret step 5 replaces.")
+        note_places_left_out(projects, argo)
         fingerprints = [fingerprint_path, projects_fingerprint]
         expected = expected_count(fingerprints) if projects is not None else None
         check = await run_final_check(old_private, new_private, old_public, new_public, projects, expected, trees)
@@ -768,6 +788,8 @@ async def main(argv: list[str] | None = None) -> int:
         return await run_verify(
             fingerprint_path, paths, old_public, new_public, new_private, trees, projects, projects_fingerprint
         )
+
+    note_argo_left_out_of_the_record(argo)
 
     plan = await build_plan(paths, old_private, new_private, old_public, trees)
     show_plan(plan)
@@ -800,7 +822,12 @@ async def main(argv: list[str] | None = None) -> int:
         for name in closed:
             print(f"FAIL opens with neither key: {name}", file=sys.stderr)
         return 1
-    fingerprint_before.save(fingerprint_path)
+    # Compared before it is replaced, by the same guard the projects round uses. Two converting
+    # runs with a changed plaintext in between -- step 2 first without --argo-applications and
+    # then with it -- otherwise make the new hash the truth in silence: ``--verify`` and
+    # ``--assert-old-key-dead`` both read this record, and ``--remove-old-key`` acts on it.
+    if replace_record(fingerprint_before, fingerprint_path):
+        return 1
     print(f"  {len(fingerprint_before.fields)} fields -> {fingerprint_path}")
 
     print("\nConverting...")

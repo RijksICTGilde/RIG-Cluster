@@ -1306,6 +1306,91 @@ async def test_the_whole_round_converts_both_places_and_leaves_a_checkable_finge
     assert "AGE-SECRET-KEY-" not in written
 
 
+async def _two_tree_round(tmp_path: Path, old_public: str) -> tuple[Path, Path, Path]:
+    """This repo with one loose value, and an argo clone with one SOPS file on the same key.
+
+    The shape of the two-run path the documentation describes: step 2 can be run without
+    ``--argo-applications`` and then again with it, so the second run is a converting run that
+    meets a record the first one wrote.
+    """
+    repo = tmp_path / "rig-cluster"
+    clone = tmp_path / "zad-argo-user-applications"
+    repo.mkdir()
+    clone.mkdir()
+    env_path = await _env_file(repo / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    _sops_file(clone, "argo-repository-main-repo", SECRET_BODY, old_public)
+    return repo, clone, env_path
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagrees_with(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A changed plaintext between two converting runs, and the record is the only witness.
+
+    This is the same failure the projects round has a guard for, on the place that round does not
+    touch. Writing the record without comparing it makes the second run's hash the truth in
+    silence: ``--verify`` then says CLEAN, ``--assert-old-key-dead`` says the old key is dead, and
+    ``--remove-old-key`` acts on that verdict -- all four reading a record the run that changed
+    the value had just rewritten. The earlier record has to survive, because it is the evidence.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    repo, clone, env_path = await _two_tree_round(tmp_path, old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with patch.object(tool, "REPO", repo), patch.object(tool, "loose_paths", return_value=[env_path]):
+        assert await tool.main(["--ja", *arguments]) == 0
+        recorded = fingerprint.read_text()
+        capsys.readouterr()
+
+        # Perfectly readable with the new key, so no decryption test can see this. Only the record can.
+        env_path.write_text(f"GIT_PROJECTS_SERVER_PASSWORD={await _base64_value('something-else', new_public)}\n")
+        code = await tool.main(["--ja", *arguments, "--argo-applications", str(clone)])
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert "disagrees with what is there now" in printed
+    assert f"content changed: {env_path}#GIT_PROJECTS_SERVER_PASSWORD" in printed
+    assert fingerprint.read_text() == recorded, "the earlier record is the evidence and has to stand"
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_a_place_left_out_of_the_first_run_joins_the_record_on_the_second(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The other side of that guard, and the reason it compares shared names only.
+
+    Leaving ``--argo-applications`` off is allowed, so its fields are simply new to the record
+    when the flag does come along. The run that RECORDS is the one that decides which fields end
+    up in there, so that is where the note about the missing flag belongs -- the final check's
+    note comes too late to change anything.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    repo, clone, env_path = await _two_tree_round(tmp_path, old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with patch.object(tool, "REPO", repo), patch.object(tool, "loose_paths", return_value=[env_path]):
+        assert await tool.main(["--ja", *arguments]) == 0
+        first = capsys.readouterr().out
+        code = await tool.main(["--ja", *arguments, "--argo-applications", str(clone)])
+
+    printed = capsys.readouterr().out
+    assert "NOTE without --argo-applications this run leaves the ArgoCD repository secrets" in first
+    assert code == 0
+    assert "disagrees with what is there now" not in printed
+    assert "new in the collection since the last round" in printed
+    assert sorted(Fingerprint.load(fingerprint).fields) == [
+        f"{env_path}#GIT_PROJECTS_SERVER_PASSWORD",
+        f"{clone}/argo-repository-main-repo.sops.yaml#<sops-document>",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_a_full_round_converts_a_python_literal_and_a_whole_file_block(tmp_path: Path) -> None:
     """The two shapes the worklist used to walk past, through the tool as the operator runs it.

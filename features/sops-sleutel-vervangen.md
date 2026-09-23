@@ -190,10 +190,12 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 ### Daarna
 
 ```bash
-# 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
-git clone <zad-projects> /tmp/zad-projects-pat
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
-uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects
+# 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU. Verse clone, want er
+#    kan sinds stap 3 gepusht zijn, maar op DEZELFDE plek: de opname noemt elk veld bij zijn
+#    pad, dus alleen dan legt deze ronde zich naast wat stap 3 vastlegde
+rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --dry-run
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects
 
 # 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
@@ -276,13 +278,20 @@ gedaan en het script gaat rood. Repareer dat bestand en draai dezelfde ronde nog
 ene ronde omzette, dus de telling van de eindtoets klopt ongeacht in hoeveel rondes het lukte.
 
 Een opname die er al staat wordt eerst VERGELEKEN en dan pas vervangen, op de velden die in
-allebei voorkomen. Overschrijven zonder vergelijken maakte er een telling van: met de oude hashes
-weg is er niets meer dat een veranderde inhoud kan tegenspreken, en de ronde meldt de nieuwe hash
-dan als de waarheid. Wat er wel bij mag komen of af mag vallen is een veld: een gerepareerd
-bestand dat nu wel leesbaar is, een project dat sindsdien weg is. Verschilt een veld dat beide
-opnames kennen van inhoud, dan stopt de ronde en blijft de oude opname staan -- dat is het bewijs.
-Bij de PAT-ronde horen de wachtwoordvelden juist te verschillen, en die staan op de lijst
-"vervangen".
+allebei voorkomen. Dat geldt voor allebei de opnames -- die van deze repo en die van de projecten
+-- en het is dezelfde grendel, niet twee keer dezelfde regel. Overschrijven zonder vergelijken
+maakte er een telling van: met de oude hashes weg is er niets meer dat een veranderde inhoud kan
+tegenspreken, en de ronde meldt de nieuwe hash dan als de waarheid. Wat er wel bij mag komen of af
+mag vallen is een veld: een gerepareerd bestand dat nu wel leesbaar is, een project dat sindsdien
+weg is, of de argo-clone die er de vorige keer niet bij zat. Verschilt een veld dat beide opnames
+kennen van inhoud, dan stopt de ronde en blijft de oude opname staan -- dat is het bewijs.
+
+De PAT-ronde werkt diezelfde projectopname bij, en niet een tweede ernaast -- en daarom draait
+stap 7 op dezelfde clonePLEK als stap 3. De wachtwoordvelden
+horen daar juist te verschillen en die staan op de lijst "vervangen"; `config.age-private-key`
+moet ook in die ronde gelijk blijven. Een eigen opname voor de PAT-ronde las niemand: `--verify`
+en de eindtoets wijzen allebei naar `security/projects-fingerprint.json`, dus na stap 7 meldde
+`--verify` dan "content changed" op elk wachtwoord terwijl er niets mis was.
 
 Wat het NIET garandeert: of de waarden zelf nog geldig zijn bij de tegenpartij. Of GitHub die PAT
 nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cutover.

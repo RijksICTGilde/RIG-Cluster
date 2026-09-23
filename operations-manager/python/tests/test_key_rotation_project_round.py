@@ -45,7 +45,6 @@ from key_rotation import (  # noqa: E402
 )
 from project_rotation import (  # noqa: E402
     KEY_FINGERPRINT,
-    PAT_FINGERPRINT,
     RoundResult,
     broken,
     build_key_parser,
@@ -1064,6 +1063,66 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
 
 
 @pytest.mark.asyncio
+async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share_one_record(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Step 3, then step 7, then the check the feature doc promises still works months later.
+
+    The two rounds are documented without ``--fingerprint``, so this runs them on their defaults,
+    which is where the fault was: a record of its own for the PAT round meant nobody read it, and
+    ``rotate-sops-key.py --verify --projects`` -- which defaults to the key round's record -- then
+    reported "content changed" on every password with nothing wrong. One record for the
+    collection keeps that promise, and gives up no check: the password hash has to have MOVED and
+    the project key hash has to have stayed put.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    repo_record = tmp_path / "fingerprint.json"
+    Fingerprint().save(repo_record)
+    pat = tmp_path / "pat.txt"
+    pat.write_text("ghp_the_new_token\n")
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    with patch.object(round_tool, "KEY_FINGERPRINT", fingerprint):
+        assert await main_rotate_keys(["--ja", "--projects", str(directory), *keys]) == 0
+        after_the_key_round = Fingerprint.load(fingerprint).fields
+        assert await main_replace_pat(["--ja", "--projects", str(directory), *keys, "--pat-file", str(pat)]) == 0
+    after_the_pat_round = Fingerprint.load(fingerprint).fields
+    capsys.readouterr()
+
+    with (
+        patch.object(final_check_tool, "sops_files_for", return_value=[]),
+        patch.object(final_check_tool, "loose_paths", return_value=[]),
+        patch.object(final_check_tool, "files_with_ciphertext", return_value={}),
+        patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+        patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
+    ):
+        step_7_verify = await final_check_tool.main(
+            ["--ja", "--verify", "--projects", str(directory), *keys, "--fingerprint", str(repo_record)]
+        )
+
+    printed = capsys.readouterr().out
+    assert step_7_verify == 0, "the record the PAT round left behind is the one --verify reads"
+    assert "content changed" not in printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+    assert (
+        after_the_key_round[f"{path}#repositories[0].password"]
+        != after_the_pat_round[f"{path}#repositories[0].password"]
+    )
+    assert (
+        after_the_key_round[f"{path}#{PROJECT_FIELD_PRIVATE_KEY}"]
+        == after_the_pat_round[f"{path}#{PROJECT_FIELD_PRIVATE_KEY}"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -1587,15 +1646,16 @@ async def test_a_second_round_does_not_point_at_head_0(
     assert "--argo-applications" in second
 
 
-def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() -> None:
+def test_the_documented_project_rounds_parse_and_share_one_record() -> None:
     """The half of the operator's script in the feature doc that this module owns.
 
     ``test_every_documented_invocation_parses_and_the_final_check_walks_the_projects`` walks the
     ``rotate-sops-key.py`` lines; these four were read by nothing. Neither round is documented
-    with ``--fingerprint``, so both run on their default, and the key round's default is the
-    file the final check counts -- which is what makes the bare step-8 command add up. The PAT
-    round writes to a file of its own on purpose: it converts the passwords alone, so counting
-    it would halve the total.
+    with ``--fingerprint``, so both run on their default, and that default has to be the file
+    the final check counts and ``--verify --projects`` compares against -- which is what makes
+    the bare step-8 command add up and what keeps step 7 from leaving a verify that reports
+    "content changed" on every password. Both records covered the whole collection and were
+    the same size, so a second file never halved anything; it was simply read by nobody.
     """
     documented = documented_lines("rotate-project-keys.py", "replace-git-pat.py")
     key_lines = [line for line in documented if "rotate-project-keys.py" in line]
@@ -1603,12 +1663,17 @@ def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() ->
 
     assert len(key_lines) == 2, "step 3 is a dry run and then the real one"
     assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"
+    clones = set()
     for line in key_lines:
         arguments = build_key_parser().parse_args(flags(line))
         assert arguments.fingerprint == str(KEY_FINGERPRINT)
         assert arguments.projects, f"the round has nowhere to look: {line}"
+        clones.add(arguments.projects)
     for line in pat_lines:
         arguments = build_pat_parser().parse_args(flags(line))
-        assert arguments.fingerprint == str(PAT_FINGERPRINT)
+        assert arguments.fingerprint == str(KEY_FINGERPRINT)
         assert arguments.projects, f"the round has nowhere to look: {line}"
-    assert KEY_FINGERPRINT != PAT_FINGERPRINT
+        clones.add(arguments.projects)
+    # One record naming every field by its PATH, so two rounds on two clone locations share no
+    # name at all and the comparison between them silently checks nothing.
+    assert len(clones) == 1, f"step 3 and step 7 have to run on the same clone location: {sorted(clones)}"

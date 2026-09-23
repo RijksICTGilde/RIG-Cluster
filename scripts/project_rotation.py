@@ -52,6 +52,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     project_files,
     public_key_of,
     read_key,
+    replace_record,
     rotate_project_file,
     sha256_of,
 )
@@ -245,24 +246,6 @@ async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerpr
     return fingerprint, closed
 
 
-def content_drift(previous: Fingerprint, current: Fingerprint, replaced: Iterable[str]) -> list[str]:
-    """Where two records disagree about a field they BOTH hold.
-
-    Deliberately not ``compare()`` over the whole record. That one also objects to a field
-    appearing or disappearing, and here both are the documented path rather than a finding: a
-    round may strand on an unreadable file and be run again once it is repaired, and the field
-    that could not be measured is then new to the record. A project that has since been deleted
-    is the same thing the other way round.
-
-    What no round may do is quietly change what a field SAYS, and a name that sits in both
-    records is exactly the question that answers.
-    """
-    shared = sorted(set(previous.fields) & set(current.fields))
-    return Fingerprint(fields={name: previous.fields[name] for name in shared}).compare(
-        Fingerprint(fields={name: current.fields[name] for name in shared}), replaced=replaced
-    )
-
-
 async def save_fingerprint(directory: Path, path: str, *private_keys: str, replaced: Iterable[str] = ()) -> list[str]:
     """Record the whole collection, and hold a record that is already there to what it says.
 
@@ -273,35 +256,16 @@ async def save_fingerprint(directory: Path, path: str, *private_keys: str, repla
     was there: a merge would keep an entry for a project that has since been deleted, and the
     check does not walk that one any more.
 
-    Measuring fresh is also why an existing record has to be COMPARED before it is replaced.
-    Overwriting it silently made this a tally instead of a check: with the earlier hashes gone
-    there is nothing left for a changed plaintext to disagree with, and the round then reports
-    the new hash as the truth. Measured on a real file, ``repositories[0].password`` swapped for
-    a different plaintext and re-encrypted: the round exited 0 and the final check said CLEAN,
-    both of them reading the record this same round had just written.
-
-    A deviation therefore stops the round and leaves the earlier record where it is -- that
-    record is the evidence. ``replaced`` names the fields that are MEANT to read differently,
-    which is the whole of the difference between the key round and the PAT round.
+    Measuring fresh is also why the record is replaced through ``replace_record()``, which
+    compares before it overwrites. Why that guard exists, and why the repo round shares it
+    rather than carrying a copy, is in ``replace_record`` itself.
 
     Returns the objections, empty when there are none.
     """
     fingerprint, closed = await fingerprint_all(directory, *private_keys)
-    recorded = Path(path)
-    if recorded.is_file():
-        previous = Fingerprint.load(recorded)
-        objections = content_drift(previous, fingerprint, replaced)
-        if objections:
-            print(f"\nFAIL the fingerprint recorded in {path} disagrees with what is there now:")
-            for objection in objections:
-                print(f"  {objection}")
-            print("Left as it was: it is from the earlier round and it is the evidence.")
-            return objections
-        for name in sorted(set(previous.fields) - set(fingerprint.fields)):
-            print(f"  no longer in the collection: {name}")
-        for name in sorted(set(fingerprint.fields) - set(previous.fields)):
-            print(f"  new in the collection since the last round: {name}")
-    fingerprint.save(path)
+    objections = replace_record(fingerprint, path, replaced=replaced)
+    if objections:
+        return objections
     print(f"\nFingerprint of {len(fingerprint.fields)} fields -> {path}")
     for name in closed:
         print(f"  not in the fingerprint, opens with neither key: {name}")
@@ -377,8 +341,14 @@ def worklist(directory: Path) -> tuple[list[Path], int]:
 REPO = Path(__file__).resolve().parents[1]
 CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
+#: One record for the collection, written by BOTH rounds. The PAT round had its own file, and
+#: nothing read it: ``rotate-sops-key.py --verify --projects`` and ``--assert-old-key-dead``
+#: both default to this one, so after the PAT round the verify said "content changed" on every
+#: password with nothing wrong. Giving the PAT round this record instead keeps the promise that
+#: ``--verify`` still holds months later, and it costs no check: ``replaced=`` already names the
+#: password fields as the ones that are MEANT to read differently, and the key field next to it
+#: still has to be unchanged.
 KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
-PAT_FINGERPRINT = REPO / "security" / "projects-pat-fingerprint.json"
 
 
 ROTATE_KEYS_DESCRIPTION = """Move the project files to the new platform key.
@@ -510,7 +480,7 @@ def build_pat_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-commit", action="store_true", help="write the files but make no commits")
     parser.add_argument("--old-key", default=str(CANONICAL_OLD))
     parser.add_argument("--new-key", default=str(CANONICAL_NEW))
-    parser.add_argument("--fingerprint", default=str(PAT_FINGERPRINT))
+    parser.add_argument("--fingerprint", default=str(KEY_FINGERPRINT))
     return parser
 
 
