@@ -24,7 +24,7 @@ from unittest.mock import patch
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
-from opi.utils.yaml_util import load_yaml_from_path
+from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
 from tests.documented_commands import documented_lines, flags
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
@@ -40,6 +40,7 @@ from key_rotation import (  # noqa: E402
     ProjectRound,
     decrypt_field,
     opens_with,
+    set_project_field,
     sha256_of,
 )
 from project_rotation import (  # noqa: E402
@@ -898,7 +899,9 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
 
     The count after the partial round is 5 and not the 4 the round converted: only the password
     of bbb is unreadable, its project key still opens, and the record says what the collection
-    HOLDS rather than what this one round did. The field it could not measure is named.
+    HOLDS rather than what this one round did. The field it could not measure is named, and so
+    is the same field when the repair round adds it: the comparison against the earlier record
+    lets a field come and go on purpose, so the printed line is the only trace of it.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -921,7 +924,7 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     partial_output = capsys.readouterr().out
     broken_path.write_text(intact)
     repaired = await main_rotate_keys(arguments)
-    capsys.readouterr()
+    repair_output = capsys.readouterr().out
     with (
         patch.object(final_check_tool, "sops_files_for", return_value=[]),
         patch.object(final_check_tool, "loose_paths", return_value=[]),
@@ -947,6 +950,9 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     assert f"opens with neither key: {broken_path}#repositories[0].password" in partial_output
     assert repaired == 0
     assert len(Fingerprint.load(fingerprint).fields) == 6
+    # A field entering the collection is allowed here, which is precisely why it has to be
+    # said out loud: the guard cannot tell a repaired file from a project that quietly turned up.
+    assert f"new in the collection since the last round: {broken_path}#repositories[0].password" in repair_output
     assert "count differs" not in printed
     assert "CLEAN the old key opens nothing, the new key opens everything" in printed
     assert step_8 == 0
@@ -1058,8 +1064,61 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
 
 
 @pytest.mark.asyncio
+async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The other side of a field coming and going, and it is a deletion.
+
+    The comparison holds a round to the fields both records share, so a project that has been
+    deleted since is allowed to drop out -- the check does not walk it any more either, and a
+    record that kept the entry would fail the count for a project that no longer exists. That
+    makes the printed line the only trace, exactly as with a field that appears: without it the
+    record silently shrinks and the next count is the new truth.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    for name in ("blijft", "verdwijnt"):
+        await _write_project(directory, name, old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    arguments = [
+        "--ja",
+        "--projects",
+        str(directory),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
+
+    assert await main_rotate_keys(arguments) == 0
+    assert len(Fingerprint.load(fingerprint).fields) == 4
+    capsys.readouterr()
+    gone = directory / "verdwijnt.yaml"
+    gone.unlink()
+
+    code = await main_rotate_keys(arguments)
+    printed = capsys.readouterr().out
+
+    assert code == 0
+    assert f"no longer in the collection: {gone}#{PROJECT_FIELD_PRIVATE_KEY}" in printed
+    assert f"no longer in the collection: {gone}#repositories[0].password" in printed
+    assert set(Fingerprint.load(fingerprint).fields) == {
+        f"{directory / 'blijft.yaml'}#{PROJECT_FIELD_PRIVATE_KEY}",
+        f"{directory / 'blijft.yaml'}#repositories[0].password",
+    }
+
+
+@pytest.mark.parametrize("entry_point", ["the key round", "the PAT round"])
+@pytest.mark.asyncio
 async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it(
-    projects_repo: Path, tmp_path: Path
+    projects_repo: Path, tmp_path: Path, entry_point: str
 ) -> None:
     """Every key in the record is "<path>#<field>", and ``--verify`` compares those NAMES.
 
@@ -1068,6 +1127,11 @@ async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it
     ``..`` in it and once without would read as a collection that was swapped whole -- every
     field disappeared, every field appeared. Both sides resolve the directory, so the spelling
     cannot decide the verdict.
+
+    Both entry points, because both write this record and the second one writes OVER the first:
+    a PAT round that recorded the spelling as typed would leave the collection under names no
+    later run matches, and ``content_drift`` compares the names two records share, so it would
+    find none to object to.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1078,27 +1142,95 @@ async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
     fingerprint = tmp_path / "projects-fingerprint.json"
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_the_new_token\n")
     detour = directory / ".." / "projects"
+    arguments = [
+        "--ja",
+        "--projects",
+        str(detour),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
 
-    code = await main_rotate_keys(
-        [
-            "--ja",
-            "--projects",
-            str(detour),
-            "--old-key",
-            str(tmp_path / "old_key.txt"),
-            "--new-key",
-            str(tmp_path / "key.txt"),
-            "--fingerprint",
-            str(fingerprint),
-        ]
-    )
+    if entry_point == "the key round":
+        code = await main_rotate_keys(arguments)
+    else:
+        code = await main_replace_pat([*arguments, "--pat-file", str(pat_file)])
 
     assert code == 0
     assert set(Fingerprint.load(fingerprint).fields) == {
         f"{directory.resolve() / 'een.yaml'}#{PROJECT_FIELD_PRIVATE_KEY}",
         f"{directory.resolve() / 'een.yaml'}#repositories[0].password",
     }
+
+
+async def _put_another_project_key_in(path: Path, public_key: str) -> None:
+    """Give the project a DIFFERENT private key, encrypted for the key it already sits on.
+
+    Written through ``set_project_field`` and the canonical writer, so the file that comes out
+    is shaped exactly like the one the round writes: a block scalar, same indentation. The one
+    thing that differs is what the field says, which is the whole question here.
+    """
+    other_private, _other_public = generate_sops_key_pair()
+    data = load_yaml_from_path(str(path))
+    set_project_field(data, PROJECT_FIELD_PRIVATE_KEY, await encrypt_age_content(other_private, public_key))
+    save_yaml_to_path(str(path), data)
+
+
+@pytest.mark.asyncio
+async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``replaced`` excuses the passwords from the comparison. It excuses nothing else.
+
+    The PAT round is the round that is MEANT to change content, which is exactly why the half
+    it may not change needs its own guard: ``config.age-private-key`` is only ever re-encrypted,
+    and a project whose key silently reads differently afterwards can no longer open a single one
+    of its own secrets. The key round refuses on that and returns 1; this asserts the PAT round
+    does the same, both in its verdict and in leaving the earlier record alone.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-pat-fingerprint.json"
+    first = tmp_path / "first-pat.txt"
+    first.write_text("ghp_the_first_new_token\n")
+    second = tmp_path / "second-pat.txt"
+    second.write_text("ghp_the_second_new_token\n")
+    arguments = [
+        "--ja",
+        "--projects",
+        str(directory),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
+
+    assert await main_replace_pat([*arguments, "--pat-file", str(first)]) == 0
+    recorded = fingerprint.read_text()
+    capsys.readouterr()
+
+    # Perfectly readable with the new key, so no decryption test can see this. Only the record can.
+    await _put_another_project_key_in(path, new_public)
+    code = await main_replace_pat([*arguments, "--pat-file", str(second)])
+    printed = capsys.readouterr().out
+
+    assert code == 1
+    assert f"content changed: {path}#{PROJECT_FIELD_PRIVATE_KEY}" in printed
+    assert fingerprint.read_text() == recorded, "the earlier record is the evidence and has to stand"
 
 
 @pytest.mark.asyncio

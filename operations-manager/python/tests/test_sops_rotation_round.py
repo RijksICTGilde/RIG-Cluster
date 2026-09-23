@@ -1668,6 +1668,149 @@ async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap_in_th
     assert gap.outside_coverage == [str(forgotten)]
 
 
+@pytest.mark.asyncio
+async def test_a_gap_in_another_tree_stops_the_round_before_a_byte_is_written(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The sweep over every tree has a second reader, and it is the one that comes first.
+
+    ``plan.gaps`` stops the rotation, and that is the moment the verdict is still cheap: the
+    final check refusing afterwards means the old key is already gone from the files the round
+    did convert. ``test_a_coverage_gap_stops_the_round_before_a_byte_is_written`` measures that
+    stop for this repo's own tree; this one measures it for a tree handed in on the command
+    line, which is the half the sweep gained and the half with no reader before it.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    before = env_path.read_text()
+    clone = tmp_path / "zad-argo"
+    clone.mkdir()
+    forgotten = clone / "los.yaml"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+        patch.object(tool, "files_with_ciphertext", side_effect=lambda tree: {forgotten: 1} if tree == clone else {}),
+    ):
+        code = await tool.main(
+            [
+                "--ja",
+                *_key_files(tmp_path, old_private, new_private),
+                "--fingerprint",
+                str(tmp_path / "fingerprint.json"),
+                "--argo-applications",
+                str(clone),
+            ]
+        )
+
+    printed = capsys.readouterr()
+    assert code == 1
+    assert "STOPPED a tracked file carries ciphertext that nothing here converts." in printed.err
+    assert f"FAIL carries ciphertext and nothing converts it: {forgotten}" in printed.out
+    assert env_path.read_text() == before, "the round may not convert anything while a place is unaccounted for"
+
+
+@pytest.mark.asyncio
+async def test_verify_is_red_on_a_project_field_that_opens_with_neither_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A field the record does not know cannot be caught by comparing the record.
+
+    The comparison answers for every field that was there when the round ran. A project file
+    added since is in neither record nor objection -- it opens with no key at all, so it is not
+    in what was measured either, and nothing would say a word about it. That is what the closed
+    list is for on this repo's own fields, and the projects clone has the same one.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    _third_private, third_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    clone = (tmp_path / "zad-projects" / "projects").resolve()
+    clone.mkdir(parents=True)
+    await _project_file(clone, "een", new_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    projects_fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = _key_files(tmp_path, old_private, new_private)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *keys, "--fingerprint", str(fingerprint)]) == 0
+        await save_fingerprint(clone, str(projects_fingerprint), old_private, new_private)
+        capsys.readouterr()
+        # Added after the record was written, and on a key nobody involved here holds.
+        stranger = await _project_file(clone, "twee", third_public)
+        code = await tool.main(
+            [
+                "--ja",
+                "--verify",
+                *keys,
+                "--fingerprint",
+                str(fingerprint),
+                "--projects",
+                str(clone),
+                "--projects-fingerprint",
+                str(projects_fingerprint),
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert f"FAIL does not open with the new key: {stranger}#repositories[0].password" in printed
+    assert "CLEAN" not in printed
+
+
+@pytest.mark.asyncio
+async def test_verify_matches_the_projects_record_however_the_clone_was_spelled(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The other side of the resolved path, and the side that does the comparing.
+
+    ``rotate-project-keys.py`` records every field under the resolved path of its file. This
+    mode compares those NAMES, so a clone handed to it with a ``..`` in it -- which is what a
+    documented ``<clone>/projects`` next to a relative path produces -- would read as a
+    collection in which every field disappeared and another one appeared, over a rotation where
+    nothing at all is wrong.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    clone = (tmp_path / "zad-projects" / "projects").resolve()
+    clone.mkdir(parents=True)
+    await _project_file(clone, "een", new_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    projects_fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = _key_files(tmp_path, old_private, new_private)
+    detour = clone / ".." / "projects"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *keys, "--fingerprint", str(fingerprint)]) == 0
+        await save_fingerprint(clone, str(projects_fingerprint), old_private, new_private)
+        capsys.readouterr()
+        code = await tool.main(
+            [
+                "--ja",
+                "--verify",
+                *keys,
+                "--fingerprint",
+                str(fingerprint),
+                "--projects",
+                str(detour),
+                "--projects-fingerprint",
+                str(projects_fingerprint),
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
+
+
 def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypted_value() -> None:
     """The row that gets forgotten: ``sops rotate`` does not see a loose ``base64+age:`` value.
 
