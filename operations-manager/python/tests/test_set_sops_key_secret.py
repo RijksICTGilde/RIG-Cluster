@@ -22,7 +22,8 @@ import pytest
 from opi.utils.sops import generate_sops_key_pair
 from tests.documented_commands import documented_lines, flags
 
-_SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+_SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
@@ -102,6 +103,42 @@ def test_a_single_secret_response_is_handled_as_well() -> None:
     assert [(holder.namespace, holder.public_key) for holder in holders] == [("rig-system", public)]
 
 
+def test_an_unreadable_secret_is_not_reported_as_a_project_key(capsys: pytest.CaptureFixture) -> None:
+    """ "Carries a different key" is a claim, and about an unreadable secret nothing is known.
+
+    It may be the platform key in a shape this tool does not recognise, and then this run leaves
+    the old key live in that namespace -- which the final check cannot see, because it measures
+    files and not cluster secrets. So it gets its own heading and a line telling the operator to
+    look, while the step is still reversible.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    _new_private, new_public = generate_sops_key_pair()
+    project_private, project_public = generate_sops_key_pair()
+    payload = {
+        "kind": "SecretList",
+        "items": [
+            _secret("rig-prd-operations", old_private),
+            _secret("rig-prd-cot-zaq", project_private),
+            {
+                "metadata": {"name": "sops-age-key", "namespace": "rig-prd-mystery"},
+                "data": {"key": base64.b64encode(b"no key line in here").decode()},
+            },
+        ],
+    }
+
+    targets = tool.report_holders(tool.holders_from_secret_list(payload), old_public, new_public)
+
+    assert [holder.namespace for holder in targets] == ["rig-prd-operations"]
+    printed = capsys.readouterr().out
+    assert "1 carry a DIFFERENT key and are left alone" in printed
+    assert "1 hold a secret this tool cannot read a key out of" in printed
+    # The unreadable namespace stands under its own heading, not next to the project key.
+    assert printed.index("rig-prd-cot-zaq") < printed.index("cannot read a key out of")
+    assert printed.index("cannot read a key out of") < printed.index("rig-prd-mystery")
+    assert project_public in printed
+    del old_private, project_private
+
+
 @pytest.mark.asyncio
 async def test_the_secret_keeps_the_whole_key_file_as_its_value(tmp_path: Path) -> None:
     """sops-plugin.sh greps ``^AGE-SECRET-KEY-`` out of the value, so the file shape must survive."""
@@ -118,8 +155,90 @@ async def test_the_secret_keeps_the_whole_key_file_as_its_value(tmp_path: Path) 
     assert f"--from-file=key={key_file}" in create_args
     assert "--dry-run=client" in create_args
     apply_args = connector.run_command.await_args_list[1].args[0]
-    assert apply_args == ["apply", "-n", "rig-prd-operations", "-f", "-"]
-    assert connector.run_command.await_args_list[1].kwargs["stdin_input"] == "rendered: yaml"
+    assert apply_args[:4] == ["apply", "-n", "rig-prd-operations", "-f"]
+
+
+@pytest.mark.asyncio
+async def test_the_manifest_never_travels_through_argv(tmp_path: Path) -> None:
+    """The finding this pins: the rendered manifest IS the key, so it may not reach a command line.
+
+    ``KubectlConnector.run_command`` wraps a ``stdin_input`` in a heredoc and runs the result
+    through ``create_subprocess_shell``, which puts the whole payload in the argv of ``/bin/sh
+    -c``. Measured on that call shape with a canary in the manifest: two hits across ``ps -eo
+    args`` and ``/proc/<pid>/cmdline`` while the apply runs, zero with a file path instead.
+
+    So this checks the property and not the spelling: no call carries ``stdin_input``, and the
+    manifest text appears in no argument of any call. A future rewrite is free to reach the
+    cluster differently as long as the key stays out of argv.
+    """
+    private, _public = generate_sops_key_pair()
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"# created: today\n{private}\n")
+    manifest = f"apiVersion: v1\nkind: Secret\ndata:\n  key: {base64.b64encode(private.encode()).decode()}\n"
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=(manifest, "", 0))
+
+    with patch.object(tool, "create_kubectl_connector", return_value=connector):
+        await tool.write_secret("rig-prd-operations", key_file)
+
+    for call in connector.run_command.await_args_list:
+        assert "stdin_input" not in call.kwargs
+        for argument in call.args[0]:
+            assert manifest not in argument
+
+
+@pytest.mark.asyncio
+async def test_the_rendered_manifest_lands_in_a_private_file_outside_the_repository(tmp_path: Path) -> None:
+    """0600 and in the temp dir: unreadable by another uid, and never near a ``git add``.
+
+    Checked while the apply is in flight, because that is the only moment the file exists -- and
+    checked again afterwards, because a manifest holding the platform key that survives the run
+    is the leak moved rather than closed.
+    """
+    private, _public = generate_sops_key_pair()
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"# created: today\n{private}\n")
+    seen: list[Path] = []
+
+    async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
+        if args[0] == "apply":
+            written = Path(args[-1])
+            seen.append(written)
+            assert written.read_text() == "rendered: yaml"
+            assert written.stat().st_mode & 0o777 == 0o600
+            assert REPO_ROOT not in written.parents
+        return "rendered: yaml", "", 0
+
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(side_effect=run_command)
+    with patch.object(tool, "create_kubectl_connector", return_value=connector):
+        await tool.write_secret("rig-prd-operations", key_file)
+
+    assert len(seen) == 1
+    assert not seen[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_apply_still_takes_the_manifest_with_it(tmp_path: Path) -> None:
+    """Without the ``finally`` the one run that goes wrong is the one that leaves the key behind."""
+    private, _public = generate_sops_key_pair()
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"# created: today\n{private}\n")
+    seen: list[Path] = []
+
+    async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
+        if args[0] == "apply":
+            seen.append(Path(args[-1]))
+            return "", "connection refused", 1
+        return "rendered: yaml", "", 0
+
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(side_effect=run_command)
+    with patch.object(tool, "create_kubectl_connector", return_value=connector), pytest.raises(RuntimeError):
+        await tool.write_secret("rig-prd-operations", key_file)
+
+    assert len(seen) == 1
+    assert not seen[0].exists()
 
 
 @pytest.mark.asyncio

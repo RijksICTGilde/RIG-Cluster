@@ -20,6 +20,7 @@ job that silently stops calling the scan is the other way this rots:
 from __future__ import annotations
 
 import ast
+import base64
 import re
 import shutil
 import subprocess
@@ -39,6 +40,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 from secret_scan import (  # noqa: E402
     Finding,
     age_key_is_real,
+    decoded_blobs,
     history_blobs,
     looks_like_a_jwt,
     report,
@@ -228,6 +230,103 @@ def test_the_split_puts_ciphertext_on_the_inventory_side() -> None:
     )
     assert [finding.kind for finding in alarms] == ["age-private-key"]
     assert [finding.kind for finding in inventory] == ["age-ciphertext"]
+
+
+# ---------------------------------------------------------------------------
+# base64: a Kubernetes secret hides the same key in plain sight
+# ---------------------------------------------------------------------------
+
+
+@needs_age
+def test_a_key_inside_a_kubernetes_secret_is_a_finding() -> None:
+    """The gap this closes, on the exact manifest ``docs/sops-en-age-met-de-hand.md`` step 2 makes.
+
+    Measured before the base64 pass existed: the same key in a ``.py`` failed the scan, and this
+    manifest came back CLEAN -- while neither ``sops-secret.yaml`` nor ``sops-key.txt`` is covered
+    by ``.gitignore`` in the repository root. So hook, CI and history sweep all said CLEAN over a
+    commit carrying the platform key.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    encoded = base64.b64encode(f"# public key: whatever\n{private_key}\n".encode()).decode()
+    manifest = f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: sops-age-key\ndata:\n  key: {encoded}\n"
+
+    findings = scan_text(manifest, "sops-secret.yaml")
+
+    assert [finding.kind for finding in findings] == ["age-private-key"]
+    # The ENCODED line, because that is the line the commit has to lose -- not a line number
+    # inside a decoding that exists nowhere on disk.
+    assert findings[0].line_number == 6
+
+
+@needs_age
+@pytest.mark.parametrize(
+    ("kind", "secret"),
+    [
+        ("github-pat", "ghp_" + "b" * 36),
+        ("slack-token", FAKE_SLACK_TOKEN),
+        ("aws-access-key", FAKE_AWS_KEY),
+    ],
+)
+def test_every_alarm_rule_reaches_through_base64(kind: str, secret: str) -> None:
+    """Not only the AGE rule: the pass runs the whole alarm set over the decoded text.
+
+    A base64 layer that covered one rule would be the next half-guard -- a token in a secret's
+    ``data`` is the same manifest with a different field.
+    """
+    encoded = base64.b64encode(f"token: {secret}\n".encode()).decode()
+
+    findings = scan_text(f"data:\n  token: {encoded}\n", "secret.yaml")
+
+    assert [finding.kind for finding in findings] == [kind]
+
+
+@needs_age
+def test_a_placeholder_inside_base64_is_still_not_a_finding() -> None:
+    """The proof rules survive the decoding, so the second pass cannot reintroduce the noise.
+
+    Without this, every base64 blob in the tree that happens to decode to text would get a second
+    chance at producing a finding nobody has to fix.
+    """
+    encoded = base64.b64encode(b'KEY = "AGE-SECRET-KEY-1TEST"\n').decode()
+    assert scan_text(f"data:\n  key: {encoded}\n", "secret.yaml") == []
+
+
+def test_base64_over_binary_is_left_alone() -> None:
+    """Which is what keeps AGE and SOPS ciphertext out of the second pass: it is not text.
+
+    Nearly every base64 run in this repository is ciphertext. Decoding those to bytes and handing
+    them to the rules would cost time on every file and could only ever produce noise.
+    """
+    assert decoded_blobs(base64.b64encode(bytes(range(256))).decode()) == []
+    assert decoded_blobs("short") == []
+
+
+@needs_age
+def test_ciphertext_is_not_counted_twice_through_its_own_base64() -> None:
+    """``base64+age:`` is base64 over an AGE block, so the inventory could count it once encoded
+    and once decoded. The decoded pass runs alarm rules only, which is what stops that."""
+    block = "-----BEGIN AGE ENCRYPTED FILE-----\nYWJj\n-----END AGE ENCRYPTED FILE-----\n"
+    text = f"password: base64+age:{base64.b64encode(block.encode()).decode()}\n"
+
+    inventory = scan_text(text, "project.yaml", include_ciphertext=True)
+
+    assert [finding.kind for finding in inventory] == ["age-ciphertext"]
+
+
+@needs_age
+def test_a_key_split_over_two_base64_lines_is_not_claimed_to_be_covered() -> None:
+    """The stated limit, pinned so it stays stated: the pass reads one LINE at a time.
+
+    A value wrapped over several lines is not a shape ``kubectl -o yaml`` produces, and joining
+    adjacent base64 lines would have to guess where a blob ends. Pinning the limit is what keeps
+    the docs honest about it rather than letting a reader assume full coverage.
+    """
+    private_key, _public_key = generate_sops_key_pair()
+    encoded = base64.b64encode(f"{private_key}\n".encode()).decode()
+    half = len(encoded) // 2
+
+    assert scan_text(f"data:\n  key: {encoded}\n", "one-line.yaml") != []
+    assert scan_text(f"data:\n  key: |\n    {encoded[:half]}\n    {encoded[half:]}\n", "wrapped.yaml") == []
 
 
 # ---------------------------------------------------------------------------

@@ -14,21 +14,25 @@ map is verwijderd: hij bevatte een eigen AGE-sleutelpaar voor ontwikkeldoeleinde
 
 ## 1. Een AGE-sleutelpaar maken
 
+`security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
+neerzetten om deze handelingen te doen. **Alle paden hieronder staan er daarom in.** Niet uit
+netheid: in de wortel van de repo is `sops-key.txt` niet genegeerd, en een `git add -A` neemt hem
+dan gewoon mee.
+
+Ook `security/` is een tussenoplossing: een sleutel hoort op termijn in een CI/CD-omgeving of een
+vault-achtige voorziening en niet in een map op een laptop. Waar precies is de vraag van het
+lopende onderzoek naar sleutelbeheer en blast radius (RC-222).
+
 ```bash
-age-keygen -o sops-key.txt
+age-keygen -o security/sops-key.txt
 ```
 
 Dat bestand bevat de private sleutel (de regel die met `AGE-SECRET-KEY-` begint) en de publieke
 helft als commentaar (`age1...`). De publieke helft kun je ook altijd afleiden:
 
 ```bash
-grep -m1 '^AGE-SECRET-KEY-' sops-key.txt | age-keygen -y
+grep -m1 '^AGE-SECRET-KEY-' security/sops-key.txt | age-keygen -y
 ```
-
-`security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
-neerzetten om deze handelingen te doen. Dat is een tussenoplossing: een sleutel hoort op termijn
-in een CI/CD-omgeving of een vault-achtige voorziening en niet in een map op een laptop. Waar
-precies is de vraag van het lopende onderzoek naar sleutelbeheer en blast radius (RC-222).
 
 ## 2. Het Kubernetes-secret maken
 
@@ -37,12 +41,16 @@ De CMP-plugin naast ArgoCD en de operations-manager lezen beide een secret met d
 
 ```bash
 kubectl create secret generic sops-age-key \
-  --from-file=key=sops-key.txt \
+  --from-file=key=security/sops-key.txt \
   -n rig-prd-operations \
-  --dry-run=client -o yaml > sops-secret.yaml
+  --dry-run=client -o yaml > security/sops-secret.yaml
 
-kubectl apply -f sops-secret.yaml
+kubectl apply -f security/sops-secret.yaml
 ```
+
+Ook dat manifest hoort in `security/`, en om dezelfde reden als de sleutel: een
+`kind: Secret` DRAAGT de sleutel, base64 eromheen. Dat is precies wat een lezer -- en tot deze
+taak ook de geheimenscanner -- over het hoofd ziet.
 
 Het hele bestand en niet alleen de sleutelregel: `bootstrap/rig-system/kustomize/sops-plugin.sh`
 haalt er met `grep '^AGE-SECRET-KEY-'` de regel uit.
@@ -54,7 +62,7 @@ niet op naam. Zie `features/sops-sleutel-vervangen.md`.
 ## 3. Een geheim versleutelen
 
 ```bash
-PUBLIC_KEY="$(grep -m1 '^AGE-SECRET-KEY-' sops-key.txt | age-keygen -y)"
+PUBLIC_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/sops-key.txt | age-keygen -y)"
 
 # een bestaand bestand
 sops --encrypt --age "$PUBLIC_KEY" secret.yaml > secret.sops.yaml
@@ -67,7 +75,7 @@ echo "password: mysecretpassword123" \
 ## 4. Nagaan of het werkt
 
 ```bash
-SOPS_AGE_KEY_FILE=sops-key.txt sops --decrypt secret.sops.yaml
+SOPS_AGE_KEY_FILE=security/sops-key.txt sops --decrypt secret.sops.yaml
 ```
 
 Een kustomize-build met de SOPS-generator erin test je zo:
@@ -82,6 +90,8 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
 
 - De private sleutel hoort nooit in git. Lokaal zet je hem voorlopig in `security/`, dat is
   gitignored -- zie hierboven waarom dat een tussenoplossing is en geen eindplek.
+- **Een `kind: Secret` telt als de sleutel zelf.** Base64 is geen versleuteling; `data.key`
+  bevat het sleutelbestand. Behandel zo'n manifest als het sleutelbestand.
 - De publieke helft is geen geheim en mag in documentatie en in de SOPS-metadata staan.
 - Gebruik per omgeving een eigen sleutelpaar: `security/key.txt` (platform),
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).

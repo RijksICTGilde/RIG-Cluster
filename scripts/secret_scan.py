@@ -10,6 +10,14 @@ placeholders (``AGE-SECRET-KEY-1TEST``, ``AGE-SECRET-KEY-FAKE``, ``AGE-SECRET-KE
 which are neither secret nor removable without making those tests worse. A scanner that alarms on
 the prefix produces findings nobody has to fix, and an alarm everyone learns to walk around is no
 alarm. So an AGE candidate is only a finding when ``age-keygen -y`` accepts it: a real key.
+
+**And it reads base64 as well as plain text.** A Kubernetes secret encodes every value, so a
+manifest carrying the platform key holds no ``AGE-SECRET-KEY-`` a plain-text scan can see --
+measured: the same key in a ``.py`` failed the scan, in a ``kind: Secret`` under ``data.key`` it
+came back CLEAN. Not a hypothetical shape: the history of this repository carries one. The sweep
+found ``sops-sandbox/sops-secret-for-in-namespace.yaml`` only once this pass existed, while the
+plain ``sops-key.txt`` beside it -- the same key -- had been showing up all along. So every
+base64 run on a line is decoded once and the decoded text goes past the same rules.
 """
 
 from __future__ import annotations
@@ -70,8 +78,10 @@ def age_key_is_real(candidate: str) -> bool:
 
 
 #: Each rule is (kind, pattern, hint). A rule whose match needs proving carries its own check in
-#: ``scan_text`` rather than being weakened into a looser regex.
-RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+#: ``findings_in`` rather than being weakened into a looser regex.
+RuleSet = tuple[tuple[str, re.Pattern[str], str], ...]
+
+RULES: RuleSet = (
     ("age-private-key", re.compile(rf"{AGE_KEY_MARKER}[A-Z0-9]{{50,}}"), "a valid AGE private key"),
     ("github-pat", re.compile(r"\bghp_[A-Za-z0-9]{36,}\b"), "classic GitHub personal access token"),
     ("github-pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"), "fine-grained GitHub token"),
@@ -88,7 +98,7 @@ RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 #: "BBBB", or by nothing at all) -- exactly the kind of known finding that teaches people to ignore
 #: the scan. Requiring two lines of real base64 in between leaves those alone and still catches a
 #: key, which is never shorter than that.
-MULTILINE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+MULTILINE_RULES: RuleSet = (
     (
         "pem-private-key",
         re.compile(
@@ -102,7 +112,7 @@ MULTILINE_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
 #: The ciphertext forms ZAD writes itself. These are NOT findings on their own -- the whole point
 #: of AGE is that the ciphertext may be committed -- so they are reported only when asked for
 #: explicitly, as an inventory rather than an alarm.
-CIPHERTEXT_RULES: tuple[tuple[str, re.Pattern[str], str], ...] = (
+CIPHERTEXT_RULES: RuleSet = (
     ("age-ciphertext", re.compile(r"-----BEGIN AGE ENCRYPTED FILE-----"), "armored AGE block"),
     ("age-ciphertext", re.compile(r"\bbase64\+age:[A-Za-z0-9+/=]{20,}"), "base64+age value"),
 )
@@ -123,6 +133,42 @@ def looks_like_a_jwt(candidate: str) -> bool:
     return isinstance(header, dict) and "alg" in header
 
 
+#: A base64 run long enough to hide something. The shortest shape in ``RULES`` is an AWS access
+#: key id at twenty characters, which needs twenty-eight base64 characters of its own; below
+#: twenty-four -- eighteen bytes decoded -- no rule fits, so a shorter run cannot carry one.
+BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{24,}={0,2}")
+
+
+def decoded_blobs(line: str) -> list[str]:
+    """Every base64 run on this line that decodes to text, decoded.
+
+    One level deep and no further: a secret hidden under two rounds of base64 is not a shape this
+    repository produces, while re-scanning every decode of every decode is how a tree scan turns
+    into a coffee break. Runs that decode to bytes rather than text are dropped here, which is
+    what keeps AGE and SOPS ciphertext -- base64 over a binary payload -- out of the second pass.
+    """
+    decoded: list[str] = []
+    for match in BASE64_BLOB.finditer(line):
+        try:
+            decoded.append(base64.b64decode(match.group(0), validate=True).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return decoded
+
+
+def findings_in(text: str, path: str, line_number: int, rules: RuleSet) -> list[Finding]:
+    """Apply the single-line rules to one piece of text, all of it reported on one line number."""
+    findings: list[Finding] = []
+    for kind, pattern, hint in rules:
+        for match in pattern.finditer(text):
+            if kind == "age-private-key" and not age_key_is_real(match.group(0)):
+                continue
+            if kind == "kubeconfig-token" and not looks_like_a_jwt(match.group(0)):
+                continue
+            findings.append(Finding(path=path, line_number=line_number, kind=kind, hint=hint))
+    return findings
+
+
 def scan_text(text: str, path: str, *, include_ciphertext: bool = False) -> list[Finding]:
     """Every finding in one file's text, with the line number.
 
@@ -130,17 +176,18 @@ def scan_text(text: str, path: str, *, include_ciphertext: bool = False) -> list
     header decoded, so a placeholder is not a finding. The rest is shape-based: a ``ghp_`` of the
     right length is a token whether it is live or revoked, and a scanner cannot tell those apart --
     nor should it try.
+
+    Each line is read twice: as it stands, and with every base64 run on it decoded. A finding from
+    the decoded pass keeps the line number of the ENCODED line, because that is the line a commit
+    has to lose. The decoded pass runs the alarm rules only: a base64 run that unwraps to
+    ciphertext is the same ciphertext, and counting it twice would inflate the inventory.
     """
     findings: list[Finding] = []
     rules = (*RULES, *CIPHERTEXT_RULES) if include_ciphertext else RULES
     for number, line in enumerate(text.splitlines(), start=1):
-        for kind, pattern, hint in rules:
-            for match in pattern.finditer(line):
-                if kind == "age-private-key" and not age_key_is_real(match.group(0)):
-                    continue
-                if kind == "kubeconfig-token" and not looks_like_a_jwt(match.group(0)):
-                    continue
-                findings.append(Finding(path=path, line_number=number, kind=kind, hint=hint))
+        findings.extend(findings_in(line, path, number, rules))
+        for decoded in decoded_blobs(line):
+            findings.extend(findings_in(decoded, path, number, RULES))
     for kind, pattern, hint in MULTILINE_RULES:
         for match in pattern.finditer(text):
             line_number = text.count("\n", 0, match.start()) + 1

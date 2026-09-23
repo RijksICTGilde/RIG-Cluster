@@ -29,7 +29,9 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -108,7 +110,25 @@ async def find_holders() -> list[SecretHolder]:
 
 
 async def write_secret(namespace: str, key_file: Path) -> None:
-    """Replace the secret in one namespace, keeping the whole key file as its value."""
+    """Replace the secret in one namespace, keeping the whole key file as its value.
+
+    The rendered manifest goes through a 0600 temporary FILE and ``apply -f <path>``, never
+    through ``stdin_input``. That is not a style choice. ``KubectlConnector.run_command`` builds a
+    heredoc around a stdin payload and hands the whole thing to ``create_subprocess_shell``, so
+    the manifest -- which is the entire key file, base64 encoded under ``data.key`` -- would stand
+    in the argv of ``/bin/sh -c`` and be readable by every local uid from ``ps`` and from
+    ``/proc/<pid>/cmdline`` for as long as the apply runs, once per namespace. Measured on that
+    call shape: the payload comes back out of both.
+
+    It is the very property this tool promises. ``key_rotation.ask_for_path`` refuses to take a
+    key as an argument *because* a key on a command line lands in the process table, and the
+    machine this runs on is a shared dev server with several sessions on it. With a file, argv
+    carries a PATH -- the same shape as the ``--from-file`` above it.
+
+    ``tempfile.mkstemp`` creates 0600 and outside the repository, so the file is neither readable
+    by another user nor commitable by accident, and the ``finally`` removes it even when the apply
+    raises.
+    """
     kubectl = create_kubectl_connector()
     stdout, stderr, code = await kubectl.run_command(
         [
@@ -126,9 +146,16 @@ async def write_secret(namespace: str, key_file: Path) -> None:
     )
     if code != 0:
         raise RuntimeError(f"kubectl create secret --dry-run failed in {namespace}: {stderr.strip()}")
-    _out, stderr, code = await kubectl.run_command(["apply", "-n", namespace, "-f", "-"], stdin_input=stdout)
-    if code != 0:
-        raise RuntimeError(f"kubectl apply failed in {namespace}: {stderr.strip()}")
+    handle, name = tempfile.mkstemp(prefix="sops-age-key-", suffix=".yaml")
+    manifest = Path(name)
+    try:
+        with os.fdopen(handle, "w") as stream:
+            stream.write(stdout)
+        _out, stderr, code = await kubectl.run_command(["apply", "-n", namespace, "-f", str(manifest)])
+        if code != 0:
+            raise RuntimeError(f"kubectl apply failed in {namespace}: {stderr.strip()}")
+    finally:
+        manifest.unlink(missing_ok=True)
 
 
 async def restart_operations_manager(namespace: str) -> bool:
@@ -174,10 +201,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def report_holders(holders: list[SecretHolder], old_public: str, new_public: str) -> list[SecretHolder]:
-    """Print every holder, and return the ones that carry the old platform key."""
+    """Print every holder, and return the ones that carry the old platform key.
+
+    A secret whose value yields no public key gets its OWN heading rather than being counted with
+    the project keys. "Carries a different key, left alone" is a statement about what is in it,
+    and about an unreadable one nothing is known: it may be the platform key in a shape this tool
+    does not recognise, in which case leaving it alone leaves the old key live in that namespace.
+    The final check measures FILES, so it would not catch that either. Saying it out loud is what
+    puts it in front of the operator while the step is still reversible.
+    """
     targets = [holder for holder in holders if holder.public_key == old_public]
     done = [holder for holder in holders if holder.public_key == new_public]
-    others = [holder for holder in holders if holder not in targets and holder not in done]
+    unreadable = [holder for holder in holders if holder.public_key is None]
+    others = [holder for holder in holders if holder not in targets and holder not in done and holder not in unreadable]
 
     print(f"\n{len(holders)} namespaces hold a '{SECRET_NAME}' secret.")
     print(f"\n{len(targets)} carry the OLD platform key and WILL be replaced:")
@@ -190,7 +226,14 @@ def report_holders(holders: list[SecretHolder], old_public: str, new_public: str
     if others:
         print(f"\n{len(others)} carry a DIFFERENT key and are left alone (a project's own key):")
         for holder in others:
-            print(f"  {holder.namespace}  {holder.public_key or 'unreadable'}")
+            print(f"  {holder.namespace}  {holder.public_key}")
+    if unreadable:
+        print(f"\n{len(unreadable)} hold a secret this tool cannot read a key out of, and are left alone:")
+        for holder in unreadable:
+            print(f"  {holder.namespace}")
+        print("Check those by hand. If one of them holds the platform key in another shape, this")
+        print("run leaves the old key live there, and the final check measures files and not")
+        print("cluster secrets, so it will not notice.")
     return targets
 
 
