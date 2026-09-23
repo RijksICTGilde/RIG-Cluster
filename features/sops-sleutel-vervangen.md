@@ -105,8 +105,7 @@ scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
 ```
 
 Stap 2 laat zijn wijzigingen in de werkboom staan, in deze repo en in `/tmp/zad-argo`: commit ze
-daar allebei zelf, zonder push. Stap 3 commit wel, een commit per project, ook zonder push. Na
-deze fase staan alle drie de repo's klaar en is er nog niets vertrokken.
+daar allebei zelf, zonder push. Stap 3 commit wel, een commit per project, ook zonder push.
 
 ### VERIFY-1 -- het go/no-go moment, voor de push
 
@@ -127,17 +126,15 @@ find /tmp/zad-argo -mindepth 2 -name kustomization.yaml -exec dirname {} \; | so
 unset SOPS_AGE_KEY
 ```
 
-Dezelfde eindtoets als na de cutover, maar nu tegen de bestanden op schijf: elk veld in alle drie
-de repo's gaat open met de nieuwe sleutel, geen enkel veld nog met de oude, de platte inhoud is
-per veld ongewijzigd en de telling klopt met de som van beide vingerafdrukken. Hij praat niet met
-het cluster, dus hij mag hier al.
+Dezelfde eindtoets als na de cutover, over alle drie de repo's. Hij praat niet met het cluster,
+dus hij mag hier al; wat hij eist staat onder "De eindtoets".
 
 De kustomize-lus dekt iets anders dan de vingerafdruk: een bestand kan prima ontsleutelen en de
-render toch laten stranden of leeglopen. Hij vraagt `kustomize` en `ksops` op je PATH, precies de
-twee die de plugin ook gebruikt (`bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`).
-Blijft de uitvoer leeg, dan rendert elke map.
+render toch laten stranden of leeglopen. De vlaggen en de mappenkeuze komen uit
+`bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`; `kustomize` en `ksops` moeten op je
+PATH staan, zoals in het plugin-image (`images/cmp-kustomize-sops/Dockerfile`).
 
-Gaat hier iets rood, dan gooi je de clones weg en begin je opnieuw. Er is nog niets gepusht.
+Gaat hier iets rood, dan gooi je de clones weg en begin je opnieuw.
 
 ### APPLY -- het korte venster
 
@@ -156,8 +153,7 @@ via `env.valueFrom.secretKeyRef` bij OPI binnen
 (`bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml:117`), op de vaste naam
 `sops-age-key`; er staat geen `secretGenerator` in `bootstrap/`, dus ook geen hash-achtervoegsel
 dat het manifest zou veranderen. Een `kubectl rollout restart deployment/operations-manager` is
-genoeg, en dat is precies wat het script draait, met `rollout status` erachter. Geen bouw, geen
-nieuwe tag.
+genoeg, en dat is precies wat het script draait, met `rollout status` erachter.
 
 De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de
 wissel is het bewijs dat het goed staat. Forceer hem dus nu, terwijl je meekijkt, in plaats van
@@ -178,8 +174,7 @@ een projectdetailpagina in het portaal, want die ontsleutelt `config.age-private
 project haalt zijn repository op** (draai een deployment-actie op een project, want die leest
 `repositories[].password`).
 
-De eindtoets erachter is de harde: de oude sleutel opent niets meer. Wat hij precies eist staat
-hieronder onder "De eindtoets".
+De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 
 ### Daarna
 

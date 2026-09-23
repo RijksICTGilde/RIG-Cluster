@@ -710,7 +710,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 1
     print(f"  {len(fingerprint_after.fields)} fields readable with the new key and unchanged in content")
 
-    print("\nDone, and nothing has left this machine yet. The rest of PREPARE, then:")
+    print("\nDone, and nothing has left this machine yet. Still to do:")
     print("  PREPARE   scripts/rotate-project-keys.py on a fresh clone of the projects repo,")
     print("            and commit here and in the argo clone without pushing")
     print("  VERIFY-1  scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects")
