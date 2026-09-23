@@ -898,3 +898,81 @@ def test_ci_installs_sops_so_the_rotation_guards_actually_run() -> None:
     assert any(pinned.group(1) in command for command in installs), (
         f"CI must install the same sops as the image ({pinned.group(1)})"
     )
+
+
+@pytest.mark.asyncio
+async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """An operator who answers the prompt with another path must see THAT file go away.
+
+    The tests above pass the paths as flags, so the default and the answer always coincide and
+    the difference between them cannot show. Here the prompt is answered with a name that is not
+    the default: before the fix the run printed "Old key removed: .../security/old_key.txt" and
+    exited 0 while the real key file was still on disk -- a false report on the last safety
+    action of the plan.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    answered_old = tmp_path / "mijn-oude-sleutel.txt"
+    answered_old.write_text(f"{old_private}\n")
+    answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
+    answered_new.write_text(f"{new_private}\n")
+    projects = tmp_path / "projects"
+    projects.mkdir()
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "env_paths", return_value=[]),
+        patch("builtins.input", side_effect=[str(answered_old), str(answered_new)]),
+    ):
+        code = await tool.main(
+            [
+                "--remove-old-key",
+                "--projects",
+                str(projects),
+                "--fingerprint",
+                str(tmp_path / "absent.json"),
+            ]
+        )
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert not answered_old.exists()
+    assert f"Old key removed: {answered_old}" in output
+
+
+@pytest.mark.asyncio
+async def test_renaming_follows_the_answered_path_not_the_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``--rename`` on answered paths has to move those files, not compare the defaults.
+
+    The defaults ARE ``CANONICAL_OLD`` and ``CANONICAL_NEW`` by construction, so reading the
+    paths from argparse made the first check in ``rename_keys`` always true: it printed "Keys
+    already sit under their fixed names." and renamed nothing, whatever the operator answered.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    answered_old = tmp_path / "mijn-oude-sleutel.txt"
+    answered_old.write_text(f"{old_private}\n")
+    answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
+    answered_new.write_text(f"{new_private}\n")
+    target_old = tmp_path / "security" / "old_key.txt"
+    target_new = tmp_path / "security" / "key.txt"
+    target_old.parent.mkdir()
+
+    with (
+        patch.object(tool, "CANONICAL_OLD", target_old),
+        patch.object(tool, "CANONICAL_NEW", target_new),
+        patch("builtins.input", side_effect=[str(answered_old), str(answered_new), "ja"]),
+    ):
+        code = await tool.main(["--rename"])
+
+    output = capsys.readouterr().out
+    assert code == 0
+    assert target_old.read_text() == f"{old_private}\n"
+    assert target_new.read_text() == f"{new_private}\n"
+    assert not answered_old.exists()
+    assert not answered_new.exists()
+    assert "Renamed." in output

@@ -195,12 +195,18 @@ async def fingerprint_now(
     return fingerprint, closed
 
 
-def ask_for_keys(arguments: argparse.Namespace) -> tuple[str, str]:
-    """Ask for the two key files and hand back the private halves."""
+def ask_for_keys(arguments: argparse.Namespace) -> tuple[Path, str, Path, str]:
+    """Ask for the two key files and hand back both the answered paths and the private halves.
+
+    The paths come back along with the contents because the last two actions of the plan --
+    renaming and deleting the old key -- act on a FILE. Reading those from the argparse default
+    instead means an operator who answered the prompt with another path gets told the key was
+    removed while it is still on disk.
+    """
     reader = (lambda _question: "") if arguments.ja else input
     old = ask_for_path("old key", arguments.old_key, reader=reader)
     new = ask_for_path("new key", arguments.new_key, reader=reader)
-    return read_key(old), read_key(new)
+    return old, read_key(old), new, read_key(new)
 
 
 @dataclass
@@ -386,7 +392,7 @@ async def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
 
     try:
-        old_private, new_private = ask_for_keys(arguments)
+        old_path, old_private, new_path, new_private = ask_for_keys(arguments)
     except MissingKey as e:
         print(f"FAIL {e}", file=sys.stderr)
         return 2
@@ -402,7 +408,7 @@ async def main(argv: list[str] | None = None) -> int:
     paths = env_paths()
 
     if arguments.rename:
-        rename_keys(Path(arguments.old_key), Path(arguments.new_key), yes=arguments.ja)
+        rename_keys(old_path, new_path, yes=arguments.ja)
         return 0
 
     if arguments.assert_old_key_dead or arguments.remove_old_key:
@@ -422,9 +428,11 @@ async def main(argv: list[str] | None = None) -> int:
                 print("REFUSED the old key does not go away without --projects: the fourth", file=sys.stderr)
                 print("place was not walked, so a project may still sit on the old key.", file=sys.stderr)
                 return 1
-            old_path = Path(arguments.old_key)
-            old_path.unlink(missing_ok=True)
-            print(f"Old key removed: {old_path}")
+            if old_path.is_file():
+                old_path.unlink()
+                print(f"Old key removed: {old_path}")
+            else:
+                print(f"Old key was not there: {old_path}")
         return 0
 
     if arguments.verify:

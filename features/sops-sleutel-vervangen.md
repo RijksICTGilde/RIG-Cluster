@@ -61,8 +61,9 @@ De streepjesnamen hierboven zijn dunne ingangen; de logica staat in modules erna
 ```bash
 # 1. sleutel B maken en de namen op hun plek zetten
 age-keygen -o security/nieuw.txt
-mv security/key.txt security/old_key.txt
-mv security/nieuw.txt security/key.txt
+# --rename vraagt naar de twee paden: antwoord security/key.txt en security/nieuw.txt,
+# en het script schuift ze naar old_key.txt en key.txt
+scripts/rotate-sops-key.py --rename
 
 # 2. deze repo: eerst kijken, dan doen
 scripts/rotate-sops-key.py --dry-run
