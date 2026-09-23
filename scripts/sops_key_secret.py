@@ -3,8 +3,8 @@
 This is the ONE irreversible step of the cutover, so it asks for confirmation with the cluster
 name typed out in full.
 
-    scripts/set-sops-key-secret.py --dry-run     # says which namespaces, and which it leaves alone
-    scripts/set-sops-key-secret.py               # asks for the cluster name, then does it
+    uv run --project operations-manager/python python scripts/set-sops-key-secret.py --dry-run     # says which namespaces, and which it leaves alone
+    uv run --project operations-manager/python python scripts/set-sops-key-secret.py               # asks for the cluster name, then does it
 
 **``sops-age-key`` is NOT one secret in one namespace, and this is the trap.** The plan names
 ``rig-prd-operations``. Measured on the sandbox cluster: **12 namespaces** hold a secret by that
@@ -251,5 +251,8 @@ async def main(argv: list[str] | None = None) -> int:
     print("  - OPI reads a sops file (check the logs for a decryption error)")
     print("  - ArgoCD renders an application without an error")
     print("  - a project can reach its repository")
-    print("Then: scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects")
+    print("Then, from the repository root:")
+    print(
+        "  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects"
+    )
     return 0

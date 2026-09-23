@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Put the new key in the cluster's sops-age-key secrets and restart what has to reread it.
 
 The logic lives in ``sops_key_secret.py`` next to this file; see ``scripts/README.md``.

@@ -55,14 +55,20 @@ historie-scan staat in `docs/geheimenscan-historie-2026-09-22.md`.
 
 ## Aanroepen
 
-Vanaf de repowortel, met de venv van OPI voor de Python-scripts die `opi` importeren:
+Vanaf de repowortel, en dat is niet vrijblijvend: de vier rotatie-ingangen importeren `opi`, dus
+ze draaien alleen in de omgeving van OPI. `python3 scripts/rotate-sops-key.py` stopt op
+`ModuleNotFoundError: No module named 'pydantic'`. `uv run --project` zet die omgeving eromheen
+zonder de werkmap te verplaatsen, zodat de paden in het commando paden vanaf de wortel blijven:
 
 ```bash
-cd operations-manager/python && uv run python ../../scripts/rotate-sops-key.py --dry-run
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --dry-run
 ```
 
-`scan-secrets.py` heeft `opi` niet nodig en draait op een kale Python 3 (dat is wat de CI-job en
-de pre-commit hook doen):
+Daarom dragen ze geen shebang en geen x-bit: er is geen interpreter die het alleen af kan, en een
+`./scripts/rotate-sops-key.py` die dat wel belooft zou stranden.
+
+`scan-secrets.py` is de uitzondering. Die importeert `opi` niet en draait op een kale Python 3
+(dat is wat de CI-job en de pre-commit hook doen), dus die heeft de shebang wel:
 
 ```bash
 python3 scripts/scan-secrets.py

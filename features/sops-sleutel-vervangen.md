@@ -63,7 +63,7 @@ alleen in Kubernetes leeft.
 
 | script | doet |
 |---|---|
-| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 8 losse waarden en `projects/` in DEZE repo, plus met `--argo-applications` de SOPS-bestanden in een clone van zad-argo-user-applications |
+| `scripts/rotate-sops-key.py` | de 21 SOPS-bestanden, de 9 losse waarden en `projects/` in DEZE repo, plus met `--argo-applications` de SOPS-bestanden in een clone van zad-argo-user-applications |
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
 | `scripts/replace-git-pat.py` | dezelfde ronde, met de PAT er ook vervangen |
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
@@ -79,6 +79,11 @@ erbij, zodat je ze ook met de hand kunt draaien; wijkt een script af van wat hie
 dat een fout in het script. De losse handelingen eronder staan in
 `docs/sops-en-age-met-de-hand.md`.
 
+De regels hieronder draai je vanaf de repowortel en je plakt ze heel: het voorvoegsel hoort bij
+het commando, want de vier rotatie-ingangen importeren `opi` en draaien alleen in de omgeving van
+OPI. `scan-secrets.py` is de uitzondering en draait op een kale `python3`. Waarom dat zo is staat
+in `scripts/README.md`.
+
 De ronde heeft vier fasen, en de grens die telt zit tussen VERIFY-1 en APPLY. Tot daar raakt niets
 productie en blijft alles op de oude sleutel werken, dus afbreken kost niet meer dan een paar
 weggegooide clones. Daarna is het een kort venster waarin de bestanden en het cluster allebei om
@@ -90,18 +95,18 @@ moeten.
 # 1. sleutel B maken en de namen op hun plek zetten. --generate-new-key roept age-keygen zelf
 #    aan; --rename vraagt naar de twee paden (antwoord security/key.txt en security/nieuw.txt)
 #    en schuift ze daarna naar old_key.txt en key.txt
-scripts/rotate-sops-key.py --rename --generate-new-key
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --rename --generate-new-key
 # met de hand: age-keygen -o security/nieuw.txt, en dan hetzelfde zonder --generate-new-key
 
 # 2. deze repo EN de argo-applicatierepo: eerst kijken, dan doen
 git clone <zad-argo-user-applications> /tmp/zad-argo
-scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo --dry-run
-scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo --dry-run
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
 
 # 3. de projectbestanden, op een VERSE clone
 git clone <zad-projects> /tmp/zad-projects
-scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
-scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
+uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
+uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
 ```
 
 Stap 2 laat zijn wijzigingen in de werkboom staan, in deze repo en in `/tmp/zad-argo`: commit ze
@@ -111,7 +116,7 @@ daar allebei zelf, zonder push. Stap 3 commit wel, een commit per project, ook z
 
 ```bash
 # 4. alle drie de repo's nalopen TERWIJL er nog niets gepusht is
-scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 git -C /tmp/zad-projects log --oneline | head
 git -C /tmp/zad-projects diff --stat HEAD~45
 
@@ -140,8 +145,8 @@ Gaat hier iets rood, dan gooi je de clones weg en begin je opnieuw.
 
 ```bash
 # 5. pushen, alle drie de repo's, en METEEN daarna het secret wisselen
-scripts/set-sops-key-secret.py --dry-run
-scripts/set-sops-key-secret.py
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py --dry-run
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py
 
 # en ArgoCD de eerste render met de nieuwe sleutel laten doen terwijl je kijkt
 kubectl annotate application production-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
@@ -165,7 +170,7 @@ hem bij de eerstvolgende willekeurige sync tegen te komen.
 # 6. de rooktest en de eindtoets
 kubectl -n rig-system get applications -o wide
 kubectl -n rig-prd-operations rollout status deployment/operations-manager
-scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
 Drie dingen moeten kloppen, en ze raken elk een andere lezer van de sleutel: **ArgoCD rendert**
@@ -181,11 +186,11 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 ```bash
 # 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
 git clone <zad-projects> /tmp/zad-projects-pat
-scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
-scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
+uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects
 
 # 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg
-scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
 **Waarom de PAT-ronde stap 7 is en niet stap 3.** Ze kunnen in een keer: de motor onder beide is
@@ -243,7 +248,7 @@ alles nog klopt -- ook als de clones van toen allang weg zijn:
 
 ```bash
 git clone <zad-argo-user-applications> /tmp/zad-argo
-scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
+uv run --project operations-manager/python python scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
 ```
 
 De clone hoort erbij: de vingerafdruk van stap 2 dekt deze repo EN de argo-applicatierepo, dus
@@ -469,7 +474,7 @@ privesleutels in PEM-vorm met een body, JWT's, Slack-tokens en AWS-access-keys. 
 precies het punt van AGE -- maar met `--inventory` wel op te vragen, als inventaris van de plekken
 die een rotatie moet raken.
 
-`scripts/scan-secrets.py --history` loopt elke blob die ooit in de repo heeft bestaan na. Dat is
+`python3 scripts/scan-secrets.py --history` loopt elke blob die ooit in de repo heeft bestaan na. Dat is
 een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden. De
 uitkomst van de eenmalige scan over beide repo's staat in
 `docs/geheimenscan-historie-2026-09-22.md`.

@@ -359,7 +359,10 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"\nDone. Check `git log --oneline` and `git diff --stat HEAD~{len(result.committed)}` in the clone,")
-    print(f"then push. After that: scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}")
+    print("then push. After that, from the repository root:")
+    print(
+        f"  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}"
+    )
     return 0
 
 

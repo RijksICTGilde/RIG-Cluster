@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Refuse a commit, a branch or a history that carries a secret.
 
-    scripts/scan-secrets.py                        # every file git tracks in this tree
-    scripts/scan-secrets.py --files a.py b.yaml    # just these, for the pre-commit hook
-    scripts/scan-secrets.py --history              # every blob that ever existed (slow)
-    scripts/scan-secrets.py --inventory            # also list AGE ciphertext, as an inventory
+    python3 scripts/scan-secrets.py                        # every file git tracks in this tree
+    python3 scripts/scan-secrets.py --files a.py b.yaml    # just these, for the pre-commit hook
+    python3 scripts/scan-secrets.py --history              # every blob that ever existed (slow)
+    python3 scripts/scan-secrets.py --inventory            # also list AGE ciphertext, as an inventory
 
 Exit code 0 when clean, 1 when there is a finding, so CI and the hook can both hang off it.
 

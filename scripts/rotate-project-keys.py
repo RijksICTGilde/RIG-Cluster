@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """Move the project files to the new platform key: two fields per file, one commit per project.
 
-    scripts/rotate-project-keys.py --projects <clone>/projects --dry-run
-    scripts/rotate-project-keys.py --projects <clone>/projects
+    uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects <clone>/projects --dry-run
+    uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects <clone>/projects
 
 Point it at a LOCAL CLONE of the projects repo. It writes and commits there and pushes nothing:
 the cutover verifies while nothing has been pushed yet, and then the operator pushes the clone.

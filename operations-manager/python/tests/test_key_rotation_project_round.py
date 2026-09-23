@@ -15,7 +15,6 @@ The keys come from ``generate_sops_key_pair`` per test. There is no fixed key in
 from __future__ import annotations
 
 import base64
-import shlex
 import shutil
 import subprocess
 import sys
@@ -26,6 +25,7 @@ import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
+from tests.documented_commands import documented_lines, flags
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -1009,22 +1009,18 @@ def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() ->
     round writes to a file of its own on purpose: it converts the passwords alone, so counting
     it would halve the total.
     """
-    documented = [
-        line.strip()
-        for line in (final_check_tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
-        if line.strip().startswith(("scripts/rotate-project-keys.py", "scripts/replace-git-pat.py"))
-    ]
+    documented = documented_lines("rotate-project-keys.py", "replace-git-pat.py")
     key_lines = [line for line in documented if "rotate-project-keys.py" in line]
     pat_lines = [line for line in documented if "replace-git-pat.py" in line]
 
     assert len(key_lines) == 2, "step 3 is a dry run and then the real one"
     assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"
     for line in key_lines:
-        arguments = build_key_parser().parse_args(shlex.split(line)[1:])
+        arguments = build_key_parser().parse_args(flags(line))
         assert arguments.fingerprint == str(KEY_FINGERPRINT)
         assert arguments.projects, f"the round has nowhere to look: {line}"
     for line in pat_lines:
-        arguments = build_pat_parser().parse_args(shlex.split(line)[1:])
+        arguments = build_pat_parser().parse_args(flags(line))
         assert arguments.fingerprint == str(PAT_FINGERPRINT)
         assert arguments.projects, f"the round has nowhere to look: {line}"
     assert KEY_FINGERPRINT != PAT_FINGERPRINT

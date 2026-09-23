@@ -6,10 +6,13 @@ repository secrets in a clone of zad-argo-user-applications, which sit on the pl
 too. The project files in the zad-projects repo live in ``rotate-project-keys.py``; those sit in
 a different repo and belong to a round of their own, with its own commits.
 
-    scripts/rotate-sops-key.py --dry-run             # says what it would do, changes nothing
-    scripts/rotate-sops-key.py                       # same questions, runs after confirmation
-    scripts/rotate-sops-key.py --verify              # check the fingerprint, months later too
-    scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all five places
+    uv run --project operations-manager/python python scripts/rotate-sops-key.py --dry-run             # says what it would do, changes nothing
+    uv run --project operations-manager/python python scripts/rotate-sops-key.py                       # same questions, runs after confirmation
+    uv run --project operations-manager/python python scripts/rotate-sops-key.py --verify              # check the fingerprint, months later too
+    uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead # the final check over all five places
+
+The launcher is not decoration: this module imports ``opi``, so it only runs inside the OPI
+environment. ``scripts/README.md`` says why, and every documented line carries it.
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
@@ -711,10 +714,15 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"  {len(fingerprint_after.fields)} fields readable with the new key and unchanged in content")
 
     print("\nDone, and nothing has left this machine yet. Still to do:")
-    print("  PREPARE   scripts/rotate-project-keys.py on a fresh clone of the projects repo,")
-    print("            and commit here and in the argo clone without pushing")
-    print("  VERIFY-1  scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects")
-    print("            --argo-applications <clone>, and kustomize build over that argo clone")
-    print("  APPLY     push all three repos, then scripts/set-sops-key-secret.py")
+    print("  PREPARE   uv run --project operations-manager/python python scripts/rotate-project-keys.py")
+    print("            on a fresh clone of the projects repo, then commit here and in the argo")
+    print("            clone without pushing")
+    print(
+        "  VERIFY-1  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead"
+    )
+    print("            --projects <clone>/projects --argo-applications <clone>, and kustomize")
+    print("            build over that argo clone")
+    print("  APPLY     push all three repos, then")
+    print("            uv run --project operations-manager/python python scripts/set-sops-key-secret.py")
     print("  VERIFY-2  that same final check, plus the smoke test in the feature doc")
     return 0

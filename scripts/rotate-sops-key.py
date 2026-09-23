@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Replace the platform AGE key in this repo: the SOPS files and the loose values.
 
 The logic lives in ``sops_rotation.py`` next to this file; see ``scripts/README.md``.

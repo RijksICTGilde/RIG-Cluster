@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
 """Replace the GitHub PAT in every project file -- the same loop, with a different entry.
 
-    scripts/replace-git-pat.py --projects <clone>/projects --dry-run
-    scripts/replace-git-pat.py --projects <clone>/projects
+    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects --dry-run
+    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects
 
 Hard precondition: the new PAT must already be valid on GitHub before the first file is written,
 with the old one still valid too. Otherwise a project loses its repository access the moment its

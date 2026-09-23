@@ -13,7 +13,6 @@ checks cover the guards that make the step safe to rerun and hard to run by acci
 from __future__ import annotations
 
 import base64
-import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -21,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.utils.sops import generate_sops_key_pair
+from tests.documented_commands import documented_lines, flags
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -437,14 +437,10 @@ def test_the_documented_secret_swap_parses() -> None:
     an operator cannot swap the secret of the wrong cluster by pasting a line. A renamed flag
     would leave the line in the doc with nothing saying it no longer runs.
     """
-    documented = [
-        line.strip()
-        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
-        if line.strip().startswith("scripts/set-sops-key-secret.py")
-    ]
+    documented = documented_lines("set-sops-key-secret.py")
 
     assert len(documented) == 2, "step 5 is a dry run and then the real one"
     assert sum("--dry-run" in line for line in documented) == 1, "the dry run comes first"
     for line in documented:
-        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        arguments = tool.build_parser().parse_args(flags(line))
         assert arguments.confirm_cluster is None, f"the cluster name is asked, not pasted: {line}"

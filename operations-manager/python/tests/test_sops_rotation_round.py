@@ -18,9 +18,11 @@ only for the SOPS half, so those tests carry ``needs_sops`` and skip without the
 from __future__ import annotations
 
 import base64
+import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -31,6 +33,7 @@ import yaml
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
+from tests.documented_commands import BARE_PYTHON, LAUNCHER, documented_lines, flags
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -706,27 +709,138 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     ``--remove-old-key`` refuse on either. A flag that is renamed or dropped from the parser turns
     every line here into a SystemExit, instead of leaving a doc that has gone stale without
     anything saying so.
+
+    This reads the FLAGS. Whether the command in front of them starts at all is a claim of its
+    own, and ``test_every_documented_command_line_starts_as_written`` runs it.
     """
-    documented = [
-        line.strip()
-        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
-        if line.strip().startswith("scripts/rotate-sops-key.py")
-    ]
+    documented = documented_lines("rotate-sops-key.py")
     final_checks = [line for line in documented if "--assert-old-key-dead" in line or "--remove-old-key" in line]
 
     assert len(documented) >= 5, "the documented run disappeared from the feature doc"
     assert len(final_checks) == 3, "the final check runs in VERIFY-1 and again in VERIFY-2, plus step 8"
     for line in documented:
-        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        arguments = tool.build_parser().parse_args(flags(line))
         assert arguments.projects_fingerprint == str(tool.DEFAULT_PROJECTS_FINGERPRINT)
         if arguments.verify:
             # The fingerprint of step 2 covers both trees, so a --verify handed only this repo
             # reports every field of the argo clone as "field disappeared".
             assert arguments.argo_applications, f"--verify walks the argo clone too: {line}"
     for line in final_checks:
-        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        arguments = tool.build_parser().parse_args(flags(line))
         assert arguments.projects, f"the final check walks the fourth place: {line}"
         assert arguments.argo_applications, f"the final check walks the fifth place: {line}"
+
+
+#: The five entry points under ``scripts/``. Every one of them carries a documented invocation.
+ENTRY_SCRIPTS = (
+    "rotate-sops-key.py",
+    "rotate-project-keys.py",
+    "replace-git-pat.py",
+    "set-sops-key-secret.py",
+    "scan-secrets.py",
+)
+
+#: The documents that hand an operator a command line to paste.
+COMMAND_DOCS = (
+    tool.REPO / "features" / "sops-sleutel-vervangen.md",
+    tool.REPO / "docs" / "geheimenscan-historie-2026-09-22.md",
+    tool.REPO / "scripts" / "README.md",
+)
+
+
+def _pasteable_commands(doc: Path) -> list[str]:
+    """Every line inside a ```bash block of ``doc`` that runs one of the entry points.
+
+    Only inside a bash block: the same names appear in tables and in prose, and those are
+    references and not commands. A line that starts with ``#`` is a comment in such a block.
+    """
+    commands = []
+    inside = False
+    for raw in doc.read_text().splitlines():
+        if raw.startswith("```"):
+            inside = raw.startswith("```bash")
+            continue
+        line = raw.strip()
+        if inside and not line.startswith("#") and any(f"scripts/{name}" in line for name in ENTRY_SCRIPTS):
+            commands.append(line)
+    return commands
+
+
+def _launcher_of(line: str) -> list[str]:
+    """The tokens up to and including the script path: argv[0] and everything that carries it."""
+    tokens = shlex.split(line)
+    for index, token in enumerate(tokens):
+        if token.startswith("scripts/") and token.endswith(".py"):
+            return tokens[: index + 1]
+    raise AssertionError(f"no script path in this line: {line}")
+
+
+def test_every_documented_command_line_starts_as_written() -> None:
+    """A documented command is a claim about argv[0] too, not only about its flags.
+
+    Four of the five entry points import ``opi``, so ``scripts/rotate-sops-key.py`` on its own
+    stops on ModuleNotFoundError -- and on a fresh clone, where the file carries no exec bit,
+    before that on exit 126. Parsing the flags of such a line says nothing: it is the launcher in
+    front of them that decides whether the paste runs. So this RUNS each unique invocation, with
+    ``--help`` in place of the arguments, from the repository root the docs tell you to be in.
+
+    An operator runs these docs by hand, so nothing else would catch it.
+
+    It runs them OUTSIDE this test's virtualenv. Pytest itself runs inside the OPI environment,
+    so a plain ``python3`` here would resolve to the interpreter that already has pydantic, and
+    the documented form that only works for us would read as green.
+    """
+    commands = [line for doc in COMMAND_DOCS for line in _pasteable_commands(doc)]
+
+    assert len(commands) >= 14, "the documented run disappeared from the docs"
+
+    launchers = {tuple(_launcher_of(line)) for line in commands}
+    scripts_covered = {launcher[-1].removeprefix("scripts/") for launcher in launchers}
+
+    assert scripts_covered == set(ENTRY_SCRIPTS), "an entry point lost its documented invocation"
+
+    outside_the_venv = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
+    venv_bin = str(Path(sys.prefix) / "bin")
+    outside_the_venv["PATH"] = os.pathsep.join(
+        entry for entry in outside_the_venv.get("PATH", "").split(os.pathsep) if entry != venv_bin
+    )
+
+    for launcher in sorted(launchers):
+        assert launcher[0] in {BARE_PYTHON, *shlex.split(LAUNCHER)[:1]}, f"unknown launcher: {launcher}"
+        try:
+            finished = subprocess.run(
+                [*launcher, "--help"],
+                cwd=tool.REPO,
+                env=outside_the_venv,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except OSError as refused:
+            # A bare "scripts/x.py" without an exec bit: the shell would say 126 here, and
+            # without a shell it is an OSError. Both mean the same thing for the operator.
+            pytest.fail(f"{shlex.join(launcher)} does not start: {refused}")
+        assert finished.returncode == 0, f"{shlex.join(launcher)} does not start: {finished.stderr[-400:]}"
+
+
+def test_the_scripts_hand_out_the_same_launcher_the_docs_do() -> None:
+    """The tools print next steps and epilogs, and those are pasted exactly like a doc line.
+
+    A next-step line is the one place where the wrong form is handed to an operator who has just
+    finished a round and is not reading the README. Every ``scripts/<entry>.py`` in the sources
+    is in command position -- the modules refer to each other by bare name -- so each one has to
+    carry a launcher.
+    """
+    written = re.compile(r"(.{0,60})scripts/(" + "|".join(re.escape(name) for name in ENTRY_SCRIPTS) + ")")
+    seen = 0
+    for path in sorted((tool.REPO / "scripts").glob("*.py")):
+        for before, name in written.findall(path.read_text()):
+            seen += 1
+            expected = BARE_PYTHON if name == "scan-secrets.py" else LAUNCHER
+            assert before.endswith(f"{expected} "), f"{path.name} hands out a bare scripts/{name}: ...{before}"
+
+    assert seen >= 15, "the scripts stopped naming each other, or the names changed"
 
 
 # ---------------------------------------------------------------------------
@@ -1786,21 +1900,21 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
 
     phase = dict(zip(headings, [text[a:b] for a, b in zip(starts, [*starts[1:], len(text)], strict=True)], strict=True))
 
-    assert "scripts/rotate-project-keys.py --projects" in phase["### PREPARE"]
+    assert f"{LAUNCHER} scripts/rotate-project-keys.py --projects" in phase["### PREPARE"]
     # Every rotate-sops-key call in PREPARE except the key-making one converts, and the fifth
     # place is converted here or nowhere -- VERIFY-1 would find it, one phase and a clone late.
     converting = [
         line.strip()
         for line in phase["### PREPARE"].splitlines()
-        if line.strip().startswith("scripts/rotate-sops-key.py") and "--rename" not in line
+        if line.strip().startswith(f"{LAUNCHER} scripts/rotate-sops-key.py") and "--rename" not in line
     ]
     assert converting, "PREPARE stopped running the round at all"
     for line in converting:
         assert "--argo-applications" in line, f"this leaves the ArgoCD secrets on the old key: {line}"
-    assert "scripts/set-sops-key-secret.py" not in phase["### PREPARE"], "the swap is not a preparation"
+    assert f"{LAUNCHER} scripts/set-sops-key-secret.py" not in phase["### PREPARE"], "the swap is not a preparation"
     assert "--assert-old-key-dead" in phase["### VERIFY-1"], "the go/no-go check is the point of VERIFY-1"
     assert "kustomize build" in phase["### VERIFY-1"], "a full render is checked before ArgoCD gets to try it"
-    assert "scripts/set-sops-key-secret.py" in phase["### APPLY"]
+    assert f"{LAUNCHER} scripts/set-sops-key-secret.py" in phase["### APPLY"]
     assert "--assert-old-key-dead" in phase["### VERIFY-2"]
     assert "--remove-old-key" in phase["### Daarna"], "throwing the old key away is not part of the cutover"
 
