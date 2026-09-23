@@ -373,9 +373,6 @@ def content_drift(previous: Fingerprint, current: Fingerprint, replaced: Iterabl
     is the same thing the other way round, and so is a place that was left out of the earlier
     run -- the repo round without ``--argo-applications`` records fewer fields than the one
     with it.
-
-    What no round may do is quietly change what a field SAYS, and a name that sits in both
-    records is exactly the question that answers.
     """
     shared = sorted(set(previous.fields) & set(current.fields))
     return Fingerprint(fields={name: previous.fields[name] for name in shared}).compare(
@@ -386,21 +383,15 @@ def content_drift(previous: Fingerprint, current: Fingerprint, replaced: Iterabl
 def replace_record(fingerprint: Fingerprint, path: str | Path, *, replaced: Iterable[str] = ()) -> list[str]:
     """Hold a record that is already there to what it says, and only then overwrite it.
 
-    Every round measures fresh rather than merging into what was there, because a merge keeps an
-    entry for something that is no longer walked. That is also why an existing record has to be
-    COMPARED before it is replaced. Overwriting it silently makes the record a tally instead of a
-    check: with the earlier hashes gone there is nothing left for a changed plaintext to disagree
-    with, and the round then reports the new hash as the truth. Measured on a real file,
-    ``repositories[0].password`` swapped for a different plaintext and re-encrypted: the round
-    exited 0 and the final check said CLEAN, both of them reading the record that same round had
-    just written.
+    Overwriting it silently makes the record a tally instead of a check: with the earlier hashes
+    gone there is nothing left for a changed plaintext to disagree with, and the round then
+    reports the new hash as the truth. Measured on a real file, ``repositories[0].password``
+    swapped for a different plaintext and re-encrypted: the round exited 0 and the final check
+    said CLEAN, both of them reading the record that same round had just written.
 
     A deviation therefore stops the round and leaves the earlier record where it is -- that
     record is the evidence. ``replaced`` names the fields that are MEANT to read differently,
     which is the whole of the difference between the key round and the PAT round.
-
-    One guard for both rounds, rather than a copy per entry point: this is the check that decides
-    whether a rotation may be believed, and a second copy is the one that silently lacks it.
 
     Returns the objections, empty when there are none -- and then the record is written.
     """

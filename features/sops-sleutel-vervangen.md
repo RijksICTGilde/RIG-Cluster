@@ -191,8 +191,7 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 
 ```bash
 # 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU. Verse clone, want er
-#    kan sinds stap 3 gepusht zijn, maar op DEZELFDE plek: de opname noemt elk veld bij zijn
-#    pad, dus alleen dan legt deze ronde zich naast wat stap 3 vastlegde
+#    kan sinds stap 3 gepusht zijn, maar op DEZELFDE plek: de opname noemt elk veld bij zijn pad
 rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
 uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --dry-run
 uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects
@@ -268,30 +267,20 @@ vlag gaat het over deze repo en de argo-clone. De vlag eist wel een opname om te
 (`--projects-fingerprint`, standaard `security/projects-fingerprint.json`); is die er niet, dan
 weigert hij in plaats van CLEAN te zeggen over een clone die hij alleen maar heeft opengemaakt.
 
-Let op de spelling van het clonepad: die opname noemt elk veld bij zijn PAD, dus beide kanten
-werken op het uitgevouwen pad. De telling in de eindtoets heeft daar geen last van -- die
-vergelijkt totalen.
-
 Een ronde over de projectbestanden mag stranden op een onleesbaar bestand: de rest wordt wel
 gedaan en het script gaat rood. Repareer dat bestand en draai dezelfde ronde nog een keer.
 `rotate-project-keys.py` meet zijn vingerafdruk over ALLE projectbestanden en niet over wat die
 ene ronde omzette, dus de telling van de eindtoets klopt ongeacht in hoeveel rondes het lukte.
 
 Een opname die er al staat wordt eerst VERGELEKEN en dan pas vervangen, op de velden die in
-allebei voorkomen. Dat geldt voor allebei de opnames -- die van deze repo en die van de projecten
--- en het is dezelfde grendel, niet twee keer dezelfde regel. Overschrijven zonder vergelijken
-maakte er een telling van: met de oude hashes weg is er niets meer dat een veranderde inhoud kan
-tegenspreken, en de ronde meldt de nieuwe hash dan als de waarheid. Wat er wel bij mag komen of af
-mag vallen is een veld: een gerepareerd bestand dat nu wel leesbaar is, een project dat sindsdien
-weg is, of de argo-clone die er de vorige keer niet bij zat. Verschilt een veld dat beide opnames
-kennen van inhoud, dan stopt de ronde en blijft de oude opname staan -- dat is het bewijs.
+allebei voorkomen. Dat een veld erbij komt of afvalt mag: een gerepareerd bestand dat nu wel
+leesbaar is, een project dat sindsdien weg is, of de argo-clone die er de vorige keer niet bij
+zat. Verschilt een veld dat beide opnames kennen van inhoud, dan stopt de ronde en blijft de oude
+opname staan -- dat is het bewijs.
 
-De PAT-ronde werkt diezelfde projectopname bij, en niet een tweede ernaast -- en daarom draait
-stap 7 op dezelfde clonePLEK als stap 3. De wachtwoordvelden
-horen daar juist te verschillen en die staan op de lijst "vervangen"; `config.age-private-key`
-moet ook in die ronde gelijk blijven. Een eigen opname voor de PAT-ronde las niemand: `--verify`
-en de eindtoets wijzen allebei naar `security/projects-fingerprint.json`, dus na stap 7 meldde
-`--verify` dan "content changed" op elk wachtwoord terwijl er niets mis was.
+De PAT-ronde werkt diezelfde projectopname bij en niet een tweede ernaast, en daarom draait stap 7
+op dezelfde clonePLEK als stap 3. De wachtwoordvelden horen daar juist te verschillen en staan op
+de lijst "vervangen"; `config.age-private-key` moet ook in die ronde gelijk blijven.
 
 Wat het NIET garandeert: of de waarden zelf nog geldig zijn bij de tegenpartij. Of GitHub die PAT
 nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cutover.
@@ -400,9 +389,8 @@ elk getrackt bestand met ECHTE cijfertekst, in ELKE boom die de ronde loopt
 over de argo-clone niet -- terwijl `--remove-old-key` die clone juist EIST en er alleen
 SOPS-bestanden in loopt. Een getrackt bestand daar met een losse waarde werd dus door geen
 vindplaats bereikt en door geen vingerafdruk geteld, en de eindtoets zei CLEAN. Dat het in de
-echte argo-repo goed ging komt doordat `argo_manager.py` er niets anders dan SOPS-bestanden
-schrijft, en dat is een bewering over andere code: precies wat deze grendel er is om na te meten
-in plaats van na te vertellen. In zo'n clone dekt `sops_files()` het bestand en verder niets.
+echte argo-repo goed gaat leunt op wat `argo_manager.py` daar schrijft, en dat is een bewering
+over andere code: precies wat deze grendel er is om na te meten in plaats van na te vertellen.
 
 Twee dingen maken dat bruikbaar in plaats van een lijst die verslapt:
 

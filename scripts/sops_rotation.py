@@ -71,9 +71,8 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     write_loose_value,
 )
 
-# The projects round writes its own fingerprint and owns the walk behind it; ``--verify`` checks
-# that record rather than growing a second walk over the same clone that would then have to be
-# kept in step with it by hand.
+# ``--verify`` checks the record the projects round wrote rather than growing a second walk over
+# the same clone, which would then have to be kept in step with that round by hand.
 from project_rotation import fingerprint_all  # type: ignore[reportMissingImports]
 
 REPO = Path(__file__).resolve().parents[1]
@@ -184,13 +183,7 @@ def own_project_paths() -> list[Path]:
 
 
 def gaps_in(tree: Path, covered: set[Path]) -> list[Path]:
-    """Tracked files under one tree holding real ciphertext that ``covered`` does not name.
-
-    The question is identical wherever it is asked and only the covered set differs per tree, so
-    it is asked in one place. A tree that grows a second kind of place then gets a bigger covered
-    set instead of a third copy of this loop -- which is how the argo clone came to be swept for
-    its SOPS files and for nothing else.
-    """
+    """Tracked files under one tree holding real ciphertext that ``covered`` does not name."""
     return sorted(path for path in files_with_ciphertext(tree) if path not in covered)
 
 
@@ -199,10 +192,8 @@ def covered_in(tree: Path) -> set[Path]:
 
     This repo holds four kinds of place. A clone of zad-argo-user-applications holds one, its
     SOPS files: ``argo_manager.py`` writes the repository secrets there through
-    ``encrypt_to_sops_files_or_fail`` and nothing else. That is a claim about another module's
-    behaviour, and a claim is what the coverage guard exists to measure rather than repeat -- a
-    loose ``base64+age:`` value in that clone is reached by no place here, and
-    ``--remove-old-key`` acts on the verdict.
+    ``encrypt_to_sops_files_or_fail`` and nothing else. That last word is a claim about another
+    module, which is why the sweep below measures it rather than repeating it.
     """
     if tree == REPO:
         return {
@@ -224,10 +215,9 @@ def coverage_gaps(trees: list[Path] | None = None) -> list[Path]:
     committed values sat outside every place the tool walked and ``--assert-old-key-dead``
     reported CLEAN over them.
 
-    Over EVERY tree of ``sops_trees()`` and not this repo alone. The sweep used to run here and
-    over the projects clone, which left the argo clone as the one tree whose coverage was
-    reasoned about instead of measured, while ``--remove-old-key`` goes irreversibly ahead on
-    the same CLEAN.
+    Over EVERY tree of ``sops_trees()`` and not this repo alone: the argo clone used to be the
+    one tree whose coverage was reasoned about instead of measured, while ``--remove-old-key``
+    goes irreversibly ahead on the same CLEAN.
 
     A SOPS file counts as covered by having SOPS metadata, not by its recipient: a file on
     another key is still a file ``sops rotate`` owns, and the recipient selection decides
@@ -562,9 +552,9 @@ async def run_verify(
 
     Which record belongs to which walk matters here in a way it does not for the count in
     ``--assert-old-key-dead``: that one compares totals, this one compares field NAMES, and a
-    name is a path. Both sides therefore walk a resolved directory (``main`` and
-    ``main_rotate_keys`` both resolve it), or a clone addressed by a different spelling would
-    report every field as disappeared and every field as appeared.
+    name is a path. Every entry point that writes or reads this record therefore resolves the
+    directory first, or a clone addressed by a different spelling would report every field as
+    disappeared and every field as appeared.
     """
     trees = trees if trees is not None else [REPO]
     if not fingerprint_path.is_file():
@@ -683,13 +673,11 @@ def note_places_left_out(projects: Path | None, argo: Path | None) -> None:
 
 
 def note_argo_left_out_of_the_record(argo: Path | None) -> None:
-    """The same flag, in the run that RECORDS -- and there it is the sharper of the two.
+    """``--argo-applications``, in the run that RECORDS.
 
-    The final check says which place it does not WALK. This run decides which fields the
-    fingerprint HOLDS, and every later check reads that record: leaving the flag off here and
-    passing it on a second run makes the ArgoCD fields new to the record, which is the one
-    difference the guard around it deliberately allows. Saying so only at the final check is
-    saying so after the record has been written.
+    The final check says which place it does not WALK; this run decides which fields the
+    fingerprint HOLDS, and every later check reads that record. Saying so only at the final
+    check is saying so after the record has been written.
     """
     if argo is None:
         print("NOTE without --argo-applications this run leaves the ArgoCD repository secrets")
@@ -721,8 +709,7 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
 
     new_public = public_key_of(new_private)
-    # Resolved, not as typed: the projects fingerprint keys off the path of each file, and
-    # ``--verify`` compares those names against the record the projects round wrote.
+    # Resolved, not as typed: the projects fingerprint keys off the path of each file.
     projects = Path(arguments.projects).resolve() if arguments.projects else None
     argo = Path(arguments.argo_applications) if arguments.argo_applications else None
     if argo is not None and not argo.is_dir():
@@ -822,10 +809,8 @@ async def main(argv: list[str] | None = None) -> int:
         for name in closed:
             print(f"FAIL opens with neither key: {name}", file=sys.stderr)
         return 1
-    # Compared before it is replaced, by the same guard the projects round uses. Two converting
-    # runs with a changed plaintext in between -- step 2 first without --argo-applications and
-    # then with it -- otherwise make the new hash the truth in silence: ``--verify`` and
-    # ``--assert-old-key-dead`` both read this record, and ``--remove-old-key`` acts on it.
+    # Compared before it is replaced: step 2 run twice, first without --argo-applications and
+    # then with it, is two converting runs over one record.
     if replace_record(fingerprint_before, fingerprint_path):
         return 1
     print(f"  {len(fingerprint_before.fields)} fields -> {fingerprint_path}")

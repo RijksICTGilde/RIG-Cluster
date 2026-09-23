@@ -341,12 +341,11 @@ def worklist(directory: Path) -> tuple[list[Path], int]:
 REPO = Path(__file__).resolve().parents[1]
 CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
-#: One record for the collection, written by BOTH rounds. The PAT round had its own file, and
+#: One record for the collection, written by BOTH rounds. The PAT round had its own file and
 #: nothing read it: ``rotate-sops-key.py --verify --projects`` and ``--assert-old-key-dead``
 #: both default to this one, so after the PAT round the verify said "content changed" on every
-#: password with nothing wrong. Giving the PAT round this record instead keeps the promise that
-#: ``--verify`` still holds months later, and it costs no check: ``replaced=`` already names the
-#: password fields as the ones that are MEANT to read differently, and the key field next to it
+#: password with nothing wrong. Sharing the record costs no check, because ``replaced=`` names
+#: the password fields as the ones that are MEANT to differ and the key field next to them
 #: still has to be unchanged.
 KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
 
@@ -394,8 +393,7 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
     """The key rotation entry point: recrypt both platform fields, keep every plaintext."""
     arguments = build_key_parser().parse_args(argv)
     # Resolved: every fingerprint key is "<path>#<field>", and rotate-sops-key.py --verify
-    # compares those names against this record. A clone addressed once as ../zad-projects and
-    # once by its full path would otherwise look like a collection that was swapped whole.
+    # compares those names against this record.
     directory = Path(arguments.projects).resolve()
     if not directory.is_dir():
         print(f"FAIL not a directory: {directory}", file=sys.stderr)
