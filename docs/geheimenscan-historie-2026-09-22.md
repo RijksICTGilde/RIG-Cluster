@@ -85,10 +85,11 @@ versleuteld was in dat project op dat moment: de api-key, de Keycloak-wachtwoord
 heeft de inhoud.
 
 **Wat de reikwijdte begrenst.** Nagemeten: **geen enkel van de 11 projecten bestaat nog**. Ze
-komen niet voor in de huidige 53 projectbestanden, `projects/local-old/` meegeteld. De namen lezen als een reeks wegwerpprojecten
-uit een testronde. Er valt dus niets meer te roteren voor deze projecten; wat er wel uit volgt is
-dat de onderliggende waarden die ze deelden met iets dat nog leeft (bijvoorbeeld een
-registry-wachtwoord of een PAT die over projecten heen gebruikt werd) niet meer geheim zijn.
+komen niet voor in de huidige 53 projectbestanden, `projects/local-old/` meegeteld. De namen
+lezen als een reeks wegwerpprojecten uit een testronde. Er valt dus niets meer te roteren voor
+deze projecten; wat er wel uit volgt is dat de onderliggende waarden die ze deelden met iets dat
+nog leeft (bijvoorbeeld een registry-wachtwoord of een PAT die over projecten heen gebruikt
+werd) niet meer geheim zijn.
 
 **Wat nog na te gaan is,** en dit is de reden dat deze scan een meting heet en geen afronding:
 

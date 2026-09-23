@@ -172,8 +172,7 @@ def own_project_paths() -> list[Path]:
 
     ``projects/ideas/`` holds sketches that are not project files, and this repo's ciphertext is
     already measured against ``coverage_gaps()`` -- so a project file appearing in a
-    subdirectory here is a named gap that stops the round, not a silent miss. The clone has no
-    such inventory of its own, which is why the selection there is the recursive one.
+    subdirectory here is a named gap that stops the round, not a silent miss.
     """
     return sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []
 
@@ -204,11 +203,9 @@ def coverage_gaps() -> list[Path]:
 def project_coverage_gaps(projects: Path) -> list[Path]:
     """The same check as ``coverage_gaps()``, over the clone the project round walked.
 
-    That round has the problem this repo does not: its whole selection is one walk of that tree,
-    and the fingerprint it compares against is measured by that same walk. Both halves therefore
-    agree over an incomplete one -- 90 fields converted, 90 recorded, CLEAN -- while a
-    subdirectory of project files kept opening with the old key. This is the half that does not
-    come out of the walk: git says which files the tree tracks, and any of them holding real
+    That round has the problem this repo does not: its worklist and the fingerprint it compares
+    against are one and the same walk, so neither half can see what that walk misses. This one
+    does not come out of it -- git says which files the tree tracks, and any of them holding real
     ciphertext that the selection does not reach is a gap.
 
     No exception list of its own. Every tracked file under the directory either is a project
@@ -462,10 +459,9 @@ async def run_final_check(
     the exception list whose reason turns out to be wrong (``check_exceptions``). Without those
     the verdict is about the fields the tool happens to know, not about the old key.
 
-    With ``--projects`` the same inventory runs over that clone (``project_coverage_gaps()``).
-    That is the one measurement here that does not come out of the selection the round used, and
-    it is what this check was missing: a walk and a count built from the same glob report CLEAN
-    over everything that glob does not see.
+    With ``--projects`` the same inventory runs over that clone (``project_coverage_gaps()``),
+    and there it is the only half that does not come out of the walk the round used: a walk and
+    a count built from the same glob report CLEAN over everything that glob does not see.
     """
     trees = trees if trees is not None else [REPO]
     check = FinalCheck(expected=expected)

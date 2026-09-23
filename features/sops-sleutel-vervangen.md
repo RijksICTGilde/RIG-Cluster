@@ -58,11 +58,10 @@ sleutel van het project zelf.
 **Het zijn er 53 en niet 45.** De projects-repo houdt een eerdere ronde in `projects/local-old/`:
 8 bestanden met 16 platformvelden. Een platte `glob('*.yaml')` laat die staan, en de ronde meldt
 dat niet, want de vingerafdruk waar hij tegen vergelijkt komt uit diezelfde selectie -- 90 tegen
-90, CLEAN, terwijl de oude sleutel die 16 velden gewoon opent. Het gereedschap selecteert daarom
-met `rglob`, en de eindtoets meet er een inventaris naast die NIET uit die selectie komt: git
-zegt welke bestanden de boom bijhoudt, en elk bestand daarvan met echte cijfertekst dat de
-selectie niet raakt is een gat. Dat dekt ook een `.yml`, een bestand zonder extensie en een map
-die er vandaag nog niet is.
+90, CLEAN, terwijl de oude sleutel die 16 velden gewoon opent. De selectie is daarom `rglob`, en
+de dekkingsgrendel uit "De vorm is niet de vindplaats" loopt ook over de clone: die meet op wat
+git bijhoudt en niet op de selectie, dus een `.yml`, een bestand zonder extensie of een map die
+er vandaag nog niet is komt er ook uit.
 
 De sleutelwaarde staat nergens in git: `deployment.yaml` verwijst met `secretKeyRef` naar het
 secret `sops-age-key`, en `sops-plugin.sh` leest datzelfde secret. Het is een bootstrapwaarde die
@@ -418,10 +417,9 @@ op de 53 bestanden:
 
 Tijdens het schrijven van het plan is de omzetting een keer met tekstvervanging geprobeerd, toen
 nog over de platte 45: **56 van de 90 velden bleven stil op de oude sleutel staan**, zonder
-foutmelding. Raak de
-projectbestanden dus nooit met sed, awk of `str.replace` aan. Het gereedschap laadt en schrijft
-via `opi.utils.yaml_util`, de canonieke round-trip-schrijver, en zet een meerregelige waarde terug
-als `LiteralScalarString`.
+foutmelding. Raak de projectbestanden dus nooit met sed, awk of `str.replace` aan. Het
+gereedschap laadt en schrijft via `opi.utils.yaml_util`, de canonieke round-trip-schrijver, en
+zet een meerregelige waarde terug als `LiteralScalarString`.
 
 ## Validatie: waarschuwen, niet blokkeren
 

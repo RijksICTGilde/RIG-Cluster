@@ -606,13 +606,9 @@ def files_with_ciphertext(tree: str | Path) -> dict[Path, int]:
 def project_files(directory: str | Path) -> list[Path]:
     """Every project file under the directory, the ones in a subdirectory included.
 
-    ``rglob`` and not ``glob``, and that is the whole point of the function. The projects repo
-    keeps an earlier round under ``projects/local-old/``: 8 files carrying 16 platform fields,
-    which a flat selection leaves on the old key. Nothing in the round says so either, because
-    the fingerprint it compares against is written by this same selection -- 90 against 90,
-    CLEAN. The independent half is ``files_with_ciphertext()`` over that same tree, which asks
-    the tree instead of the worklist and therefore also covers a ``.yml``, a file with no
-    extension and a directory that did not exist when this was written.
+    ``rglob`` and not ``glob``, and that is the whole point of the function: the projects repo
+    keeps an earlier round under ``projects/local-old/``, 8 files carrying 16 platform fields
+    that a flat selection leaves on the old key.
 
     ``.git`` is skipped so that pointing the tool at a clone root instead of at its
     ``projects/`` walks the work tree and not the object store.

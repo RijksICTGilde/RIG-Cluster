@@ -1002,12 +1002,10 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
 
 @pytest.mark.asyncio
 async def test_the_round_walks_a_project_file_in_a_subdirectory(projects_repo: Path, tmp_path: Path) -> None:
-    """The projects repo keeps an earlier round under ``projects/local-old/``: 8 files, 16 fields.
+    """The nested file has to be converted AND to stand in the record the final check counts.
 
-    A flat selection converts none of them and the round says nothing, because the fingerprint it
-    compares against is written by that same selection: both sides count the same incomplete set
-    and agree with each other. So the file in the subdirectory is the measurement here -- it has
-    to be converted AND to stand in the record the final check counts.
+    ``projects/local-old/`` is the subdirectory a flat selection leaves on the old key, and the
+    round's own numbers cannot say so: the fingerprint comes out of that same selection.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1051,9 +1049,9 @@ async def test_a_flat_selection_is_stopped_by_the_coverage_guard(
     """The counter-check on the selection, and on the guard that does not come out of it.
 
     Flatten ``project_files`` back to a plain glob and the round's own numbers still add up --
-    one file converted, one file recorded, "unchanged". What sees it is the inventory: git
-    tracks the nested file, it carries real ciphertext, and no worklist names it. That stops the
-    round before a byte is written, rather than ending in a count that matches over half a walk.
+    one file converted, one file recorded, "unchanged". What sees it is the inventory: git tracks
+    the nested file, it carries real ciphertext, and no worklist names it. The round stops before
+    a byte is written.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1137,10 +1135,8 @@ async def test_both_entry_points_refuse_a_directory_without_a_project_file(
     """An existing directory holding no project file at all: a wrong clone, an empty one.
 
     That used to be a silent exit 0 over "0 project files", which reads as a finished round to
-    whoever runs the step after it. A path that does not EXIST was refused already; this is the
-    mirror of that, and of the refusal ``--argo-applications`` got in an earlier round. The
-    other half of the same mistake is covered by the walk rather than by a refusal: ``<clone>``
-    instead of ``<clone>/projects`` now finds the files one level down.
+    whoever runs the step after it. The other half of the same mistake needs no refusal:
+    ``<clone>`` instead of ``<clone>/projects`` now finds the files one level down.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1169,9 +1165,7 @@ async def test_a_second_round_does_not_point_at_head_0(
 ) -> None:
     """A round that converted nothing has nothing to look at before pushing.
 
-    The closing advice names the commits this round made, and the second round makes none:
-    ``git diff --stat HEAD~0`` is the whole working tree against itself, which reads as "check
-    this" and shows nothing whatever went wrong.
+    The closing advice names the commits this round made, and the second round makes none.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()

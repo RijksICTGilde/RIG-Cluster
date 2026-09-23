@@ -343,12 +343,11 @@ async def test_the_final_check_walks_the_project_files_when_given_a_directory(tm
 async def test_the_final_check_walks_a_project_file_in_a_subdirectory(tmp_path: Path) -> None:
     """The fourth place is a tree, not a flat directory, and the verdict has to cover the tree.
 
-    Both halves are here because they are the two readings of the same run. With the selection
-    as it is, the nested file is counted and named as still opening with the old key; with it
-    flattened -- which is what the projects repo's ``local-old/`` ran into -- the same run
-    reports CLEAN over a field the old key opens. The second half is the FIELD walk alone: the
-    inventory that would also catch it is emptied for every test here by ``no_coverage_sweep``,
-    and has its own test below.
+    Both halves are the two readings of the same run: as the selection stands the nested file is
+    counted and named as still opening with the old key, and flattened the same run reports CLEAN
+    over a field the old key opens. That second half is the FIELD walk alone -- the inventory
+    that would also catch it is emptied for every test here by ``no_coverage_sweep``, and has its
+    own test below.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -374,12 +373,11 @@ async def test_the_final_check_walks_a_project_file_in_a_subdirectory(tmp_path: 
 
 @pytest.mark.asyncio
 async def test_the_final_check_names_a_projects_file_no_selection_reaches(tmp_path: Path) -> None:
-    """The one measurement in this check that does not come out of the selection it checks.
+    """The half of the projects verdict that does not come out of the selection it checks.
 
     A walk and a count built from the same glob agree with each other over everything that glob
-    does not see. So the projects clone gets the same inventory this repo gets: git says which
-    files the tree tracks, and a tracked file carrying real ciphertext that no project-file
-    selection reaches is a gap -- whatever it is called.
+    does not see. So the clone gets the same inventory this repo gets: git says which files the
+    tree tracks, and any of them carrying real ciphertext that no selection reaches is a gap.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -941,11 +939,9 @@ def test_a_shebang_only_sits_on_the_entry_a_bare_interpreter_can_finish() -> Non
     """A shebang plus an exec bit is a promise that ``./scripts/<entry>.py`` runs. Most cannot.
 
     Four of the five import ``opi`` through their module, so a bare interpreter gets as far as
-    ``ModuleNotFoundError``. That is why they are documented with a launcher in front of them --
-    and a shebang on such a file invites exactly the invocation the launcher exists to replace,
-    without anything in the paste saying it will not work. The one entry documented as
-    ``python3 scripts/...`` is the one that can keep the promise, so it carries both and is run
-    here by its own path to prove it.
+    ``ModuleNotFoundError``, and a shebang on such a file invites exactly the invocation the
+    launcher in the docs exists to replace. The one entry documented as ``python3 scripts/...``
+    can keep that promise, so it carries both and is run here by its own path to prove it.
 
     The entry points are read from the tree and not from ``ENTRY_SCRIPTS``: a dash in the name is
     what makes a file an entry rather than an importable module (``scripts/README.md``), so a

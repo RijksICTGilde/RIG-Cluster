@@ -297,12 +297,12 @@ def coverage_gaps(directory: Path) -> list[Path]:
 def worklist(directory: Path) -> tuple[list[Path], int]:
     """The files this round walks, and the exit code that says not to start. 0 means go.
 
-    Both refusals are mirrors of the one ``--argo-applications`` already gets. An existing
-    directory holding no project file at all used to be a silent exit 0 over "0 project files",
-    and that reads as a finished round to whoever runs the step after it -- a wrong clone, a
-    directory one level too deep, an empty one. A tracked file carrying ciphertext that the
-    selection does not reach is the other half; it stops the round for the reason
-    ``coverage_gaps()`` gives, with the exit code the SOPS round uses for the same finding.
+    An existing directory holding no project file at all used to be a silent exit 0 over "0
+    project files", and that reads as a finished round to whoever runs the step after it -- a
+    wrong clone, an empty one. That refusal mirrors the one ``--argo-applications`` already
+    gets. A tracked file carrying ciphertext the selection does not reach is the other half; it
+    stops the round for the reason ``coverage_gaps()`` gives, with the exit code the SOPS round
+    uses for the same finding.
     """
     found = project_files(directory)
     if not found:
@@ -312,8 +312,8 @@ def worklist(directory: Path) -> tuple[list[Path], int]:
         return [], 2
     gaps = coverage_gaps(directory)
     if gaps:
-        # Same wording as the SOPS round's stop on the same finding, so an operator who has seen
-        # one recognises the other.
+        # Opens like the SOPS round's stop on the same finding, so an operator who has seen one
+        # recognises the other.
         print("STOPPED a tracked file carries ciphertext this round does not walk:", file=sys.stderr)
         for path in gaps:
             print(f"  {display(path, directory)}", file=sys.stderr)
@@ -421,8 +421,8 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
         print(f"\nDone. Check `git log --oneline` and `git diff --stat HEAD~{len(result.committed)}` in the clone,")
         print("then push. After that, from the repository root:")
     else:
-        # The second round of a rotation that went well: everything already sits on the new key,
-        # so there is nothing to look at and nothing to push. "HEAD~0" is the whole working tree.
+        # A second round of a rotation that went well: everything already sits on the new key.
+        # "git diff --stat HEAD~0" would be the working tree against itself and show nothing.
         print("\nDone. Nothing was left to convert, so there is nothing to commit or push. Still:")
     print(
         f"  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}"
