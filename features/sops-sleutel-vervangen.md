@@ -144,6 +144,12 @@ bij de wachtwoordvelden; het script noemt ze vooraf.
 
 `--verify` werkt los, dus je kunt maanden later nog nagaan of alles nog klopt.
 
+Een ronde over de projectbestanden mag stranden op een onleesbaar bestand: de rest wordt dan wel
+gedaan en het script gaat rood. Repareer dat bestand en draai dezelfde ronde nog een keer.
+`rotate-project-keys.py` meet zijn vingerafdruk over ALLE projectbestanden en niet over wat die
+ene ronde omzette, dus de telling van de eindtoets klopt daarna nog, ongeacht in hoeveel rondes
+het gelukt is.
+
 Wat het NIET garandeert: of de waarden zelf nog geldig zijn bij de tegenpartij. Of GitHub die PAT
 nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cutover.
 

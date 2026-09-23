@@ -44,9 +44,13 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     MissingKey,
     ProjectRound,
     ask_for_path,
+    decrypt_field,
+    load_yaml_from_path,
+    project_fields,
     public_key_of,
     read_key,
     rotate_project_file,
+    sha256_of,
 )
 
 # A failed decryption is the EXPECTED outcome in several places here: telling "already
@@ -196,19 +200,53 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
         print(f"\nContent check: {result.fields} fields {kept}.")
 
 
-def save_fingerprint(result: RoundResult, path: str) -> None:
-    """Write the fingerprint, but only when this round actually converted something.
+async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerprint, list[str]]:
+    """Measure the plaintext of every platform field in the directory, with the first key that fits.
 
-    A round that finds nothing left to do is the CORRECT outcome of running the tool twice, and
-    saving there would overwrite the record of the first round with zero fields. The final check
-    compares its count against that record, so the second, harmless round would be what makes
-    ``--assert-old-key-dead`` fail afterwards.
+    Over the WHOLE collection and not over the round's worklist, which is what
+    ``sops_rotation.main`` does for its three places as well. Passing both keys is what makes
+    that possible: a field already on B reads just as well as one still on A, so the SET of
+    fields does not depend on how much a given round had left to do.
+
+    Second return value: the fields that opened with neither key. Those are not a fingerprint
+    but a finding -- the same ones the round reports as a real problem.
     """
-    if not result.fields:
-        print(f"\nNothing converted, so {path} is left as it was.")
-        return
-    result.fingerprint_before.save(path)
-    print(f"\nFingerprint of {result.fields} fields -> {path}")
+    fingerprint = Fingerprint()
+    closed: list[str] = []
+    for path in sorted(directory.glob("*.yaml")):
+        data = load_yaml_from_path(str(path))
+        if not isinstance(data, dict):
+            continue
+        for field_name, value in project_fields(data):
+            name = f"{path}#{field_name}"
+            for key in private_keys:
+                plain = await decrypt_field(value, key)
+                if plain is not None:
+                    fingerprint.set(name, sha256_of(plain))
+                    break
+            else:
+                closed.append(name)
+    return fingerprint, closed
+
+
+async def save_fingerprint(directory: Path, path: str, *private_keys: str) -> None:
+    """Record the whole collection, not the fields this particular round happened to convert.
+
+    The final check compares its count against this record, and the round is allowed to convert
+    a PART: ``run_round`` promises that one unreadable file does not abort it. A record of the
+    worklist alone therefore breaks the documented recovery path -- round one converts four
+    fields of six, the operator repairs the file, round two converts the remaining two and
+    OVERWRITES the record with those two, and ``--assert-old-key-dead`` then reports "6 now, 2
+    before the conversion" with nothing wrong with the key and the earlier record gone.
+
+    Measured fresh each time rather than merged into what was there: a merge would keep an entry
+    for a project that has since been deleted, and the check does not walk that one any more.
+    """
+    fingerprint, closed = await fingerprint_all(directory, *private_keys)
+    fingerprint.save(path)
+    print(f"\nFingerprint of {len(fingerprint.fields)} fields -> {path}")
+    for name in closed:
+        print(f"  not in the fingerprint, opens with neither key: {name}")
 
 
 def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound]:
@@ -315,7 +353,7 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
 
     result = await run_round(directory, old_private, new_private, dry_run=False, commit=not arguments.no_commit)
     report(result, dry_run=False)
-    save_fingerprint(result, arguments.fingerprint)
+    await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
 
     problems = broken(result)
     if problems:
@@ -399,7 +437,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
         directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
     )
     report(result, dry_run=False)
-    save_fingerprint(result, arguments.fingerprint)
+    await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
 
     problems = broken(result, pat_round=True)
     if problems:

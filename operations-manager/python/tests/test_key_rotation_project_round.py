@@ -38,6 +38,7 @@ from key_rotation import (  # noqa: E402
     ProjectRound,
     decrypt_field,
     opens_with,
+    sha256_of,
 )
 from project_rotation import (  # noqa: E402
     RoundResult,
@@ -528,14 +529,16 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
 
 
 @pytest.mark.asyncio
-async def test_a_second_key_round_leaves_the_fingerprint_of_the_first_alone(
-    projects_repo: Path, tmp_path: Path
-) -> None:
+async def test_a_second_key_round_records_the_same_fields_as_the_first(projects_repo: Path, tmp_path: Path) -> None:
     """Running the tool twice is a promise of this tool, and the second run converts nothing.
 
     Why that matters is in ``save_fingerprint``. Measured before the fix: round one 6 fields,
     round two 0, and step 6 red with the right flag. This goes through the entry point on
     purpose: ``run_round`` sits UNDER the layer that saves.
+
+    The record is re-measured over the whole collection rather than held onto, so what has to
+    be equal is the SET of fields and their hashes. Only ``created`` differs, and that stamp
+    says when the collection was last measured, which is genuinely the second round.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -558,13 +561,13 @@ async def test_a_second_key_round_leaves_the_fingerprint_of_the_first_alone(
     ]
 
     first = await main_rotate_keys(arguments)
-    after_the_first_round = fingerprint.read_text()
+    after_the_first_round = Fingerprint.load(fingerprint).fields
     second = await main_rotate_keys(arguments)
 
     assert first == 0
     assert second == 0
-    assert len(Fingerprint.load(fingerprint).fields) == 2
-    assert fingerprint.read_text() == after_the_first_round
+    assert len(after_the_first_round) == 2
+    assert Fingerprint.load(fingerprint).fields == after_the_first_round
 
 
 def test_the_pat_is_read_from_a_file(tmp_path: Path) -> None:
@@ -706,19 +709,19 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
 
 
 @pytest.mark.asyncio
-async def test_a_second_pat_round_leaves_the_fingerprint_of_the_first_alone(
-    projects_repo: Path, tmp_path: Path
-) -> None:
+async def test_a_second_pat_round_records_the_same_fields_as_the_first(projects_repo: Path, tmp_path: Path) -> None:
     """The same guard on the other entry point, which saves its own fingerprint on the same line.
 
-    A second PAT round finds the token already in place, so it converts nothing either.
+    A second PAT round finds the token already in place, so it converts nothing either -- and
+    the hashes have to be the NEW token's, or the record does not describe the files as they
+    now are.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
-    await _write_project(projects_repo / "projects", "een", old_public)
+    path = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
     fingerprint = tmp_path / "pat-fingerprint.json"
@@ -737,13 +740,14 @@ async def test_a_second_pat_round_leaves_the_fingerprint_of_the_first_alone(
     ]
 
     first = await main_replace_pat(arguments)
-    after_the_first_round = fingerprint.read_text()
+    after_the_first_round = Fingerprint.load(fingerprint).fields
     second = await main_replace_pat(arguments)
 
     assert first == 0
     assert second == 0
-    assert len(Fingerprint.load(fingerprint).fields) == 2
-    assert fingerprint.read_text() == after_the_first_round
+    assert len(after_the_first_round) == 2
+    assert Fingerprint.load(fingerprint).fields == after_the_first_round
+    assert after_the_first_round[f"{path}#repositories[0].password"] == sha256_of("ghp_brand_new")
 
 
 def test_already_converted_is_only_harmless_in_the_key_round() -> None:
@@ -865,3 +869,70 @@ async def test_every_repository_password_gets_the_new_pat_and_not_just_the_first
     data = load_yaml_from_path(str(path))
     for index in (0, 1):
         assert await decrypt_field(data["repositories"][index]["password"], new_private) == "ghp_brand_new"
+
+
+@pytest.mark.asyncio
+async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The documented recovery path: one file unreadable, repair it, run again, then step 8.
+
+    ``run_round`` promises that an unreadable file does not abort the round, so the operator
+    ends up with a round that converted a PART and a second round that converted the rest.
+    The fingerprint has to hold the WHOLE collection either way -- a record of only the
+    second round's fields makes the final check go red on the count with nothing wrong with
+    the key, and by then the record of the first round is gone.
+
+    The count after the partial round is 5 and not the 4 the round converted: only the password
+    of bbb is unreadable, its project key still opens, and the record says what the collection
+    HOLDS rather than what this one round did. The field it could not measure is named.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    for name in ("aaa", "bbb", "ccc"):
+        await _write_project(directory, name, old_public)
+    broken_path = directory / "bbb.yaml"
+    intact = broken_path.read_text()
+    broken_path.write_text(intact.replace(intact.split("password: ")[1].split("\n")[0], f"{BASE64_AGE_PREFIX}QUJDREVG"))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+    arguments = ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)]
+
+    partial = await main_rotate_keys(arguments)
+    after_the_partial_round = len(Fingerprint.load(fingerprint).fields)
+    partial_output = capsys.readouterr().out
+    broken_path.write_text(intact)
+    repaired = await main_rotate_keys(arguments)
+    capsys.readouterr()
+    with (
+        patch.object(final_check_tool, "sops_files_for", return_value=[]),
+        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+        patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
+    ):
+        step_8 = await final_check_tool.main(
+            [
+                "--ja",
+                "--assert-old-key-dead",
+                "--projects",
+                str(directory),
+                *keys,
+                "--fingerprint",
+                str(tmp_path / "no-fingerprint-for-this-repo.json"),
+            ]
+        )
+    printed = capsys.readouterr().out
+
+    assert partial == 1
+    assert after_the_partial_round == 5
+    assert f"opens with neither key: {broken_path}#repositories[0].password" in partial_output
+    assert repaired == 0
+    assert len(Fingerprint.load(fingerprint).fields) == 6
+    assert "count differs" not in printed
+    assert "CLEAN the old key opens nothing, the new key opens everything" in printed
+    assert step_8 == 0
