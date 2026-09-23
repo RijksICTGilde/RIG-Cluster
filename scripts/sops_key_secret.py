@@ -251,8 +251,8 @@ async def main(argv: list[str] | None = None) -> int:
     print("  - OPI reads a sops file (check the logs for a decryption error)")
     print("  - ArgoCD renders an application without an error")
     print("  - a project can reach its repository")
-    print("Then, from the repository root:")
-    print(
-        "  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects <clone>/projects"
-    )
+    print("Then, from the repository root, the final check of step 6 -- both clones, because")
+    print("without them the fourth and fifth place are not walked:")
+    print("  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead")
+    print("  --projects <zad-projects clone>/projects --argo-applications <zad-argo clone>")
     return 0

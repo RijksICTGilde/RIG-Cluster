@@ -70,6 +70,11 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     write_loose_value,
 )
 
+# The projects round writes its own fingerprint and owns the walk behind it; ``--verify`` checks
+# that record rather than growing a second walk over the same clone that would then have to be
+# kept in step with it by hand.
+from project_rotation import fingerprint_all  # type: ignore[reportMissingImports]
+
 REPO = Path(__file__).resolve().parents[1]
 
 #: The files outside the SOPS tree that carry a loose encrypted value. They are easily
@@ -177,7 +182,38 @@ def own_project_paths() -> list[Path]:
     return sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []
 
 
-def coverage_gaps() -> list[Path]:
+def gaps_in(tree: Path, covered: set[Path]) -> list[Path]:
+    """Tracked files under one tree holding real ciphertext that ``covered`` does not name.
+
+    The question is identical wherever it is asked and only the covered set differs per tree, so
+    it is asked in one place. A tree that grows a second kind of place then gets a bigger covered
+    set instead of a third copy of this loop -- which is how the argo clone came to be swept for
+    its SOPS files and for nothing else.
+    """
+    return sorted(path for path in files_with_ciphertext(tree) if path not in covered)
+
+
+def covered_in(tree: Path) -> set[Path]:
+    """What this rotation reaches inside one tree of ``sops_trees()``.
+
+    This repo holds four kinds of place. A clone of zad-argo-user-applications holds one, its
+    SOPS files: ``argo_manager.py`` writes the repository secrets there through
+    ``encrypt_to_sops_files_or_fail`` and nothing else. That is a claim about another module's
+    behaviour, and a claim is what the coverage guard exists to measure rather than repeat -- a
+    loose ``base64+age:`` value in that clone is reached by no place here, and
+    ``--remove-old-key`` acts on the verdict.
+    """
+    if tree == REPO:
+        return {
+            *sops_files(REPO),
+            *loose_paths(),
+            *own_project_paths(),
+            *(REPO / name for name in COVERAGE_EXCEPTIONS),
+        }
+    return set(sops_files(tree))
+
+
+def coverage_gaps(trees: list[Path] | None = None) -> list[Path]:
     """Tracked files holding real ciphertext that no place of this rotation reaches.
 
     The SOPS round selects on the recipient and takes care of itself, but the loose values
@@ -187,17 +223,17 @@ def coverage_gaps() -> list[Path]:
     committed values sat outside every place the tool walked and ``--assert-old-key-dead``
     reported CLEAN over them.
 
+    Over EVERY tree of ``sops_trees()`` and not this repo alone. The sweep used to run here and
+    over the projects clone, which left the argo clone as the one tree whose coverage was
+    reasoned about instead of measured, while ``--remove-old-key`` goes irreversibly ahead on
+    the same CLEAN.
+
     A SOPS file counts as covered by having SOPS metadata, not by its recipient: a file on
     another key is still a file ``sops rotate`` owns, and the recipient selection decides
     whether it is touched.
     """
-    covered = {
-        *sops_files(REPO),
-        *loose_paths(),
-        *own_project_paths(),
-        *(REPO / name for name in COVERAGE_EXCEPTIONS),
-    }
-    return sorted(path for path in files_with_ciphertext(REPO) if path not in covered)
+    trees = trees if trees is not None else [REPO]
+    return sorted(path for tree in trees for path in gaps_in(tree, covered_in(tree)))
 
 
 def project_coverage_gaps(projects: Path) -> list[Path]:
@@ -211,8 +247,7 @@ def project_coverage_gaps(projects: Path) -> list[Path]:
     No exception list of its own. Every tracked file under the directory either is a project
     file the round converts, or it is the finding.
     """
-    covered = set(project_files(projects))
-    return sorted(path for path in files_with_ciphertext(projects) if path not in covered)
+    return gaps_in(projects, set(project_files(projects)))
 
 
 def sops_trees(argo_applications: Path | None) -> list[Path]:
@@ -375,7 +410,7 @@ async def build_plan(
     """
     trees = trees if trees is not None else [REPO]
     plan = RotationPlan(
-        sops=[path for tree in trees for path in sops_files_for(tree, old_public)], gaps=coverage_gaps()
+        sops=[path for tree in trees for path in sops_files_for(tree, old_public)], gaps=coverage_gaps(trees)
     )
     for path in paths:
         for field_ in loose_values(path):
@@ -455,9 +490,10 @@ async def run_final_check(
     selection.
 
     On top of the five places it settles the two halves of the coverage list: a file that
-    carries ciphertext and is converted by nothing at all (``coverage_gaps()``), and a file on
-    the exception list whose reason turns out to be wrong (``check_exceptions``). Without those
-    the verdict is about the fields the tool happens to know, not about the old key.
+    carries ciphertext and is converted by nothing at all (``coverage_gaps()``, over every tree
+    this run walks, the argo clone included), and a file on the exception list whose reason turns
+    out to be wrong (``check_exceptions``). Without those the verdict is about the fields the
+    tool happens to know, not about the old key.
 
     With ``--projects`` the same inventory runs over that clone (``project_coverage_gaps()``),
     and there it is the only half that does not come out of the walk the round used: a walk and
@@ -480,7 +516,7 @@ async def run_final_check(
             for field_name, value in project_fields(data):
                 await check_value(f"{path}#{field_name}", value, old_private, new_private, check)
         check.outside_coverage.extend(str(path) for path in project_coverage_gaps(projects))
-    check.outside_coverage.extend(short(path) for path in coverage_gaps())
+    check.outside_coverage.extend(short(path) for path in coverage_gaps(trees))
     await check_exceptions(old_private, check)
     return check
 
@@ -512,24 +548,50 @@ async def run_verify(
     new_public: str,
     new_private: str,
     trees: list[Path] | None = None,
+    projects: Path | None = None,
+    projects_fingerprint: Path | None = None,
 ) -> int:
-    """Check the recorded fingerprint against what the new key reads today."""
+    """Check the recorded fingerprints against what the new key reads today.
+
+    With ``--projects`` the fourth place is checked too, against the record
+    ``rotate-project-keys.py`` wrote. This mode already validated that flag -- a missing or empty
+    directory is exit 2 -- and then walked nothing with it, so the verdict line counted this
+    repo's fields alone while the projects fingerprint sat next to it with nothing reading it.
+    A number that is written and never read is a tally, not a check.
+
+    Which record belongs to which walk matters here in a way it does not for the count in
+    ``--assert-old-key-dead``: that one compares totals, this one compares field NAMES, and a
+    name is a path. Both sides therefore walk a resolved directory (``main`` and
+    ``main_rotate_keys`` both resolve it), or a clone addressed by a different spelling would
+    report every field as disappeared and every field as appeared.
+    """
     trees = trees if trees is not None else [REPO]
     if not fingerprint_path.is_file():
         print(f"FAIL no fingerprint to check against: {fingerprint_path}", file=sys.stderr)
+        return 2
+    if projects is not None and (projects_fingerprint is None or not projects_fingerprint.is_file()):
+        print(f"FAIL no fingerprint to check --projects against: {projects_fingerprint}", file=sys.stderr)
+        print("That is the record rotate-project-keys.py writes. Leave --projects off to check", file=sys.stderr)
+        print("this repo and the argo clone alone.", file=sys.stderr)
         return 2
     wanted = Fingerprint.load(fingerprint_path)
     measured, closed = await fingerprint_now(
         sops_on_either_recipient(old_public, new_public, trees), all_loose_values(paths), new_private
     )
     objections = wanted.compare(measured)
+    counted = len(measured.fields)
+    if projects is not None and projects_fingerprint is not None:
+        measured_projects, closed_projects = await fingerprint_all(projects, new_private)
+        objections.extend(Fingerprint.load(projects_fingerprint).compare(measured_projects))
+        closed.extend(closed_projects)
+        counted += len(measured_projects.fields)
     for name in closed:
         print(f"FAIL does not open with the new key: {name}")
     for objection in objections:
         print(f"FAIL {objection}")
     if objections or closed:
         return 1
-    print(f"CLEAN {len(measured.fields)} fields readable with the new key and unchanged in content")
+    print(f"CLEAN {counted} fields readable with the new key and unchanged in content")
     return 0
 
 
@@ -596,11 +658,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--projects-fingerprint",
         default=str(DEFAULT_PROJECTS_FINGERPRINT),
-        help="the fingerprint rotate-project-keys.py wrote, so the final check's count adds up",
+        help="the fingerprint rotate-project-keys.py wrote: the final check counts it and --verify compares against it",
     )
     parser.add_argument(
         "--projects",
-        help="directory with project files, so the final check can walk the fourth place too",
+        help="directory with project files, so the final check and --verify walk the fourth place too",
     )
     parser.add_argument(
         "--argo-applications",
@@ -635,7 +697,9 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
 
     new_public = public_key_of(new_private)
-    projects = Path(arguments.projects) if arguments.projects else None
+    # Resolved, not as typed: the projects fingerprint keys off the path of each file, and
+    # ``--verify`` compares those names against the record the projects round wrote.
+    projects = Path(arguments.projects).resolve() if arguments.projects else None
     argo = Path(arguments.argo_applications) if arguments.argo_applications else None
     if argo is not None and not argo.is_dir():
         print(f"FAIL no such directory: {argo}", file=sys.stderr)
@@ -653,11 +717,14 @@ async def main(argv: list[str] | None = None) -> int:
         return 2
     trees = sops_trees(argo)
     fingerprint_path = Path(arguments.fingerprint)
+    projects_fingerprint = Path(arguments.projects_fingerprint)
     paths = loose_paths()
 
     if old_private is None:
         # Guaranteed by old_optional above; everything past this point acts on the old key.
-        return await run_verify(fingerprint_path, paths, None, new_public, new_private, trees)
+        return await run_verify(
+            fingerprint_path, paths, None, new_public, new_private, trees, projects, projects_fingerprint
+        )
 
     old_public = public_key_of(old_private)
     if old_public == new_public:
@@ -674,7 +741,7 @@ async def main(argv: list[str] | None = None) -> int:
         if argo is None:
             print("NOTE without --argo-applications the final check does not walk the ArgoCD")
             print("repository secrets, and those render with the secret step 5 replaces.")
-        fingerprints = [fingerprint_path, Path(arguments.projects_fingerprint)]
+        fingerprints = [fingerprint_path, projects_fingerprint]
         expected = expected_count(fingerprints) if projects is not None else None
         check = await run_final_check(old_private, new_private, old_public, new_public, projects, expected, trees)
         for line in check.lines():
@@ -698,7 +765,9 @@ async def main(argv: list[str] | None = None) -> int:
         return 0
 
     if arguments.verify:
-        return await run_verify(fingerprint_path, paths, old_public, new_public, new_private, trees)
+        return await run_verify(
+            fingerprint_path, paths, old_public, new_public, new_private, trees, projects, projects_fingerprint
+        )
 
     plan = await build_plan(paths, old_private, new_private, old_public, trees)
     show_plan(plan)

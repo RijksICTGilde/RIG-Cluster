@@ -35,6 +35,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -54,6 +55,9 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     rotate_project_file,
     sha256_of,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # A failed decryption is the EXPECTED outcome in several places here: telling "already
 # converted" from "unreadable" is done by trying. ``opi.utils.age`` logs such an attempt at
@@ -241,22 +245,67 @@ async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerpr
     return fingerprint, closed
 
 
-async def save_fingerprint(directory: Path, path: str, *private_keys: str) -> None:
-    """Record the whole collection, not the fields this particular round happened to convert.
+def content_drift(previous: Fingerprint, current: Fingerprint, replaced: Iterable[str]) -> list[str]:
+    """Where two records disagree about a field they BOTH hold.
+
+    Deliberately not ``compare()`` over the whole record. That one also objects to a field
+    appearing or disappearing, and here both are the documented path rather than a finding: a
+    round may strand on an unreadable file and be run again once it is repaired, and the field
+    that could not be measured is then new to the record. A project that has since been deleted
+    is the same thing the other way round.
+
+    What no round may do is quietly change what a field SAYS, and a name that sits in both
+    records is exactly the question that answers.
+    """
+    shared = sorted(set(previous.fields) & set(current.fields))
+    return Fingerprint(fields={name: previous.fields[name] for name in shared}).compare(
+        Fingerprint(fields={name: current.fields[name] for name in shared}), replaced=replaced
+    )
+
+
+async def save_fingerprint(directory: Path, path: str, *private_keys: str, replaced: Iterable[str] = ()) -> list[str]:
+    """Record the whole collection, and hold a record that is already there to what it says.
 
     ``run_round`` promises that one unreadable file does not abort the round, so a rotation may
     take two rounds. A record of the second round's worklist alone makes ``--assert-old-key-dead``
     fail on the count with nothing wrong with the key, and the record of the first round is gone
-    by then.
+    by then. Hence the whole collection, measured fresh each time rather than merged into what
+    was there: a merge would keep an entry for a project that has since been deleted, and the
+    check does not walk that one any more.
 
-    Measured fresh each time rather than merged into what was there: a merge would keep an entry
-    for a project that has since been deleted, and the check does not walk that one any more.
+    Measuring fresh is also why an existing record has to be COMPARED before it is replaced.
+    Overwriting it silently made this a tally instead of a check: with the earlier hashes gone
+    there is nothing left for a changed plaintext to disagree with, and the round then reports
+    the new hash as the truth. Measured on a real file, ``repositories[0].password`` swapped for
+    a different plaintext and re-encrypted: the round exited 0 and the final check said CLEAN,
+    both of them reading the record this same round had just written.
+
+    A deviation therefore stops the round and leaves the earlier record where it is -- that
+    record is the evidence. ``replaced`` names the fields that are MEANT to read differently,
+    which is the whole of the difference between the key round and the PAT round.
+
+    Returns the objections, empty when there are none.
     """
     fingerprint, closed = await fingerprint_all(directory, *private_keys)
+    recorded = Path(path)
+    if recorded.is_file():
+        previous = Fingerprint.load(recorded)
+        objections = content_drift(previous, fingerprint, replaced)
+        if objections:
+            print(f"\nFAIL the fingerprint recorded in {path} disagrees with what is there now:")
+            for objection in objections:
+                print(f"  {objection}")
+            print("Left as it was: it is from the earlier round and it is the evidence.")
+            return objections
+        for name in sorted(set(previous.fields) - set(fingerprint.fields)):
+            print(f"  no longer in the collection: {name}")
+        for name in sorted(set(fingerprint.fields) - set(previous.fields)):
+            print(f"  new in the collection since the last round: {name}")
     fingerprint.save(path)
     print(f"\nFingerprint of {len(fingerprint.fields)} fields -> {path}")
     for name in closed:
         print(f"  not in the fingerprint, opens with neither key: {name}")
+    return []
 
 
 def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound]:
@@ -374,7 +423,10 @@ def build_key_parser() -> argparse.ArgumentParser:
 async def main_rotate_keys(argv: list[str] | None = None) -> int:
     """The key rotation entry point: recrypt both platform fields, keep every plaintext."""
     arguments = build_key_parser().parse_args(argv)
-    directory = Path(arguments.projects)
+    # Resolved: every fingerprint key is "<path>#<field>", and rotate-sops-key.py --verify
+    # compares those names against this record. A clone addressed once as ../zad-projects and
+    # once by its full path would otherwise look like a collection that was swapped whole.
+    directory = Path(arguments.projects).resolve()
     if not directory.is_dir():
         print(f"FAIL not a directory: {directory}", file=sys.stderr)
         return 2
@@ -408,11 +460,15 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
 
     result = await run_round(directory, old_private, new_private, dry_run=False, commit=not arguments.no_commit)
     report(result, directory, dry_run=False)
-    await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
+    # No ``replaced``: this round re-encrypts and changes no plaintext, so every hash that moved
+    # is a finding.
+    drifted = await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
 
     problems = broken(result)
     if problems:
         print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
+        return 1
+    if drifted:
         return 1
     if result.fingerprint_before.compare(result.fingerprint_after):
         return 1
@@ -424,9 +480,8 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
         # A second round of a rotation that went well: everything already sits on the new key.
         # "git diff --stat HEAD~0" would be the working tree against itself and show nothing.
         print("\nDone. Nothing was left to convert, so there is nothing to commit or push. Still:")
-    print(
-        f"  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects {directory}"
-    )
+    print("  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead")
+    print(f"  --projects {directory} --argo-applications <zad-argo clone>")
     return 0
 
 
@@ -462,7 +517,7 @@ def build_pat_parser() -> argparse.ArgumentParser:
 async def main_replace_pat(argv: list[str] | None = None) -> int:
     """The PAT entry point: the same round, with the repository password replaced as well."""
     arguments = build_pat_parser().parse_args(argv)
-    directory = Path(arguments.projects)
+    directory = Path(arguments.projects).resolve()
     if not directory.is_dir():
         print(f"FAIL not a directory: {directory}", file=sys.stderr)
         return 2
@@ -503,11 +558,15 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
         directory, old_private, new_private, new_pat=new_pat, dry_run=False, commit=not arguments.no_commit
     )
     report(result, directory, dry_run=False)
-    await save_fingerprint(directory, arguments.fingerprint, old_private, new_private)
+    drifted = await save_fingerprint(
+        directory, arguments.fingerprint, old_private, new_private, replaced=result.replaced_fields
+    )
 
     problems = broken(result, pat_round=True)
     if problems:
         print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
+        return 1
+    if drifted:
         return 1
     if result.fingerprint_before.compare(result.fingerprint_after, replaced=result.replaced_fields):
         return 1
