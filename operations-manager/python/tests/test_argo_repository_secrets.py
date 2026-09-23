@@ -68,8 +68,7 @@ needs_sops = pytest.mark.skipif(shutil.which("sops") is None, reason="requires t
 
 OLD_TOKEN = "ghp_" + "o" * 36
 NEW_TOKEN = "ghp_" + "n" * 36
-#: A third token: neither the one being replaced nor the one replacing it. The live shape the
-#: conditional exists for -- two of the 67 repository secrets carry a value like this.
+#: A third token: neither the one being replaced nor the one replacing it.
 OLDER_TOKEN = "ghp_" + "x" * 36
 CLUSTER = "odcn-production"
 
@@ -1114,13 +1113,10 @@ async def test_a_secret_whose_project_has_a_plain_password_is_held_to_the_token_
 ) -> None:
     """The gap the review found: the token half ran over ``pairs`` and nothing else.
 
-    ``without_platform_password`` is split on the PROJECT file -- its password is ``plain:``, so
-    nothing can be derived for this secret and the round rightly leaves it alone. But the secret
-    itself carries an ordinary plaintext password like every other one, and here it is the
-    withdrawn token. The verdict says nothing decrypts to the current PAT any more, which is
-    absolute, so a secret in this list has to answer for it as well.
-
-    The shape is not a corner case: the doc names it as the form of the entire sandbox.
+    The two lists are split on the PROJECT file, and the token question is about the SECRET, so
+    a secret in ``without_platform_password`` has to answer for it too. Why: the docstring of
+    ``check_repository_secrets``. Not a corner case: the doc names it as the shape of the whole
+    sandbox.
     """
     platform_private, platform_public = platform_keys
     projects, clone, _secret = await a_pair(

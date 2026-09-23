@@ -1926,11 +1926,10 @@ def test_the_documented_pat_round_and_its_final_check_share_the_same_two_token_f
     Drift between the two spellings means the round replaces from one file while the check
     measures against another, and the check reports CLEAN over a token nothing ever read.
 
-    That such a check is documented at all is the other half. ``--pat-new-file`` recognises a
-    token by its SHAPE and ``--pat-current-file`` is plain equality with the value that was
-    replaced; only the second says the old token is gone. "At least one", not "exactly one":
-    running it again a day later with the same two files is more measurement, not less. WHICH
-    of them has to carry the tokens is the test below; that is the half this one cannot see.
+    That such a check is documented at all is the other half. Only ``--pat-current-file`` says
+    the old token is gone (the two rules: ``check_token``), and "at least one" rather than
+    "exactly one": a repeat a day later is more measurement, not less. WHICH of the documented
+    checks has to carry the tokens is the test below.
     """
     pat_lines = documented_lines("replace-git-pat.py")
     assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"

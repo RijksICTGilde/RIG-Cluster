@@ -2883,15 +2883,10 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
 ) -> None:
     """The second half of the gap the review found, on the project side this time.
 
-    ``project_fields()`` selects on ``form_of()``, so a password stored in the clear is not in
-    the walk at all, and ``project_coverage_gaps()`` does not report it either -- plain text is
-    not ciphertext. For the KEY question both are right: there is nothing there to re-encrypt.
-    But the verdict ``--pat-current-file`` prints is absolute, and a withdrawn token lying in a
-    project file in the clear is that token.
-
-    The counted total is the other half. These fields were never converted, so they are not in
-    the fingerprint, and counting them would make the count that has to match disagree by
-    exactly their number.
+    A ``repositories[].password`` stored in the clear is outside the walk the key half uses, so
+    the key half is right to stay quiet about it and the verdict ``--pat-current-file`` prints
+    is not. Both halves are pinned here: the finding, and the count it may not change. Why:
+    ``project_plain_passwords``.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
