@@ -395,11 +395,23 @@ def test_strip_and_preserve_attachment_content_roundtrip() -> None:
     assert "content" not in fv["attachments"]["data"][0]
 
 
-def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
-    """The standalone modal-edit-attachments flow (single ATTACHMENTS_SECTION) must carry
-    `services` into step_data via the read-only carrier, so the upload partial can list
-    existing attachments even without the services-selection section present."""
+def test_modal_edit_attachments_flow_keeps_services_in_base_data() -> None:
+    """De losse bijlagenmodal ziet de bestaande bijlagen via base_data, niet via step_data.
+
+    DEZE TEST STOND OM. Hij eiste dat de readonly services-carrier een kopie van de
+    dienstenlijst IN step_data zette. Dat is precies wat 559eaa60 heeft weggehaald, en met
+    reden: de naam-unie in merge_service_lists verwijdert nooit, dus die kopie bracht elke
+    uitgevinkte dienst terug (de configstap verscheen opnieuw en de save hield de dienst).
+    De test bleef achter en stond sindsdien rood op de basistak.
+
+    Wat er nu bewaakt wordt is de andere helft van diezelfde reparatie, want die twee horen
+    bij elkaar: _split_data_across_sections slaat de readonly carrier over, EN
+    _fully_owned_list_keys negeert hem, zodat de lijst in base_data blijft staan en de
+    uploadstap zijn context houdt. Valt een van de twee weg, dan is de modal leeg of komt
+    een verwijderde dienst terug.
+    """
     from opi.forms.visualizers.flows import get_flow
+    from opi.web.router_detail_edit import _fully_owned_list_keys
     from opi.web.router_wizard import _split_data_across_sections
 
     flow = get_flow("modal-edit-attachments")
@@ -411,11 +423,17 @@ def test_modal_edit_attachments_flow_carries_services_for_display() -> None:
             {"attachments": {"data": [{"id": "sso", "filename": "cert.pem", "content": "AGEBLOCK"}]}},
         ]
     }
+
     step_data = _split_data_across_sections(flow, project)
-    carried = step_data.get("attachments", {}).get("services")
-    assert carried, "services not carried into the attachments step"
-    catalog = [d for s in carried if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]]
-    assert [(d["id"], d["filename"]) for d in catalog] == [("sso", "cert.pem")]
+    assert "services" not in step_data.get("attachments", {}), (
+        "de readonly carrier zet weer een gezaghebbende kopie in step_data; dan brengt de "
+        "naam-unie in merge_service_lists een uitgevinkte dienst terug"
+    )
+
+    assert "services" not in _fully_owned_list_keys(flow), (
+        "services geldt hier als bezit van de flow, en dan haalt base_data de lijst weg; "
+        "de uploadstap heeft dan geen enkele bron voor de bestaande bijlagen"
+    )
 
 
 def test_wizard_session_catalog_removal_and_ids() -> None:

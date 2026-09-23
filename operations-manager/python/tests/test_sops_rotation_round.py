@@ -1322,6 +1322,11 @@ async def _two_tree_round(tmp_path: Path, old_public: str) -> tuple[Path, Path, 
     return repo, clone, env_path
 
 
+def _argo_sops_file(clone: Path) -> Path:
+    """The one file the argo clone of ``_two_tree_round`` holds."""
+    return clone / "argo-repository-main-repo.sops.yaml"
+
+
 @pytest.mark.asyncio
 @needs_sops
 async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagrees_with(
@@ -1334,6 +1339,11 @@ async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagr
     silence: ``--verify`` then says CLEAN, ``--assert-old-key-dead`` says the old key is dead, and
     ``--remove-old-key`` acts on that verdict -- all four reading a record the run that changed
     the value had just rewritten. The earlier record has to survive, because it is the evidence.
+
+    And the round has to stop BEFORE it converts, not report afterwards. A guard that runs once
+    the files are on the new key leaves the collection converted under a record that was refused:
+    the old key still opens nothing, so the final check calls it CLEAN, and the one measurement
+    that disagreed is the one that was thrown away.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -1348,6 +1358,7 @@ async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagr
 
         # Perfectly readable with the new key, so no decryption test can see this. Only the record can.
         env_path.write_text(f"GIT_PROJECTS_SERVER_PASSWORD={await _base64_value('something-else', new_public)}\n")
+        untouched = _argo_sops_file(clone).read_text()
         code = await tool.main(["--ja", *arguments, "--argo-applications", str(clone)])
 
     printed = capsys.readouterr().out
@@ -1355,6 +1366,7 @@ async def test_a_second_converting_run_refuses_to_overwrite_the_record_it_disagr
     assert "disagrees with what is there now" in printed
     assert f"content changed: {env_path}#GIT_PROJECTS_SERVER_PASSWORD" in printed
     assert fingerprint.read_text() == recorded, "the earlier record is the evidence and has to stand"
+    assert _argo_sops_file(clone).read_text() == untouched, "the refusal comes before a single file is converted"
 
 
 @pytest.mark.asyncio
@@ -1368,6 +1380,10 @@ async def test_a_place_left_out_of_the_first_run_joins_the_record_on_the_second(
     when the flag does come along. The run that RECORDS is the one that decides which fields end
     up in there, so that is where the note about the missing flag belongs -- the final check's
     note comes too late to change anything.
+
+    Both stands, because only the silence pins the condition: a note that prints whether or not
+    the flag was given says the record is short of the ArgoCD secrets in the very run that put
+    them in it, right above the plan the operator says yes to.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1381,7 +1397,9 @@ async def test_a_place_left_out_of_the_first_run_joins_the_record_on_the_second(
         code = await tool.main(["--ja", *arguments, "--argo-applications", str(clone)])
 
     printed = capsys.readouterr().out
-    assert "NOTE without --argo-applications this run leaves the ArgoCD repository secrets" in first
+    note = "NOTE without --argo-applications this run leaves the ArgoCD repository secrets"
+    assert note in first
+    assert note not in printed, "the second run walked the clone, so it has nothing to leave out"
     assert code == 0
     assert "disagrees with what is there now" not in printed
     assert "new in the collection since the last round" in printed
@@ -2042,6 +2060,50 @@ async def test_the_final_check_walks_this_repo_and_the_argo_clone_in_one_run(
     assert code == 1
     assert f"FAIL STILL opens with the old key: {here}" in printed
     assert f"FAIL STILL opens with the old key: {there}" in printed
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_names_the_places_its_flags_left_out_and_stays_quiet_about_the_rest(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """CLEAN over four places reads exactly like CLEAN over five, so the note carries the width.
+
+    ``--remove-old-key`` deletes the old key on this same verdict, and a run without a flag
+    reports CLEAN over a place it never opened. The half that is easy to lose is the silence:
+    a note that prints whichever flags were given tells the operator that his complete run was
+    incomplete, and one that is always there is one nobody reads any more.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    keys = _key_files(tmp_path, old_private, new_private)
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    await _project_file(projects, "een", new_public)
+    argo = tmp_path / "zad-argo-user-applications"
+    argo.mkdir()
+    records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
+    stands = {
+        "neither": [],
+        "only --projects": ["--projects", str(projects)],
+        "only --argo-applications": ["--argo-applications", str(argo)],
+        "both": ["--projects", str(projects), "--argo-applications", str(argo)],
+    }
+
+    printed: dict[str, str] = {}
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+    ):
+        for stand, given in stands.items():
+            assert await tool.main(["--ja", "--assert-old-key-dead", *keys, *records, *given]) == 0, stand
+            printed[stand] = capsys.readouterr().out
+
+    projects_note = "NOTE without --projects the final check does not walk the fourth place."
+    argo_note = "NOTE without --argo-applications the final check does not walk the ArgoCD"
+    for stand, given in stands.items():
+        assert (projects_note in printed[stand]) is ("--projects" not in given), f"the fourth place, {stand}"
+        assert (argo_note in printed[stand]) is ("--argo-applications" not in given), f"the ArgoCD secrets, {stand}"
 
 
 @pytest.mark.asyncio
