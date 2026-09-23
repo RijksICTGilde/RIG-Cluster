@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import base64
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, decrypt_age_content, encrypt_age_content
@@ -458,6 +458,14 @@ async def test_real_ciphertext_is_told_apart_from_a_value_with_only_the_shape(
     assert not is_real_ciphertext("-----BEGIN AGE ENCRYPTED FILE-----\nQUJDREVG\n-----END AGE ENCRYPTED FILE-----")
     assert not is_real_ciphertext("plain:hunter2")
 
+    # A SHORTENED block, and this one is not made up: two values in this tree open with the
+    # header and a recipient stanza and stop before the MAC line. Reading only the header would
+    # call those real, which is how the exception list starts filling up with entries nobody
+    # can act on.
+    body = base64.b64decode("".join((await encrypt_age_content("hunter2", public_key)).splitlines()[1:-1]))
+    cut = base64.b64encode(body[: body.index(b"\n--- ")]).decode()
+    assert not is_real_ciphertext(f"-----BEGIN AGE ENCRYPTED FILE-----\n{cut}\n-----END AGE ENCRYPTED FILE-----")
+
 
 @pytest.mark.asyncio
 async def test_a_block_is_read_even_when_it_sits_indented_in_a_yaml_file(key_pair_a: tuple[str, str]) -> None:
@@ -477,10 +485,24 @@ async def test_a_block_is_read_even_when_it_sits_indented_in_a_yaml_file(key_pai
     assert await decrypt_field(found[0], private_key) == "hunter2"
 
 
-def test_the_inventory_walks_tracked_files_and_not_the_working_tree(tmp_path: Path) -> None:
-    """``security/`` holds the real keys on purpose and is untracked; a scratch file is not a gap."""
-    with patch("key_rotation.tracked_files", return_value=[]):
-        assert files_with_ciphertext(tmp_path) == {}
+@pytest.mark.asyncio
+async def test_the_inventory_walks_tracked_files_and_not_the_working_tree(
+    tmp_path: Path, key_pair_a: tuple[str, str]
+) -> None:
+    """``security/`` holds the real keys on purpose and is untracked; a scratch file is not a gap.
+
+    Measured on a real git tree holding the SAME ciphertext twice, once added and once not.
+    The inventory is what the coverage guard refuses to start on, so reading the working tree
+    would turn every scratch file and every untracked clone into a blockade instead of a guard.
+    """
+    _private_key, public_key = key_pair_a
+    block = await encrypt_age_content("hunter2", public_key)
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    (tmp_path / "tracked.txt").write_text(block)
+    (tmp_path / "scratch.txt").write_text(block)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt"], check=True)
+
+    assert files_with_ciphertext(tmp_path) == {tmp_path / "tracked.txt": 1}
 
 
 # ---------------------------------------------------------------------------

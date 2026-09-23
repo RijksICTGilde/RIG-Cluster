@@ -719,6 +719,10 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     for line in documented:
         arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
         assert arguments.projects_fingerprint == str(tool.DEFAULT_PROJECTS_FINGERPRINT)
+        if arguments.verify:
+            # The fingerprint of step 2 covers both trees, so a --verify handed only this repo
+            # reports every field of the argo clone as "field disappeared".
+            assert arguments.argo_applications, f"--verify walks the argo clone too: {line}"
     for line in final_checks:
         arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
         assert arguments.projects, f"the final check walks the fourth place: {line}"
@@ -1315,6 +1319,109 @@ async def test_the_round_also_converts_the_argocd_repository_secrets(tmp_path: P
 
 
 @pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_walks_this_repo_and_the_argo_clone_in_one_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The verdict is only as wide as the trees it is handed, and one of them is another repo.
+
+    Both halves are measured in one run, because dropping either is the same failure. A file
+    left behind HERE and one left behind in the argo clone both have to be named: walk only
+    this repo and the ArgoCD repository secrets go quiet, walk only the clone and this repo's
+    SOPS files do -- and either way ``--assert-old-key-dead`` calls the old key dead over a
+    place it never opened, which is the one verdict the whole cutover hangs on.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    repo = tmp_path / "rig-cluster"
+    clone = tmp_path / "zad-argo-user-applications"
+    repo.mkdir()
+    clone.mkdir()
+    here = _sops_file(repo, "operations-manager-env-secrets", SECRET_BODY, old_public)
+    there = _sops_file(clone, "argo-repository-main-repo", SECRET_BODY, old_public)
+
+    with patch.object(tool, "REPO", repo), patch.object(tool, "loose_paths", return_value=[]):
+        code = await tool.main(
+            [
+                "--ja",
+                "--assert-old-key-dead",
+                *_key_files(tmp_path, old_private, new_private),
+                "--argo-applications",
+                str(clone),
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert f"FAIL STILL opens with the old key: {here}" in printed
+    assert f"FAIL STILL opens with the old key: {there}" in printed
+
+
+@pytest.mark.asyncio
+async def test_a_clone_path_that_is_not_there_stops_the_run_instead_of_walking_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """A typo in the clone path must not read as "the fifth place holds nothing".
+
+    ``sops_files_for`` on a directory that is not there answers with an empty list and no
+    complaint, so without this refusal the run walks four places, finds them clean and prints
+    CLEAN -- while the ArgoCD repository secrets still sit on the old key.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    absent = tmp_path / "zad-argo-typo"
+
+    with patch.object(tool, "sops_files_for", return_value=[]), patch.object(tool, "loose_paths", return_value=[]):
+        code = await tool.main(
+            [
+                "--ja",
+                "--assert-old-key-dead",
+                *_key_files(tmp_path, old_private, new_private),
+                "--argo-applications",
+                str(absent),
+            ]
+        )
+
+    assert code == 2
+    assert f"FAIL no such directory: {absent}" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_verify_measures_the_argo_clone_too_and_says_so_when_it_is_left_out(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``--verify`` runs months later, and it has to cover the same trees the round did.
+
+    The fingerprint of the round holds this repo AND the argo clone, so a ``--verify`` handed
+    only one of them reports every field of the other as gone. Both halves are here because
+    they are the two ways to read the same command: with the clone it is CLEAN, without it the
+    argo field is "field disappeared" -- and that second half is exactly what the documented
+    command avoids by carrying the flag.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    repo = tmp_path / "rig-cluster"
+    clone = tmp_path / "zad-argo-user-applications"
+    repo.mkdir()
+    clone.mkdir()
+    _sops_file(repo, "demo", SECRET_BODY, old_public)
+    there = _sops_file(clone, "argo-repository-main-repo", SECRET_BODY, old_public)
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "fingerprint.json")]
+
+    with patch.object(tool, "REPO", repo), patch.object(tool, "loose_paths", return_value=[]):
+        assert await tool.main(["--ja", *arguments, "--argo-applications", str(clone)]) == 0
+        capsys.readouterr()
+
+        assert await tool.main(["--ja", "--verify", *arguments, "--argo-applications", str(clone)]) == 0
+        assert "CLEAN 2 fields readable with the new key and unchanged in content" in capsys.readouterr().out
+
+        assert await tool.main(["--ja", "--verify", *arguments]) == 1
+
+    assert f"FAIL field disappeared: {there}#<sops-document>" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
 async def test_the_old_key_does_not_go_away_while_the_argocd_secrets_are_unwalked(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -1680,6 +1787,16 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
     phase = dict(zip(headings, [text[a:b] for a, b in zip(starts, [*starts[1:], len(text)], strict=True)], strict=True))
 
     assert "scripts/rotate-project-keys.py --projects" in phase["### PREPARE"]
+    # Every rotate-sops-key call in PREPARE except the key-making one converts, and the fifth
+    # place is converted here or nowhere -- VERIFY-1 would find it, one phase and a clone late.
+    converting = [
+        line.strip()
+        for line in phase["### PREPARE"].splitlines()
+        if line.strip().startswith("scripts/rotate-sops-key.py") and "--rename" not in line
+    ]
+    assert converting, "PREPARE stopped running the round at all"
+    for line in converting:
+        assert "--argo-applications" in line, f"this leaves the ArgoCD secrets on the old key: {line}"
     assert "scripts/set-sops-key-secret.py" not in phase["### PREPARE"], "the swap is not a preparation"
     assert "--assert-old-key-dead" in phase["### VERIFY-1"], "the go/no-go check is the point of VERIFY-1"
     assert "kustomize build" in phase["### VERIFY-1"], "a full render is checked before ArgoCD gets to try it"
