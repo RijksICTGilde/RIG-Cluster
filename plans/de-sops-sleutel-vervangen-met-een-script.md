@@ -2,15 +2,17 @@
 
 Status: plan, 22 september 2026. Niet gebouwd. Vervangt de brede opzet in `de-age-sleutel-roteren-en-splitsen.md`, die als fase 3 blijft staan.
 
-Aanleiding: **age kent geen verlooptijd.** Een sleutel is geldig tot je hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door. Deze taak levert het gereedschap dat die handeling van een dag naar een uur brengt, en het ritme waarin hij gedraaid wordt.
+Aanleiding: **age kent geen verlooptijd.** Een sleutel is geldig tot je hem intrekt, en intrekken kan alleen door alles opnieuw te versleutelen. Zolang dat een project is in plaats van een handeling, gebeurt het niet, en groeit de tijd dat een sleutel geldig blijft ongemerkt door. Andere geheimen hebben dat wel: een GitHub-token verloopt vanzelf en dwingt zo zijn eigen vervanging af. Een AGE-sleutel niet. Deze taak levert het gereedschap dat die handeling kort en voorspelbaar maakt, en het ritme waarin hij gedraaid wordt.
 
-## Het ritme: jaarlijks, en op aanleiding
+## Het ritme: elk kwartaal, tegelijk met de tokens
 
-**Op aanleiding is het sterkere signaal.** Een vertrekkende collega, een verdenking, een repository die publiek blijkt: dan roteer je dezelfde dag, en daarvoor moet het gereedschap er zijn. Dat is de eigenlijke reden dat dit bestaat.
+**Elke drie maanden, preventief.** Niet omdat er iets aan de hand is, maar omdat het dan routine blijft. Het ritme valt samen met de verlooptijd van de GitHub-tokens: die moeten toch vervangen worden, en dat is **dezelfde ronde**. De motor onder `rotate-project-keys.py` en `replace-git-pat.py` is een lus, over dezelfde bestanden, met dezelfde verificatie. De sleutel meenemen in een PAT-vervanging die er toch komt kost bijna niets extra.
 
-**Periodiek: jaarlijks.** Niet vaker, en dat is een afweging en geen slordigheid. Wat frequenter roteren oplevert is uitsluitend de tijd dat een ONBEKEND lek blijft werken: bij twee maanden gemiddeld een maand, bij een jaar gemiddeld zes. Daar staat tegenover dat een aanvaller die de sleutel heeft hem binnen minuten gebruikt en niet na vijf maanden, en dat oude cijfertekst in de git-historie met de oude sleutel leesbaar blijft, hoe vaak je ook roteert. Rotatie beperkt de houdbaarheid van een lek, niet de schade van het eerste gebruik.
+Dat is meteen het antwoord op "is elk kwartaal niet te vaak voor zo'n operatie". Een handeling die je een keer per jaar doet gaat mis, want niemand kent hem nog en het gereedschap is ongemerkt achterhaald. Een handeling die je elk kwartaal doet is geoefend. Frequentie verlaagt hier het risico per keer in plaats van het te verhogen, mits de droogloop hieronder draait.
 
-Daar staat een reële kostenkant tegenover: elke rotatie raakt drie repositories, alle projectbestanden, het clustersecret en een herstart van de operations-manager, met een APPLY-venster waarin een fout het platform raakt. Zes van die operaties per jaar is een groter risico dan de blootstelling die ze wegnemen. Stel het getal definitief vast na de eerste echte ronde, als bekend is hoe lang hij duurt en wat er misging.
+**Daarnaast incidenteel**, als daar aanleiding voor is: een collega die weggaat, of het vermoeden dat een sleutel bekend geworden is. Dan draai je dezelfde ronde, op dezelfde dag.
+
+Het doel is dat een beheerder dit **automatisch, pijnloos en gecontroleerd** kan doen. Niet dat het spannend is, maar dat het saai is. Duurt de ronde langer dan een uur of vraagt hij onderweg om een beslissing, dan is het gereedschap niet af.
 
 ## De droogloop: automatiseer de oefening, niet de ingreep
 
@@ -23,7 +25,7 @@ De vier fasen splitsen precies op de plek waar automatisering veilig is:
 | APPLY | ja: cluster en drie repositories | **nee, mensenwerk** |
 | VERIFY-2 | nee | ja |
 
-Laat PREPARE en VERIFY-1 **maandelijks in CI** draaien op een wegwerpsleutel, en gooi het resultaat weg. Dat bewijst elke maand dat het gereedschap nog werkt, dat elke vindplaats nog gevonden wordt, en dat er geen nieuwe vindplaats is bijgekomen die niemand heeft aangemeld. Dat laatste is de fout die dit traject veroorzaakte, en de droogloop is de enige bewaking die hem vangt voordat het uitmaakt.
+Laat PREPARE en VERIFY-1 **maandelijks in CI** draaien op een wegwerpsleutel, en gooi het resultaat weg. Dus vaker dan de rotatie zelf, zodat een kwartaalronde nooit de eerste keer is dat iemand merkt dat er iets stuk is. Dat bewijst elke maand dat het gereedschap nog werkt, dat elke vindplaats nog gevonden wordt, en dat er geen nieuwe vindplaats is bijgekomen die niemand heeft aangemeld. Dat laatste is de fout die dit traject veroorzaakte, en de droogloop is de enige bewaking die hem vangt voordat het uitmaakt.
 
 APPLY blijft met de hand, met iemand die meekijkt. Een geautomatiseerde apply die 's nachts faalt legt het platform plat terwijl niemand het alarm leest.
 
