@@ -1,8 +1,50 @@
-# De SOPS-sleutel vervangen
+# De sleutel en het token vervangen, met een script dat het elk kwartaal kan
 
-De platform-AGE-sleutel zit niet alleen in de SOPS-bestanden, en `sops rotate` ziet alleen die.
-Dit is het gereedschap dat elke vindplaats omzet, aantoont dat er niets anders is veranderd, en
-aantoont dat de oude sleutel daarna niets meer opent. De volgende keer is het een commando.
+De GitHub-PAT verloopt. Die moet dus vervangen worden, in de platformconfiguratie en in elk
+projectbestand dat hem draagt, en dat is een geplande handeling met een datum erop. Precies het
+moment om de AGE-sleutel mee te nemen.
+
+Dat is namelijk het verschil tussen die twee. Een token dwingt zijn eigen vervanging af zodra het
+verloopt. Een AGE-sleutel niet: die blijft geldig tot iemand hem intrekt, en intrekken kan alleen
+door alles opnieuw te versleutelen wat eraan hangt. Zolang dat een project is in plaats van een
+handeling gebeurt het niet, en dan betekent "geldig tot je hem intrekt" in de praktijk gewoon
+"geldig".
+
+Samen kan, want het is dezelfde ronde: dezelfde bestanden, dezelfde lus, dezelfde verificatie.
+`replace-git-pat.py` en `rotate-project-keys.py` zijn twee ingangen op een motor. De sleutel
+meenemen in een PAT-vervanging die er toch al komt kost bijna niets extra, en dat is meteen de
+onderbouwing van het kwartaalritme hieronder.
+
+Dit document levert allebei: het gereedschap en het ritme. Het gereedschap, omdat de
+platform-AGE-sleutel niet alleen in de SOPS-bestanden zit en `sops rotate` alleen die ziet -- dit
+zet elke vindplaats om, toont aan dat er niets anders is veranderd, en toont aan dat de oude
+sleutel daarna niets meer opent. Het ritme, omdat gereedschap dat niemand pakt op hetzelfde
+neerkomt als geen gereedschap.
+
+## Het ritme: elk kwartaal, plus op aanleiding
+
+Preventief elk kwartaal, op het moment dat de PAT toch vervangen moet worden, en daarnaast
+incidenteel zodra er een aanleiding is: een collega die weggaat, of het vermoeden dat een sleutel
+bekend is geworden.
+
+Reken je de sleutelrotatie als losse operatie, dan lijkt elk kwartaal duur. Dat is de rekenfout en
+niet de frequentie: de ronde komt er toch, en de sleutel rijdt mee.
+
+Frequentie verlaagt hier het risico per keer, en niet andersom. Een handeling die je een keer per
+jaar doet gaat mis doordat niemand hem nog kent en het gereedschap ondertussen ongemerkt
+achterhaald is geraakt. Elk kwartaal is geoefend.
+
+**Dit is routine en geen gebeurtenis.** Het doel is dat een beheerder de ronde automatisch,
+pijnloos en gecontroleerd draait. Duurt hij langer dan een uur, of vraagt hij onderweg om een
+beslissing, dan is het gereedschap niet af. Dat is de maat -- niet of de ronde uiteindelijk
+gelukt is.
+
+Voor de EERSTE ronde geldt een uitzondering op dat samen draaien: daar gaat de sleutel voorop en
+de PAT erachteraan, zodat een fout in het een het ander niet meesleept. Zie "Waarom de PAT-ronde
+achteraan staat, ook al is hij de aanleiding". Zodra die ronde aantoonbaar goed is gegaan, is de
+kwartaalronde de gecombineerde.
+
+Tussen de rondes door loopt er maandelijks een oefening die niets omzet; zie "De oefenronde".
 
 ## Wat de sleutel vasthoudt
 
@@ -200,8 +242,9 @@ uv run --project operations-manager/python python scripts/replace-git-pat.py --p
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
-**Waarom de PAT-ronde stap 7 is en niet stap 3.** Ze kunnen in een keer: de motor onder beide is
-dezelfde lus en `replace-git-pat.py` zet de sleutel en het wachtwoord in een beweging om. Toch is
+**Waarom de PAT-ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen in een keer: de
+motor onder beide is dezelfde lus en `replace-git-pat.py` zet de sleutel en het wachtwoord in een
+beweging om. Toch is
 de geadviseerde volgorde de sleutel eerst en de PAT daarna, want een fout in de PAT-vervanging
 sleept dan de sleutelrotatie niet mee en de twee zijn los terug te draaien. Is de sleutelronde
 aantoonbaar goed gegaan, dan is de PAT-ronde een herhaling van iets dat al gewerkt heeft.
@@ -229,6 +272,30 @@ sleutel die op dat moment alles nog opent, en waarvan geen kopie bestaat.
 
 Droogloop is de veilige stand: zonder `--ja` wordt er geen byte geschreven voordat je op
 "Run this?" ja hebt gezegd, en `--dry-run` stelt die vraag niet eens.
+
+## De oefenronde: automatiseer de oefening, niet de ingreep
+
+PREPARE en VERIFY-1 zijn precies de twee fasen waarin niets deze machine verlaat. Ze zetten om en
+ze controleren, en committen doen ze in een clone, maar er wordt niet gepusht en het clustersecret
+blijft staan -- afbreken kost een weggegooide clone. Die twee kunnen dus maandelijks in CI draaien
+op een wegwerpsleutel, met het resultaat weggegooid.
+
+Maandelijks is met opzet VAKER dan de rotatie zelf. Een kwartaalronde mag nooit de eerste keer
+zijn dat iemand merkt dat er iets stuk is.
+
+Dat is geen rotatie maar een meting, en hij bewijst twee dingen die je anders pas ontdekt op het
+moment dat je ze nodig hebt:
+
+* **het gereedschap werkt nog.** Een verschoven API of een `sops` die zich anders gedraagt valt
+  hier om, in een ronde die niets kapot kan maken, en niet halverwege een echte;
+* **er is geen vindplaats bijgekomen die niemand heeft aangemeld.** Dat is de stille fout: iemand
+  zet een nieuwe versleutelde waarde neer, de inventaris weet er niet van, en de eerstvolgende
+  rotatie laat hem op de oude sleutel staan. De grendel onder "De vorm is niet de vindplaats"
+  vangt dat binnen deze repo; een oefenronde vangt ook de andere twee.
+
+APPLY blijft mensenwerk, en dat is een grens en geen achterstand. Een geautomatiseerde apply die
+'s nachts faalt legt het platform plat terwijl niemand het alarm leest. Een half omgezet platform
+om vier uur 's ochtends kost meer dan de handeling die je ermee zou besparen.
 
 ## De vingerafdruk is het echte product
 
@@ -328,10 +395,10 @@ Elk veld gaat van A naar B en A verdwijnt meteen. Het alternatief is overwogen: 
 age-blob voor twee sleutels tegelijk versleutelen, zodat oud en nieuw allebei werken en er geen
 omschakelmoment is.
 
-Dat is afgewezen. Dit is een sleutelwissel na blootstelling, dus het doel is dat A zo snel
-mogelijk niets meer opent. Een overlapfase houdt A juist geldig, voegt een extra ronde toe om hem
-er later weer af te halen, en die ronde kan vergeten worden -- dan heb je alle moeite gedaan en is
-de oude sleutel nog steeds bruikbaar.
+Dat is afgewezen. Het hele punt van een rotatie is dat A daarna niets meer opent; een overlapfase
+houdt A juist geldig en voegt een LOSSE ronde toe om hem er later weer af te halen. Precies zo'n
+losse ronde is wat volgens de eerste alinea van dit document niet vanzelf gebeurt: niets dwingt
+hem af. Dan heb je alle moeite gedaan en is de oude sleutel nog steeds bruikbaar.
 
 Bij de PAT is het precies andersom, en dat is geen inconsistentie: GitHub kent gewoon twee geldige
 tokens naast elkaar, dus daar kost een overlap niets en voorkomt hij dat een project zijn
@@ -511,11 +578,14 @@ uitkomst van de eenmalige scan over beide repo's staat in
 
 ## Sleutels in toetsen: geen vaste, maar een gemaakte
 
-Tot deze taak stonden er vier geldige AGE-sleutels in de boom, waarvan een de productiesleutel.
-Dat die andere drie onschuldig waren is precies de reden dat de vierde niet opviel: een sleutel in
-een testbestand was hier normaal.
+Een vaste sleutel in een toets en een sleutel die roteert gaan niet samen. Hij gaat niet mee in de
+ronde -- een toets houdt zijn eigen kopie vast -- en daarmee pint hij precies de waarde vast die
+moet kunnen wisselen. Bij de eerstvolgende ronde is zo'n toets ofwel rood zonder dat er iets stuk
+is, ofwel groen op een sleutel die nergens meer geldig is, en dat tweede is het vervelendste van
+de twee.
 
-Nu maakt een toets die een sleutel nodig heeft er zelf een, via de fixture `age_keypair` of de
+Tot deze taak stonden er vier geldige AGE-sleutels in de boom. Dat dit normaal was is precies
+waarom het niemand opviel. Nu maakt een toets die een sleutel nodig heeft er zelf een, via de fixture `age_keypair` of de
 factory `make_age_keypair` in `tests/conftest.py` (beide leunen op `generate_sops_key_pair`, wat
 OPI ook gebruikt voor een projectsleutel). Ook de oefenmap `sops-sandbox/` is weg; de werkwijze
 die daar in `steps.md` stond staat nu in `docs/sops-en-age-met-de-hand.md`.
