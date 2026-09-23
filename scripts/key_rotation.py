@@ -889,16 +889,11 @@ async def rotate_project_file(
     only re-encrypted.
 
     **The replacement is conditional, and that is not a nicety.** A password is replaced only
-    when its plaintext IS ``current_pat``. Measured against the live repos the project files are
-    uniform today -- all 58 passwords carry the same value -- but the ArgoCD secrets derived
-    from them are not: two of 67 carry something else, on the same GitHub URL, so almost
-    certainly an older token. Nothing makes the project files the half that stays uniform, and
-    an unconditional round replaces whatever it can read. Anything that is not the current PAT
-    is therefore only RE-ENCRYPTED, keeps its plaintext, and is named in ``kept`` with its path
-    and the reason.
-
-    Hence ``current_pat`` is required as soon as ``new_pat`` is given: a PAT round with
-    nothing to compare against is the unconditional round under another name.
+    when its plaintext IS ``current_pat``; anything else is only RE-ENCRYPTED, keeps its
+    plaintext, and is named in ``kept`` with its path and the reason. The module docstring has
+    the measurement that decided this. Hence ``current_pat`` is required as soon as ``new_pat``
+    is given: a PAT round with nothing to compare against is the unconditional round under
+    another name.
 
     The worklist cannot be settled by the key alone: the documented order runs the key round
     first, so by then every password already sits on B while still holding the OLD token, and
@@ -1006,17 +1001,13 @@ class FinalCheck:
     still_opens_with_old: list[str] = field(default_factory=list)
     does_not_open_with_new: list[str] = field(default_factory=list)
     outside_coverage: list[str] = field(default_factory=list)
-    #: Fields whose plaintext is a GitHub token that is not the one ``--pat-file`` names. The
+    #: Fields whose plaintext is a GitHub token that is not the one ``--pat-new-file`` names. The
     #: key half of this check cannot see these: a value can sit on the new key perfectly and
     #: still hold the withdrawn token, and then the round reports CLEAN while every project
     #: created after it gets a dead credential.
     holds_another_token: list[str] = field(default_factory=list)
-    #: Fields whose plaintext IS the current PAT. This is the "the old PAT is dead" half, and
-    #: it is a different question from the one above: ``holds_another_token`` asks whether a
-    #: value is a GitHub token that is not the new one, which depends on the token SHAPE, while
-    #: this one is plain equality with the token that was supposed to be replaced. The key half
-    #: cannot see either: a value sits on the new key perfectly and still hands out the
-    #: withdrawn token.
+    #: Fields whose plaintext IS the current PAT: the "the old PAT is dead" half. A different
+    #: question from the one above, and ``check_token`` says why.
     still_holds_current_pat: list[str] = field(default_factory=list)
     #: ArgoCD repository secrets whose password no longer equals the project file they were
     #: derived from, and the coupling findings next to them.

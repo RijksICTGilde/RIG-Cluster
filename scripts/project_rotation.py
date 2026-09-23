@@ -199,8 +199,7 @@ async def run_round(
         result.fingerprint_before.fields.update(report.fingerprint_before.fields)
         result.fingerprint_after.fields.update(report.fingerprint_after.fields)
         # Exactly the fields whose PLAINTEXT was replaced, as the conversion itself reported
-        # them. Naming every password instead would excuse from the content check the very
-        # passwords the round deliberately left alone.
+        # them; ``ProjectRound.replaced`` says what that list excuses.
         result.replaced_fields.extend(report.replaced)
         if report.rewritten and repo_root is not None:
             # The commits land in zad-projects next to OPI's own ("auto-tune: adjust
@@ -226,8 +225,7 @@ def report(result: RoundResult, directory: Path, *, dry_run: bool) -> None:
     for round_report in result.skipped:
         print(f"  {display(round_report.path, directory)}: {round_report.skipped}")
     if result.kept:
-        # Named one by one rather than counted: "2 left alone" is a number an operator can
-        # read past, and these two are precisely the fields that need a decision made by hand.
+        # Named and not just counted: these are the fields that need a decision made by hand.
         print(f"\n{len(result.kept)} repository passwords re-encrypted but NOT replaced:")
         for line in result.kept:
             print(f"  {line}")
@@ -310,14 +308,12 @@ def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound
     about the token, so it drops off the list in the PAT round and the skips that name the
     password take its place.
 
-    A password left alone because it is not the current PAT belongs on the harmless side, and
-    that is a decision rather than an oversight. It is the round doing what it was asked; the
+    A password left alone because it is not the current PAT belongs on the harmless side: the
     exit code says whether the round could do its work, and this file it could. After the key
-    round every field already sits on the new key, so such a project has nothing else to
-    convert and lands here rather than among the converted -- an exit 1 would then report
-    failure on exactly the fields the round correctly declined to touch. They are named
-    instead, twice: in this round's own report and in the three-number summary. The argo half
-    treats its drift the same way, for the same reason.
+    round every field already sits on the new key, so such a project has nothing left to
+    convert and lands among the skips -- an exit 1 would then report failure on exactly the
+    fields the round correctly declined to touch. They are named in the report instead. The
+    argo half treats its drift the same way, for the same reason.
     """
     harmless = (
         (
@@ -545,8 +541,6 @@ def report_argo(plan: ArgoPlan, converted: list[str], clone: Path, directory: Pa
                 f" -- derived from {display(repository.path, directory)}#{repository.field_name}"
             )
     if plan.drift:
-        # Measured on the clone as it stands, so this is the drift that was ALREADY there and
-        # not a report on what this round just wrote.
         print(f"\n{len(plan.drift)} repository secrets disagree with their project file:")
         for line in plan.drift:
             print(f"  {line}")
@@ -605,8 +599,7 @@ CANONICAL_OLD = REPO / "security" / "old_key.txt"
 #: still has to be unchanged.
 KEY_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
 #: The two tokens, on disk in the same untracked ``security/`` the keys live in and answered
-#: the same way. Two files and not one: the round replaces only what IS the current PAT, so it
-#: has to be told what that is instead of assuming every value it can read is it.
+#: the same way. Two and not one: the round has to be told what the current PAT is.
 CANONICAL_PAT_CURRENT = REPO / "security" / "pat_current.txt"
 CANONICAL_PAT_NEW = REPO / "security" / "pat_new.txt"
 #: The record ``rotate-sops-key.py`` keeps for THIS repo. The PAT round does not write it, it
@@ -734,10 +727,8 @@ async def main_rotate_keys(argv: list[str] | None = None) -> int:
 def read_pat(path: str | Path) -> str:
     """Take a PAT out of a file, the same shape the key files have.
 
-    A file and not a prompt, and never an argument: a token on the command line lands in the
-    shell history and in the process table, exactly as a key would. ``ask_for_path`` asks where
-    the file is with a default and refuses when it is not there, so the two PATs are answered
-    the way ``old_key.txt`` and ``key.txt`` are.
+    A file and not a prompt, and never an argument, for the reason ``ask_for_path`` gives: the
+    two PATs are answered the way ``old_key.txt`` and ``key.txt`` are.
     """
     value = Path(path).read_text().strip()
     if not value:

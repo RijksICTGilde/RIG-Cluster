@@ -278,9 +278,7 @@ class ArgoPlan:
     todo: list[tuple[RepositorySecret, ProjectRepository, str]] = field(default_factory=list)
     #: Secrets left alone because their password is not the current PAT, with the reason.
     kept: list[tuple[RepositorySecret, ProjectRepository, str]] = field(default_factory=list)
-    #: Secrets whose password differs from the project file they were derived from. Measured
-    #: against the file itself and never against a value the round is about to write, which is
-    #: what makes this the BEGIN state rather than a report on the round's own work.
+    #: Secrets whose password differs from the project file they were derived from.
     drift: list[str] = field(default_factory=list)
     #: Project fields that opened with neither key: no value can be derived from them.
     closed: list[str] = field(default_factory=list)
@@ -393,10 +391,7 @@ async def check_repository_secrets(
 
     The comparison is against the project file rather than against the token, for the same reason
     the round derives from the project file: these secrets are derived, and a repository that
-    does not use the shared token has its own password there quite legitimately. It reads
-    ``plan.drift``, which is measured against the file, and not the worklist -- a worklist is
-    what the round would WRITE, so holding the clone to it after the round is holding the round
-    to its own work.
+    does not use the shared token has its own password there quite legitimately.
 
     With ``pat`` the password is ALSO held to the new token when it is one, and with
     ``current_pat`` to the sharper rule underneath: it must not still BE the token the round

@@ -21,10 +21,8 @@ loose values, the project files and the ArgoCD repository secrets at once.
 
 ``--pat-current-file`` adds the sharper one underneath: no field, in any of those three places,
 may still decrypt to the token that was replaced. That is the real "the old PAT is dead"
-assertion, and it is not the same as the one above -- that one recognises a token by its SHAPE,
-so a token shape the scanner rules do not carry slips past it, while equality with the value
-that was replaced needs no shape at all. ``replace-git-pat.py`` is what writes them, and it
-takes the same two files.
+assertion, and ``check_token`` in the engine says why it is not the same question as the one
+above. ``replace-git-pat.py`` is what writes them, and it takes the same two files.
 
 **Dry run is the default in the sense that matters:** without ``--ja`` not a byte is written
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
@@ -699,8 +697,7 @@ def note_places_left_out(
         print("the new key and still carry the withdrawn token; that half is not measured here.")
     if current_pat is None:
         print("NOTE without --pat-current-file nothing here proves the OLD PAT is gone. The")
-        print("token half above asks whether a value is a GitHub token that is not the new one,")
-        print("which depends on the shape; equality with the token that was replaced does not.")
+        print("token half above recognises a token by its SHAPE; equality needs no shape.")
 
 
 def note_argo_left_out_of_the_record(argo: Path | None) -> None:

@@ -1,7 +1,7 @@
 """Replace the GitHub PAT in every project file -- the same loop, with a different entry.
 
-    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects --dry-run
-    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects
+    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects --argo-applications <zad-argo clone> --dry-run
+    uv run --project operations-manager/python python scripts/replace-git-pat.py --projects <clone>/projects --argo-applications <zad-argo clone>
 
 It takes TWO tokens, from two files in ``security/`` answered the way the key files are:
 ``--pat-current-file`` (default ``security/pat_current.txt``) is the token being replaced and

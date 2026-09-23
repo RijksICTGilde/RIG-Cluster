@@ -225,9 +225,8 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 #    ingetrokken token staan. Zie "De PAT-ronde raakt drie plekken".
 #    TWEE tokenbestanden, in dezelfde vorm als old_key.txt / key.txt: security/pat_current.txt
 #    is de token die vervangen wordt en security/pat_new.txt die ervoor in de plaats komt. Dat
-#    zijn ook de defaults, dus zonder vlag vraagt het script er met die paden naar. Alleen een
-#    veld dat de HUIDIGE token bevat wordt vervangen; de rest gaat mee naar sleutel B met zijn
-#    waarde intact en wordt bij pad gemeld. Zie "Vervangen is voorwaardelijk"
+#    zijn ook de defaults, dus zonder vlag vraagt het script er met die paden naar.
+#    Zie "Vervangen is voorwaardelijk"
 rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
 rm -rf /tmp/zad-argo && git clone <zad-argo-user-applications> /tmp/zad-argo
 uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --dry-run
@@ -235,8 +234,8 @@ uv run --project operations-manager/python python scripts/replace-git-pat.py --p
 
 # 7b. de eindtoets MET beide tokens erbij. Zonder --pat-new-file gaat hij alleen over de
 #     SLEUTEL, en een veld kan keurig op de nieuwe sleutel staan en de ingetrokken token
-#     bevatten. --pat-current-file is de scherpste van de twee: geen enkel veld, op geen van
-#     de drie plekken, ontsleutelt dan nog naar de token die vervangen is
+#     bevatten. --pat-current-file eist bovendien dat geen enkel veld, op geen van de drie
+#     plekken, nog naar de vervangen token ontsleutelt
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --pat-new-file security/pat_new.txt --pat-current-file security/pat_current.txt
 
 # 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg. Daarna ook
@@ -279,12 +278,9 @@ sops-bestand, dus daar is er geen veld om apart om te sleutelen -- de sleutelron
 bestand al verplaatst. De voorwaarde zelf is er dezelfde: is het de huidige token, dan de nieuwe
 erin, anders blijft hij staan en wordt hij gemeld.
 
-Bij de argo-secrets betekent dat ook dat de waarde NIET meer uit het projectbestand wordt
-afgeleid zodra er een token in het spel is: afleiden zou de voorwaarde via de achterdeur
-ongedaan maken, want het projectbestand houdt zijn oudere token nu juist vast. Wat het secret en zijn projectbestand van elkaar vinden wordt apart gemeten en
-apart gemeld, tegen het bestand zelf en nooit tegen een waarde die de ronde nog moet schrijven.
-Dat laatste was precies de fout: in de droogloop werd vergeleken met de token die geschreven
-ging worden, dus verschilde elk secret en viel het ene dat echt afweek niet op.
+Wat een secret en zijn projectbestand van elkaar vinden wordt apart gemeten en apart gemeld,
+altijd tegen het bestand zelf en nooit tegen een waarde die de ronde nog moet schrijven: anders
+verschilt elk secret in de droogloop en valt het ene dat echt afwijkt niet op.
 
 De droogloop telt daarom drie getallen apart, over de drie plekken samen: wat vervangen wordt,
 wat blijft staan (met de paden erbij) en wat met geen van beide sleutels opent. Een getal kan
@@ -381,22 +377,20 @@ echte clone en niet beredeneerd:
 **De eindtoets moet dit kunnen zien.** `--assert-old-key-dead` bewijst dat de oude SLEUTEL niets
 meer opent, en dat blijft waar na een PAT-ronde die de argo-clone oversloeg: die bestanden zijn
 door de sleutelronde herversleuteld en hun wachtwoord is nooit aangeraakt. De toets meldde dus
-CLEAN terwijl ArgoCD stilstond. Er zijn daarom drie helften bij gekomen:
+CLEAN terwijl ArgoCD stilstond. Er zijn daarom drie controles bij gekomen:
 
 * met `--projects` en `--argo-applications` samen wordt elk repository-secret naast het
   projectbestand gelegd waar het uit komt. Verschillen ze, dan is dat een bevinding met beide
-  paden erbij. Die vergelijking gaat tegen het BESTAND, nooit tegen een waarde die de ronde nog
-  moet schrijven: hij las eerder de werklijst, en een werklijst is wat de ronde zou SCHRIJVEN,
-  dus daarmee toetste hij de ronde aan zijn eigen werk;
+  paden erbij;
 * met `--pat-new-file` wordt elke platte tekst die de VORM van een GitHub-token heeft ook aan
   die ene token gehouden, op alle drie de plekken;
-* met `--pat-current-file` de scherpste van de drie: geen enkel veld mag nog ONTSLEUTELEN naar
-  de token die vervangen is. Dat is een andere vraag dan de regel hierboven -- die herkent een
-  token aan zijn vorm, dus een vorm die de scannerregels niet kennen glipt erlangs, terwijl
-  gelijkheid met de vervangen waarde helemaal geen vorm nodig heeft. Dit is wat "de oude token
-  is dood" van een gevolgtrekking een meting maakt.
+* met `--pat-current-file` komt de scherpste van de drie erbij: geen enkel veld mag nog
+  ONTSLEUTELEN naar de token die vervangen is. Dat is een andere vraag dan de regel hierboven,
+  die een token aan zijn VORM herkent en dus een onbekende vorm laat passeren; gelijkheid met
+  de vervangen waarde heeft geen vorm nodig. Dit is wat "de oude token is dood" van een
+  gevolgtrekking een meting maakt.
 
-Zonder die vlaggen zegt de toets dat zelf: hij drukt per ontbrekende helft af waar hij niets
+Zonder die vlaggen zegt de toets dat zelf: hij drukt per ontbrekende vlag af waar hij niets
 over heeft gemeten.
 
 **Waarom de PAT-ronde in de EERSTE ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen
