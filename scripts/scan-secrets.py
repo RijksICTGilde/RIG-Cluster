@@ -8,6 +8,11 @@
 
 Exit code 0 when clean, 1 when there is a finding, so CI and the hook can both hang off it.
 
+Findings go to stdout and nowhere else. There is deliberately no flag that writes them to a
+file: a list of where secrets sit, and how many, is a map to what is not revoked yet, and a
+scanner that commits its own output makes the problem bigger than it was. Redirect it
+yourself, to a path outside the repository. See ``scripts/README.md``.
+
 Why an AGE candidate only counts when ``age-keygen`` accepts it is in ``secret_scan.py``; the
 three layers of the guard are in ``features/sops-sleutel-vervangen.md``.
 """

@@ -9,7 +9,8 @@ Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-
 stappenplan; hier staan de losse handelingen eronder.
 
 Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo. Die
-map is verwijderd omdat er een geldige AGE-sleutel in stond (`sops-key.txt`).
+map is verwijderd: hij bevatte een eigen AGE-sleutelpaar voor ontwikkeldoeleinden
+(`sops-key.txt`), dat alleen de twee oefenbestanden in diezelfde map opende.
 
 ## 1. Een AGE-sleutelpaar maken
 
@@ -24,7 +25,11 @@ helft als commentaar (`age1...`). De publieke helft kun je ook altijd afleiden:
 grep -m1 '^AGE-SECRET-KEY-' sops-key.txt | age-keygen -y
 ```
 
-In deze repo horen sleutels in `security/`, en die map staat in `.gitignore`.
+`security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
+neerzetten om deze handelingen te doen. Dat is een tussenoplossing zolang het proces nog
+uitkristalliseert: uiteindelijk hoort een sleutel alleen nog in een CI/CD-omgeving of een
+vault-achtige voorziening te leven, en niet in een map op een laptop. Waar ze op termijn wel
+horen is de vraag van het lopende onderzoek naar sleutelbeheer en blast radius (RC-222).
 
 ## 2. Het Kubernetes-secret maken
 
@@ -76,7 +81,8 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
 
 ## Waar je op moet letten
 
-- De private sleutel hoort nooit in git. In deze repo: in `security/`, dat is gitignored.
+- De private sleutel hoort nooit in git. Lokaal zet je hem voorlopig in `security/`, dat is
+  gitignored -- zie hierboven waarom dat een tussenoplossing is en geen eindplek.
 - De publieke helft is geen geheim en mag in documentatie en in de SOPS-metadata staan.
 - Gebruik per omgeving een eigen sleutelpaar: `security/key.txt` (platform),
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).

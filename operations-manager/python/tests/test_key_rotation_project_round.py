@@ -188,10 +188,11 @@ async def test_a_round_converts_every_file_and_commits_one_per_project(
 async def test_a_round_commits_but_pushes_nothing(projects_repo: Path, tmp_path: Path) -> None:
     """VERIFY-1 is the go/no-go moment BEFORE anything is pushed, so the round may not push itself.
 
-    The monthly exercise leans on this hardest: it runs PREPARE and VERIFY-1 on a throwaway key
-    and throws the clone away, and a push there puts a rotation nobody asked for on the real
-    projects repo. The round prints "Nothing pushed" whatever it does, so this measures the
-    remote and not the output.
+    The monthly exercise leans on this hardest: it would run PREPARE and VERIFY-1 on a throwaway
+    key and throw the clone away, and a push there puts a rotation nobody asked for on the real
+    projects repo. That exercise is a proposal -- no scheduled workflow runs the round today --
+    so until it exists this test is the only thing holding the boundary it will need. The round
+    prints "Nothing pushed" whatever it does, so this measures the remote and not the output.
     """
     origin = tmp_path / "origin.git"
     _git(tmp_path, "init", "-q", "--bare", str(origin))

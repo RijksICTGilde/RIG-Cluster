@@ -823,7 +823,6 @@ ENTRY_SCRIPTS = (
 #: The documents that hand an operator a command line to paste.
 COMMAND_DOCS = (
     tool.REPO / "features" / "sops-sleutel-vervangen.md",
-    tool.REPO / "docs" / "geheimenscan-historie-2026-09-22.md",
     tool.REPO / "scripts" / "README.md",
 )
 
@@ -2556,9 +2555,10 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
 
     The boundary that matters is between VERIFY-1 and APPLY: a command that drifts across it
     turns "nothing has left this machine" into a lie. An operator runs this doc by hand, so
-    nothing else would catch that. The monthly exercise leans on the same boundary: it runs
+    nothing else would catch that. The monthly exercise leans on the same boundary: it would run
     PREPARE and VERIFY-1 on a throwaway key, so a push or a secret swap landing in either of
-    those two phases is a rotation of production on a key nobody keeps.
+    those two phases would be a rotation of production on a key nobody keeps. That exercise is
+    a proposal and no scheduled workflow runs it yet, so today the boundary rests here alone.
     """
     text = (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text()
     headings = ["### PREPARE", "### VERIFY-1", "### APPLY", "### VERIFY-2", "### Daarna"]

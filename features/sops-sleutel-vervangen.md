@@ -1,4 +1,4 @@
-# De sleutel en het token vervangen, met een script dat het elk kwartaal kan
+# De sleutel en het token vervangen, met een script dat alle stappen automatiseert en dus te allen tijde gebruikt kan worden
 
 De GitHub-PAT verloopt en moet vervangen worden. We nemen die rotatie als aanleiding om tegelijk
 de AGE-sleutel te roteren en er een terugkerende handeling van te maken. Het is dezelfde ronde:
@@ -8,7 +8,9 @@ De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 
 * 8.24.01 vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het
   sleutelbeheer en "hoe geregistreerd wordt waar welke cryptografie toegepast wordt". De
-  vindplaatsenlijst hieronder is die registratie; de oefenronde houdt hem eerlijk.
+  vindplaatsenlijst hieronder is die registratie; de dekkingsgrendel onder "De vorm is niet de
+  vindplaats" houdt hem eerlijk. Die meet elke boom die de ronde loopt na op cijfertekst die
+  geen vindplaats dekt, heeft geen sleutel nodig en draait dus ook in de toetsen.
 * 8.24.02 vraagt dat is vastgesteld waar cryptografische beheersmaatregelen worden ingezet, wie
   verantwoordelijk is "en hoe ze actueel worden gehouden". Dat laatste ontbrak: een AGE-sleutel
   kent geen verlooptijd, een token dwingt zijn eigen vervanging af.
@@ -16,6 +18,10 @@ De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 Het gereedschap hoort erbij, omdat de platform-AGE-sleutel niet alleen in de SOPS-bestanden zit en
 `sops rotate` alleen die ziet: dit zet elke vindplaats om, toont aan dat er niets anders is
 veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
+
+Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid. Elke stap is
+geautomatiseerd, dus de ronde is te allen tijde te draaien -- op het kwartaalmoment, en
+net zo goed op de dag dat er een aanleiding is.
 
 ## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
 
@@ -35,10 +41,12 @@ beslissing, dan is het gereedschap niet af. Dat is de maat -- niet of de ronde u
 gelukt is.
 
 Voor de EERSTE ronde geldt een uitzondering op dat samen draaien: daar gaat de sleutel voorop en
-de PAT erachteraan; zie "Waarom de PAT-ronde achteraan staat, ook al is hij de aanleiding". Zodra
+de PAT erachteraan; zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat". Zodra
 die ronde aantoonbaar goed is gegaan, is de kwartaalronde de gecombineerde.
 
-Tussen de rondes door loopt er maandelijks een oefening die niets omzet; zie "De oefenronde".
+Tussen de rondes door KUNNEN PREPARE en VERIFY-1 maandelijks als oefening draaien, een ronde die
+niets omzet. Die is nog niet gebouwd: er staat geen geplande workflow die hem draait. Zie "De
+oefenronde" en "Wat hierna komt".
 
 ## Wat de sleutel vasthoudt
 
@@ -145,7 +153,10 @@ git clone <zad-argo-user-applications> /tmp/zad-argo
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo --dry-run
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
 
-# 3. de projectbestanden, op een VERSE clone
+# 3. de projectbestanden, op een VERSE clone. Dit is de EERSTE ronde, dus alleen de sleutel; de
+#    PAT volgt in stap 7. In een kwartaalronde draai je deze twee regels met replace-git-pat.py
+#    in plaats van rotate-project-keys.py -- dezelfde vlaggen, dezelfde clone -- en vervalt
+#    stap 7. Zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat".
 git clone <zad-projects> /tmp/zad-projects
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
@@ -226,7 +237,8 @@ De eindtoets erachter is de harde: de oude sleutel opent niets meer.
 ### Daarna
 
 ```bash
-# 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU. Verse clone, want er
+# 7. de PAT-vervanging van de EERSTE ronde: dezelfde ronde, een ingang verder -- en pas NU.
+#    Een kwartaalronde deed dit al in stap 3 en slaat deze stap over. Verse clone, want er
 #    kan sinds stap 3 gepusht zijn, maar op DEZELFDE plek: de opname noemt elk veld bij zijn pad
 rm -rf /tmp/zad-projects && git clone <zad-projects> /tmp/zad-projects
 uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --dry-run
@@ -236,16 +248,17 @@ uv run --project operations-manager/python python scripts/replace-git-pat.py --p
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
-**Waarom de PAT-ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen in een keer: de
-motor onder beide is dezelfde lus en `replace-git-pat.py` zet de sleutel en het wachtwoord in een
-beweging om. Toch is de geadviseerde volgorde de sleutel eerst en de PAT daarna, want een fout in
-de PAT-vervanging sleept dan de sleutelrotatie niet mee en de twee zijn los terug te draaien. Is
-de sleutelronde aantoonbaar goed gegaan, dan is de PAT-ronde een herhaling van iets dat al gewerkt
-heeft.
+**Waarom de PAT-ronde in de EERSTE ronde achteraan staat, ook al is hij de aanleiding.** Ze kunnen
+in een keer: de motor onder beide is dezelfde lus en `replace-git-pat.py` zet de sleutel en het
+wachtwoord in een beweging om. Toch is de geadviseerde volgorde voor die eerste ronde de sleutel
+eerst en de PAT daarna, want een fout in de PAT-vervanging sleept dan de sleutelrotatie niet mee
+en de twee zijn los terug te draaien. Is die ronde aantoonbaar goed gegaan, dan is de PAT-ronde
+een herhaling van iets dat al gewerkt heeft, en draait een kwartaalronde ze samen: in stap 3
+`replace-git-pat.py` in plaats van `rotate-project-keys.py`, en stap 7 vervalt.
 
 Twee dingen die daaruit volgen:
 
-* de ronde neemt nog steeds **beide** sleutels aan, ook al staat er na stap 3 geen enkel veld meer
+* de losse PAT-ronde neemt nog steeds **beide** sleutels aan, ook al staat er na stap 3 geen veld
   op de oude. Ze mogen niet dezelfde zijn, dus `security/old_key.txt` moet nog bestaan -- vandaar
   dat het weghalen daarvan stap 8 is en niet stap 7;
 * een tweede PAT-ronde doet niets: een wachtwoord dat het meegegeven token al draagt blijft staan,
@@ -270,9 +283,12 @@ Droogloop is de veilige stand: zonder `--ja` wordt er geen byte geschreven voord
 ## De oefenronde: automatiseer de oefening, niet de ingreep
 
 PREPARE en VERIFY-1 zijn precies de twee fasen waarin niets deze machine verlaat. Ze zetten om en
-ze controleren, en committen doen ze in een clone, maar er wordt niet gepusht en het clustersecret
-blijft staan -- afbreken kost een weggegooide clone. Die twee kunnen dus maandelijks in CI draaien
-op een wegwerpsleutel, met het resultaat weggegooid.
+ze controleren, maar er wordt niet gepusht en het clustersecret blijft staan. Afbreken kost dus
+niets buiten deze machine, maar wel wat er op staat: de clones weggooien, de wijzigingen die stap
+2 in deze werkboom en in `/tmp/zad-argo` laat staan terugdraaien, en de hernoeming van stap 1
+omkeren zodat `security/key.txt` weer de sleutel is die alles opent. In CI is dat een verse
+checkout en dus gratis: die twee fasen kunnen daar maandelijks draaien op een wegwerpsleutel, met
+het resultaat weggegooid.
 
 Maandelijks is met opzet VAKER dan de rotatie zelf. Een kwartaalronde mag nooit de eerste keer
 zijn dat iemand merkt dat er iets stuk is.
@@ -565,9 +581,22 @@ precies het punt van AGE -- maar met `--inventory` wel op te vragen, als inventa
 die een rotatie moet raken.
 
 `python3 scripts/scan-secrets.py --history` loopt elke blob die ooit in de repo heeft bestaan na. Dat is
-een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden. De
-uitkomst van de eenmalige scan over beide repo's staat in
-`docs/geheimenscan-historie-2026-09-22.md`.
+een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden.
+
+**Die uitkomst gaat nooit naar git, ook niet samengevat.** Een lijst van waar in de historie
+geheimen staan, en hoeveel, is een routekaart naar iets wat nog geldig is zolang de opruiming
+loopt -- en deze repo gaat naar GitHub. Een scanner die zijn eigen bevindingen commit maakt het
+probleem groter dan het was. De bevindingen horen op een intern kanaal; `scan-secrets.py`
+schrijft ze daarom naar stdout en kent geen vlag die ze in een bestand zet. Zie
+`scripts/README.md`.
+
+Let op het onderscheid, want twee dingen heten hier "vindplaats" en maar een ervan is een
+probleem:
+
+| welke vindplaats | hoort in git? |
+|---|---|
+| WAAR CRYPTOGRAFIE WORDT TOEGEPAST: de inventaris die de ronde omzet, hierboven | **ja** -- BIO2 8.24.01 vraagt letterlijk om die registratie |
+| WAAR GEHEIMEN IN DE HISTORIE STAAN: de uitkomst van `--history` | **nee** -- intern kanaal |
 
 ## Sleutels in toetsen: geen vaste, maar een gemaakte
 
@@ -577,8 +606,10 @@ moet kunnen wisselen. Bij de eerstvolgende ronde is zo'n toets ofwel rood zonder
 is, ofwel groen op een sleutel die nergens meer geldig is, en dat tweede is het vervelendste van
 de twee.
 
-Tot deze taak stonden er vier geldige AGE-sleutels in de boom. Dat dit normaal was is precies
-waarom het niemand opviel. Nu maakt een toets die een sleutel nodig heeft er zelf een, via de
+Tot deze taak stonden er vier AGE-sleutels in de boom die `age-keygen` als echte sleutel
+accepteert. Een daarvan was de platformsleutel zelf; de andere drie openden niets buiten hun
+eigen toetsdata, en juist dat maakte de vierde onzichtbaar: een sleutel in een testbestand was
+hier normaal. Nu maakt een toets die een sleutel nodig heeft er zelf een, via de
 fixture `age_keypair` of de factory `make_age_keypair` in `tests/conftest.py` (beide leunen op
 `generate_sops_key_pair`, wat OPI ook gebruikt voor een projectsleutel). Ook de oefenmap
 `sops-sandbox/` is weg; de werkwijze die daar in `steps.md` stond staat nu in
@@ -595,5 +626,8 @@ fixture `age_keypair` of de factory `make_age_keypair` in `tests/conftest.py` (b
 - **De git-historie zelf.** Zolang die bestaat is elke oude versie met een oude sleutel te openen.
   Dat geldt voor deze repo en voor de projects-repo. Een sleutelwissel verandert dat niet, en dat
   hoort een bewuste beslissing te zijn en geen aanname.
+- **De oefenronde in CI bouwen:** een maandelijkse workflow die PREPARE en VERIFY-1 op een
+  wegwerpsleutel draait en het resultaat weggooit. Vandaag draait geen enkele geplande workflow
+  de ronde; zie "De oefenronde" voor waarom juist die twee fasen dat kunnen.
 - **Laag 3 uitzoeken:** of GitHub push protection een eigen patroon voor `AGE-SECRET-KEY-`
   toestaat op dit abonnement.

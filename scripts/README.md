@@ -38,8 +38,28 @@ Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
 | `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
 
 Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
-in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`. De uitkomst van de eenmalige
-historie-scan staat in `docs/geheimenscan-historie-2026-09-22.md`.
+in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`.
+
+De hele historie nalopen is een eigen gang, en die duurt lang:
+
+```bash
+python3 scripts/scan-secrets.py --history                       # deze repo
+python3 scripts/scan-secrets.py --history --tree <andere repo>  # een andere clone
+```
+
+**De bevindingen van de scanner gaan nooit naar git.** Niet als document, niet als bijlage,
+ook niet samengevat tot aantallen en paden: dat is een routekaart naar geheimen die nog
+geldig zijn zolang de opruiming loopt, en deze repo gaat naar GitHub. Een scanner die zijn
+eigen uitkomst commit maakt het probleem groter dan het was. Ze horen op een intern kanaal.
+
+Het script dwingt dat af door niets anders te kunnen: `report()` schrijft naar stdout en er
+is geen vlag die de uitkomst in een bestand zet. Wil je hem bewaren, leid hem dan zelf om
+naar een pad BUITEN de repo. `tests/test_secret_scan.py` pint dat vast, zodat zo'n vlag er
+niet ongemerkt bij komt.
+
+Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt toegepast --
+de vindplaatsenlijst in `features/sops-sleutel-vervangen.md` die de rotatieronde omzet --
+hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
 ## De rest
 

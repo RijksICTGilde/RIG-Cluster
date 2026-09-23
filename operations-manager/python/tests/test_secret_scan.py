@@ -20,6 +20,7 @@ job that silently stops calling the scan is the other way this rots:
 from __future__ import annotations
 
 import ast
+import re
 import shutil
 import subprocess
 import sys
@@ -447,3 +448,25 @@ def test_empty_files_does_not_fall_through_to_the_whole_tree(capsys: pytest.Capt
 
     assert scan_module.main(["--files"]) == 0
     assert "0 staged files" in capsys.readouterr().out
+
+
+def test_the_scan_has_no_way_to_write_its_findings_to_a_file() -> None:
+    """The findings never go to git, and the script enforces that by not being able to.
+
+    A list of where secrets sit, and how many, is a map to what is not revoked yet, and this
+    repository is published. A scanner that can write its own output to a path is one flag away
+    from committing it, so the rule in ``scripts/README.md`` is only as good as the absence of
+    that flag. This pins the option list and the fact that both modules only ever print.
+    """
+    scan_module = _scan_secrets_module()
+
+    options = {option for action in scan_module.build_parser()._actions for option in action.option_strings}
+
+    assert options == {"-h", "--help", "--files", "--history", "--inventory", "--tree"}, (
+        "a new flag on the scanner: if it names an output path, the findings can land in git"
+    )
+
+    for name in ("scan-secrets.py", "secret_scan.py"):
+        source = (_SCRIPTS_DIR / name).read_text()
+        assert "write_text(" not in source, f"{name} writes a file; findings belong on stdout"
+        assert not re.search(r"open\([^)]*[\"'][wax]", source), f"{name} opens a file for writing"
