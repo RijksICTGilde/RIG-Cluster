@@ -296,10 +296,8 @@ def ask_for_keys(
     works months later. It measures with the new key, so demanding the file the previous step
     removed would turn that promise into exit 2.
 
-    ``generate`` turns the second question around: the new key does not have to be there, it is
-    MADE at the answered path. That takes the one manual ``age-keygen`` out of step 1, the step
-    where a mistyped path is most expensive. It refuses a path that already exists, so the
-    answer that would land on the key in use is a message and not a loss.
+    ``generate`` turns the second question around: the new key is MADE at the answered path
+    instead of read there, which takes the one hand-typed ``age-keygen`` out of step 1.
     """
     reader = (lambda _question: "") if arguments.ja else input
     old_path = Path(arguments.old_key)
@@ -594,8 +592,7 @@ async def main(argv: list[str] | None = None) -> int:
     if arguments.generate_new_key and not arguments.rename:
         # Rotating onto a freshly made key that still sits under its own name would encrypt
         # every field for a key that nothing in the repo points at: the Taskfile, CLAUDE.md and
-        # the install docs all read security/key.txt, and that still holds the old one. Making
-        # the key and shifting the names is one step, so the flags are too.
+        # the install docs all read security/key.txt, and that still holds the old one.
         print("FAIL --generate-new-key goes with --rename: making the key and putting it under", file=sys.stderr)
         print("its fixed name is one step. Without the rename nothing reads the new key.", file=sys.stderr)
         return 2

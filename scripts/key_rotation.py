@@ -174,17 +174,16 @@ def public_key_of(private_key: str) -> str:
 def generate_key(path: Path) -> Path:
     """Make a new AGE key at ``path`` with ``age-keygen``, and never on top of a file.
 
-    A key file is the only copy of its key: land on ``security/key.txt`` and every field
-    encrypted for it is shut for good. ``age-keygen -o`` opens with O_EXCL and refuses that
-    itself -- measured -- but the rule belongs here and in this tool's words, because the
-    default answer to the question above IS that file. "refusing to overwrite an existing
-    file" says why it matters; "failed to open output file" reads as a malfunction.
+    Landing on a key file destroys the only copy of that key. ``age-keygen -o`` opens with
+    O_EXCL and refuses that itself -- measured -- but the words are worth owning, because the
+    default answer in ``ask_for_new_key`` IS ``security/key.txt``: "refusing to overwrite an
+    existing file" says why it matters where "failed to open output file" reads as a breakdown.
     """
     if path.exists():
         raise KeyExists(f"refusing to overwrite an existing file: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    # S603/S607: the same fixed argument list as ``public_key_of``, resolved through PATH. The
-    # key is written to the file by age-keygen itself, so it never reaches an argument.
+    # S603/S607: a bare program name resolved through PATH, as in ``public_key_of``. The
+    # key is written to the file by age-keygen itself, so it never reaches the argument list.
     process = subprocess.run(  # noqa: S603
         ["age-keygen", "-o", str(path)],  # noqa: S607
         capture_output=True,
@@ -197,12 +196,7 @@ def generate_key(path: Path) -> Path:
 
 
 def ask_for_new_key(question: str, default: str | Path, *, reader: Any = input) -> Path:
-    """Ask where the new key goes and make it there, so step 1 is one command.
-
-    Same rule as ``ask_for_path``: the PATH is answered, never the key itself. The difference
-    is the direction -- this file is about to be written, so the check is the mirror image:
-    it may not be there yet.
-    """
+    """Ask where the new key goes and make it there, so step 1 is one command."""
     answer = reader(f"{question} [{default}]: ").strip() or str(default)
     return generate_key(Path(answer))
 

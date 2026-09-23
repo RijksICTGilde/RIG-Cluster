@@ -74,11 +74,9 @@ De streepjesnamen hierboven zijn dunne ingangen; de logica staat in modules erna
 
 ## Gebruik
 
-**Dit document is de bron, de scripts zijn de uitvoering.** De stappen hieronder staan in de
-volgorde waarin ze moeten en met de reden erbij, zodat wie ze met de hand wil draaien dat kan
-zonder een script te openen. Wijkt een script af van wat hier staat, dan is dat een fout in het
-script. De losse handelingen eronder -- een sleutelpaar maken, de publieke helft afleiden, het
-k8s-secret zetten, met `sops` versleutelen en ontsleutelen -- staan in
+**Dit document is de bron, de scripts zijn de uitvoering.** De stappen staan hier met de reden
+erbij, zodat je ze ook met de hand kunt draaien; wijkt een script af van wat hier staat, dan is
+dat een fout in het script. De losse handelingen eronder staan in
 `docs/sops-en-age-met-de-hand.md`.
 
 ```bash

@@ -415,10 +415,9 @@ def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_pat
 async def test_generating_the_new_key_makes_it_at_the_answered_path(tmp_path: Path) -> None:
     """Step 1 is one command: --rename makes the key too, instead of a hand-typed age-keygen.
 
-    The arrangement is the documented one -- the old key sits on ``security/key.txt`` and the
-    new one is answered as ``security/nieuw.txt``, a path that does NOT exist yet. Without the
-    flag that answer is a missing file and the run stops at exit 2, which is what makes this
-    test measure the generation rather than the rename it rides along with.
+    The new key is answered as a path that does NOT exist yet. Without the flag that answer is
+    a missing file and the run stops at exit 2, which is what makes this test measure the
+    generation rather than the rename it rides along with.
     """
     old_private, _old_public = generate_sops_key_pair()
     security = tmp_path / "security"
@@ -445,10 +444,6 @@ async def test_generating_refuses_to_write_over_a_key_that_is_already_there(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """The default answer for the new key IS the key in use, and that answer must not destroy it.
-
-    Take the default here and the platform key would be gone while every field in the repo still
-    hangs on it, with no copy anywhere -- the one mistake in this tool with no way back. So an
-    existing path is a refusal that names it, and the old key stays put.
 
     ``age-keygen -o`` opens with O_EXCL and refuses this too, which is why the assert is on the
     WORDS: without the tool's own rule the run still ends at exit 2 with the path in it, and
@@ -478,9 +473,7 @@ async def test_generating_refuses_to_write_over_a_key_that_is_already_there(
 async def test_generating_a_key_without_the_rename_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     """Making the key and giving it the fixed name is one step, so the flags are one step too.
 
-    A fresh key under its own name would otherwise be rotated onto while the Taskfile, CLAUDE.md
-    and the install docs all still read ``security/key.txt`` -- which holds the OLD key. The
-    refusal comes before the first question, so nothing is written and nothing is asked.
+    The refusal comes before the first question, so nothing is written and nothing is asked.
     """
     would_be = tmp_path / "nieuw.txt"
 
