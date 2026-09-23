@@ -95,12 +95,16 @@ def _indent(value: str, spaces: int = 4) -> str:
     return "\n".join(" " * spaces + line for line in value.splitlines())
 
 
-async def _repositories(platform_public: str, passwords: tuple[str | None, ...]) -> str:
+async def _repositories(platform_public: str, passwords: tuple[str | None, ...], *, armored: bool = False) -> str:
     """The ``repositories:`` block, one entry per element of ``passwords``.
 
     ``None`` is a repository that carries no password at all. That is not a contrived shape:
     two of the three repositories in this repo's own ``projects/simple-example.yaml`` look
     exactly like that, and a project made only of them has nothing for the PAT round to do.
+
+    ``armored`` is the second storage form the same field occurs in: an AGE block under a
+    ``|-`` scalar instead of one ``base64+age:`` line. Measured on the projects repo: 19 of the
+    53 files store the password that way, the eight in ``local-old/`` all of them.
     """
     lines: list[str] = []
     for index, password in enumerate(passwords):
@@ -109,7 +113,11 @@ async def _repositories(platform_public: str, passwords: tuple[str | None, ...])
         if password is not None:
             block = await encrypt_age_content(password, platform_public)
             lines.append("    username: git")
-            lines.append(f"    password: {BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}")
+            if armored:
+                lines.append("    password: |-")
+                lines.extend(_indent(block, 6).splitlines())
+            else:
+                lines.append(f"    password: {BASE64_AGE_PREFIX}{base64.b64encode(block.encode()).decode()}")
         lines.append("    branch: main")
         lines.append("    path: .")
     return "\n".join(lines)
@@ -121,14 +129,15 @@ async def _write_project(
     platform_public: str,
     *,
     passwords: tuple[str | None, ...] = ("ghp_repository_token",),
+    armored: bool = False,
 ) -> Path:
-    """One project file shaped like the real ones: block-scalar key, one-line repo passwords."""
+    """One project file shaped like the real ones: block-scalar key, repo password per ``armored``."""
     project_private, project_public = generate_sops_key_pair()
     path = directory / f"{name}.yaml"
     path.write_text(
         PROJECT_TEMPLATE.format(
             name=name,
-            repositories=await _repositories(platform_public, passwords),
+            repositories=await _repositories(platform_public, passwords, armored=armored),
             project_public=project_public,
             project_private=_indent(await encrypt_age_content(project_private, platform_public)),
         )
@@ -1001,11 +1010,17 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
 
 
 @pytest.mark.asyncio
-async def test_the_round_walks_a_project_file_in_a_subdirectory(projects_repo: Path, tmp_path: Path) -> None:
+async def test_the_round_walks_a_project_file_in_a_subdirectory(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
     """The nested file has to be converted AND to stand in the record the final check counts.
 
     ``projects/local-old/`` is the subdirectory a flat selection leaves on the old key, and the
     round's own numbers cannot say so: the fingerprint comes out of that same selection.
+
+    The line the operator reads names it with its subdirectory: the bare name was enough while
+    the selection was flat, and two files of the same name in two directories now print as the
+    same line twice.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1040,6 +1055,7 @@ async def test_the_round_walks_a_project_file_in_a_subdirectory(projects_repo: P
     converted = load_yaml_from_path(str(nested))
     assert await opens_with(converted["config"]["age-private-key"], new_private)
     assert not await opens_with(converted["config"]["age-private-key"], old_private)
+    assert "local-old/oud.yaml: config.age-private-key" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
@@ -1126,6 +1142,96 @@ async def test_a_tracked_file_with_ciphertext_outside_the_selection_stops_the_ro
 
     assert code == 1
     assert "oud.yml" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_the_round_walks_the_work_tree_of_a_clone_and_not_its_git_directory(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    """A clone root is an answer --projects survives, and ``.git`` stays out of the walk.
+
+    The walk that reaches one subdirectory reaches every subdirectory, git's own storage
+    included. The inventory cannot object there: ``git ls-files`` does not list what is inside
+    ``.git``, so a file converted in there would be a field in the count that belongs to no
+    project, and a write into the store that holds the way back.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    live = await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    inside_git = projects_repo / ".git" / "een.yaml"
+    inside_git.write_text(live.read_text())
+    fingerprint = tmp_path / "projects-fingerprint.json"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(projects_repo),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    assert len(Fingerprint.load(fingerprint).fields) == 2
+    assert await opens_with(load_yaml_from_path(str(live))["config"]["age-private-key"], new_private)
+    assert await opens_with(load_yaml_from_path(str(inside_git))["config"]["age-private-key"], old_private)
+
+
+@pytest.mark.asyncio
+async def test_a_repository_password_in_a_block_scalar_goes_along_and_stays_one(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    """The other storage form of the same field, and the one every nested file uses.
+
+    Measured on the projects repo: 19 of the 53 repository passwords sit in an armored block
+    instead of on a ``base64+age:`` line, and all eight files in the subdirectory this round
+    started walking are of that shape. It is also the shape where a miss stays quiet:
+    ``project_fields`` picks the worklist, the fingerprint AND the final check, so a form it
+    stops recognising is converted by nothing and missed by nothing -- 106 fields would become
+    87, three times over, and every count would agree with itself.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public, armored=True)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    recorded = Fingerprint.load(fingerprint)
+    assert [name for name in recorded.fields if name.endswith("#repositories[0].password")] != []
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_repository_token"
+    assert not await opens_with(data["repositories"][0]["password"], old_private)
+    # Written back as a block scalar and not as one line with \n in it: that is another file.
+    assert "password: |" in path.read_text()
+    assert "\\n" not in path.read_text()
 
 
 @pytest.mark.asyncio
