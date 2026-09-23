@@ -39,6 +39,7 @@ import project_rotation as round_tool  # noqa: E402
 import sops_rotation as final_check_tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
+    REPO,
     Fingerprint,
     MissingKey,
     ProjectRound,
@@ -49,6 +50,8 @@ from key_rotation import (  # noqa: E402
     sha256_of,
 )
 from project_rotation import (  # noqa: E402
+    CANONICAL_PAT_CURRENT,
+    CANONICAL_PAT_NEW,
     KEY_FINGERPRINT,
     RoundResult,
     broken,
@@ -1915,6 +1918,47 @@ def test_the_documented_project_rounds_parse_and_share_one_record() -> None:
     assert len(clones) == 1, f"step 3 and step 7 have to run on the same clone location: {sorted(clones)}"
 
 
+def test_the_documented_pat_round_and_its_final_check_share_the_same_two_token_files() -> None:
+    """Step 7 runs on the defaults, the check after it names the two files, and they have to match.
+
+    The PAT round is documented WITHOUT a token flag, so whatever its parser defaults to is where
+    the operator has to have put the tokens; the final check then hands paths in explicitly.
+    Drift between the two spellings means the round replaces from one file while the check
+    measures against another, and the check reports CLEAN over a token nothing ever read.
+
+    That such a check is documented at all is the other half. ``--pat-new-file`` recognises a
+    token by its SHAPE and ``--pat-current-file`` is plain equality with the value that was
+    replaced; only the second says the old token is gone. "At least one", not "exactly one":
+    running it again a day later with the same two files is more measurement, not less.
+    """
+    pat_lines = documented_lines("replace-git-pat.py")
+    assert len(pat_lines) == 2, "step 7 is a dry run and then the real one"
+    for line in pat_lines:
+        arguments = build_pat_parser().parse_args(flags(line))
+        assert arguments.pat_current_file == str(CANONICAL_PAT_CURRENT), line
+        assert arguments.pat_new_file == str(CANONICAL_PAT_NEW), line
+
+    final_checks = [
+        line
+        for line in documented_lines("rotate-sops-key.py")
+        if "--assert-old-key-dead" in line or "--remove-old-key" in line
+    ]
+    assert final_checks, "the documented final check left the feature doc"
+    with_both_tokens = [
+        parsed
+        for parsed in (final_check_tool.build_parser().parse_args(flags(line)) for line in final_checks)
+        if parsed.pat_new_file and parsed.pat_current_file
+    ]
+
+    assert with_both_tokens, (
+        "no documented final check runs with both token files; without --pat-current-file nothing "
+        "in the documented run proves the replaced token is gone"
+    )
+    for parsed in with_both_tokens:
+        assert (REPO / parsed.pat_current_file).resolve() == CANONICAL_PAT_CURRENT.resolve()
+        assert (REPO / parsed.pat_new_file).resolve() == CANONICAL_PAT_NEW.resolve()
+
+
 def test_the_documented_quarterly_round_swaps_the_script_and_adds_the_argo_clone() -> None:
     """Step 3 says a quarterly round runs those same two lines with ``replace-git-pat.py``.
 
@@ -1992,6 +2036,59 @@ async def test_the_dry_run_counts_replaced_kept_and_unreadable_apart(
     assert "1 fields would be left as they are (their value is not the current PAT)" in printed
     assert "0 fields open with neither key" in printed
     assert f"kept: {older}#repositories[0].password" in printed
+    # The totals are a summary of the round; the report above them is where the operator reads
+    # per file what happened. Measured: the section had no test of its own and could be removed
+    # whole while these three numbers stayed right.
+    assert "1 repository passwords re-encrypted but NOT replaced:" in printed
+
+
+@pytest.mark.asyncio
+async def test_a_field_that_opens_with_neither_key_is_named_as_a_failure_and_counted(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture, argo_clone: Path
+) -> None:
+    """The third of the three numbers, and the one that has to stop the round.
+
+    A file on a key nobody holds cannot be converted and cannot be left alone either: it is the
+    one outcome where the round does not know what it is looking at. So it is named with its
+    path, under FAIL, and the dry run ends on exit 1 rather than on a tally that reads as work
+    done. Measured: the section naming them could be removed whole with the suite staying green.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    stranger_private, stranger_public = generate_sops_key_pair()
+    assert stranger_private not in (old_private, new_private)
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "gewoon", old_public, passwords=("ghp_the_current_token",))
+    kwijt = await _write_project(directory, "kwijt", stranger_public, passwords=("ghp_the_current_token",))
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await _pat_round(
+        [
+            "--ja",
+            "--dry-run",
+            "--projects",
+            str(directory),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ],
+        argo_clone,
+        "ghp_the_current_token",
+    )
+    printed = capsys.readouterr().out
+
+    assert code == 1, printed
+    assert "1 fields open with neither key" in printed
+    assert f"FAIL {kwijt}#config.age-private-key" in printed
 
 
 @pytest.mark.asyncio

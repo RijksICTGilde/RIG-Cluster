@@ -2775,22 +2775,28 @@ async def test_a_git_server_password_is_not_held_to_the_github_token(
     assert "NOTE without --pat-new-file" not in printed
 
 
+@pytest.mark.parametrize("flag", ["--pat-file", "--pat-new-file", "--pat-current-file"])
 @pytest.mark.asyncio
-async def test_a_pat_file_outside_the_final_check_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+async def test_a_pat_file_outside_the_final_check_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture, flag: str
+) -> None:
     """The converting round replaces no token, so accepting the flag there would mislead.
 
     Whoever passes it believes the token was measured, and that belief is what decides whether
     the old one is revoked. A flag that is read and then ignored is the quietest way to get that
     decision wrong.
+
+    Per flag, because the gate reads all three names and a test on one of them says nothing
+    about the others. Measured: with ``--pat-current-file`` dropped out of the gate the suite
+    stayed green, while the flag that carries the sharpest half of the final check was accepted
+    and ignored on a round that measures no token at all.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     pat_file = tmp_path / "pat.txt"
     pat_file.write_text("ghp_" + "n" * 36 + "\n")
 
-    code = await tool.main(
-        ["--ja", "--dry-run", "--pat-file", str(pat_file), *_key_files(tmp_path, old_private, new_private)]
-    )
+    code = await tool.main(["--ja", "--dry-run", flag, str(pat_file), *_key_files(tmp_path, old_private, new_private)])
 
     assert code == 2
     assert "a PAT file belongs to --assert-old-key-dead" in capsys.readouterr().err
@@ -2842,11 +2848,18 @@ async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
 
     Without this the test above would pass just as well on a check that reports every field,
     and the verdict line is what the operator revokes the old token on.
+
+    The value left behind is deliberately a GitHub token SHAPE, which makes this the counter-
+    check for the other rule as well: ``--pat-current-file`` must not switch on the shape rule.
+    That rule needs a token to hold values against, and with only the current PAT given there is
+    none -- so every value that merely looks like a token would become a finding, including the
+    one the round just wrote correctly. Measured: without the guard on it this tree reports FAIL
+    in the run whose whole job is to say the OLD token is gone.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
     current = "the-old-pat-in-a-shape-no-rule-knows"
-    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "the-new-one"}, new_public)
+    env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "n" * 36}, new_public)
     current_file = tmp_path / "pat_current.txt"
     current_file.write_text(current + "\n")
     records = ["--fingerprint", str(tmp_path / "absent.json")]
@@ -2859,6 +2872,8 @@ async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
     assert code == 0, printed
     assert "and nothing decrypts to the current PAT any more" in printed
     assert "NOTE without --pat-current-file" not in printed
+    assert "holds a GitHub token that is not the new one" not in printed
+    assert "and every GitHub token is the new one" not in printed, "no new token was given to judge against"
 
 
 @pytest.mark.asyncio

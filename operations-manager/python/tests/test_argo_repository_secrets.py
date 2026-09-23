@@ -68,6 +68,9 @@ needs_sops = pytest.mark.skipif(shutil.which("sops") is None, reason="requires t
 
 OLD_TOKEN = "ghp_" + "o" * 36
 NEW_TOKEN = "ghp_" + "n" * 36
+#: A third token: neither the one being replaced nor the one replacing it. The live shape the
+#: conditional exists for -- two of the 67 repository secrets carry a value like this.
+OLDER_TOKEN = "ghp_" + "x" * 36
 CLUSTER = "odcn-production"
 
 PROJECT_TEMPLATE = """\
@@ -357,7 +360,7 @@ async def test_a_secret_on_another_token_keeps_it_and_is_named_with_its_drift(
     its password, and both facts are printed: what was left alone, and what disagrees.
     """
     platform_private, platform_public = platform_keys
-    older_token = "ghp_" + "x" * 36
+    older_token = OLDER_TOKEN
     projects, clone, secret = await a_pair(
         tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=older_token
     )
@@ -378,6 +381,27 @@ async def test_a_secret_on_another_token_keeps_it_and_is_named_with_its_drift(
     assert len(plan.drift) == 1
     assert "disagrees with its project file" in printed
     assert round_tool.argo_problems(plan) == [], "drift is a finding for a person, not a stop"
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_half_a_pat_round_is_refused_on_the_argo_side_too(tmp_path: Path, platform_keys: tuple[str, str]) -> None:
+    """The same refusal the project round makes, on the other place the conditional lives.
+
+    With only one of the two tokens the branch below falls through to the DERIVATION rule -- the
+    key round's behaviour -- while the caller believes it is replacing conditionally. That is the
+    blind write returning through the back door, and silently. The engine's twin refusal is
+    measured in ``test_a_pat_round_without_the_current_pat_is_refused``; this one had nothing.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
+    before = raw_hashes(clone)
+
+    for half in ({"new_pat": NEW_TOKEN}, {"current_pat": OLD_TOKEN}):
+        with pytest.raises(ConversionFailed, match="both the current and the new PAT"):
+            await argo_rotation.plan_argo_round(clone, projects, platform_private, **half)
+
+    assert raw_hashes(clone) == before
 
 
 @needs_sops
@@ -815,25 +839,29 @@ def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(
 
 
 async def a_round_to_run(
-    tmp_path: Path, old_private: str, old_public: str, new_private: str
+    tmp_path: Path, old_private: str, old_public: str, new_private: str, *, in_all_three: str = OLD_TOKEN
 ) -> tuple[Path, Path, Path, Path, list[str]]:
-    """Everything ``replace-git-pat.py`` touches, all three of them on the old token.
+    """Everything ``replace-git-pat.py`` touches, all three of them on the same token.
 
     Returns the projects directory, the argo clone, the secret in it, the loose-value file and
     the arguments. The record is pre-written the way a key round leaves it, because the
     correction of exactly the replaced entries is part of what the round has to do.
+
+    ``in_all_three`` is what the three places carry. The default is the token being replaced --
+    the ordinary round; a caller that passes something else gets the round that has nothing to
+    replace anywhere.
     """
     projects, clone, secret = await a_pair(
-        tmp_path, old_private, old_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
+        tmp_path, old_private, old_public, in_the_project=in_all_three, in_the_secret=in_all_three
     )
     loose = tmp_path / "config.py"
-    loose.write_text(f'PROJECT_REPO_PASSWORD = "{await _encrypted(OLD_TOKEN, old_public)}"\n')
+    loose.write_text(f'PROJECT_REPO_PASSWORD = "{await _encrypted(in_all_three, old_public)}"\n')
     (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
     (tmp_path / "key.txt").write_text(f"{new_private}\n")
     (tmp_path / "pat.txt").write_text(f"{NEW_TOKEN}\n")
     (tmp_path / "pat-current.txt").write_text(f"{OLD_TOKEN}\n")
     record = Fingerprint()
-    record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(OLD_TOKEN))
+    record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(in_all_three))
     record.save(tmp_path / "repo-fingerprint.json")
     arguments = [
         "--ja",
@@ -987,6 +1015,42 @@ async def test_a_repository_without_credentials_renders_a_secret_the_round_leave
 
 @needs_sops
 @pytest.mark.asyncio
+async def test_the_three_numbers_count_every_place_and_are_printed_by_the_real_round(
+    tmp_path: Path, platform_keys: tuple[str, str], capsys: pytest.CaptureFixture
+) -> None:
+    """The totals the operator reads before revoking: over all three places, and after writing.
+
+    The dry run's copy of this line has its own test, but that one runs with an empty argo clone
+    and no loose values -- so nothing there says the other two places reach the totals at all,
+    and nothing says the line survives into the real round. Measured: dropping the argo and
+    loose terms, or the call that comes after the round has written, leaves the whole rotation
+    suite green.
+
+    All three sit on a token that is neither the current nor the new one, so the round has
+    nothing to replace anywhere and has to say exactly that, in three numbers and by path.
+    """
+    old_private, old_public = platform_keys
+    new_private, _new_public = generate_sops_key_pair()
+    projects, _clone, secret, loose, arguments = await a_round_to_run(
+        tmp_path, old_private, old_public, new_private, in_all_three=OLDER_TOKEN
+    )
+
+    with patch.object(round_tool, "loose_paths", return_value=[loose]):
+        code = await round_tool.main_replace_pat(arguments)
+    printed = capsys.readouterr().out
+
+    assert code == 0, printed
+    assert "0 fields were replaced with the new PAT" in printed
+    assert "3 fields were left as they are (their value is not the current PAT)" in printed
+    assert "0 fields open with neither key" in printed
+    # And named per place, so a total that adds up over the wrong set still reads wrong here.
+    assert f"kept: {projects / 'een.yaml'}#repositories[0].password" in printed
+    assert f"kept: {loose}#PROJECT_REPO_PASSWORD" in printed
+    assert f"kept: {secret} " in printed
+
+
+@needs_sops
+@pytest.mark.asyncio
 async def test_drift_that_was_already_there_survives_the_round_and_the_final_check_reports_it(
     tmp_path: Path, platform_keys: tuple[str, str]
 ) -> None:
@@ -999,7 +1063,7 @@ async def test_drift_that_was_already_there_survives_the_round_and_the_final_che
     the measurement against the project file rather than the worklist it would have written.
     """
     platform_private, platform_public = platform_keys
-    older_token = "ghp_" + "x" * 36
+    older_token = OLDER_TOKEN
     projects, clone, secret = await a_pair(
         tmp_path, platform_private, platform_public, in_the_project=OLD_TOKEN, in_the_secret=older_token
     )

@@ -540,6 +540,27 @@ def test_the_whole_tree_scan_counts_what_it_read_and_not_what_it_was_handed(
 
 
 @needs_age
+def test_the_hook_scan_counts_what_it_read_and_not_what_it_was_handed(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The same line on the other entry: ``--files``, which is what layer 1 hands the scanner.
+
+    The count is spelled out once per branch, so the tree scan above proves nothing about this
+    one. Measured: with ``len(paths)`` put back in the ``--files`` branch alone, every other test
+    in this file stays green while the hook prints CLEAN over two files it opened one of.
+    """
+    (tmp_path / "logo.png").write_text("not really a png\n")
+    (tmp_path / "notes.md").write_text("nothing secret\n")
+    scan_module = _scan_secrets_module()
+
+    assert scan_module.main(["--files", str(tmp_path / "logo.png"), str(tmp_path / "notes.md")]) == 0
+
+    printed = capsys.readouterr().out
+    assert "1 of 2 staged files" in printed
+    assert "Unread: 1 files were not opened (binary or media suffix: 1)" in printed
+
+
+@needs_age
 def test_only_tracked_files_are_scanned(tmp_path: Path) -> None:
     """``security/`` holds the real keys on purpose, and it is untracked.
 

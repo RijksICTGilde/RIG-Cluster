@@ -494,15 +494,24 @@ async def test_the_inventory_walks_tracked_files_and_not_the_working_tree(
     Measured on a real git tree holding the SAME ciphertext twice, once added and once not.
     The inventory is what the coverage guard refuses to start on, so reading the working tree
     would turn every scratch file and every untracked clone into a blockade instead of a guard.
+
+    Tracked is the only question it asks. Where a file SITS is not one: a committed bundle under
+    ``dist/`` carrying ciphertext is exactly the thing the coverage guard has to see, and the
+    filter this shares with the scanner used to drop those on a directory rule.
     """
     _private_key, public_key = key_pair_a
     block = await encrypt_age_content("hunter2", public_key)
     subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
     (tmp_path / "tracked.txt").write_text(block)
     (tmp_path / "scratch.txt").write_text(block)
-    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt"], check=True)
+    (tmp_path / "dist").mkdir()
+    (tmp_path / "dist" / "bundle.js").write_text(block)
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.txt", "dist/bundle.js"], check=True)
 
-    assert files_with_ciphertext(tmp_path) == {tmp_path / "tracked.txt": 1}
+    assert files_with_ciphertext(tmp_path) == {
+        tmp_path / "tracked.txt": 1,
+        tmp_path / "dist" / "bundle.js": 1,
+    }
 
 
 # ---------------------------------------------------------------------------
