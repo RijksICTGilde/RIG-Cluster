@@ -108,9 +108,8 @@ Twee dingen die daaruit volgen:
 * de ronde neemt nog steeds **beide** sleutels aan, ook al staat er na stap 3 geen enkel veld meer
   op de oude. Ze mogen niet dezelfde zijn, dus `security/old_key.txt` moet nog bestaan -- vandaar
   dat het weghalen daarvan stap 8 is en niet stap 7;
-* de werklijst kijkt in deze stand naar de PAT en niet naar de sleutel. Een wachtwoord dat al op de
-  nieuwe sleutel staat maar nog het oude token draagt gaat gewoon mee; een wachtwoord dat het
-  meegegeven token al draagt wordt overgeslagen, zodat een tweede ronde niets doet.
+* een tweede PAT-ronde doet niets: een wachtwoord dat het meegegeven token al draagt blijft staan,
+  ciphertext en al.
 
 **Randvoorwaarde, en die is hard:** de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste
 bestand wordt geschreven, met de oude er nog naast (zie "Geen dubbele recipients" voor waarom dat

@@ -497,9 +497,8 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(proje
 async def test_the_pat_round_still_replaces_after_the_key_round(projects_repo: Path, tmp_path: Path) -> None:
     """The order the plan advises, driven through both entry points in turn.
 
-    After the key round every password sits on the new key while still holding the OLD token,
-    so a worklist that asks "does this still open with the old key?" hands back "already
-    converted", exit 0 and "revoke the old PAT" -- with the old PAT still in the file.
+    Without the worklist looking at the token, the second round hands back "already converted",
+    exit 0 and "revoke the old PAT" -- with the old PAT still in the file.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -563,7 +562,6 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
 
 
 def test_already_converted_is_only_harmless_in_the_key_round() -> None:
-    """The same skip, judged per round: it answers the key question and not the token one."""
     result = RoundResult(skipped=[ProjectRound(path=Path("een.yaml"), skipped="already converted (2 of 2 fields)")])
 
     assert broken(result) == []

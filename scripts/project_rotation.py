@@ -199,14 +199,11 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
 def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound]:
     """The skips that are a real problem, as opposed to "nothing left to do here".
 
-    A file that is already converted, or that carries no platform field at all, is not a
-    finding. A file whose value opens with neither key is, and the round's exit code has to say
-    so -- otherwise a silent skip reads as success.
-
-    What counts as harmless differs per round, which is why the mode comes in here. "Already
-    converted" answers the key question and says nothing about the token, so in the PAT round
-    it is not on this list: there the only innocent skips are the ones that name the password
-    itself.
+    A file whose value opens with neither key is a finding, and the round's exit code has to say
+    so -- otherwise a silent skip reads as success. What is harmless differs per round, which is
+    why the mode comes in here: "already converted" answers the key question and says nothing
+    about the token, so it drops off the list in the PAT round and the skips that name the
+    password take its place.
     """
     harmless = (
         ("no encrypted platform fields", "no repository password", "the repository password already holds this PAT")

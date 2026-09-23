@@ -507,9 +507,8 @@ class ProjectRound:
 def nothing_to_do(total: int, on_new_key: int, passwords: int, *, new_pat: str | None) -> str:
     """Why this file needs no work, in the terms of the round that is actually running.
 
-    The two rounds skip for different reasons and "already converted" said both. In the PAT
-    round that phrasing reads as reassurance while the file may still hold the old token, so
-    each round names its own reason and ``broken()`` judges the two sets separately.
+    "Already converted" used to cover both rounds; in the PAT round it reads as reassurance
+    while the file may still hold the old token. ``broken()`` judges the two sets separately.
     """
     if new_pat is None:
         return f"already converted ({on_new_key} of {total} fields sit on the new key)"
@@ -540,12 +539,9 @@ async def rotate_project_file(
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
     only re-encrypted.
 
-    The worklist therefore cannot be settled by the key alone. The documented order runs the
-    key round first and the PAT round after it, so by then every password already sits on B
-    while still holding the OLD token -- a gate on "does this still open with A?" would make
-    that second round a silent no-op. What puts a field on the list is what the round is for:
-    a key that is still the old one, or a password that is not yet the PAT that was handed in.
-    Each field is then converted with the key that actually opened it.
+    The worklist therefore cannot be settled by the key alone: the documented order runs the
+    key round first, so by then every password already sits on B while still holding the OLD
+    token, and a gate on "does this still open with A?" makes that second round a silent no-op.
     """
     path = Path(path)
     round_report = ProjectRound(path=path)

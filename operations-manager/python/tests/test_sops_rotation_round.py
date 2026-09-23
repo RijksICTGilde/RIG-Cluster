@@ -344,11 +344,10 @@ def test_renaming_moves_both_files_into_place(tmp_path: Path, capsys: pytest.Cap
 def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_path: Path) -> None:
     """The documented step 1 has the old key sitting on the name the new one is about to take.
 
-    ``features/sops-sleutel-vervangen.md`` tells the operator to answer ``security/key.txt`` and
+    ``features/sops-sleutel-vervangen.md`` has the operator answer ``security/key.txt`` and
     ``security/nieuw.txt``, so the answered old key IS ``CANONICAL_NEW``. Move the new one first
-    and it overwrites the old key before the old key has been copied anywhere: A is gone, and
-    with it every field that has not been converted yet. The two moves above never overlap, so
-    only this arrangement measures the order.
+    and it overwrites A before A has been copied anywhere. The three rename tests around this one
+    never let the two paths overlap, so only this arrangement measures the order.
     """
     security = tmp_path / "security"
     security.mkdir()

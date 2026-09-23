@@ -346,18 +346,12 @@ def test_the_pre_commit_hook_calls_the_scan() -> None:
 
 
 def test_every_script_parses_on_the_oldest_python_the_hook_may_meet() -> None:
-    """Layer 1 runs on whatever ``python3`` the developer has, so newer syntax refuses every commit.
+    """Layer 1 runs on whatever ``python3`` the developer has, so 3.14-only syntax refuses every commit.
 
-    The hook is ``entry: python3 scripts/scan-secrets.py --files`` with ``language: system``: no
-    venv, no pinned interpreter. Syntax that only 3.14 accepts -- ``except A, B:`` is the one that
-    bit here -- turns the hook into a ``SyntaxError`` that refuses every commit until someone
-    works out that the guard itself is broken. Neither gate catches it: ``ruff format`` calls the
-    file formatted either way, and the ruff hooks in ``.pre-commit-config.yaml`` are limited to
-    ``^operations-manager/python/``, so nothing runs ruff over ``scripts/`` on its own.
-
-    The floor comes out of ``scripts/.ruff.toml`` rather than being written here twice, so the
-    pin and this check cannot drift apart. That pin is a statement about the whole directory, so
-    every script is measured against it.
+    Why the pin under ``scripts/`` exists at all: ``scripts/README.md``, "Aanroepen". Nothing
+    else catches a breach of it -- ``ruff format`` calls the file formatted either way, and the
+    ruff hooks in ``.pre-commit-config.yaml`` are limited to ``^operations-manager/python/``, so
+    no gate runs ruff over ``scripts/``.
     """
 
     def version_of(text: str) -> tuple[int, int]:

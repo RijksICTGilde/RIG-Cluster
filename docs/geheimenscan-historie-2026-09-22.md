@@ -22,7 +22,7 @@ getrackte bestanden). De job `secret-scan` in `.github/workflows/security.yml` h
 
 **Wat hieronder staat is gemeten, niet opgelost.** RC-221 levert het GEREEDSCHAP voor de
 sleutelwissel; de wissel zelf en het intrekken van wat hier boven water komt zijn handelingen op
-een draaiend cluster en staan nog open. Waar een rij "te doen" zegt, is dat te doen.
+een draaiend cluster en staan nog open.
 
 ## RIG-Cluster: 47.428 objecten, 16 vindplaatsen
 
@@ -40,10 +40,9 @@ een draaiend cluster en staan nog open. Waar een rij "te doen" zegt, is dat te d
 Wat hiervan te vinden is:
 
 - **De platformsleutel stond op precies EEN pad, ooit.** Dat is de belangrijkste uitkomst van deze
-  scan: hij is nooit ergens anders in deze repo terechtgekomen. Hij wordt vervangen -- het
-  gereedschap en de volgorde staan in `features/sops-sleutel-vervangen.md`, de wissel zelf moet
-  nog gebeuren -- en die vervanging is wat hem waardeloos maakt, niet het weghalen uit het
-  bestand.
+  scan: hij is nooit ergens anders in deze repo terechtgekomen. Hij wordt vervangen (het
+  gereedschap en de volgorde staan in `features/sops-sleutel-vervangen.md`), en die vervanging
+  is wat hem waardeloos maakt, niet het weghalen uit het bestand.
 - **Er stond een oudere sleutel in datzelfde testbestand**, van voor de platformsleutel. Die is
   dus ook blootgesteld. Onbekend waar die ooit voor gebruikt is; het is niet de huidige sandbox- of
   developersleutel (die komen in geen enkele commit voor).
@@ -61,7 +60,7 @@ De echte sandbox- en developersleutels (`security/sandbox-key.txt`,
 
 | wat | waar | te doen |
 |---|---|---|
-| ArgoCD-projecttoken, **zonder `exp`** dus niet-verlopend | `HOW.md` en `archive/HOW.md` regel 161 | **intrekken.** `iss: argocd`, `sub: proj:default:automation-service`, `jti: 944c67e0-5d82-4890-b817-7c14de23cf79`, uitgegeven 2025-07-01T09:44:41Z. Intrekken met `argocd proj role delete-token default automation-service <jti>`; dat staat nog open. De waarde is inmiddels uit de huidige boom weggehaald, maar staat nog in de historie |
+| ArgoCD-projecttoken, **zonder `exp`** dus niet-verlopend | `HOW.md` en `archive/HOW.md` regel 161 | **intrekken.** `iss: argocd`, `sub: proj:default:automation-service`, `jti: 944c67e0-5d82-4890-b817-7c14de23cf79`, uitgegeven 2025-07-01T09:44:41Z. `argocd proj role delete-token default automation-service <jti>`. De waarde is inmiddels uit de huidige boom weggehaald, maar staat nog in de historie |
 | PEM-privesleutel | `keys/git-server-key` | pad bestaat niet meer. Was de sleutel van de git-server uit de begindagen; als die sleutel nog ergens als authorized_key staat, moet hij eruit |
 | JWT in een sessiebestand | `operations-manager/python/scripts/.sandbox-sessie.json` | een sandboxsessie, pad bestaat niet meer. Sandboxen zijn wegwerp, dus lage prioriteit; wel een reden om zulke bestanden in `.gitignore` te zetten |
 

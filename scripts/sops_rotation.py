@@ -344,10 +344,8 @@ def rename_keys(old: Path, new: Path, *, yes: bool) -> None:
     would drag all of those with it, so the old one shifts to ``old_key.txt`` and the new one
     takes over the fixed name.
 
-    ``Path.replace`` overwrites, so an ``old_key.txt`` that is still lying around is gone after
-    this. In the documented order that cannot bite -- the last step of a rotation deletes that
-    file, and the next rotation therefore starts without one -- but a second rotation where that
-    step was skipped loses the previous key silently.
+    ``Path.replace`` overwrites: a second rotation where the last step (the one that deletes
+    ``old_key.txt``) was skipped loses the previous key silently.
     """
     if old.resolve() == CANONICAL_OLD.resolve() and new.resolve() == CANONICAL_NEW.resolve():
         print("Keys already sit under their fixed names.")
