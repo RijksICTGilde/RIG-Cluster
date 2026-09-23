@@ -1,15 +1,18 @@
 """The CI wiring around the key rotation: what has to run, and what does not run yet.
 
-Both checks here read workflow files and need no binary, and that is why they are their own
-module. ``test_sops_rotation_round.py``, ``test_key_rotation_project_round.py`` and
+The checks here read the workflow file and need neither ``age`` nor ``sops``, and that is why
+they are their own module. ``test_sops_rotation_round.py``, ``test_key_rotation_project_round.py`` and
 ``test_key_rotation_engine.py`` all carry ``skipif(which("age") is None)`` at module level, so
-with ``age`` off the runner they go quiet in one move: measured on this tree, all 167 of them
+with ``age`` off the runner they go quiet in one move: measured on this tree, all 168 of them
 skip and nothing goes red. A guard against a silent skip may not sit behind that same skip.
 """
 
 from __future__ import annotations
 
 import re
+import shlex
+import subprocess
+import sys
 from pathlib import Path
 
 import yaml
@@ -20,6 +23,13 @@ _FEATURE_DOC = _REPO_ROOT / "features" / "sops-sleutel-vervangen.md"
 
 #: The entry points that convert something or touch the cluster.
 _ROTATION_SCRIPTS = ("rotate-sops-key.py", "rotate-project-keys.py", "replace-git-pat.py", "set-sops-key-secret.py")
+
+#: The three modules that carry the rotation guards, and that skip whole without ``age``.
+_ROTATION_MODULES = (
+    "tests/test_sops_rotation_round.py",
+    "tests/test_key_rotation_project_round.py",
+    "tests/test_key_rotation_engine.py",
+)
 
 
 def _triggers(workflow: dict) -> dict | list | str:
@@ -52,7 +62,7 @@ def test_ci_installs_age_and_sops_so_the_rotation_guards_actually_run() -> None:
 
     The job matters as much as the install. Measured: with both install steps moved from ``test``
     to ``license-check`` a sweep over all jobs stays green, while the test job has neither binary
-    and 167 rotation tests skip under a summary that says passed.
+    and 168 rotation tests skip under a summary that says passed.
     """
     workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
     # A step behind a falsy condition installs nothing, and reading only the "run" lines would
@@ -108,3 +118,88 @@ def test_the_monthly_exercise_is_not_running_yet_and_the_doc_still_says_so() -> 
     assert any("oefenronde" in item.lower() for item in still_to_come), (
         f"the exercise left the future-work list while nothing runs it: {still_to_come}"
     )
+
+
+def _pytest_argv(workflow: dict, job: str) -> list[str]:
+    """The arguments the pytest step of ``job`` hands to pytest, without the runner in front."""
+    running = [
+        step.get("run", "") for step in workflow["jobs"][job].get("steps", []) if "pytest" in step.get("run", "")
+    ]
+    assert len(running) == 1, f"job {job!r} has {len(running)} steps running pytest, so this guard reads the wrong one"
+    tokens = shlex.split(running[0])
+    return tokens[tokens.index("pytest") + 1 :]
+
+
+def _selection(argv: list[str]) -> tuple[str, list[str]]:
+    """The ``-m`` expression and the paths pytest is pointed at.
+
+    ``-p``, ``-k`` and ``-n`` carry their value in the next token, so those are stepped over;
+    everything else that does not start with a dash is a path.
+    """
+    expression = ""
+    paths: list[str] = []
+    tokens = iter(argv)
+    for token in tokens:
+        if token == "-m":
+            expression = next(tokens, "")
+        elif token in {"-p", "-k", "-n"}:
+            next(tokens, "")
+        elif not token.startswith("-"):
+            paths.append(token)
+    return expression, paths
+
+
+def test_the_ci_test_job_really_collects_the_rotation_modules() -> None:
+    """Installing the binaries is half of it: the job also has to SELECT these tests.
+
+    The feature doc says under 8.24.01 that the coverage guard runs along in every CI test round,
+    and the check above holds ``age`` and ``sops`` in the job that runs pytest. Nothing held the
+    step's own selection. Measured: with ``pytest.mark.slow`` added to the three rotation modules
+    the CI expression collects 0 of their 168 tests, the local run stays green because nothing
+    here excludes ``slow``, and no test in this repo went red -- the same silent quiet the
+    install check exists for, one step further down.
+
+    Both halves are measured with the step's own arguments: the paths it points at have to cover
+    the modules, and the marker expression has to leave them selected, which is a real collection
+    and not a reading of the markers.
+    """
+    workflow = yaml.safe_load((_WORKFLOWS / "ci.yml").read_text())
+    working_directory = workflow["jobs"]["test"].get("defaults", {}).get("run", {}).get("working-directory")
+    assert working_directory == "operations-manager/python", (
+        f"the pytest step runs in {working_directory!r}, so its paths no longer mean what this guard reads"
+    )
+    expression, paths = _selection(_pytest_argv(workflow, "test"))
+    assert paths, "the pytest step points at no path at all, so this guard measures nothing"
+
+    for module in _ROTATION_MODULES:
+        assert any(module == path or module.startswith(path.rstrip("/") + "/") for path in paths), (
+            f"{module} sits outside the paths the CI test step runs ({paths}), so its guards go quiet in CI"
+        )
+
+    collected = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            # Its own cache, so a collection inside a run leaves the outer run's cache alone.
+            "-p",
+            "no:cacheprovider",
+            *(["-m", expression] if expression else []),
+            *_ROTATION_MODULES,
+        ],
+        cwd=_REPO_ROOT / working_directory,
+        capture_output=True,
+        text=True,
+    )
+    # Exit code 5 is "nothing collected", which is the deselection this measures rather than a
+    # broken run, so the sharp message below gets to say it.
+    assert collected.returncode in {0, 5}, (
+        f"collecting the rotation modules failed:\n{collected.stdout}{collected.stderr}"
+    )
+    for module in _ROTATION_MODULES:
+        assert f"{module}::" in collected.stdout, (
+            f"CI selects with -m {expression!r} and that deselects every test in {module}: "
+            f"its guards would report green without running\n{collected.stdout[-2000:]}"
+        )

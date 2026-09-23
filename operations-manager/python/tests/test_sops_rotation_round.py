@@ -2282,6 +2282,36 @@ async def test_a_coverage_gap_stops_the_round_before_a_byte_is_written(
 
 
 @pytest.mark.asyncio
+async def test_a_dry_run_over_a_gap_is_a_failure_and_not_a_green_preview(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The dry run is where the gap has to show, because it is what the operator reads first.
+
+    The guard needs no key, so it runs on every dry run -- but "runs" has to mean the VERDICT and
+    not a line in the plan. Measured with the stop moved below the early return of ``--dry-run``:
+    the FAIL line still printed, the run ended in exit 0 with "Dry run: nothing was changed", and
+    no test in the three rotation modules went red. That is the reading an operator, and a
+    wrapper around this script, takes as "the round is ready to go".
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    outsider = tmp_path / "forgotten.py"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+        patch.object(tool, "files_with_ciphertext", return_value={outsider: 1}),
+    ):
+        code = await tool.main(["--ja", "--dry-run", *_key_files(tmp_path, old_private, new_private)])
+
+    printed = capsys.readouterr()
+    assert code == 1, "a dry run that reports a gap and still exits 0 reads as a green preview"
+    assert "STOPPED a tracked file carries ciphertext that nothing here converts." in printed.err
+    assert "Dry run: nothing was changed." not in printed.out
+
+
+@pytest.mark.asyncio
 async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap(tmp_path: Path) -> None:
     """The half that matters most: the verdict has to be about the tree, not about the worklist."""
     old_private, old_public = generate_sops_key_pair()
