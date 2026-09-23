@@ -418,9 +418,9 @@ def test_a_built_bundle_is_scanned_like_any_other_tracked_file(tmp_path: Path) -
     """The measured hole: ``dist`` and ``build`` were skipped on the tracked path as well.
 
     A bundle with a token baked into it is one of the most ordinary leak shapes there is, and this
-    repository really does track 23 files under ``presentation/reveal/dist/``. Both layers of the
-    guard call ``scan_files``, so a directory rule here took the finding away from both at once --
-    and said "CLEAN" while doing it.
+    repository really does track committed files under ``presentation/reveal/dist/``. Both layers
+    of the guard call ``scan_files``, so a directory rule here took the finding away from both at
+    once -- and said "CLEAN" while doing it.
     """
     private_key, _public_key = generate_sops_key_pair()
     for name in ("dist/vendor.js", "build/out.txt", "node_modules/pkg/index.js", "src/app.py"):
@@ -441,11 +441,8 @@ def test_a_built_bundle_is_scanned_like_any_other_tracked_file(tmp_path: Path) -
 
 
 def test_where_a_file_sits_is_never_a_reason_to_leave_it_unread(tmp_path: Path) -> None:
-    """``skip_reason`` judges what a file IS, never which directory it is in.
-
-    The counterpart of the test above, and the one that catches the repair being undone by hand:
-    the directory list may only be consulted while WALKING a tree that git cannot list.
-    """
+    """The counterpart of the test above, and the one that catches the repair being undone by
+    hand: the directory list may only be consulted while WALKING a tree that git cannot list."""
     for name in ("dist", "build", "node_modules", ".git"):
         path = tmp_path / name / "thing.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -458,12 +455,8 @@ def test_where_a_file_sits_is_never_a_reason_to_leave_it_unread(tmp_path: Path) 
 
 @needs_age
 def test_an_svg_is_text_and_is_read_like_any_other_file(tmp_path: Path) -> None:
-    """It sat on the media list between the PNGs, and it is the one entry there that is text.
-
-    A suffix list is the wrong place to decide that a readable file does not count: a key pasted
-    into XML reads exactly like a key pasted into YAML. Content that really is binary still falls
-    out one step later, where it is counted instead of dropped.
-    """
+    """It sat on the media list between the PNGs, and it is the one entry there that is text:
+    a key pasted into XML reads exactly like a key pasted into YAML."""
     private_key, _public_key = generate_sops_key_pair()
     (tmp_path / "diagram.svg").write_text(f"<svg><desc>{private_key}</desc></svg>\n")
 
@@ -692,12 +685,9 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     assert not any("--files" in command for command in commands)
     # age-keygen has to be there, or every placeholder in the suite becomes a finding.
     assert any("age" in command for command in commands)
-    # On every push to main and on every pull request.
+    # On every pull request, and on a push to main or main_github.
     triggers = workflow[True] if True in workflow else workflow["on"]
     assert "pull_request" in triggers
-    # Both branches, and that second name is not decoration: the publicly published branch is
-    # ``main_github``, so a push straight to it used to reach the public repository without ever
-    # passing the layer that binds.
     assert set(triggers["push"]["branches"]) >= {"main", "main_github"}
 
 

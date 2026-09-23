@@ -712,11 +712,11 @@ lezen aan wat hij zei. Hij las **2604 van de 2765 getrackte bestanden** en meldd
 23 van die overgeslagen bestanden vielen weg op een MAP-regel die `dist/` en `build/` oversloeg,
 overgenomen uit een filesystem-walk waar hij `node_modules` buiten de deur houdt. Op de
 `git ls-files`-weg voegt zo'n regel niets toe -- git levert geen ongetrackte rommel -- en haalt
-hij alleen dekking weg, precies waar het pijn doet: deze repo trackt 23 bestanden onder
-`presentation/reveal/dist/`, en een gebouwde bundel met een ingebakken token is een van de
-gewoonste lekvormen die er is. Die map-regel geldt nu alleen nog voor de `rglob`-terugval, voor
-een boom die geen git-repo is. Of een bestand gelezen wordt hangt verder uitsluitend af van wat
-het IS, nooit van waar het staat.
+hij alleen dekking weg, precies waar het pijn doet: het zijn alle 23 gecommitte bestanden onder
+`presentation/reveal/dist/`, waarvan er 8 leesbare tekst zijn, en een gebouwde bundel met een
+ingebakken token is een van de gewoonste lekvormen die er is. Die map-regel geldt nu alleen nog
+voor de `rglob`-terugval, voor een boom die geen git-repo is. Of een bestand gelezen wordt hangt
+verder uitsluitend af van wat het IS, nooit van waar het staat.
 
 Wat er dan overblijft, staat onder de uitspraak in plaats van eronderdoor:
 
@@ -725,12 +725,16 @@ CLEAN no secrets found in 2613 of 2765 tracked files in /workspace
 Unread: 152 files were not opened (binary or media suffix: 143, larger than the size limit: 1, not UTF-8 text: 8)
 ```
 
-Dat tweede getal is de grens van de grendel. Daarom staat hij vast in `test_secret_scan.py` -- een
-uitbreiding van de overslaglijst hoort geen dekking te kunnen weghalen zonder dat een toets rood
-wordt -- en daarom draagt elke overgeslagen categorie een reden. Nagemeten wat er in die 152 zit:
-151 zijn als UTF-8 helemaal niet te lezen (afbeeldingen, lettertypen, een jar, twee .docx), en de
-ene die dat wel is -- de 2,9 MB grote `bootstrap/crd/operator/argocd-operator-install.yaml` -- is
-met de hand door `scan_text` gehaald: 0 bevindingen. `.svg` stond ook op die suffixlijst en staat
+Dat tweede getal is de grens van de grendel, en daarom draagt elke overgeslagen categorie een
+reden. `test_secret_scan.py` pint de drie regels vast die eraf gingen (`.svg`, `dist`, `build`) en
+de grens van `MAX_BYTES`; het getal zelf niet. Gemeten: een nieuwe suffix op de lijst haalt dekking
+weg zonder dat een toets rood wordt, dus die regel in de melding is de enige plek waar dat te zien
+is.
+
+Nagemeten wat er in die 152 zit: 151 zijn als UTF-8 helemaal niet te lezen (afbeeldingen,
+lettertypen, een jar, twee .docx), en de ene die dat wel is -- de 2,9 MB grote
+`bootstrap/crd/operator/argocd-operator-install.yaml` -- is met de hand door `scan_text` gehaald:
+0 bevindingen. `.svg` stond ook op die suffixlijst en staat
 er niet meer op: dat is XML, en een token dat erin geplakt staat leest net zo goed als elders.
 
 ## Sleutels in toetsen: geen vaste, maar een gemaakte

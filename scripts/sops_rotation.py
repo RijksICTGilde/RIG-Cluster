@@ -588,10 +588,9 @@ def rename_keys(old: Path, new: Path, *, yes: bool) -> None:
     would drag all of those with it, so the old one shifts to ``old_key.txt`` and the new one
     takes over the fixed name.
 
-    ``Path.replace`` overwrites, so a second rotation where step 8 (the one that deletes
-    ``old_key.txt``) was skipped would land on the previous round's old key and destroy the only
-    copy of it. It refuses instead, the way ``generate_key`` refuses to write over a key file:
-    while the old key still opens something, losing it is losing the way back.
+    ``Path.replace`` overwrites, so a second rotation would land on the previous round's old key
+    and destroy the only copy of it. It refuses instead, the way ``generate_key`` refuses to write
+    over a key file: while the old key still opens something, losing it is losing the way back.
     """
     if old.resolve() == CANONICAL_OLD.resolve() and new.resolve() == CANONICAL_NEW.resolve():
         print("Keys already sit under their fixed names.")

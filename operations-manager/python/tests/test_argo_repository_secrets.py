@@ -816,7 +816,7 @@ async def a_round_to_run(
 async def test_the_entry_point_converts_all_three_places_in_one_round(
     tmp_path: Path, platform_keys: tuple[str, str]
 ) -> None:
-    """ "Drie plekken, een ronde", driven over the entry point rather than per function.
+    """Driven over the entry point rather than per function.
 
     Each of the three fails differently and none of them loudly: a project file hands the
     revoked token to its next git operation, ``PROJECT_REPO_PASSWORD`` hands it to the next NEW

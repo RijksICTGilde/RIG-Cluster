@@ -505,9 +505,8 @@ def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_pat
 def test_a_second_round_refuses_to_land_on_the_previous_old_key(tmp_path: Path) -> None:
     """The round that was never finished still has its old key under the fixed name.
 
-    ``Path.replace`` overwrites without a word, so the second rotation would destroy the only
-    copy of the key the first one rotated away from -- while that key still opens whatever the
-    first round did not reach. Step 8 is what clears the name; until then the rename refuses.
+    That key opens whatever the first round did not reach, and ``Path.replace`` would overwrite
+    it without a word.
     """
     security = tmp_path / "security"
     security.mkdir()

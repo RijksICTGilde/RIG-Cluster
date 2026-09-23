@@ -220,8 +220,7 @@ def skip_reason(path: Path) -> str | None:
     """Why this file will not be read, or ``None`` when it will be.
 
     The whole filter, in one place and with a reason attached, so ``report`` can name what it
-    passed over. Nothing here is about WHERE a file sits: a path is skipped for what it is
-    (a font, a 2 MB CRD dump), never for the directory it happens to live in.
+    passed over.
     """
     if path.suffix.lower() in SKIP_SUFFIXES:
         return SKIP_BINARY
@@ -237,11 +236,7 @@ def skip_reason(path: Path) -> str | None:
 
 @dataclass(frozen=True)
 class ScanResult:
-    """What a scan found AND what it actually opened.
-
-    The second half travels with the findings so that ``report`` can say how many files the
-    verdict is really about.
-    """
+    """What a scan found AND what it actually opened."""
 
     findings: list[Finding]
     scanned: list[Path]
