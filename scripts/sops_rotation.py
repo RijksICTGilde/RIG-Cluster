@@ -275,6 +275,31 @@ def own_project_fields() -> list[tuple[str, str]]:
     return found
 
 
+def own_plain_passwords() -> list[tuple[str, str]]:
+    """The plain-text ``repositories[].password`` values in this repo's own ``projects/``.
+
+    Shaped like ``own_project_fields()`` -- ``(fingerprint key, value)`` -- but the value is a
+    plaintext and not a ciphertext, because there is nothing encrypted here to open.
+
+    What ``own_project_fields()`` is for the key question, this is for the token one, and the
+    split is the same as the one ``project_plain_passwords()`` describes for the clone: that
+    walk selects on ``form_of()``, so a password stored as ``plain:<token>`` is invisible to it
+    and to ``coverage_gaps()`` both. The final check walks this repo's ``projects/`` as well as
+    the clone, so without this the same input answers the token question on one path and not on
+    the other.
+
+    Not counted, for the reason ``run_final_check`` gives at the clone's copy: nothing converted
+    these fields, so they are not in the fingerprint.
+    """
+    found: list[tuple[str, str]] = []
+    for path in own_project_paths():
+        data = load_yaml_from_path(str(path))
+        if not isinstance(data, dict):
+            continue
+        found.extend((f"{path}#{name}", plaintext) for name, plaintext in project_plain_passwords(data))
+    return found
+
+
 async def fingerprint_now(
     sops_paths: list[Path], fields: list[LooseValue], *private_keys: str
 ) -> tuple[Fingerprint, list[str]]:
@@ -488,6 +513,11 @@ async def run_final_check(
             )
     for name, value in own_project_fields():
         await check_value(name, value, old_private, new_private, check, pat, current_pat)
+    if pat is not None or current_pat is not None:
+        # Same reason, and the same "not counted", as the clone's copy below: nothing converted
+        # these, so they are not in the fingerprint. Why they are checked: ``own_plain_passwords``.
+        for name, plaintext in own_plain_passwords():
+            check_token(name, plaintext, pat, check, current_pat)
     if projects is not None:
         for path in project_files(projects):
             data = load_yaml_from_path(str(path))

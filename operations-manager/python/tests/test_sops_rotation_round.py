@@ -2926,6 +2926,70 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
 
 @pytest.mark.asyncio
 @needs_sops
+async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same plain password, on the OTHER of the two project walks the final check makes.
+
+    ``run_final_check`` walks project files twice: the clone behind ``--projects`` and this
+    repo's own ``projects/``. The test above pins the first. Both select with
+    ``project_fields()``/``form_of()``, so both are blind to ``plain:<token>`` in the same way,
+    and a fix hung on one of them leaves the same input answering the token question on one path
+    and staying silent on the other. Pinned here per walk, because that silence is a full CLEAN.
+
+    Both of ``check_token``'s rules run through this new entry point, so both are measured:
+    equality with the replaced token (``--pat-current-file``) and the token SHAPE
+    (``--pat-new-file``). Wiring one of the two in is enough to make the other stay quiet.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    another = "ghp_" + "x" * 36
+    own = tmp_path / "own-projects"
+    own.mkdir()
+    monkeypatch.setattr(tool, "OWN_PROJECTS", own)
+    await _project_file(own, "een", new_public)
+    plain = own / "twee.yaml"
+    # Three repositories, and neither finding sits at index 0: the field name is all the
+    # operator gets, and a first-position hit cannot tell a counted index from a hard-coded zero.
+    plain.write_text(
+        "name: twee\n"
+        "repositories:\n"
+        "  - name: docs-repo\n"
+        "    password: plain:an-ordinary-password-that-is-no-token\n"
+        "  - name: main-repo\n"
+        f"    password: plain:{current}\n"
+        "  - name: extra-repo\n"
+        f"    password: plain:{another}\n"
+    )
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        without = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+        printed = capsys.readouterr().out
+        shape = await tool.main(["--ja", "--assert-old-key-dead", "--pat-new-file", str(pat_file), *arguments])
+        shape_printed = capsys.readouterr().out
+
+    assert without == 0, "the key half is happy: there is no ciphertext here at all"
+    assert code == 1
+    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[1].password" in printed
+    assert "repositories[0].password" not in printed, "the other plain password is not the token and says nothing"
+    assert "1 fields checked" in printed, "only the converted file is in the count"
+    assert shape == 1
+    assert f"FAIL holds a GitHub token that is not the new one: {plain}#repositories[2].password" in shape_printed
+    assert "repositories[0].password" not in shape_printed, "no token shape, so the shape rule says nothing"
+    assert "1 fields checked" in shape_printed, "these fields were never converted, so they are not counted either"
+
+
+@pytest.mark.asyncio
+@needs_sops
 async def test_a_plain_password_is_held_to_the_token_shape_as_well(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
