@@ -260,10 +260,29 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --v
 De clone hoort erbij: de vingerafdruk van stap 2 dekt deze repo EN de argo-applicatierepo, dus
 zonder `--argo-applications` mist hij elk veld daaruit en meldt hij dat als "field disappeared".
 
+Heb je de projectenclone nog, geef hem dan mee: `--projects <clone>/projects` vergelijkt daar de
+opname van `rotate-project-keys.py` naast, en de CLEAN-regel telt die velden dan mee. Zonder die
+vlag gaat het over deze repo en de argo-clone. De vlag eist wel een opname om tegen te vergelijken
+(`--projects-fingerprint`, standaard `security/projects-fingerprint.json`); is die er niet, dan
+weigert hij in plaats van CLEAN te zeggen over een clone die hij alleen maar heeft opengemaakt.
+
+Let op de spelling van het clonepad: die opname noemt elk veld bij zijn PAD, dus beide kanten
+werken op het uitgevouwen pad. De telling in de eindtoets heeft daar geen last van -- die
+vergelijkt totalen.
+
 Een ronde over de projectbestanden mag stranden op een onleesbaar bestand: de rest wordt wel
 gedaan en het script gaat rood. Repareer dat bestand en draai dezelfde ronde nog een keer.
 `rotate-project-keys.py` meet zijn vingerafdruk over ALLE projectbestanden en niet over wat die
 ene ronde omzette, dus de telling van de eindtoets klopt ongeacht in hoeveel rondes het lukte.
+
+Een opname die er al staat wordt eerst VERGELEKEN en dan pas vervangen, op de velden die in
+allebei voorkomen. Overschrijven zonder vergelijken maakte er een telling van: met de oude hashes
+weg is er niets meer dat een veranderde inhoud kan tegenspreken, en de ronde meldt de nieuwe hash
+dan als de waarheid. Wat er wel bij mag komen of af mag vallen is een veld: een gerepareerd
+bestand dat nu wel leesbaar is, een project dat sindsdien weg is. Verschilt een veld dat beide
+opnames kennen van inhoud, dan stopt de ronde en blijft de oude opname staan -- dat is het bewijs.
+Bij de PAT-ronde horen de wachtwoordvelden juist te verschillen, en die staan op de lijst
+"vervangen".
 
 Wat het NIET garandeert: of de waarden zelf nog geldig zijn bij de tegenpartij. Of GitHub die PAT
 nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cutover.
@@ -362,11 +381,19 @@ en een bestand dat zelf het blok is -- maar dat repareert de drie gevallen, niet
 grendel daarvoor:
 
 ```
-elk getrackt bestand met ECHTE cijfertekst
+elk getrackt bestand met ECHTE cijfertekst, in ELKE boom die de ronde loopt
    -> wordt omgezet door een van de vindplaatsen
    OF staat op COVERAGE_EXCEPTIONS met een reden
    anders: FAIL, en de ronde begint niet eens
 ```
+
+"In elke boom" is geen detail. De veegactie liep over deze repo en over de projectenclone, en
+over de argo-clone niet -- terwijl `--remove-old-key` die clone juist EIST en er alleen
+SOPS-bestanden in loopt. Een getrackt bestand daar met een losse waarde werd dus door geen
+vindplaats bereikt en door geen vingerafdruk geteld, en de eindtoets zei CLEAN. Dat het in de
+echte argo-repo goed ging komt doordat `argo_manager.py` er niets anders dan SOPS-bestanden
+schrijft, en dat is een bewering over andere code: precies wat deze grendel er is om na te meten
+in plaats van na te vertellen. In zo'n clone dekt `sops_files()` het bestand en verder niets.
 
 Twee dingen maken dat bruikbaar in plaats van een lijst die verslapt:
 
