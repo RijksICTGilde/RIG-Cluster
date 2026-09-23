@@ -37,11 +37,10 @@ AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 #: the ``rglob`` fallback in ``tracked_files``, for a tree that is not a git repository: caches and
 #: installed dependencies are not committed and not what a commit guard is about.
 #:
-#: It used to hold ``dist`` and ``build`` as well, and it used to apply to the ``git ls-files`` path
-#: too. That cost coverage on exactly the shape this guard exists for: this repository tracks 23
-#: files under ``presentation/reveal/dist/``, and a built bundle with a token baked into it is one
-#: of the most ordinary leak shapes there is. On the tracked path the list adds nothing anyway --
-#: git already hands over no untracked clutter -- so it no longer runs there at all.
+#: It deliberately holds no ``dist`` or ``build``, and it deliberately does not run on the
+#: ``git ls-files`` path: where a file sits is never a reason to leave it unread. What that cost
+#: while it did is measured under "Wat er NIET gelezen wordt" in
+#: ``features/sops-sleutel-vervangen.md``.
 WALK_SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"})
 #: Suffixes that carry no readable text. ``.svg`` is deliberately NOT among them: it is XML, a
 #: token pasted into one is as readable as in any other file, and a suffix list is the wrong place
@@ -52,8 +51,7 @@ SKIP_SUFFIXES = frozenset(
 )
 MAX_BYTES = 2_000_000
 
-#: Why a file was passed over. These are counted and printed, because a scanner that reads less
-#: than it claims turns "CLEAN" into a statement about nothing.
+#: Why a file was passed over. One of these travels with every path the scan did not open.
 SKIP_BINARY = "binary or media suffix"
 SKIP_TOO_LARGE = "larger than the size limit"
 SKIP_NOT_TEXT = "not UTF-8 text"
@@ -241,9 +239,8 @@ def skip_reason(path: Path) -> str | None:
 class ScanResult:
     """What a scan found AND what it actually opened.
 
-    The second half is not bookkeeping. A scan that silently drops files still prints "CLEAN", and
-    the operator reads that as a statement about everything handed to it. Carrying the skips out
-    of ``scan_files`` is what lets the verdict say how many files it is really about.
+    The second half travels with the findings so that ``report`` can say how many files the
+    verdict is really about.
     """
 
     findings: list[Finding]
@@ -251,7 +248,6 @@ class ScanResult:
     skipped: list[tuple[Path, str]]
 
     def skips_per_reason(self) -> dict[str, int]:
-        """A count per reason, in the order the reasons are declared above."""
         order = (SKIP_BINARY, SKIP_TOO_LARGE, SKIP_NOT_TEXT, SKIP_UNREADABLE)
         counts = {reason: sum(1 for _path, why in self.skipped if why == reason) for reason in order}
         return {reason: count for reason, count in counts.items() if count}
