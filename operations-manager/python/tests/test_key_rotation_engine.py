@@ -51,6 +51,7 @@ from key_rotation import (  # noqa: E402
     opens_with,
     plaintext_secrets,
     project_fields,
+    project_plain_passwords,
     public_key_of,
     read_key,
     rotate_project_file,
@@ -600,6 +601,23 @@ async def test_project_fields_finds_exactly_the_two_platform_fields(
 
     names = [name for name, _value in project_fields(load_yaml_from_path(str(path)))]
     assert names == [PROJECT_FIELD_PRIVATE_KEY, "repositories[0].password"]
+
+
+def test_a_repositories_entry_that_is_not_a_mapping_yields_nothing_instead_of_crashing() -> None:
+    """A hand-edited project file must not take down the last gate before the old key is deleted.
+
+    ``repositories:`` holding a bare string is malformed but it is YAML that loads, and both
+    walks reach into every entry of that list. Without the guard the final check dies on an
+    AttributeError halfway through the tree: no verdict, no list of what it had already passed,
+    and the run that was meant to say "the old key opens nothing" says nothing at all.
+
+    Both selections in one test because they read the same list and carry the same guard: the
+    key half by ciphertext, the token half by everything else.
+    """
+    data = {"name": "een", "repositories": ["main-repo", None, {"name": "real", "password": "plain:a-password"}]}
+
+    assert project_fields(data) == []
+    assert project_plain_passwords(data) == [("repositories[2].password", "a-password")]
 
 
 @pytest.mark.asyncio

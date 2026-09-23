@@ -2895,7 +2895,17 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
     projects.mkdir()
     converted = await _project_file(projects, "een", new_public)
     plain = projects / "twee.yaml"
-    plain.write_text(f"name: twee\nrepositories:\n  - name: main-repo\n    password: plain:{current}\n")
+    # Two repositories, and the one holding the token is the SECOND. The field name is the only
+    # thing the operator has to go on here -- nothing decrypts, so there is no value to grep for
+    # -- and a project with one repository cannot tell a counted index from a hard-coded zero.
+    plain.write_text(
+        "name: twee\n"
+        "repositories:\n"
+        "  - name: docs-repo\n"
+        "    password: plain:an-ordinary-password-that-is-no-token\n"
+        "  - name: main-repo\n"
+        f"    password: plain:{current}\n"
+    )
     current_file = tmp_path / "pat_current.txt"
     current_file.write_text(current + "\n")
     records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
@@ -2909,8 +2919,47 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
     printed = capsys.readouterr().out
     assert without == 0, "the key half is happy: there is no ciphertext here at all"
     assert code == 1
-    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[0].password" in printed
+    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[1].password" in printed
+    assert "repositories[0].password" not in printed, "the other plain password is not the token and says nothing"
     assert "1 fields checked" in printed, f"only {converted} is converted, so only that one counts"
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_a_plain_password_is_held_to_the_token_shape_as_well(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The same plain password, held to the other of the two token rules.
+
+    ``check_token`` asks two questions and they do not overlap: ``--pat-current-file`` is plain
+    equality with the value that was replaced, ``--pat-new-file`` is "this is a GitHub token and
+    it is not the new one". The test above pins the first over a plain password deliberately
+    shaped like nothing at all; this one pins the second, and the shape is the whole point --
+    a token nobody remembers replacing, lying in the clear, is found by its form or not at all.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    another = "ghp_" + "x" * 36
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    await _project_file(projects, "een", new_public)
+    plain = projects / "twee.yaml"
+    plain.write_text(f"name: twee\nrepositories:\n  - name: main-repo\n    password: plain:{another}\n")
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        without = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-new-file", str(pat_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert without == 0, "without a token to judge against there is nothing here to report"
+    assert code == 1
+    assert f"FAIL holds a GitHub token that is not the new one: {plain}#repositories[0].password" in printed
+    assert "1 fields checked" in printed, "this field was never converted, so it is not in the count either"
 
 
 @pytest.mark.asyncio
