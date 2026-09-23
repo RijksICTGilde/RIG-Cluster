@@ -1,27 +1,25 @@
 # De sleutel en het token vervangen, met een script dat het elk kwartaal kan
 
-De GitHub-PAT verloopt. Die moet dus vervangen worden, in de platformconfiguratie en in elk
-projectbestand dat hem draagt, en dat is een geplande handeling met een datum erop. Precies het
-moment om de AGE-sleutel mee te nemen.
+De GitHub-PAT verloopt en moet vervangen worden. We nemen die rotatie als aanleiding om tegelijk
+de AGE-sleutel te roteren en er een terugkerende handeling van te maken. Het is dezelfde ronde:
+dezelfde bestanden, dezelfde lus, dezelfde verificatie.
 
-Dat is namelijk het verschil tussen die twee. Een token dwingt zijn eigen vervanging af zodra het
-verloopt. Een AGE-sleutel niet: die blijft geldig tot iemand hem intrekt, en intrekken kan alleen
-door alles opnieuw te versleutelen wat eraan hangt. Zolang dat een project is in plaats van een
-handeling gebeurt het niet, en dan betekent "geldig tot je hem intrekt" in de praktijk gewoon
-"geldig".
+De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 
-Samen kan, want het is dezelfde ronde: dezelfde bestanden, dezelfde lus, dezelfde verificatie.
-`replace-git-pat.py` en `rotate-project-keys.py` zijn twee ingangen op een motor. De sleutel
-meenemen in een PAT-vervanging die er toch al komt kost bijna niets extra, en dat is meteen de
-onderbouwing van het kwartaalritme hieronder.
+* 8.24.01 vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het
+  sleutelbeheer en "hoe geregistreerd wordt waar welke cryptografie toegepast wordt". De
+  vindplaatsenlijst hieronder is die registratie; de oefenronde houdt hem eerlijk.
+* 8.24.02 vraagt dat is vastgesteld waar cryptografische beheersmaatregelen worden ingezet, wie
+  verantwoordelijk is "en hoe ze actueel worden gehouden". Dat laatste ontbrak: een AGE-sleutel
+  kent geen verlooptijd, een token dwingt zijn eigen vervanging af.
 
-Dit document levert allebei: het gereedschap en het ritme. Het gereedschap, omdat de
-platform-AGE-sleutel niet alleen in de SOPS-bestanden zit en `sops rotate` alleen die ziet -- dit
-zet elke vindplaats om, toont aan dat er niets anders is veranderd, en toont aan dat de oude
-sleutel daarna niets meer opent. Het ritme, omdat gereedschap dat niemand pakt op hetzelfde
-neerkomt als geen gereedschap.
+`replace-git-pat.py` en `rotate-project-keys.py` zijn twee ingangen op een motor. Dit document
+levert het gereedschap en het ritme allebei. Het gereedschap, omdat de platform-AGE-sleutel niet
+alleen in de SOPS-bestanden zit en `sops rotate` alleen die ziet -- dit zet elke vindplaats om,
+toont aan dat er niets anders is veranderd, en toont aan dat de oude sleutel daarna niets meer
+opent.
 
-## Het ritme: elk kwartaal, plus op aanleiding
+## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
 
 Preventief elk kwartaal, op het moment dat de PAT toch vervangen moet worden, en daarnaast
 incidenteel zodra er een aanleiding is: een collega die weggaat, of het vermoeden dat een sleutel
@@ -397,8 +395,7 @@ omschakelmoment is.
 
 Dat is afgewezen. Het hele punt van een rotatie is dat A daarna niets meer opent; een overlapfase
 houdt A juist geldig en voegt een LOSSE ronde toe om hem er later weer af te halen. Precies zo'n
-losse ronde is wat volgens de eerste alinea van dit document niet vanzelf gebeurt: niets dwingt
-hem af. Dan heb je alle moeite gedaan en is de oude sleutel nog steeds bruikbaar.
+losse ronde is wat niets afdwingt -- zie 8.24.02 hierboven. Dan heb je alle moeite gedaan en is de oude sleutel nog steeds bruikbaar.
 
 Bij de PAT is het precies andersom, en dat is geen inconsistentie: GitHub kent gewoon twee geldige
 tokens naast elkaar, dus daar kost een overlap niets en voorkomt hij dat een project zijn
