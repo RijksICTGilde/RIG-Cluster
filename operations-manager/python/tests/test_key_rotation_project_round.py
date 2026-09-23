@@ -79,15 +79,24 @@ def argo_clone(tmp_path: Path) -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _loose_values_out_of_the_way() -> Iterator[None]:
-    """Keep the PAT round's loose-value pass off this repo's own files.
+def _loose_values_out_of_the_way(tmp_path: Path) -> Iterator[None]:
+    """Keep the PAT round's loose-value pass off this repo's own files, record included.
 
     ``loose_paths()`` resolves against the REAL working tree, and those nine values sit on the
     platform key, which no test has. Left alone, every PAT round in this file would report nine
     fields that open with neither key and stop on the environment instead of measuring the code.
-    The pass itself is tested in ``test_argo_repository_secrets.py``, on files the test writes.
+    The pass itself is tested in ``test_pat_loose_values.py``, on files the test writes.
+
+    ``REPO_FINGERPRINT`` goes along for a second reason: it is the default of
+    ``--repo-fingerprint`` and it points at ``security/fingerprint.json`` in the working tree.
+    That file does not exist on a runner, which is the only reason these tests do not write to
+    it -- on the machine of the operator who is halfway through a rotation it does, and a test
+    run would rewrite the record the next ``--verify`` compares against.
     """
-    with patch.object(round_tool, "loose_paths", return_value=[]):
+    with (
+        patch.object(round_tool, "loose_paths", return_value=[]),
+        patch.object(round_tool, "REPO_FINGERPRINT", tmp_path / "repo-fingerprint.json"),
+    ):
         yield
 
 

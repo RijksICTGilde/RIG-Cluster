@@ -203,3 +203,16 @@ def test_a_record_that_does_not_know_a_field_is_refused_rather_than_extended(tmp
     assert len(objections) == 1
     assert "a#unknown" in objections[0]
     assert Fingerprint.load(record).fields == {"a#known": "0" * 64}
+
+
+def test_a_tree_without_a_record_is_not_an_error_and_gets_no_record_written(tmp_path: Path) -> None:
+    """A PAT round may run where no key round has ever recorded anything.
+
+    Refusing there would make a record a precondition for replacing a token. Writing one would
+    be worse: a record created by the round that changed the values compares nothing to nothing,
+    and the next ``--verify`` would read it as proof.
+    """
+    record = tmp_path / "fingerprint.json"
+
+    assert update_record(record, {f"{tmp_path}/config.py#PROJECT_REPO_PASSWORD": "0" * 64}) == []
+    assert not record.exists()

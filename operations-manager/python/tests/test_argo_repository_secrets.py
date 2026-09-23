@@ -33,21 +33,35 @@ from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import ArgoManager
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.naming import generate_argocd_repository_secret_name, get_output_filename_from_template
-from opi.utils.sops import encrypt_to_sops_files_or_fail, generate_sops_key_pair
+from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import argo_rotation  # noqa: E402
 import project_rotation as round_tool  # noqa: E402
 from argo_rotation import (  # noqa: E402
+    ARGO_SECRET_TYPE_LABEL,
+    RepositorySecret,
     check_repository_secrets,
     pair_up,
     project_repositories,
     read_repository_secrets,
+    write_repository_secret,
 )
-from key_rotation import FinalCheck, sops_files, sops_plaintext, sops_recipients  # noqa: E402
+from key_rotation import (  # noqa: E402
+    ConversionFailed,
+    FinalCheck,
+    Fingerprint,
+    decrypt_field,
+    loose_values,
+    sha256_of,
+    sops_files,
+    sops_plaintext,
+    sops_recipients,
+)
 
 pytestmark = pytest.mark.skipif(shutil.which("age") is None, reason="requires the age binary")
 needs_sops = pytest.mark.skipif(shutil.which("sops") is None, reason="requires the sops binary")
@@ -583,3 +597,342 @@ async def test_the_final_check_holds_the_argo_password_to_the_new_token(
 
     assert without.argo_drift == [], "the two sides agree, so the derivation half has nothing to say"
     assert len(withtoken.holds_another_token) == 1
+
+
+# ---------------------------------------------------------------------------
+# a clone holds more than repository secrets
+# ---------------------------------------------------------------------------
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_another_kind_of_sops_file_in_the_clone_is_left_out_of_the_round(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """An Application next to the secrets is not a repository secret, and saying so needs the key.
+
+    Everything in these files is encrypted, ``kind`` and the labels included, so that question
+    can only be answered after decryption. Answered off the file name instead, every other SOPS
+    file in the clone would reach ``pair_up``, where a document without a repository name turns
+    into "no project file accounts for this" -- a stop, on a file that is entirely normal.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, secret = await a_pair(tmp_path, platform_private, platform_public)
+    directory = secret.parent
+    (directory / "application.to-sops.yaml").write_text(
+        "apiVersion: argoproj.io/v1alpha1\nkind: Application\nmetadata:\n  name: een\n  labels: {}\n"
+    )
+    encrypt_to_sops_files_or_fail(str(directory), platform_public, "test", private_key=platform_private)
+    application = directory / "application.sops.yaml"
+    assert application.is_file(), "the other manifest has to be a SOPS file, or this proves nothing"
+
+    secrets, unreadable = read_repository_secrets(clone, platform_private)
+    pairing, converted, closed = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=False
+    )
+
+    assert [s.path for s in secrets] == [secret]
+    assert unreadable == []
+    assert round_tool.argo_problems(pairing, closed) == []
+    assert len(converted) == 1
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_a_secret_that_opens_with_neither_key_stops_the_round(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """Not an empty result but a finding, on both the round and the final check.
+
+    A file this round cannot open is one it cannot hold against its project file either, so
+    converting the rest and walking past it is the half-converted clone again -- and the final
+    check would then report CLEAN over a file it never read.
+    """
+    platform_private, platform_public = platform_keys
+    projects, clone, _secret = await a_pair(tmp_path, platform_private, platform_public)
+    stranger_private, stranger_public = generate_sops_key_pair()
+    lost = await write_repository_secret_as_opi_would(
+        clone,
+        "vreemde-sleutel",
+        {
+            "name": "main-repo",
+            "url": "https://github.com/example/app.git",
+            "username": "git",
+            "password": await _encrypted(OLD_TOKEN, stranger_public),
+        },
+        stranger_private,
+        stranger_public,
+    )
+
+    pairing, _converted, closed = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=True
+    )
+    check = FinalCheck()
+    await check_repository_secrets(clone, projects, platform_private, platform_private, check)
+
+    assert pairing.unreadable == [lost]
+    assert f"opens with neither key: {lost}" in round_tool.argo_problems(pairing, closed)
+    assert not check.clean
+    assert [line for line in check.argo_drift if "opens with neither key" in line] == [
+        f"opens with neither key: {lost}"
+    ]
+
+
+# ---------------------------------------------------------------------------
+# writing one back: the guards around the plaintext
+# ---------------------------------------------------------------------------
+
+
+def _a_secret_at(path: Path, recipients: list[str]) -> RepositorySecret:
+    """A repository secret as it stands after decryption, for the guards in the write path."""
+    return RepositorySecret(
+        path=path,
+        recipients=recipients,
+        private_key="",
+        document={
+            "kind": "Secret",
+            "metadata": {"name": "een-main-repo", "labels": {ARGO_SECRET_TYPE_LABEL: "repository"}},
+            "stringData": {"name": "een-main-repo", "password": OLD_TOKEN},
+        },
+    )
+
+
+def test_a_secret_on_more_than_one_recipient_is_refused_and_no_plaintext_is_written(tmp_path: Path) -> None:
+    """Writing back to the first of several would drop the others without a word.
+
+    Moving a file to another key is the key round's work. A PAT round that quietly did it too
+    would hide one operation inside the other, and the key round's fingerprint would have
+    nothing to say about it.
+    """
+    _private_a, public_a = generate_sops_key_pair()
+    _private_b, public_b = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public_a, public_b])
+
+    with pytest.raises(ConversionFailed) as refused:
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert "2 AGE recipients" in str(refused.value)
+    assert list(tmp_path.iterdir()) == [], "the plaintext may not be written before the guard runs"
+
+
+def test_a_file_that_is_not_a_sops_file_is_refused(tmp_path: Path) -> None:
+    """``.sops.yaml`` in, ``.to-sops.yaml`` out: without that pairing the plaintext would land
+    under a name nothing encrypts, and stay there."""
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.yaml", [public])
+
+    with pytest.raises(ConversionFailed) as refused:
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert "not a SOPS file name" in str(refused.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failing_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> None:
+    """The one outcome this whole tool exists to prevent: a readable password in a git clone.
+
+    The plaintext has to be on disk for SOPS to read it, so the window exists; what may not
+    survive is the failure. ``sops`` not being on the PATH is enough to produce this.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+
+    with (
+        patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=SOPSEncryptionError("no sops here")),
+        pytest.raises(SOPSEncryptionError),
+    ):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(tmp_path: Path) -> None:
+    """An encryption that reports success and removes nothing is the same leak without the error.
+
+    So the outcome is measured rather than the exit code: the ``.to-sops.yaml`` is gone, and the
+    round hears that the secret was not written.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+
+    with (
+        patch.object(argo_rotation, "encrypt_to_sops_files"),
+        pytest.raises(ConversionFailed) as refused,
+    ):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert "in plain text" in str(refused.value)
+    assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# the entry point: three places in one round, or nothing at all
+# ---------------------------------------------------------------------------
+
+
+async def a_round_to_run(
+    tmp_path: Path, old_private: str, old_public: str, new_private: str
+) -> tuple[Path, Path, Path, Path, list[str]]:
+    """Everything ``replace-git-pat.py`` touches, all three of them on the old token.
+
+    Returns the projects directory, the argo clone, the secret in it, the loose-value file and
+    the arguments. The record is pre-written the way a key round leaves it, because the
+    correction of exactly the replaced entries is part of what the round has to do.
+    """
+    projects, clone, secret = await a_pair(
+        tmp_path, old_private, old_public, in_the_project=OLD_TOKEN, in_the_secret=OLD_TOKEN
+    )
+    loose = tmp_path / "config.py"
+    loose.write_text(f'PROJECT_REPO_PASSWORD = "{await _encrypted(OLD_TOKEN, old_public)}"\n')
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text(f"{NEW_TOKEN}\n")
+    record = Fingerprint()
+    record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(OLD_TOKEN))
+    record.save(tmp_path / "repo-fingerprint.json")
+    arguments = [
+        "--ja",
+        "--no-commit",
+        "--projects",
+        str(projects),
+        "--argo-applications",
+        str(clone),
+        "--pat-file",
+        str(tmp_path / "pat.txt"),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(tmp_path / "projects-fingerprint.json"),
+        "--repo-fingerprint",
+        str(tmp_path / "repo-fingerprint.json"),
+    ]
+    return projects, clone, secret, loose, arguments
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_the_entry_point_converts_all_three_places_in_one_round(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """ "Drie plekken, een ronde", driven over the entry point rather than per function.
+
+    Each of the three fails differently and none of them loudly: a project file hands the
+    revoked token to its next git operation, ``PROJECT_REPO_PASSWORD`` hands it to the next NEW
+    project, and the argo secret hands it to ArgoCD at the next sync. A round that walks one of
+    them and calls it done is the shape this test exists to catch, so all three are read back
+    -- and the record next to them, because that is what the following ``--verify`` compares.
+    """
+    old_private, old_public = platform_keys
+    new_private, _new_public = generate_sops_key_pair()
+    projects, _clone, secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
+
+    with patch.object(round_tool, "loose_paths", return_value=[loose]):
+        code = await round_tool.main_replace_pat(arguments)
+
+    assert code == 0
+    project = load_yaml_from_string((projects / "een.yaml").read_text())
+    assert isinstance(project, dict)
+    assert await decrypt_field(project["repositories"][0]["password"], new_private) == NEW_TOKEN
+    assert await decrypt_field(loose_values(loose)[0].value, new_private) == NEW_TOKEN
+    assert decrypted(secret, old_private)["stringData"]["password"] == NEW_TOKEN
+    recorded = Fingerprint.load(tmp_path / "repo-fingerprint.json").fields
+    assert recorded == {f"{loose}#PROJECT_REPO_PASSWORD": sha256_of(NEW_TOKEN)}
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_a_finding_in_the_argo_clone_stops_the_round_before_a_single_file_is_written(
+    tmp_path: Path, platform_keys: tuple[str, str], capsys: pytest.CaptureFixture
+) -> None:
+    """Half a round is worse than none, so the finding has to land in the PREVIEW.
+
+    Nothing derives the password of a secret no project accounts for, so no later pass can
+    repair it. Converting the project files first and stopping there would leave the two halves
+    on different tokens -- with the project files already committed.
+    """
+    old_private, old_public = platform_keys
+    new_private, _new_public = generate_sops_key_pair()
+    projects, clone, _secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
+    await write_repository_secret_as_opi_would(
+        clone,
+        "weggegooid",
+        {
+            "name": "main-repo",
+            "url": "https://github.com/example/app.git",
+            "username": "git",
+            "password": await _encrypted(OLD_TOKEN, old_public),
+        },
+        old_private,
+        old_public,
+    )
+    before = ((projects / "een.yaml").read_text(), loose.read_text(), raw_hashes(clone))
+
+    with patch.object(round_tool, "loose_paths", return_value=[loose]):
+        code = await round_tool.main_replace_pat(arguments)
+
+    assert code == 1
+    assert "STOPPED" in capsys.readouterr().err
+    assert ((projects / "een.yaml").read_text(), loose.read_text(), raw_hashes(clone)) == before
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_an_argo_clone_that_is_not_there_is_refused_before_anything_is_written(
+    tmp_path: Path, platform_keys: tuple[str, str], capsys: pytest.CaptureFixture
+) -> None:
+    """The flag is required, so the way to get this wrong is a path that does not exist.
+
+    A mistyped clone is an EMPTY clone if it is not checked: every secret then goes missing at
+    once, which is the direction that does not stop the round, and ArgoCD keeps the old token.
+    """
+    old_private, old_public = platform_keys
+    new_private, _new_public = generate_sops_key_pair()
+    projects, _clone, _secret, loose, arguments = await a_round_to_run(tmp_path, old_private, old_public, new_private)
+    arguments[arguments.index("--argo-applications") + 1] = str(tmp_path / "een-typefout")
+    before = (projects / "een.yaml").read_text()
+
+    with patch.object(round_tool, "loose_paths", return_value=[loose]):
+        code = await round_tool.main_replace_pat(arguments)
+
+    assert code == 2
+    assert "not a directory" in capsys.readouterr().err
+    assert (projects / "een.yaml").read_text() == before
+
+
+@needs_sops
+@pytest.mark.asyncio
+async def test_a_repository_without_credentials_renders_a_secret_the_round_leaves_alone(
+    tmp_path: Path, platform_keys: tuple[str, str]
+) -> None:
+    """Measured, because ``RepositorySecret.password`` makes a claim about this exact shape.
+
+    ``prepare_repository_variables`` hands ``password: ""`` to the HTTPS template, which writes
+    ``password:`` with nothing behind it -- and YAML reads that back as None, not as an empty
+    string. So this secret is indistinguishable here from the SSH form and the round leaves it
+    untouched, even though its project file does carry a password on the platform key. Pinning
+    what the templates really produce rather than what the docstring expects them to: if OPI
+    starts quoting that field, this test is where it turns up.
+    """
+    platform_private, platform_public = platform_keys
+    projects = tmp_path / "zad-projects" / "projects"
+    clone = tmp_path / "zad-argo"
+    await write_project(projects, "een", platform_public, token=NEW_TOKEN)
+    secret = await write_repository_secret_as_opi_would(
+        clone,
+        "een",
+        {"name": "main-repo", "url": "https://github.com/example/app.git", "username": "git"},
+        platform_private,
+        platform_public,
+    )
+    assert decrypted(secret, platform_private)["stringData"]["password"] is None
+    before = raw_hashes(clone)
+
+    pairing, converted, closed = await round_tool.run_argo_round(
+        clone, projects, platform_private, platform_private, dry_run=False
+    )
+
+    assert [s.credential_form for s in pairing.ssh_form] == ["no credentials"]
+    assert (pairing.pairs, converted, closed) == ([], [], [])
+    assert raw_hashes(clone) == before

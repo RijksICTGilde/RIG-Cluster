@@ -82,13 +82,22 @@ def _sops_file(directory: Path, name: str, body: str, public_key: str) -> Path:
     return directory / f"{name}.sops.yaml"
 
 
-async def _project_file(directory: Path, name: str, public_key: str) -> Path:
+async def _project_file(
+    directory: Path,
+    name: str,
+    public_key: str,
+    *,
+    token: str = "ghp_token",  # noqa: S107 - a fixture value in a test, not a credential
+) -> Path:
     """One project file with a repository password on the given key.
 
     ``--projects`` refuses a directory without a single project file, so a test that points at an
     empty one measures that refusal instead of what it came for.
+
+    The default password is deliberately not a token shape the scanner accepts: a test about the
+    KEY should not also trip the token half of the final check.
     """
-    block = await encrypt_age_content("ghp_token", public_key)
+    block = await encrypt_age_content(token, public_key)
     encoded = base64.b64encode(block.encode()).decode()
     path = directory / f"{name}.yaml"
     path.write_text(f"name: {name}\nrepositories:\n  - name: main-repo\n    password: {BASE64_AGE_PREFIX}{encoded}\n")
@@ -2105,9 +2114,15 @@ async def test_the_final_check_names_the_places_its_flags_left_out_and_stays_qui
 
     projects_note = "NOTE without --projects the final check does not walk the fourth place."
     argo_note = "NOTE without --argo-applications the final check does not walk the ArgoCD"
+    # The third stand is the one that reads like coverage and is not: the ArgoCD secrets ARE
+    # walked, but they are DERIVED from the project files, so without --projects nothing holds
+    # them against the value they are supposed to carry.
+    derived_note = "NOTE the ArgoCD repository secrets are only held against their project files"
     for stand, given in stands.items():
         assert (projects_note in printed[stand]) is ("--projects" not in given), f"the fourth place, {stand}"
         assert (argo_note in printed[stand]) is ("--argo-applications" not in given), f"the ArgoCD secrets, {stand}"
+        only_argo = "--argo-applications" in given and "--projects" not in given
+        assert (derived_note in printed[stand]) is only_argo, f"derived from the project files, {stand}"
 
 
 @pytest.mark.asyncio
@@ -2693,8 +2708,12 @@ async def test_a_git_server_password_is_not_held_to_the_github_token(
         capsys.readouterr()
         code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-file", str(pat_file), *arguments])
 
-    assert code == 0, capsys.readouterr().out
-    assert "and every GitHub token is the new one" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert code == 0, printed
+    assert "and every GitHub token is the new one" in printed
+    # And the NOTE about the half that was NOT measured stays silent, or the verdict above
+    # would be read as covering less than it does.
+    assert "NOTE without --pat-file" not in printed
 
 
 @pytest.mark.asyncio
@@ -2716,3 +2735,36 @@ async def test_a_pat_file_outside_the_final_check_is_refused(tmp_path: Path, cap
 
     assert code == 2
     assert "--pat-file belongs to --assert-old-key-dead" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The token half over the FIRST place, the one with 45 files instead of one.
+
+    The loose values have the test above and the ArgoCD secrets have their own; this is the
+    third, and the one where a skipped file is hardest to see by hand. The field here sits on
+    the NEW key -- the key round did its work -- and still holds the withdrawn token, which is
+    the state no half of the key check can report.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    project = await _project_file(projects, "een", new_public, token="ghp_" + "o" * 36)
+    pat_file = tmp_path / "pat.txt"
+    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        without = await tool.main(["--ja", "--assert-old-key-dead", *arguments])
+        capsys.readouterr()
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-file", str(pat_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert without == 0, "the key half is happy: this field really does sit on the new key"
+    assert code == 1
+    assert f"FAIL holds a GitHub token that is not the new one: {project}#repositories[0].password" in printed
