@@ -2556,7 +2556,9 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
 
     The boundary that matters is between VERIFY-1 and APPLY: a command that drifts across it
     turns "nothing has left this machine" into a lie. An operator runs this doc by hand, so
-    nothing else would catch that.
+    nothing else would catch that. The monthly exercise leans on the same boundary: it runs
+    PREPARE and VERIFY-1 on a throwaway key, so a push or a secret swap landing in either of
+    those two phases is a rotation of production on a key nobody keeps.
     """
     text = (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text()
     headings = ["### PREPARE", "### VERIFY-1", "### APPLY", "### VERIFY-2", "### Daarna"]
@@ -2577,7 +2579,14 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
     assert converting, "PREPARE stopped running the round at all"
     for line in converting:
         assert "--argo-applications" in line, f"this leaves the ArgoCD secrets on the old key: {line}"
-    assert f"{LAUNCHER} scripts/set-sops-key-secret.py" not in phase["### PREPARE"], "the swap is not a preparation"
+    for early in ("### PREPARE", "### VERIFY-1"):
+        assert f"{LAUNCHER} scripts/set-sops-key-secret.py" not in phase[early], f"the swap is not part of {early}"
+        pushes = [
+            line.strip()
+            for line in phase[early].splitlines()
+            if line.strip().startswith(("git ", "uv run", "kubectl ")) and "push" in line
+        ]
+        assert pushes == [], f"{early} pushes, and the go/no-go moment sits after it: {pushes}"
     assert "--assert-old-key-dead" in phase["### VERIFY-1"], "the go/no-go check is the point of VERIFY-1"
     assert "kustomize build" in phase["### VERIFY-1"], "a full render is checked before ArgoCD gets to try it"
     assert f"{LAUNCHER} scripts/set-sops-key-secret.py" in phase["### APPLY"]

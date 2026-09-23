@@ -185,6 +185,35 @@ async def test_a_round_converts_every_file_and_commits_one_per_project(
 
 
 @pytest.mark.asyncio
+async def test_a_round_commits_but_pushes_nothing(projects_repo: Path, tmp_path: Path) -> None:
+    """VERIFY-1 is the go/no-go moment BEFORE anything is pushed, so the round may not push itself.
+
+    The monthly exercise leans on this hardest: it runs PREPARE and VERIFY-1 on a throwaway key
+    and throws the clone away, and a push there puts a rotation nobody asked for on the real
+    projects repo. The round prints "Nothing pushed" whatever it does, so this measures the
+    remote and not the output.
+    """
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", str(origin))
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    for name in ("een", "twee"):
+        await _write_project(directory, name, old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    _git(projects_repo, "remote", "add", "origin", str(origin))
+    _git(projects_repo, "push", "-q", "origin", "HEAD:refs/heads/main")
+    remote_before = _git(origin, "rev-parse", "refs/heads/main")
+
+    result = await run_round(directory, old_private, new_private, dry_run=False)
+
+    # Without this, a round that converted nothing would pass the line below for free.
+    assert result.committed == ["een.yaml", "twee.yaml"]
+    assert _git(origin, "rev-parse", "refs/heads/main") == remote_before, "the round pushed to origin"
+
+
+@pytest.mark.asyncio
 async def test_a_round_leaves_the_content_alone(projects_repo: Path) -> None:
     """Both platform fields move to the new key, and the old key opens neither."""
     old_private, old_public = generate_sops_key_pair()
