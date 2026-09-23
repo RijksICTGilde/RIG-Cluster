@@ -118,7 +118,7 @@ def looks_like_a_jwt(candidate: str) -> bool:
     padded = head + "=" * (-len(head) % 4)
     try:
         header = json.loads(base64.urlsafe_b64decode(padded))
-    except ValueError, UnicodeDecodeError:
+    except (ValueError, UnicodeDecodeError):
         return False
     return isinstance(header, dict) and "alg" in header
 
@@ -168,7 +168,7 @@ def scan_files(paths: list[Path], *, include_ciphertext: bool = False) -> list[F
             continue
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         findings.extend(scan_text(text, str(path), include_ciphertext=include_ciphertext))
     return findings

@@ -1,0 +1,11 @@
+# scripts/ wordt door OPI's ruff-config geformatteerd, en die staat op target-version py314.
+# Daar hoort PEP 758 bij: `ruff format` SCHRIJFT `except (A, B):` om naar `except A, B:`.
+# Dat is prima voor opi/, dat altijd op 3.14 draait, maar niet voor dit mapje. scan-secrets.py
+# hangt in .pre-commit-config.yaml als `entry: python3 scripts/scan-secrets.py --files` met
+# language: system, dus de scanner draait op de python3 die de ontwikkelaar toevallig heeft --
+# op 3.13 en ouder is PEP 758 een SyntaxError en weigert de hook elke commit.
+#
+# Vandaar deze pin: alles uit de OPI-config, alleen de target-version omlaag, zodat de
+# formatter de haakjes laat staan in plaats van ze er bij de volgende ronde weer af te halen.
+extend = "../operations-manager/python/pyproject.toml"
+target-version = "py312"

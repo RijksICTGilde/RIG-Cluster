@@ -65,7 +65,7 @@ def public_key_from_secret_data(encoded: str) -> str | None:
     """The public half of the key inside a secret's base64 ``key`` field, or None."""
     try:
         content = base64.b64decode(encoded).decode()
-    except ValueError, UnicodeDecodeError:
+    except (ValueError, UnicodeDecodeError):
         return None
     for line in content.splitlines():
         if line.strip().startswith(AGE_KEY_MARKER):

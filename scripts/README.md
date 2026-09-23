@@ -67,3 +67,10 @@ de pre-commit hook doen):
 ```bash
 python3 scripts/scan-secrets.py
 ```
+
+Dat "kale" is de reden dat hier een eigen `.ruff.toml` staat. De config van OPI staat op
+`target-version = "py314"`, en met die stand SCHRIJFT `ruff format` een `except (A, B):` om naar
+de PEP 758-vorm `except A, B:`. In `opi/` is dat prima -- daar is de interpreter gepind -- maar
+`scan-secrets.py` draait op de `python3` die de ontwikkelaar toevallig heeft, en op 3.13 en ouder
+is die vorm een SyntaxError die elke commit weigert. `scripts/.ruff.toml` neemt daarom de hele
+OPI-config over en zet alleen de target-version omlaag, zodat de formatter de haakjes laat staan.

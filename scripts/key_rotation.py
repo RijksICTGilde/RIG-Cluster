@@ -316,7 +316,7 @@ def sops_files(tree: str | Path) -> list[Path]:
             continue
         try:
             content = path.read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         if re.search(r"^sops:", content, re.MULTILINE):
             found.append(path)
