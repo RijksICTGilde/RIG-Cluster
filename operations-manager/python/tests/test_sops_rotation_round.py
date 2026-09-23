@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -589,6 +590,32 @@ def test_the_default_projects_fingerprint_is_the_file_the_projects_round_writes(
     assert REAL_PROJECTS_FINGERPRINT == KEY_FINGERPRINT
 
 
+def test_every_documented_invocation_parses_and_the_final_check_walks_the_projects() -> None:
+    """The feature doc is the operator's script, and nothing else reads it.
+
+    Both final-check commands there are bare: no ``--projects-fingerprint``, so the count only
+    adds up through the default measured two tests up. And without ``--projects`` the fourth
+    place is not walked, which makes ``--remove-old-key`` refuse. A flag that is renamed or
+    dropped from the parser turns every line here into a SystemExit, instead of leaving a doc
+    that has gone stale without anything saying so.
+    """
+    documented = [
+        line.strip()
+        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
+        if line.strip().startswith("scripts/rotate-sops-key.py")
+    ]
+    final_checks = [line for line in documented if "--assert-old-key-dead" in line or "--remove-old-key" in line]
+
+    assert len(documented) >= 5, "the documented run disappeared from the feature doc"
+    assert len(final_checks) == 2, "step 6 and step 8 are both final checks"
+    for line in documented:
+        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        assert arguments.projects_fingerprint == str(tool.DEFAULT_PROJECTS_FINGERPRINT)
+    for line in final_checks:
+        arguments = tool.build_parser().parse_args(shlex.split(line)[1:])
+        assert arguments.projects, f"the final check walks the fourth place: {line}"
+
+
 # ---------------------------------------------------------------------------
 # this repo's own projects/ directory
 # ---------------------------------------------------------------------------
@@ -967,6 +994,45 @@ async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
     assert "CLEAN 2 fields readable with the new key and unchanged in content" in printed
     assert still_demanded == 2
     assert "file does not exist" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_verify_without_the_old_key_still_names_a_file_that_stayed_on_the_old_recipient(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Narrowing the SELECTION must not narrow what the check catches.
+
+    Without the old key the walk covers the new recipient alone, so a file that the round
+    skipped falls outside it. What keeps it visible is the fingerprint: it recorded the field,
+    and a field that cannot be measured reads as gone. Without that, the one stand meant to be
+    runnable months later would call a half-finished rotation clean.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    _sops_file(tree, "converted", "value: hunter2\n", old_public)
+    skipped = _sops_file(tree, "skipped", "value: also-secret\n", old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(fingerprint)]
+
+    with _selecting_from(tree), patch.object(tool, "env_paths", return_value=[]):
+        assert await tool.main(["--ja", *arguments]) == 0
+        assert len(Fingerprint.load(fingerprint).fields) == 2
+        # the file drifts back onto the old recipient: what a skipped file looks like afterwards
+        sops_rotate(skipped, new_public, old_public, new_private)
+        capsys.readouterr()
+
+        with_the_old_key = await tool.main(["--ja", "--verify", *arguments])
+        (tmp_path / "old_key.txt").unlink()
+        without_the_old_key = await tool.main(["--ja", "--verify", *arguments])
+
+    printed = capsys.readouterr().out
+    assert with_the_old_key == 1
+    assert without_the_old_key == 1
+    assert f"FAIL does not open with the new key: {skipped}#<sops-document>" in printed
+    assert f"FAIL field disappeared: {skipped}#<sops-document>" in printed
 
 
 @pytest.mark.asyncio

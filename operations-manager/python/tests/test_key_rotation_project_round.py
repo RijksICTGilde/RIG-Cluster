@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
@@ -29,6 +30,7 @@ _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
+import sops_rotation as final_check_tool  # noqa: E402
 from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
     Fingerprint,
@@ -463,6 +465,66 @@ async def test_the_key_entry_point_writes_the_fingerprint_it_will_be_checked_aga
     assert len(Fingerprint.load(fingerprint).fields) == 2
     assert "ghp_repository_token" not in written
     assert "AGE-SECRET-KEY-" not in written
+
+
+@pytest.mark.asyncio
+async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_expects(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The two tools have to agree on the number, and only running both proves that they do.
+
+    ``rotate-project-keys.py`` records the count and ``rotate-sops-key.py --assert-old-key-dead``
+    checks against it, but each half is otherwise tested against a fingerprint written by hand.
+    A round that records a different SET of fields than the check walks ends on "count differs",
+    which reads as a failed rotation while nothing is wrong with the key. The second half is
+    there because a count check that is not running at all also prints no complaint: with one
+    field taken out of the record, the same command has to go red.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    for name in ("een", "twee", "drie"):
+        await _write_project(directory, name, old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    round_code = await main_rotate_keys(
+        ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)]
+    )
+    capsys.readouterr()
+    with (
+        patch.object(final_check_tool, "sops_files_for", return_value=[]),
+        patch.object(final_check_tool, "env_paths", return_value=[]),
+        patch.object(final_check_tool, "OWN_PROJECTS", tmp_path / "not-a-directory"),
+        patch.object(final_check_tool, "DEFAULT_PROJECTS_FINGERPRINT", fingerprint),
+    ):
+        command = [
+            "--ja",
+            "--assert-old-key-dead",
+            "--projects",
+            str(directory),
+            *keys,
+            "--fingerprint",
+            str(tmp_path / "no-fingerprint-for-this-repo.json"),
+        ]
+        step_8 = await final_check_tool.main(command)
+        printed = capsys.readouterr().out
+        recorded = Fingerprint.load(fingerprint)
+        recorded.fields.popitem()
+        recorded.save(fingerprint)
+        with_a_field_short = await final_check_tool.main(command)
+
+    assert round_code == 0
+    assert len(recorded.fields) == 5
+    assert "6 fields checked" in printed
+    assert "count differs" not in printed
+    assert step_8 == 0
+    assert with_a_field_short == 1
+    assert "FAIL count differs from the fingerprint: 6 now, 5 before" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
