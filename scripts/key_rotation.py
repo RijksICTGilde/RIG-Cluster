@@ -504,6 +504,20 @@ class ProjectRound:
     validation_was_already_red: str | None = None
 
 
+def nothing_to_do(total: int, on_new_key: int, passwords: int, *, new_pat: str | None) -> str:
+    """Why this file needs no work, in the terms of the round that is actually running.
+
+    The two rounds skip for different reasons and "already converted" said both. In the PAT
+    round that phrasing reads as reassurance while the file may still hold the old token, so
+    each round names its own reason and ``broken()`` judges the two sets separately.
+    """
+    if new_pat is None:
+        return f"already converted ({on_new_key} of {total} fields sit on the new key)"
+    if not passwords:
+        return "no repository password to replace"
+    return f"the repository password already holds this PAT ({on_new_key} of {total} fields sit on the new key)"
+
+
 async def rotate_project_file(
     path: str | Path,
     old_private_key: str,
@@ -516,7 +530,7 @@ async def rotate_project_file(
     """Convert one project file's two platform fields, or explain why not.
 
     Idempotent, and that is measured rather than assumed: a field that does not open with A
-    but does open with B is already converted, and a field that opens with neither is
+    but does open with B already sits on the new key, and a field that opens with neither is
     unreadable. That distinction is why the NEW private key comes in here and not just its
     public half -- without B, "already done" cannot be told apart from "broken", and a second
     round would then silently skip good files.
@@ -525,6 +539,13 @@ async def rotate_project_file(
 
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
     only re-encrypted.
+
+    The worklist therefore cannot be settled by the key alone. The documented order runs the
+    key round first and the PAT round after it, so by then every password already sits on B
+    while still holding the OLD token -- a gate on "does this still open with A?" would make
+    that second round a silent no-op. What puts a field on the list is what the round is for:
+    a key that is still the old one, or a password that is not yet the PAT that was handed in.
+    Each field is then converted with the key that actually opened it.
     """
     path = Path(path)
     round_report = ProjectRound(path=path)
@@ -540,27 +561,34 @@ async def rotate_project_file(
         round_report.skipped = "no encrypted platform fields in this file"
         return round_report
 
-    todo: list[tuple[str, str]] = []
-    already = 0
+    todo: list[tuple[str, str, str]] = []
+    on_new_key = 0
+    passwords = 0
     for field_name, value in fields:
+        is_password = field_name != PROJECT_FIELD_PRIVATE_KEY
+        if is_password:
+            passwords += 1
         if await opens_with(value, old_private_key):
-            todo.append((field_name, value))
-        elif await opens_with(value, new_private_key):
-            already += 1
-        else:
+            todo.append((field_name, value, old_private_key))
+            continue
+        plain = await decrypt_field(value, new_private_key)
+        if plain is None:
             round_report.skipped = f"{field_name} opens with neither key"
             return round_report
+        on_new_key += 1
+        if new_pat is not None and is_password and plain != new_pat:
+            todo.append((field_name, value, new_private_key))
 
     if not todo:
-        round_report.skipped = f"already converted ({already} of {len(fields)} fields sit on the new key)"
+        round_report.skipped = nothing_to_do(len(fields), on_new_key, passwords, new_pat=new_pat)
         return round_report
 
     round_report.validation_was_already_red = await validate_project_data(data)
 
-    for field_name, value in todo:
+    for field_name, value, opening_key in todo:
         replacement = new_pat if (new_pat is not None and field_name != PROJECT_FIELD_PRIVATE_KEY) else None
         try:
-            conversion = await convert_value(value, old_private_key, new_public_key, new_plaintext=replacement)
+            conversion = await convert_value(value, opening_key, new_public_key, new_plaintext=replacement)
         except Exception as e:  # age and base64 each raise their own type
             round_report.skipped = f"{field_name} does not open: {e}"
             return round_report

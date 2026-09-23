@@ -33,10 +33,12 @@ from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
     Fingerprint,
     MissingKey,
+    ProjectRound,
     decrypt_field,
     opens_with,
 )
 from project_rotation import (  # noqa: E402
+    RoundResult,
     broken,
     find_repo_root,
     main_replace_pat,
@@ -484,3 +486,85 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(proje
     data = load_yaml_from_path(str(path))
     assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_brand_new"
     assert await opens_with(data["config"]["age-private-key"], new_private)
+
+
+# ---------------------------------------------------------------------------
+# the documented order: the key round first, the PAT round after it
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_pat_round_still_replaces_after_the_key_round(projects_repo: Path, tmp_path: Path) -> None:
+    """The order the plan advises, driven through both entry points in turn.
+
+    After the key round every password sits on the new key while still holding the OLD token,
+    so a worklist that asks "does this still open with the old key?" hands back "already
+    converted", exit 0 and "revoke the old PAT" -- with the old PAT still in the file.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    path = await _write_project(projects_repo / "projects", "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    keys = [
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--projects",
+        str(projects_repo / "projects"),
+        "--ja",
+    ]
+
+    key_round = await main_rotate_keys([*keys, "--fingerprint", str(tmp_path / "key-fingerprint.json")])
+    pat_round = await main_replace_pat(
+        [
+            *keys,
+            "--pat-file",
+            str(tmp_path / "pat.txt"),
+            "--fingerprint",
+            str(tmp_path / "pat-fingerprint.json"),
+        ]
+    )
+
+    assert (key_round, pat_round) == (0, 0)
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_brand_new"
+    assert await opens_with(data["config"]["age-private-key"], new_private)
+
+
+@pytest.mark.asyncio
+async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_repo: Path) -> None:
+    """The other half: the gate opens on the token, so it closes again once that token is in.
+
+    Without this the fix for the round above would trade a no-op for a re-encryption on every
+    run, and "run it twice, the second time does nothing" is a promise of this tool.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+    ciphertext_after_the_first_round = load_yaml_from_path(str(path))["repositories"][0]["password"]
+    second = await run_round(directory, old_private, new_private, new_pat="ghp_new", dry_run=False)
+
+    assert second.converted == []
+    assert (
+        second.skipped[0].skipped == "the repository password already holds this PAT (2 of 2 fields sit on the new key)"
+    )
+    assert broken(second, pat_round=True) == []
+    assert load_yaml_from_path(str(path))["repositories"][0]["password"] == ciphertext_after_the_first_round
+
+
+def test_already_converted_is_only_harmless_in_the_key_round() -> None:
+    """The same skip, judged per round: it answers the key question and not the token one."""
+    result = RoundResult(skipped=[ProjectRound(path=Path("een.yaml"), skipped="already converted (2 of 2 fields)")])
+
+    assert broken(result) == []
+    assert len(broken(result, pat_round=True)) == 1

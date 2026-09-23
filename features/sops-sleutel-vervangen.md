@@ -88,9 +88,35 @@ scripts/rotate-sops-key.py --assert-old-key-dead \
   --projects /tmp/zad-projects/projects \
   --projects-fingerprint security/projects-fingerprint.json
 
-# 7. een dag later nog een keer, en dan pas mag de oude sleutel weg
+# 7. de PAT-vervanging: dezelfde ronde, een ingang verder -- en pas NU
+git clone <zad-projects> /tmp/zad-projects-pat
+scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects --dry-run
+scripts/replace-git-pat.py --projects /tmp/zad-projects-pat/projects
+
+# 8. een dag later de eindtoets nog een keer, en dan pas mag de oude sleutel weg
 scripts/rotate-sops-key.py --remove-old-key --projects /tmp/zad-projects/projects
 ```
+
+**Waarom de PAT-ronde stap 7 is en niet stap 3.** Ze kunnen in een keer: de motor onder beide is
+dezelfde lus en `replace-git-pat.py` zet de sleutel en het wachtwoord in een beweging om. Toch is
+de geadviseerde volgorde de sleutel eerst en de PAT daarna, want een fout in de PAT-vervanging
+sleept dan de sleutelrotatie niet mee en de twee zijn los terug te draaien. Is de sleutelronde
+aantoonbaar goed gegaan, dan is de PAT-ronde een herhaling van iets dat al gewerkt heeft.
+
+Twee dingen die daaruit volgen:
+
+* de ronde neemt nog steeds **beide** sleutels aan, ook al staat er na stap 3 geen enkel veld meer
+  op de oude. Ze mogen niet dezelfde zijn, dus `security/old_key.txt` moet nog bestaan -- vandaar
+  dat het weghalen daarvan stap 8 is en niet stap 7;
+* de werklijst kijkt in deze stand naar de PAT en niet naar de sleutel. Een wachtwoord dat al op de
+  nieuwe sleutel staat maar nog het oude token draagt gaat gewoon mee; een wachtwoord dat het
+  meegegeven token al draagt wordt overgeslagen, zodat een tweede ronde niets doet.
+
+**Randvoorwaarde, en die is hard:** de nieuwe PAT moet al geldig zijn op GitHub voordat het eerste
+bestand wordt geschreven, met de oude er nog naast (zie "Geen dubbele recipients" voor waarom dat
+bij een PAT wel kan en bij de sleutel niet). Anders verliest een project zijn repositorytoegang
+zodra zijn bestand om is en de rest nog niet. Trek de oude pas in nadat de clone gepusht is en een
+project aantoonbaar zijn repository haalt.
 
 Geen enkel script neemt een sleutel als argument. Ze vragen naar het PAD, met een default, en
 lezen uit `security/` -- die map staat in `.gitignore`. Een sleutel op de commandoregel belandt in

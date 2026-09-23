@@ -196,14 +196,23 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
         print(f"\nContent check: {result.fields} fields {kept}.")
 
 
-def broken(result: RoundResult) -> list[ProjectRound]:
+def broken(result: RoundResult, *, pat_round: bool = False) -> list[ProjectRound]:
     """The skips that are a real problem, as opposed to "nothing left to do here".
 
     A file that is already converted, or that carries no platform field at all, is not a
     finding. A file whose value opens with neither key is, and the round's exit code has to say
     so -- otherwise a silent skip reads as success.
+
+    What counts as harmless differs per round, which is why the mode comes in here. "Already
+    converted" answers the key question and says nothing about the token, so in the PAT round
+    it is not on this list: there the only innocent skips are the ones that name the password
+    itself.
     """
-    harmless = ("already converted", "no encrypted platform fields")
+    harmless = (
+        ("no encrypted platform fields", "no repository password", "the repository password already holds this PAT")
+        if pat_round
+        else ("already converted", "no encrypted platform fields")
+    )
     return [
         round_report
         for round_report in result.skipped
@@ -367,7 +376,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
 
     if arguments.dry_run:
         print("\nDry run: nothing was changed.")
-        return 1 if broken(preview) else 0
+        return 1 if broken(preview, pat_round=True) else 0
 
     print("\nIs the new PAT ALREADY valid on GitHub, with the old one still valid too?")
     print("If not, every converted project loses its repository access until the round is done.")
@@ -382,7 +391,7 @@ async def main_replace_pat(argv: list[str] | None = None) -> int:
     result.fingerprint_before.save(arguments.fingerprint)
     print(f"\nFingerprint of {result.fields} fields -> {arguments.fingerprint}")
 
-    problems = broken(result)
+    problems = broken(result, pat_round=True)
     if problems:
         print(f"\nFAIL {len(problems)} project files were skipped with a real problem.", file=sys.stderr)
         return 1
