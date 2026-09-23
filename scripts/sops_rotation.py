@@ -14,9 +14,7 @@ with its own commits.
 before you have answered yes to "run this?". ``--dry-run`` does not even ask.
 
 **No key on the command line.** The tool asks for the PATHS of the keys, with a default on
-every question, and reads them from the untracked ``security/``. ``--verify`` is the exception
-to needing both: it reads with the new key, so it keeps working after ``--remove-old-key`` has
-deleted the old one.
+every question, and reads them from the untracked ``security/``.
 
 **What the fingerprint is.** Per encrypted field the sha256 of the PLAINTEXT, recorded before
 the conversion and measured again afterwards, so you can show that nothing changed but the
@@ -86,11 +84,10 @@ CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
 DEFAULT_FINGERPRINT = REPO / "security" / "fingerprint.json"
 
-#: Where ``rotate-project-keys.py`` writes ITS fingerprint. The final check walks four places,
-#: converted by two tools with a fingerprint each, so the count it compares against is the SUM.
-#: This is a default and not a required flag because the documented step 8 (--remove-old-key)
-#: is a bare command: without it the count would cover this repo alone and a rotation where
-#: nothing is wrong would fail on "count differs".
+#: Where ``rotate-project-keys.py`` writes ITS fingerprint. A default and not a required flag
+#: because the documented step 8 (``--remove-old-key``) is a bare command: without it the count
+#: would cover this repo alone and a rotation where nothing is wrong would fail on
+#: "count differs".
 DEFAULT_PROJECTS_FINGERPRINT = REPO / "security" / "projects-fingerprint.json"
 YES_WORDS = {"ja", "j", "yes", "y"}
 
@@ -139,10 +136,9 @@ def sops_on_either_recipient(old_public: str | None, new_public: str) -> list[Pa
     The fingerprint has to cover the same set on both sides of the conversion, and a file
     moves from one recipient to the other while it is being rotated.
 
-    ``old_public`` may be None: ``--verify`` runs months later, when the old key file is gone.
-    The selection is then the new recipient alone, which after a completed rotation is the same
-    set -- and a file left behind on the old recipient shows up as "does not open with the new
-    key" through the fingerprint, which is the finding either way.
+    ``old_public`` may be None, and narrowing to the new recipient alone loses nothing: after a
+    completed rotation that is the same set, and a file left behind on the old one shows up
+    through the fingerprint as "does not open with the new key".
     """
     seen: dict[Path, None] = {}
     for public in (old_public, new_public):
@@ -217,11 +213,10 @@ def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -
     The paths come along because the last two actions, renaming and deleting the old key, act on
     a FILE and not on its contents.
 
-    ``old_optional`` is for ``--verify`` alone, and it is not a nicety: the documented step 8
-    (``--remove-old-key``) DELETES ``security/old_key.txt``, while both the plan and the
-    documentation promise that ``--verify`` still works months later. It measures with the new
-    key; the old public half only widens the file selection. Demanding a file that the previous
-    step removed would make that promise exit 2.
+    ``old_optional`` is for ``--verify`` alone: step 8 (``--remove-old-key``) DELETES
+    ``security/old_key.txt``, while plan and documentation both promise that ``--verify`` still
+    works months later. It measures with the new key, so demanding the file the previous step
+    removed would turn that promise into exit 2.
     """
     reader = (lambda _question: "") if arguments.ja else input
     old_path = Path(arguments.old_key)
@@ -356,11 +351,7 @@ async def run_final_check(
 async def run_verify(
     fingerprint_path: Path, paths: list[Path], old_public: str | None, new_public: str, new_private: str
 ) -> int:
-    """Check the recorded fingerprint against what the new key reads today.
-
-    Stands on its own, months after the rotation, which is why ``old_public`` may be None: by
-    then the old key file is gone (step 8 removes it) and nothing is measured with it anyway.
-    """
+    """Check the recorded fingerprint against what the new key reads today."""
     if not fingerprint_path.is_file():
         print(f"FAIL no fingerprint to check against: {fingerprint_path}", file=sys.stderr)
         return 2
@@ -437,8 +428,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--projects-fingerprint",
         default=str(DEFAULT_PROJECTS_FINGERPRINT),
-        help="the fingerprint rotate-project-keys.py wrote, so the final check's count adds up; "
-        "counts as soon as the file is there",
+        help="the fingerprint rotate-project-keys.py wrote, so the final check's count adds up",
     )
     parser.add_argument(
         "--projects",
@@ -467,8 +457,7 @@ async def main(argv: list[str] | None = None) -> int:
     paths = env_paths()
 
     if old_private is None:
-        # Guaranteed by old_optional above: this is --verify with the old key already gone.
-        # Everything below this point acts on the old key, so it also narrows the type.
+        # Guaranteed by old_optional above; everything past this point acts on the old key.
         return await run_verify(fingerprint_path, paths, None, new_public, new_private)
 
     old_public = public_key_of(old_private)

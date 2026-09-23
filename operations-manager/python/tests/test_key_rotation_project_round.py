@@ -471,12 +471,9 @@ async def test_a_second_key_round_leaves_the_fingerprint_of_the_first_alone(
 ) -> None:
     """Running the tool twice is a promise of this tool, and the second run converts nothing.
 
-    Saving the fingerprint unconditionally then overwrote the record of the first round with
-    zero fields. That record is what ``--assert-old-key-dead`` compares its count against, so
-    the harmless second round was what made the final check fail afterwards -- measured: round
-    one 6 fields, round two 0, and step 6 red with the right flag.
-
-    This goes through the entry point on purpose: ``run_round`` sits UNDER the layer that saves.
+    Why that matters is in ``save_fingerprint``. Measured before the fix: round one 6 fields,
+    round two 0, and step 6 red with the right flag. This goes through the entry point on
+    purpose: ``run_round`` sits UNDER the layer that saves.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -650,10 +647,9 @@ async def test_a_second_pat_round_does_nothing_and_still_exits_clean(projects_re
 async def test_a_second_pat_round_leaves_the_fingerprint_of_the_first_alone(
     projects_repo: Path, tmp_path: Path
 ) -> None:
-    """The same guard on the other entry point: it saves its own fingerprint on the same line.
+    """The same guard on the other entry point, which saves its own fingerprint on the same line.
 
-    A second PAT round finds the token already in place and converts nothing, so an
-    unconditional save would replace the record of the real round with zero fields.
+    A second PAT round finds the token already in place, so it converts nothing either.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()

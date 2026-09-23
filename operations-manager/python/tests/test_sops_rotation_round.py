@@ -527,12 +527,10 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
 ) -> None:
     """The documented command is bare, so the projects fingerprint has to arrive by DEFAULT.
 
-    The final check walks four places, converted by two tools with a fingerprint each, so the
-    number it compares against is the SUM. Documented step 8 is
-    ``--remove-old-key --projects <clone>/projects`` and names no fingerprint, so without a
-    default the expected count covers this repo alone: a rotation where nothing is wrong ends on
-    "count differs" and leaves the old key in place. Measured on the real repo: 118 fields walked
-    against 28 recorded.
+    Step 8 is ``--remove-old-key --projects <clone>/projects`` and names no fingerprint, so
+    without a default the expected count covers this repo alone: a rotation where nothing is
+    wrong ends on "count differs" and leaves the old key in place. Measured on the real repo:
+    118 fields walked against 28 recorded.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -936,10 +934,8 @@ async def test_verify_still_stands_once_the_old_key_file_has_been_removed(
 ) -> None:
     """Step 8 deletes ``security/old_key.txt``, and ``--verify`` has to survive that.
 
-    Plan and documentation both promise this check still runs months later, and it reads with the
-    NEW key alone: the old public half only widens the file selection, and after a completed
-    rotation nothing sits on that recipient. Demanding the file the previous step removed turned
-    the promise into exit 2 "file does not exist".
+    Plan and documentation both promise this check still runs months later. Demanding the file
+    the previous step removed turned that promise into exit 2 "file does not exist".
 
     Second half: the relaxation is for ``--verify`` and nothing else. The final check MEASURES
     with the old key, so there it stays a hard requirement.

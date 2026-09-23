@@ -156,17 +156,14 @@ nog accepteert valt hier niet mee te toetsen. Daarvoor is de rooktest na de cuto
 - **ontsleutelen met de nieuwe sleutel slaagt.** Anders is er iets omgezet naar een sleutel die
   niemand heeft.
 - **de telling klopt** met de SOM van beide vingerafdrukken (deze repo + de projecten). De
-  tweede is die van `rotate-project-keys.py`; `--projects-fingerprint` wijst standaard naar
-  `security/projects-fingerprint.json`, precies waar dat script hem schrijft, en telt mee zodra
-  dat bestand er staat. Zonder die som zou de telling alleen deze repo dekken terwijl de toets
-  vier vindplaatsen loopt, en dan valt een rotatie waar niets mis is alsnog rood uit.
+  tweede komt van `rotate-project-keys.py`: `--projects-fingerprint` wijst standaard naar
+  `security/projects-fingerprint.json`, precies waar dat script hem schrijft.
 
 Zonder `--projects` loopt hij de vierde vindplaats niet na, en dat zegt hij. `--remove-old-key`
 weigert daarom zonder `--projects`: er kan dan een project op de oude sleutel staan.
 
-`--remove-old-key` haalt `security/old_key.txt` weg, en `--verify` moet daarna blijven werken.
-Die stand vraagt de oude sleutel dus niet op: hij meet met de nieuwe, en de oude speelt alleen
-mee in de bestandsselectie. Ontbreekt hij, dan zegt het script dat en gaat het door.
+`--remove-old-key` haalt `security/old_key.txt` weg. `--verify` blijft daarna werken: die stand
+meet met de nieuwe sleutel en vraagt de oude niet op.
 
 ## `sops rotate`, niet `updatekeys`
 
