@@ -453,10 +453,9 @@ def test_empty_files_does_not_fall_through_to_the_whole_tree(capsys: pytest.Capt
 def test_the_scan_has_no_way_to_write_its_findings_to_a_file() -> None:
     """The findings never go to git, and the script enforces that by not being able to.
 
-    A list of where secrets sit, and how many, is a map to what is not revoked yet, and this
-    repository is published. A scanner that can write its own output to a path is one flag away
-    from committing it, so the rule in ``scripts/README.md`` is only as good as the absence of
-    that flag. This pins the option list and the fact that both modules only ever print.
+    The rule and its reason are in ``scripts/README.md``; it is only as good as the absence of a
+    flag that names an output path, because that flag is one step away from a commit. So this
+    pins the option list and the fact that both modules only ever print.
     """
     scan_module = _scan_secrets_module()
 

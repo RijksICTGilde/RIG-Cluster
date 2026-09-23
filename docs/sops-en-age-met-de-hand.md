@@ -26,10 +26,9 @@ grep -m1 '^AGE-SECRET-KEY-' sops-key.txt | age-keygen -y
 ```
 
 `security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
-neerzetten om deze handelingen te doen. Dat is een tussenoplossing zolang het proces nog
-uitkristalliseert: uiteindelijk hoort een sleutel alleen nog in een CI/CD-omgeving of een
-vault-achtige voorziening te leven, en niet in een map op een laptop. Waar ze op termijn wel
-horen is de vraag van het lopende onderzoek naar sleutelbeheer en blast radius (RC-222).
+neerzetten om deze handelingen te doen. Dat is een tussenoplossing: een sleutel hoort op termijn
+in een CI/CD-omgeving of een vault-achtige voorziening en niet in een map op een laptop. Waar
+precies is de vraag van het lopende onderzoek naar sleutelbeheer en blast radius (RC-222).
 
 ## 2. Het Kubernetes-secret maken
 

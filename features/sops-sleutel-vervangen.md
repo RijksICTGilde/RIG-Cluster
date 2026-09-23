@@ -9,8 +9,8 @@ De onderbouwing staat in BIO2 v1.3, control 8.24 (Gebruik van cryptografie):
 * 8.24.01 vraagt een cryptografiebeleid waarin onder meer staat wie verantwoordelijk is voor het
   sleutelbeheer en "hoe geregistreerd wordt waar welke cryptografie toegepast wordt". De
   vindplaatsenlijst hieronder is die registratie; de dekkingsgrendel onder "De vorm is niet de
-  vindplaats" houdt hem eerlijk. Die meet elke boom die de ronde loopt na op cijfertekst die
-  geen vindplaats dekt, heeft geen sleutel nodig en draait dus ook in de toetsen.
+  vindplaats" houdt hem eerlijk, en die heeft geen sleutel nodig en draait dus in elke toetsronde
+  mee.
 * 8.24.02 vraagt dat is vastgesteld waar cryptografische beheersmaatregelen worden ingezet, wie
   verantwoordelijk is "en hoe ze actueel worden gehouden". Dat laatste ontbrak: een AGE-sleutel
   kent geen verlooptijd, een token dwingt zijn eigen vervanging af.
@@ -19,30 +19,17 @@ Het gereedschap hoort erbij, omdat de platform-AGE-sleutel niet alleen in de SOP
 `sops rotate` alleen die ziet: dit zet elke vindplaats om, toont aan dat er niets anders is
 veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
 
-Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid. Elke stap is
-geautomatiseerd, dus de ronde is te allen tijde te draaien -- op het kwartaalmoment, en
-net zo goed op de dag dat er een aanleiding is.
+Het ritme hieronder is een afspraak, het gereedschap is de mogelijkheid: elke stap is
+geautomatiseerd, dus de ronde is te allen tijde te draaien.
 
 ## Het ritme: preventief elk kwartaal, incidenteel bij aanleiding
 
 Het kwartaalmoment is het moment dat de PAT toch vervangen moet worden. Een aanleiding daarbuiten
 is een collega die weggaat, of het vermoeden dat een sleutel bekend is geworden.
 
-Reken je de sleutelrotatie als losse operatie, dan lijkt elk kwartaal duur. Dat is de rekenfout en
-niet de frequentie: de ronde komt er toch, en de sleutel rijdt mee.
-
-Frequentie verlaagt hier het risico per keer, en niet andersom. Een handeling die je een keer per
-jaar doet gaat mis doordat niemand hem nog kent en het gereedschap ondertussen ongemerkt
-achterhaald is geraakt. Elk kwartaal is geoefend.
-
-**Dit is routine en geen gebeurtenis.** Het doel is dat een beheerder de ronde automatisch,
-pijnloos en gecontroleerd draait. Duurt hij langer dan een uur, of vraagt hij onderweg om een
-beslissing, dan is het gereedschap niet af. Dat is de maat -- niet of de ronde uiteindelijk
-gelukt is.
-
-Voor de EERSTE ronde geldt een uitzondering op dat samen draaien: daar gaat de sleutel voorop en
-de PAT erachteraan; zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat". Zodra
-die ronde aantoonbaar goed is gegaan, is de kwartaalronde de gecombineerde.
+Voor de EERSTE ronde gaan de sleutel en de PAT niet samen: daar gaat de sleutel voorop en de PAT
+erachteraan; zie "Waarom de PAT-ronde in de EERSTE ronde achteraan staat". Zodra die ronde
+aantoonbaar goed is gegaan, is de kwartaalronde de gecombineerde.
 
 Tussen de rondes door KUNNEN PREPARE en VERIFY-1 maandelijks als oefening draaien, een ronde die
 niets omzet. Die is nog niet gebouwd: er staat geen geplande workflow die hem draait. Zie "De
@@ -253,8 +240,8 @@ in een keer: de motor onder beide is dezelfde lus en `replace-git-pat.py` zet de
 wachtwoord in een beweging om. Toch is de geadviseerde volgorde voor die eerste ronde de sleutel
 eerst en de PAT daarna, want een fout in de PAT-vervanging sleept dan de sleutelrotatie niet mee
 en de twee zijn los terug te draaien. Is die ronde aantoonbaar goed gegaan, dan is de PAT-ronde
-een herhaling van iets dat al gewerkt heeft, en draait een kwartaalronde ze samen: in stap 3
-`replace-git-pat.py` in plaats van `rotate-project-keys.py`, en stap 7 vervalt.
+een herhaling van iets dat al gewerkt heeft, en draait een kwartaalronde ze samen zoals stap 3
+beschrijft.
 
 Twee dingen die daaruit volgen:
 
@@ -583,12 +570,8 @@ die een rotatie moet raken.
 `python3 scripts/scan-secrets.py --history` loopt elke blob die ooit in de repo heeft bestaan na. Dat is
 een meting en geen opruiming: wat eruit komt bepaalt of er meer geroteerd moet worden.
 
-**Die uitkomst gaat nooit naar git, ook niet samengevat.** Een lijst van waar in de historie
-geheimen staan, en hoeveel, is een routekaart naar iets wat nog geldig is zolang de opruiming
-loopt -- en deze repo gaat naar GitHub. Een scanner die zijn eigen bevindingen commit maakt het
-probleem groter dan het was. De bevindingen horen op een intern kanaal; `scan-secrets.py`
-schrijft ze daarom naar stdout en kent geen vlag die ze in een bestand zet. Zie
-`scripts/README.md`.
+**Die uitkomst gaat nooit naar git, ook niet samengevat**, en `scan-secrets.py` kent daarom geen
+vlag die hem wegschrijft. Waarom, en waar de bevindingen dan wel horen: `scripts/README.md`.
 
 Let op het onderscheid, want twee dingen heten hier "vindplaats" en maar een ervan is een
 probleem:
@@ -607,9 +590,9 @@ is, ofwel groen op een sleutel die nergens meer geldig is, en dat tweede is het 
 de twee.
 
 Tot deze taak stonden er vier AGE-sleutels in de boom die `age-keygen` als echte sleutel
-accepteert. Een daarvan was de platformsleutel zelf; de andere drie openden niets buiten hun
-eigen toetsdata, en juist dat maakte de vierde onzichtbaar: een sleutel in een testbestand was
-hier normaal. Nu maakt een toets die een sleutel nodig heeft er zelf een, via de
+accepteert: de platformsleutel, twee die niets buiten hun eigen toetsdata openden, en de
+oefensleutel van `sops-sandbox/`. Die drie maakten de echte onzichtbaar, want een sleutel in de
+boom was hier normaal. Nu maakt een toets die een sleutel nodig heeft er zelf een, via de
 fixture `age_keypair` of de factory `make_age_keypair` in `tests/conftest.py` (beide leunen op
 `generate_sops_key_pair`, wat OPI ook gebruikt voor een projectsleutel). Ook de oefenmap
 `sops-sandbox/` is weg; de werkwijze die daar in `steps.md` stond staat nu in
