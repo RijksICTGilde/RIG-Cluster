@@ -61,7 +61,7 @@ from key_rotation import (  # noqa: E402
     sops_recipients,
     sops_rotate,
 )
-from project_rotation import KEY_FINGERPRINT  # noqa: E402
+from project_rotation import KEY_FINGERPRINT, save_fingerprint  # noqa: E402
 
 #: The real default, taken before the autouse fixture below patches it away for every test.
 REAL_PROJECTS_FINGERPRINT = tool.DEFAULT_PROJECTS_FINGERPRINT
@@ -1504,6 +1504,168 @@ async def test_verify_is_red_on_a_file_that_is_not_in_the_fingerprint_and_opens_
 # ---------------------------------------------------------------------------
 # the worklist itself
 # ---------------------------------------------------------------------------
+
+
+async def _set_repository_password(path: Path, plaintext: str, public_key: str) -> None:
+    """Give an existing project file a repository password with other content behind it."""
+    block = await encrypt_age_content(plaintext, public_key)
+    encoded = base64.b64encode(block.encode()).decode()
+    text = path.read_text()
+    path.write_text(text.replace(text.split("password: ")[1].split("\n")[0], f"{BASE64_AGE_PREFIX}{encoded}"))
+
+
+@pytest.mark.asyncio
+async def test_verify_checks_the_projects_record_it_was_handed(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """``--verify`` judged ``--projects`` strictly and then walked nothing with it.
+
+    A missing or empty directory is exit 2 in this mode, which reads as a flag that is going to
+    be used. It was not: measured after a full round, the verdict said "CLEAN 33 fields" -- this
+    repo's own -- while ``security/projects-fingerprint.json`` sat next to it with 106 fields
+    that nothing read. Two halves, so two assertions: the projects fields have to be COUNTED,
+    and a plaintext that has drifted since the round has to make this red.
+
+    The drifted value is re-encrypted for the NEW key, so "does it open" cannot catch it. Only
+    the recorded hash can.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    clone = (tmp_path / "zad-projects" / "projects").resolve()
+    clone.mkdir(parents=True)
+    project = await _project_file(clone, "een", new_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    projects_fingerprint = tmp_path / "projects-fingerprint.json"
+    keys = _key_files(tmp_path, old_private, new_private)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *keys, "--fingerprint", str(fingerprint)]) == 0
+        # The projects round owns its own record; what is measured here is whether --verify reads it.
+        await save_fingerprint(clone, str(projects_fingerprint), old_private, new_private)
+        capsys.readouterr()
+        verify = [
+            "--ja",
+            "--verify",
+            *keys,
+            "--fingerprint",
+            str(fingerprint),
+            "--projects",
+            str(clone),
+            "--projects-fingerprint",
+            str(projects_fingerprint),
+        ]
+
+        assert await tool.main(verify) == 0
+        clean = capsys.readouterr().out
+        await _set_repository_password(project, "ghp_somebody_elses_token", new_public)
+        drifted = await tool.main(verify)
+
+    printed = capsys.readouterr().out
+    assert "CLEAN 2 fields readable with the new key and unchanged in content" in clean, (
+        "the one loose value plus the one project field, or the projects record is not counted"
+    )
+    assert drifted == 1
+    assert f"FAIL content changed: {project}#repositories[0].password" in printed
+
+
+@pytest.mark.asyncio
+async def test_verify_refuses_projects_without_the_record_to_check_it_against(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Handing this mode a clone and no record is the one case it cannot answer.
+
+    Checking this repo alone and printing CLEAN would be the same silence the flag already had.
+    Walking the clone without a record to compare against would be a decryption test wearing the
+    word "unchanged", which is what ``--assert-old-key-dead`` is for.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
+    clone = tmp_path / "zad-projects" / "projects"
+    clone.mkdir(parents=True)
+    await _project_file(clone, "een", old_public)
+    fingerprint = tmp_path / "fingerprint.json"
+    absent = tmp_path / "projects-fingerprint.json"
+    keys = _key_files(tmp_path, old_private, new_private)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[env_path]),
+    ):
+        assert await tool.main(["--ja", *keys, "--fingerprint", str(fingerprint)]) == 0
+        capsys.readouterr()
+        code = await tool.main(
+            [
+                "--ja",
+                "--verify",
+                *keys,
+                "--fingerprint",
+                str(fingerprint),
+                "--projects",
+                str(clone),
+                "--projects-fingerprint",
+                str(absent),
+            ]
+        )
+
+    printed = capsys.readouterr()
+    assert code == 2
+    assert f"FAIL no fingerprint to check --projects against: {absent}" in printed.err
+    assert "CLEAN" not in printed.out
+
+
+def test_the_coverage_sweep_walks_every_tree_of_the_run_and_not_this_repo_alone(tmp_path: Path) -> None:
+    """The sweep ran here and over the projects clone. The argo clone was reasoned about.
+
+    ``--remove-old-key`` demands ``--argo-applications`` and then walks that clone for its SOPS
+    files and nothing else, so a tracked file there carrying a loose value was reached by no
+    place and counted by no fingerprint: the verdict said CLEAN and the old key went away on it.
+    ``argo_manager.py`` writing only SOPS files is what made that safe in practice, and a claim
+    about another module's behaviour is exactly what this guard exists to stop repeating.
+
+    What covers a file in such a clone is ``sops_files()`` -- SOPS metadata, whatever the file is
+    called -- so the second half is that a file which HAS that metadata is not a gap.
+    """
+    clone = tmp_path / "zad-argo"
+    (clone / "apps" / "prj-a").mkdir(parents=True)
+    loose = clone / "apps" / "prj-a" / "los.yaml"
+    loose.write_text("password: base64+age:whatever\n")
+    sops_owned = clone / "apps" / "prj-a" / "repo.sops.yaml"
+    sops_owned.write_text("password: base64+age:whatever\n")
+    inventory = {loose: 1, sops_owned: 1}
+
+    with patch.object(tool, "files_with_ciphertext", side_effect=lambda tree: inventory if tree == clone else {}):
+        assert tool.coverage_gaps() == [], "this repo's own sweep must not change"
+        assert tool.coverage_gaps([tool.REPO, clone]) == [loose, sops_owned]
+
+        sops_owned.write_text("password: base64+age:whatever\nsops:\n    age: []\n")
+        assert tool.coverage_gaps([tool.REPO, clone]) == [loose]
+
+
+@pytest.mark.asyncio
+async def test_the_final_check_refuses_to_call_the_old_key_dead_over_a_gap_in_the_argo_clone(tmp_path: Path) -> None:
+    """The same verdict, through the check the operator actually runs before deleting the key."""
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    clone = tmp_path / "zad-argo"
+    clone.mkdir()
+    forgotten = clone / "los.yaml"
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "files_with_ciphertext", side_effect=lambda tree: {forgotten: 1} if tree == clone else {}),
+    ):
+        clean = await tool.run_final_check(old_private, new_private, old_public, new_public, None, None, [tool.REPO])
+        gap = await tool.run_final_check(
+            old_private, new_private, old_public, new_public, None, None, [tool.REPO, clone]
+        )
+
+    assert clean.clean, "without the clone there is nothing to find, which is the old blind spot"
+    assert not gap.clean
+    assert gap.outside_coverage == [str(forgotten)]
 
 
 def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypted_value() -> None:

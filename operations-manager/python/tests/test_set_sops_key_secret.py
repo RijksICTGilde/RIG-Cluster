@@ -324,7 +324,15 @@ async def test_the_run_writes_only_where_the_old_platform_key_sits(
     assert written == [("rig-prd-operations", key_file), ("rig-prd-ron", key_file)]
     assert restarted == ["rig-prd-operations", "rig-prd-ron"]
     assert "rig-prd-cot-zaq" not in [namespace for namespace, _path in written]
-    assert "deployment/operations-manager restarted and ready in rig-prd-operations" in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    assert "deployment/operations-manager restarted and ready in rig-prd-operations" in printed
+    # The next step it hands out is step 6 of the feature doc, and that check walks five places
+    # only when it is given both clones: without --projects it says NOTE about the fourth and
+    # without --argo-applications about the fifth, and --remove-old-key later refuses on either.
+    step_6 = printed.split("Then, from the repository root")[1]
+    assert "--assert-old-key-dead" in step_6
+    assert "--projects" in step_6
+    assert "--argo-applications" in step_6
 
 
 @pytest.mark.asyncio

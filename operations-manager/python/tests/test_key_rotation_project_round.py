@@ -953,6 +953,155 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
 
 
 @pytest.mark.asyncio
+async def test_a_changed_plaintext_stops_the_next_round_instead_of_overwriting_the_record(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The record was written every round and read by none, which made it a tally.
+
+    Nothing compared it: ``expected_count`` takes its ``len()`` and ``--verify`` walked past it.
+    So a second round measured the collection afresh, wrote the new hashes over the old ones and
+    exited 0 -- and with the earlier hashes gone there was nothing left for the final check to
+    disagree with either. This replays exactly that: one password re-encrypted for the NEW key
+    with a DIFFERENT plaintext behind it, which is what a round has no business doing silently.
+
+    The record has to survive the refusal. Overwriting it while reporting the deviation would
+    destroy the evidence and make the next run green.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    arguments = [
+        "--ja",
+        "--projects",
+        str(directory),
+        "--old-key",
+        str(tmp_path / "old_key.txt"),
+        "--new-key",
+        str(tmp_path / "key.txt"),
+        "--fingerprint",
+        str(fingerprint),
+    ]
+
+    assert await main_rotate_keys(arguments) == 0
+    recorded = fingerprint.read_text()
+    capsys.readouterr()
+
+    # The field is still perfectly readable with the new key. Only what it SAYS is different,
+    # which is the one thing a fingerprint exists to notice.
+    path = directory / "een.yaml"
+    swapped = await encrypt_age_content("ghp_somebody_elses_token", new_public)
+    original = path.read_text()
+    path.write_text(
+        original.replace(
+            original.split("password: ")[1].split("\n")[0],
+            f"{BASE64_AGE_PREFIX}{base64.b64encode(swapped.encode()).decode()}",
+        )
+    )
+
+    code = await main_rotate_keys(arguments)
+    printed = capsys.readouterr().out
+
+    assert code == 1
+    assert f"the fingerprint recorded in {fingerprint} disagrees" in printed
+    assert f"content changed: {path}#repositories[0].password" in printed
+    assert fingerprint.read_text() == recorded, "the earlier record is the evidence and has to stand"
+
+
+@pytest.mark.asyncio
+async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_key_not_to(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """The comparison against the record is the same one, minus the fields that are MEANT to move.
+
+    A PAT round rewrites every repository password on purpose, so without ``replaced`` a second
+    PAT round with a new token would go red on its own reason for existing. The project key is
+    only ever re-encrypted, so it stays on the strict side of the same check.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-pat-fingerprint.json"
+    keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
+
+    first = tmp_path / "first-pat.txt"
+    first.write_text("ghp_the_first_new_token\n")
+    second = tmp_path / "second-pat.txt"
+    second.write_text("ghp_the_second_new_token\n")
+    arguments = ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)]
+
+    assert await main_replace_pat([*arguments, "--pat-file", str(first)]) == 0
+    after_the_first = Fingerprint.load(fingerprint).fields
+    capsys.readouterr()
+
+    assert await main_replace_pat([*arguments, "--pat-file", str(second)]) == 0
+    after_the_second = Fingerprint.load(fingerprint).fields
+    printed = capsys.readouterr().out
+
+    path = directory / "een.yaml"
+    assert "disagrees with what is there now" not in printed
+    assert after_the_first[f"{path}#repositories[0].password"] != after_the_second[f"{path}#repositories[0].password"]
+    assert (
+        after_the_first[f"{path}#{PROJECT_FIELD_PRIVATE_KEY}"]
+        == after_the_second[f"{path}#{PROJECT_FIELD_PRIVATE_KEY}"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it(
+    projects_repo: Path, tmp_path: Path
+) -> None:
+    """Every key in the record is "<path>#<field>", and ``--verify`` compares those NAMES.
+
+    The count in ``--assert-old-key-dead`` adds up regardless of how the clone was spelled: it
+    compares totals. The comparison ``--verify`` runs does not, so a clone addressed once with a
+    ``..`` in it and once without would read as a collection that was swapped whole -- every
+    field disappeared, every field appeared. Both sides resolve the directory, so the spelling
+    cannot decide the verdict.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", old_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    fingerprint = tmp_path / "projects-fingerprint.json"
+    detour = directory / ".." / "projects"
+
+    code = await main_rotate_keys(
+        [
+            "--ja",
+            "--projects",
+            str(detour),
+            "--old-key",
+            str(tmp_path / "old_key.txt"),
+            "--new-key",
+            str(tmp_path / "key.txt"),
+            "--fingerprint",
+            str(fingerprint),
+        ]
+    )
+
+    assert code == 0
+    assert set(Fingerprint.load(fingerprint).fields) == {
+        f"{directory.resolve() / 'een.yaml'}#{PROJECT_FIELD_PRIVATE_KEY}",
+        f"{directory.resolve() / 'een.yaml'}#repositories[0].password",
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_count(
     projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
@@ -1300,6 +1449,10 @@ async def test_a_second_round_does_not_point_at_head_0(
     assert "HEAD~" not in second
     assert "nothing to commit or push" in second
     assert "--assert-old-key-dead" in second
+    # Same next step, same two clones: this one knew the projects clone and left the argo one
+    # out, which hands the operator a check that walks four of the five places.
+    assert "--projects" in second
+    assert "--argo-applications" in second
 
 
 def test_the_documented_project_rounds_parse_and_keep_their_own_fingerprint() -> None:
