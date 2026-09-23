@@ -34,12 +34,10 @@ v6 to list and delete DNS records. Reads `TRANSIP_ACCOUNT_NAME` and
 
 ## Which records need what
 
-The snapshot that used to stand here (three fixed name lists, 2026-05-08) went stale
-within months: seven names it filed under "needs a project redeploy first"
-(`algoritmes`, `amt.bzk`, `assessments`, `desa`, `website.desa`, `task-registry`,
-`frontend-main-wies`) already carried the annotation when the migration was picked up
-again on 2026-09-23, and were simply deleted and came back correct. A list of names is
-not the thing to check. The question is:
+The fixed name lists that used to stand here (snapshot 2026-05-08) went stale within
+months: seven of the names filed under "needs a project redeploy first" already carried
+the annotation when the migration was picked up again on 2026-09-23, and were simply
+deleted and came back correct. A list of names is not the thing to check. The question is:
 
 **Does the Ingress behind this name already carry
 `external-dns.alpha.kubernetes.io/target`?**
@@ -73,19 +71,11 @@ current `manifests/ingress.yaml.jinja` emits the annotation, so the re-rendered 
 carries it.
 
 For a project whose manifests are rendered by an external chart (a helmfile deployment:
-`docs`, `static-docs`, `grist`), a reprocess was **not** enough for a long time, and
-nothing in this runbook said so: the category lists it used to carry filed those names
-under "needs a project redeploy first" like any other. OPI passed the target at its own
-three ingress sites only, so the helmfile route never saw it and external-dns kept writing the
-CNAME to the OCP-router hostname. RC-225 closed that gap: OPI now writes the target into
-`cluster.ingress.annotations` of the helm values, which every ingress block of the
-mijn-bureau charts reads. Since then a reprocess works for these projects too, but only
-after that change is deployed to the cluster you are migrating.
-
-Either way: an OPI reprocess and a green ArgoCD sync are not proof. Look at the Ingress
-itself with the query above. `mb-docs-helmfile-production` in particular fails its
-ArgoCD sync on an unrelated broken Kyverno policy, so "sync succeeded" carries no
-information there at all.
+`docs`, `static-docs`, `grist`), a reprocess was **not** enough until RC-225: OPI passed
+the target at its own three ingress sites only, so the chart never saw it. RC-225 writes
+the target into `cluster.ingress.annotations` of the helm values, which every ingress
+block of the mijn-bureau charts reads. A reprocess works for these projects too, but
+only on a cluster that runs that change.
 
 ## Two traps
 
@@ -148,7 +138,7 @@ This listing is the work list: the zone knows about records the cluster does not
 (see the second trap above). Classify every name it returns with the annotation query
 from "Which records need what", and handle each one on its own route.
 
-### Step 3 — Delete the names whose Ingress already carries the annotation
+### Step 3: delete the names whose Ingress already carries the annotation
 
 Per name from Step 2 that the annotation query lists:
 
@@ -178,7 +168,7 @@ Expected: `Status 0 AD True` for all of them. Then check the TXT markers per nam
 (Verification below): `Status 0` also holds for a hand-made record that external-dns
 does not own.
 
-### Step 4 — Delete the names with no Ingress at all
+### Step 4: delete the names with no Ingress at all
 
 These external-dns will not recreate, since no Ingress claims the name. Pure cleanup.
 
@@ -196,16 +186,16 @@ whole zone while any name in it is still waiting for Step 5.
 
 Safer: enumerate the abandoned hosts explicitly, one zone at a time.
 
-### Step 5 — Get the annotation onto the remaining Ingresses, then delete
+### Step 5: get the annotation onto the remaining Ingresses, then delete
 
 For each name that still has an Ingress without the annotation:
 
 1. Get the annotation onto the Ingress. For an OPI-rendered project that is an OPI
    reprocess; for a helmfile project it is an OPI reprocess on a cluster that runs
    RC-225 or later. See "Getting the annotation onto an Ingress" above.
-2. Verify the Ingress in cluster now really has the annotation, with the query from
-   "Which records need what". This is the gate: a green ArgoCD sync is not one, and for
-   `mb-docs-helmfile-production` it is not even available.
+2. Verify the Ingress really carries the annotation, with the query from "Which records
+   need what". That is the gate, not a green ArgoCD sync: `mb-docs-helmfile-production`
+   fails its sync on an unrelated broken Kyverno policy.
 3. Delete the orphan CNAME(s) for that project's hostnames using the script.
 4. Wait ~70s, verify Google resolves to the new target, and check the TXT markers.
 
