@@ -1,4 +1,4 @@
-# De sleutel en het token vervangen, met een script dat het elk kwartaal kan
+# De sleutel en het token vervangen, met een script dat alle stappen automatiseert en dus te allen tijde gebruikt kan worden
 
 Status: plan, 22 september 2026. Niet gebouwd. Vervangt de brede opzet in `de-age-sleutel-roteren-en-splitsen.md`, die als fase 3 blijft staan.
 
