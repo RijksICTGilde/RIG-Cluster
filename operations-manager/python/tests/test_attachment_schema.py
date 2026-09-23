@@ -401,14 +401,10 @@ def test_modal_edit_attachments_flow_keeps_services_in_base_data() -> None:
     DEZE TEST STOND OM. Hij eiste dat de readonly services-carrier een kopie van de
     dienstenlijst IN step_data zette. Dat is precies wat 559eaa60 heeft weggehaald, en met
     reden: de naam-unie in merge_service_lists verwijdert nooit, dus die kopie bracht elke
-    uitgevinkte dienst terug (de configstap verscheen opnieuw en de save hield de dienst).
-    De test bleef achter en stond sindsdien rood op de basistak.
+    uitgevinkte dienst terug. De test bleef achter en stond sindsdien rood op de basistak.
 
-    Wat er nu bewaakt wordt is de andere helft van diezelfde reparatie, want die twee horen
-    bij elkaar: _split_data_across_sections slaat de readonly carrier over, EN
-    _fully_owned_list_keys negeert hem, zodat de lijst in base_data blijft staan en de
-    uploadstap zijn context houdt. Valt een van de twee weg, dan is de modal leeg of komt
-    een verwijderde dienst terug.
+    Bewaakt wordt nu de andere helft van diezelfde reparatie, en de twee horen bij elkaar:
+    valt er een weg, dan is de modal leeg of komt een verwijderde dienst terug.
     """
     from opi.forms.visualizers.flows import get_flow
     from opi.web.router_detail_edit import _fully_owned_list_keys

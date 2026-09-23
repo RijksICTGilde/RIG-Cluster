@@ -1,14 +1,7 @@
 {#
   Wat de bezoeker bij zijn EIGEN DNS-beheerder moet regelen: naar welke naam hij wijst,
-  welk record dat wordt, en hoe dat er ingevuld uitziet.
-
-  Een eigen bestand omdat de pagina anders een contentblok van 124 regels is, en dat is
-  precies wat tests/test_template_structure.py tegenhoudt: een pagina hoort een
-  SAMENSTELLING van benoemde stukken te zijn, zodat de naam zegt wat het blok doet.
-
-  De grens tussen dit bestand en _router-zad.html.j2 is de grens tussen wat de bezoeker
-  zelf doet en wat het platform daarna doet. Dat is dezelfde grens die de pagina met haar
-  nummering al maakt.
+  welk record dat wordt, en hoe dat er ingevuld uitziet. Ingesloten door router.html.j2,
+  dat de splitsing uitlegt.
 
   GEEN OPMAAK IN EEN c-list-item: <li> is onder NLDD een CSS-grid, dus elk KIND-element
   wordt een eigen kolom. Vandaar <c-rich-text><ul> hieronder en niet <c-list>. De volledige

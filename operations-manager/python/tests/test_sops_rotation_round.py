@@ -2069,9 +2069,9 @@ async def test_the_final_check_names_the_places_its_flags_left_out_and_stays_qui
     """CLEAN over four places reads exactly like CLEAN over five, so the note carries the width.
 
     ``--remove-old-key`` deletes the old key on this same verdict, and a run without a flag
-    reports CLEAN over a place it never opened. The half that is easy to lose is the silence:
-    a note that prints whichever flags were given tells the operator that his complete run was
-    incomplete, and one that is always there is one nobody reads any more.
+    reports CLEAN over a place it never opened. The silence is the half that is easy to lose:
+    a note that stands whichever flags were given tells a complete run that it was incomplete,
+    and is one nobody reads any more.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()

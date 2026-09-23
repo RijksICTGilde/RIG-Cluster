@@ -31,14 +31,14 @@
 
   De regel die daaruit volgt: een c-list-item bevat PLATTE TEKST. Wil je een vetgedrukt
   label of een <code>-naam, gebruik dan <c-paragraph>; die zet inline-opmaak gewoon in de
-  regel. Beide vormen staan hieronder, dus je kunt ze vergelijken.
+  regel. Beide vormen staan in de twee bestanden die hieronder worden ingesloten.
 
   ALLEEN WAT WAAR IS
 
-  Zelfde regel als op de introductiepagina. De IP-adressen en de records hieronder staan er
-  omdat iemand ze moet overtypen in zijn eigen zone; als ze verouderen is deze pagina erger
-  dan geen pagina. Ze horen bij `dns_config.ROUTER_HOSTNAMES` en bij wat er werkelijk in
-  TransIP staat.
+  Zelfde regel als op de introductiepagina. De IP-adressen en de records in
+  `_router-dns.html.j2` staan er omdat iemand ze moet overtypen in zijn eigen zone; als ze
+  verouderen is deze pagina erger dan geen pagina. Ze horen bij `dns_config.ROUTER_HOSTNAMES`
+  en bij wat er werkelijk in TransIP staat.
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -52,10 +52,9 @@
          platform daarna zelf regelt, en welke twee punten bij je eigen organisatie blijven."
     ) }}
 
-    {# De pagina is een SAMENSTELLING van twee benoemde stukken, en de grens ertussen is de
-       grens tussen wat de bezoeker zelf doet (het DNS-record bij zijn eigen beheerder) en
-       wat daarna gebeurt (het project, het certificaat, de twee punten die bij hem
-       blijven). Dat is dezelfde grens die de nummering op de pagina al maakt. #}
+    {# Opgesplitst omdat tests/test_template_structure.py een contentblok van meer dan 50 regels
+       tegenhoudt: een pagina hoort een SAMENSTELLING van benoemde stukken te zijn. De grens
+       tussen de twee is dezelfde die de nummering op de pagina al maakt. #}
     {% include "bg/_router-dns.html.j2" %}
     {% include "bg/_router-zad.html.j2" %}
 {% endblock %}
