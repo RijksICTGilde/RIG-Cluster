@@ -184,9 +184,7 @@ The ingresses of a helmfile deployment come from the chart, not from OPI's
 `manifests/ingress.yaml.jinja`, so the `external-dns.alpha.kubernetes.io/target`
 annotation that OPI puts on its own ingresses does not reach them. Without it,
 external-dns writes a CNAME to the cluster's OCP-router hostname, and that crosses a
-zone boundary: Google Public DNS answers such a name with SERVFAIL (EDE 12, "invalid
-denial of existence"), while Cloudflare and Quad9 accept it, so only part of the
-visitors sees the outage.
+zone boundary: Google Public DNS answers such a name with SERVFAIL (EDE 12).
 
 OPI therefore writes the target into the generated helm values, at the hook the
 mijn-bureau charts read for their ingress annotations:
