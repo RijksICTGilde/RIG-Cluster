@@ -476,10 +476,8 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
 
     ``rotate-project-keys.py`` records the count and ``rotate-sops-key.py --assert-old-key-dead``
     checks against it, but each half is otherwise tested against a fingerprint written by hand.
-    A round that records a different SET of fields than the check walks ends on "count differs",
-    which reads as a failed rotation while nothing is wrong with the key. The second half is
-    there because a count check that is not running at all also prints no complaint: with one
-    field taken out of the record, the same command has to go red.
+    The second half of this test is there because a count check that is not running at all also
+    prints no complaint: with one field taken out of the record, the same command has to go red.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -532,13 +530,11 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
 async def test_a_second_key_round_records_the_same_fields_as_the_first(projects_repo: Path, tmp_path: Path) -> None:
     """Running the tool twice is a promise of this tool, and the second run converts nothing.
 
-    Why that matters is in ``save_fingerprint``. Measured before the fix: round one 6 fields,
-    round two 0, and step 6 red with the right flag. This goes through the entry point on
-    purpose: ``run_round`` sits UNDER the layer that saves.
+    Why the record survives that is in ``save_fingerprint``. It is re-measured over the whole
+    collection rather than held onto, so what has to be equal is the SET of fields and their
+    hashes; only ``created`` differs, and that stamp says when the collection was last measured.
 
-    The record is re-measured over the whole collection rather than held onto, so what has to
-    be equal is the SET of fields and their hashes. Only ``created`` differs, and that stamp
-    says when the collection was last measured, which is genuinely the second round.
+    This goes through the entry point on purpose: ``run_round`` sits UNDER the layer that saves.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -877,11 +873,9 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
 ) -> None:
     """The documented recovery path: one file unreadable, repair it, run again, then step 8.
 
-    ``run_round`` promises that an unreadable file does not abort the round, so the operator
-    ends up with a round that converted a PART and a second round that converted the rest.
-    The fingerprint has to hold the WHOLE collection either way -- a record of only the
-    second round's fields makes the final check go red on the count with nothing wrong with
-    the key, and by then the record of the first round is gone.
+    ``run_round`` promises that an unreadable file does not abort the round, so a rotation can
+    take two rounds and the final check still has to add up. Why the fingerprint holds the whole
+    collection is in ``save_fingerprint``.
 
     The count after the partial round is 5 and not the 4 the round converted: only the password
     of bbb is unreadable, its project key still opens, and the record says what the collection

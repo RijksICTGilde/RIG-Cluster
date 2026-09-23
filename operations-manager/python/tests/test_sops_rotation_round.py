@@ -595,9 +595,9 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
     """The feature doc is the operator's script, and nothing else reads it.
 
     Both final-check commands there are bare: no ``--projects-fingerprint``, so the count only
-    adds up through the default measured two tests up. And without ``--projects`` the fourth
-    place is not walked, which makes ``--remove-old-key`` refuse. A flag that is renamed or
-    dropped from the parser turns every line here into a SystemExit, instead of leaving a doc
+    adds up through the default, which the two tests above pin. And without ``--projects`` the
+    fourth place is not walked, which makes ``--remove-old-key`` refuse. A flag that is renamed
+    or dropped from the parser turns every line here into a SystemExit, instead of leaving a doc
     that has gone stale without anything saying so.
     """
     documented = [
@@ -1205,10 +1205,10 @@ async def test_the_note_about_a_missing_old_key_names_the_answered_path(
     """The third action on an answered path, and the one that only PRINTS a path.
 
     ``--verify`` is allowed to run without the old key, and says so in a NOTE. That note named
-    ``arguments.old_key``, which is the argparse default: an operator who answers the prompt
-    with another name was told the tool had looked in ``security/old_key.txt`` -- a file that in
-    this test exists and holds a perfectly good key. Same class as the two above, and invisible
-    to every other test because they all pass ``--old-key`` and then answer and default coincide.
+    ``arguments.old_key`` instead of the answered path, so an operator who answers the prompt
+    with another name was pointed at the default -- here a file that exists and holds a
+    perfectly good key. Same class as the two above, and invisible to every other test because
+    they all pass ``--old-key`` and then answer and default coincide.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
@@ -1240,12 +1240,12 @@ async def test_the_note_about_a_missing_old_key_names_the_answered_path(
 async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_file(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """``read_key`` has two failures and the NOTE flattened them into the wrong one.
+    """Two different failures, and the NOTE flattened them into the wrong one.
 
     A file that IS there but carries no key line is a different problem from a file that is
     gone: the first is a file to look at, the second is the expected state after step 8. Reported
     as "no old key at <path>" the operator reads it as gone and stops looking at the file that is
-    lying there. The exception already tells them apart, so it is the exception that gets printed.
+    lying there.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()

@@ -227,11 +227,10 @@ def ask_for_keys(arguments: argparse.Namespace, *, old_optional: bool = False) -
     except MissingKey as e:
         if not old_optional:
             raise
-        # The exception itself, because it carries both halves this note needs. The path: on a
-        # refused prompt answer ``old_path`` still holds the argparse DEFAULT, the same class
-        # 6d0f2f1d fixed for --rename and --remove-old-key. And the reason: ``read_key`` fails
-        # on a file that IS there but carries no AGE-SECRET-KEY- line, which "no old key at"
-        # reported as an absent file.
+        # Print the exception, not a message of our own: ``old_path`` still holds the argparse
+        # default here (the class 6d0f2f1d fixed for --rename and --remove-old-key), and a file
+        # that IS there but carries no key line fails too, which "no old key at" reported as an
+        # absent file.
         print(f"NOTE {e}: checking with the new key alone.")
     new = ask_for_path("new key", arguments.new_key, reader=reader)
     return old_path, old_private, new, read_key(new)

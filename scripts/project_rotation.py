@@ -203,10 +203,8 @@ def report(result: RoundResult, *, dry_run: bool) -> None:
 async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerprint, list[str]]:
     """Measure the plaintext of every platform field in the directory, with the first key that fits.
 
-    Over the WHOLE collection and not over the round's worklist, which is what
-    ``sops_rotation.main`` does for its three places as well. Passing both keys is what makes
-    that possible: a field already on B reads just as well as one still on A, so the SET of
-    fields does not depend on how much a given round had left to do.
+    Passing both keys is what lets this cover the whole collection regardless of how far a
+    round got: a field already on B reads just as well as one still on A.
 
     Second return value: the fields that opened with neither key. Those are not a fingerprint
     but a finding -- the same ones the round reports as a real problem.
@@ -232,12 +230,10 @@ async def fingerprint_all(directory: Path, *private_keys: str) -> tuple[Fingerpr
 async def save_fingerprint(directory: Path, path: str, *private_keys: str) -> None:
     """Record the whole collection, not the fields this particular round happened to convert.
 
-    The final check compares its count against this record, and the round is allowed to convert
-    a PART: ``run_round`` promises that one unreadable file does not abort it. A record of the
-    worklist alone therefore breaks the documented recovery path -- round one converts four
-    fields of six, the operator repairs the file, round two converts the remaining two and
-    OVERWRITES the record with those two, and ``--assert-old-key-dead`` then reports "6 now, 2
-    before the conversion" with nothing wrong with the key and the earlier record gone.
+    ``run_round`` promises that one unreadable file does not abort the round, so a rotation may
+    take two rounds. A record of the second round's worklist alone makes ``--assert-old-key-dead``
+    fail on the count with nothing wrong with the key, and the record of the first round is gone
+    by then.
 
     Measured fresh each time rather than merged into what was there: a merge would keep an entry
     for a project that has since been deleted, and the check does not walk that one any more.
