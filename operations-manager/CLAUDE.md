@@ -167,8 +167,9 @@ Standalone operational tools (Keycloak, Grafana/Loki, diagnostics, project-file 
 in `operations-manager/python/scripts/` — see `scripts/README.md` there for the full index. Run
 them from `operations-manager/python` with `uv run python scripts/<tool>.py`. Prefer an existing
 tool over ad-hoc `kubectl exec`; e.g. `keycloak_flow_tool.py` for auth-flow inspect/repair,
-`grafana_loki_logs.py` for production logs older than ~3h. (The repo-root `/scripts` folder holds
-a few shell utilities only.)
+`grafana_loki_logs.py` for production logs older than ~3h. (The repo-root `/scripts` folder holds tooling that
+operates on the REPOSITORY rather than on a running OPI: the AGE key rotation, the secret scan,
+and a few shell utilities. See `scripts/README.md` there.)
 
 ## Dependencies
 

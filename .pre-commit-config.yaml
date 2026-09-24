@@ -45,6 +45,15 @@ repos:
         files: ^operations-manager/python/.*\.py$
         pass_filenames: false
 
+      # Laag 1 van de geheimengrendel, en de omzeilbare: alleen de gestageerde bestanden, want
+      # dit moet snel zijn. De bindende laag is de job secret-scan in security.yml, die de hele
+      # boom scant. Zie features/sops-sleutel-vervangen.md.
+      - id: secret-scan
+        name: secret-scan
+        entry: python3 scripts/scan-secrets.py --files
+        language: system
+        pass_filenames: true
+
       - id: djlint
         name: djlint
         entry: uv run --directory operations-manager/python djlint --lint opi/templates_lotc/

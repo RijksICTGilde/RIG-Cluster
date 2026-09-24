@@ -12,9 +12,40 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from opi.utils.sops import generate_sops_key_pair
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterator
+    from collections.abc import AsyncGenerator, Callable, Iterator
+
+
+@pytest.fixture(scope="session")
+def make_age_keypair() -> Callable[[], tuple[str, str]]:
+    """A factory that mints a throwaway AGE keypair, generated for this test run only.
+
+    A fixed key in a test file is what put the platform key rotation on the list: four of them
+    sat in this tree, one of which was the real production key, and the three harmless ones were
+    the reason nobody noticed. A test that needs a key makes one; then a scanner that alarms on a
+    valid ``AGE-SECRET-KEY-`` has nothing to complain about in the tree and stays believable.
+
+    Session scope, because ``age-keygen`` is a subprocess and the pair is immutable -- but the
+    factory is called per test that wants one, so a test needing two distinct keys just calls it
+    twice.
+
+    Requires the ``age-keygen`` binary. Tests that use this should skip without it, the way
+    ``test_sops_skip_unchanged`` and the rotation tests do.
+    """
+
+    def make() -> tuple[str, str]:
+        """Returns (private_key, public_key)."""
+        return generate_sops_key_pair()
+
+    return make
+
+
+@pytest.fixture(scope="session")
+def age_keypair(make_age_keypair: Callable[[], tuple[str, str]]) -> tuple[str, str]:
+    """One throwaway AGE keypair as ``(private_key, public_key)``, for the whole run."""
+    return make_age_keypair()
 
 
 @pytest.fixture
