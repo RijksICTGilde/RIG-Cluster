@@ -836,7 +836,7 @@ def test_the_scan_has_no_way_to_write_its_findings_to_a_file() -> None:
 # ---------------------------------------------------------------------------
 
 #: The flag's own name, referenced instead of spelled out in the patterns and fixtures below. A
-#: literal here is a line in the tree, and the test at the bottom reads the tree with ``git grep``:
+#: literal here is a line in the tree, and the test below reads the tree with ``git grep``:
 #: spelling the name inside a form that these patterns recognise would turn this very file into one
 #: of the places that configure the flag.
 _FLAG_NAME = "USE_UNSAFE_API_KEY"
@@ -847,8 +847,8 @@ _FLAG_NAME = "USE_UNSAFE_API_KEY"
 #: no ``=`` right after the name and is not a configuration.
 #:
 #: Digits belong in the value class: pydantic reads ``1`` as ``True`` exactly as it reads ``true``,
-#: so a letters-only class did not merely misread such a line, it dropped it from the count and let
-#: the floor below rest on the other places.
+#: so a letters-only class dropped such a line from the count and let the floor below rest on the
+#: other places.
 _UNSAFE_FLAG_ASSIGNMENT = re.compile(rf"{_FLAG_NAME}\s*(?::\s*bool\s*)?=\s*([A-Za-z0-9]+)")
 
 #: The second form, and the one this repo actually uses to turn a boolean setting on per overlay: a
@@ -872,7 +872,7 @@ def _following_line(grep_lines: list[str], index: int, path: str) -> str | None:
     """The line after ``grep_lines[index]``, as ``git grep -A1`` renders a context line.
 
     A match is ``path:number:text`` and a context line is ``path-number-text``, so the separator
-    alone does not say where the path ends -- every path here contains a ``-``. The path of the
+    alone does not say where the path ends: a path can contain a ``-`` itself. The path of the
     match is known, so strip that and the line number off the front.
     """
     if index + 1 >= len(grep_lines):
@@ -942,11 +942,10 @@ def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> Non
     Naming them is what goes stale: a fourth overlay, a new ``.env.<cluster>``, and the sentence is
     still true about its three while the platform runs on the fourth. So this asks the tree.
 
-    Both forms of setting it count, and that is what makes the promise above hold: a ``KEY=value``
-    line and a container env entry of two lines, the shape every overlay in this repo uses to turn
-    a boolean on. Markdown is left out on purpose, and beyond those two forms that is the whole
-    filter: ``features/futures/`` and ``archive/`` each carry a line that sets the flag to
-    ``true``, and both are prose about a situation rather than a machine in one. Failing on those
+    Both forms of setting it count, which is what makes the promise above hold. Markdown is left
+    out on purpose, and beyond those two forms that is the whole filter: ``features/futures/`` and
+    ``archive/`` each carry a line that sets the flag to ``true``, and both are prose about a
+    situation rather than a machine in one. Failing on those
     would put a permanent red on a healthy tree -- the alarm people learn to walk around that this
     whole guard exists to avoid.
     """
