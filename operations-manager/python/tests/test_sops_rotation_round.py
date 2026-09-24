@@ -1114,6 +1114,42 @@ async def test_this_repos_own_project_file_is_part_of_the_plan(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
+async def test_a_project_file_one_directory_down_in_own_projects_is_named_and_not_converted(
+    tmp_path: Path,
+) -> None:
+    """The other half of the split in ``own_project_paths()``: flat for the CIPHERTEXT questions.
+
+    ``own_plain_passwords()`` walks this same directory recursively and is pinned one directory
+    down by a test of its own. This pins the half that has to STAY flat: recursive here puts the
+    sketches in ``projects/ideas/`` under the rotation, and a sketch is not a project file this
+    round may rewrite.
+
+    Flat is only allowed by the net the same docstring promises underneath, so the second
+    assertion is the other half of that claim: what this walk leaves out comes back BY NAME from
+    the ciphertext inventory, which does walk the tree recursively. Without that half a sketch
+    carrying ciphertext is not skipped on purpose, it is skipped in silence.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    own = tmp_path / "projects"
+    (own / "ideas").mkdir(parents=True)
+    flat = await _own_project(own, "simple-example", old_public)
+    sketch = await _own_project(own / "ideas", "plan", old_public)
+
+    with (
+        patch.object(tool, "sops_files_for", return_value=[]),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "OWN_PROJECTS", own),
+        patch.object(tool, "files_with_ciphertext", return_value={flat: 1, sketch: 1}),
+    ):
+        plan = await tool.build_plan([], old_private, new_private, old_public)
+
+    assert [report.path for report in plan.projects] == [flat], "a sketch is not a project file of this round"
+    assert plan.total == 1
+    assert plan.gaps == [sketch], "and it is not silently left out either: the round stops on it by name"
+
+
+@pytest.mark.asyncio
 async def test_this_repos_own_project_file_is_converted_and_fingerprinted(tmp_path: Path) -> None:
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -2997,8 +3033,9 @@ async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
     Why the flat walk over this repo's own ``projects/`` is the wrong net for the token half,
     and what a deeper file there carries: ``own_plain_passwords``.
 
-    The file is identical to the one in the test above and sits one directory lower, so the pair
-    measures the DEPTH and nothing else; on the flat selection this run ended in a full CLEAN.
+    The file carries the same two entries as the one in the test above and sits one directory
+    lower, so the pair measures the DEPTH and nothing else; on the flat selection this run ended
+    in a full CLEAN.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -3032,6 +3069,28 @@ async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
     assert "the old key opens nothing" not in printed, "a token one directory down is no clean sheet"
     assert "repositories[0].password" not in printed, "the other plain password is not the token"
     assert "1 fields checked" in printed, f"only {converted} is converted, so only that one counts"
+
+
+def test_an_absent_own_projects_directory_leaves_the_token_half_empty_instead_of_raising(
+    tmp_path: Path,
+) -> None:
+    """``own_project_paths()`` refuses a missing directory with ``is_dir()``; this walk has no such line.
+
+    The token half moved off that helper onto ``project_files()``, and the guard a sister
+    function carries is what such a move drops in silence. This walk runs on the last gate
+    before ``--remove-old-key``, where an exception is not an empty list but a rotation that
+    cannot finish.
+
+    Two shapes of "not a directory": the path that is not there at all, and the path that turns
+    out to be a file.
+    """
+    absent = tmp_path / "absent"
+    a_file = tmp_path / "projects.yaml"
+    a_file.write_text("name: not-a-directory\n")
+
+    for stand in (absent, a_file):
+        with patch.object(tool, "OWN_PROJECTS", stand):
+            assert tool.own_plain_passwords() == [], stand
 
 
 @pytest.mark.asyncio
