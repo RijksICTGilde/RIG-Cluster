@@ -240,6 +240,35 @@ async def test_a_failing_apply_still_takes_the_manifest_with_it(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_an_interrupt_during_the_apply_still_takes_the_manifest_with_it(tmp_path: Path) -> None:
+    """The same manifest, through the door a named failure type does not cover.
+
+    The file holds the whole platform key, so what may not survive is any way out of the apply,
+    not just the one that returns a non-zero code. Ctrl-C while ``kubectl apply`` is running is a
+    ``KeyboardInterrupt``: the test above would stay green on a cleanup that named ``RuntimeError``
+    and left the key in the temp dir of a shared dev server.
+    """
+    private, _public = generate_sops_key_pair()
+    key_file = tmp_path / "key.txt"
+    key_file.write_text(f"# created: today\n{private}\n")
+    seen: list[Path] = []
+
+    async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
+        if args[0] == "apply":
+            seen.append(Path(args[-1]))
+            raise KeyboardInterrupt
+        return "rendered: yaml", "", 0
+
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(side_effect=run_command)
+    with patch.object(tool, "create_kubectl_connector", return_value=connector), pytest.raises(KeyboardInterrupt):
+        await tool.write_secret("rig-prd-operations", key_file)
+
+    assert len(seen) == 1
+    assert not seen[0].exists(), "the manifest with the platform key outlived the interrupt"
+
+
+@pytest.mark.asyncio
 async def test_a_namespace_without_the_deployment_is_not_restarted() -> None:
     """The RON namespace holds the key but runs no operations-manager; that is not an error."""
     connector = AsyncMock()

@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, decrypt_age_content, encrypt_age_content
@@ -435,6 +436,30 @@ def test_write_loose_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
     path.write_text("A=something-else\n")
     with pytest.raises(ConversionFailed):
         write_loose_value(field_, SHAPED_TOO)
+
+
+def test_write_loose_value_leaves_no_temporary_behind_when_it_is_interrupted(tmp_path: Path) -> None:
+    """The half of the writer that is not about the target file: what the failure leaves next to it.
+
+    The temporary is a dotfile in the directory of the file being converted, so in this repo it
+    sits in ``bootstrap/`` or next to ``.env`` and a following ``git add -A`` picks it up. Ctrl-C
+    during the move is a ``KeyboardInterrupt``: not an ``OSError``, so a named list of failure
+    types would step over the cleanup and leave it there. ``argo_rotation.write_repository_secret``
+    names this function as the reason it catches just as widely, which only holds while it does.
+    """
+    path = tmp_path / "configmap.yaml"
+    before = f"data:\n  .env: |\n    A={SHAPED}\n    B=keep-me\n"
+    path.write_text(before)
+    field_ = loose_values(path)[0]
+
+    with (
+        patch("key_rotation.os.replace", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        write_loose_value(field_, SHAPED_TOO)
+
+    assert list(tmp_path.iterdir()) == [path], "the temporary outlived the interrupt"
+    assert path.read_text() == before
 
 
 # ---------------------------------------------------------------------------
