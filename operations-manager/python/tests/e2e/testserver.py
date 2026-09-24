@@ -33,11 +33,9 @@ SECRET_KEY = "e2e-test-secret-key-padded-to-32-chars-minimum"
 def test_age_keypair() -> tuple[str, str]:
     """A throwaway AGE keypair for this test run, as ``(private, public)``.
 
-    Minted rather than pasted in. A fixed key used to sit here, and three more like it elsewhere
-    in the tree; that they were all harmless is exactly why the one real production key among
-    them went unnoticed for a year. ``cache`` keeps it stable for the whole process, which the
-    wizard needs: it encrypts a project's key with the public half and reads it back with the
-    private one within the same server.
+    Minted per run rather than pasted in, and ``cache`` keeps it stable for the whole process:
+    the wizard encrypts a project's key with the public half and reads it back with the private
+    one within the same server.
 
     Requires ``age-keygen``, which the E2E suite needs for the real ``age`` calls anyway.
     """

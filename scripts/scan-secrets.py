@@ -13,7 +13,7 @@ file: a list of where secrets sit, and how many, is a map to what is not revoked
 it yourself, to a path outside the repository. See ``scripts/README.md``.
 
 Why an AGE candidate only counts when ``age-keygen`` accepts it is in ``secret_scan.py``; the
-three layers of the guard are in ``features/sops-sleutel-vervangen.md``.
+three layers of the guard are in ``features/sops-sleutel-roteren.md``.
 """
 
 from __future__ import annotations

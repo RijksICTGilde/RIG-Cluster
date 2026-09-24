@@ -12,8 +12,8 @@ That is what these tests measure, on real ciphertext produced by the real ``age`
   ``age-private-key`` block scalar.
 
 Both keys are generated per test through ``generate_sops_key_pair`` -- the same helper OPI
-uses when it makes a project key. No fixed key appears in this file: a key in a test file is
-what put this task on the list in the first place.
+uses when it makes a project key. No fixed key appears in this file, so the scanner has
+nothing to trip over here.
 """
 
 from __future__ import annotations

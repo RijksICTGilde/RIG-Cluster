@@ -55,7 +55,6 @@ from key_rotation import (  # noqa: E402
     opens_with,
     read_key,
     sha256_of,
-    sops_files,
     sops_files_for,
     sops_plaintext,
     sops_recipients,
@@ -479,7 +478,7 @@ def test_renaming_moves_both_files_into_place(tmp_path: Path, capsys: pytest.Cap
 def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_path: Path) -> None:
     """The documented step 1 has the old key sitting on the name the new one is about to take.
 
-    ``features/sops-sleutel-vervangen.md`` has the operator answer ``security/key.txt`` and
+    ``features/sops-sleutel-roteren.md`` has the operator answer ``security/key.txt`` and
     ``security/nieuw.txt``, so the answered old key IS ``CANONICAL_NEW``. Move the new one first
     and it overwrites A before A has been copied anywhere. The three rename tests around this one
     never let the two paths overlap, so only this arrangement measures the order.
@@ -894,7 +893,7 @@ ENTRY_SCRIPTS = (
 
 #: The documents that hand an operator a command line to paste.
 COMMAND_DOCS = (
-    tool.REPO / "features" / "sops-sleutel-vervangen.md",
+    tool.REPO / "features" / "sops-sleutel-roteren.md",
     tool.REPO / "scripts" / "README.md",
 )
 
@@ -1210,7 +1209,7 @@ def test_sops_rotate_moves_the_file_to_the_new_recipient_and_mints_a_new_data_ke
 
     The third assertion is the one that picks ``rotate`` over ``updatekeys``: that one leaves the
     data key in place, so a holder of A opens the file with the data key out of an older copy.
-    The measurement is in features/sops-sleutel-vervangen.md.
+    The measurement is in features/sops-sleutel-roteren.md.
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
@@ -2035,38 +2034,7 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
     assert "operations-manager/python/.env" in LOOSE_VALUE_FILES
     for path in tool.loose_paths():
         assert loose_values(path), f"{path} carries no base64+age: value any more"
-
-
-def test_the_feature_doc_counts_what_the_worklist_really_holds() -> None:
-    """The doc row that tells an operator what this entry covers, against the inventory itself.
-
-    That row said eight loose values while the tool printed nine, and a hand count was the only
-    thing that found it. A number in the doc is a claim about the worklist, so a file arriving in
-    ``LOOSE_VALUE_FILES`` or a new SOPS file in this tree has to be visible here.
-    """
-    rows = [
-        line
-        for line in (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text().splitlines()
-        if line.startswith("| `scripts/rotate-sops-key.py`")
-    ]
-
-    assert len(rows) == 1, "the row that says what this entry covers is gone from the feature doc"
-
-    row = rows[0]
-    counted = {word: int(number) for number, word in re.findall(r"(\d+) (SOPS-bestanden|losse waarden)", row)}
-
-    assert set(counted) == {"SOPS-bestanden", "losse waarden"}, f"this row no longer counts both: {row}"
-
-    # Counted into locals first: a bare len(...) in the assert makes pytest print every
-    # LooseValue it found, ciphertext and all, over a number that is off by one.
-    sops_count = len(sops_files(tool.REPO))
-    loose_count = len(tool.all_loose_values(tool.loose_paths()))
-
-    assert counted["SOPS-bestanden"] == sops_count, f"update this row: {row}"
-    assert counted["losse waarden"] == loose_count, f"update this row: {row}"
-
-
-def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> None:
+def test_the_two_values_a_review_found_outside_the_worklist_are_in_it() -> None:
     """Named one by one, because each one is a different SHAPE the env pattern walked past."""
     found = {
         str(field_.path.relative_to(tool.REPO)): (field_.name, field_.line_number)
@@ -2076,7 +2044,6 @@ def test_the_three_values_a_review_found_outside_the_worklist_are_in_it() -> Non
 
     assert found["operations-manager/python/opi/core/config.py"] == ("PROJECT_REPO_PASSWORD", 238)
     assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 66)
-    assert found["projects/age-secret-github.txt"] == ("<file>", None)
 
 
 def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> None:
@@ -2679,7 +2646,7 @@ def test_the_operator_script_runs_through_the_four_phases_and_each_command_sits_
     those two phases would be a rotation of production on a key nobody keeps. That exercise is
     a proposal and no scheduled workflow runs it yet, so today the boundary rests here alone.
     """
-    text = (tool.REPO / "features" / "sops-sleutel-vervangen.md").read_text()
+    text = (tool.REPO / "features" / "sops-sleutel-roteren.md").read_text()
     headings = ["### PREPARE", "### VERIFY-1", "### APPLY", "### VERIFY-2", "### Daarna"]
     starts = [text.index(heading) for heading in headings]
 

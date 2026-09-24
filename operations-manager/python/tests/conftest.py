@@ -22,10 +22,9 @@ if TYPE_CHECKING:
 def make_age_keypair() -> Callable[[], tuple[str, str]]:
     """A factory that mints a throwaway AGE keypair, generated for this test run only.
 
-    A fixed key in a test file is what put the platform key rotation on the list: four of them
-    sat in this tree, one of which was the real production key, and the three harmless ones were
-    the reason nobody noticed. A test that needs a key makes one; then a scanner that alarms on a
-    valid ``AGE-SECRET-KEY-`` has nothing to complain about in the tree and stays believable.
+    A test that needs a key makes one, so no fixed key has to sit in the tree. That is what keeps
+    the scanner believable: it alarms on any valid ``AGE-SECRET-KEY-``, and an alarm with known
+    findings in it is one people learn to walk around.
 
     Session scope, because ``age-keygen`` is a subprocess and the pair is immutable -- but the
     factory is called per test that wants one, so a test needing two distinct keys just calls it

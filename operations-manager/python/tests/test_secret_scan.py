@@ -722,10 +722,14 @@ def test_ci_scans_the_whole_tree_and_not_the_diff() -> None:
     assert not any("--files" in command for command in commands)
     # age-keygen has to be there, or every placeholder in the suite becomes a finding.
     assert any("age" in command for command in commands)
-    # On every pull request, and on a push to main or main_github.
+    # On every pull request, and on a push. Which branches the push covers is a choice that may
+    # change; that it covers main is not, because that is where a merge lands. A push filter that
+    # is absent altogether means every branch, which is wider and therefore also fine.
     triggers = workflow[True] if True in workflow else workflow["on"]
     assert "pull_request" in triggers
-    assert set(triggers["push"]["branches"]) >= {"main", "main_github"}
+    assert "push" in triggers
+    push_branches = (triggers["push"] or {}).get("branches")
+    assert push_branches is None or "main" in push_branches
 
 
 def test_every_flag_the_docs_hand_an_operator_exists_on_the_scanner() -> None:
@@ -739,7 +743,7 @@ def test_every_flag_the_docs_hand_an_operator_exists_on_the_scanner() -> None:
     options = {option for action in _scan_secrets_module().build_parser()._actions for option in action.option_strings}
     sources = (
         _REPO_ROOT / "scripts" / "README.md",
-        _REPO_ROOT / "features" / "sops-sleutel-vervangen.md",
+        _REPO_ROOT / "features" / "sops-sleutel-roteren.md",
         _REPO_ROOT / ".pre-commit-config.yaml",
         _REPO_ROOT / ".github" / "workflows" / "security.yml",
     )

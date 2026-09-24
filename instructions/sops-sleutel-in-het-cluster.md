@@ -43,6 +43,6 @@ OPI wel. Die krijgt de sleutel via `env.valueFrom.secretKeyRef` binnen (`bootstr
 
 ## Verder lezen
 
-- `features/sops-sleutel-vervangen.md` is het stappenplan voor de vervanging zelf
+- `features/sops-sleutel-roteren.md` is het stappenplan voor de vervanging zelf
 - `features/send-email.md` heeft de aanzetstappen voor de ron-namespace, inclusief het kopieercommando
 - `bootstrap/rig-system/kustomize/sops-plugin.sh` is de plugin die de sleutel leest

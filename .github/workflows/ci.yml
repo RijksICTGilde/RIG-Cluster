@@ -43,12 +43,7 @@ jobs:
       # de age-keygen binary op de runner.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
-      # Zonder sops slaan juist de bewakers van de sleutelwissel over, en overslaan leest als
-      # groen. Zelfde versie als de OPI-image (SOPS_VERSION in operations-manager/Dockerfile),
-      # zodat CI en pod hetzelfde gedrag zien.
-      # De checksum hoort erbij: een release-tag is muteerbaar door de uitgever, dus zonder
-      # deze regel bepaalt het moment van downloaden welke binary de geheimen van deze repo
-      # in handen krijgt. Komt uit sops-v3.13.2.checksums.txt van diezelfde release.
+      # Vastgepind op versie en checksum omdat een release-tag muteerbaar is.
       - name: Install sops
         run: |
           curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64

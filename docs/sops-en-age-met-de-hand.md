@@ -5,7 +5,7 @@ versleutelen of wil begrijpen wat de Taskfile en de CMP-plugin doen. In het norm
 je dit niet: `task generate-age-key` maakt de sleutel en `task generate-env-secrets-for-operations-manager`
 maakt het SOPS-secret. Dit doc is er voor het geval je eronder wilt kijken.
 
-Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-vervangen.md` het
+Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-roteren.md` het
 stappenplan; hier staan de losse handelingen eronder.
 
 Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo. Die
@@ -15,9 +15,7 @@ map is verwijderd: hij bevatte een eigen AGE-sleutelpaar voor ontwikkeldoeleinde
 ## 1. Een AGE-sleutelpaar maken
 
 `security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
-neerzetten om deze handelingen te doen. **De sleutel en het secret-manifest hieronder gaan er
-daarom allebei in:** in de wortel van de repo is `sops-key.txt` niet genegeerd, en een
-`git add -A` neemt hem dan mee.
+neerzetten om deze handelingen te doen.
 
 Ook `security/` is een tussenoplossing: een sleutel hoort op termijn in een CI/CD-omgeving of een
 vault-achtige voorziening en niet in een map op een laptop. Waar precies is de vraag van het
@@ -53,7 +51,7 @@ haalt er met `grep '^AGE-SECRET-KEY-'` de regel uit.
 
 Dit secret staat in MEER dan een namespace, en niet overal met dezelfde sleutel erin. Wissel je
 de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`: dat selecteert op sleutel en
-niet op naam. Zie `features/sops-sleutel-vervangen.md`.
+niet op naam. Zie `features/sops-sleutel-roteren.md`.
 
 ## 3. Een geheim versleutelen
 
@@ -93,4 +91,4 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).
 - **`sops updatekeys` is geen sleutelwissel.** Dat wisselt de recipients en laat de data key
   staan, dus wie de oude sleutel ooit had opent het bijgewerkte bestand nog steeds. Gebruik
-  `sops rotate`; de meting staat in `features/sops-sleutel-vervangen.md`.
+  `sops rotate`; de meting staat in `features/sops-sleutel-roteren.md`.

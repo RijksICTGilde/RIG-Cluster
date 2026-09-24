@@ -1,6 +1,6 @@
 """The engine under the key rotation: one loop, five places, one fingerprint.
 
-The whole story, with the measurements, is in ``features/sops-sleutel-vervangen.md``.
+The whole story, with the measurements, is in ``features/sops-sleutel-roteren.md``.
 
 There is a single operation under every place that is not a SOPS file, and it lives here once:
 
@@ -84,6 +84,11 @@ from secret_scan import RULES, skip_reason, tracked_files  # type: ignore[report
 #: The repository root. Every path this module resolves outside of an argument -- the loose
 #: value files below -- hangs off it.
 REPO = Path(__file__).resolve().parents[1]
+
+#: Worktrees live INSIDE this repo, under this directory. Every walk here skips it along with
+#: ``.git``: a worktree is a second checkout of the same files, so counting it means finding the
+#: same secret several times and, worse, rewriting it in a working copy that is not yours.
+WORKTREE_DIR = ".claude"
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 
@@ -467,10 +472,16 @@ def sops_files(tree: str | Path) -> list[Path]:
 
     Matching on the name would miss half of them: next to the ``*.sops.yaml`` files the tree
     holds two ``operations-manager-env-secrets.yaml`` without that suffix.
+
+    ``.claude/worktrees`` is skipped along with ``.git``, and that is not cosmetic. A worktree
+    checked out INSIDE the repo is a second copy of these same files, so without this the walk
+    finds them again per worktree: measured on this checkout, 21 became 118 over four of them.
+    A rotation would then rewrite secrets in somebody else's working copy, leave uncommitted
+    changes behind there, and count those copies into the fingerprint it compares against.
     """
     found: list[Path] = []
     for path in sorted(Path(tree).rglob("*.yaml")):
-        if ".git" in path.parts:
+        if ".git" in path.parts or WORKTREE_DIR in path.parts:
             continue
         try:
             content = path.read_text(encoding="utf-8")
@@ -641,11 +652,12 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 #: ``.env`` is on it deliberately: that file really is loaded during local development, so
 #: without conversion that stops working the moment A goes away.
 #:
-#: The last three read like examples and are not. ``PROJECT_REPO_PASSWORD`` is the default
-#: ``odcn-production`` and ``local`` fall back to (only ``sandboxed-local`` overrides it), the
-#: migration script carries a copy of that same value, and ``age-secret-github.txt`` is a whole
-#: file that is one armored block which nothing in the tree names. All three open with the
-#: platform key.
+#: The last two read like examples and are not. ``PROJECT_REPO_PASSWORD`` is the default
+#: ``odcn-production`` and ``local`` fall back to (only ``sandboxed-local`` overrides it), and the
+#: migration script carries a copy of that same value. Both open with the platform key.
+#:
+#: ``projects/age-secret-github.txt`` stood here too, a whole file that was one armored block.
+#: It was removed from the tree: nothing read it and the token in it was withdrawn.
 #:
 #: It lives here and not in ``sops_rotation`` because BOTH rounds walk it. The key round
 #: re-encrypts every value on the list; the PAT round replaces the ones that hold the shared
@@ -656,7 +668,6 @@ LOOSE_VALUE_FILES = (
     "operations-manager/python/.env",
     "operations-manager/python/opi/core/config.py",
     "operations-manager/python/scripts/migrate_project_to_production.py",
-    "projects/age-secret-github.txt",
 )
 
 
@@ -763,9 +774,12 @@ def project_files(directory: str | Path) -> list[Path]:
     that a flat selection leaves on the old key.
 
     ``.git`` is skipped so that pointing the tool at a clone root instead of at its
-    ``projects/`` walks the work tree and not the object store.
+    ``projects/`` walks the work tree and not the object store, and ``.claude`` for the reason
+    on ``WORKTREE_DIR``.
     """
-    return sorted(path for path in Path(directory).rglob("*.yaml") if ".git" not in path.parts)
+    return sorted(
+        path for path in Path(directory).rglob("*.yaml") if ".git" not in path.parts and WORKTREE_DIR not in path.parts
+    )
 
 
 def project_fields(data: dict[str, Any]) -> list[tuple[str, str]]:

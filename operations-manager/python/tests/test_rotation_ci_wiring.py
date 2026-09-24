@@ -19,7 +19,7 @@ import yaml
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _WORKFLOWS = _REPO_ROOT / ".github" / "workflows"
-_FEATURE_DOC = _REPO_ROOT / "features" / "sops-sleutel-vervangen.md"
+_FEATURE_DOC = _REPO_ROOT / "features" / "sops-sleutel-roteren.md"
 
 #: The entry points that convert something or touch the cluster.
 _ROTATION_SCRIPTS = ("rotate-sops-key.py", "rotate-project-keys.py", "replace-git-pat.py", "set-sops-key-secret.py")
@@ -111,7 +111,7 @@ def test_the_monthly_exercise_is_not_running_yet_and_the_doc_still_says_so() -> 
 
     assert scheduled == {}, (
         f"the rotation runs on a schedule now: {scheduled}. The docs and the two docstrings that "
-        'say "it would run" are stale -- see "De oefenronde" in features/sops-sleutel-vervangen.md'
+        'say "it would run" are stale -- see "De oefenronde" in features/sops-sleutel-roteren.md'
     )
 
     future_work = _FEATURE_DOC.read_text().split("## Wat hierna komt", 1)

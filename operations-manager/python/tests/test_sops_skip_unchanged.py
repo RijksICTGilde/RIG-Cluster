@@ -28,9 +28,8 @@ pytestmark = pytest.mark.skipif(
 def keypair(age_keypair: tuple[str, str]) -> tuple[str, str]:
     """The throwaway keypair for this run, as ``(public, private)``.
 
-    Minted by ``age-keygen`` per run instead of pasted in as a constant. A fixed key in a test
-    file is what hid the real platform key in this tree for a year: there were four of them, and
-    the three harmless ones were the reason the fourth did not stand out.
+    Minted by ``age-keygen`` per run instead of pasted in as a constant, so the tree holds no
+    fixed key for the scanner to trip over.
     """
     private_key, public_key = age_keypair
     return public_key, private_key

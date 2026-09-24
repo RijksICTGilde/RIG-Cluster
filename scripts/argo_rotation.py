@@ -11,7 +11,7 @@ CLEAN, because the old KEY really does open nothing any more.
 These secrets are DERIVED: OPI regenerates them out of the project file whenever it processes
 that project, so this round writes what OPI itself would write and nothing else. What that
 means -- where the value comes from, why an SSH secret is left alone, why only one direction of
-the coupling stops the round -- is worked out in ``features/sops-sleutel-vervangen.md`` under
+the coupling stops the round -- is worked out in ``features/sops-sleutel-roteren.md`` under
 "De PAT-ronde raakt drie plekken", and below, at the place each decision is made.
 """
 

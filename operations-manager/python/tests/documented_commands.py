@@ -11,7 +11,7 @@ import shlex
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-FEATURE_DOC = REPO / "features" / "sops-sleutel-vervangen.md"
+FEATURE_DOC = REPO / "features" / "sops-sleutel-roteren.md"
 
 #: How every documented invocation of an ``opi``-importing entry starts.
 LAUNCHER = "uv run --project operations-manager/python python"

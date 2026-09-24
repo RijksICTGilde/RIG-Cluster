@@ -8,7 +8,7 @@ hier omdat ze paden in de repowortel aanraken (`bootstrap/`, `infrastructure/`, 
 
 ## De sleutelrotatie
 
-Zie `features/sops-sleutel-vervangen.md` voor het hele verhaal, inclusief de metingen.
+Zie `features/sops-sleutel-roteren.md` voor het hele verhaal, inclusief de metingen.
 
 | ingang | doet |
 |---|---|
@@ -59,7 +59,7 @@ pad BUITEN de repo. `tests/test_secret_scan.py` pint dat vast, zodat zo'n vlag e
 bij komt.
 
 Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt toegepast --
-de vindplaatsenlijst in `features/sops-sleutel-vervangen.md` die de rotatieronde omzet --
+de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
 hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
 ## De rest

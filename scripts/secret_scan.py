@@ -1,6 +1,6 @@
 """Scan a tree, a set of files, or the whole git history for committed secrets.
 
-This is layer 1 and layer 2 of the guard described in ``features/sops-sleutel-vervangen.md``: the
+This is layer 1 and layer 2 of the guard described in ``features/sops-sleutel-roteren.md``: the
 pre-commit hook and the CI job both call ``scan-secrets.py``, which calls this module. Only the CI
 job binds -- ``--no-verify`` is standing practice in this project, because pre-commit stashes
 everything unstaged and knocks over other sessions working in the same checkout.
@@ -40,7 +40,7 @@ AGE_KEY_MARKER = "AGE-SECRET-KEY-"
 #: It deliberately holds no ``dist`` or ``build``, and it deliberately does not run on the
 #: ``git ls-files`` path: where a file sits is never a reason to leave it unread. What that cost
 #: while it did is measured under "Wat er NIET gelezen wordt" in
-#: ``features/sops-sleutel-vervangen.md``.
+#: ``features/sops-sleutel-roteren.md``.
 WALK_SKIP_DIRECTORIES = frozenset({".git", ".venv", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache"})
 #: Suffixes that carry no readable text. ``.svg`` is deliberately NOT among them: it is XML, a
 #: token pasted into one is as readable as in any other file, and a suffix list is the wrong place
