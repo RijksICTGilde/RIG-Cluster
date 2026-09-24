@@ -410,6 +410,15 @@ def test_loose_values_ignores_prose_about_the_prefix(tmp_path: Path) -> None:
 
 
 def test_write_loose_value_keeps_the_indentation_and_the_other_lines(tmp_path: Path) -> None:
+    """The converted line, and the directory it was converted in: nothing next to the file.
+
+    The temporary is consumed by the ``os.replace`` and not by a cleanup, so a success is the one
+    outcome where nothing removes it: the interrupt test below hangs its whole listing on the
+    failure path, and it is that test that names what a leftover dotfile in this directory
+    reaches. Measured with a ``Path(temporary).write_text`` after the move: 0 red over the 157
+    tests of this file, ``test_pat_loose_values.py`` and ``test_sops_rotation_round.py`` without
+    the assertion below, 1 red here with it.
+    """
     path = tmp_path / "configmap.yaml"
     path.write_text(f"data:\n  .env: |\n    A={SHAPED}\n    B=keep-me\n")
 
@@ -417,6 +426,7 @@ def test_write_loose_value_keeps_the_indentation_and_the_other_lines(tmp_path: P
     write_loose_value(field_, SHAPED_TOO)
 
     assert path.read_text() == f"data:\n  .env: |\n    A={SHAPED_TOO}\n    B=keep-me\n"
+    assert list(tmp_path.iterdir()) == [path], "the temporary outlived the write it was made for"
 
 
 def test_write_loose_value_rewrites_a_whole_file_block(tmp_path: Path) -> None:
