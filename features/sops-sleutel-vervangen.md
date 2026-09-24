@@ -190,7 +190,21 @@ uv run --project operations-manager/python python scripts/set-sops-key-secret.py
 # en ArgoCD de eerste render met de nieuwe sleutel laten doen terwijl je kijkt
 kubectl annotate application production-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
 kubectl annotate application user-applications -n rig-system argocd.argoproj.io/refresh=hard --overwrite
+kubectl annotate application ron-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
 ```
+
+**Lees de droogloop van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen
+secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want `sops-plugin.sh:23`
+leest hem uit `${ARGOCD_APP_NAMESPACE}`, de namespace waar de applicatie naartoe deployt. Op productie
+dragen er daarom twee de platformsleutel: `rig-prd-operations`, en `rig-prd-ron` voor de mailrelay,
+die er een kopie van heeft. Dat staat in `bootstrap/rig-system/kustomize/overlays/odcn-production/namespace-ron.yaml`
+beschreven als een handmatige aanzetstap, dus het komt niet uit git en het valt niet vanzelf op. Sla
+die tweede over en de mailrelay valt om bij zijn eerstvolgende render, niet bij de wissel.
+
+Alle ANDERE namespaces met die naam dragen een eigen projectsleutel, die OPI er per project in zet.
+Het script bepaalt het verschil door te meten welke de OUDE publieke sleutel dragen, en noemt de rest
+in de uitvoer als "left alone" met hun eigen publieke sleutel erachter. Die lijst is de controle: wat
+er onder "WILL be replaced" staat hoort het te zijn, en daaronder hoort geen projectnamespace.
 
 `set-sops-key-secret.py` doet zelf de herstart, en die kost **geen nieuwe image**. De sleutel komt
 via `env.valueFrom.secretKeyRef` bij OPI binnen
