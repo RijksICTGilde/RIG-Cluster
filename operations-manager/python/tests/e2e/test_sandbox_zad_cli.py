@@ -24,6 +24,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+import httpx
 import pytest
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_via_wizard
@@ -151,15 +152,25 @@ def test_component_toevoegen_via_cli_landt_in_het_projectbestand(
     assert naam in str(lijst.json()), f"'{naam}' staat niet in `component list`: {lijst.stdout}"
 
 
-def test_component_verwijderen_via_cli(
+def test_een_component_in_gebruik_wordt_geweigerd_en_de_uitweg_staat_in_de_api(
     cli: ZadCli,
     cli_project: CreatedProject,
     forgejo: ForgejoClient,
+    sandbox_url: str,
 ) -> None:
-    """Het einde van de doorloop: opruimen kan ook over de CLI.
+    """Het einde van de doorloop, en de plek waar de CLI en de API uiteenlopen.
 
-    Draait na de toets hierboven en gebruikt diezelfde component, want een doorloop die
-    alleen aanmaakt laat de helft van het pad ongemeten.
+    De component uit de vorige toets hangt aan een deployment. De API weigert hem dan met
+    409 en biedt `confirm_in_use` als uitweg; het antwoord noemt volgens het
+    OpenAPI-document elke plek waar hij nog gebruikt wordt. `zad component delete` kent die
+    vlag niet (gemeten op zad-cli 1.0.0: alleen `--yes` en `--dry-run`), dus opruimen over
+    de CLI eindigt hier.
+
+    Wat deze toets vastlegt is daarom niet "de CLI kan het niet" - dat zou een gebrek
+    vastpinnen dat morgen gerepareerd mag worden. Hij legt de twee dingen vast die hoe dan
+    ook moeten blijven gelden: de weigering is leesbaar en zonder traceback, en de API
+    HOUDT de uitweg. Verdwijnt `confirm_in_use` uit het document, dan is er geen weg meer
+    en valt dit om.
     """
     naam = "cli-web"
     if naam not in forgejo.component_names(cli_project.name):
@@ -167,13 +178,34 @@ def test_component_verwijderen_via_cli(
 
     resultaat = cli.run("component", "delete", naam, "--yes")
     logger.info("component delete: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:400])
-    resultaat.assert_ok()
+    resultaat.assert_faalt()
+    assert "Traceback (most recent call last)" not in resultaat.uitvoer, (
+        f"de CLI braakte een traceback uit:\n{resultaat.uitvoer}"
+    )
 
+    with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0) as client:
+        document = client.get(f"{sandbox_url.rstrip('/')}/openapi.json").raise_for_status().json()
+    operatie = document["paths"]["/api/v2/projects/{project_name}/components/{component_name}"]["delete"]
+    vlaggen = {parameter["name"] for parameter in operatie.get("parameters", [])}
+    assert "confirm_in_use" in vlaggen, (
+        f"de API biedt geen uitweg meer voor een component in gebruik; gevonden: {sorted(vlaggen)}"
+    )
+
+    # Opruimen langs de weg die deze repo wel heeft, zodat het project schoon achterblijft.
+    status, _ = sandbox_api.delete_component(
+        sandbox_url,
+        cli_project.name,
+        cli_project.api_key,
+        component_name=naam,
+        confirm_in_use=True,
+        verify_ssl=_API_VERIFY_SSL,
+    )
+    assert status == 202, f"opruimen met confirm_in_use gaf {status}"
     assert forgejo.wait_for_condition(
         cli_project.name,
         lambda yaml: naam not in [c.get("name") for c in (yaml.get("components") or [])],
         timeout=240.0,
-    ), f"component '{naam}' staat na `component delete` nog in het projectbestand"
+    ), f"component '{naam}' staat er na het opruimen nog in"
 
 
 def test_onbekend_project_geeft_een_leesbare_fout(cli: ZadCli) -> None:
