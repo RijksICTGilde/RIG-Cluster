@@ -775,15 +775,15 @@ als body, precies de vorm die deze scanner bewust laat staan. **Vijf** zijn een 
 een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `features/cli-*.md`,
 `test_project_service_sequence_persist.py` en `fixtures/upgrade_safety/invites-legacy.yaml`).
 
-**Eén** is een gecommitte ontwikkelstandaard: `d68d6aebd694d636e5eb4784a952b9c3`, 12 keer, de
-default van `API_TOKEN` in `opi/core/config.py:261`. Die opent niets --
+**Eén** is een gecommitte ontwikkelstandaard: 12 keer de default van `API_TOKEN` uit
+`opi/core/config.py:261`. Die opent niets --
 `opi/utils/api_keys.py:37` gebruikt hem alleen als `USE_UNSAFE_API_KEY` aanstaat, en die staat op
 `False` in de code, op `false` in `operations-manager/python/.env` en op `false` in de configmap van
 odcn-production. Hem weghalen uit `archive/HOW.md` verandert daar dus niets aan, want hij staat als
 default van de instelling zelf in de boom.
 
 En **vier** zijn een databasewachtwoord in vijf `requires_infra`-scripts voor
-`amt2_dev_deployment_*`: `tV7ItQqGCqqUA8Efhg9q` staat in `tests/test_direct_clone.py:51` en
+`amt2_dev_deployment_*`: een ervan staat in `tests/test_direct_clone.py:51` en
 `tests/test_schema_permissions.py:21`, beide met `# From the Kubernetes secret` erachter, en
 `test_deployment2_source.py`, `test_deployment3_db.py` en `test_source_db.py` dragen er elk nog een.
 Geen AGE-sleutel en geen vindplaats van deze ronde, maar ook geen plaatshouder, en dit is de klasse
