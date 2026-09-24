@@ -24,6 +24,23 @@ omdat ze precies de vraag beantwoorden die dit plan stelde.
 | `quay.io/minio/mc` geeft 401 | **gemeten en stuk, gerepareerd** (commit `65b90336`). Controlebeeld: `quay.io/prometheus/busybox` geeft 200 vanaf dezelfde machine, `quay.io/minio/mc` en `quay.io/minio/minio` allebei 401. mc komt nu uit de GitHub-release van dezelfde tag, met de sha256sum ernaast als grendel. |
 | De productiepin is niet meer te herbouwen | **gemeten en stuk, niet gerepareerd.** De Dockerfile op `d81cdab4` haalt mc van `dl.min.io`, en dat adres geeft 410. Een terugrol naar de huidige productiepin kan alleen met het al gepubliceerde image, niet met een build. |
 
+## De nulmeting, en waarom er geen volledige staat
+
+Fase 0 van het plan vroeg om de bestaande 26 sandboxtoetsen als nulmeting. Die run is
+gestart en na 25 van de 74 toetsen afgebroken, omdat hij toen al geen oordeel meer droeg:
+vanaf dat moment liep er een tweede suite naast op hetzelfde cluster, en elke module die
+een project aanmaakt viel daardoor om op de wizardwacht van 240 seconden. De applicaties
+kwamen er wel, alleen later.
+
+Wat er VOOR die vervuiling stond en dus wel telt: `test_sandbox_all_services.py` gaf drie
+ERRORs in zijn fixture, en de overige 22 toetsen tot dat punt stonden groen. De drie
+ERRORs zijn van dezelfde soort (de wizardwacht), dus ook daar is de uitspraak
+"omgevingsartefact" waarschijnlijker dan "kapot", maar dat is niet nagemeten.
+
+**Een nulmeting hoort dus nog te gebeuren, op een rustig cluster en als enige run.** Dat
+is geen detail: zonder die meting is niet te zeggen of iets wat in de toekomst rood staat
+van de nieuwe code komt of er al stond.
+
 ## 1. Eigen container registries
 
 | Functie | Uitspraak |
