@@ -761,8 +761,9 @@ en een uitzondering op een melding die niet bestaat is geen oordeel maar ruis.
 
 Dat een uitzondering NODIG leek komt van een tweede scanner. Een review over de branch draait
 `gitleaks`, en dat is een andere poort met andere regels. Gemeten met gitleaks 8.30.1 over deze
-boom: **167 bevindingen op getrackte bestanden, 24 verschillende waarden**, en de kop van die lijst
-is `test-api-key-12345` (72x) en `your-api-key` (45x) -- plaatshouders in toetsen en documentatie.
+boom: **160 bevindingen op getrackte bestanden, 24 verschillende waarden** -- voor deze ronde 167,
+de zeven eraf zijn de vondsten op de waarde die hieronder uit `archive/HOW.md` gehaald is -- en de kop
+van die lijst is `test-api-key-12345` (72x) en `your-api-key` (45x): plaatshouders in toetsen en documentatie.
 Dat is precies het alarm waar de sectie hierboven over gaat, nu van de andere kant: daarom is
 gitleaks hier geen grendel en staat er een eigen scanner die zijn treffers kan bewijzen.
 
@@ -775,12 +776,18 @@ als body, precies de vorm die deze scanner bewust laat staan. **Vier** zijn een 
 een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `features/cli-*.md`,
 `test_project_service_sequence_persist.py` en `fixtures/upgrade_safety/invites-legacy.yaml`).
 
-**Eén** is een gecommitte ontwikkelstandaard: 12 keer de default van `API_TOKEN` uit
+**Eén** is een gecommitte ontwikkelstandaard: de default van `API_TOKEN` uit
 `opi/core/config.py:261`. Die opent niets --
 `opi/utils/api_keys.py:37` gebruikt hem alleen als `USE_UNSAFE_API_KEY` aanstaat, en die staat op
 `False` in de code, op `false` in `operations-manager/python/.env` en op `false` in de configmap van
-odcn-production. Hem weghalen uit `archive/HOW.md` verandert daar dus niets aan, want hij staat als
-default van de instelling zelf in de boom.
+odcn-production. Gitleaks meldde hem 12 keer, en zeven van die meldingen zaten op de vier
+voorbeeld-curls in `archive/HOW.md`; die vier dragen nu `$API_TOKEN`, met een regel erboven die
+zegt waar de waarde vandaan komt. Aan de blootstelling verandert dat niets: de waarde blijft als
+default van de instelling zelf staan in `opi/core/config.py:261`, in
+`operations-manager/python/.env:46` en in twee voorbeelden in `opi/api/router.py` -- samen de vijf
+meldingen die overblijven -- en geen van die drie bestanden is een vindplaats van deze ronde. Wat
+het weghalen wél doet staat hieronder: het haalt de twee bevindingen weg die anders in een
+uitzonderingenlijst hadden moeten staan.
 
 En **vijf** zijn geen plaatshouder, en of ze nog iets openen valt hier niet te meten. Vier ervan
 zijn een databasewachtwoord in vijf `requires_infra`-scripts voor `amt2_dev_deployment_*`: een
@@ -792,11 +799,20 @@ regel eronder dat `GET .../invite/config` hem teruggeeft, dus verzonnen is hij n
 vindplaats van deze ronde, en dit is de klasse waar een scanner die alleen bewijsbare vormen meldt
 per definitie niets over zegt. Zie "Wat hierna komt".
 
-Wordt gitleaks hier ooit wel bindend, dan hoort die uitzondering in ZIJN configuratie -- een
-`.gitleaksignore` of een `[allowlist]` in een gitleaks-toml -- met de vingerafdruk die gitleaks
-zelf uitrekent (`archive/HOW.md:generic-api-key:181`). Niet in een eigen bestand met eigen
-regelnamen: dat leest als een poort en is er geen, en een vingerafdruk die geen gereedschap
-produceert kan niemand nameten.
+Er hangt wél een poort aan zo'n lijst, alleen niet die van deze repo. De review draait
+gitleaks niet rechtstreeks maar via `secret-scan`, dat het als een van zijn lagen gebruikt. Dat
+gereedschap staat in het reviewbeeld en niet in de boom (`/usr/local/bin/secret-scan`), maar zijn
+uitzonderingenlijst staat hier wél: `ALLOW_PAD = "workflow/secret-scan-allow.toml"`, gelezen met
+`tomllib`, en `secret-scan --stel-voor` drukt het TOML-blok mét vingerafdruk kant-en-klaar af. Een
+uitzondering daar is dus na te meten, en op een vondst die de machine zelf beslist -- een kloppende
+checksum, een sleutel buiten zijn scope -- negeert het gereedschap hem expres.
+
+Dat die lijst hier niet staat is daarom een keuze en geen constatering: de twee vondsten die erin
+hadden gestaan bestaan niet meer. Een waarde weghalen is beter dan hem vastleggen, want een
+uitzondering moet elke ronde opnieuw gelezen en vertrouwd worden en een weggehaalde waarde niet.
+Wordt gitleaks hier ooit ZELF bindend, dan hoort een uitzondering in zijn eigen configuratie -- een
+`.gitleaksignore` of een `[allowlist]` in een gitleaks-toml -- met de vingerafdruk die gitleaks zelf
+uitrekent.
 
 ### Wat er gescand wordt
 

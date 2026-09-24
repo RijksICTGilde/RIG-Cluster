@@ -176,25 +176,27 @@ curl -X POST \
 -H "Content-Type: application/json" \
 http://localhost:8080/api/v1/applications/example-project-just-a-name/sync
 
+export API_TOKEN="<de ontwikkelwaarde van API_TOKEN uit opi/core/config.py; OPI accepteert hem alleen met USE_UNSAFE_API_KEY=true>"
+
 curl -X POST "http://operations-manager.kind/api/git/repositories" \
   -H "Content-Type: application/json" \
-  -H "X-API-Token: d68d6aebd694d636e5eb4784a952b9c3" \
+  -H "X-API-Token: $API_TOKEN" \
   -d '{"repo_name": "main-repo-autocreated"}'
 
 
 curl -X POST "http://operations-manager.kind/api/projects/process" \
   -H "Content-Type: application/json" \
-  -H "X-API-Token: d68d6aebd694d636e5eb4784a952b9c3" \
+  -H "X-API-Token: $API_TOKEN" \
   -d '{"project_file_path": "projects/simple-example.yaml"}'
 
 curl -X POST "http://operations-manager.kind/api/projects/process" \
 -H "Content-Type: application/json" \
--H "X-API-Token: d68d6aebd694d636e5eb4784a952b9c3" \
+-H "X-API-Token: $API_TOKEN" \
 -d '{"project_file_path": "projects/beslishulp.yaml"}'
 
 curl -X POST "http://operations-manager.rig.prd1.gn2.quattro.rijksapps.nl/api/projects/process" \
 -H "Content-Type: application/json" \
--H "X-API-Token: d68d6aebd694d636e5eb4784a952b9c3" \
+-H "X-API-Token: $API_TOKEN" \
 -d '{"project_file_path": "projects/robbert.yaml"}'
 
 
