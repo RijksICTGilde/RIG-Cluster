@@ -275,7 +275,9 @@ def test_nog_een_run_zet_er_geen_generatie_naast(
     daarna nog steeds geen `_vN` staat en dat het merkteken er precies EEN keer in staat:
     een tweede kloon over hetzelfde schema zou de rij verdubbelen of de run laten vastlopen.
     """
-    resultaat = cli.run("project", "refresh", "--yes")
+    # `project refresh` kent geen --yes (gemeten op zad-cli 1.0.0: alleen --force-clone
+    # en --dry-run), dus die vlag hoort er niet bij.
+    resultaat = cli.run("project", "refresh")
     logger.info("project refresh: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:400])
     resultaat.assert_ok()
 
