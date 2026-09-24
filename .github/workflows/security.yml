@@ -2,9 +2,7 @@ name: Security Scanning
 
 on:
   push:
-    # main_github erbij, want dat is de branch waar de publieke repo op staat en waar deze
-    # PR's base ligt. Alleen [main] liet een push daarheen langs de bindende laag komen.
-    branches: [main, main_github]
+    branches: [main]
   pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC - catch newly disclosed CVEs
@@ -44,7 +42,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # De scan vraagt age-keygen: een AGE-kandidaat telt alleen als hij een GELDIGE sleutel is,
-      # anders meldt hij de ~20 plaatshouders uit de testsuite mee.
+      # anders meldt hij de ~20 placeholders uit de testsuite mee.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
 
@@ -52,8 +50,6 @@ jobs:
         with:
           python-version: "3.14"
 
-      # De hele BOOM van de branch en niet alleen de diff: iets dat via een omweg binnenkomt
-      # (een rebase, een merge, een commit met --no-verify) valt zo alsnog op.
       - name: Scan the branch tree for committed secrets
         run: python scripts/scan-secrets.py
 
