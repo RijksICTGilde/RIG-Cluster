@@ -1136,7 +1136,6 @@ async def test_a_secret_whose_project_has_a_plain_password_is_held_to_the_token_
     assert not check.clean
     assert check.still_holds_current_pat != []
     assert check.holds_another_token != []
-    # The token half adds nothing to the count. These files are already counted once, by the
-    # tree walk that opens them as SOPS files, and the total has to match the fingerprint the
-    # conversion wrote -- counting a secret again here would put it out by one per secret.
+    # The token half adds nothing to the count: the tree walk that opens these as SOPS files
+    # counted them already, and counting them again would put the total out by one per secret.
     assert check.counted == 0

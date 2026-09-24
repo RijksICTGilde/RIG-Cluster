@@ -281,15 +281,13 @@ def own_plain_passwords() -> list[tuple[str, str]]:
     Shaped like ``own_project_fields()`` -- ``(fingerprint key, value)`` -- but the value is a
     plaintext and not a ciphertext, because there is nothing encrypted here to open.
 
-    What ``own_project_fields()`` is for the key question, this is for the token one, and the
-    split is the same as the one ``project_plain_passwords()`` describes for the clone: that
-    walk selects on ``form_of()``, so a password stored as ``plain:<token>`` is invisible to it
-    and to ``coverage_gaps()`` both. The final check walks this repo's ``projects/`` as well as
-    the clone, so without this the same input answers the token question on one path and not on
-    the other.
+    What ``own_project_fields()`` is for the key question, this is for the token one, split the
+    way ``project_plain_passwords()`` describes for the clone; here that leaves a
+    ``plain:<token>`` invisible to ``coverage_gaps()`` as well. The final check walks this
+    repo's ``projects/`` as well as the clone, so without this the same input answers the token
+    question on one path and not on the other.
 
-    Not counted, for the reason ``run_final_check`` gives at the clone's copy: nothing converted
-    these fields, so they are not in the fingerprint.
+    Not counted, for the reason ``run_final_check`` gives at the clone's copy.
     """
     found: list[tuple[str, str]] = []
     for path in own_project_paths():
@@ -514,8 +512,8 @@ async def run_final_check(
     for name, value in own_project_fields():
         await check_value(name, value, old_private, new_private, check, pat, current_pat)
     if pat is not None or current_pat is not None:
-        # Same reason, and the same "not counted", as the clone's copy below: nothing converted
-        # these, so they are not in the fingerprint. Why they are checked: ``own_plain_passwords``.
+        # Not counted, for the same reason as the clone's copy below. Why they are checked at
+        # all: ``own_plain_passwords``.
         for name, plaintext in own_plain_passwords():
             check_token(name, plaintext, pat, check, current_pat)
     if projects is not None:

@@ -2932,10 +2932,9 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
     """The same plain password, on the OTHER of the two project walks the final check makes.
 
     ``run_final_check`` walks project files twice: the clone behind ``--projects`` and this
-    repo's own ``projects/``. The test above pins the first. Both select with
-    ``project_fields()``/``form_of()``, so both are blind to ``plain:<token>`` in the same way,
-    and a fix hung on one of them leaves the same input answering the token question on one path
-    and staying silent on the other. Pinned here per walk, because that silence is a full CLEAN.
+    repo's own ``projects/``. The test above pins the first, this one the second. Both walks are
+    blind to ``plain:<token>`` in the same way -- why: ``own_plain_passwords`` -- so a fix hung
+    on one of them leaves the other silent, and that silence is a full CLEAN.
 
     Both of ``check_token``'s rules run through this new entry point, so both are measured:
     equality with the replaced token (``--pat-current-file``) and the token SHAPE
@@ -2950,8 +2949,8 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
     monkeypatch.setattr(tool, "OWN_PROJECTS", own)
     await _project_file(own, "een", new_public)
     plain = own / "twee.yaml"
-    # Three repositories, and neither finding sits at index 0: the field name is all the
-    # operator gets, and a first-position hit cannot tell a counted index from a hard-coded zero.
+    # Three repositories, and neither finding sits at index 0. Why:
+    # ``test_a_plain_password_in_a_project_file_is_held_to_the_token_too``.
     plain.write_text(
         "name: twee\n"
         "repositories:\n"
@@ -2993,13 +2992,12 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
 async def test_a_plain_password_is_held_to_the_token_shape_as_well(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
-    """The same plain password, held to the other of the two token rules.
+    """The same plain password on the clone walk, held to the other of ``check_token``'s rules.
 
-    ``check_token`` asks two questions and they do not overlap: ``--pat-current-file`` is plain
-    equality with the value that was replaced, ``--pat-new-file`` is "this is a GitHub token and
-    it is not the new one". The test above pins the first over a plain password deliberately
-    shaped like nothing at all; this one pins the second, and the shape is the whole point --
-    a token nobody remembers replacing, lying in the clear, is found by its form or not at all.
+    ``test_a_plain_password_in_a_project_file_is_held_to_the_token_too`` pins the equality rule
+    there, over a password deliberately shaped like nothing at all; this one pins the shape
+    rule, and the shape is the whole point -- a token nobody remembers replacing, lying in the
+    clear, is found by its form or not at all.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
