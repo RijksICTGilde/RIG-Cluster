@@ -46,9 +46,6 @@ class TrackedResource:
     name: str
     namespace: str
     app_name: str
-    #: The annotation or label value that named the Application, verbatim.
-    owner_ref: str
-    being_deleted: bool
 
     @property
     def kubectl_type(self) -> str:
@@ -68,12 +65,10 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
     tracking_id = (metadata.get("annotations") or {}).get(TRACKING_ID_ANNOTATION)
     if tracking_id:
         app_name = application_name_from_tracking_id(tracking_id)
-        owner_ref = tracking_id
     else:
         # The label method. Taken only in the annotation's absence, so a resource ArgoCD
         # tracks by annotation is never claimed by a label another tool left behind.
         app_name = ((metadata.get("labels") or {}).get(INSTANCE_LABEL) or "").strip() or None
-        owner_ref = f"{INSTANCE_LABEL}={app_name}" if app_name else ""
 
     if not app_name:
         return None
@@ -84,6 +79,4 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
         name=name,
         namespace=metadata.get("namespace", ""),
         app_name=app_name,
-        owner_ref=owner_ref,
-        being_deleted=bool(metadata.get("deletionTimestamp")),
     )
