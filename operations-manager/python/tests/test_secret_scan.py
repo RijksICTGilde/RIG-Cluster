@@ -835,14 +835,77 @@ def test_the_scan_has_no_way_to_write_its_findings_to_a_file() -> None:
 # the committed development token opens nothing
 # ---------------------------------------------------------------------------
 
+#: The flag's own name, referenced instead of spelled out in the patterns and fixtures below. A
+#: literal here is a line in the tree, and the test at the bottom reads the tree with ``git grep``:
+#: spelling the name inside a form that these patterns recognise would turn this very file into one
+#: of the places that configure the flag.
+_FLAG_NAME = "USE_UNSAFE_API_KEY"
+
 #: An assignment of the flag and nothing else: its name, then an ``=`` (with a ``: bool``
 #: annotation allowed in between), then the value. A line that merely NAMES the flag -- the ``if``
 #: in ``api_keys.py``, the comment above the setting in ``.env``, a dict key in a test -- carries
 #: no ``=`` right after the name and is not a configuration.
 #:
-#: Described rather than shown, for the reason the note at the top of this file gives: a literal
-#: example here would be a line in the tree that sets the flag, and this test reads the tree.
-_UNSAFE_FLAG_ASSIGNMENT = re.compile(r"USE_UNSAFE_API_KEY\s*(?::\s*bool\s*)?=\s*([A-Za-z]+)")
+#: Digits belong in the value class: pydantic reads ``1`` as ``True`` exactly as it reads ``true``,
+#: so a letters-only class did not merely misread such a line, it dropped it from the count and let
+#: the floor below rest on the other places.
+_UNSAFE_FLAG_ASSIGNMENT = re.compile(rf"{_FLAG_NAME}\s*(?::\s*bool\s*)?=\s*([A-Za-z0-9]+)")
+
+#: The second form, and the one this repo actually uses to turn a boolean setting on per overlay: a
+#: container env entry, where the name and the value are two lines and there is no ``=`` anywhere.
+#: ``operations-manager/overlays/odcn-production/patches/deployment.yaml:119`` sets
+#: ``LOG_ERRORS_TO_FILE`` that way and ``overlays/local/patches/deployment.yaml:30`` sets
+#: ``LOCAL_DEVELOPMENT``. Such an entry overrides the ``.env`` that comes from the configmap, so a
+#: fourth overlay would switch the flag on in precisely the shape a ``KEY=value`` pattern misses.
+_UNSAFE_FLAG_ENV_NAME = re.compile(rf"-\s*name:\s*[\"']?{_FLAG_NAME}[\"']?\s*$")
+
+#: The ``value:`` belonging to such an entry, which stands on the line below it.
+_ENV_VALUE = re.compile(r"^\s*value:\s*[\"']?([A-Za-z0-9]+)[\"']?\s*$")
+
+#: Every spelling pydantic accepts for a ``bool`` field as false. Anything else counts as on --
+#: including a value this cannot read, such as a ``valueFrom:`` that pulls it out of a secret, so
+#: an unreadable configuration fails the test instead of passing it.
+_FALSE_LITERALS = frozenset({"false", "f", "no", "n", "off", "0"})
+
+
+def _following_line(grep_lines: list[str], index: int, path: str) -> str | None:
+    """The line after ``grep_lines[index]``, as ``git grep -A1`` renders a context line.
+
+    A match is ``path:number:text`` and a context line is ``path-number-text``, so the separator
+    alone does not say where the path ends -- every path here contains a ``-``. The path of the
+    match is known, so strip that and the line number off the front.
+    """
+    if index + 1 >= len(grep_lines):
+        return None
+    prefix = f"{path}-"
+    candidate = grep_lines[index + 1]
+    if not candidate.startswith(prefix):
+        return None
+    number, _, text = candidate[len(prefix) :].partition("-")
+    return text if number.isdigit() else None
+
+
+def _flag_configurations(grep_lines: list[str]) -> list[tuple[str, str]]:
+    """Every place in ``git grep -n -A1`` output that gives the flag a value, and which value."""
+    configured: list[tuple[str, str]] = []
+    for index, line in enumerate(grep_lines):
+        path, _, rest = line.partition(":")
+        number, _, text = rest.partition(":")
+        if not number.isdigit():
+            continue  # a context line, or the ``--`` between two groups: not a match of its own
+        if Path(path).suffix.lower() == ".md":
+            continue
+        where = f"{path}:{number}"
+        assignment = _UNSAFE_FLAG_ASSIGNMENT.search(text)
+        if assignment is not None:
+            configured.append((where, assignment.group(1)))
+            continue
+        if _UNSAFE_FLAG_ENV_NAME.search(text) is None:
+            continue
+        following = _following_line(grep_lines, index, path) or ""
+        value = _ENV_VALUE.match(following)
+        configured.append((where, value.group(1) if value is not None else following.strip() or "<no value>"))
+    return configured
 
 
 def test_the_committed_development_token_is_only_handed_out_behind_the_unsafe_flag(
@@ -879,30 +942,78 @@ def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> Non
     Naming them is what goes stale: a fourth overlay, a new ``.env.<cluster>``, and the sentence is
     still true about its three while the platform runs on the fourth. So this asks the tree.
 
-    Markdown is left out on purpose and that is the whole filter: ``features/futures/`` and
-    ``archive/`` each carry a line that sets the flag to ``true``, and both are prose about a
-    situation rather than a machine in one. Failing on those would put a permanent red on a
-    healthy tree -- the alarm people learn to walk around that this whole guard exists to avoid.
+    Both forms of setting it count, and that is what makes the promise above hold: a ``KEY=value``
+    line and a container env entry of two lines, the shape every overlay in this repo uses to turn
+    a boolean on. Markdown is left out on purpose, and beyond those two forms that is the whole
+    filter: ``features/futures/`` and ``archive/`` each carry a line that sets the flag to
+    ``true``, and both are prose about a situation rather than a machine in one. Failing on those
+    would put a permanent red on a healthy tree -- the alarm people learn to walk around that this
+    whole guard exists to avoid.
     """
     grep = subprocess.run(
-        ["git", "-C", str(_REPO_ROOT), "grep", "-n", "USE_UNSAFE_API_KEY"],
+        ["git", "-C", str(_REPO_ROOT), "grep", "-n", "-A1", _FLAG_NAME],
         capture_output=True,
         text=True,
         check=False,
     )
     assert grep.returncode == 0, "the flag is not in the tree at all, so this checks nothing"
 
-    configured: list[tuple[str, str]] = []
-    for line in grep.stdout.splitlines():
-        path, _, rest = line.partition(":")
-        number, _, text = rest.partition(":")
-        if Path(path).suffix.lower() == ".md":
-            continue
-        match = _UNSAFE_FLAG_ASSIGNMENT.search(text)
-        if match is not None:
-            configured.append((f"{path}:{number}", match.group(1)))
+    configured = _flag_configurations(grep.stdout.splitlines())
 
     assert len(configured) >= 3, f"expected the code default, the .env and a configmap; found {configured}"
 
-    on = [where for where, value in configured if value.lower() != "false"]
-    assert on == [], f"the unsafe API key is switched on here: {on}"
+    on = [(where, value) for where, value in configured if value.lower() not in _FALSE_LITERALS]
+    assert on == [], f"the unsafe API key is not switched off here: {on}"
+
+
+def test_both_shapes_that_configure_the_flag_are_read_including_a_numeric_value() -> None:
+    """The recogniser itself, on a tree that does not exist: neither shape is in this repo today.
+
+    Without this, the test above is green either way. There is no env entry for this flag in any
+    overlay and no ``=1`` anywhere, so a pattern that reads neither counts the same three places
+    and says nothing -- which is how the k8s shape slipped past in the first place.
+    """
+    lines = [
+        f"operations-manager/python/.env:48:{_FLAG_NAME}=false",
+        "operations-manager/python/.env-49-",
+        "--",
+        f"opi/core/config.py:262:    {_FLAG_NAME}: bool = False  # a trailing comment",
+        "--",
+        f"bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml:119:        - name: {_FLAG_NAME}",
+        'bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml-120-          value: "true"',
+        "--",
+        f"bootstrap/rig-system/kustomize/o-m/overlays/fourth/configmap.yaml:63:    {_FLAG_NAME}=1",
+        "--",
+        f"features/futures/lightweight-kind-cluster.md:272:{_FLAG_NAME}=true",
+        "--",
+        f"operations-manager/python/opi/utils/api_keys.py:37:    if settings.{_FLAG_NAME}:",
+    ]
+
+    assert _flag_configurations(lines) == [
+        ("operations-manager/python/.env:48", "false"),
+        ("opi/core/config.py:262", "False"),
+        ("bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml:119", "true"),
+        ("bootstrap/rig-system/kustomize/o-m/overlays/fourth/configmap.yaml:63", "1"),
+    ]
+
+    # And the two values a letters-only class or a missing second shape would have dropped are the
+    # ones that switch the flag ON, so dropping them is not a misread but a silent pass.
+    assert "true" not in _FALSE_LITERALS
+    assert "1" not in _FALSE_LITERALS
+
+
+def test_an_env_entry_whose_value_cannot_be_read_does_not_pass_as_off() -> None:
+    """A ``valueFrom:`` puts the value in a secret, where this cannot follow it.
+
+    The entry still configures the flag, so the honest answer is "not provably off" and not
+    "absent": it has to land in the list with a value that fails the check above.
+    """
+    lines = [
+        f"bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml:10:        - name: {_FLAG_NAME}",
+        "bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml-11-          valueFrom:",
+    ]
+
+    ((where, value),) = _flag_configurations(lines)
+
+    assert where == "bootstrap/rig-system/kustomize/o-m/overlays/fourth/patches/deployment.yaml:10"
+    assert value.lower() not in _FALSE_LITERALS, "a value this cannot read must not count as off"
