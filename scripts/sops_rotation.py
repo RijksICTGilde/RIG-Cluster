@@ -156,11 +156,17 @@ def sops_fingerprint_key(path: Path) -> str:
 
 
 def own_project_paths() -> list[Path]:
-    """This repo's own project files. Flat on purpose, unlike the clone's ``project_files()``.
+    """This repo's own project files, for the CIPHERTEXT questions. Flat on purpose.
 
     ``projects/ideas/`` holds sketches that are not project files, and this repo's ciphertext is
-    already measured against ``coverage_gaps()`` -- so a project file appearing in a
-    subdirectory here is a named gap that stops the round, not a silent miss.
+    already measured against ``coverage_gaps()``, which walks the tree recursively -- so a
+    project file appearing in a subdirectory here is a named gap that stops the round, not a
+    silent miss. That is what buys the flat selection for the three callers that ask a question
+    about ciphertext: ``own_project_fields``, ``covered_in`` and ``build_plan``.
+
+    It buys nothing for the token half. A ``plain:<token>`` is not ciphertext, so no gap list
+    sees it and there is no net underneath; ``own_plain_passwords`` walks this same directory
+    recursively for that reason.
     """
     return sorted(OWN_PROJECTS.glob("*.yaml")) if OWN_PROJECTS.is_dir() else []
 
@@ -287,10 +293,16 @@ def own_plain_passwords() -> list[tuple[str, str]]:
     repo's ``projects/`` as well as the clone, so without this the same input answers the token
     question on one path and not on the other.
 
+    ``project_files(OWN_PROJECTS)`` and not ``own_project_paths()``: that flat selection is
+    bought by ``coverage_gaps()`` seeing everything it walks past, and that net catches
+    ciphertext alone. A withdrawn token lying in the clear one directory down -- and
+    ``projects/ideas/`` is five tracked files, one of them carrying a ``repositories:`` list --
+    would otherwise get a full CLEAN out of the last gate before ``--remove-old-key``.
+
     Not counted, for the reason ``run_final_check`` gives at the clone's copy.
     """
     found: list[tuple[str, str]] = []
-    for path in own_project_paths():
+    for path in project_files(OWN_PROJECTS):
         data = load_yaml_from_path(str(path))
         if not isinstance(data, dict):
             continue

@@ -2989,6 +2989,58 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
 
 @pytest.mark.asyncio
 @needs_sops
+async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same plain token, one directory deeper: still a FAIL, not a CLEAN.
+
+    The walk over this repo's own ``projects/`` was flat, and the docstring defending that
+    flatness argued from ``coverage_gaps()``: whatever the selection walks past still comes back
+    as a named gap if it carries ciphertext. That net is real, and it is the wrong net for this
+    half -- a ``plain:<token>`` is not ciphertext, so nothing catches it and the token half
+    alone falls through both mazes. Not hypothetical: ``projects/ideas/`` is five tracked files
+    and ``plan.yaml`` there carries a ``repositories:`` list.
+
+    The file is identical to the one in the test above and sits one directory lower, so the pair
+    measures the DEPTH and nothing else; on the flat selection this run ended in a full CLEAN,
+    which is the last gate before ``--remove-old-key``.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    own = tmp_path / "own-projects"
+    (own / "ideas").mkdir(parents=True)
+    converted = await _project_file(own, "een", new_public)
+    monkeypatch.setattr(tool, "OWN_PROJECTS", own)
+    plain = own / "ideas" / "twee.yaml"
+    # The finding sits at index 1, for the reason
+    # ``test_a_plain_password_in_a_project_file_is_held_to_the_token_too`` gives.
+    plain.write_text(
+        "name: twee\n"
+        "repositories:\n"
+        "  - name: docs-repo\n"
+        "    password: plain:an-ordinary-password-that-is-no-token\n"
+        "  - name: main-repo\n"
+        f"    password: plain:{current}\n"
+    )
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 1, printed
+    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[1].password" in printed
+    assert "the old key opens nothing" not in printed, "a token one directory down is no clean sheet"
+    assert "repositories[0].password" not in printed, "the other plain password is not the token"
+    assert "1 fields checked" in printed, f"only {converted} is converted, so only that one counts"
+
+
+@pytest.mark.asyncio
+@needs_sops
 async def test_a_stray_yaml_in_this_repos_own_projects_does_not_take_the_final_check_down(
     tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
