@@ -40,8 +40,6 @@ def _resource(app_name: str, name: str, kind: str = "Secret", namespace: str = "
         name=name,
         namespace=namespace,
         app_name=app_name,
-        owner_ref=f"{app_name}:/{kind}:{namespace}/{name}",
-        being_deleted=False,
     )
 
 
@@ -258,9 +256,42 @@ class TestRefusal:
 
         kubectl.list_tracked_resources.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_a_failed_type_discovery_stops_the_sweep(self) -> None:
+        """Without the type list every namespace comes back empty, which would print
+        SCHOON and exit 0 after querying nothing at all."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": [_resource("app-a", "a")]})
+        kubectl.list_namespaced_resource_types = AsyncMock(return_value=None)
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="resource types"),
+        ):
+            await inventory(None, None)
+
+        kubectl.list_tracked_resources.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_namespace_that_could_not_be_inventoried_stops_the_sweep(self) -> None:
+        """A namespace that did not answer is not an empty one. Reported as clean it is a
+        false green on the test this tool exists for."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": [], "rig-prd-other": []})
+        kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: None if ns == "rig-prd-other" else [])
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="rig-prd-other"),
+        ):
+            await inventory(None, None)
+
     def test_the_cli_answers_a_refusal_with_its_own_exit_code(self) -> None:
         """Not 0 (clean) and not 1 (orphans found): nothing was measured."""
         kubectl = _kubectl([], {})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+    def test_an_unreadable_namespace_reaches_the_cli_as_exit_2(self) -> None:
+        """The refusal has to survive the whole way out: exit 0 is what was wrong."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.list_tracked_resources = AsyncMock(return_value=None)
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 

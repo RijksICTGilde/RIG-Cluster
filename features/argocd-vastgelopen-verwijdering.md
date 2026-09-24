@@ -53,9 +53,12 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    finalizer weg. Welke resources dat zijn leest `opi/utils/argocd_tracking.py`, en dat
    kijkt naar allebei de merktekens die ArgoCD kan zetten (zie hieronder).
 
-Kan de bestemmingsnamespace niet gelezen worden, dan gaat de finalizer alsnog weg (een
-Application die blijft staan blokkeert de parent voor iedereen) maar komt dat als fout in
-`deletion_results["errors"]` terecht. Zwijgend forceren is precies wat de schade maakte.
+Kan de bestemmingsnamespace niet gelezen worden, of lukt de inventaris van die namespace
+niet, dan gaat de finalizer alsnog weg (een Application die blijft staan blokkeert de
+parent voor iedereen) maar komt dat als fout in `deletion_results["errors"]` terecht.
+Zwijgend forceren is precies wat de schade maakte. Een mislukte inventaris leest anders
+als een lege namespace, en dan meldt de forcering `deleted: 0` zonder fout terwijl de
+resources gewoon blijven staan.
 
 ### Twee merktekens, niet een
 
@@ -133,9 +136,20 @@ letterlijk vergelijken zou elk levend pad een wees noemen.
 Of een Application bestaat wordt via de Kubernetes-API gelezen, nooit via die van ArgoCD:
 die antwoordt onder druk een dubbelzinnige `permission denied` voor Applications die wel
 bestaan, en een levende Application als afwezig lezen zou de veegactie een draaiende
-deployment laten verwijderen. Om dezelfde reden weigert hij te vegen als het cluster
-helemaal geen Applications teruggeeft: dat leest hetzelfde als een mislukte query, en in
-beide lezingen wordt elke resource een wees.
+deployment laten verwijderen.
+
+Om dezelfde reden weigert hij op elke mislukte lezing. Een mislukte `kubectl` mag nooit
+als meting doorgaan, want dan komt de uitkomst er precies zo uit als bij een schoon
+cluster: `SCHOON` op stdout en exitcode 0, zonder dat er iets bekeken is. Dat geldt voor
+alle drie de lezingen die hij doet:
+
+* geen enkele Application terug: dat leest hetzelfde als een mislukte query, en in beide
+  lezingen wordt elke resource een wees;
+* geen lijst van resourcetypes terug: dan inventariseert elke namespace als leeg;
+* een namespace die niet te inventariseren was: die is niet leeg, hij heeft niet geantwoord.
+
+`list_tracked_resources` en `list_namespaced_resource_types` dragen dat verschil zelf, met
+`None` voor een mislukte lezing naast een lege lijst voor "niets gevonden".
 
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
@@ -147,9 +161,10 @@ NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
 Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
 hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
 
-Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er zijn wezen, `2` geweigerd.
-Dat maakt hem bruikbaar als laatste stap van een verwijdertoets: hij meet wat er OVER is,
-niet wat er gebeurd lijkt te zijn.
+Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er zijn wezen, `2` geweigerd,
+waaronder elke mislukte lezing hierboven. Dat maakt hem bruikbaar als laatste stap van een
+verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn. Een exitcode 0
+betekent dan ook echt dat er gekeken is.
 
 ## Bestanden
 
