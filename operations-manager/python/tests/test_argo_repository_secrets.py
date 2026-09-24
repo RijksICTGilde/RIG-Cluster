@@ -816,10 +816,9 @@ def test_a_failing_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> Non
 def test_an_interrupt_during_the_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> None:
     """The same leak, through the door a list of failure types does not cover.
 
-    Ctrl-C while ``sops`` is running is a ``KeyboardInterrupt``: not a ``SOPSEncryptionError``,
-    not an ``OSError``, and the one above would have let it through -- leaving a world-readable
-    plaintext password in a git clone, which is exactly what a following ``git add -A`` commits.
-    So the cleanup is measured on something that is not a failure type at all.
+    Ctrl-C while ``sops`` is running is a ``KeyboardInterrupt``: neither of the two failure types
+    the test above names, so the cleanup is measured here on something that is not a failure at
+    all. Why it has to run anyway: ``write_repository_secret``.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])

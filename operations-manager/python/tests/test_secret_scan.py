@@ -98,17 +98,16 @@ SHORTEST_ALARM_SHAPES: tuple[tuple[str, str], ...] = (
 
 
 #: The PEM markers are composed for the same reason, and they were the pair that was still
-#: written out. This file is scanned like any other tracked file, and a literal BEGIN pairs with
-#: the nearest END below it -- across cases, across tests -- so the source in between is read as
-#: the body: two findings on this file, one of them blocking on 100 characters of test source.
-#: Reordering the cases only moves which pair forms; composing leaves no literal to pair.
+#: written out. Not for ``secret_scan``, which wants a base64 body under the header and reads this
+#: file CLEAN either way, but for the gitleaks pass a review runs over the branch: its private-key
+#: rule pairs a literal BEGIN with the next END below it, across cases and across tests, and reads
+#: the source in between as the body. Two findings before this, both on test source. Reordering the
+#: cases only moves which pair forms; composing leaves no literal to pair.
 def pem_header(label: str) -> str:
-    """The opening line of a PEM block, composed rather than written out."""
     return "-----BEG" + f"IN {label}-----"
 
 
 def pem_block(label: str, body: str) -> str:
-    """A whole PEM block around ``body``, both markers composed -- see ``pem_header``."""
     return pem_header(label) + f"\n{body}\n" + "-----E" + f"ND {label}-----\n"
 
 
