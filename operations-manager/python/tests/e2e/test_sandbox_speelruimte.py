@@ -82,6 +82,10 @@ def db_project(
             unique_project_name("speelrui"),
             user_email=_USER_EMAIL,
             services=["publish-on-web", _DIENST],
+            # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
+            # met diensten dat niet altijd. Een ruimere wacht is hier geen verdoezeling:
+            # de toets meet wat er daarna gebeurt, niet hoe snel de wizard is.
+            create_timeout=600.0,
         )
     finally:
         page.close()
