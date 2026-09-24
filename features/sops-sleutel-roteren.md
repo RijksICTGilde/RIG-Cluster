@@ -101,13 +101,19 @@ Vanaf hieronder worden de wijzigingen daadwerkelijk doorgevoerd!
 ### APPLY -- het korte venster
 
 ```bash
-# 5. pushen, alle drie de repo's, en METEEN daarna het secret wisselen
-uv run --project operations-manager/python python scripts/set-sops-key-secret.py --dry-run
-uv run --project operations-manager/python python scripts/set-sops-key-secret.py
-
 # de namen en de namespace verschillen per cluster, dus zet ze hier een keer
 NS=rig-prd-operations; INFRA=production-infrastructure   # productie
 # NS=rig-system;       INFRA=sandbox-infrastructure      # sandbox
+
+# 5. pushen, alle drie de repo's. Dan de configmap van OPI, en dan pas het secret:
+#    die volgorde luistert, zie hieronder
+SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec \
+  bootstrap/rig-system/kustomize/overlays/odcn-production --load-restrictor LoadRestrictionsNone |
+  yq 'select(.kind == "ConfigMap" and .metadata.name == "operations-manager-config")' |
+  kubectl apply -n $NS -f -
+
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py --dry-run
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py
 
 # en ArgoCD de eerste render met de nieuwe sleutel laten doen terwijl je kijkt
 kubectl annotate application $INFRA -n $NS argocd.argoproj.io/refresh=hard --overwrite
@@ -129,23 +135,19 @@ kubectl annotate application ron-infrastructure -n $NS argocd.argoproj.io/refres
 
 De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
 
-### De configmap van OPI, alleen als de token meeliep
+**Waarom de configmap vóór het secret moet, en waarom hij altijd mee moet.** De twee git-wachtwoorden staan in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml` als `base64+age:`-waarden, en OPI ontsleutelt ze TIJDENS HET DRAAIEN met de sleutel uit `sops-age-key` (`opi/connectors/git.py:134`). Die map wordt door niemand gesynct; hij komt het cluster in via `kubectl apply`.
 
-Twee losse waarden staan in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml`, en die map wordt door niemand gesynct: hij komt het cluster in via `kubectl apply`. Bij een sleutelrotatie maakt dat niet uit, want de platte inhoud verandert niet en wat er draait is dus al goed. Vervang je de token (situatie B, of stap 7), dan verandert die inhoud wel, en zonder deze stap blijft OPI de ingetrokken token gebruiken tot iemand hem opnieuw uitrolt.
+Het gaat dus niet om de platte inhoud maar om de ciphertext die in het cluster staat:
 
-```bash
-# alleen de configmap, niet de hele overlay: die draagt ook de ArgoCD-CR, de drie
-# Applications en de OPI-deployment, en die wil je hier niet meeduwen
-SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec \
-  bootstrap/rig-system/kustomize/overlays/odcn-production --load-restrictor LoadRestrictionsNone |
-  yq 'select(.kind == "ConfigMap" and .metadata.name == "operations-manager-config")' |
-  kubectl apply -n $NS -f -
-
-kubectl -n $NS rollout restart deployment/operations-manager
-kubectl -n $NS rollout status deployment/operations-manager
+```
+nu            sleutel A + configmap op A     werkt
+alleen secret sleutel B + configmap op A     KAPOT, OPI kan zijn git-wachtwoord niet lezen
+na de apply   sleutel B + configmap op B     werkt
 ```
 
-De herstart hoort erbij: OPI leest die waarden bij het opstarten, dus een draaiende pod ziet een gewijzigde configmap niet.
+Daarom hoort deze stap bij ELKE rotatie en niet alleen bij een tokenronde, en daarom staat hij vóór `set-sops-key-secret.py`: dat script herstart OPI zelf, en die herstart moet de nieuwe configmap al aantreffen.
+
+Alleen die ene configmap, niet de hele overlay: die draagt ook de ArgoCD-CR, de drie Applications en de OPI-deployment, en dat zou een uitrol zijn vermomd als rotatiestap.
 
 ### VERIFY-2 -- werkt alles nog
 
