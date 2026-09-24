@@ -113,6 +113,10 @@ class TestTrackingId:
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="   "))
         assert resource is None
 
+    def test_a_resource_without_a_name_is_claimed_by_nobody(self) -> None:
+        """What follows a claim is a delete, and a delete needs something to aim at."""
+        assert tracked_resource_from_item(_item("Secret", "v1", "", "app-a:/Secret:ns/x")) is None
+
     def test_kubectl_type_carries_the_api_group(self) -> None:
         deployment = tracked_resource_from_item(_item("Deployment", "apps/v1", "web", "app-a:apps/Deployment:ns/web"))
         secret = tracked_resource_from_item(_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"))
@@ -347,6 +351,16 @@ def _recording_kubectl(
     return kubectl
 
 
+def _targets(pm: AsyncMock, method: str) -> list[str]:
+    """The Application name each call to ``method`` was aimed at.
+
+    Order alone does not pin this: clearing the operation of some OTHER Application runs
+    at exactly the right moment and changes nothing, so the block that RC-226 is about
+    stays in place while every sequence assertion here still passes.
+    """
+    return [call.args[0] for call in getattr(pm._kubectl_connector, method).await_args_list]
+
+
 def _tracked(app_name: str, name: str) -> TrackedResource:
     return TrackedResource(
         kind="Secret",
@@ -571,6 +585,41 @@ class TestOperationClearedBeforeTheWait:
             "remove_finalizers",
             "wait_for_deletion",
         ]
+        assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-infrastructure"]
+        assert _targets(pm, "get_argocd_application_destination_namespace") == ["mpfm-w3h-infrastructure"]
+
+    @pytest.mark.asyncio
+    async def test_the_infrastructure_delete_only_forces_when_asked_to(self) -> None:
+        """Without force a timeout stays a timeout: forcing is what leaves rubbish behind,
+        so it may not run on an ordinary delete. Its sibling on the deployment route has
+        the same gate, and dropping either one on its own goes unnoticed by the other."""
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
+        pm._manifest_generator = MagicMock()
+
+        gitops = AsyncMock()
+        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+
+        argo = AsyncMock()
+        argo.refresh_application = AsyncMock(return_value=True)
+        argo.application_exists = AsyncMock(return_value=True)
+        argo.wait_for_application_deletion = AsyncMock(return_value=False)
+
+        results: dict = {"operations": [], "errors": []}
+        project_data = {"name": "mpfm-w3h", "services": ["namespace-postgresql-database"]}
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm)._cleanup_project_infrastructure(
+                "mpfm-w3h", "local", project_data, results, force=False
+            )
+
+        assert "remove_finalizers" not in calls
+        assert "delete_resources" not in calls
 
     @pytest.mark.asyncio
     async def test_deleting_a_deployment_clears_the_operation_before_waiting(self) -> None:
@@ -590,6 +639,7 @@ class TestOperationClearedBeforeTheWait:
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
 
         assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
+        assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
 
     @pytest.mark.asyncio
     async def test_a_stuck_deployment_delete_sweeps_its_resources_before_forcing(self) -> None:
@@ -627,6 +677,7 @@ class TestOperationClearedBeforeTheWait:
         ]
         deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
         assert [r.name for r in deleted] == ["db-creds"]
+        assert _targets(pm, "get_argocd_application_destination_namespace") == ["mpfm-w3h-pr-310"]
         assert any(op["type"] == "argocd_app_tracked_resource_deletion" for op in results["operations"])
 
     @pytest.mark.asyncio
@@ -662,6 +713,7 @@ class TestOperationClearedBeforeTheWait:
             await DeleteProjectManager(pm).delete_deployment_from_yaml_change("mpfm-w3h", deployment, project_data)
 
         assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
+        assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
 
     @pytest.mark.asyncio
     async def test_orphan_cleanup_clears_the_operation_before_deleting(self) -> None:
@@ -684,3 +736,4 @@ class TestOperationClearedBeforeTheWait:
             await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
 
         assert calls == ["terminate_operation", "delete_application"]
+        assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
