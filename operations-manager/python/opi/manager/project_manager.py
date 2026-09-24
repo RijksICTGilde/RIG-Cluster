@@ -105,6 +105,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
     set_domain_setting,
 )
+from opi.services.catalog.publish_on_web.issuer import effective_issuer
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -4072,7 +4073,9 @@ class ProjectManager:
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        # record_base=False: a projection that only needs the project's domain block, so it
+        # must not become the compare-and-swap base of whoever saves next.
+        issuer_config = effective_issuer(await self.get_contents(record_base=False), deployment, cluster_name)
         use_https = get_ingress_tls_enabled(cluster_name)
 
         # Calculate hostname based on configuration
@@ -4420,7 +4423,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
@@ -4813,7 +4816,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
@@ -5786,7 +5789,7 @@ class ProjectManager:
             use_https = get_ingress_tls_enabled(cluster)
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
             base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-            issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+            issuer_config = effective_issuer(project_data, deployment, cluster)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
