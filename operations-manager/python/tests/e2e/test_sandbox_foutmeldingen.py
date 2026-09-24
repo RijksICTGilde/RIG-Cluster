@@ -33,6 +33,8 @@ from tests.e2e.helpers.zad_cli import ZadCli, skip_zonder_cli
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+    from playwright.sync_api import BrowserContext
+
 logger = logging.getLogger(__name__)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
@@ -47,9 +49,20 @@ _BROWSER_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0
 _LEKSPOREN = ("Traceback (most recent call last)", 'File "/app/', "asyncpg", "psycopg", "5432")
 
 
-def _haal(sandbox_url: str, pad: str, *, accept: str) -> httpx.Response:
+@pytest.fixture(scope="module")
+def sessiekoek(sandbox_context: BrowserContext) -> dict[str, str]:
+    """Het sessiecookie van de browsercontext, zodat httpx als INGELOGDE gebruiker vraagt.
+
+    Zonder dit meet een onbekend pad buiten /api de inlogpoort en niet de foutafhandeling:
+    de sandbox antwoordt een anonieme browser met 302 naar de login, en dat is juist gedrag
+    maar een ander onderwerp. Precies daarop vielen de eerste twee toetsen hier om.
+    """
+    return {koek["name"]: koek["value"] for koek in sandbox_context.cookies() if koek["name"] == "session"}
+
+
+def _haal(sandbox_url: str, pad: str, *, accept: str, cookies: dict[str, str] | None = None) -> httpx.Response:
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0, follow_redirects=False) as client:
-        return client.get(f"{sandbox_url.rstrip('/')}{pad}", headers={"Accept": accept})
+        return client.get(f"{sandbox_url.rstrip('/')}{pad}", headers={"Accept": accept}, cookies=cookies or {})
 
 
 def test_een_onbekend_api_pad_geeft_json_ook_aan_een_browser(sandbox_url: str) -> None:
@@ -65,21 +78,21 @@ def test_een_onbekend_api_pad_geeft_json_ook_aan_een_browser(sandbox_url: str) -
     assert respons.json().get("detail"), f"geen 'detail' in het antwoord: {respons.text[:300]}"
 
 
-def test_een_onbekende_pagina_geeft_een_pagina_aan_een_browser(sandbox_url: str) -> None:
+def test_een_onbekende_pagina_geeft_een_pagina_aan_een_browser(sandbox_url: str, sessiekoek: dict[str, str]) -> None:
     """De tegenhanger: buiten /api krijgt een browser wel een pagina.
 
     Zonder deze helft meet de toets hierboven alleen dat er ergens JSON uitkomt, en niet
-    dat de Accept-header de keuze maakt.
+    dat de Accept-header de keuze maakt. Ingelogd, want anders antwoordt de inlogpoort.
     """
-    respons = _haal(sandbox_url, "/dit-pad-bestaat-niet-rc227", accept=_BROWSER_ACCEPT)
+    respons = _haal(sandbox_url, "/dit-pad-bestaat-niet-rc227", accept=_BROWSER_ACCEPT, cookies=sessiekoek)
 
     assert respons.status_code == 404, f"verwachtte 404, kreeg {respons.status_code}"
     assert "<html" in respons.text.lower(), f"een browser kreeg geen pagina op een 404:\n{respons.text[:400]}"
 
 
-def test_een_client_buiten_api_krijgt_geen_markup(sandbox_url: str) -> None:
+def test_een_client_buiten_api_krijgt_geen_markup(sandbox_url: str, sessiekoek: dict[str, str]) -> None:
     """En een client die geen HTML vraagt krijgt JSON, ook buiten /api."""
-    respons = _haal(sandbox_url, "/dit-pad-bestaat-niet-rc227", accept="application/json")
+    respons = _haal(sandbox_url, "/dit-pad-bestaat-niet-rc227", accept="application/json", cookies=sessiekoek)
 
     assert respons.status_code == 404
     assert "<html" not in respons.text.lower(), f"een JSON-client kreeg markup:\n{respons.text[:400]}"
@@ -93,9 +106,9 @@ def test_een_client_buiten_api_krijgt_geen_markup(sandbox_url: str) -> None:
         "/projects/bestaat-echt-niet-rc227/details",
     ],
 )
-def test_er_lekt_geen_techniek_in_een_foutantwoord(sandbox_url: str, pad: str) -> None:
+def test_er_lekt_geen_techniek_in_een_foutantwoord(sandbox_url: str, pad: str, sessiekoek: dict[str, str]) -> None:
     """De reden dat dit blok bestaat: er stond een intern IP en een poort op het scherm."""
-    respons = _haal(sandbox_url, pad, accept=_BROWSER_ACCEPT)
+    respons = _haal(sandbox_url, pad, accept=_BROWSER_ACCEPT, cookies=sessiekoek)
 
     gevonden = [spoor for spoor in _LEKSPOREN if spoor in respons.text]
     assert not gevonden, f"{pad} (HTTP {respons.status_code}) lekt {gevonden}:\n{respons.text[:600]}"
