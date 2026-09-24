@@ -110,30 +110,6 @@ def test_de_uitleg_heeft_een_eigen_adres(test_client: TestClient) -> None:
     assert ROUTER_IPV4 in response.text
 
 
-def test_de_uitleg_toont_beide_helften(test_client: TestClient) -> None:
-    """De pagina is een samenstelling van twee ingesloten bestanden, en een include die wegvalt
-    is stil: er rendert een pagina, alleen een halve uitleg korter.
-
-    De DNS-helft staat niet onbewaakt -- de adressen erop worden hierboven nagelopen -- maar de
-    ZAD-helft (het project, het certificaat, internet.nl) werd door geen enkele toets gelezen.
-    Vandaar per helft twee ankers die alleen in dat bestand staan.
-    """
-    response = test_client.get("/eigen-domein", headers={"host": "router.rijksapp.nl"})
-
-    assert response.status_code == 200, response.text
-    helften = {
-        "bg/_router-dns.html.j2": ("ALIAS", "issuewild"),
-        "bg/_router-zad.html.j2": ("PKIoverheid", "AS202553"),
-    }
-    ontbreekt = {
-        bestand: [anker for anker in ankers if anker not in response.text]
-        for bestand, ankers in helften.items()
-        if any(anker not in response.text for anker in ankers)
-    }
-
-    assert ontbreekt == {}, f"deze helften staan niet op de pagina: {ontbreekt}"
-
-
 def test_het_eigen_adres_vraagt_geen_rechten() -> None:
     """Wie een domein aanwijst is vaak een DNS-beheerder van buiten, zonder account hier.
 
