@@ -757,6 +757,35 @@ class KubectlConnector:
             return None
         return stdout.strip()
 
+    async def list_argocd_applications(self, namespace: str | None = None) -> list[dict[str, Any]]:
+        """
+        Every ArgoCD Application CR, read through the Kubernetes API.
+
+        The Kubernetes API rather than ArgoCD's own: the sweep decides from this list
+        which resources are orphans, and ArgoCD answers an ambiguous 'permission denied'
+        for applications that do exist (see ArgoConnector.wait_for_application_deletion).
+        Reading a live Application as absent would make the sweep delete a running
+        deployment.
+
+        Args:
+            namespace: Namespace holding the Application CRs; defaults to this instance's cluster
+
+        Returns:
+            The Application CRs, empty when the query failed.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        stdout, stderr, code = await self._run_kubectl_command(["get", "applications", "-n", namespace, "-o", "json"])
+        if code != 0:
+            logger.error(f"Failed to list ArgoCD Applications in namespace '{namespace}': {stderr}")
+            return []
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse the ArgoCD Application list: {e}")
+            return []
+        return data.get("items", []) if isinstance(data, dict) else []
+
     async def list_namespaced_resource_types(self) -> list[str]:
         """
         The namespaced resource types this cluster can list and delete.
