@@ -18,6 +18,10 @@ patches:
 
 # ODCN-nodes mogen quay.io niet rechtstreeks; alles loopt via de RCR-proxycache. Het
 # quay-rig-robot-pull-secret hangt al aan de default serviceaccount in deze namespaces.
+# Op digest en niet op tag: de proxycache laat een tag verlopen (Quay time machine) en dan
+# faalt de pull met "Tag ... was deleted or has expired" zodra een pod op een node landt die
+# de image niet lokaal heeft. De digest is die van RELEASE.2025-07-23T15-54-02Z.
 images:
   - name: quay.io/minio/minio
     newName: rcr.rijksapps.nl/quay-rig/minio/minio
+    digest: sha256:d249d1fb6966de4d8ad26c04754b545205ff15a62e4fd19ebd0f26fa5baacbc0
