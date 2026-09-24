@@ -18,7 +18,9 @@ the coupling stops the round -- is worked out in ``features/sops-sleutel-vervang
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -360,15 +362,27 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
         )
     secret.string_data[PASSWORD_FIELD] = password
     source = secret.path.with_name(secret.path.name[: -len(SOPS_SUFFIX)] + TO_SOPS_SUFFIX)
-    source.write_text(dump_yaml_to_string(secret.document), encoding="utf-8")
+    # The plaintext is built in a temporary file and moved onto the ``.to-sops.yaml`` name with
+    # ``os.replace``, the same shape ``key_rotation.write_loose_value`` and
+    # ``sops_key_secret.write_secret`` use. A plain ``write_text`` is open+write+close: an
+    # interrupt or a full disk halfway through leaves a world-readable half file under the name
+    # a following ``git add -A`` picks up, and outside any ``try`` nothing removes it. The
+    # temporary carries mkstemp's 0600 and a name the ``*.to-sops.yaml`` glob does not match, so
+    # it is neither readable by other uids nor visible to SOPS while it is being written.
+    handle, temporary = tempfile.mkstemp(prefix=f".{source.name}.", dir=source.parent)
     try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(dump_yaml_to_string(secret.document))
+        os.replace(temporary, source)
         encrypt_to_sops_files(str(secret.path.parent), secret.recipients[0], secret.private_key)
     except BaseException:
         # A plaintext password left behind in a git clone is the one outcome this whole tool
-        # exists to prevent, so it goes before the error is passed on. BaseException and not a
-        # named pair: Ctrl-C during the sops call is a KeyboardInterrupt, which no list of
-        # failure types covers, and it leaves exactly the file a following ``git add -A`` picks
-        # up. ``key_rotation.write_loose_value`` catches it just as widely, for the same reason.
+        # exists to prevent, so both names go before the error is passed on: the temporary when
+        # the write itself was cut short, the ``.to-sops.yaml`` when it was already in place.
+        # BaseException and not a named pair: Ctrl-C is a KeyboardInterrupt, which no list of
+        # failure types covers. ``key_rotation.write_loose_value`` catches it just as widely,
+        # for the same reason.
+        Path(temporary).unlink(missing_ok=True)
         source.unlink(missing_ok=True)
         raise
     if source.exists():

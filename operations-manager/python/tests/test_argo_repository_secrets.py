@@ -34,7 +34,7 @@ from opi.manager.argo_manager import ArgoManager
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.naming import generate_argocd_repository_secret_name, get_output_filename_from_template
 from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail, generate_sops_key_pair
-from opi.utils.yaml_util import load_yaml_from_string
+from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -830,6 +830,58 @@ def test_an_interrupt_during_the_encryption_takes_the_plaintext_with_it(tmp_path
         write_repository_secret(secret, NEW_TOKEN)
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_an_interrupt_halfway_through_the_write_takes_the_plaintext_with_it(tmp_path: Path) -> None:
+    """The window BEFORE the encryption: the plaintext going on disk, not the sops call.
+
+    The two tests above interrupt ``encrypt_to_sops_files``, so they say nothing about the step
+    in front of it. Putting the plaintext on disk is itself open+write+close, and a Ctrl-C or a
+    full disk halfway through leaves a readable part of the password under the name a following
+    ``git add -A`` picks up -- with nothing to remove it as long as that write stands outside
+    the ``try``. The tear is staged on the dump: the half file lands under the ``.to-sops.yaml``
+    name and the write then stops, which is exactly what a torn write leaves behind.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+    source = tmp_path / "argo-repository-https-een.to-sops.yaml"
+
+    def a_torn_write(document: Any) -> str:
+        text = dump_yaml_to_string(document)
+        source.write_text(text[: len(text) // 2], encoding="utf-8")
+        raise KeyboardInterrupt
+
+    with (
+        patch.object(argo_rotation, "dump_yaml_to_string", side_effect=a_torn_write),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_plaintext_sops_reads_is_readable_by_nobody_else(tmp_path: Path) -> None:
+    """While it exists, the file with the token in it carries 0600 and not the umask's 0644.
+
+    This runs on a shared dev server, so for the length of the sops call every local uid could
+    read the password out of a 0644 file. The mode comes from ``mkstemp`` and survives the
+    ``os.replace``; it is measured here from inside the encryption, the only moment the file is
+    on disk.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+    source = tmp_path / "argo-repository-https-een.to-sops.yaml"
+    seen: list[int] = []
+
+    def look_at_the_plaintext(*_arguments: Any) -> bool:
+        seen.append(source.stat().st_mode & 0o777)
+        source.unlink()
+        return True
+
+    with patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=look_at_the_plaintext):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert seen == [0o600]
 
 
 def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(tmp_path: Path) -> None:
