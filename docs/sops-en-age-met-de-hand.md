@@ -8,10 +8,6 @@ maakt het SOPS-secret. Dit document legt uit wat we precies doen en waarom.
 Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-roteren.md` het
 stappenplan; hier staan de losse handelingen eronder.
 
-Deze werkwijze stond in `sops-sandbox/steps.md`, een oefenmap uit de begindagen van de repo. Die
-map is verwijderd: hij bevatte een eigen AGE-sleutelpaar voor ontwikkeldoeleinden
-(`sops-key.txt`), dat alleen de twee oefenbestanden in diezelfde map opende.
-
 ## 1. Een AGE-sleutelpaar maken
 
 `security/` staat in `.gitignore` en is daarmee de plek waar je lokaal een sleutelbestand kunt
@@ -46,12 +42,9 @@ kubectl create secret generic sops-age-key \
 kubectl apply -f security/sops-secret.yaml
 ```
 
-Het hele bestand en niet alleen de sleutelregel: `bootstrap/rig-system/kustomize/sops-plugin.sh`
-haalt er met `grep '^AGE-SECRET-KEY-'` de regel uit.
-
-Dit secret staat in MEER dan een namespace, en niet overal met dezelfde sleutel erin. Wissel je
-de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`: dat selecteert op sleutel en
-niet op naam. Zie `features/sops-sleutel-roteren.md`.
+Elk ZAD project heeft een eigen sops-secret. De platformsleutel zit alleen in de platform
+namespaces. Wissel je de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`. 
+Zie `features/sops-sleutel-roteren.md`.
 
 ## 3. Een geheim versleutelen
 
@@ -91,4 +84,4 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).
 - **`sops updatekeys` is geen sleutelwissel.** Dat wisselt de recipients en laat de data key
   staan, dus wie de oude sleutel ooit had opent het bijgewerkte bestand nog steeds. Gebruik
-  `sops rotate`; de meting staat in `features/sops-sleutel-roteren.md`.
+  `sops rotate`; zie ook `features/sops-sleutel-roteren.md`.
