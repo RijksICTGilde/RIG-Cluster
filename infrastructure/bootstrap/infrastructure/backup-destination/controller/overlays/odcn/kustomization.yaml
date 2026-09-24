@@ -34,8 +34,14 @@ patches:
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
 
-# ODCN-nodes mogen quay.io niet rechtstreeks; alles loopt via de RCR-proxycache. Het
-# quay-rig-robot-pull-secret hangt al aan de default serviceaccount in deze namespaces.
+# Eigen build, om dezelfde reden als bij de platform-MinIO: MinIO distribueert deze release
+# niet meer (Docker Hub 401, dl.min.io 410 Gone) en de tag is uit de quay-proxycache verlopen.
+# Gecompileerd uit de broncode van tag RELEASE.2025-07-23T15-54-02Z; zie
+# infrastructure/bootstrap/infrastructure/minio/controller/overlays/odcn/kustomization.yaml.
+#
+# Deze pod draait nog omdat zijn node de oude image lokaal heeft. Hij valt om zodra hij
+# verplaatst, dus dit vooruit rechtzetten en niet wachten tot het misgaat.
 images:
   - name: quay.io/minio/minio
-    newName: rcr.rijksapps.nl/quay-rig/minio/minio
+    newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/minio
+    newTag: RELEASE.2025-07-23T15-54-02Z
