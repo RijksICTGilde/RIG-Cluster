@@ -1,10 +1,10 @@
-# De SOPS-sleutel en de GitHub-token roteren
+# De SOPS-sleutel en een GitHub-token roteren
 
 De GitHub-PAT verloopt en moet vervangen worden. We nemen die rotatie als aanleiding om tegelijk de AGE-sleutel te roteren en er een terugkerende handeling van te maken: dezelfde bestanden, dezelfde lus, dezelfde verificatie.
 
 We roteren elk kwartaal preventief. Een aanleiding daarbuiten is bijvoorbeeld een collega die weggaat, of het vermoeden dat een sleutel bekend is geworden.
 
-Waarom er gereedschap bij hoort: `sops rotate` ziet alleen SOPS-bestanden, en de platformsleutel zit op meer plekken dan dat. Het gereedschap zet elke vindplaats om, toont aan dat er niets anders is veranderd, en toont aan dat de oude sleutel daarna niets meer opent.
+Waarom er gereedschap bij hoort: `sops rotate` ziet alleen SOPS-bestanden, en de platformsleutel zit op meer plekken dan dat. Het gereedschap zet elke vindplaats om, toont aan dat er niets anders is veranderd dan de encryptie, en toont aan dat de oude sleutel daarna niets meer opent.
 
 Dit onderbouwt BIO2 v1.3 control 8.24: 8.24.01 vraagt registratie van waar welke cryptografie wordt toegepast, 8.24.02 vraagt dat die actueel wordt gehouden. Dat laatste ontbrak, want een AGE-sleutel kent geen verlooptijd.
 
@@ -58,7 +58,7 @@ Waarom die vlaggen alleen bij B horen: `--pat-current-file` eist dat geen enkel 
 
 ## Gebruik
 
-Draai alles vanuit de repo-root. De ronde heeft vier fasen, en de grens die telt zit tussen VERIFY-1 en APPLY: tot daar raakt niets productie en blijft alles op de oude sleutel werken, dus afbreken kost niet meer dan een paar weggegooide clones.
+Draai alles vanuit de repo-root. De ronde heeft vier fasen, en de grens die telt zit tussen VERIFY-1 en APPLY: tot daar raakt niets productie en blijft alles op de oude sleutel werken.
 
 ### PREPARE -- herversleutelen, en niets versturen
 
@@ -96,7 +96,7 @@ find /tmp/zad-argo -mindepth 2 -name kustomization.yaml -exec dirname {} \; | so
   done
 ```
 
-Dit is het laatste moment waarop terugdraaien gratis is.
+Vanaf hieronder worden de wijzigingen daadwerkelijk doorgevoerd!
 
 ### APPLY -- het korte venster
 

@@ -3,7 +3,7 @@
 Een minimale gang door SOPS met een AGE-sleutel, voor wie handmatig een geheim wil
 versleutelen of wil begrijpen wat de Taskfile en de CMP-plugin doen. In het normale werk hoef
 je dit niet: `task generate-age-key` maakt de sleutel en `task generate-env-secrets-for-operations-manager`
-maakt het SOPS-secret. Dit doc is er voor het geval je eronder wilt kijken.
+maakt het SOPS-secret. Dit document legt uit wat we precies doen en waarom.
 
 Gaat het om het VERVANGEN van de platformsleutel, dan is `features/sops-sleutel-roteren.md` het
 stappenplan; hier staan de losse handelingen eronder.
