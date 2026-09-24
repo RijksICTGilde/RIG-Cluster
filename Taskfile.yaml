@@ -2099,13 +2099,10 @@ tasks:
   argocd-orphan-sweep:
     desc: "Spoor resources op die achterbleven toen hun ArgoCD-Application verdween"
     summary: |
-      Zoekt in het cluster naar resources met een `argocd.argoproj.io/tracking-id` die naar
-      een Application wijst die niet meer bestaat, en in een checkout van de deployments-repo
-      naar paden waar geen enkele Application naar verwijst. Meldt alleen; met DELETE=1
-      verwijdert hij wat hij vond.
-
-      Meldt hij SCHOON, dan is er niets achtergebleven. Dat is de eindtoets na een
-      verwijdering: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn.
+      Zoekt in het cluster naar resources die ArgoCD als de zijne merkte terwijl hun
+      Application niet meer bestaat, en in een checkout van de deployments-repo naar paden
+      waar geen enkele Application naar verwijst. Meldt alleen; met DELETE=1 verwijdert hij
+      wat hij vond. Meldt hij SCHOON, dan is er niets achtergebleven.
 
         task argocd-orphan-sweep                                  # het hele cluster
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller

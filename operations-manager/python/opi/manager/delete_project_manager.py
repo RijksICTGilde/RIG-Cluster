@@ -91,10 +91,7 @@ class DeleteProjectManager:
     async def _terminate_application_operation(self, app_name: str, deletion_results: dict[str, Any]) -> None:
         """Clear a running sync operation on an Application before it is deleted.
 
-        An operation that waits on health blocks the deletion for as long as it runs, and
-        it runs forever when the workloads it waits for cannot become healthy. The
-        finalizer never gets to its cascade then. Clearing the operation first is what
-        makes the cascade run; see RC-226.
+        Why this has to come first: KubectlConnector.terminate_argocd_application_operation.
         """
         kubectl = self.project_manager._kubectl_connector
         terminated = await kubectl.terminate_argocd_application_operation(app_name)
