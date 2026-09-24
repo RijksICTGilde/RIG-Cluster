@@ -342,6 +342,26 @@ def _tracked(app_name: str, name: str) -> TrackedResource:
     )
 
 
+class TestTerminationIsReported:
+    """The caller has to be able to see that the operation could NOT be cleared.
+
+    A delete that reports success while the block is still in place is the state this
+    task is about: it looks done and it is not.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("terminated", "status"), [(True, "success"), (False, "failed")])
+    async def test_the_outcome_lands_in_the_deletion_results(self, terminated: bool, status: str) -> None:
+        pm = AsyncMock()
+        pm._kubectl_connector.terminate_argocd_application_operation = AsyncMock(return_value=terminated)
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._terminate_application_operation("app-a", results)
+
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_operation_termination")
+        assert (operation["target"], operation["status"]) == ("app-a", status)
+
+
 class TestForceDeleteStuckApplication:
     @pytest.mark.asyncio
     async def test_resources_go_before_the_finalizer(self) -> None:
@@ -422,10 +442,16 @@ class TestForceDeleteStuckApplication:
         assert operation["status"] == "unknown_namespace"
 
 
-def _deployment_harness(calls: list[str]) -> tuple[AsyncMock, AsyncMock, dict, dict]:
-    """A deployment delete with a live Application, recording the order of the calls."""
+def _deployment_harness(
+    calls: list[str], *, wait_results: list[bool] | None = None, tracked: list[TrackedResource] | None = None
+) -> tuple[AsyncMock, AsyncMock, dict, dict]:
+    """A deployment delete with a live Application, recording the order of the calls.
+
+    ``wait_results`` feeds successive answers to the deletion wait, so a caller can make
+    the first wait time out and reach the force branch.
+    """
     pm = AsyncMock()
-    pm._kubectl_connector = _recording_kubectl(calls, destination="rig-mpfm-w3h", tracked=[])
+    pm._kubectl_connector = _recording_kubectl(calls, destination="rig-mpfm-w3h", tracked=tracked or [])
     pm._manifest_generator = MagicMock()
     pm._manifest_generator.create_kustomization_files = MagicMock(return_value=True)
     pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
@@ -439,9 +465,11 @@ def _deployment_harness(calls: list[str]) -> tuple[AsyncMock, AsyncMock, dict, d
         connector.get_working_dir = AsyncMock(return_value="/tmp/gitops")
         setattr(pm, factory, AsyncMock(return_value=connector))
 
+    answers = list(wait_results or [])
+
     async def _wait(*args, **kwargs):
         calls.append("wait_for_deletion")
-        return True
+        return answers.pop(0) if answers else True
 
     argo = AsyncMock()
     argo.refresh_application = AsyncMock(return_value=True)
@@ -527,6 +555,65 @@ class TestOperationClearedBeforeTheWait:
             await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
 
         assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
+
+    @pytest.mark.asyncio
+    async def test_a_stuck_deployment_delete_sweeps_its_resources_before_forcing(self) -> None:
+        """The force branch of the deployment route, the one the 350 leftovers came out of.
+
+        Its sibling in _cleanup_project_infrastructure runs the same sequence; both call
+        sites need pinning, because reverting either one on its own puts the old
+        finalizer-first behaviour back without the other noticing.
+        """
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(
+            calls, wait_results=[False, True], tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")]
+        )
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
+
+        assert calls[:7] == [
+            "terminate_operation",
+            "wait_for_deletion",
+            "read_namespace",
+            "list_resources",
+            "delete_resources",
+            "remove_finalizers",
+            "wait_for_deletion",
+        ]
+        deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["db-creds"]
+        assert any(op["type"] == "argocd_app_tracked_resource_deletion" for op in results["operations"])
+
+    @pytest.mark.asyncio
+    async def test_a_deployment_delete_without_force_does_not_touch_the_finalizer(self) -> None:
+        """Without force a timeout stays a timeout: forcing is what leaves rubbish behind."""
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls, wait_results=[False])
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
+
+        assert "remove_finalizers" not in calls
+        assert "delete_resources" not in calls
 
     @pytest.mark.asyncio
     async def test_yaml_change_delete_clears_the_operation_before_waiting(self) -> None:
