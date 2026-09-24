@@ -2994,16 +2994,11 @@ async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
 ) -> None:
     """The same plain token, one directory deeper: still a FAIL, not a CLEAN.
 
-    The walk over this repo's own ``projects/`` was flat, and the docstring defending that
-    flatness argued from ``coverage_gaps()``: whatever the selection walks past still comes back
-    as a named gap if it carries ciphertext. That net is real, and it is the wrong net for this
-    half -- a ``plain:<token>`` is not ciphertext, so nothing catches it and the token half
-    alone falls through both mazes. Not hypothetical: ``projects/ideas/`` is five tracked files
-    and ``plan.yaml`` there carries a ``repositories:`` list.
+    Why the flat walk over this repo's own ``projects/`` is the wrong net for the token half,
+    and what a deeper file there carries: ``own_plain_passwords``.
 
     The file is identical to the one in the test above and sits one directory lower, so the pair
-    measures the DEPTH and nothing else; on the flat selection this run ended in a full CLEAN,
-    which is the last gate before ``--remove-old-key``.
+    measures the DEPTH and nothing else; on the flat selection this run ended in a full CLEAN.
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()

@@ -293,9 +293,8 @@ def own_plain_passwords() -> list[tuple[str, str]]:
     repo's ``projects/`` as well as the clone, so without this the same input answers the token
     question on one path and not on the other.
 
-    ``project_files(OWN_PROJECTS)`` and not ``own_project_paths()``: that flat selection is
-    bought by ``coverage_gaps()`` seeing everything it walks past, and that net catches
-    ciphertext alone. A withdrawn token lying in the clear one directory down -- and
+    ``project_files(OWN_PROJECTS)`` and not ``own_project_paths()``, for the reason that
+    docstring gives. A withdrawn token lying in the clear one directory down -- and
     ``projects/ideas/`` is five tracked files, one of them carrying a ``repositories:`` list --
     would otherwise get a full CLEAN out of the last gate before ``--remove-old-key``.
 
