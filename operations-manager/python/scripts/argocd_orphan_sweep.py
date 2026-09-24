@@ -13,11 +13,9 @@ there, and for proving afterwards that a deletion took everything with it.
 
 Two sources, one test: does the Application this thing belongs to still exist?
 
-* CLUSTER  -- every resource ArgoCD marked as its own, through whichever tracking method
-              the cluster runs: the ``argocd.argoproj.io/tracking-id`` annotation
-              (odcn-production) or the ``app.kubernetes.io/instance`` label (local and
-              sandboxed-local, which take ArgoCD's default). The name in it is its
-              Application.
+* CLUSTER  -- every resource ArgoCD marked as its own, by whichever of its two tracking
+              marks this cluster uses (opi.utils.argocd_tracking). The name in the mark
+              is its Application.
 * GIT      -- every ``<cluster>/<project>/<leaf>`` directory in the deployments repo. Each
               one is a render root an Application should point at with spec.source.path.
 
@@ -42,8 +40,8 @@ Usage:
     uv run python scripts/argocd_orphan_sweep.py --namespace rig-prd-mpfm-w3h --delete
 
 Exit codes: 0 when nothing was found (or everything found was deleted), 1 when orphans
-remain. That makes it usable as the last step of a delete test: it measures what is left
-over, not what appeared to happen.
+remain, 2 when it refused to sweep. That makes it usable as the last step of a delete
+test: it measures what is left over, not what appeared to happen.
 """
 
 from __future__ import annotations
@@ -82,7 +80,7 @@ NAMESPACE_OWNER_LABEL = "created-by"
 NAMESPACE_OWNER_VALUE = "operations-manager"
 
 #: Depth of a render root in the deployments repo: ``<cluster>/<project>/<leaf>``, the
-#: shape every path generator in opi.utils.naming produces.
+#: shape opi.utils.naming produces for this repo.
 RENDER_ROOT_DEPTH = 3
 
 CLEAN = "SCHOON"
@@ -232,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         "--namespace",
         action="append",
         dest="namespaces",
-        help="only this namespace (repeatable); default is every namespace in the cluster",
+        help="only this namespace (repeatable); default is every namespace OPI created",
     )
     parser.add_argument(
         "--deployments-repo",

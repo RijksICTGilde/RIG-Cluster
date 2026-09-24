@@ -761,12 +761,6 @@ class KubectlConnector:
         """
         Every ArgoCD Application CR, read through the Kubernetes API.
 
-        The Kubernetes API rather than ArgoCD's own: the sweep decides from this list
-        which resources are orphans, and ArgoCD answers an ambiguous 'permission denied'
-        for applications that do exist (see ArgoConnector.wait_for_application_deletion).
-        Reading a live Application as absent would make the sweep delete a running
-        deployment.
-
         Args:
             namespace: Namespace holding the Application CRs; defaults to this instance's cluster
 
