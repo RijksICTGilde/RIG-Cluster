@@ -3221,3 +3221,45 @@ async def test_the_own_values_of_another_recipient_stop_the_run_until_they_are_n
     assert went_ahead == 0
     assert "opens with neither key" not in out_with
     assert "NOTE --own-values-on-another-key" in out_with
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_flag_also_holds_past_the_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The same flag, in the run that actually converts, and in the final check after it.
+
+    The sibling test above stops at ``--dry-run``, and the dry run returns before the fingerprint
+    is ever recorded. So it measures ``build_plan`` and nothing else. Everything past that point
+    -- the fingerprint before, the one after, and the final check -- walks its own worklist of
+    paths in this repo, and a flag that is honoured in one place and not in the next leaves the
+    operator with a run that plans fine and then stops halfway through.
+
+    Measured on the project half, because that is the worklist ``build_plan`` and the fingerprint
+    reach through different doors: ``own_project_paths()`` at the bottom of both.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    _another_private, another_public = generate_sops_key_pair()
+    sops_path, _env_path, _ = await _two_place_tree(tmp_path, old_public)
+    # An own project file on a THIRD key: neither the old nor the new one opens it.
+    projects = tmp_path / "eigen"
+    projects.mkdir()
+    stranger = await _project_file(projects, "vreemde", another_public)
+    command = [
+        "--ja",
+        *_key_files(tmp_path, old_private, new_private),
+        "--fingerprint",
+        str(tmp_path / "fingerprint.json"),
+        "--own-values-on-another-key",
+    ]
+
+    with (
+        _selecting_from(sops_path.parent),
+        patch.object(tool, "loose_paths", return_value=[]),
+        patch.object(tool, "own_project_paths", return_value=[stranger]),
+    ):
+        code = await tool.main(command)
+    printed = capsys.readouterr()
+
+    assert code == 0, printed.out + printed.err
+    assert "opens with neither key" not in printed.out + printed.err
