@@ -261,28 +261,38 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
     """
     namespace = f"rig-{registry_project.name}"
 
+    def _pods_uit_de_registry() -> list[dict]:
+        """Pods die DIT image draaien.
+
+        Op de naam selecteren gaat mis: een pod heet ``<deployment>-<component>-<hash>``,
+        dus hij begint met de deployment en niet met de componentnaam. Het image is
+        eenduidig en is bovendien precies waar deze toets over gaat.
+        """
+        return [
+            pod
+            for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]
+            if any(
+                houder.get("image", "").startswith(prive_image.split(":")[0]) for houder in pod["spec"]["containers"]
+            )
+        ]
+
     def _pod_draait() -> bool:
-        for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]:
-            if not pod["metadata"]["name"].startswith("prive"):
-                continue
+        for pod in _pods_uit_de_registry():
             statussen = pod.get("status", {}).get("containerStatuses") or []
             if statussen and all(status.get("ready") for status in statussen):
                 return True
         return False
 
-    gelukt = cluster.wait_for(_pod_draait, timeout=420.0)
-    if not gelukt:
-        pods = _kubectl_json(["get", "pods", "-n", namespace])["items"]
+    if not cluster.wait_for(_pod_draait, timeout=420.0):
         beeld = [
             (pod["metadata"]["name"], [s.get("state") for s in (pod.get("status", {}).get("containerStatuses") or [])])
-            for pod in pods
+            for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]
         ]
         pytest.fail(f"geen draaiende pod uit de private registry in {namespace}: {beeld}")
 
     namen = [
         verwijzing["name"]
-        for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]
-        if pod["metadata"]["name"].startswith("prive")
+        for pod in _pods_uit_de_registry()
         for verwijzing in (pod["spec"].get("imagePullSecrets") or [])
     ]
     assert namen, "de pod draait maar noemt geen imagePullSecret; dan is de registry niet privaat genoeg"
