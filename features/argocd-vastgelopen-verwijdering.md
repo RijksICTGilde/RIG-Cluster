@@ -122,7 +122,7 @@ bestaat de Application waar dit ding bij hoort nog?
 * **cluster**: elke resource die ArgoCD als de zijne merkte, via welk van de twee
   merktekens hierboven het cluster ook gebruikt. De naam erin is zijn Application.
 * **git**: elke `<cluster>/<project>/<leaf>`-map in een checkout van de deployments-repo.
-  Dat is de vorm die alle padgeneratoren in `opi/utils/naming.py` opleveren, en elk zo'n
+  Dat is de vorm die `opi/utils/naming.py` voor deze repo oplevert, en elk zo'n
   pad hoort het doel te zijn van de `spec.source.path` van een Application.
 
 Een `spec.source.path` wordt genormaliseerd voordat hij met een map vergeleken wordt: OPI
@@ -155,7 +155,7 @@ niet wat er gebeurd lijkt te zijn.
 
 | Bestand | Wat het doet |
 |---|---|
-| `opi/utils/argocd_tracking.py` | De tracking-id-annotatie: welke Application een resource bezit |
+| `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens |
 | `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
