@@ -5,6 +5,25 @@ resources:
 - ../../base
 
 patches:
+  # NOODVERBAND, 24 september 2026. De image is nergens meer te pullen: MinIO heeft zijn
+  # Docker Hub-repository achter een abonnement gezet (401 op elke tag, ook ingelogd), de tag
+  # is uit de RCR-proxycache verlopen en die kan hem niet terughalen ("upstream authentication
+  # failed"). Node w4-51l09-11 heeft de image nog lokaal, want de backup-MinIO draait er al
+  # 35 uur op. Pin de pod daarheen en pull niet.
+  #
+  # WEGHALEN zodra de image weer normaal te pullen is: dit kost de scheduler zijn vrijheid en
+  # overleeft het wegvallen van die ene node niet.
+  - target:
+      kind: Deployment
+      name: minio
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kubernetes.io/hostname: w4-51l09-11
+      - op: add
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: IfNotPresent
   - target:
       kind: PersistentVolumeClaim
       name: minio-storage-versioned
