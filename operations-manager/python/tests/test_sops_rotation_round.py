@@ -2989,6 +2989,56 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
 
 @pytest.mark.asyncio
 @needs_sops
+async def test_a_stray_yaml_in_this_repos_own_projects_does_not_take_the_final_check_down(
+    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file in ``projects/`` that is no mapping: walked past, not crashed on.
+
+    Both walks over this repo's own ``projects/`` load every ``*.yaml`` there and hand the
+    result straight to a ``.get()`` -- ``own_project_fields`` for the key half,
+    ``own_plain_passwords`` for the token half. An empty or non-mapping file loads as something
+    that has no ``.get()``, and without the guard the last gate before the old key is deleted
+    dies on an AttributeError: no verdict, and no word about the files it had already passed.
+    The clone walk has this pinned already; these two are the same guard on the other walk.
+
+    The stray file sits between the other two by name, because the glob is sorted: a crash on it
+    takes the finding in ``twee.yaml`` with it, so the assertion that the finding still arrives
+    is what says the walk continued rather than that it never got there.
+    """
+    old_private, _old_public = generate_sops_key_pair()
+    new_private, new_public = generate_sops_key_pair()
+    current = "the-old-pat-in-a-shape-no-rule-knows"
+    own = tmp_path / "own-projects"
+    own.mkdir()
+    converted = await _project_file(own, "een", new_public)
+    (own / "leeg.yaml").write_text("")
+    plain = own / "twee.yaml"
+    plain.write_text(
+        "name: twee\n"
+        "repositories:\n"
+        "  - name: docs-repo\n"
+        "    password: plain:an-ordinary-password-that-is-no-token\n"
+        "  - name: main-repo\n"
+        f"    password: plain:{current}\n"
+    )
+    monkeypatch.setattr(tool, "OWN_PROJECTS", own)
+    current_file = tmp_path / "pat_current.txt"
+    current_file.write_text(current + "\n")
+    records = ["--fingerprint", str(tmp_path / "absent.json")]
+    arguments = [*_key_files(tmp_path, old_private, new_private), *records]
+
+    with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[]):
+        code = await tool.main(["--ja", "--assert-old-key-dead", "--pat-current-file", str(current_file), *arguments])
+
+    printed = capsys.readouterr().out
+    assert code == 1
+    assert f"FAIL still decrypts to the current PAT: {plain}#repositories[1].password" in printed
+    assert "leeg.yaml" not in printed, "nothing to say about it: it holds no field of either kind"
+    assert "1 fields checked" in printed, f"only {converted} is converted, and the stray file adds nothing"
+
+
+@pytest.mark.asyncio
+@needs_sops
 async def test_a_plain_password_is_held_to_the_token_shape_as_well(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
