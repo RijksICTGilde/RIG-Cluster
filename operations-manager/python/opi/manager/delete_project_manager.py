@@ -134,10 +134,8 @@ class DeleteProjectManager:
         else:
             inventory = await kubectl.list_tracked_resources(destination)
             if inventory is None:
-                # Not the same as an empty namespace: this read failed, so there is no
-                # telling what is standing there. Reporting it as swept-and-empty is the
-                # silent force this function exists to prevent, so it lands in errors and
-                # the same branch as an unreadable namespace.
+                # Not the same as an empty namespace: this read failed, so reporting it
+                # as swept is the silent force this function exists to prevent.
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_tracked_resource_deletion",

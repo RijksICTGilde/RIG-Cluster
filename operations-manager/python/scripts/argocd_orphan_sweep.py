@@ -183,9 +183,7 @@ async def inventory(
 
     resource_types = await kubectl.list_namespaced_resource_types()
     if resource_types is None:
-        # Without the type list every namespace inventories as empty, and this tool would
-        # print SCHOON with exit 0 after querying nothing at all. Same reason as the
-        # refusal above: a failed read must never be answered as a measurement.
+        # Same reason as the refusal above: a failed read must never answer as a measurement.
         raise SweepRefused("the cluster did not answer which resource types it has; nothing could be inventoried")
 
     orphans: list[TrackedResource] = []
