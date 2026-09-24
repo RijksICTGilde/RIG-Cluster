@@ -42,7 +42,7 @@ from opi.utils.naming import (
     generate_argocd_repository_secret_name,
     generate_infrastructure_application_name,
 )
-from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files
+from opi.utils.sops import encrypt_to_sops_files
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 # A failed decryption is the EXPECTED outcome here: a clone whose key round has run opens with
@@ -363,9 +363,12 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
     source.write_text(dump_yaml_to_string(secret.document), encoding="utf-8")
     try:
         encrypt_to_sops_files(str(secret.path.parent), secret.recipients[0], secret.private_key)
-    except (SOPSEncryptionError, OSError):
+    except BaseException:
         # A plaintext password left behind in a git clone is the one outcome this whole tool
-        # exists to prevent, so it goes before the error is passed on.
+        # exists to prevent, so it goes before the error is passed on. BaseException and not a
+        # named pair: Ctrl-C during the sops call is a KeyboardInterrupt, which no list of
+        # failure types covers, and it leaves exactly the file a following ``git add -A`` picks
+        # up. ``key_rotation.write_loose_value`` catches it just as widely, for the same reason.
         source.unlink(missing_ok=True)
         raise
     if source.exists():

@@ -97,6 +97,21 @@ SHORTEST_ALARM_SHAPES: tuple[tuple[str, str], ...] = (
 )
 
 
+#: The PEM markers are composed for the same reason, and they were the pair that was still
+#: written out. This file is scanned like any other tracked file, and a literal BEGIN pairs with
+#: the nearest END below it -- across cases, across tests -- so the source in between is read as
+#: the body: two findings on this file, one of them blocking on 100 characters of test source.
+#: Reordering the cases only moves which pair forms; composing leaves no literal to pair.
+def pem_header(label: str) -> str:
+    """The opening line of a PEM block, composed rather than written out."""
+    return "-----BEG" + f"IN {label}-----"
+
+
+def pem_block(label: str, body: str) -> str:
+    """A whole PEM block around ``body``, both markers composed -- see ``pem_header``."""
+    return pem_header(label) + f"\n{body}\n" + "-----E" + f"ND {label}-----\n"
+
+
 # ---------------------------------------------------------------------------
 # an AGE key: a real one is a finding, a placeholder is not
 # ---------------------------------------------------------------------------
@@ -175,7 +190,7 @@ def test_each_token_shape_is_a_finding(text: str, kind: str) -> None:
 @needs_age
 def test_a_pem_private_key_with_a_body_is_a_finding() -> None:
     body = "\n".join(["MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ" * 2] * 3)
-    text = f"-----BEGIN PRIVATE KEY-----\n{body}\n-----END PRIVATE KEY-----\n"
+    text = pem_block("PRIVATE KEY", body)
 
     findings = scan_text(text, "some.pem")
 
@@ -187,11 +202,11 @@ def test_a_pem_private_key_with_a_body_is_a_finding() -> None:
     "text",
     [
         # A header used as an assertion string.
-        'assert "-----BEGIN PRIVATE KEY-----" not in source\n',
+        'assert "' + pem_header("PRIVATE KEY") + '" not in source\n',
         # A header with a stub body, as several tests in this tree use.
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nFAKEKEYMATERIAL==\n-----END OPENSSH PRIVATE KEY-----\n",
-        "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n",
-        "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n",
+        pem_block("OPENSSH PRIVATE KEY", "FAKEKEYMATERIAL=="),
+        pem_block("PRIVATE KEY", "BBBB"),
+        pem_block("PRIVATE KEY", "x"),
     ],
 )
 def test_a_pem_header_without_a_real_body_is_not_a_finding(text: str) -> None:

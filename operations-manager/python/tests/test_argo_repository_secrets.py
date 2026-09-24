@@ -813,6 +813,26 @@ def test_a_failing_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> Non
     assert list(tmp_path.iterdir()) == []
 
 
+def test_an_interrupt_during_the_encryption_takes_the_plaintext_with_it(tmp_path: Path) -> None:
+    """The same leak, through the door a list of failure types does not cover.
+
+    Ctrl-C while ``sops`` is running is a ``KeyboardInterrupt``: not a ``SOPSEncryptionError``,
+    not an ``OSError``, and the one above would have let it through -- leaving a world-readable
+    plaintext password in a git clone, which is exactly what a following ``git add -A`` commits.
+    So the cleanup is measured on something that is not a failure type at all.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+
+    with (
+        patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=KeyboardInterrupt),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(tmp_path: Path) -> None:
     """An encryption that reports success and removes nothing is the same leak without the error.
 
