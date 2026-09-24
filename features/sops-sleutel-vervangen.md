@@ -771,7 +771,7 @@ Die 24 waarden natrekken geeft vier soorten. **Veertien** zeggen zelf dat ze een
 env-regel `ENABLE_TRACEMALLOC=true` uit `features/prometheus-monitoring.md`, een JWT die letterlijk
 `.secret.signature` als staart heeft, en de twee `private-key`-treffers in
 `tests/test_publish_passthrough.py:211` en `:228` -- een PEM-kopregel met `BBBB` respectievelijk `a`
-als body, precies de vorm die deze scanner bewust laat staan. **Vijf** zijn een verzonnen sleutel in
+als body, precies de vorm die deze scanner bewust laat staan. **Vier** zijn een verzonnen sleutel in
 een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `features/cli-*.md`,
 `test_project_service_sequence_persist.py` en `fixtures/upgrade_safety/invites-legacy.yaml`).
 
@@ -782,13 +782,15 @@ een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `featu
 odcn-production. Hem weghalen uit `archive/HOW.md` verandert daar dus niets aan, want hij staat als
 default van de instelling zelf in de boom.
 
-En **vier** zijn een databasewachtwoord in vijf `requires_infra`-scripts voor
-`amt2_dev_deployment_*`: een ervan staat in `tests/test_direct_clone.py:51` en
-`tests/test_schema_permissions.py:21`, beide met `# From the Kubernetes secret` erachter, en
-`test_deployment2_source.py`, `test_deployment3_db.py` en `test_source_db.py` dragen er elk nog een.
-Geen AGE-sleutel en geen vindplaats van deze ronde, maar ook geen plaatshouder, en dit is de klasse
-waar een scanner die alleen bewijsbare vormen meldt per definitie niets over zegt. Zie "Wat hierna
-komt".
+En **vijf** zijn geen plaatshouder, en of ze nog iets openen valt hier niet te meten. Vier ervan
+zijn een databasewachtwoord in vijf `requires_infra`-scripts voor `amt2_dev_deployment_*`: een
+ervan staat in `tests/test_direct_clone.py:51` en `tests/test_schema_permissions.py:21`, beide met
+`# From the Kubernetes secret` erachter, en `test_deployment2_source.py`, `test_deployment3_db.py`
+en `test_source_db.py` dragen er elk nog een. De vijfde is de invitesleutel in
+`docs/generale-doorloop-rc118.md:339`: twee regels erboven staat dat de server hem genereerde en
+dat `GET .../invite/config` hem teruggeeft, dus verzonnen is hij niet. Geen AGE-sleutel en geen
+vindplaats van deze ronde, en dit is de klasse waar een scanner die alleen bewijsbare vormen meldt
+per definitie niets over zegt. Zie "Wat hierna komt".
 
 Wordt gitleaks hier ooit wel bindend, dan hoort die uitzondering in ZIJN configuratie -- een
 `.gitleaksignore` of een `[allowlist]` in een gitleaks-toml -- met de vingerafdruk die gitleaks
@@ -900,7 +902,8 @@ fixture `age_keypair` of de factory `make_age_keypair` in `tests/conftest.py` (b
   de ronde; zie "De oefenronde" voor waarom juist die twee fasen dat kunnen.
 - **Laag 3 uitzoeken:** of GitHub push protection een eigen patroon voor `AGE-SECRET-KEY-`
   toestaat op dit abonnement.
-- **De databasewachtwoorden in de `requires_infra`-scripts natrekken.** Vier stuks voor
-  `amt2_dev_deployment_*`, waarvan er twee bij zeggen dat ze uit een Kubernetes-secret komen. Of
-  die gebruikers nog bestaan valt hier niet te meten; bestaan ze nog, dan is dat een rotatie erbij
-  en horen de waarden uit de boom.
+- **De vijf waarden natrekken die geen plaatshouder zijn.** Vier databasewachtwoorden voor
+  `amt2_dev_deployment_*` in de `requires_infra`-scripts, waarvan er twee bij zeggen dat ze uit een
+  Kubernetes-secret komen, plus de invitesleutel uit een echte doorloop in
+  `docs/generale-doorloop-rc118.md:339`. Of die gebruikers en die sleutel nog bestaan valt hier niet
+  te meten; bestaan ze nog, dan is dat een rotatie erbij en horen de waarden uit de boom.
