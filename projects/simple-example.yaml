@@ -26,14 +26,13 @@ repositories:
   - name: github-repo
     url: "https://github.com/RijksICTGilde/rig-cluster-application-test.git"
     username: "git"
-    password: |
+    password: |-
       -----BEGIN AGE ENCRYPTED FILE-----
-      YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA0K28zZERxZ29ZMjVuQVNP
-      WEpMU0wwMXNPN2F1T3ZSK2M5TmN4b3RNY3dnCmhLN3FxLzcvN01OdmIxWXVFL00z
-      dCt0L0drcVFZUTBKOERIZ3NQK3VFUGcKLS0tIFNCQUM3Z1U0MGJ3eTYxeC9Tb29Z
-      ZmxTWm9BRGtpUExUVlN3N1JPUjRhV0kKt96lbcSOqLThEgvr67Pk3i4IBV6j8mPo
-      ATTaHv3CMKcMQOrDcJ4Z2ilL6CgB/RUw+5G3mBZ/A0f1n5HdqYfXfLi8slY7348S
-      DQ==
+      YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB3dk42YTVRMXNIeVJuYmVK
+      QmdsT0laV2haU09hdXpDMStJZTNZL2RKUjFVCjM0KzNsVi83WU1Qd0ZkNHBodHdH
+      bHVxRnU3eWRybCtUT09PWlllVExwTGMKLS0tIElLSWFVM2hXVFpySDRwTWltcVhk
+      dkI4TGRBUkNnWG45VnFYc3RmZCsvUW8KBkdHlmlJeFrec+BjxPtpeHuomqu9pC68
+      M0lJ+TTScTS0WYBN4RjTae4C0KjLdhedfMrjYRikatqkyn++BKsGmJut96xF6sHP
       -----END AGE ENCRYPTED FILE-----
     branch: "main"
     path: "."
