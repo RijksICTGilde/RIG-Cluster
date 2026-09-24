@@ -5,14 +5,12 @@ ARG UV_VERSION=0.12.15
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-# dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
-FROM quay.io/minio/mc:${MC_VERSION} AS mc
-
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
+ARG MC_VERSION
 ARG SOPS_VERSION=v3.13.2
 ARG KOPIA_VERSION=0.23.1
 ARG CHISEL_VERSION=1.11.8
@@ -55,8 +53,20 @@ RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/
     && chmod +x "sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && mv "sops-${SOPS_VERSION}.linux.${TARGETARCH}" /usr/local/bin/sops
 
-# Install MinIO client
-COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
+# Install MinIO client - layer cached unless MC_VERSION ARG changes.
+# Niet uit een image: MinIO heeft zowel docker.io/minio als quay.io/minio achter een
+# abonnement gezet (401 op elke tag, en anoniem ook op de repo-API; een publiek quay-repo
+# ernaast geeft wel 200). dl.min.io geeft 410 Gone. De GitHub-release van dezelfde tag
+# staat er nog. De sha256sum die daar naast de binary hangt is hier de grendel: zonder die
+# controle wordt een foutpagina als binary opgeslagen en valt dat pas bij de eerste
+# aanroep op.
+RUN MC_ASSET="mc.linux-${TARGETARCH}.${MC_VERSION}" \
+    && MC_URL="https://github.com/minio/mc/releases/download/${MC_VERSION}/${MC_ASSET}" \
+    && curl -fsSL -o /usr/local/bin/mc "${MC_URL}" \
+    && curl -fsSL -o /tmp/mc.sha256sum "${MC_URL}.sha256sum" \
+    && echo "$(cut -d' ' -f1 /tmp/mc.sha256sum)  /usr/local/bin/mc" | sha256sum -c - \
+    && chmod 755 /usr/local/bin/mc \
+    && rm /tmp/mc.sha256sum
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64
