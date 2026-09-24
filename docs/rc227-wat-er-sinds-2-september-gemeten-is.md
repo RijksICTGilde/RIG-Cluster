@@ -127,6 +127,45 @@ geen 404. Dat is juist (de inlogpoort zit voor de routering), maar het betekent 
 | Het repositorypad blijft binnen de repo | **niet gemeten.** `test_repository_pad_binnen_de_repo.py` dekt de regel; een clustertoets zou dezelfde functie meten. |
 | De ciphertext van een secret dat opnieuw gemaakt wordt blijft staan | **al gedekt** door `test_sandbox_secret_rollout.py`. |
 
+## Wat de CLI-weg opleverde
+
+Het plan verwachtte hiervan het meest: *"Een API-wijziging die de UI niet raakt maar de CLI
+wel, valt vandaag nergens om."* Twee dingen vielen meteen om. Allebei zitten ze in de
+**zad-cli-repository** en niet hier, dus ze zijn gemeld en niet gerepareerd.
+
+**1. `scope: project` is vanaf de CLI onbereikbaar.** De projectlaag van
+`postgresql-database` is in het OpenAPI-document een `oneOf` met een discriminator op
+`scope`, met `shared` en `project` als takken. De CLI valideert client-side tegen een tak en
+weigert de andere met een zin die zichzelf tegenspreekt:
+
+```
+'scope' is 'project', which is not one of shared, project.
+```
+
+`scope=shared` komt er wel door, `scope=project` niet. Daarmee is de weg naar een eigen
+databasecluster vanaf de opdrachtregel dicht.
+
+**2. `zad component delete` heeft geen uitweg voor een component in gebruik.** De API draagt
+`confirm_in_use` en zegt over de 409 dat de body elke plek noemt waar de component nog
+gebruikt wordt. De CLI kent alleen `--yes` en `--dry-run`, en drukt af:
+
+```
+✗ Conflict (HTTP 409): the resource is in a state that blocks this action.
+```
+
+De gebruiker leest een toestand en krijgt geen volgende stap.
+
+Beide toetsen pinnen daarom de **serverkant** vast, niet het gebrek: het document moet beide
+scopes blijven noemen, en `confirm_in_use` moet blijven bestaan. Een toets die de
+CLI-weigering vastpint wordt rood zodra iemand de CLI repareert, en dat is precies verkeerd
+om.
+
+**Waarneming zonder eigenaar.** De grenzen van `connection-limit` (1 tot 500) staan NIET in
+het OpenAPI-document: het veld is daar een kale `integer`. Een client kan de speelruimte dus
+niet vooraf kennen en komt er pas achter door een weigering. Dat is verdedigbaar (de grens
+staat op een plek, zoals de feature-doc eist) maar het betekent wel dat elke client die het
+vooraf wil weten, het moet raden.
+
 ## Wat hieruit volgt
 
 Twee dingen die buiten deze ronde vallen maar wel een eigenaar nodig hebben:
