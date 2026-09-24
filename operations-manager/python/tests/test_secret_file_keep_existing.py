@@ -10,7 +10,6 @@ from opi.generation.manifests import ManifestGenerator
 from opi.manager.project_manager import ProjectManager, _existing_secret_pairs
 from opi.services.catalog.base import ManifestContribution, SecretFileSpec
 from opi.utils.sops import encrypt_to_sops_files
-from tests.test_sops_skip_unchanged import PRIVATE_KEY, PUBLIC_KEY
 
 pytestmark = pytest.mark.skipif(
     shutil.which("sops") is None or shutil.which("age") is None,
@@ -31,10 +30,25 @@ PROJECT: dict = {
         }
     ],
 }
-WRONG_KEY = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
+# Gevuld door de fixture hieronder: de wegwerpsleutels van deze run, zodat er geen vaste sleutel in
+# de boom staat. De scanner slaat alarm op elke geldige AGE-SECRET-KEY-, en een alarm met bekende
+# vondsten erin is er een waar mensen omheen leren lopen.
+PUBLIC_KEY = ""
+PRIVATE_KEY = ""
+WRONG_KEY = ""
+
+_EIGEN_SLEUTEL = object()
 
 
-def _write(directory: str, value: str, *, keep: bool = True, private_key: str | None = PRIVATE_KEY) -> str:
+@pytest.fixture(scope="session", autouse=True)
+def _sleutels(age_keypair: tuple[str, str], make_age_keypair) -> None:
+    """Bind de wegwerpsleutels van deze run aan de modulewaarden."""
+    global PRIVATE_KEY, PUBLIC_KEY, WRONG_KEY
+    PRIVATE_KEY, PUBLIC_KEY = age_keypair
+    WRONG_KEY, _publiek = make_age_keypair()
+
+
+def _write(directory: str, value: str, *, keep: bool = True, private_key: str | None | object = _EIGEN_SLEUTEL) -> str:
     """Schrijf het cookie-secret en geef de waarde uit de geschreven plaintext terug."""
     pm = ProjectManager.__new__(ProjectManager)
     pm._manifest_generator = ManifestGenerator()
@@ -46,7 +60,7 @@ def _write(directory: str, value: str, *, keep: bool = True, private_key: str | 
         output_dir=directory,
         template_path=TEMPLATE,
         created_files=created_files,
-        private_key=private_key,
+        private_key=PRIVATE_KEY if private_key is _EIGEN_SLEUTEL else private_key,
     )
     assert created_files == [f"{NAME}-secret.to-sops.yaml"]
     with open(os.path.join(directory, created_files[0])) as f:

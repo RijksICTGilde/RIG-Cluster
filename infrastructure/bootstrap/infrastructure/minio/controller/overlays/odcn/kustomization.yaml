@@ -15,3 +15,14 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 10Gi
+
+# Eigen build, want MinIO distribueert deze release niet meer: Docker Hub vraagt een
+# abonnement (401 op elke tag, ook ingelogd) en dl.min.io geeft 410 Gone. Deze image is
+# gecompileerd uit de broncode van tag RELEASE.2025-07-23T15-54-02Z, die nog publiek en AGPL
+# is, met dezelfde ldflags als hun Makefile: `minio --version` noemt dezelfde release en
+# commit-id (7ced9663e6a7). ghcr-rig is hetzelfde proxypad waar ArgoCD zijn eigen image
+# vandaan haalt.
+images:
+  - name: quay.io/minio/minio
+    newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/minio
+    newTag: RELEASE.2025-07-23T15-54-02Z
