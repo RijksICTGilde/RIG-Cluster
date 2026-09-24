@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from tests.e2e.conftest import SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
-from tests.e2e.helpers.lifecycle import create_project_with_services
+from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_with_services
 from tests.e2e.helpers.wizard import unique_project_name
 from tests.e2e.helpers.zad_cli import ZadCli, skip_zonder_cli
 
@@ -60,6 +60,9 @@ _SERVICES = ["publish-on-web", "postgresql-database"]
 #: eerdere run was blijven staan niet als geslaagde kloon telt.
 _MERKTEKEN = f"rc227-{uuid.uuid4().hex[:8]}"
 
+#: De componentnaam die de wizardhelper aanmaakt.
+_COMPONENT = "web"
+
 
 @pytest.fixture(scope="module")
 def kloon_project(
@@ -77,6 +80,10 @@ def kloon_project(
             unique_project_name(prefix="kloon"),
             user_email=SANDBOX_TEST_USER["email"],
             services=_SERVICES,
+            # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
+            # met diensten dat niet altijd. Een ruimere wacht is hier geen verdoezeling: de
+            # toets meet wat er daarna gebeurt, niet hoe snel de wizard is.
+            create_timeout=600.0,
         )
         logger.info("kloonproject %s, brondeployment %s", gemaakt.name, gemaakt.deployment_name)
         yield gemaakt
@@ -200,10 +207,18 @@ def test_klonen_via_de_cli_neemt_de_data_mee(
     De uitkomst wordt in de DOELdatabase gemeten en niet in het antwoord van de CLI: dat
     laatste zegt alleen dat de taak startte.
     """
+    # `--component` en `--image` moeten mee: de CLI weigert een deployment zonder inhoud
+    # ("Provide --component + --image, or a manifest with -f/--file"). De component is
+    # dezelfde als die van de brondeployment, want het gaat hier om de DATA en niet om de
+    # applicatie.
     resultaat = cli.run(
         "deployment",
         "create",
         doel_deployment,
+        "--component",
+        _COMPONENT,
+        "--image",
+        RUNNABLE_IMAGE,
         "--clone-from",
         kloon_project.deployment_name,
         "--yes",
