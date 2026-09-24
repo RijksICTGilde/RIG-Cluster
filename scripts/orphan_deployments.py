@@ -89,8 +89,8 @@ EXTERNAL_SERVICES = {
 def run_git(repo: str, *args: str) -> str:
     """Draai een git-commando in ``repo`` en geef stdout terug (leeg bij fouten)."""
     try:
-        result = subprocess.run(
-            ["git", "-C", repo, *args],
+        result = subprocess.run(  # noqa: S603
+            ["git", "-C", repo, *args],  # noqa: S607
             capture_output=True,
             text=True,
             check=False,
@@ -293,7 +293,7 @@ def scan_manifest_dir(manifest_dir: str) -> tuple[list[str], list[str], list[str
                     break
             if name.endswith("-deployment.yaml"):
                 components.add(name[: -len("-deployment.yaml")])
-            if name.endswith("-pvc.yaml") or name.endswith("-pvc.marked-for-deletion.yaml"):
+            if name.endswith(("-pvc.yaml", "-pvc.marked-for-deletion.yaml")):
                 data = load_yaml(os.path.join(root, name))
                 metadata = data.get("metadata") if data else None
                 if isinstance(metadata, dict) and isinstance(metadata.get("name"), str):
