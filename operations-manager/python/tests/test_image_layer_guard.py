@@ -236,15 +236,25 @@ class TestPinnedTools:
             assert tag != "latest", base
 
     @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
-    def test_mc_comes_from_the_pinned_image(self, dockerfile: Path) -> None:
-        """dl.min.io answers 410 with a text body, which `curl -LO` saved as the binary."""
+    def test_mc_comes_from_the_pinned_github_release(self, dockerfile: Path) -> None:
+        """Both bronnen die MinIO zelf aanbood zijn dicht, en allebei zwijgend.
+
+        dl.min.io geeft 410 met een tekstbody die `curl -LO` als binary opsloeg, en sinds
+        MinIO zijn images achter een abonnement zette geeft quay.io 401 op elke tag. Wat
+        overblijft is de GitHub-release. De sha256sum ernaast is wat een foutpagina hier
+        laat omvallen in plaats van bij de eerste aanroep.
+        """
         lines = [line for _, line in _instructions(dockerfile.read_text())]
         assert not [line for line in lines if "dl.min.io" in line]
-        assert "FROM quay.io/minio/mc:${MC_VERSION} AS mc" in lines
-        assert "COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc" in lines
-        # An ARG used in FROM only has a value when it is declared before the first FROM.
-        first_from = next(i for i, line in enumerate(lines) if line.upper().startswith("FROM "))
-        assert [line for line in lines[:first_from] if re.fullmatch(r"ARG MC_VERSION=RELEASE\.\S+", line)]
+        assert not [line for line in lines if "minio/mc" in line and line.upper().startswith("FROM ")]
+
+        haal = [line for line in lines if "github.com/minio/mc/releases/download" in line]
+        assert haal, "mc wordt nergens uit de GitHub-release gehaald"
+        for line in haal:
+            assert "sha256sum -c -" in line, f"mc wordt gehaald zonder checksumcontrole: {line}"
+            assert "curl -fsSL" in line, f"mc-download zonder -f slaat een foutpagina op: {line}"
+
+        assert [line for line in lines if re.fullmatch(r"ARG MC_VERSION(=RELEASE\.\S+)?", line)]
 
 
 class TestAptLayers:
