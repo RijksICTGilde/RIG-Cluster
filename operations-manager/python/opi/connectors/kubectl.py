@@ -780,7 +780,7 @@ class KubectlConnector:
             return []
         return data.get("items", []) if isinstance(data, dict) else []
 
-    async def list_namespaced_resource_types(self) -> list[str]:
+    async def list_namespaced_resource_types(self) -> list[str] | None:
         """
         The namespaced resource types this cluster can list and delete.
 
@@ -788,14 +788,17 @@ class KubectlConnector:
         sweep whose whole job is finding what was left behind.
 
         Returns:
-            kubectl type names (``secrets``, ``deployments.apps``, ...), empty on failure.
+            kubectl type names (``secrets``, ``deployments.apps``, ...), or ``None`` when
+            the discovery itself failed. A failed discovery must not read as 'this cluster
+            has no types': every namespace would then inventory as empty and a sweep would
+            report SCHOON without having looked at anything (RC-226).
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["api-resources", "--namespaced=true", "--verbs=list,delete", "-o", "name"]
         )
         if code != 0:
             logger.error(f"Failed to list namespaced api-resources: {stderr}")
-            return []
+            return None
 
         types = []
         for line in stdout.splitlines():
@@ -807,7 +810,7 @@ class KubectlConnector:
 
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None
-    ) -> list[TrackedResource]:
+    ) -> list[TrackedResource] | None:
         """
         Every resource in a namespace that ArgoCD marked as its own.
 
@@ -817,11 +820,15 @@ class KubectlConnector:
                 type this cluster can list and delete
 
         Returns:
-            The tracked resources found, empty when there are none or the query failed.
+            The tracked resources found, empty when there are none, or ``None`` when the
+            namespace could not be inventoried. Both callers act on the difference: a
+            force that reads a failure as 'nothing here' deletes nothing and reports
+            success, and a sweep that does so reports SCHOON (RC-226).
         """
         types = resource_types if resource_types is not None else await self.list_namespaced_resource_types()
         if not types:
-            return []
+            logger.error(f"Cannot inventory namespace '{namespace}': no resource types to query")
+            return None
 
         stdout, stderr, code = await self._run_kubectl_command(
             ["get", ",".join(types), "-n", namespace, "--ignore-not-found=true", "-o", "json"],
@@ -830,6 +837,7 @@ class KubectlConnector:
         if not stdout.strip():
             if code != 0:
                 logger.error(f"Failed to inventory tracked resources in namespace '{namespace}': {stderr}")
+                return None
             return []
         if code != 0:
             # kubectl reports a non-zero exit when ONE of the queried types fails (an
@@ -841,7 +849,7 @@ class KubectlConnector:
             data = json.loads(stdout)
         except json.JSONDecodeError as e:
             logger.error(f"Could not parse the resource inventory of namespace '{namespace}': {e}")
-            return []
+            return None
 
         items = data.get("items", []) if isinstance(data, dict) else []
         tracked = [resource for item in items if (resource := tracked_resource_from_item(item)) is not None]
