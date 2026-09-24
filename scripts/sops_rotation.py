@@ -267,13 +267,13 @@ def sops_on_either_recipient(old_public: str | None, new_public: str, trees: lis
     return list(seen)
 
 
-def own_project_fields() -> list[tuple[str, str]]:
+def own_project_fields(paths: list[Path] | None = None) -> list[tuple[str, str]]:
     """The platform-keyed fields in this repo's own ``projects/``, as ``(fingerprint key, value)``.
 
     Same shape as a loose value for the fingerprint's purposes: a name and a ciphertext.
     """
     found: list[tuple[str, str]] = []
-    for path in own_project_paths():
+    for path in own_project_paths() if paths is None else paths:
         data = load_yaml_from_path(str(path))
         if not isinstance(data, dict):
             continue
@@ -310,7 +310,7 @@ def own_plain_passwords() -> list[tuple[str, str]]:
 
 
 async def fingerprint_now(
-    sops_paths: list[Path], fields: list[LooseValue], *private_keys: str
+    sops_paths: list[Path], fields: list[LooseValue], *private_keys: str, own_projects: list[Path] | None = None
 ) -> tuple[Fingerprint, list[str]]:
     """Measure the plaintext of every named field, with the first key that fits.
 
@@ -340,7 +340,7 @@ async def fingerprint_now(
                 break
         else:
             closed.append(loose_fingerprint_key(field_))
-    for name, value in own_project_fields():
+    for name, value in own_project_fields(own_projects):
         for key in private_keys:
             plain = await decrypt_field(value, key)
             if plain is not None:
@@ -499,6 +499,7 @@ async def run_final_check(
     argo: Path | None = None,
     pat: str | None = None,
     current_pat: str | None = None,
+    own_values_on_another_key: bool = False,
 ) -> FinalCheck:
     """A must fail everywhere, B must succeed everywhere, and the count must match.
 
@@ -520,17 +521,20 @@ async def run_final_check(
     check = FinalCheck(expected=expected, token_checked=pat is not None, current_pat_checked=current_pat is not None)
     for path in sops_on_either_recipient(old_public, new_public, trees):
         check_sops_file(path, old_private, new_private, check)
-    for path in loose_paths():
+    # With ``own_values_on_another_key`` this repo's own values sit on a recipient this run is
+    # not rotating, so holding them against these two keys would fail on every one of them.
+    own = [] if own_values_on_another_key else None
+    for path in [] if own_values_on_another_key else loose_paths():
         for field_ in loose_values(path):
             await check_value(
                 loose_fingerprint_key(field_), field_.value, old_private, new_private, check, pat, current_pat
             )
-    for name, value in own_project_fields():
+    for name, value in own_project_fields(own):
         await check_value(name, value, old_private, new_private, check, pat, current_pat)
     if pat is not None or current_pat is not None:
         # Not counted, for the same reason as the clone's copy below. Why they are checked at
         # all: ``own_plain_passwords``.
-        for name, plaintext in own_plain_passwords():
+        for name, plaintext in [] if own_values_on_another_key else own_plain_passwords():
             check_token(name, plaintext, pat, check, current_pat)
     if projects is not None:
         for path in project_files(projects):
@@ -875,7 +879,17 @@ async def main(argv: list[str] | None = None) -> int:
         fingerprints = [fingerprint_path, projects_fingerprint]
         expected = expected_count(fingerprints) if projects is not None else None
         check = await run_final_check(
-            old_private, new_private, old_public, new_public, projects, expected, trees, argo, pat, current_pat
+            old_private,
+            new_private,
+            old_public,
+            new_public,
+            projects,
+            expected,
+            trees,
+            argo,
+            pat,
+            current_pat,
+            arguments.own_values_on_another_key,
         )
         for line in check.lines():
             print(line)
@@ -929,7 +943,11 @@ async def main(argv: list[str] | None = None) -> int:
 
     print("\nRecording the fingerprint of the plaintext...")
     fingerprint_before, closed = await fingerprint_now(
-        sops_on_either_recipient(old_public, new_public, trees), all_loose_values(paths), old_private, new_private
+        sops_on_either_recipient(old_public, new_public, trees),
+        all_loose_values(paths),
+        old_private,
+        new_private,
+        own_projects=own_projects,
     )
     if closed:
         for name in closed:
@@ -946,7 +964,10 @@ async def main(argv: list[str] | None = None) -> int:
 
     print("\nChecking with the new key...")
     fingerprint_after, closed = await fingerprint_now(
-        [path for tree in trees for path in sops_files_for(tree, new_public)], all_loose_values(paths), new_private
+        [path for tree in trees for path in sops_files_for(tree, new_public)],
+        all_loose_values(paths),
+        new_private,
+        own_projects=own_projects,
     )
     objections = fingerprint_before.compare(fingerprint_after)
     for name in closed:
