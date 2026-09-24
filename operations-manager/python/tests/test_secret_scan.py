@@ -848,8 +848,9 @@ _FLAG_NAME = "USE_UNSAFE_API_KEY"
 #:
 #: Digits belong in the value class: pydantic reads ``1`` as ``True`` exactly as it reads ``true``,
 #: so a letters-only class dropped such a line from the count and let the floor below rest on the
-#: other places.
-_UNSAFE_FLAG_ASSIGNMENT = re.compile(rf"{_FLAG_NAME}\s*(?::\s*bool\s*)?=\s*([A-Za-z0-9]+)")
+#: other places. The quotes are there for the same reason, and the env form below already allowed
+#: them: a ``.env`` line may write its value quoted, and pydantic strips those quotes.
+_UNSAFE_FLAG_ASSIGNMENT = re.compile(rf"{_FLAG_NAME}\s*(?::\s*bool\s*)?=\s*[\"']?([A-Za-z0-9]+)[\"']?")
 
 #: The second form, and the one this repo actually uses to turn a boolean setting on per overlay: a
 #: container env entry, where the name and the value are two lines and there is no ``=`` anywhere.
@@ -999,6 +1000,33 @@ def test_both_shapes_that_configure_the_flag_are_read_including_a_numeric_value(
     # ones that switch the flag ON, so dropping them is not a misread but a silent pass.
     assert "true" not in _FALSE_LITERALS
     assert "1" not in _FALSE_LITERALS
+
+
+def test_a_quoted_value_in_an_env_line_is_read_like_a_bare_one() -> None:
+    """A ``.env`` line may put its value in quotes, and this repo writes settings that way.
+
+    ``bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:29``
+    sets ``ADDITIONAL_DOMAINS`` (``opi/core/config.py:177``) with the value in double quotes,
+    thirty-four lines above the line that sets this flag in that same ``.env`` block. Measured
+    against ``pydantic_settings`` with a one-field model: ``FLAG="true"`` and ``FLAG='true'`` both
+    arrive as ``True``, exactly like the bare spelling. A pattern that reads only a bare value
+    therefore does not misread such a line, it drops it from the count -- a silent pass, and the
+    hole the env form below does not have, because that one reads the quotes.
+    """
+    fourth = "bootstrap/rig-system/kustomize/o-m/overlays/fourth/configmap.yaml"
+    lines = [
+        f'{fourth}:63:    {_FLAG_NAME}="true"',
+        "--",
+        f"{fourth}:64:    {_FLAG_NAME}='true'",
+        "--",
+        f'{fourth}:65:    {_FLAG_NAME}="false"',
+    ]
+
+    assert _flag_configurations(lines) == [
+        (f"{fourth}:63", "true"),
+        (f"{fourth}:64", "true"),
+        (f"{fourth}:65", "false"),
+    ]
 
 
 def test_an_env_entry_whose_value_cannot_be_read_does_not_pass_as_off() -> None:
