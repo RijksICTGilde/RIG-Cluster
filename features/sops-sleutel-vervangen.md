@@ -751,6 +751,51 @@ die allemaal kopregels in testdata waren.
 **Eerst de boom schoon, dan de grendel.** In die volgorde, anders bouw je een alarm dat vanaf dag
 een rood staat.
 
+### Er is geen uitzonderingslijst, en waarom dat geen omissie is
+
+Deze grendel kent geen allowlist. Niet als voorziening die nog moet komen: er is niets om uit te
+zonderen. Gemeten op deze branch is `scan-secrets.py` schoon over de hele boom, en het bestand
+waar in deze ronde een uitzondering voor voorgesteld werd -- `archive/HOW.md` -- is met `--files`
+ook los schoon. Een lijst met regels erin zou dus een lijst zijn van dingen die de poort nooit meldt,
+en een uitzondering op een melding die niet bestaat is geen oordeel maar ruis.
+
+Dat een uitzondering NODIG leek komt van een tweede scanner. Een review over de branch draait
+`gitleaks`, en dat is een andere poort met andere regels. Gemeten met gitleaks 8.30.1 over deze
+boom: **167 bevindingen op getrackte bestanden, 24 verschillende waarden**, en de kop van die lijst
+is `test-api-key-12345` (72x) en `your-api-key` (45x) -- plaatshouders in toetsen en documentatie.
+Dat is precies het alarm waar de sectie hierboven over gaat, nu van de andere kant: daarom is
+gitleaks hier geen grendel en staat er een eigen scanner die zijn treffers kan bewijzen.
+
+Die 24 waarden natrekken geeft vier soorten. **Veertien** zeggen zelf dat ze een plaatshouder zijn
+(`your-api-key`, `test-api-key-12345`, `YOUR_ACCESS_TOKEN`), of zijn helemaal geen waarde: de
+env-regel `ENABLE_TRACEMALLOC=true` uit `features/prometheus-monitoring.md`, een JWT die letterlijk
+`.secret.signature` als staart heeft, en de twee `private-key`-treffers in
+`tests/test_publish_passthrough.py:211` en `:228` -- een PEM-kopregel met `BBBB` respectievelijk `a`
+als body, precies de vorm die deze scanner bewust laat staan. **Vijf** zijn een verzonnen sleutel in
+een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `features/cli-*.md`,
+`test_project_service_sequence_persist.py` en `fixtures/upgrade_safety/invites-legacy.yaml`).
+
+**Eén** is een gecommitte ontwikkelstandaard: `d68d6aebd694d636e5eb4784a952b9c3`, 12 keer, de
+default van `API_TOKEN` in `opi/core/config.py:261`. Die opent niets --
+`opi/utils/api_keys.py:37` gebruikt hem alleen als `USE_UNSAFE_API_KEY` aanstaat, en die staat op
+`False` in de code, op `false` in `operations-manager/python/.env` en op `false` in de configmap van
+odcn-production. Hem weghalen uit `archive/HOW.md` verandert daar dus niets aan, want hij staat als
+default van de instelling zelf in de boom.
+
+En **vier** zijn een databasewachtwoord in vijf `requires_infra`-scripts voor
+`amt2_dev_deployment_*`: `tV7ItQqGCqqUA8Efhg9q` staat in `tests/test_direct_clone.py:51` en
+`tests/test_schema_permissions.py:21`, beide met `# From the Kubernetes secret` erachter, en
+`test_deployment2_source.py`, `test_deployment3_db.py` en `test_source_db.py` dragen er elk nog een.
+Geen AGE-sleutel en geen vindplaats van deze ronde, maar ook geen plaatshouder, en dit is de klasse
+waar een scanner die alleen bewijsbare vormen meldt per definitie niets over zegt. Zie "Wat hierna
+komt".
+
+Wordt gitleaks hier ooit wel bindend, dan hoort die uitzondering in ZIJN configuratie -- een
+`.gitleaksignore` of een `[allowlist]` in een gitleaks-toml -- met de vingerafdruk die gitleaks
+zelf uitrekent (`archive/HOW.md:generic-api-key:181`). Niet in een eigen bestand met eigen
+regelnamen: dat leest als een poort en is er geen, en een vingerafdruk die geen gereedschap
+produceert kan niemand nameten.
+
 ### Wat er gescand wordt
 
 AGE-privesleutels, GitHub-PAT's (`ghp_`, `github_pat_`, `gho_`/`ghu_`/`ghs_`/`ghr_`),
@@ -855,3 +900,7 @@ fixture `age_keypair` of de factory `make_age_keypair` in `tests/conftest.py` (b
   de ronde; zie "De oefenronde" voor waarom juist die twee fasen dat kunnen.
 - **Laag 3 uitzoeken:** of GitHub push protection een eigen patroon voor `AGE-SECRET-KEY-`
   toestaat op dit abonnement.
+- **De databasewachtwoorden in de `requires_infra`-scripts natrekken.** Vier stuks voor
+  `amt2_dev_deployment_*`, waarvan er twee bij zeggen dat ze uit een Kubernetes-secret komen. Of
+  die gebruikers nog bestaan valt hier niet te meten; bestaan ze nog, dan is dat een rotatie erbij
+  en horen de waarden uit de boom.
