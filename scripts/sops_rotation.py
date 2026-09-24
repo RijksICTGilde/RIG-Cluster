@@ -690,6 +690,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="delete the old key file, but only when the final check is clean",
     )
+    parser.add_argument(
+        "--loose-values-not-on-this-key",
+        action="store_true",
+        help="the loose values in this repo belong to another recipient; leave them out",
+    )
     parser.add_argument("--rename", action="store_true", help="put the keys under their fixed names and stop")
     parser.add_argument(
         "--generate-new-key",
@@ -745,6 +750,18 @@ def note_places_left_out(
     if current_pat is None:
         print("NOTE without --pat-current-file nothing here proves the OLD PAT is gone. The")
         print("token half above recognises a token by its SHAPE; equality needs no shape.")
+
+
+def note_loose_values_left_out(left_out: bool) -> None:
+    """What ``--loose-values-not-on-this-key`` takes off the worklist, said out loud.
+
+    A run that measures less than the usual run has to say so in its own output, because the
+    CLEAN line underneath reads the same either way.
+    """
+    if not left_out:
+        return
+    print(f"NOTE --loose-values-not-on-this-key: the {len(loose_paths())} loose-value files in this")
+    print("repo are left out. Nothing in this run says anything about the values in them.")
 
 
 def note_argo_left_out_of_the_record(argo: Path | None) -> None:
@@ -820,7 +837,17 @@ async def main(argv: list[str] | None = None) -> int:
     trees = sops_trees(argo)
     fingerprint_path = Path(arguments.fingerprint)
     projects_fingerprint = Path(arguments.projects_fingerprint)
-    paths = loose_paths()
+    # The SOPS round picks its files by recipient, so pointing this at another key finds that
+    # key's files by itself. The loose values cannot do that: outside a SOPS file the text does
+    # not say which key it belongs to, so their worklist is a list of PATHS, and those paths hold
+    # the platform key's values whatever key is being rotated. Rotating a different recipient --
+    # the sandbox key, say -- then trips "opens with neither key" on values that were never in
+    # scope. Saying so is the operator's call and has to be explicit, because "not my key" and
+    # "I failed to reach it" look identical from here, and the second is what the grendel exists
+    # for. ``covered_in`` keeps counting these paths as covered, so this narrows the worklist
+    # without opening a hole in ``coverage_gaps()``.
+    paths = [] if arguments.loose_values_not_on_this_key else loose_paths()
+    note_loose_values_left_out(arguments.loose_values_not_on_this_key)
 
     if old_private is None:
         # Guaranteed by old_optional above; everything past this point acts on the old key.

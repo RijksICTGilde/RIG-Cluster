@@ -3211,3 +3211,46 @@ async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
     assert without == 0, "the key half is happy: this field really does sit on the new key"
     assert code == 1
     assert f"FAIL holds a GitHub token that is not the new one: {project}#repositories[0].password" in printed
+
+
+@pytest.mark.asyncio
+@needs_sops
+async def test_the_loose_values_of_another_recipient_stop_the_run_until_they_are_named(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Rotating a recipient that is not the platform key: the loose values are not its business.
+
+    The SOPS round selects on the recipient, so pointing the tool at the sandbox key finds the
+    sandbox files by itself. The loose values cannot follow: their worklist is a list of PATHS in
+    this repo, and those hold the platform key's values whatever key is being rotated. Without
+    the flag that is a stop, and it should be -- "not my key" and "I failed to reach it" look the
+    same from here. With it the run goes ahead and SAYS what it left out.
+
+    Both halves are measured, because a flag that is read but never consulted passes the first
+    assertion on its own.
+    """
+    old_private, old_public = generate_sops_key_pair()
+    new_private, _new_public = generate_sops_key_pair()
+    _another_private, another_public = generate_sops_key_pair()
+    sops_path, _env_path, _ = await _two_place_tree(tmp_path, old_public)
+    # A loose value on a THIRD key: neither the old nor the new one opens it.
+    stranger = await _env_file(tmp_path / "stranger.env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, another_public)
+    command = [
+        "--ja",
+        "--dry-run",
+        *_key_files(tmp_path, old_private, new_private),
+        "--fingerprint",
+        str(tmp_path / "fingerprint.json"),
+    ]
+
+    with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[stranger]):
+        stopped = await tool.main(command)
+        out_without = capsys.readouterr().out
+        went_ahead = await tool.main([*command, "--loose-values-not-on-this-key"])
+        out_with = capsys.readouterr().out
+
+    assert stopped == 1
+    assert "opens with neither key" in out_without
+    assert went_ahead == 0
+    assert "opens with neither key" not in out_with
+    assert "NOTE --loose-values-not-on-this-key" in out_with
