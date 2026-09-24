@@ -132,27 +132,42 @@ class DeleteProjectManager:
                 "its resources may be left behind"
             )
         else:
-            tracked = [
-                resource
-                for resource in await kubectl.list_tracked_resources(destination)
-                if resource.app_name == app_name
-            ]
-            failed = await kubectl.delete_tracked_resources(tracked)
-            deletion_results["operations"].append(
-                {
-                    "type": "argocd_app_tracked_resource_deletion",
-                    "target": app_name,
-                    "namespace": destination,
-                    "status": "success" if not failed else "partial",
-                    "deleted": len(tracked) - len(failed),
-                    "failed": len(failed),
-                }
-            )
-            if failed:
-                deletion_results["errors"].append(
-                    f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
-                    f"in namespace '{destination}'"
+            inventory = await kubectl.list_tracked_resources(destination)
+            if inventory is None:
+                # Not the same as an empty namespace: this read failed, so there is no
+                # telling what is standing there. Reporting it as swept-and-empty is the
+                # silent force this function exists to prevent, so it lands in errors and
+                # the same branch as an unreadable namespace.
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_tracked_resource_deletion",
+                        "target": app_name,
+                        "namespace": destination,
+                        "status": "inventory_failed",
+                    }
                 )
+                deletion_results["errors"].append(
+                    f"Could not inventory namespace '{destination}' for resources of ArgoCD application "
+                    f"'{app_name}'; its resources may be left behind"
+                )
+            else:
+                tracked = [resource for resource in inventory if resource.app_name == app_name]
+                failed = await kubectl.delete_tracked_resources(tracked)
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_tracked_resource_deletion",
+                        "target": app_name,
+                        "namespace": destination,
+                        "status": "success" if not failed else "partial",
+                        "deleted": len(tracked) - len(failed),
+                        "failed": len(failed),
+                    }
+                )
+                if failed:
+                    deletion_results["errors"].append(
+                        f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
+                        f"in namespace '{destination}'"
+                    )
 
         finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)
         deletion_results["operations"].append(

@@ -83,19 +83,12 @@ class TestTrackingId:
     def test_untracked_resource_is_skipped(self) -> None:
         assert tracked_resource_from_item(_item("Secret", "v1", "db-creds", None)) is None
 
-    def test_tracked_resource_reads_kind_name_and_deletion_state(self) -> None:
+    def test_tracked_resource_reads_kind_name_and_owner(self) -> None:
         resource = tracked_resource_from_item(
             _item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds", deletionTimestamp="2026-09-24T10:00:00Z")
         )
         assert resource is not None
         assert (resource.kind, resource.name, resource.app_name) == ("Secret", "db-creds", "app-a")
-        assert resource.being_deleted is True
-
-    def test_resource_without_deletion_timestamp_is_not_being_deleted(self) -> None:
-        """The 350 leftovers carried none: nothing had ever asked for their deletion."""
-        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"))
-        assert resource is not None
-        assert resource.being_deleted is False
 
     def test_the_instance_label_also_names_the_owner(self) -> None:
         """ArgoCD's DEFAULT tracking method, which is what local and sandboxed-local run.
@@ -107,7 +100,6 @@ class TestTrackingId:
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="app-a"))
         assert resource is not None
         assert resource.app_name == "app-a"
-        assert resource.owner_ref == "app.kubernetes.io/instance=app-a"
 
     def test_the_annotation_wins_over_a_label(self) -> None:
         """With annotation tracking the label may be a leftover from another tool."""
@@ -199,9 +191,10 @@ class TestResourceTypeDiscovery:
         ]
 
     @pytest.mark.asyncio
-    async def test_failure_yields_no_types(self, connector) -> None:
+    async def test_a_failed_discovery_is_not_an_empty_cluster(self, connector) -> None:
+        """Reading this as 'no types' makes every namespace inventory as empty (RC-226)."""
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "boom", 1))):
-            assert await connector.list_namespaced_resource_types() == []
+            assert await connector.list_namespaced_resource_types() is None
 
 
 class TestListArgocdApplications:
@@ -259,16 +252,40 @@ class TestListTrackedResources:
         assert [r.name for r in tracked] == ["db-creds"]
 
     @pytest.mark.asyncio
-    async def test_no_types_means_no_query(self, connector) -> None:
+    async def test_without_types_nothing_was_read_and_nothing_is_claimed(self, connector) -> None:
+        """Querying no types answers nothing about the namespace, so it is not 'empty'."""
         run = AsyncMock()
         with patch.object(connector, "_run_kubectl_command", run):
-            assert await connector.list_tracked_resources("ns", []) == []
+            assert await connector.list_tracked_resources("ns", []) is None
         run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_discovery_stops_the_inventory(self, connector) -> None:
+        """The default path discovers its own types; that failing must not read as empty."""
+        run = AsyncMock()
+        with (
+            patch.object(connector, "list_namespaced_resource_types", AsyncMock(return_value=None)),
+            patch.object(connector, "_run_kubectl_command", run),
+        ):
+            assert await connector.list_tracked_resources("ns") is None
+        run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_failed_query_is_not_an_empty_namespace(self, connector) -> None:
+        """kubectl non-zero with no output: a timeout after 120s looks exactly like this."""
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "timed out", 1))):
+            assert await connector.list_tracked_resources("ns", ["secrets"]) is None
+
+    @pytest.mark.asyncio
+    async def test_an_empty_answer_from_a_successful_query_is_an_empty_namespace(self, connector) -> None:
+        """The other side of the same coin: exit 0 and nothing found really is nothing."""
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "", 0))):
+            assert await connector.list_tracked_resources("ns", ["secrets"]) == []
 
     @pytest.mark.asyncio
     async def test_unparsable_output_is_not_read_as_empty_silently(self, connector) -> None:
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("not json", "", 0))):
-            assert await connector.list_tracked_resources("ns", ["secrets"]) == []
+            assert await connector.list_tracked_resources("ns", ["secrets"]) is None
 
 
 class TestDeleteTrackedResources:
@@ -280,8 +297,6 @@ class TestDeleteTrackedResources:
             name=name,
             namespace="rig-prd-mpfm-w3h",
             app_name="app-a",
-            owner_ref=f"app-a:/Secret:rig-prd-mpfm-w3h/{name}",
-            being_deleted=False,
         )
 
     @pytest.mark.asyncio
@@ -309,7 +324,9 @@ class TestDeleteTrackedResources:
 # ---------------------------------------------------------------------------
 
 
-def _recording_kubectl(calls: list[str], *, destination: str | None, tracked: list[TrackedResource]) -> AsyncMock:
+def _recording_kubectl(
+    calls: list[str], *, destination: str | None, tracked: list[TrackedResource] | None
+) -> AsyncMock:
     """A kubectl stand-in that writes the name of each call into ``calls``."""
 
     def step(name: str, result):
@@ -337,8 +354,6 @@ def _tracked(app_name: str, name: str) -> TrackedResource:
         name=name,
         namespace="rig-prd-mpfm-w3h",
         app_name=app_name,
-        owner_ref=f"{app_name}:/Secret:rig-prd-mpfm-w3h/{name}",
-        being_deleted=False,
     )
 
 
@@ -440,6 +455,26 @@ class TestForceDeleteStuckApplication:
         assert any("destination namespace" in error for error in results["errors"])
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "unknown_namespace"
+
+    @pytest.mark.asyncio
+    async def test_a_failed_inventory_is_an_error_and_never_reports_a_clean_sweep(self) -> None:
+        """The same branch as an unreadable namespace: force, but say that nothing was swept.
+
+        Reading a failed inventory as 'no resources' is the silent force the docstring of
+        this function forbids: deleted 0, no error, finalizer gone, resources standing.
+        """
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(calls, destination="rig-prd-mpfm-w3h", tracked=None)
+        results: dict = {"operations": [], "errors": []}
+
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+
+        assert calls == ["read_namespace", "list_resources", "remove_finalizers"]
+        pm._kubectl_connector.delete_tracked_resources.assert_not_awaited()
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert operation["status"] == "inventory_failed"
+        assert any("Could not inventory namespace" in error for error in results["errors"])
 
 
 def _deployment_harness(

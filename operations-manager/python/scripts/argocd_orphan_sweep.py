@@ -182,10 +182,18 @@ async def inventory(
             raise SweepRefused(f"not created by OPI, so not this tool's to sweep: {', '.join(sorted(outside))}")
 
     resource_types = await kubectl.list_namespaced_resource_types()
+    if resource_types is None:
+        # Without the type list every namespace inventories as empty, and this tool would
+        # print SCHOON with exit 0 after querying nothing at all. Same reason as the
+        # refusal above: a failed read must never be answered as a measurement.
+        raise SweepRefused("the cluster did not answer which resource types it has; nothing could be inventoried")
+
     orphans: list[TrackedResource] = []
     for namespace in namespaces:
         print(f"  inventorying {namespace}", file=sys.stderr)
         tracked = await kubectl.list_tracked_resources(namespace, resource_types)
+        if tracked is None:
+            raise SweepRefused(f"namespace '{namespace}' could not be inventoried; refusing to call it clean")
         orphans.extend(orphaned_resources(tracked, existing))
 
     paths = orphaned_paths(deployments_repo, referenced) if deployments_repo else []
