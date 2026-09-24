@@ -129,6 +129,24 @@ kubectl annotate application ron-infrastructure -n $NS argocd.argoproj.io/refres
 
 De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
 
+### De configmap van OPI, alleen als de token meeliep
+
+Twee losse waarden staan in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml`, en die map wordt door niemand gesynct: hij komt het cluster in via `kubectl apply`. Bij een sleutelrotatie maakt dat niet uit, want de platte inhoud verandert niet en wat er draait is dus al goed. Vervang je de token (situatie B, of stap 7), dan verandert die inhoud wel, en zonder deze stap blijft OPI de ingetrokken token gebruiken tot iemand hem opnieuw uitrolt.
+
+```bash
+# alleen de configmap, niet de hele overlay: die draagt ook de ArgoCD-CR, de drie
+# Applications en de OPI-deployment, en die wil je hier niet meeduwen
+SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec \
+  bootstrap/rig-system/kustomize/overlays/odcn-production --load-restrictor LoadRestrictionsNone |
+  yq 'select(.kind == "ConfigMap" and .metadata.name == "operations-manager-config")' |
+  kubectl apply -n $NS -f -
+
+kubectl -n $NS rollout restart deployment/operations-manager
+kubectl -n $NS rollout status deployment/operations-manager
+```
+
+De herstart hoort erbij: OPI leest die waarden bij het opstarten, dus een draaiende pod ziet een gewijzigde configmap niet.
+
 ### VERIFY-2 -- werkt alles nog
 
 ```bash
