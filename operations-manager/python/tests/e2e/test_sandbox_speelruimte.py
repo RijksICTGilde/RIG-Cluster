@@ -174,11 +174,12 @@ def test_buiten_de_speelruimte_wordt_geweigerd(
     logger.info("%s (%s): %s", wat, waarde, uitvoer.strip()[:300])
 
     assert "Traceback (most recent call last)" not in uitvoer, f"weigering met traceback:\n{uitvoer}"
-    ontbreekt = [str(grens) for grens in (_MINIMUM, _MAXIMUM) if str(grens) not in uitvoer]
-    assert not ontbreekt, (
-        f"de weigering noemt {ontbreekt} niet, dus weet de gebruiker niet wat wel mag "
-        f"(speelruimte {_MINIMUM}..{_MAXIMUM}):\n{uitvoer}"
-    )
+    # Op de hele ZIN en niet op de twee getallen apart: "1" komt in bijna elke tekst voor
+    # (ook in "501"), dus een controle per getal zou groen blijven op een weigering die de
+    # speelruimte helemaal niet noemt.
+    zin = f"moet tussen {_MINIMUM} en {_MAXIMUM} liggen"
+    genormaliseerd = " ".join(uitvoer.split())
+    assert zin in genormaliseerd, f"de weigering zegt niet {zin!r}, dus weet de gebruiker niet wat wel mag:\n{uitvoer}"
 
     assert _limiet_in_projectbestand(forgejo, db_project.name) == ervoor, (
         f"'{_VELD}' is in het projectbestand veranderd terwijl {waarde} geweigerd werd"
