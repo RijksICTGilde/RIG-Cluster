@@ -16,19 +16,31 @@ Usage:
 
 import logging
 import os
+from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.utils.sops import generate_sops_key_pair
 
 logger = logging.getLogger(__name__)
 
 SECRET_KEY = "e2e-test-secret-key-padded-to-32-chars-minimum"
 
-# Fixed test AGE keypair for E2E testing (DO NOT use in production)
-TEST_AGE_PUBLIC_KEY = "age10uegg2n4sxnsmpd00xjqh8e80hhrs9983yhy673gp8k0aevn4dtsn9d8xj"
-TEST_AGE_PRIVATE_KEY = "REDACTED-AGE-PRIVATE-KEY-SEE-SECURITY-NOTICE"
+
+@cache
+def test_age_keypair() -> tuple[str, str]:
+    """A throwaway AGE keypair for this test run, as ``(private, public)``.
+
+    Minted per run rather than pasted in, and ``cache`` keeps it stable for the whole process:
+    the wizard encrypts a project's key with the public half and reads it back with the private
+    one within the same server.
+
+    Requires ``age-keygen``, which the E2E suite needs for the real ``age`` calls anyway.
+    """
+    return generate_sops_key_pair()
+
 
 TEST_USER_EMAIL = "test@example.com"
 
@@ -431,12 +443,12 @@ def create_test_app():
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", TEST_AGE_PRIVATE_KEY),
+            patch("opi.core.config.settings.SOPS_AGE_PRIVATE_KEY", test_age_keypair()[0]),
             # The wizard-create generators encrypt the project's AGE private key and
             # API key with SOPS_AGE_PUBLIC_KEY; without it, creating a project raises
             # "Missing public age key for encryption". The matching public key is
             # already defined above but was never wired to settings.
-            patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", TEST_AGE_PUBLIC_KEY),
+            patch("opi.core.config.settings.SOPS_AGE_PUBLIC_KEY", test_age_keypair()[1]),
             patch(
                 "opi.connectors.prometheus.get_metrics_connector",
                 return_value=SimpleNamespace(is_connected=False),
