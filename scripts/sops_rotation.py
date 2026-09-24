@@ -406,7 +406,12 @@ class RotationPlan:
 
 
 async def build_plan(
-    paths: list[Path], old_private: str, new_private: str, old_public: str, trees: list[Path] | None = None
+    paths: list[Path],
+    old_private: str,
+    new_private: str,
+    old_public: str,
+    trees: list[Path] | None = None,
+    own_projects: list[Path] | None = None,
 ) -> RotationPlan:
     """Decide per field whether it still needs converting, is done, or opens with neither key.
 
@@ -429,7 +434,7 @@ async def build_plan(
                 plan.already.append(loose_fingerprint_key(field_))
             else:
                 plan.closed.append(loose_fingerprint_key(field_))
-    for path in own_project_paths():
+    for path in own_project_paths() if own_projects is None else own_projects:
         report = await rotate_project_file(path, old_private, new_private, dry_run=True)
         if report.fields:
             plan.projects.append(report)
@@ -691,9 +696,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="delete the old key file, but only when the final check is clean",
     )
     parser.add_argument(
-        "--loose-values-not-on-this-key",
+        "--own-values-on-another-key",
         action="store_true",
-        help="the loose values in this repo belong to another recipient; leave them out",
+        help="this repo's own loose values and projects/ sit on another recipient; leave them out",
     )
     parser.add_argument("--rename", action="store_true", help="put the keys under their fixed names and stop")
     parser.add_argument(
@@ -752,16 +757,17 @@ def note_places_left_out(
         print("token half above recognises a token by its SHAPE; equality needs no shape.")
 
 
-def note_loose_values_left_out(left_out: bool) -> None:
-    """What ``--loose-values-not-on-this-key`` takes off the worklist, said out loud.
+def note_own_values_left_out(left_out: bool) -> None:
+    """What ``--own-values-on-another-key`` takes off the worklist, said out loud.
 
     A run that measures less than the usual run has to say so in its own output, because the
     CLEAN line underneath reads the same either way.
     """
     if not left_out:
         return
-    print(f"NOTE --loose-values-not-on-this-key: the {len(loose_paths())} loose-value files in this")
-    print("repo are left out. Nothing in this run says anything about the values in them.")
+    print(f"NOTE --own-values-on-another-key: this repo's {len(loose_paths())} loose-value files and")
+    print(f"its own {len(own_project_paths())} project files are left out. Nothing in this run says")
+    print("anything about the values in them.")
 
 
 def note_argo_left_out_of_the_record(argo: Path | None) -> None:
@@ -846,8 +852,9 @@ async def main(argv: list[str] | None = None) -> int:
     # "I failed to reach it" look identical from here, and the second is what the grendel exists
     # for. ``covered_in`` keeps counting these paths as covered, so this narrows the worklist
     # without opening a hole in ``coverage_gaps()``.
-    paths = [] if arguments.loose_values_not_on_this_key else loose_paths()
-    note_loose_values_left_out(arguments.loose_values_not_on_this_key)
+    paths = [] if arguments.own_values_on_another_key else loose_paths()
+    own_projects = [] if arguments.own_values_on_another_key else None
+    note_own_values_left_out(arguments.own_values_on_another_key)
 
     if old_private is None:
         # Guaranteed by old_optional above; everything past this point acts on the old key.
@@ -897,7 +904,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     note_argo_left_out_of_the_record(argo)
 
-    plan = await build_plan(paths, old_private, new_private, old_public, trees)
+    plan = await build_plan(paths, old_private, new_private, old_public, trees, own_projects)
     show_plan(plan)
     if plan.closed:
         print("\nSTOPPED there are fields that open with neither key.", file=sys.stderr)

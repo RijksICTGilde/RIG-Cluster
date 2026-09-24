@@ -3215,7 +3215,7 @@ async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
 
 @pytest.mark.asyncio
 @needs_sops
-async def test_the_loose_values_of_another_recipient_stop_the_run_until_they_are_named(
+async def test_the_own_values_of_another_recipient_stop_the_run_until_they_are_named(
     tmp_path: Path, capsys: pytest.CaptureFixture
 ) -> None:
     """Rotating a recipient that is not the platform key: the loose values are not its business.
@@ -3246,11 +3246,11 @@ async def test_the_loose_values_of_another_recipient_stop_the_run_until_they_are
     with _selecting_from(sops_path.parent), patch.object(tool, "loose_paths", return_value=[stranger]):
         stopped = await tool.main(command)
         out_without = capsys.readouterr().out
-        went_ahead = await tool.main([*command, "--loose-values-not-on-this-key"])
+        went_ahead = await tool.main([*command, "--own-values-on-another-key"])
         out_with = capsys.readouterr().out
 
     assert stopped == 1
     assert "opens with neither key" in out_without
     assert went_ahead == 0
     assert "opens with neither key" not in out_with
-    assert "NOTE --loose-values-not-on-this-key" in out_with
+    assert "NOTE --own-values-on-another-key" in out_with
