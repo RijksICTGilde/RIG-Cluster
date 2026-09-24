@@ -13,8 +13,11 @@ there, and for proving afterwards that a deletion took everything with it.
 
 Two sources, one test: does the Application this thing belongs to still exist?
 
-* CLUSTER  -- every resource carrying ``argocd.argoproj.io/tracking-id``, the annotation
-              ArgoCD stamps on everything it applies. The name in it is its Application.
+* CLUSTER  -- every resource ArgoCD marked as its own, through whichever tracking method
+              the cluster runs: the ``argocd.argoproj.io/tracking-id`` annotation
+              (odcn-production) or the ``app.kubernetes.io/instance`` label (local and
+              sandboxed-local, which take ArgoCD's default). The name in it is its
+              Application.
 * GIT      -- every ``<cluster>/<project>/<leaf>`` directory in the deployments repo. Each
               one is a render root an Application should point at with spec.source.path.
 
@@ -48,6 +51,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import posixpath
 import shutil
 import sys
 from pathlib import Path
@@ -66,9 +70,16 @@ from opi.connectors.kubectl import create_kubectl_connector  # noqa: E402
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
 
-#: Namespaces the platform does not deploy user Applications into. A tracked resource
-#: here belongs to the bootstrap, which is applied by hand, not by a user Application.
-SKIPPED_NAMESPACES = {"kube-system", "kube-public", "kube-node-lease"}
+#: The label OPI puts on every namespace it creates (manifests/namespace.yaml.jinja). The
+#: sweep looks ONLY inside those, as an allowlist rather than a list of names to skip.
+#:
+#: This is not caution, it is a measurement. With the label tracking method, Helm writes
+#: ``app.kubernetes.io/instance`` too, and it means the Helm release, not an Application.
+#: On the sandbox on 24 September 2026 six resources in ``ingress-nginx`` carried
+#: ``instance: ingress-nginx`` while no Application by that name exists, so a sweep that
+#: merely skipped kube-system would have offered the ingress controller for deletion.
+NAMESPACE_OWNER_LABEL = "created-by"
+NAMESPACE_OWNER_VALUE = "operations-manager"
 
 #: Depth of a render root in the deployments repo: ``<cluster>/<project>/<leaf>``, the
 #: shape every path generator in opi.utils.naming produces.
@@ -97,8 +108,14 @@ def render_roots(repo_root: Path) -> list[str]:
 
 
 def orphaned_paths(repo_root: Path, referenced: set[str]) -> list[str]:
-    """The render roots no Application points at with its ``spec.source.path``."""
-    normalised = {path.strip("/") for path in referenced}
+    """The render roots no Application points at with its ``spec.source.path``.
+
+    The reference is normalised first. OPI writes the path bare, but the Applications on
+    the cluster carry it as ``./sandboxed-local/<project>/<deployment>`` (measured on the
+    sandbox, 24 September 2026), and comparing those two forms literally would call every
+    live path an orphan.
+    """
+    normalised = {posixpath.normpath(path).strip("/") for path in referenced if path}
     return [root for root in render_roots(repo_root) if root not in normalised]
 
 
@@ -151,11 +168,20 @@ async def inventory(
     referenced = {(app.get("spec", {}).get("source", {}) or {}).get("path", "") for app in applications}
     print(f"{len(existing)} ArgoCD Application(s) exist", file=sys.stderr)
 
+    owned = {
+        namespace
+        for namespace, value in (await kubectl.get_namespace_label_map(NAMESPACE_OWNER_LABEL)).items()
+        if value == NAMESPACE_OWNER_VALUE
+    }
     if namespaces is None:
-        # Any namespace can hold leftovers, including one whose Applications are all gone,
-        # so the sweep asks the cluster instead of deriving the list from the Applications.
-        namespaces = sorted(await kubectl.get_namespace_label_map("kubernetes.io/metadata.name"))
-    namespaces = [namespace for namespace in namespaces if namespace not in SKIPPED_NAMESPACES]
+        # Any OPI namespace can hold leftovers, including one whose Applications are all
+        # gone, so the list comes from the cluster and not from the Applications that are
+        # still standing.
+        namespaces = sorted(owned)
+    else:
+        outside = [namespace for namespace in namespaces if namespace not in owned]
+        if outside:
+            raise SweepRefused(f"not created by OPI, so not this tool's to sweep: {', '.join(sorted(outside))}")
 
     resource_types = await kubectl.list_namespaced_resource_types()
     orphans: list[TrackedResource] = []

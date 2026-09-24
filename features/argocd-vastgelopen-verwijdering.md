@@ -49,13 +49,39 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
 
 2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
-   `_force_delete_stuck_application()` eerst de resources zelf. Welke dat zijn is
-   eenduidig: ze dragen de annotatie `argocd.argoproj.io/tracking-id` met de naam van de
-   Application erin. Pas daarna gaat de finalizer weg.
+   `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna gaat de
+   finalizer weg. Welke resources dat zijn leest `opi/utils/argocd_tracking.py`, en dat
+   kijkt naar allebei de merktekens die ArgoCD kan zetten (zie hieronder).
 
 Kan de bestemmingsnamespace niet gelezen worden, dan gaat de finalizer alsnog weg (een
 Application die blijft staan blokkeert de parent voor iedereen) maar komt dat als fout in
 `deletion_results["errors"]` terecht. Zwijgend forceren is precies wat de schade maakte.
+
+### Twee merktekens, niet een
+
+Welke resources bij een Application horen hangt af van de `resourceTrackingMethod` van
+ArgoCD, en dit platform draait er twee:
+
+| clustertype | ingesteld in | merkteken op de resource |
+|---|---|---|
+| `odcn-production` | `bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml` (`resourceTrackingMethod: annotation`) | annotatie `argocd.argoproj.io/tracking-id` |
+| `local`, `sandboxed-local` | niets ingesteld, dus de standaard van ArgoCD | label `app.kubernetes.io/instance` |
+
+Gemeten op het sandboxcluster op 24 september 2026: `argocd-cm` zegt
+`application.resourceTrackingMethod: label`, en geen enkele resource onder een levende
+Application droeg een tracking-id. Alleen op de annotatie selecteren vindt daar dus niets,
+en een forcering die niets vindt verwijdert niets terwijl hij succes meldt: precies de
+schade die dit moet voorkomen. Daarom tellen allebei de merktekens, met de annotatie
+voorop. Geen van tweeën is hier dubbelzinnig: OPI's eigen manifesten schrijven ze geen van
+beide, dus wat er staat komt van ArgoCD.
+
+Voor de veegactie ligt dat anders, want het label is niet van ArgoCD alleen: Helm zet
+`app.kubernetes.io/instance` ook, en bedoelt er de release mee. Op de sandbox dragen zes
+resources in `ingress-nginx` het label `instance: ingress-nginx` terwijl er geen
+Application met die naam bestaat. Daarom kijkt de veegactie alleen in namespaces die OPI
+zelf heeft aangemaakt: die dragen `created-by: operations-manager`
+(`manifests/namespace.yaml.jinja`). Dat is een toelatingslijst, geen lijst met namen om
+over te slaan, en ook een met de hand opgegeven `--namespace` moet erop staan.
 
 ### syncOptions die niets deden
 
@@ -67,16 +93,42 @@ wachten die er dus niet was), en `Delete` kent op app-niveau alleen `false` en `
 de historie of documentatie staat waarvoor hij nodig was. Zonder die reden is weghalen
 gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin.
 
+## Nagemeten op de sandbox
+
+Nagespeeld op 24 september 2026 op het sandboxcluster, met een Application waarvan de
+Deployment een niet-bestaande image trekt (`ErrImagePull`, dus nooit healthy) en een
+ConfigMap in sync-wave 5. Die latere wave is wat de sync op health laat wachten: zonder
+hem meldt ArgoCD gewoon `Succeeded` terwijl de workload nog `Progressing` is. OPI maakt die
+vorm zelf ook, want zijn secrets staan op wave -1 en een `postgresql-cluster` op wave 1.
+
+```
+22:09:43  op=Running  msg=waiting for healthy state of apps/Deployment/proef-web
+22:09:45  kubectl delete application            deletionTimestamp gezet
+22:12:18  na 2m33s: app er nog, finalizer er nog, deployment en configmap onaangeraakt
+22:12:50  kubectl patch --type=json remove /operation
+22:12:53  app EN resources weg, 3 seconden later
+```
+
+En de oude noodgreep, op dezelfde opstelling: `delete`, dan de finalizer weg terwijl de
+operatie loopt. De Application was meteen weg, en de Deployment bleef staan **zonder
+`deletionTimestamp`**, precies zoals de 350 resources in `rig-prd-mpfm-w3h`. De veegactie
+vond hem daarna, verwijderde hem met `--delete`, en meldde `SCHOON`.
+
 ## De veegactie
 
 `scripts/argocd_orphan_sweep.py` spoort op wat er al ligt. Twee bronnen, één toets:
 bestaat de Application waar dit ding bij hoort nog?
 
-* **cluster**: elke resource met een `argocd.argoproj.io/tracking-id`. De naam erin is zijn
-  Application.
+* **cluster**: elke resource die ArgoCD als de zijne merkte, via welk van de twee
+  merktekens hierboven het cluster ook gebruikt. De naam erin is zijn Application.
 * **git**: elke `<cluster>/<project>/<leaf>`-map in een checkout van de deployments-repo.
   Dat is de vorm die alle padgeneratoren in `opi/utils/naming.py` opleveren, en elk zo'n
   pad hoort het doel te zijn van de `spec.source.path` van een Application.
+
+Een `spec.source.path` wordt genormaliseerd voordat hij met een map vergeleken wordt: OPI
+schrijft hem kaal, maar de Applications op het cluster dragen hem als
+`./sandboxed-local/<project>/<deployment>` (gemeten op de sandbox), en die twee vormen
+letterlijk vergelijken zou elk levend pad een wees noemen.
 
 Of een Application bestaat wordt via de Kubernetes-API gelezen, nooit via die van ArgoCD:
 die antwoordt onder druk een dubbelzinnige `permission denied` voor Applications die wel

@@ -40,7 +40,7 @@ def _resource(app_name: str, name: str, kind: str = "Secret", namespace: str = "
         name=name,
         namespace=namespace,
         app_name=app_name,
-        tracking_id=f"{app_name}:/{kind}:{namespace}/{name}",
+        owner_ref=f"{app_name}:/{kind}:{namespace}/{name}",
         being_deleted=False,
     )
 
@@ -93,10 +93,25 @@ class TestOrphanedPaths:
         repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310", "odcn-production/mpfm-w3h/pr-9")
         assert orphaned_paths(repo, {"odcn-production/mpfm-w3h/pr-310"}) == ["odcn-production/mpfm-w3h/pr-9"]
 
-    def test_a_reference_with_slashes_around_it_still_protects(self, tmp_path: Path) -> None:
-        """spec.source.path is written both bare and with a leading slash; both mean the same path."""
+    @pytest.mark.parametrize(
+        "reference",
+        [
+            "odcn-production/mpfm-w3h/pr-310",
+            "./odcn-production/mpfm-w3h/pr-310",
+            "/odcn-production/mpfm-w3h/pr-310/",
+        ],
+    )
+    def test_every_spelling_of_the_same_reference_protects(self, tmp_path: Path, reference: str) -> None:
+        """The live Applications carry the ``./`` form (measured on the sandbox); OPI writes
+        it bare. Comparing the two literally would call every live path an orphan."""
         repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310")
-        assert orphaned_paths(repo, {"/odcn-production/mpfm-w3h/pr-310/"}) == []
+        assert orphaned_paths(repo, {reference}) == []
+
+    def test_an_application_without_a_path_protects_nothing(self, tmp_path: Path) -> None:
+        """An empty string normalises to ``.``; reading that as a render root would
+        silently protect a directory named after nothing."""
+        repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310")
+        assert orphaned_paths(repo, {""}) == ["odcn-production/mpfm-w3h/pr-310"]
 
 
 class TestReport:
@@ -124,10 +139,16 @@ class TestReport:
 _LIVE_APPLICATIONS = [{"metadata": {"name": "user-applications"}, "spec": {"source": {"path": "root"}}}]
 
 
-def _kubectl(applications: list[dict], tracked: dict[str, list[TrackedResource]]) -> AsyncMock:
+def _kubectl(
+    applications: list[dict],
+    tracked: dict[str, list[TrackedResource]],
+    namespace_labels: dict[str, str] | None = None,
+) -> AsyncMock:
     kubectl = AsyncMock()
     kubectl.list_argocd_applications = AsyncMock(return_value=applications)
-    kubectl.get_namespace_label_map = AsyncMock(return_value=dict.fromkeys(tracked, ""))
+    kubectl.get_namespace_label_map = AsyncMock(
+        return_value=namespace_labels if namespace_labels is not None else dict.fromkeys(tracked, "operations-manager")
+    )
     kubectl.list_namespaced_resource_types = AsyncMock(return_value=["secrets"])
     kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: tracked.get(ns, []))
     kubectl.delete_tracked_resources = AsyncMock(return_value=[])
@@ -154,14 +175,39 @@ class TestInventory:
         ]
 
     @pytest.mark.asyncio
-    async def test_the_kube_system_namespaces_are_left_alone(self) -> None:
-        """What carries a tracking-id there comes from the bootstrap, not from a user Application."""
-        kubectl = _kubectl(_LIVE_APPLICATIONS, {"kube-system": [_resource("something", "x")], "rig-prd-mpfm-w3h": []})
+    async def test_only_namespaces_opi_created_are_swept(self) -> None:
+        """Helm writes ``app.kubernetes.io/instance`` too, and there it means the RELEASE.
+
+        Measured on the sandbox, 24 September 2026: six resources in ``ingress-nginx``
+        carry ``instance: ingress-nginx`` while no Application by that name exists. An
+        allowlist of the namespaces OPI created is what keeps those out of range.
+        """
+        kubectl = _kubectl(
+            _LIVE_APPLICATIONS,
+            {"ingress-nginx": [_resource("ingress-nginx", "controller")], "rig-prd-mpfm-w3h": []},
+            namespace_labels={"ingress-nginx": "", "rig-system": "", "rig-prd-mpfm-w3h": "operations-manager"},
+        )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             resources, _ = await inventory(None, None)
 
         assert resources == []
         assert [call.args[0] for call in kubectl.list_tracked_resources.await_args_list] == ["rig-prd-mpfm-w3h"]
+
+    @pytest.mark.asyncio
+    async def test_a_namespace_opi_did_not_create_is_refused_by_name_too(self) -> None:
+        """Naming it by hand must not get past the allowlist either."""
+        kubectl = _kubectl(
+            _LIVE_APPLICATIONS,
+            {"ingress-nginx": [_resource("ingress-nginx", "controller")]},
+            namespace_labels={"ingress-nginx": "", "rig-prd-mpfm-w3h": "operations-manager"},
+        )
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="ingress-nginx"),
+        ):
+            await inventory(["ingress-nginx"], None)
+
+        kubectl.list_tracked_resources.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_named_namespace_is_the_only_one_queried(self) -> None:
@@ -170,7 +216,6 @@ class TestInventory:
             await inventory(["rig-prd-mpfm-w3h"], None)
 
         assert [call.args[0] for call in kubectl.list_tracked_resources.await_args_list] == ["rig-prd-mpfm-w3h"]
-        kubectl.get_namespace_label_map.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_the_application_paths_come_from_the_cluster_not_from_argocd(self, tmp_path: Path) -> None:

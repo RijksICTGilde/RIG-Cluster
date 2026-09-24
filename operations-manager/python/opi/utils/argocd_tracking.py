@@ -1,8 +1,16 @@
-"""The ``argocd.argoproj.io/tracking-id`` annotation: which Application owns a resource.
+"""Which ArgoCD Application owns a live resource.
 
-ArgoCD stamps every resource it applies with this annotation. It is the only link back
-from a live resource to the Application that put it there, so it is what both the delete
-route and the sweep use to find what an Application owns.
+ArgoCD marks everything it applies, but HOW depends on its ``resourceTrackingMethod``,
+and this platform runs both: ``odcn-production`` sets ``annotation``, so resources carry
+``argocd.argoproj.io/tracking-id``; ``local`` and ``sandboxed-local`` set nothing and get
+ArgoCD's default, ``label``, so resources carry ``app.kubernetes.io/instance`` instead
+and no annotation at all. Measured on the sandbox cluster on 24 September 2026: not one
+resource under a live Application had a tracking-id.
+
+Reading only the annotation would therefore find nothing on two of the three cluster
+types, and a force that finds nothing deletes nothing while reporting success, which is
+the damage this is meant to prevent. So both signals count. Neither is ambiguous here:
+OPI's own manifests write neither, so whichever is present was written by ArgoCD.
 """
 
 from __future__ import annotations
@@ -10,8 +18,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-#: Annotation ArgoCD writes on every resource it applies.
+#: Annotation ArgoCD writes with resourceTrackingMethod ``annotation``.
 TRACKING_ID_ANNOTATION = "argocd.argoproj.io/tracking-id"
+
+#: Label ArgoCD writes with resourceTrackingMethod ``label`` (its default).
+INSTANCE_LABEL = "app.kubernetes.io/instance"
 
 
 def application_name_from_tracking_id(tracking_id: str) -> str | None:
@@ -28,14 +39,15 @@ def application_name_from_tracking_id(tracking_id: str) -> str | None:
 
 @dataclass(frozen=True)
 class TrackedResource:
-    """One live resource, and the Application its tracking-id points at."""
+    """One live resource, and the Application ArgoCD says it belongs to."""
 
     kind: str
     api_version: str
     name: str
     namespace: str
     app_name: str
-    tracking_id: str
+    #: The annotation or label value that named the Application, verbatim.
+    owner_ref: str
     being_deleted: bool
 
     @property
@@ -47,15 +59,23 @@ class TrackedResource:
 
 
 def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
-    """Read one ``kubectl get -o json`` item, or ``None`` when ArgoCD does not track it."""
+    """Read one ``kubectl get -o json`` item, or ``None`` when ArgoCD does not own it."""
     metadata = item.get("metadata") or {}
-    tracking_id = (metadata.get("annotations") or {}).get(TRACKING_ID_ANNOTATION)
-    if not tracking_id:
+    name = metadata.get("name")
+    if not name:
         return None
 
-    app_name = application_name_from_tracking_id(tracking_id)
-    name = metadata.get("name")
-    if not app_name or not name:
+    tracking_id = (metadata.get("annotations") or {}).get(TRACKING_ID_ANNOTATION)
+    if tracking_id:
+        app_name = application_name_from_tracking_id(tracking_id)
+        owner_ref = tracking_id
+    else:
+        # The label method. Taken only in the annotation's absence, so a resource ArgoCD
+        # tracks by annotation is never claimed by a label another tool left behind.
+        app_name = ((metadata.get("labels") or {}).get(INSTANCE_LABEL) or "").strip() or None
+        owner_ref = f"{INSTANCE_LABEL}={app_name}" if app_name else ""
+
+    if not app_name:
         return None
 
     return TrackedResource(
@@ -64,6 +84,6 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
         name=name,
         namespace=metadata.get("namespace", ""),
         app_name=app_name,
-        tracking_id=tracking_id,
+        owner_ref=owner_ref,
         being_deleted=bool(metadata.get("deletionTimestamp")),
     )
