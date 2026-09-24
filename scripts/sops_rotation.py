@@ -849,7 +849,7 @@ async def main(argv: list[str] | None = None) -> int:
     # the platform key's values whatever key is being rotated. Rotating a different recipient --
     # the sandbox key, say -- then trips "opens with neither key" on values that were never in
     # scope. Saying so is the operator's call and has to be explicit, because "not my key" and
-    # "I failed to reach it" look identical from here, and the second is what the grendel exists
+    # "I failed to reach it" look identical from here, and the second is what the guard exists
     # for. ``covered_in`` keeps counting these paths as covered, so this narrows the worklist
     # without opening a hole in ``coverage_gaps()``.
     paths = [] if arguments.own_values_on_another_key else loose_paths()

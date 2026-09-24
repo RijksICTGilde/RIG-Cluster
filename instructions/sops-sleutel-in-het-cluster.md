@@ -26,7 +26,7 @@ De tweede rij is de val. `bootstrap/rig-system/kustomize/overlays/odcn-productio
 
 Nooit alle `sops-age-key`-secrets overschrijven. Dat vervangt de eigen sleutel van elk project door de platformsleutel, en dan is elk projectgeheim onleesbaar.
 
-De regel is: vervang alleen waar de OUDE publieke sleutel in staat. `scripts/set-sops-key-secret.py` doet precies dat, en het is de reden dat het script elke namespace langsloopt in plaats van een vaste lijst af te werken. Zijn droogloop toont twee groepen, en die lijst is de controle vóór de onomkeerbare stap:
+De regel is: vervang alleen waar de OUDE publieke sleutel in staat. `scripts/set-sops-key-secret.py` doet precies dat, en het is de reden dat het script elke namespace langsloopt in plaats van een vaste lijst af te werken. Zijn dry-run toont twee groepen, en die lijst is de controle vóór de onomkeerbare stap:
 
 ```
 N carry the OLD platform key and WILL be replaced:   <- hier horen alleen platformhouders

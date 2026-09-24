@@ -17,7 +17,7 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
    |
    +-- de losse base64+age:-waarden op de lijst LOOSE_VALUE_FILES
    |      Niet alleen env-regels: dezelfde waarde staat ook als Python-literal. Daarom een
-   |      lijst en geen patroon, en daarom een grendel op die lijst (coverage_gaps).
+   |      lijst en geen patroon, en daarom een guard op die lijst (coverage_gaps).
    |
    +-- de projectbestanden in de projects-repo
    |      per project twee velden: config.age-private-key en repositories[].password
@@ -28,7 +28,7 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CO
           afgeleid uit repositories[].password, met het wachtwoord er PLAT in
 ```
 
-De aantallen staan bewust nergens: het gereedschap selecteert op recipient en op die lijst, en telt zelf. Een droogloop noemt wat hij gevonden heeft, en dat is het actuele getal.
+De aantallen staan bewust nergens: het gereedschap selecteert op recipient en op die lijst, en telt zelf. Een dry-run noemt wat hij gevonden heeft, en dat is het actuele getal.
 
 Buiten scope: de sleutels per project (issue #183) en de zad-deployments-repo, die op de projectsleutel staat.
 
@@ -40,9 +40,21 @@ Buiten scope: de sleutels per project (issue #183) en de zad-deployments-repo, d
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
 | `scripts/replace-git-pat.py` | de PAT-ronde: dezelfde projectbestanden, plus de losse waarden die de token DRAGEN en de ArgoCD repository-secrets |
 | `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
-| `scripts/scan-secrets.py` | de grendel: weigert een commit, een branch of een historie met een geheim |
+| `scripts/scan-secrets.py` | de guard: weigert een commit, een branch of een historie met een geheim |
 
 De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/sops-en-age-met-de-hand.md`.
+
+## Twee situaties
+
+Bepaal eerst welke van de twee je doet. Ze lopen door dezelfde fasen; alleen stap 3 en de eindtoetsen verschillen.
+
+**A. Alleen de sleutel.** De token blijft zoals hij is. Stap 3 draait `rotate-project-keys.py`, de eindtoetsen krijgen geen tokenvlaggen, en stap 7 vervalt.
+
+**B. De sleutel en de token samen.** Stap 3 draait `replace-git-pat.py`, die de token vervangt én omsleutelt, en de eindtoetsen krijgen `--pat-new-file` en `--pat-current-file` mee. Stap 7 vervalt, want de vervanging is dan al gebeurd.
+
+Doe je A en moet de token later alsnog om, dan is dat stap 7: een tokenronde op zichzelf, met dezelfde eindtoets erachter.
+
+Waarom die vlaggen alleen bij B horen: `--pat-current-file` eist dat geen enkel veld nog naar de oude token ontsleutelt. In A is die token niet vervangen, dus dat zou terecht overal rood melden.
 
 ## Gebruik
 
@@ -58,15 +70,13 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --r
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo --dry-run
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --argo-applications /tmp/zad-argo
 
-# 3. de projectbestanden, op een VERSE clone. In een kwartaalronde draai je hier
+# 3. de projectbestanden, op een VERSE clone. Dit is situatie A. In situatie B draai je hier
 #    replace-git-pat.py in plaats van rotate-project-keys.py, met --argo-applications erbij,
 #    en krijgen de eindtoetsen van stap 4 en 6 er --pat-new-file en --pat-current-file bij:
 #    de vervanging is dan al gebeurd, dus zonder die twee meten ze de token niet.
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects --dry-run
 uv run --project operations-manager/python python scripts/rotate-project-keys.py --projects /tmp/zad-projects/projects
 ```
-
-In een kwartaalronde draai je stap 3 met `replace-git-pat.py` in plaats van `rotate-project-keys.py`, met `--argo-applications` erbij, en vervalt stap 7. De eindtoetsen krijgen er dan ook `--pat-new-file` en `--pat-current-file` bij. In de EERSTE ronde juist niet: daar is de huidige token op dat moment nog overal de waarde.
 
 ### VERIFY-1 -- het go/no-go moment, voor de push
 
@@ -101,7 +111,7 @@ kubectl annotate application user-applications -n rig-system argocd.argoproj.io/
 kubectl annotate application ron-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
 ```
 
-**Lees de droogloop van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie dragen er twee de platformsleutel: `rig-prd-operations` en `rig-prd-ron`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
+**Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie dragen er twee de platformsleutel: `rig-prd-operations` en `rig-prd-ron`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
 
 De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
 
@@ -114,10 +124,10 @@ kubectl -n rig-prd-operations rollout status deployment/operations-manager
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
-### Daarna
+### Daarna -- de tokenronde, alleen na situatie A
 
 ```bash
-# 7. de PAT-vervanging van de EERSTE ronde, en pas NU. Verse clone, want er kan sinds stap 3
+# 7. alleen na situatie A, als de token alsnog om moet. Verse clone, want er kan sinds stap 3
 #    gepusht zijn. --argo-applications is verplicht: het repo-wachtwoord staat daar PLAT in
 #    het sops-bestand, dus zonder die vlag blijft ArgoCD op de ingetrokken token staan.
 uv run --project operations-manager/python python scripts/replace-git-pat.py --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo --dry-run
@@ -148,15 +158,15 @@ Daarna pas de twee tokenbestanden opruimen. En trek de oude token in bij GitHub;
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --verify --argo-applications /tmp/zad-argo
 ```
 
-**De lijst met losse waarden is gegrendeld.** Een getrackt bestand met echte ciphertext dat nergens wordt bereikt stopt het gereedschap. Dat is er niet voor niets: drie waarden zaten eerder buiten elke ronde en de eindtoets meldde CLEAN over ze heen.
+**Op de lijst met losse waarden zit een guard.** Een getrackt bestand met echte ciphertext dat nergens wordt bereikt stopt het gereedschap. Dat is er niet voor niets: drie waarden zaten eerder buiten elke ronde en de eindtoets meldde CLEAN over ze heen.
 
 **Rotatie is een re-bootstrap.** De platformsleutel komt niet uit git, en dat kan ook niet: het is de sleutel waarmee git ontsleuteld wordt. Hij wordt bij het aanzetten van een cluster neergezet en die plaatsing is idempotent; de wissel is diezelfde plaatsing met een ander sleutelbestand.
 
-## De grendel
+## De guard
 
 Drie lagen, zodat een geheim niet in git komt: de pre-commit hook (lokaal, met `--no-verify` te omzeilen, en dat is geaccepteerd), de security-workflow (bindend, scant de hele boom van de branch) en GitHub push protection (op de server).
 
-Een AGE-kandidaat telt alleen als `age-keygen` hem als geldige sleutel accepteert. Zonder die controle zou elke plaatshouder in de testsuite een bevinding zijn, en een alarm met bekende bevindingen erin is een alarm waar mensen omheen leren lopen. Daarom staat er ook geen vaste sleutel meer in een toets: wie er een nodig heeft maakt er een.
+Een AGE-kandidaat telt alleen als `age-keygen` hem als geldige sleutel accepteert. Zonder die controle zou elke placeholder in de testsuite een bevinding zijn, en een alarm met bekende bevindingen erin is een alarm waar mensen omheen leren lopen. Daarom staat er ook geen vaste sleutel meer in een toets: wie er een nodig heeft maakt er een.
 
 De scan meldt wat hij NIET gelezen heeft, met de reden. Een melding die zwijgt over overgeslagen bestanden leest als groen terwijl er niet gekeken is.
 

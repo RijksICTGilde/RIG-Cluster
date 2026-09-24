@@ -1,10 +1,10 @@
-# scripts/ (repowortel)
+# scripts/ (repo-root)
 
 Gereedschap dat op de REPOSITORY werkt en niet op een draaiende OPI. Dat is het verschil met
 `operations-manager/python/scripts/`: die tools praten met een cluster, met Keycloak of met een
 projectbestand in de zad-projects-repo, en draaien vanuit `operations-manager/python`. Deze staan
-hier omdat ze paden in de repowortel aanraken (`bootstrap/`, `infrastructure/`, `security/`,
-`projects/`, de historie) en dus vanaf de wortel horen te worden aangeroepen.
+hier omdat ze paden in de repo-root aanraken (`bootstrap/`, `infrastructure/`, `security/`,
+`projects/`, de historie) en dus vanaf de root horen te worden aangeroepen.
 
 ## De sleutelrotatie
 
@@ -22,7 +22,7 @@ de toetsen moeten bij de logica kunnen:
 
 | module | wat erin staat |
 |---|---|
-| `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vindplaatsen, de vingerafdruk, de eindtoets, en de inventaris waar de dekkingsgrendel op hangt |
+| `key_rotation.py` | de motor: de ene lees-ontsleutel-versleutel-schrijf-lus, de vindplaatsen, de vingerafdruk, de eindtoets, en de inventaris waar de dekkings-guard op hangt |
 | `sops_rotation.py` | de ronde over deze repo |
 | `project_rotation.py` | de ronde over de projectbestanden, met beide ingangen (sleutel en PAT), en de twee plekken die de PAT-ronde er verder bij heeft |
 | `argo_rotation.py` | de ArgoCD repository-secrets: ze lezen, aan hun projectbestand koppelen, en terugschrijven zoals `argo_manager` dat doet |
@@ -76,10 +76,10 @@ hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
 ## Aanroepen
 
-Vanaf de repowortel, en dat is niet vrijblijvend: de vier rotatie-ingangen importeren `opi`, dus
+Vanaf de repo-root, en dat is niet vrijblijvend: de vier rotatie-ingangen importeren `opi`, dus
 ze draaien alleen in de omgeving van OPI. `python3 scripts/rotate-sops-key.py` stopt op
 `ModuleNotFoundError: No module named 'pydantic'`. `uv run --project` zet die omgeving eromheen
-zonder de werkmap te verplaatsen, zodat de paden in het commando paden vanaf de wortel blijven:
+zonder de werkmap te verplaatsen, zodat de paden in het commando paden vanaf de root blijven:
 
 ```bash
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --dry-run

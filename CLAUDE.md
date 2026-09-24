@@ -10,6 +10,23 @@ Think and act as a Principal Engineer. Be a critical thinker - do not agree with
 
 **Planning**: Always present numbered task lists and wait for explicit confirmation before implementation.
 
+## Woordenlijst
+
+Nederlandse prose met Engelse vaktermen. Verzin geen Nederlandse vertaling voor een term die het team in het Engels gebruikt: dat leest als een ander begrip en is niet terug te zoeken. Geldt voor code, commentaar, documenten, commitberichten en antwoorden in de chat.
+
+Gebruik de rechterkolom, nooit de linker:
+
+| niet | wel |
+|---|---|
+| plaatshouder | placeholder |
+| droogloop | dry-run |
+| wortel | root |
+| grendel (een controle die weigert) | guard |
+| grendel (een fase die groen of rood geeft) | gate |
+| vergrendeld (een veld dat niet te wijzigen is) | locked, of read-only voor het attribuut |
+
+Pas dit toe op nieuw werk. Bestaande teksten worden niet met terugwerkende kracht omgezet: dat levert een grote diff op die niets aan de code verandert.
+
 ## Architecture Overview
 
 **RIG-Cluster** is a Kubernetes platform for RIG projects in ODC-Noord. At its core is **ZAD** (Zelfservice Applicatie Deployment) - a self-service portal where developers define their infrastructure needs in a declarative YAML project file. ZAD provisions databases, storage, authentication, generates Kubernetes manifests, and deploys via ArgoCD.
