@@ -2108,12 +2108,17 @@ tasks:
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
         REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
         NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+
+      Alleen DELETE=1 verwijdert. Anders dan bij de buren hier vergelijkt de vlag op die
+      waarde: een kale if-test is waar voor elke niet-lege waarde, dus DELETE=0 zou ook
+      verwijderen. Bij een destructieve vlag hoort een typefout niets te doen.
     dir: operations-manager/python
     cmds:
       - >-
         uv run python scripts/argocd_orphan_sweep.py
         {{if .NAMESPACE}}--namespace {{.NAMESPACE}}{{end}}
-        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}} {{if .DELETE}}--delete{{end}}
+        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
+        {{if eq (default "0" .DELETE) "1"}}--delete{{end}}
     silent: true
 
   upgrade-safety-diff:
