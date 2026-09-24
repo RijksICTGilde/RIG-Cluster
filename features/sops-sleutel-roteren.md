@@ -105,11 +105,25 @@ Vanaf hieronder worden de wijzigingen daadwerkelijk doorgevoerd!
 uv run --project operations-manager/python python scripts/set-sops-key-secret.py --dry-run
 uv run --project operations-manager/python python scripts/set-sops-key-secret.py
 
+# de namen en de namespace verschillen per cluster, dus zet ze hier een keer
+NS=rig-prd-operations; INFRA=production-infrastructure   # productie
+# NS=rig-system;       INFRA=sandbox-infrastructure      # sandbox
+
 # en ArgoCD de eerste render met de nieuwe sleutel laten doen terwijl je kijkt
-kubectl annotate application production-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
-kubectl annotate application user-applications -n rig-system argocd.argoproj.io/refresh=hard --overwrite
-kubectl annotate application ron-infrastructure -n rig-system argocd.argoproj.io/refresh=hard --overwrite
+kubectl annotate application $INFRA -n $NS argocd.argoproj.io/refresh=hard --overwrite
+kubectl annotate application user-applications -n $NS argocd.argoproj.io/refresh=hard --overwrite
+kubectl annotate application ron-infrastructure -n $NS argocd.argoproj.io/refresh=hard --overwrite
 ```
+
+**Namespaces en namen verschillen per cluster, en de bronbestanden helpen je daar niet mee.** De overlay van productie zet met een namespace-transformer alles naar `rig-prd-operations`, de sandbox doet dat niet. Wat in `bootstrap/rig-system/...` `rig-system` heet, is dus de sandboxnaam die op productie hernoemd wordt.
+
+| | sandbox | productie |
+|---|---|---|
+| de Applications staan in | `rig-system` | `rig-prd-operations` |
+| de infra-app heet | `sandbox-infrastructure` | `production-infrastructure` |
+| OPI draait in | `rig-system` | `rig-prd-operations` |
+| de mailrelay deployt naar | `rig-ron` | `rig-prd-ron` |
+
 
 **Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie dragen er twee de platformsleutel: `rig-prd-operations` en `rig-prd-ron`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
 
@@ -119,8 +133,8 @@ De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de ee
 
 ```bash
 # 6. de rooktest en de eindtoets
-kubectl -n rig-system get applications -o wide
-kubectl -n rig-prd-operations rollout status deployment/operations-manager
+kubectl -n $NS get applications -o wide
+kubectl -n $NS rollout status deployment/operations-manager
 uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead --projects /tmp/zad-projects/projects --argo-applications /tmp/zad-argo
 ```
 
