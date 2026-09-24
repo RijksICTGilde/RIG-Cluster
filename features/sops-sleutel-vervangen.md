@@ -761,9 +761,9 @@ en een uitzondering op een melding die niet bestaat is geen oordeel maar ruis.
 
 Dat een uitzondering NODIG leek komt van een tweede scanner. Een review over de branch draait
 `gitleaks`, en dat is een andere poort met andere regels. Gemeten met gitleaks 8.30.1 over deze
-boom: **160 bevindingen op getrackte bestanden, 24 verschillende waarden** -- voor deze ronde 167,
-de zeven eraf zijn de vondsten op de waarde die hieronder uit `archive/HOW.md` gehaald is -- en de kop
-van die lijst is `test-api-key-12345` (72x) en `your-api-key` (45x): plaatshouders in toetsen en documentatie.
+boom: **160 bevindingen op getrackte bestanden, 24 verschillende waarden** -- voor deze ronde 167;
+welke zeven eraf zijn staat hieronder -- en de kop van die lijst is `test-api-key-12345` (72x) en
+`your-api-key` (45x): plaatshouders in toetsen en documentatie.
 Dat is precies het alarm waar de sectie hierboven over gaat, nu van de andere kant: daarom is
 gitleaks hier geen grendel en staat er een eigen scanner die zijn treffers kan bewijzen.
 
@@ -784,10 +784,11 @@ odcn-production. Gitleaks meldde hem 12 keer, en zeven van die meldingen zaten o
 voorbeeld-curls in `archive/HOW.md`; die vier dragen nu `$API_TOKEN`, met een regel erboven die
 zegt waar de waarde vandaan komt. Aan de blootstelling verandert dat niets: de waarde blijft als
 default van de instelling zelf staan in `opi/core/config.py:261`, in
-`operations-manager/python/.env:46` en in twee voorbeelden in `opi/api/router.py` -- samen de vijf
-meldingen die overblijven -- en geen van die drie bestanden is een vindplaats van deze ronde. Wat
-het weghalen wél doet staat hieronder: het haalt de twee bevindingen weg die anders in een
-uitzonderingenlijst hadden moeten staan.
+`operations-manager/python/.env:46` en in twee voorbeelden in `opi/api/router.py`, en geen van die
+drie bestanden is een vindplaats van deze ronde. De vijf meldingen die overblijven liggen op twee
+van die drie: vier op de twee curls in `router.py`, waar elke regel twee keer telt
+(`curl-auth-header` naast `generic-api-key`), en een op `.env:46`. De default in `config.py:261`
+meldt gitleaks zelf niet. Wat het weghalen wél doet staat hieronder.
 
 En **vijf** zijn geen plaatshouder, en of ze nog iets openen valt hier niet te meten. Vier ervan
 zijn een databasewachtwoord in vijf `requires_infra`-scripts voor `amt2_dev_deployment_*`: een
