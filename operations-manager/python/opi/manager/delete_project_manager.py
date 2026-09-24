@@ -113,8 +113,8 @@ class DeleteProjectManager:
 
         Removing the finalizer is what makes the Application disappear, but it also cancels
         the cascade that would have deleted the resources underneath it. So they go first,
-        selected by the tracking-id ArgoCD stamped on them. Forcing without that step is
-        what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
+        selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
+        that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
 
         Returns:
             True if the finalizer was removed.
