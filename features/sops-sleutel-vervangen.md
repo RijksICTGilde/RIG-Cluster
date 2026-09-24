@@ -780,7 +780,10 @@ een voorbeeld of een fixture (de api-key en de invite-keys, onder meer in `featu
 `opi/core/config.py:261`. Die opent niets --
 `opi/utils/api_keys.py:37` gebruikt hem alleen als `USE_UNSAFE_API_KEY` aanstaat, en die staat op
 `False` in de code, op `false` in `operations-manager/python/.env` en op `false` in de configmap van
-odcn-production. Gitleaks meldde hem 12 keer, en zeven van die meldingen zaten op de vier
+odcn-production. Dat "opent niets" is een toets en niet alleen deze zin: `test_secret_scan.py` draait
+de vlag om en ziet de gecommitte waarde er dan uit komen, en vraagt daarnaast de boom of iets hem
+ergens aanzet -- die tweede telt de plekken zelf, zodat een vierde overlay hier niet stil buiten
+valt. Gitleaks meldde hem 12 keer, en zeven van die meldingen zaten op de vier
 voorbeeld-curls in `archive/HOW.md`; die vier dragen nu `$API_TOKEN`, met een regel erboven die
 zegt waar de waarde vandaan komt. Aan de blootstelling verandert dat niets: de waarde blijft als
 default van de instelling zelf staan in `opi/core/config.py:261`, in

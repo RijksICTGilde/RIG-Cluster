@@ -30,6 +30,8 @@ from pathlib import Path
 
 import pytest
 import yaml
+from opi.core.config import settings
+from opi.utils.api_keys import generate_api_key
 from opi.utils.sops import generate_sops_key_pair
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -827,3 +829,80 @@ def test_the_scan_has_no_way_to_write_its_findings_to_a_file() -> None:
         source = (_SCRIPTS_DIR / name).read_text()
         assert "write_text(" not in source, f"{name} writes a file; findings belong on stdout"
         assert not re.search(r"open\([^)]*[\"'][wax]", source), f"{name} opens a file for writing"
+
+
+# ---------------------------------------------------------------------------
+# the committed development token opens nothing
+# ---------------------------------------------------------------------------
+
+#: An assignment of the flag and nothing else: its name, then an ``=`` (with a ``: bool``
+#: annotation allowed in between), then the value. A line that merely NAMES the flag -- the ``if``
+#: in ``api_keys.py``, the comment above the setting in ``.env``, a dict key in a test -- carries
+#: no ``=`` right after the name and is not a configuration.
+#:
+#: Described rather than shown, for the reason the note at the top of this file gives: a literal
+#: example here would be a line in the tree that sets the flag, and this test reads the tree.
+_UNSAFE_FLAG_ASSIGNMENT = re.compile(r"USE_UNSAFE_API_KEY\s*(?::\s*bool\s*)?=\s*([A-Za-z]+)")
+
+
+def test_the_committed_development_token_is_only_handed_out_behind_the_unsafe_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The triage in the feature doc rests on this branch, and nothing else was pinning it.
+
+    ``opi/core/config.py`` holds the development default of ``API_TOKEN`` in the tree, and the
+    round that took that value out of the example curls in ``archive/HOW.md`` argued the removal
+    changes nothing about the exposure, because ``generate_api_key`` only ever returns it while
+    ``USE_UNSAFE_API_KEY`` is on. Invert that branch and the committed value becomes the API key
+    of every project created from then on, with no scan anywhere saying so: it is thirty-two hex
+    characters, and neither a rule in ``scripts/secret_scan.py`` nor one in gitleaks can prove
+    such a shape is a secret. So the argument has to be a test, not a sentence.
+    """
+    monkeypatch.setattr(settings, "USE_UNSAFE_API_KEY", False)
+    keys = {generate_api_key() for _ in range(5)}
+
+    assert settings.API_TOKEN not in keys, "the committed development token is handed out with the flag OFF"
+    assert len(keys) > 1, "the key is a constant with the flag off, so it is a committed credential either way"
+    assert {len(key) for key in keys} == {32}
+
+    monkeypatch.setattr(settings, "USE_UNSAFE_API_KEY", True)
+
+    # The other half of the branch, which is what makes the half above mean something: the flag
+    # really is the only thing standing between the committed value and every new project.
+    assert generate_api_key() == settings.API_TOKEN
+
+
+def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> None:
+    """And the flag is off in every place that actually sets it, not just in the one the doc names.
+
+    The doc names three (the code default, the committed ``.env``, the odcn-production configmap).
+    Naming them is what goes stale: a fourth overlay, a new ``.env.<cluster>``, and the sentence is
+    still true about its three while the platform runs on the fourth. So this asks the tree.
+
+    Markdown is left out on purpose and that is the whole filter: ``features/futures/`` and
+    ``archive/`` each carry a line that sets the flag to ``true``, and both are prose about a
+    situation rather than a machine in one. Failing on those would put a permanent red on a
+    healthy tree -- the alarm people learn to walk around that this whole guard exists to avoid.
+    """
+    grep = subprocess.run(
+        ["git", "-C", str(_REPO_ROOT), "grep", "-n", "USE_UNSAFE_API_KEY"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert grep.returncode == 0, "the flag is not in the tree at all, so this checks nothing"
+
+    configured: list[tuple[str, str]] = []
+    for line in grep.stdout.splitlines():
+        path, _, rest = line.partition(":")
+        number, _, text = rest.partition(":")
+        if Path(path).suffix.lower() == ".md":
+            continue
+        match = _UNSAFE_FLAG_ASSIGNMENT.search(text)
+        if match is not None:
+            configured.append((f"{path}:{number}", match.group(1)))
+
+    assert len(configured) >= 3, f"expected the code default, the .env and a configmap; found {configured}"
+
+    on = [where for where, value in configured if value.lower() != "false"]
+    assert on == [], f"the unsafe API key is switched on here: {on}"
