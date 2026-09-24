@@ -906,25 +906,25 @@ def test_while_the_plaintext_is_being_written_it_lies_next_to_the_target_and_sop
 ) -> None:
     """The half-written plaintext is a neighbour of the target under a name SOPS does not glob.
 
-    Two things hang on where that temporary lives, and neither is visible in the outcome of a
-    successful write. Next to the target is what makes the move a rename inside one filesystem,
-    so the ``.to-sops.yaml`` name is either absent or complete and never half a password; a
-    temporary in the system temp directory turns ``os.replace`` into a cross-device error on any
-    machine where ``/tmp`` is its own filesystem, and drops the plaintext PAT outside the clone,
-    where this round's "nothing left behind" check does not look. And the name has to stay out
-    of the ``*.to-sops.yaml`` glob, because that glob is what ``encrypt_to_sops_files`` selects
-    on -- it is spelled here the way ``opi/utils/sops.py`` spells it rather than with
-    ``Path.glob``, which unlike ``glob.glob`` does match a leading dot.
+    Two things hang on that temporary, its place and its name, and neither is visible in the
+    outcome of a successful write. Next to the target is what makes the move a rename inside one
+    filesystem, so the ``.to-sops.yaml`` name is either absent or complete and never half a
+    password; a temporary in the system temp directory turns ``os.replace`` into a cross-device
+    error on any machine where ``/tmp`` is its own filesystem, and drops the plaintext PAT
+    outside the clone, where this round's "nothing left behind" check does not look. And the
+    name has to stay out of the ``*.to-sops.yaml`` glob, because that glob is what
+    ``encrypt_to_sops_files`` selects on -- it is spelled here with ``glob.glob``, the way
+    ``opi/utils/sops.py`` spells it.
 
-    Both halves of the name are asserted on directly, because the glob assertion below cannot
-    carry either of them on its own: ``glob.glob`` skips a leading dot, so it only sees a name
-    that has lost the dot AND ends in ``.to-sops.yaml``, and either protection alone keeps it
-    quiet. Measured over the 34 tests in this file: handing ``mkstemp`` the ``.to-sops.yaml``
-    suffix while the dot stays is 1 red, on the suffix assertion; dropping only the leading dot
-    is 0 red, which is the same answer the previous round gave -- the dot is belt over braces
-    and the suffix is the brace. Dropping ``dir=source.parent`` is 1 red, on the
-    "not in the target's directory" assertion. The glob assertion states the consequence the
-    two names are protecting against and stands behind the stricter of them.
+    The suffix is asserted on directly, because the glob assertion below cannot carry it on its
+    own: ``glob.glob`` skips a leading dot, so it only sees a name that has lost the dot AND
+    ends in ``.to-sops.yaml``, and either protection alone keeps it quiet. Measured over the 34
+    tests in this file: handing ``mkstemp`` the ``.to-sops.yaml`` suffix while the dot stays is
+    1 red, on the suffix assertion; dropping only the leading dot is 0 red, which is the same
+    answer the previous round gave -- the dot is belt over braces and the suffix is the brace.
+    Dropping ``dir=source.parent`` is 1 red, on the "not in the target's directory" assertion.
+    The glob assertion states the consequence the two names are protecting against and stands
+    behind the stricter of them.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])

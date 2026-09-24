@@ -469,10 +469,9 @@ def test_write_loose_value_leaves_no_temporary_behind_when_it_is_interrupted(tmp
     # Where the temporary lies is the other half of the same promise, and the check above cannot
     # see it: a temporary in the system temp directory leaves this directory just as clean while
     # ``os.replace`` stops being a rename inside one filesystem -- a cross-device error on any
-    # machine where ``/tmp`` is its own, with the converted content in the wrong place if it ever
-    # were a copy. Measured with the two assertions below removed, so that only the directory
-    # listing above is left to speak: dropping ``dir=path.parent`` leaves all 46 tests in this
-    # file green. With them in place that same mutation is 1 red, here.
+    # machine where ``/tmp`` is its own. Measured with the two assertions below removed, so that
+    # only the directory listing above is left to speak: dropping ``dir=path.parent`` leaves all
+    # 46 tests in this file green. With them in place that same mutation is 1 red, here.
     assert [Path(origin).parent for origin, _destination in moved] == [path.parent]
     assert [destination for _origin, destination in moved] == [str(path)]
 
