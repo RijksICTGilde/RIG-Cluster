@@ -1,0 +1,508 @@
+"""RC-226: a delete that hangs, and the forcing that leaves rubbish behind.
+
+Two things have to be true of the delete route, and both are about ORDER:
+
+1. The running operation goes FIRST. A sync that waits on health blocks the deletion for
+   as long as it runs, and it runs forever when the workload it waits for cannot become
+   healthy. Only clearing ``/operation`` releases it.
+2. When forcing, the resources go before the finalizer. The finalizer IS the cascade that
+   deletes them; taking it away first is what left 350 resources behind in
+   rig-prd-mpfm-w3h.
+
+So these tests assert sequences, not just that the calls happened.
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from opi.connectors.kubectl import KubectlConnector
+from opi.manager.delete_project_manager import DeleteProjectManager
+from opi.utils.argocd_tracking import (
+    TRACKING_ID_ANNOTATION,
+    TrackedResource,
+    application_name_from_tracking_id,
+    tracked_resource_from_item,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_singleton():
+    KubectlConnector._instance = None
+    KubectlConnector._initialized = False
+    yield
+    KubectlConnector._instance = None
+    KubectlConnector._initialized = False
+
+
+@pytest.fixture
+def connector():
+    with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
+        conn = KubectlConnector()
+    KubectlConnector.isConnected = True
+    return conn
+
+
+def _item(kind: str, api_version: str, name: str, tracking_id: str | None, **metadata) -> dict:
+    annotations = {TRACKING_ID_ANNOTATION: tracking_id} if tracking_id else {}
+    return {
+        "kind": kind,
+        "apiVersion": api_version,
+        "metadata": {"name": name, "namespace": "rig-prd-mpfm-w3h", "annotations": annotations, **metadata},
+    }
+
+
+# ---------------------------------------------------------------------------
+# The tracking-id annotation: the only link from a resource back to its Application
+# ---------------------------------------------------------------------------
+
+
+class TestTrackingId:
+    def test_application_name_is_the_part_before_the_first_colon(self) -> None:
+        assert application_name_from_tracking_id("mpfm-w3h-pr-310:apps/Deployment:ns/pr-310-magazijna") == (
+            "mpfm-w3h-pr-310"
+        )
+
+    def test_app_in_any_namespace_form_drops_the_namespace(self) -> None:
+        """With apps-in-any-namespace the app part is ``<ns>/<app>``; the name is the tail."""
+        assert application_name_from_tracking_id("argocd/mpfm-w3h-pr-310:apps/Deployment:ns/x") == "mpfm-w3h-pr-310"
+
+    def test_empty_tracking_id_has_no_application(self) -> None:
+        assert application_name_from_tracking_id("") is None
+        assert application_name_from_tracking_id(":apps/Deployment:ns/x") is None
+
+    def test_untracked_resource_is_skipped(self) -> None:
+        assert tracked_resource_from_item(_item("Secret", "v1", "db-creds", None)) is None
+
+    def test_tracked_resource_reads_kind_name_and_deletion_state(self) -> None:
+        resource = tracked_resource_from_item(
+            _item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds", deletionTimestamp="2026-09-24T10:00:00Z")
+        )
+        assert resource is not None
+        assert (resource.kind, resource.name, resource.app_name) == ("Secret", "db-creds", "app-a")
+        assert resource.being_deleted is True
+
+    def test_resource_without_deletion_timestamp_is_not_being_deleted(self) -> None:
+        """The 350 leftovers carried none: nothing had ever asked for their deletion."""
+        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"))
+        assert resource is not None
+        assert resource.being_deleted is False
+
+    def test_kubectl_type_carries_the_api_group(self) -> None:
+        deployment = tracked_resource_from_item(_item("Deployment", "apps/v1", "web", "app-a:apps/Deployment:ns/web"))
+        secret = tracked_resource_from_item(_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"))
+        assert deployment is not None
+        assert deployment.kubectl_type == "deployment.apps"
+        assert secret is not None
+        assert secret.kubectl_type == "secret"
+
+
+# ---------------------------------------------------------------------------
+# The connector: the manual repair that worked, as code
+# ---------------------------------------------------------------------------
+
+
+class TestTerminateOperation:
+    @pytest.mark.asyncio
+    async def test_sends_the_json_patch_that_removes_the_operation(self, connector) -> None:
+        """The measured repair: remove /operation, not the finalizer."""
+        run = AsyncMock(return_value=("patched", "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            assert await connector.terminate_argocd_application_operation("mpfm-w3h-pr-310", "argocd") is True
+
+        args = run.await_args.args[0]
+        assert args[:5] == ["patch", "application", "mpfm-w3h-pr-310", "-n", "argocd"]
+        assert "--type" in args
+        assert args[args.index("--type") + 1] == "json"
+        assert args[-1] == '[{"op":"remove","path":"/operation"}]'
+
+    @pytest.mark.asyncio
+    async def test_no_operation_running_is_not_a_failure(self, connector) -> None:
+        """A json-patch remove on an absent path is rejected; that is the normal case."""
+        stderr = 'remove operation does not apply: doc is missing path: "/operation": missing value'
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", stderr, 1))):
+            assert await connector.terminate_argocd_application_operation("app-a") is True
+
+    @pytest.mark.asyncio
+    async def test_missing_application_is_not_a_failure(self, connector) -> None:
+        stderr = 'Error from server (NotFound): applications.argoproj.io "app-a" not found'
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", stderr, 1))):
+            assert await connector.terminate_argocd_application_operation("app-a") is True
+
+    @pytest.mark.asyncio
+    async def test_any_other_error_is_a_failure(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "connection reset", 1))):
+            assert await connector.terminate_argocd_application_operation("app-a") is False
+
+
+class TestDestinationNamespace:
+    @pytest.mark.asyncio
+    async def test_reads_the_destination_namespace(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("rig-prd-mpfm-w3h", "", 0))):
+            assert await connector.get_argocd_application_destination_namespace("app-a") == "rig-prd-mpfm-w3h"
+
+    @pytest.mark.asyncio
+    async def test_empty_answer_is_not_a_namespace(self, connector) -> None:
+        """An empty jsonpath result exits 0; reading it as a namespace would sweep nothing."""
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "", 0))):
+            assert await connector.get_argocd_application_destination_namespace("app-a") is None
+
+
+class TestResourceTypeDiscovery:
+    @pytest.mark.asyncio
+    async def test_discovers_namespaced_types_and_skips_events(self, connector) -> None:
+        stdout = "secrets\nconfigmaps\nevents\ndeployments.apps\nevents.events.k8s.io\n"
+        run = AsyncMock(return_value=(stdout, "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            types = await connector.list_namespaced_resource_types()
+
+        assert types == ["secrets", "configmaps", "deployments.apps"]
+        assert run.await_args.args[0] == [
+            "api-resources",
+            "--namespaced=true",
+            "--verbs=list,delete",
+            "-o",
+            "name",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failure_yields_no_types(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "boom", 1))):
+            assert await connector.list_namespaced_resource_types() == []
+
+
+class TestListTrackedResources:
+    @pytest.mark.asyncio
+    async def test_keeps_only_the_resources_argocd_tracks(self, connector) -> None:
+        payload = {
+            "items": [
+                _item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"),
+                _item("Secret", "v1", "sops-age-key", None),
+                _item("Deployment", "apps/v1", "web", "app-b:apps/Deployment:ns/web"),
+            ]
+        }
+        import json
+
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(json.dumps(payload), "", 0))):
+            tracked = await connector.list_tracked_resources("rig-prd-mpfm-w3h", ["secrets", "deployments.apps"])
+
+        assert [(r.name, r.app_name) for r in tracked] == [("db-creds", "app-a"), ("web", "app-b")]
+
+    @pytest.mark.asyncio
+    async def test_partial_output_is_kept(self, connector) -> None:
+        """kubectl exits non-zero when ONE queried type fails, but prints the rest.
+
+        Dropping that would report an empty namespace while resources are still standing.
+        """
+        import json
+
+        payload = {"items": [_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds")]}
+        stderr = "error: unable to retrieve the complete list of server APIs: metrics.k8s.io/v1beta1"
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(json.dumps(payload), stderr, 1))):
+            tracked = await connector.list_tracked_resources("rig-prd-mpfm-w3h", ["secrets"])
+
+        assert [r.name for r in tracked] == ["db-creds"]
+
+    @pytest.mark.asyncio
+    async def test_no_types_means_no_query(self, connector) -> None:
+        run = AsyncMock()
+        with patch.object(connector, "_run_kubectl_command", run):
+            assert await connector.list_tracked_resources("ns", []) == []
+        run.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unparsable_output_is_not_read_as_empty_silently(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("not json", "", 0))):
+            assert await connector.list_tracked_resources("ns", ["secrets"]) == []
+
+
+class TestDeleteTrackedResources:
+    @staticmethod
+    def _resource(name: str) -> TrackedResource:
+        return TrackedResource(
+            kind="Secret",
+            api_version="v1",
+            name=name,
+            namespace="rig-prd-mpfm-w3h",
+            app_name="app-a",
+            tracking_id=f"app-a:/Secret:rig-prd-mpfm-w3h/{name}",
+            being_deleted=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_deletes_each_resource_by_its_own_type(self, connector) -> None:
+        delete = AsyncMock(return_value=True)
+        with patch.object(connector, "delete_resource", delete):
+            failed = await connector.delete_tracked_resources([self._resource("a"), self._resource("b")])
+
+        assert failed == []
+        assert [call.args for call in delete.await_args_list] == [
+            ("secret", "a", "rig-prd-mpfm-w3h"),
+            ("secret", "b", "rig-prd-mpfm-w3h"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_reports_the_ones_that_would_not_go(self, connector) -> None:
+        with patch.object(connector, "delete_resource", AsyncMock(side_effect=[True, False])):
+            failed = await connector.delete_tracked_resources([self._resource("a"), self._resource("b")])
+
+        assert [r.name for r in failed] == ["b"]
+
+
+# ---------------------------------------------------------------------------
+# The delete route: the order is the fix
+# ---------------------------------------------------------------------------
+
+
+def _recording_kubectl(calls: list[str], *, destination: str | None, tracked: list[TrackedResource]) -> AsyncMock:
+    """A kubectl stand-in that writes the name of each call into ``calls``."""
+
+    def step(name: str, result):
+        async def _run(*args, **kwargs):
+            calls.append(name)
+            return result
+
+        return AsyncMock(side_effect=_run)
+
+    kubectl = AsyncMock()
+    kubectl.terminate_argocd_application_operation = step("terminate_operation", True)
+    kubectl.get_argocd_application_destination_namespace = step("read_namespace", destination)
+    kubectl.list_tracked_resources = step("list_resources", tracked)
+    kubectl.delete_tracked_resources = step("delete_resources", [])
+    kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
+    kubectl.delete_namespace = AsyncMock(return_value=True)
+    kubectl._run_kubectl_command = AsyncMock(return_value=("", "", 0))
+    return kubectl
+
+
+def _tracked(app_name: str, name: str) -> TrackedResource:
+    return TrackedResource(
+        kind="Secret",
+        api_version="v1",
+        name=name,
+        namespace="rig-prd-mpfm-w3h",
+        app_name=app_name,
+        tracking_id=f"{app_name}:/Secret:rig-prd-mpfm-w3h/{name}",
+        being_deleted=False,
+    )
+
+
+class TestForceDeleteStuckApplication:
+    @pytest.mark.asyncio
+    async def test_resources_go_before_the_finalizer(self) -> None:
+        """The whole point: remove the finalizer first and the cascade never runs."""
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            calls, destination="rig-prd-mpfm-w3h", tracked=[_tracked("app-a", "db-creds")]
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+
+        assert calls == ["read_namespace", "list_resources", "delete_resources", "remove_finalizers"]
+
+    @pytest.mark.asyncio
+    async def test_only_the_resources_of_this_application_are_deleted(self) -> None:
+        """A namespace holds several deployments; a delete may only take its own."""
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            calls,
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked("app-a", "mine"), _tracked("app-b", "someone-elses")],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results)
+
+        deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["mine"]
+
+    @pytest.mark.asyncio
+    async def test_reports_how_much_it_deleted(self) -> None:
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [], destination="rig-prd-mpfm-w3h", tracked=[_tracked("app-a", "a"), _tracked("app-a", "b")]
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results)
+
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert operation["status"] == "success"
+        assert operation["deleted"] == 2
+        assert operation["namespace"] == "rig-prd-mpfm-w3h"
+
+    @pytest.mark.asyncio
+    async def test_resources_that_would_not_go_become_an_error(self) -> None:
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl([], destination="ns", tracked=[_tracked("app-a", "a")])
+        pm._kubectl_connector.delete_tracked_resources = AsyncMock(return_value=[_tracked("app-a", "a")])
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results)
+
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert operation["status"] == "partial"
+        assert results["errors"]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_namespace_is_reported_and_does_not_stop_the_force(self) -> None:
+        """Leaving the app stuck blocks the parent for everyone, so the force still runs.
+
+        What must not happen is that it runs SILENTLY: without a namespace, nothing was
+        swept, and that has to reach the caller as an error.
+        """
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(calls, destination=None, tracked=[])
+        results: dict = {"operations": [], "errors": []}
+
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+
+        assert calls == ["read_namespace", "remove_finalizers"]
+        assert any("destination namespace" in error for error in results["errors"])
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert operation["status"] == "unknown_namespace"
+
+
+def _deployment_harness(calls: list[str]) -> tuple[AsyncMock, AsyncMock, dict, dict]:
+    """A deployment delete with a live Application, recording the order of the calls."""
+    pm = AsyncMock()
+    pm._kubectl_connector = _recording_kubectl(calls, destination="rig-mpfm-w3h", tracked=[])
+    pm._manifest_generator = MagicMock()
+    pm._manifest_generator.create_kustomization_files = MagicMock(return_value=True)
+    pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
+    pm._minio_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
+    pm._ensure_database_manager.return_value.delete_resources_for_deployment = AsyncMock(
+        return_value={"operations": [], "errors": []}
+    )
+
+    for factory in ("get_git_connector_for_argocd", "get_git_connector_for_deployment"):
+        connector = AsyncMock()
+        connector.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        setattr(pm, factory, AsyncMock(return_value=connector))
+
+    async def _wait(*args, **kwargs):
+        calls.append("wait_for_deletion")
+        return True
+
+    argo = AsyncMock()
+    argo.refresh_application = AsyncMock(return_value=True)
+    argo.application_exists = AsyncMock(return_value=True)
+    argo.wait_for_application_deletion = AsyncMock(side_effect=_wait)
+
+    deployment = {
+        "name": "pr-310",
+        "cluster": "local",
+        "namespace": "mpfm-w3h",
+        "repository": "main-repo",
+        "components": [{"reference": "web"}],
+    }
+    project_data = {
+        "name": "mpfm-w3h",
+        "services": [],
+        "components": [{"name": "web"}],
+        "deployments": [deployment],
+        "repositories": [{"name": "main-repo", "path": ""}],
+    }
+    return pm, argo, project_data, deployment
+
+
+class TestOperationClearedBeforeTheWait:
+    @pytest.mark.asyncio
+    async def test_infrastructure_delete_clears_the_operation_before_waiting(self) -> None:
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
+        pm._manifest_generator = MagicMock()
+
+        gitops = AsyncMock()
+        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+
+        async def _wait(*args, **kwargs):
+            calls.append("wait_for_deletion")
+            return False
+
+        argo = AsyncMock()
+        argo.refresh_application = AsyncMock(return_value=True)
+        argo.application_exists = AsyncMock(return_value=True)
+        argo.wait_for_application_deletion = AsyncMock(side_effect=_wait)
+
+        results: dict = {"operations": [], "errors": []}
+        project_data = {"name": "mpfm-w3h", "services": ["namespace-postgresql-database"]}
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm)._cleanup_project_infrastructure(
+                "mpfm-w3h", "local", project_data, results, force=True
+            )
+
+        # The operation goes first, then the wait; on the timeout the resources go
+        # before the finalizer, and only then does it wait for the app to disappear.
+        assert calls == [
+            "terminate_operation",
+            "wait_for_deletion",
+            "read_namespace",
+            "list_resources",
+            "delete_resources",
+            "remove_finalizers",
+            "wait_for_deletion",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_deleting_a_deployment_clears_the_operation_before_waiting(self) -> None:
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls)
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
+
+        assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
+
+    @pytest.mark.asyncio
+    async def test_yaml_change_delete_clears_the_operation_before_waiting(self) -> None:
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment_from_yaml_change("mpfm-w3h", deployment, project_data)
+
+        assert calls[:2] == ["terminate_operation", "wait_for_deletion"]
+
+    @pytest.mark.asyncio
+    async def test_orphan_cleanup_clears_the_operation_before_deleting(self) -> None:
+        """The orphan cleanup deletes directly instead of via GitOps, and hits the same gate."""
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
+        pm._kubectl_connector._run_kubectl_command = AsyncMock(return_value=("", "", 0))
+
+        async def _delete(*args, **kwargs):
+            calls.append("delete_application")
+            return True
+
+        argo = AsyncMock()
+        argo.list_applications = AsyncMock(return_value=[{"metadata": {"name": "mpfm-w3h-pr-310"}}])
+        argo.delete_application = AsyncMock(side_effect=_delete)
+
+        results: dict = {"operations": [], "errors": []}
+        with patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo):
+            await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
+
+        assert calls == ["terminate_operation", "delete_application"]
