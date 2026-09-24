@@ -103,7 +103,26 @@ def cli(sandbox_url: str, db_project: CreatedProject) -> ZadCli:
 
 
 def _zet(cli: ZadCli, waarde: object, *, laag: str = "project", deployment: str = ""):
-    args = ["service", "config", "set", _DIENST, "--target", laag, "--set", f"{_VELD}={waarde}", "--yes"]
+    """De projectlaag van deze dienst is een `scope`-gediscrimineerde unie, dus `scope` moet mee.
+
+    Zonder dat veld weigert de CLI de aanroep op zijn eigen schemacontrole en komt er niets
+    bij de server. `shared` is de standaardtak en de enige die de CLI accepteert; zie
+    ``test_de_cli_weigert_een_scope_die_de_server_wel_kent`` hieronder voor waarom dat het
+    tweede deel van deze meting is.
+    """
+    args = [
+        "service",
+        "config",
+        "set",
+        _DIENST,
+        "--target",
+        laag,
+        "--set",
+        "scope=shared",
+        "--set",
+        f"{_VELD}={waarde}",
+        "--yes",
+    ]
     if deployment:
         args += ["--deployment", deployment]
     return cli.run(*args)
@@ -241,4 +260,35 @@ def test_een_veld_dat_de_dienst_niet_declareert_wordt_geweigerd(
     logger.info("onbekend veld: HTTP %d %s", respons.status_code, respons.text[:300])
     assert respons.status_code >= 400, (
         f"de server nam een niet-gedeclareerd veld aan (HTTP {respons.status_code}): {respons.text[:400]}"
+    )
+
+
+def test_de_cli_weigert_een_scope_die_de_server_wel_kent(cli: ZadCli, sandbox_url: str) -> None:
+    """Een bevinding uit deze ronde, vastgelegd op de kant die hoort te blijven kloppen.
+
+    De projectlaag van `postgresql-database` is in het OpenAPI-document een `oneOf` met een
+    discriminator op `scope`, met `shared` en `project` als de twee takken. De server kent
+    dus allebei. De CLI (zad-cli 1.0.0) valideert client-side tegen EEN tak en weigert
+    `scope=project` met een zin die zichzelf tegenspreekt:
+
+        'scope' is 'project', which is not one of shared, project.
+
+    `scope=shared` komt er wel door. Daarmee is `scope: project` - de weg naar een eigen
+    databasecluster - vanaf de CLI onbereikbaar. Dat zit in de zad-cli-repository.
+
+    Wat deze toets vastlegt is de SERVERkant, want dat is de kant die deze repo bezit en de
+    kant waarop de CLI-reparatie straks steunt: het document moet beide waarden blijven
+    noemen. Zou hier de CLI-weigering worden vastgepind, dan wordt deze toets rood zodra
+    iemand de CLI repareert, en dat is precies verkeerd om.
+    """
+    with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0) as client:
+        document = client.get(f"{sandbox_url.rstrip('/')}/openapi.json").raise_for_status().json()
+
+    schema = document["components"]["schemas"]["PostgresqlDatabaseProjectConfig"]
+    discriminator = schema.get("discriminator") or {}
+    assert discriminator.get("propertyName") == "scope", (
+        f"de projectlaag is niet meer op scope gediscrimineerd: {schema}"
+    )
+    assert set(discriminator.get("mapping") or {}) == {"shared", "project"}, (
+        f"de server kent andere scopes dan shared en project: {discriminator.get('mapping')}"
     )
