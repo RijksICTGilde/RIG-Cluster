@@ -18,6 +18,7 @@ import pytest
 from opi.connectors.kubectl import KubectlConnector
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.utils.argocd_tracking import (
+    INSTANCE_LABEL,
     TRACKING_ID_ANNOTATION,
     TrackedResource,
     application_name_from_tracking_id,
@@ -42,12 +43,21 @@ def connector():
     return conn
 
 
-def _item(kind: str, api_version: str, name: str, tracking_id: str | None, **metadata) -> dict:
+def _item(
+    kind: str, api_version: str, name: str, tracking_id: str | None, instance_label: str | None = None, **metadata
+) -> dict:
     annotations = {TRACKING_ID_ANNOTATION: tracking_id} if tracking_id else {}
+    labels = {INSTANCE_LABEL: instance_label} if instance_label else {}
     return {
         "kind": kind,
         "apiVersion": api_version,
-        "metadata": {"name": name, "namespace": "rig-prd-mpfm-w3h", "annotations": annotations, **metadata},
+        "metadata": {
+            "name": name,
+            "namespace": "rig-prd-mpfm-w3h",
+            "annotations": annotations,
+            "labels": labels,
+            **metadata,
+        },
     }
 
 
@@ -86,6 +96,30 @@ class TestTrackingId:
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds"))
         assert resource is not None
         assert resource.being_deleted is False
+
+    def test_the_instance_label_also_names_the_owner(self) -> None:
+        """ArgoCD's DEFAULT tracking method, which is what local and sandboxed-local run.
+
+        Measured on the sandbox cluster on 24 September 2026: argocd-cm says
+        resourceTrackingMethod=label, and not one resource under a live Application
+        carried a tracking-id. Reading only the annotation finds nothing there.
+        """
+        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="app-a"))
+        assert resource is not None
+        assert resource.app_name == "app-a"
+        assert resource.owner_ref == "app.kubernetes.io/instance=app-a"
+
+    def test_the_annotation_wins_over_a_label(self) -> None:
+        """With annotation tracking the label may be a leftover from another tool."""
+        resource = tracked_resource_from_item(
+            _item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds", instance_label="something-else")
+        )
+        assert resource is not None
+        assert resource.app_name == "app-a"
+
+    def test_an_empty_label_owns_nothing(self) -> None:
+        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="   "))
+        assert resource is None
 
     def test_kubectl_type_carries_the_api_group(self) -> None:
         deployment = tracked_resource_from_item(_item("Deployment", "apps/v1", "web", "app-a:apps/Deployment:ns/web"))
@@ -246,7 +280,7 @@ class TestDeleteTrackedResources:
             name=name,
             namespace="rig-prd-mpfm-w3h",
             app_name="app-a",
-            tracking_id=f"app-a:/Secret:rig-prd-mpfm-w3h/{name}",
+            owner_ref=f"app-a:/Secret:rig-prd-mpfm-w3h/{name}",
             being_deleted=False,
         )
 
@@ -303,7 +337,7 @@ def _tracked(app_name: str, name: str) -> TrackedResource:
         name=name,
         namespace="rig-prd-mpfm-w3h",
         app_name=app_name,
-        tracking_id=f"{app_name}:/Secret:rig-prd-mpfm-w3h/{name}",
+        owner_ref=f"{app_name}:/Secret:rig-prd-mpfm-w3h/{name}",
         being_deleted=False,
     )
 
