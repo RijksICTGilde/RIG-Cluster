@@ -33,3 +33,9 @@ patches:
       - op: add
         path: /spec/storageClassName
         value: ocs-storagecluster-ceph-rbd
+
+# ODCN-nodes mogen quay.io niet rechtstreeks; alles loopt via de RCR-proxycache. Het
+# quay-rig-robot-pull-secret hangt al aan de default serviceaccount in deze namespaces.
+images:
+  - name: quay.io/minio/minio
+    newName: rcr.rijksapps.nl/quay-rig/minio/minio

@@ -15,3 +15,9 @@ patches:
       - op: replace
         path: /spec/resources/requests/storage
         value: 10Gi
+
+# ODCN-nodes mogen quay.io niet rechtstreeks; alles loopt via de RCR-proxycache. Het
+# quay-rig-robot-pull-secret hangt al aan de default serviceaccount in deze namespaces.
+images:
+  - name: quay.io/minio/minio
+    newName: rcr.rijksapps.nl/quay-rig/minio/minio

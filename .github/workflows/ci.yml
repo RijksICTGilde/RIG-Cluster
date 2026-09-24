@@ -43,6 +43,14 @@ jobs:
       # de age-keygen binary op de runner.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
+      # Vastgepind op versie en checksum omdat een release-tag muteerbaar is.
+      - name: Install sops
+        run: |
+          curl -fsSLo /tmp/sops https://github.com/getsops/sops/releases/download/v3.13.2/sops-v3.13.2.linux.amd64
+          echo "154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef  /tmp/sops" | sha256sum -c -
+          chmod +x /tmp/sops
+          sudo mv /tmp/sops /usr/local/bin/sops
+          sops --version --disable-version-check
       - name: Run tests with coverage
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report
