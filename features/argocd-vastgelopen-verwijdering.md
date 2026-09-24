@@ -138,10 +138,10 @@ die antwoordt onder druk een dubbelzinnige `permission denied` voor Applications
 bestaan, en een levende Application als afwezig lezen zou de veegactie een draaiende
 deployment laten verwijderen.
 
-Om dezelfde reden weigert hij op elke mislukte lezing. Een mislukte `kubectl` mag nooit
-als meting doorgaan, want dan komt de uitkomst er precies zo uit als bij een schoon
-cluster: `SCHOON` op stdout en exitcode 0, zonder dat er iets bekeken is. Dat geldt voor
-alle drie de lezingen die hij doet:
+Om dezelfde reden weigert hij op een mislukte lezing die anders als leeg zou doorgaan. Een
+mislukte `kubectl` mag nooit als meting doorgaan, want dan komt de uitkomst er precies zo
+uit als bij een schoon cluster: `SCHOON` op stdout en exitcode 0, zonder dat er iets
+bekeken is:
 
 * geen enkele Application terug: dat leest hetzelfde als een mislukte query, en in beide
   lezingen wordt elke resource een wees;
@@ -163,8 +163,7 @@ hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
 
 Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er zijn wezen, `2` geweigerd,
 waaronder elke mislukte lezing hierboven. Dat maakt hem bruikbaar als laatste stap van een
-verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn. Een exitcode 0
-betekent dan ook echt dat er gekeken is.
+verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn.
 
 ## Bestanden
 
