@@ -20,7 +20,9 @@ keeps it true.
 from __future__ import annotations
 
 import base64
+import glob
 import hashlib
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -865,6 +867,13 @@ def test_the_plaintext_sops_reads_is_readable_by_nobody_else(tmp_path: Path) -> 
     read the password out of a 0644 file. The mode comes from ``mkstemp`` and survives the
     ``os.replace``; it is measured here from inside the encryption, the only moment the file is
     on disk.
+
+    The umask is pinned for the measurement, otherwise this test says more about the machine it
+    runs on than about the code. Under ``umask 0077`` a plain ``write_text`` produces 0600 all
+    by itself, and this is the ONLY test that separates the temporary from a ``write_text``
+    moved inside the ``try`` -- the interrupt tests stay green on that shape, because the
+    cleanup removes the half file either way. Measured with exactly that write back in place:
+    1 red here under ``umask 0022``, 33 green under ``umask 0077``.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
@@ -876,10 +885,55 @@ def test_the_plaintext_sops_reads_is_readable_by_nobody_else(tmp_path: Path) -> 
         source.unlink()
         return True
 
-    with patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=look_at_the_plaintext):
-        write_repository_secret(secret, NEW_TOKEN)
+    previous_umask = os.umask(0o022)
+    try:
+        with patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=look_at_the_plaintext):
+            write_repository_secret(secret, NEW_TOKEN)
+    finally:
+        os.umask(previous_umask)
 
     assert seen == [0o600]
+
+
+def test_while_the_plaintext_is_being_written_it_lies_next_to_the_target_and_sops_cannot_see_it(
+    tmp_path: Path,
+) -> None:
+    """The half-written plaintext is a neighbour of the target under a name SOPS does not glob.
+
+    Two things hang on where that temporary lives, and neither is visible in the outcome of a
+    successful write. Next to the target is what makes the move a rename inside one filesystem,
+    so the ``.to-sops.yaml`` name is either absent or complete and never half a password; a
+    temporary in the system temp directory turns ``os.replace`` into a cross-device error on any
+    machine where ``/tmp`` is its own filesystem, and drops the plaintext PAT outside the clone,
+    where this round's "nothing left behind" check does not look. And the name has to stay out
+    of the ``*.to-sops.yaml`` glob, because that glob is what ``encrypt_to_sops_files`` selects
+    on -- it is spelled here the way ``opi/utils/sops.py`` spells it rather than with
+    ``Path.glob``, which unlike ``glob.glob`` does match a leading dot.
+
+    Measured: dropping ``dir=source.parent`` leaves all 33 tests in this file green, and so does
+    giving the temporary the ``.to-sops.yaml`` suffix.
+    """
+    _private, public = generate_sops_key_pair()
+    secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
+    source = tmp_path / "argo-repository-https-een.to-sops.yaml"
+    alongside: list[list[str]] = []
+    visible_to_sops: list[list[str]] = []
+
+    def look_around_while_writing(document: Any) -> str:
+        alongside.append(sorted(entry.name for entry in tmp_path.iterdir()))
+        visible_to_sops.append(sorted(glob.glob(os.path.join(str(tmp_path), "*.to-sops.yaml"))))
+        return dump_yaml_to_string(document)
+
+    with (
+        patch.object(argo_rotation, "dump_yaml_to_string", side_effect=look_around_while_writing),
+        patch.object(argo_rotation, "encrypt_to_sops_files", side_effect=lambda *_a: source.unlink() or True),
+    ):
+        write_repository_secret(secret, NEW_TOKEN)
+
+    assert len(alongside) == 1, "the plaintext is built exactly once"
+    assert len(alongside[0]) == 1, f"the temporary is not in the target's directory: {alongside[0]}"
+    assert alongside[0][0] != source.name, "the half-written plaintext carries the target's own name"
+    assert visible_to_sops == [[]], "SOPS globs the half-written plaintext"
 
 
 def test_sops_leaving_the_plaintext_behind_is_a_failure_and_the_file_still_goes(tmp_path: Path) -> None:

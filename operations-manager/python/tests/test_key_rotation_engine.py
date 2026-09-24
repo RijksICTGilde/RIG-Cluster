@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -451,15 +452,27 @@ def test_write_loose_value_leaves_no_temporary_behind_when_it_is_interrupted(tmp
     before = f"data:\n  .env: |\n    A={SHAPED}\n    B=keep-me\n"
     path.write_text(before)
     field_ = loose_values(path)[0]
+    moved: list[tuple[str, str]] = []
+
+    def stop_the_move(origin: Any, destination: Any) -> None:
+        moved.append((str(origin), str(destination)))
+        raise KeyboardInterrupt
 
     with (
-        patch("key_rotation.os.replace", side_effect=KeyboardInterrupt),
+        patch("key_rotation.os.replace", side_effect=stop_the_move),
         pytest.raises(KeyboardInterrupt),
     ):
         write_loose_value(field_, SHAPED_TOO)
 
     assert list(tmp_path.iterdir()) == [path], "the temporary outlived the interrupt"
     assert path.read_text() == before
+    # Where the temporary lies is the other half of the same promise, and the check above cannot
+    # see it: a temporary in the system temp directory leaves this directory just as clean while
+    # ``os.replace`` stops being a rename inside one filesystem -- a cross-device error on any
+    # machine where ``/tmp`` is its own, with the converted content in the wrong place if it ever
+    # were a copy. Measured: dropping ``dir=path.parent`` leaves all 46 tests in this file green.
+    assert [Path(origin).parent for origin, _destination in moved] == [path.parent]
+    assert [destination for _origin, destination in moved] == [str(path)]
 
 
 # ---------------------------------------------------------------------------
