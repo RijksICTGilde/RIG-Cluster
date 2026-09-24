@@ -46,6 +46,7 @@ import argo_rotation  # noqa: E402
 import project_rotation as round_tool  # noqa: E402
 from argo_rotation import (  # noqa: E402
     ARGO_SECRET_TYPE_LABEL,
+    TO_SOPS_SUFFIX,
     RepositorySecret,
     check_repository_secrets,
     pair_up,
@@ -869,11 +870,16 @@ def test_the_plaintext_sops_reads_is_readable_by_nobody_else(tmp_path: Path) -> 
     on disk.
 
     The umask is pinned for the measurement, otherwise this test says more about the machine it
-    runs on than about the code. Under ``umask 0077`` a plain ``write_text`` produces 0600 all
-    by itself, and this is the ONLY test that separates the temporary from a ``write_text``
-    moved inside the ``try`` -- the interrupt tests stay green on that shape, because the
-    cleanup removes the half file either way. Measured with exactly that write back in place:
-    1 red here under ``umask 0022``, 33 green under ``umask 0077``.
+    runs on than about the code: a plain ``open`` produces 0600 all by itself under ``umask
+    0077``, so the mode would look right for a reason that has nothing to do with this code.
+    Measured with the pin moved to ``umask 0077`` and the temporary written by a plain ``open``
+    instead of ``mkstemp``: all 34 tests in this file green; with the pin at ``umask 0022``
+    that same write is 1 red, and it is red here alone -- the name and the cleanup are
+    untouched by it, so no other test in the file has anything to say about the mode.
+
+    A ``write_text`` moved back inside the ``try`` is a coarser mutation and is 2 red: this
+    test on the mode, and the neighbour below on there being no separate file at all at that
+    moment, since such a write builds the plaintext straight onto the target's own name.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
@@ -910,8 +916,15 @@ def test_while_the_plaintext_is_being_written_it_lies_next_to_the_target_and_sop
     on -- it is spelled here the way ``opi/utils/sops.py`` spells it rather than with
     ``Path.glob``, which unlike ``glob.glob`` does match a leading dot.
 
-    Measured: dropping ``dir=source.parent`` leaves all 33 tests in this file green, and so does
-    giving the temporary the ``.to-sops.yaml`` suffix.
+    Both halves of the name are asserted on directly, because the glob assertion below cannot
+    carry either of them on its own: ``glob.glob`` skips a leading dot, so it only sees a name
+    that has lost the dot AND ends in ``.to-sops.yaml``, and either protection alone keeps it
+    quiet. Measured over the 34 tests in this file: handing ``mkstemp`` the ``.to-sops.yaml``
+    suffix while the dot stays is 1 red, on the suffix assertion; dropping only the leading dot
+    is 0 red, which is the same answer the previous round gave -- the dot is belt over braces
+    and the suffix is the brace. Dropping ``dir=source.parent`` is 1 red, on the
+    "not in the target's directory" assertion. The glob assertion states the consequence the
+    two names are protecting against and stands behind the stricter of them.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
@@ -933,6 +946,7 @@ def test_while_the_plaintext_is_being_written_it_lies_next_to_the_target_and_sop
     assert len(alongside) == 1, "the plaintext is built exactly once"
     assert len(alongside[0]) == 1, f"the temporary is not in the target's directory: {alongside[0]}"
     assert alongside[0][0] != source.name, "the half-written plaintext carries the target's own name"
+    assert not alongside[0][0].endswith(TO_SOPS_SUFFIX), f"the temporary is named a SOPS source: {alongside[0][0]}"
     assert visible_to_sops == [[]], "SOPS globs the half-written plaintext"
 
 
