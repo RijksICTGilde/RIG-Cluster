@@ -363,12 +363,12 @@ def write_repository_secret(secret: RepositorySecret, password: str) -> None:
     secret.string_data[PASSWORD_FIELD] = password
     source = secret.path.with_name(secret.path.name[: -len(SOPS_SUFFIX)] + TO_SOPS_SUFFIX)
     # The plaintext is built in a temporary file and moved onto the ``.to-sops.yaml`` name with
-    # ``os.replace``, the same shape ``key_rotation.write_loose_value`` and
-    # ``sops_key_secret.write_secret`` use. A plain ``write_text`` is open+write+close: an
-    # interrupt or a full disk halfway through leaves a world-readable half file under the name
-    # a following ``git add -A`` picks up, and outside any ``try`` nothing removes it. The
-    # temporary carries mkstemp's 0600 and a name the ``*.to-sops.yaml`` glob does not match, so
-    # it is neither readable by other uids nor visible to SOPS while it is being written.
+    # ``os.replace``, the same shape ``key_rotation.write_loose_value`` uses. A plain
+    # ``write_text`` is open+write+close: an interrupt or a full disk halfway through leaves a
+    # world-readable half file under the name a following ``git add -A`` picks up, and outside
+    # any ``try`` nothing removes it. The temporary carries mkstemp's 0600 and a name the
+    # ``*.to-sops.yaml`` glob does not match, so it is neither readable by other uids nor
+    # visible to SOPS while it is being written.
     handle, temporary = tempfile.mkstemp(prefix=f".{source.name}.", dir=source.parent)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:

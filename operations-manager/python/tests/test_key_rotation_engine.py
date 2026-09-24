@@ -441,9 +441,9 @@ def test_write_loose_value_refuses_when_the_line_moved(tmp_path: Path) -> None:
 def test_write_loose_value_leaves_no_temporary_behind_when_it_is_interrupted(tmp_path: Path) -> None:
     """The half of the writer that is not about the target file: what the failure leaves next to it.
 
-    The temporary is a dotfile in the directory of the file being converted, so in this repo it
-    sits in ``bootstrap/`` or next to ``.env`` and a following ``git add -A`` picks it up. Ctrl-C
-    during the move is a ``KeyboardInterrupt``: not an ``OSError``, so a named list of failure
+    The temporary is a dotfile in the directory of the file being converted, so it sits inside
+    the repository and a following ``git add -A`` picks it up. Ctrl-C during the move is a
+    ``KeyboardInterrupt``: not an ``OSError``, so a named list of failure
     types would step over the cleanup and leave it there. ``argo_rotation.write_repository_secret``
     names this function as the reason it catches just as widely, which only holds while it does.
     """

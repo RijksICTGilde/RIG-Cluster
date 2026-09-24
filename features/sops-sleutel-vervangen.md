@@ -787,8 +787,8 @@ zijn een databasewachtwoord in vijf `requires_infra`-scripts voor `amt2_dev_depl
 ervan staat in `tests/test_direct_clone.py:51` en `tests/test_schema_permissions.py:21`, beide met
 `# From the Kubernetes secret` erachter, en `test_deployment2_source.py`, `test_deployment3_db.py`
 en `test_source_db.py` dragen er elk nog een. De vijfde is de invitesleutel in
-`docs/generale-doorloop-rc118.md:339`: twee regels erboven staat dat de server hem genereerde en
-dat `GET .../invite/config` hem teruggeeft, dus verzonnen is hij niet. Geen AGE-sleutel en geen
+`docs/generale-doorloop-rc118.md:339`: de regel erboven zegt dat de server hem genereerde en de
+regel eronder dat `GET .../invite/config` hem teruggeeft, dus verzonnen is hij niet. Geen AGE-sleutel en geen
 vindplaats van deze ronde, en dit is de klasse waar een scanner die alleen bewijsbare vormen meldt
 per definitie niets over zegt. Zie "Wat hierna komt".
 

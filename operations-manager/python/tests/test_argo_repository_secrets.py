@@ -836,11 +836,9 @@ def test_an_interrupt_halfway_through_the_write_takes_the_plaintext_with_it(tmp_
     """The window BEFORE the encryption: the plaintext going on disk, not the sops call.
 
     The two tests above interrupt ``encrypt_to_sops_files``, so they say nothing about the step
-    in front of it. Putting the plaintext on disk is itself open+write+close, and a Ctrl-C or a
-    full disk halfway through leaves a readable part of the password under the name a following
-    ``git add -A`` picks up -- with nothing to remove it as long as that write stands outside
-    the ``try``. The tear is staged on the dump: the half file lands under the ``.to-sops.yaml``
-    name and the write then stops, which is exactly what a torn write leaves behind.
+    in front of it. The tear is staged on the dump: the half file lands under the
+    ``.to-sops.yaml`` name and the write then stops, which is exactly what a torn write leaves
+    behind.
     """
     _private, public = generate_sops_key_pair()
     secret = _a_secret_at(tmp_path / "argo-repository-https-een.sops.yaml", [public])
