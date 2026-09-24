@@ -12,10 +12,14 @@ ten cases that had been worked out by hand, no more and no fewer, while the five
 environments stayed out of range. That is the behaviour pinned here.
 """
 
-from typing import TYPE_CHECKING
+import os
+import shutil
+import subprocess
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 from opi.utils.argocd_tracking import TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
@@ -29,8 +33,9 @@ from scripts.argocd_orphan_sweep import (
     render_roots,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TASKFILE = REPO_ROOT / "Taskfile.yaml"
+SWEEP_TASK = "argocd-orphan-sweep"
 
 
 def _resource(app_name: str, name: str, kind: str = "Secret", namespace: str = "rig-prd-mpfm-w3h") -> TrackedResource:
@@ -223,6 +228,42 @@ class TestInventory:
         assert [call.args[0] for call in kubectl.list_tracked_resources.await_args_list] == ["rig-prd-mpfm-w3h"]
 
     @pytest.mark.asyncio
+    async def test_a_live_application_protects_its_own_resources(self) -> None:
+        """The name that protects comes out of ``metadata.name`` of the Application CRs.
+
+        The test itself lives in orphaned_resources, which is fed a ready-made set of
+        names; reading that set out of the wrong field is what this covers. Every name
+        would then be missing, every tracked resource would be an orphan, and with
+        --delete a running deployment goes down. That is the one failure this tool may
+        never have.
+        """
+        kubectl = _kubectl(
+            [{"metadata": {"name": "mpfm-w3h-productie"}, "spec": {"source": {"path": "p"}}}],
+            {"rig-prd-mpfm-w3h": [_resource("mpfm-w3h-productie", "db-creds")]},
+        )
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            resources, _ = await inventory(None, None)
+
+        assert resources == []
+
+    @pytest.mark.asyncio
+    async def test_an_application_with_several_sources_has_no_single_source_path(self, tmp_path: Path) -> None:
+        """``spec.source`` can be present and null rather than absent, which is how an
+        Application that uses ``spec.sources`` carries it. Reading ``.get("path")`` off
+        that null ends the sweep in a traceback halfway through its inventory, so
+        neither the report nor the exit code says anything.
+        """
+        (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
+        kubectl = _kubectl(
+            [{"metadata": {"name": "mpfm-w3h-productie"}, "spec": {"source": None, "sources": [{"path": "p"}]}}],
+            {"rig-prd-mpfm-w3h": []},
+        )
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            _, paths = await inventory(["rig-prd-mpfm-w3h"], tmp_path)
+
+        assert paths == ["odcn-production/mpfm-w3h/pr-9"]
+
+    @pytest.mark.asyncio
     async def test_the_application_paths_come_from_the_cluster_not_from_argocd(self, tmp_path: Path) -> None:
         (tmp_path / "odcn-production/mpfm-w3h/pr-310").mkdir(parents=True)
         (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
@@ -400,3 +441,79 @@ class TestRemove:
 
         assert not (tmp_path / "odcn-production/mpfm-w3h/pr-9").exists()
         assert (tmp_path / "odcn-production/mpfm-w3h/pr-310").exists()
+
+
+class TestTheTask:
+    """``task argocd-orphan-sweep`` is the documented way in (scripts/README.md and
+    features/argocd-vastgelopen-verwijdering.md), so the flags it hands the script are
+    part of the contract, and nothing measured them.
+
+    The one that matters is DELETE. go-task's bare ``{{if .DELETE}}`` is true for EVERY
+    non-empty value, and that is what this task had, so ``DELETE=0`` deleted. On a flag
+    that removes cluster resources, anything but the word asked for has to do nothing.
+    """
+
+    @staticmethod
+    def _task(name: str) -> dict:
+        return yaml.safe_load(TASKFILE.read_text())["tasks"][name]
+
+    def _cmd(self) -> str:
+        return "\n".join(str(cmd) for cmd in self._task(SWEEP_TASK)["cmds"])
+
+    def test_the_task_runs_the_sweep_script(self) -> None:
+        assert "scripts/argocd_orphan_sweep.py" in self._cmd()
+        assert self._task(SWEEP_TASK)["dir"] == "operations-manager/python"
+
+    def test_the_delete_flag_is_not_wired_on_bare_truthiness(self) -> None:
+        """The guard that runs everywhere; the rendered proof below needs a go-task binary."""
+        cmd = self._cmd()
+
+        assert "--delete" in cmd
+        assert "{{if .DELETE}}" not in cmd
+        assert '{{if eq (default "0" .DELETE) "1"}}' in cmd
+
+
+@pytest.mark.skipif(shutil.which("task") is None, reason="requires the go-task binary")
+class TestTheTaskAsRendered:
+    """What go-task actually makes of those templates. ``--dry`` renders without running."""
+
+    @staticmethod
+    def _rendered(**env: str) -> str:
+        proc = subprocess.run(
+            ["task", "--dry", "-v", SWEEP_TASK],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", ""), **env},
+        )
+        assert proc.returncode == 0, proc.stderr
+        # go-task writes the command it would run to stderr, not to stdout.
+        prefix = f"task: [{SWEEP_TASK}]"
+        line = next(line for line in proc.stderr.splitlines() if line.startswith(prefix))
+        return line[len(prefix) :].strip()
+
+    def test_without_delete_it_only_reports(self) -> None:
+        assert "--delete" not in self._rendered()
+
+    @pytest.mark.parametrize("value", ["0", "false"])
+    def test_anything_but_one_only_reports(self, value: str) -> None:
+        """``DELETE=0`` is the form this task got wrong; ``false`` is the same intent
+        spelled differently. On a destructive flag, a value that is not the one asked
+        for has to do nothing rather than something."""
+        assert "--delete" not in self._rendered(DELETE=value)
+
+    def test_delete_one_is_what_deletes(self) -> None:
+        assert "--delete" in self._rendered(DELETE="1")
+
+    def test_the_namespace_and_repo_variables_reach_the_script(self) -> None:
+        rendered = self._rendered(NAMESPACE="rig-prd-mpfm-w3h", REPO="/checkouts/zad deployments")
+
+        assert "--namespace rig-prd-mpfm-w3h" in rendered
+        assert '--deployments-repo "/checkouts/zad deployments"' in rendered
+
+    def test_without_variables_the_whole_cluster_is_swept(self) -> None:
+        rendered = self._rendered()
+
+        assert "--namespace" not in rendered
+        assert "--deployments-repo" not in rendered
