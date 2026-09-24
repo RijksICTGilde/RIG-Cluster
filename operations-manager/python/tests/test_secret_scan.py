@@ -143,10 +143,12 @@ def test_a_real_age_private_key_is_a_finding() -> None:
     ],
 )
 def test_a_placeholder_key_is_not_a_finding(placeholder: str) -> None:
-    """These shapes really live in this tree, in about twenty places.
+    """These shapes really live in this tree, in test data and in documentation.
 
-    A scanner matching the prefix reports them all, and an alarm with known findings in it gets
-    ignored -- which would make the guard worthless while looking like it works.
+    Two things keep them out of the findings, and this test holds the second. The rule wants a
+    long run of characters after the marker, which a placeholder never has, and what is long
+    enough still has to be a key ``age-keygen`` accepts. An alarm with known findings in it gets
+    ignored, which would make the guard worthless while looking like it works.
     """
     assert scan_text(f'KEY = "{placeholder}"\n', "tests/whatever.py") == []
 
@@ -779,9 +781,10 @@ def _scan_secrets_module():
 
 
 def test_the_scan_refuses_to_run_without_age_keygen(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Silently scanning without the validity check would report the ~20 placeholders.
+    """Without the binary the rule cannot tell a real key from a long string, so it refuses.
 
-    Better to fail loudly than to produce a finding list nobody can act on.
+    ``scan-secrets.py`` checks for it up front and exits 2. Better to fail loudly than to scan
+    with one rule silently weakened, because the output of that run looks exactly like a clean one.
     """
     scan_module = _scan_secrets_module()
 

@@ -41,8 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # De scan vraagt age-keygen: een AGE-kandidaat telt alleen als hij een GELDIGE sleutel is,
-      # anders meldt hij de ~20 placeholders uit de testsuite mee.
+      # De scan roept age-keygen aan om een sleutelvormige string op geldigheid te toetsen.
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
 
