@@ -1,0 +1,120 @@
+# Een Application die niet weg wil, en het forceren dat rommel achterlaat
+
+Het verwijderen van een ArgoCD-Application kan blijven hangen achter een lopende
+sync-operatie. OPI haalt die operatie nu eerst weg, en forceert pas nadat het de resources
+zelf heeft verwijderd. Er is een veegactie voor wat er al ligt.
+
+## Wat er misging
+
+Een sync-operatie die op health wacht blokkeert de verwijdering zolang hij loopt. En hij
+loopt eeuwig als de workloads waarop hij wacht niet gezond kunnen worden, bijvoorbeeld
+omdat hun image onpullbaar is nadat de PR gesloten is. De Application `mpfm-w3h-pr-310`
+stond zo veertien dagen vast:
+
+```
+operationState.phase:   Running
+operationState.message: waiting for healthy state of apps/Deployment/pr-310-magazijna and 2 more
+```
+
+De verwijderroute wachtte zestig seconden en haalde dan de **finalizer** weg. Dat is het
+verkeerde veld: de finalizer is juist wat de cascade uitvoert. De blokkade bleef staan, de
+Application verdween, en er is nooit een delete-verzoek voor zijn resources geweest.
+
+Gemeten op 24 september 2026 in `rig-prd-mpfm-w3h`: tien verdwenen Applications, **350
+achtergebleven resources** waaronder 140 secrets, geen enkele met een `deletionTimestamp`.
+Daarbovenop elf mappen in de deployments-repo waar geen Application meer naar wees.
+
+Dit is geen kwestie van de finalizer-variant. Nagespeeld op de sandbox met build
+`v3.5.1-rig2`: een Application met `resources-finalizer.argocd.argoproj.io` en een met de
+`/background`-variant, allebei met een gegarandeerd ongezonde workload eronder, waren
+allebei binnen vijf seconden weg met hun Deployment erbij. De cascade trekt zich niets aan
+van de gezondheid van de workload. Het knelpunt is de lopende operatie, en die blokkeert
+beide varianten even hard.
+
+## Wat er nu gebeurt
+
+De volgorde in de verwijderroute is: **operatie beëindigen, verwijderen, wachten**, en
+lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
+
+1. `KubectlConnector.terminate_argocd_application_operation()` haalt de lopende operatie
+   weg, met de patch die met de hand aantoonbaar werkte:
+
+   ```
+   kubectl -n <ns> patch application <naam> --type=json -p '[{"op":"remove","path":"/operation"}]'
+   ```
+
+   Dit gebeurt op alle vier de plekken waar OPI een Application laat verwijderen: de
+   wezenopruiming, de infrastructuur-Application, `delete_deployment` en
+   `delete_deployment_from_yaml_change`. Het werkt ook als de oorzaak buiten ons ligt: een
+   registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
+
+2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
+   `_force_delete_stuck_application()` eerst de resources zelf. Welke dat zijn is
+   eenduidig: ze dragen de annotatie `argocd.argoproj.io/tracking-id` met de naam van de
+   Application erin. Pas daarna gaat de finalizer weg.
+
+Kan de bestemmingsnamespace niet gelezen worden, dan gaat de finalizer alsnog weg (een
+Application die blijft staan blokkeert de parent voor iedereen) maar komt dat als fout in
+`deletion_results["errors"]` terecht. Zwijgend forceren is precies wat de schade maakte.
+
+### syncOptions die niets deden
+
+Uit `manifests/argocd-application.yaml.jinja` zijn twee regels weg die ArgoCD stil
+negeerde: `Timeout=300` bestaat niet als sync option (en las als een bovengrens op het
+wachten die er dus niet was), en `Delete` kent op app-niveau alleen `false` en `confirm`.
+
+`PruneLast=true` blijft staan. Die kwam mee met de eerste commit van de repo en nergens in
+de historie of documentatie staat waarvoor hij nodig was. Zonder die reden is weghalen
+gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin.
+
+## De veegactie
+
+`scripts/argocd_orphan_sweep.py` spoort op wat er al ligt. Twee bronnen, één toets:
+bestaat de Application waar dit ding bij hoort nog?
+
+* **cluster**: elke resource met een `argocd.argoproj.io/tracking-id`. De naam erin is zijn
+  Application.
+* **git**: elke `<cluster>/<project>/<leaf>`-map in een checkout van de deployments-repo.
+  Dat is de vorm die alle padgeneratoren in `opi/utils/naming.py` opleveren, en elk zo'n
+  pad hoort het doel te zijn van de `spec.source.path` van een Application.
+
+Of een Application bestaat wordt via de Kubernetes-API gelezen, nooit via die van ArgoCD:
+die antwoordt onder druk een dubbelzinnige `permission denied` voor Applications die wel
+bestaan, en een levende Application als afwezig lezen zou de veegactie een draaiende
+deployment laten verwijderen. Om dezelfde reden weigert hij te vegen als het cluster
+helemaal geen Applications teruggeeft: dat leest hetzelfde als een mislukte query, en in
+beide lezingen wordt elke resource een wees.
+
+```bash
+task argocd-orphan-sweep                                  # het hele cluster
+NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
+REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+```
+
+Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
+hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
+
+Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er zijn wezen, `2` geweigerd.
+Dat maakt hem bruikbaar als laatste stap van een verwijdertoets: hij meet wat er OVER is,
+niet wat er gebeurd lijkt te zijn.
+
+## Bestanden
+
+| Bestand | Wat het doet |
+|---|---|
+| `opi/utils/argocd_tracking.py` | De tracking-id-annotatie: welke Application een resource bezit |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
+| `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
+| `scripts/argocd_orphan_sweep.py` | De veegactie |
+| `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute |
+| `tests/test_argocd_application_syncoptions.py` | De syncOptions die ArgoCD kent |
+| `tests/test_argocd_orphan_sweep.py` | De veegactie |
+
+## Wat hier niet in zit
+
+Detectie en alarmering. Dit was veertien dagen onzichtbaar, en een alarm op Applications
+met een `deletionTimestamp` ouder dan een kwartier zou dat afvangen, net als een alarm op
+`user-applications` met een langlopende operatie. Dat hoort bij het bredere gat rond
+servicemonitoring en is een eigen taak.

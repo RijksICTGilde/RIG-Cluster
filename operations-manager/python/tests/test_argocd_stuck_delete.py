@@ -170,6 +170,28 @@ class TestResourceTypeDiscovery:
             assert await connector.list_namespaced_resource_types() == []
 
 
+class TestListArgocdApplications:
+    """The sweep decides from this list what to delete, so it must read the honest source."""
+
+    @pytest.mark.asyncio
+    async def test_reads_the_application_crs_through_kubectl(self, connector) -> None:
+        import json
+
+        payload = {"items": [{"metadata": {"name": "mpfm-w3h-pr-310"}, "spec": {"source": {"path": "a/b/c"}}}]}
+        run = AsyncMock(return_value=(json.dumps(payload), "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            applications = await connector.list_argocd_applications("argocd")
+
+        assert [app["metadata"]["name"] for app in applications] == ["mpfm-w3h-pr-310"]
+        assert run.await_args.args[0] == ["get", "applications", "-n", "argocd", "-o", "json"]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_query_yields_no_applications(self, connector) -> None:
+        """Empty must never be read as 'nothing exists': that would orphan every resource."""
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "timeout", 1))):
+            assert await connector.list_argocd_applications() == []
+
+
 class TestListTrackedResources:
     @pytest.mark.asyncio
     async def test_keeps_only_the_resources_argocd_tracks(self, connector) -> None:
