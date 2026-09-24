@@ -34,8 +34,8 @@ logger = logging.getLogger(__name__)
 #: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
 _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
 
-#: Types left out of a tracking-id inventory. Events are never applied by ArgoCD, so they
-#: carry no tracking-id, but a busy namespace holds thousands of them.
+#: Types left out of the ArgoCD-ownership inventory. Events are never applied by ArgoCD,
+#: so they carry no ownership mark, but a busy namespace holds thousands of them.
 _TRACKING_SWEEP_SKIPPED_TYPES = {"events", "events.events.k8s.io"}
 
 
@@ -815,7 +815,7 @@ class KubectlConnector:
         self, namespace: str, resource_types: list[str] | None = None
     ) -> list[TrackedResource]:
         """
-        Every resource in a namespace that carries ArgoCD's tracking-id annotation.
+        Every resource in a namespace that ArgoCD marked as its own.
 
         Args:
             namespace: The namespace to inventory
@@ -851,7 +851,7 @@ class KubectlConnector:
 
         items = data.get("items", []) if isinstance(data, dict) else []
         tracked = [resource for item in items if (resource := tracked_resource_from_item(item)) is not None]
-        logger.debug(f"Namespace '{namespace}': {len(tracked)} of {len(items)} resources carry a tracking-id")
+        logger.debug(f"Namespace '{namespace}': {len(tracked)} of {len(items)} resources are ArgoCD-owned")
         return tracked
 
     async def delete_tracked_resources(self, resources: list[TrackedResource]) -> list[TrackedResource]:
