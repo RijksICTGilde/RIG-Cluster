@@ -45,7 +45,7 @@ Reproduceer met project `tfc-nfv` op de sandbox: open de bewerkdialoog, wijzig i
 
 ## Waar op te letten
 
-**Herstel de regel niet door plaatshouders toe te laten.** Dat een plaatshouder nooit in het projectbestand mag komen is juist; het probleem is dat de bron niet gevonden wordt.
+**Herstel de regel niet door placeholders toe te laten.** Dat een plaatshouder nooit in het projectbestand mag komen is juist; het probleem is dat de bron niet gevonden wordt.
 
 **Byte-voor-byte vergelijken.** Een AGE-blok dat opnieuw versleuteld wordt ziet er anders uit maar is inhoudelijk gelijk; een wachtwoord dat stilletjes vervangen is ziet er ook anders uit. Vergelijk de ontsleutelde waarde, niet de tekst.
 
