@@ -85,6 +85,13 @@ class TestOrphanedPaths:
         repo = self._repo(tmp_path, ".git/refs/heads", "odcn-production/mpfm-w3h/pr-310")
         assert render_roots(repo) == ["odcn-production/mpfm-w3h/pr-310"]
 
+    def test_a_file_at_that_depth_is_not_a_render_root(self, tmp_path: Path) -> None:
+        """A render root is a directory. Offering a file as one reaches ``--delete``, and
+        ``shutil.rmtree`` on a file raises, so the sweep would die halfway."""
+        repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310")
+        (tmp_path / "odcn-production/mpfm-w3h/kustomization.yaml").write_text("")
+        assert render_roots(repo) == ["odcn-production/mpfm-w3h/pr-310"]
+
     def test_a_referenced_path_is_not_an_orphan(self, tmp_path: Path) -> None:
         repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310")
         assert orphaned_paths(repo, {"odcn-production/mpfm-w3h/pr-310"}) == []
@@ -256,6 +263,89 @@ class TestRefusal:
         kubectl = _kubectl([], {})
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+
+class TestTheCommandLine:
+    """What the flags promise. The default is a REPORT: this tool deletes cluster
+    resources, so nothing may go until it is asked for it in so many words.
+
+    The exit code is the other half. The plan makes this sweep the last step of the
+    delete test ("die hoort SCHOON te melden. Meldt hij iets, dan heeft de cascade niet
+    alles meegenomen"), and a step that always exits 0 measures nothing.
+    """
+
+    @staticmethod
+    def _cluster_with_one_orphan() -> AsyncMock:
+        return _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": [_resource("mpfm-w3h-pr-310", "db-creds")]})
+
+    def test_without_the_delete_flag_nothing_is_deleted(self) -> None:
+        kubectl = self._cluster_with_one_orphan()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h"])
+
+        kubectl.delete_tracked_resources.assert_not_awaited()
+
+    def test_without_the_delete_flag_an_orphaned_directory_stays(self, tmp_path: Path) -> None:
+        (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path)])
+
+        assert (tmp_path / "odcn-production/mpfm-w3h/pr-9").is_dir()
+
+    def test_the_delete_flag_is_what_deletes(self) -> None:
+        kubectl = self._cluster_with_one_orphan()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h", "--delete"])
+
+        deleted = kubectl.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["db-creds"]
+
+    def test_finding_nothing_exits_clean(self) -> None:
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 0
+
+    def test_finding_an_orphan_exits_one(self) -> None:
+        kubectl = self._cluster_with_one_orphan()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 1
+
+    def test_finding_only_an_orphaned_path_exits_one_too(self, tmp_path: Path) -> None:
+        (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path)]) == 1
+
+    def test_a_deletion_that_took_everything_exits_clean(self) -> None:
+        kubectl = self._cluster_with_one_orphan()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h", "--delete"]) == 0
+
+    def test_a_resource_that_would_not_go_keeps_the_exit_code_at_one(self) -> None:
+        """Deleting is not the same as gone: what is still standing must still be an exit 1."""
+        kubectl = self._cluster_with_one_orphan()
+        kubectl.delete_tracked_resources = AsyncMock(return_value=[_resource("mpfm-w3h-pr-310", "db-creds")])
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h", "--delete"]) == 1
+
+    def test_a_deployments_repo_that_is_not_a_directory_is_refused(self, tmp_path: Path) -> None:
+        """Not 1: nothing was measured, so the git side cannot be called clean either."""
+        not_a_repo = tmp_path / "zad-deployments"
+        not_a_repo.write_text("")
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(not_a_repo)]) == 2
+
+        kubectl.list_argocd_applications.assert_not_awaited()
+
+    def test_the_clean_report_reaches_the_screen(self, capsys) -> None:
+        """SCHOON is what the delete test reads; printing it is part of the contract."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h"])
+
+        assert capsys.readouterr().out.strip() == CLEAN
 
 
 class TestRemove:
