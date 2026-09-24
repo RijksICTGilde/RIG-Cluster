@@ -106,30 +106,32 @@ def cli(sandbox_url: str, db_project: CreatedProject) -> ZadCli:
     return ZadCli(skip_zonder_cli(), sandbox_url, api_key=db_project.api_key, project=db_project.name)
 
 
-def _zet(cli: ZadCli, waarde: object, *, laag: str = "project", deployment: str = ""):
-    """De projectlaag van deze dienst is een `scope`-gediscrimineerde unie, dus `scope` moet mee.
+def _zet(sandbox_url: str, project: CreatedProject, waarde: object, *, scope: str = "shared") -> httpx.Response:
+    """De projectlaag van de dienst schrijven, rechtstreeks over de API.
 
-    Zonder dat veld weigert de CLI de aanroep op zijn eigen schemacontrole en komt er niets
-    bij de server. `shared` is de standaardtak en de enige die de CLI accepteert; zie
-    ``test_de_cli_weigert_een_scope_die_de_server_wel_kent`` hieronder voor waarom dat het
-    tweede deel van deze meting is.
+    NIET over de CLI, en dat is een meting en geen gemak. `zad service config set
+    postgresql-database` weigert ELK body waarin `connection-limit` voorkomt, op zijn eigen
+    client-side schemacontrole, met een zin die `scope` aanwijst terwijl daar niets mis mee
+    is. Geisoleerd met vier bodies uit een bestand, op zad-cli 1.0.0:
+
+        {scope: shared}                              -> exit 0
+        {scope: shared, schemas: [{postfix: ''}]}    -> exit 0   (zijn eigen skelet)
+        {scope: shared, connection-limit: 42}        -> exit 2
+        {scope: shared, connection-limit: null}      -> exit 2
+
+    `connection-limit` is het enige veld in dat schema met de vorm
+    `anyOf: [integer, null]`. Het veld waar de hele speelruimte op rust is daarmee vanaf de
+    opdrachtregel niet te zetten. Dat zit in de zad-cli-repository en is daar gemeld;
+    ``test_het_veld_staat_in_het_document_dat_de_cli_leest`` hieronder pint de kant vast die
+    deze repo bezit.
     """
-    args = [
-        "service",
-        "config",
-        "set",
-        _DIENST,
-        "--target",
-        laag,
-        "--set",
-        "scope=shared",
-        "--set",
-        f"{_VELD}={waarde}",
-        "--yes",
-    ]
-    if deployment:
-        args += ["--deployment", deployment]
-    return cli.run(*args)
+    url = f"{sandbox_url.rstrip('/')}/api/v2/projects/{project.name}/services/{_DIENST}/config/project"
+    with httpx.Client(verify=_API_VERIFY_SSL, timeout=120.0) as client:
+        return client.put(
+            url,
+            json={"scope": scope, _VELD: waarde},
+            headers={"X-API-Key": project.api_key, "Content-Type": "application/json"},
+        )
 
 
 def _limiet_in_projectbestand(forgejo: ForgejoClient, project: str) -> object:
@@ -146,21 +148,22 @@ def _limiet_in_projectbestand(forgejo: ForgejoClient, project: str) -> object:
 
 
 def test_een_waarde_binnen_de_speelruimte_wordt_opgeslagen(
-    cli: ZadCli,
+    sandbox_url: str,
     db_project: CreatedProject,
     forgejo: ForgejoClient,
 ) -> None:
     """Eerst de gewone weg, anders meet elke weigering hieronder ook 'het werkt sowieso niet'.
 
-    Dit is de tegencontrole bij de drie toetsen erna: zonder een aantoonbaar geslaagde
-    schrijfactie is een rode exitcode op een te grote waarde net zo goed een CLI die
-    helemaal niets kan.
+    Dit is de tegencontrole bij de twee toetsen erna: zonder een aantoonbaar geslaagde
+    schrijfactie is een 4xx op een te grote waarde net zo goed een endpoint dat niets kan.
     """
     waarde = 42
     assert waarde != _STANDAARD, "kies een waarde die van de standaard verschilt, anders bewijst het niets"
 
-    resultaat = _zet(cli, waarde).assert_ok()
-    logger.info("binnen de speelruimte: %s", resultaat.uitvoer.strip()[:300])
+    respons = _zet(sandbox_url, db_project, waarde)
+    assert respons.status_code < 300, (
+        f"een waarde binnen de speelruimte werd geweigerd: {respons.status_code} {respons.text[:300]}"
+    )
 
     assert forgejo.wait_for_condition(
         db_project.name,
@@ -177,7 +180,7 @@ def test_een_waarde_binnen_de_speelruimte_wordt_opgeslagen(
     ],
 )
 def test_buiten_de_speelruimte_wordt_geweigerd(
-    cli: ZadCli,
+    sandbox_url: str,
     db_project: CreatedProject,
     forgejo: ForgejoClient,
     waarde: int,
@@ -186,23 +189,24 @@ def test_buiten_de_speelruimte_wordt_geweigerd(
     """Weigeren is de helft; zeggen wat dan WEL mag is de andere helft.
 
     De feature-doc belooft een leesbare zin met de grenzen erin ("moet tussen 1 en 500
-    liggen"), niet alleen een rode exitcode. Een weigering zonder die zin laat de
-    gebruiker raden, dus wordt hij hier gemeten. En het projectbestand mag niet
-    veranderd zijn: een weigering die pas na het schrijven komt is geen weigering.
+    liggen"), niet alleen een foutcode. Een weigering zonder die zin laat de gebruiker
+    raden. En het projectbestand mag niet veranderd zijn: een weigering die pas na het
+    schrijven komt is geen weigering.
     """
     ervoor = _limiet_in_projectbestand(forgejo, db_project.name)
 
-    resultaat = _zet(cli, waarde).assert_faalt()
-    uitvoer = resultaat.uitvoer
-    logger.info("%s (%s): %s", wat, waarde, uitvoer.strip()[:300])
+    respons = _zet(sandbox_url, db_project, waarde)
+    logger.info("%s (%s): HTTP %d %s", wat, waarde, respons.status_code, respons.text[:300])
+    assert respons.status_code >= 400, f"{waarde} werd geaccepteerd (HTTP {respons.status_code})"
 
-    assert "Traceback (most recent call last)" not in uitvoer, f"weigering met traceback:\n{uitvoer}"
+    tekst = respons.text
+    assert "Traceback (most recent call last)" not in tekst, f"weigering met traceback:\n{tekst}"
+
     # Op de hele ZIN en niet op de twee getallen apart: "1" komt in bijna elke tekst voor
     # (ook in "501"), dus een controle per getal zou groen blijven op een weigering die de
     # speelruimte helemaal niet noemt.
     zin = f"moet tussen {_MINIMUM} en {_MAXIMUM} liggen"
-    genormaliseerd = " ".join(uitvoer.split())
-    assert zin in genormaliseerd, f"de weigering zegt niet {zin!r}, dus weet de gebruiker niet wat wel mag:\n{uitvoer}"
+    assert zin in " ".join(tekst.split()), f"de weigering zegt niet {zin!r}:\n{tekst[:600]}"
 
     assert _limiet_in_projectbestand(forgejo, db_project.name) == ervoor, (
         f"'{_VELD}' is in het projectbestand veranderd terwijl {waarde} geweigerd werd"
@@ -267,32 +271,25 @@ def test_een_veld_dat_de_dienst_niet_declareert_wordt_geweigerd(
     )
 
 
-def test_de_cli_weigert_een_scope_die_de_server_wel_kent(cli: ZadCli, sandbox_url: str) -> None:
-    """Een bevinding uit deze ronde, vastgelegd op de kant die hoort te blijven kloppen.
+def test_het_veld_staat_in_het_document_dat_de_cli_leest(cli: ZadCli, sandbox_url: str) -> None:
+    """De serverkant van de CLI-bevinding, want dat is de kant die deze repo bezit.
 
-    De projectlaag van `postgresql-database` is in het OpenAPI-document een `oneOf` met een
-    discriminator op `scope`, met `shared` en `project` als de twee takken. De server kent
-    dus allebei. De CLI (zad-cli 1.0.0) valideert client-side tegen EEN tak en weigert
-    `scope=project` met een zin die zichzelf tegenspreekt:
+    `connection-limit` moet in het OpenAPI-document blijven staan als een veld van de
+    projectlaag, in allebei de scope-takken. Daarop steunt de reparatie aan de CLI-kant, en
+    verdwijnt het hier, dan is die reparatie onmogelijk geworden.
 
-        'scope' is 'project', which is not one of shared, project.
-
-    `scope=shared` komt er wel door. Daarmee is `scope: project` - de weg naar een eigen
-    databasecluster - vanaf de CLI onbereikbaar. Dat zit in de zad-cli-repository.
-
-    Wat deze toets vastlegt is de SERVERkant, want dat is de kant die deze repo bezit en de
-    kant waarop de CLI-reparatie straks steunt: het document moet beide waarden blijven
-    noemen. Zou hier de CLI-weigering worden vastgepind, dan wordt deze toets rood zodra
-    iemand de CLI repareert, en dat is precies verkeerd om.
+    De CLI-weigering zelf wordt hier NIET vastgepind: dat zou deze toets rood maken zodra
+    iemand de CLI repareert, en dat is precies verkeerd om. Wat er gemeten is staat in de
+    docstring van ``_zet``.
     """
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0) as client:
         document = client.get(f"{sandbox_url.rstrip('/')}/openapi.json").raise_for_status().json()
 
-    schema = document["components"]["schemas"]["PostgresqlDatabaseProjectConfig"]
-    discriminator = schema.get("discriminator") or {}
-    assert discriminator.get("propertyName") == "scope", (
-        f"de projectlaag is niet meer op scope gediscrimineerd: {schema}"
-    )
-    assert set(discriminator.get("mapping") or {}) == {"shared", "project"}, (
-        f"de server kent andere scopes dan shared en project: {discriminator.get('mapping')}"
-    )
+    schemas = document["components"]["schemas"]
+    for tak in ("SharedScopeConfig", "ProjectScopeConfig"):
+        eigenschappen = schemas[tak].get("properties") or {}
+        assert _VELD in eigenschappen, f"'{_VELD}' staat niet meer in {tak}: {sorted(eigenschappen)}"
+
+    unie = schemas["PostgresqlDatabaseProjectConfig"]
+    mapping = (unie.get("discriminator") or {}).get("mapping") or {}
+    assert set(mapping) == {"shared", "project"}, f"de scopes van de projectlaag zijn veranderd: {mapping}"
