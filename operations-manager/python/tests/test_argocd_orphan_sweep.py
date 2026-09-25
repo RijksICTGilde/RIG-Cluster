@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import yaml
 from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
-from opi.utils.argocd_tracking import TrackedResource
+from opi.utils.argocd_tracking import LABEL_VALUE_MAX, TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
     SweepRefused,
@@ -32,6 +32,7 @@ from scripts.argocd_orphan_sweep import (
     orphaned_resources,
     remove,
     render_roots,
+    undecidable_resources,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -39,14 +40,27 @@ TASKFILE = REPO_ROOT / "Taskfile.yaml"
 SWEEP_TASK = "argocd-orphan-sweep"
 
 
-def _resource(app_name: str, name: str, kind: str = "Secret", namespace: str = "rig-prd-mpfm-w3h") -> TrackedResource:
+def _resource(
+    app_name: str,
+    name: str,
+    kind: str = "Secret",
+    namespace: str = "rig-prd-mpfm-w3h",
+    from_label: bool = False,
+) -> TrackedResource:
     return TrackedResource(
         kind=kind,
         api_version="v1",
         name=name,
         namespace=namespace,
         app_name=app_name,
+        from_label=from_label,
     )
+
+
+#: 63 characters: a whole Application name, and also what a longer name is cut to in a label
+#: value. ``LONG_APP`` is the longer one, in the shape the schema allows (30 + 63).
+CUT_NAME = "p-" + "b" * 61
+LONG_APP = CUT_NAME + "-x"
 
 
 class TestOrphanedResources:
@@ -67,11 +81,35 @@ class TestOrphanedResources:
         tracked = [_resource("app-a", "a"), _resource("app-b", "b")]
         assert orphaned_resources(tracked, set()) == tracked
 
-    def test_a_label_cut_to_the_cap_does_not_make_a_live_resource_an_orphan(self) -> None:
+    def test_a_label_that_may_be_a_live_name_cut_to_the_cap_is_not_an_orphan(self) -> None:
         """The destructive direction: ``--delete`` acts on whatever this returns."""
-        app = "a" * 30 + "-" + "b" * 63
-        orphans = orphaned_resources([_resource(app[:63], "db-creds")], {app})
+        assert len(CUT_NAME) == LABEL_VALUE_MAX
+        orphans = orphaned_resources([_resource(CUT_NAME, "db-creds", from_label=True)], {LONG_APP})
         assert orphans == []
+
+    def test_an_annotation_at_that_length_is_a_whole_name_and_so_an_orphan(self) -> None:
+        """Only a label can be cut. On odcn-production, the one cluster type that tracks by
+        annotation, a name of this length is whole and its Application is simply gone."""
+        orphans = orphaned_resources([_resource(CUT_NAME, "db-creds")], {LONG_APP})
+        assert [r.name for r in orphans] == ["db-creds"]
+
+
+class TestUndecidedResources:
+    """The other half of the same doubt. Keeping such a resource out of the orphan list is
+    right, reporting SCHOON over it is not: a real orphan would then stay invisible for as
+    long as a longer-named sister lives."""
+
+    def test_a_label_that_may_be_a_live_name_cut_to_the_cap_is_reported(self) -> None:
+        undecidable = undecidable_resources([_resource(CUT_NAME, "db-creds", from_label=True)], {LONG_APP})
+        assert [r.name for r in undecidable] == ["db-creds"]
+
+    def test_a_resource_of_a_live_application_is_not_undecidable(self) -> None:
+        """Its mark IS the name, so there is nothing to weigh up and nothing to report."""
+        assert undecidable_resources([_resource(CUT_NAME, "db-creds", from_label=True)], {CUT_NAME}) == []
+
+    def test_a_plain_orphan_is_not_undecidable(self) -> None:
+        """It goes in the orphan list, where ``--delete`` can reach it."""
+        assert undecidable_resources([_resource("mpfm-w3h-pr-310", "db-creds")], {"mpfm-w3h-productie"}) == []
 
 
 class TestOrphanedPaths:
@@ -146,21 +184,28 @@ class TestOrphanedPaths:
 class TestReport:
     def test_nothing_found_is_reported_as_clean(self) -> None:
         """The last step of a delete test: it measures what is left, not what seemed to happen."""
-        assert format_report([], []) == CLEAN
+        assert format_report([], [], []) == CLEAN
 
     def test_resources_are_grouped_under_their_application(self) -> None:
-        report = format_report([_resource("app-a", "a"), _resource("app-b", "b"), _resource("app-a", "c")], [])
+        report = format_report([_resource("app-a", "a"), _resource("app-b", "b"), _resource("app-a", "c")], [], [])
         assert "Found 3 resource(s)" in report
         assert "app-a  (2 resources in rig-prd-mpfm-w3h)" in report
         assert "app-b  (1 resources in rig-prd-mpfm-w3h)" in report
 
     def test_paths_are_reported_too(self) -> None:
-        report = format_report([], ["odcn-production/mpfm-w3h/pr-9"])
+        report = format_report([], [], ["odcn-production/mpfm-w3h/pr-9"])
         assert "1 deployments-repo path(s)" in report
         assert "odcn-production/mpfm-w3h/pr-9" in report
 
+    def test_what_could_not_be_placed_gets_its_own_block(self) -> None:
+        """Under the orphans it would read as something --delete took; it never touches these."""
+        report = format_report([], [_resource(CUT_NAME, "db-creds", from_label=True)], [])
+        assert report != CLEAN
+        assert f"1 resource(s) whose mark sits on the {LABEL_VALUE_MAX}-character label cap" in report
+        assert f"{CUT_NAME}  rig-prd-mpfm-w3h/secret/db-creds" in report
+
     def test_after_a_delete_the_report_says_what_is_still_standing(self) -> None:
-        report = format_report([_resource("app-a", "a")], [], after_delete=True)
+        report = format_report([_resource("app-a", "a")], [], [], after_delete=True)
         assert report.startswith("Still standing 1 resource(s)")
 
 
@@ -199,7 +244,7 @@ class TestInventory:
             {"rig-prd-mpfm-w3h": [_resource("mpfm-w3h-pr-310", "db-creds")], "rig-prd-other": []},
         )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            resources, paths = await inventory(None, None)
+            resources, _, paths = await inventory(None, None)
 
         assert [r.name for r in resources] == ["db-creds"]
         assert paths == []
@@ -222,7 +267,7 @@ class TestInventory:
             namespace_labels={"ingress-nginx": "", "rig-system": "", "rig-prd-mpfm-w3h": "operations-manager"},
         )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            resources, _ = await inventory(None, None)
+            resources, _, _ = await inventory(None, None)
 
         assert resources == []
         assert [call.args[0] for call in kubectl.list_tracked_resources.await_args_list] == ["rig-prd-mpfm-w3h"]
@@ -266,7 +311,7 @@ class TestInventory:
             {"rig-prd-mpfm-w3h": [_resource("mpfm-w3h-productie", "db-creds")]},
         )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            resources, _ = await inventory(None, None)
+            resources, _, _ = await inventory(None, None)
 
         assert resources == []
 
@@ -283,7 +328,7 @@ class TestInventory:
             {"rig-prd-mpfm-w3h": []},
         )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            _, paths = await inventory(["rig-prd-mpfm-w3h"], tmp_path)
+            *_, paths = await inventory(["rig-prd-mpfm-w3h"], tmp_path)
 
         assert paths == ["odcn-production/mpfm-w3h/pr-9"]
 
@@ -301,7 +346,7 @@ class TestInventory:
             {"rig-prd-mpfm-w3h": []},
         )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            _, paths = await inventory(["rig-prd-mpfm-w3h"], tmp_path)
+            *_, paths = await inventory(["rig-prd-mpfm-w3h"], tmp_path)
 
         assert paths == ["odcn-production/mpfm-w3h/pr-9"]
         kubectl.list_argocd_applications.assert_awaited()
@@ -487,6 +532,30 @@ class TestTheCommandLine:
         kubectl.delete_tracked_resources = AsyncMock(return_value=[_resource("mpfm-w3h-pr-310", "db-creds")])
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h", "--delete"]) == 1
+
+    @staticmethod
+    def _cluster_with_one_undecidable() -> AsyncMock:
+        """A live Application whose name is longer than a label value holds, and a resource
+        marked with exactly the first 63 characters of it."""
+        return _kubectl(
+            [{"metadata": {"name": LONG_APP}, "spec": {"source": {"path": "p"}}}],
+            {"rig-prd-mpfm-w3h": [_resource(CUT_NAME, "db-creds", from_label=True)]},
+        )
+
+    def test_what_it_could_not_place_is_never_deleted(self) -> None:
+        """Half of those resources belong to a running deployment, and --delete cannot ask."""
+        kubectl = self._cluster_with_one_undecidable()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h", "--delete"])
+
+        kubectl.delete_tracked_resources.assert_not_awaited()
+
+    def test_what_it_could_not_place_is_not_a_clean_cluster(self) -> None:
+        """SCHOON plus exit 0 is the all-clear a delete test reads. A resource nobody could
+        place is exactly the case where that all-clear would be a guess."""
+        kubectl = self._cluster_with_one_undecidable()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 1
 
     def test_a_deployments_repo_that_is_not_a_directory_is_refused(self, tmp_path: Path) -> None:
         """Not 1: nothing was measured, so the git side cannot be called clean either."""
