@@ -8,11 +8,12 @@ op een lege tabel vrolijk doorloopt kan op zulke rijen alsnog omvallen.
 Deze toets draait de backfill van `006_add_project_reconciliation.py` LETTERLIJK, maar
 tegen een eigen tabel in plaats van tegen `project_reconciliation`: de sandbox-database is
 gedeeld met alles wat er verder op dit cluster draait, en een toets hoort de meting van een
-ander niet te verstoren. De bron (`async_tasks`) is wel de echte.
+ander niet te verstoren. De bron is wel de echte: een momentopname van `async_tasks` van
+dit cluster, en waarom die opname er tussen zit staat bij de fixture ``taken``.
 
 Drie dingen worden gemeten, en het derde is de reden dat de rest er staat:
 
-1. de backfill loopt zonder fout over de echte `async_tasks`;
+1. de backfill loopt zonder fout over de echte rijen uit `async_tasks`;
 2. hij is idempotent, en de unieke index doet zijn werk ook voor de NULL-scope
    (`COALESCE(deployment_name, '')`) - dat is de vondst die stil kan falen, want een gewone
    unieke index zou twee projectbrede rijen naast elkaar toelaten;
@@ -31,8 +32,12 @@ import logging
 import subprocess
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +48,19 @@ _DB_HOST = "rig-db-rw"
 _DB_NAAM = "operations_manager"
 _ADMIN_SECRET = "postgres-admin-credentials"
 
-#: De backfill uit de migratie, letterlijk. Alleen de doeltabel is een parameter, zodat de
-#: toets niet in `project_reconciliation` schrijft. Loopt deze tekst uiteen met de migratie,
+#: Laatste regel van elk statement. Komt hij niet terug, dan heeft de pod de uitvoer van psql
+#: niet doorgegeven en is er niets gemeten; zie ``_psql``.
+_SLUITSTUK = "rc227-psql-klaar"
+
+#: De backfill uit de migratie, letterlijk. Doeltabel en brontabel zijn een parameter: de
+#: toets schrijft niet in `project_reconciliation`, en hij leest uit een MOMENTOPNAME van
+#: `async_tasks` (zie de fixture ``taken``). Loopt deze tekst verder uiteen met de migratie,
 #: dan meet de toets iets anders dan er draait; ``test_de_backfill_is_die_uit_de_migratie``
 #: hieronder bewaakt dat.
 _BACKFILL = """
 INSERT INTO {tabel} (project_name, deployment_name, reconciled_at)
 SELECT project_name, NULL, max(coalesce(started_at, completed_at))
-FROM async_tasks
+FROM {bron}
 WHERE status = 'completed'
   AND task_type IN ('refresh_project', 'delete_component')
   AND (payload ->> 'rollout') IS DISTINCT FROM 'false'
@@ -61,7 +71,7 @@ ON CONFLICT (project_name, COALESCE(deployment_name, '')) DO NOTHING;
 
 #: De oude meting, in dezelfde woorden als de constante die verdween.
 _OUDE_METING = """
-SELECT count(DISTINCT project_name) FROM async_tasks
+SELECT count(DISTINCT project_name) FROM {bron}
 WHERE status = 'completed'
   AND task_type IN ('refresh_project', 'delete_component')
   AND (payload ->> 'rollout') IS DISTINCT FROM 'false';
@@ -87,6 +97,33 @@ def db_wachtwoord(sandbox_url: str) -> str:
 
 
 def _psql(wachtwoord: str, sql: str, *, timeout: float = 300.0) -> tuple[int, str]:
+    """SQL tegen de sandbox-database, in een eigen pod.
+
+    Drie pogingen, en dat is geen ruimte voor toeval maar voor de pod. `kubectl run --rm -i`
+    hangt aan een container die nog moet starten, en op een druk cluster haalt hij die
+    soms niet: dan komt hij terug met exitcode NUL en alleen zijn eigen opruimregel, en is
+    alles wat psql schreef weg. Dat is de vorm die hier rood gaf op werk dat gewoon gelukt
+    was, dus het sluitstuk hieronder moet echt terugkomen voordat een uitkomst geldig is.
+    Een echte SQL-fout draagt `ERROR:` en gaat meteen terug, zodat een fout in het statement
+    niet achter een herhaling verdwijnt.
+
+    Die herhaling stelt een eis aan de aanroeper: bij een verloren uitvoer is het statement
+    wel UITGEVOERD, dus elk statement hier moet een tweede keer kunnen. Daarom staat er
+    `DROP TABLE IF EXISTS` voor elke `CREATE TABLE`, en staat op elke INSERT de `ON CONFLICT`
+    die de migratie zelf ook draagt.
+    """
+    for poging in (1, 2, 3):
+        code, uit = _psql_eenmaal(wachtwoord, f"{sql.rstrip().rstrip(';')}; SELECT '{_SLUITSTUK}';", timeout=timeout)
+        if "ERROR:" in uit:
+            return code, uit
+        if _SLUITSTUK in uit:
+            schoon = "\n".join(regel for regel in uit.splitlines() if regel.strip() != _SLUITSTUK)
+            return code, schoon.strip()
+        logger.warning("psql-pod gaf niets terug (exit %d, poging %d): %s", code, poging, uit[:200])
+    return code or 1, uit
+
+
+def _psql_eenmaal(wachtwoord: str, sql: str, *, timeout: float) -> tuple[int, str]:
     resultaat = _kubectl(
         [
             "-n",
@@ -116,6 +153,26 @@ def _psql(wachtwoord: str, sql: str, *, timeout: float = 300.0) -> tuple[int, st
         timeout=timeout,
     )
     return resultaat.returncode, (resultaat.stdout + resultaat.stderr).strip()
+
+
+@pytest.fixture(scope="module")
+def taken(db_wachtwoord: str) -> Generator[str]:
+    """Een momentopname van `async_tasks`, en dat is de reparatie van een wankele toets.
+
+    De rijen moeten echt zijn, maar ze mogen niet BEWEGEN: dit is de database van een draaiend
+    cluster. Gemeten over drie gangen op dezelfde dag leverde de backfill 1 rij, daarna 0, daarna
+    0, want een projectverwijdering haalt taken weg en een nieuwe taak zet er een bij. Twee
+    metingen die niet tegelijk gebeuren kunnen daardoor uit elkaar lopen zonder dat er iets mis
+    is: de idempotentietoets zou dat lezen als "de tweede backfill voegde rijen toe", en de
+    vergelijking met de oude meting leest twee verschillende momenten.
+    """
+    naam = f"rc227_taken_{uuid.uuid4().hex[:8]}"
+    code, uit = _psql(db_wachtwoord, f"DROP TABLE IF EXISTS {naam}; CREATE TABLE {naam} AS SELECT * FROM async_tasks;")
+    assert code == 0, f"de momentopname van async_tasks kon niet worden gemaakt: {uit}"
+    try:
+        yield naam
+    finally:
+        _psql(db_wachtwoord, f"DROP TABLE IF EXISTS {naam};")
 
 
 def _getallen(uitvoer: str) -> list[int]:
@@ -148,10 +205,10 @@ def test_de_backfill_is_die_uit_de_migratie(sandbox_url: str) -> None:
         assert regel in _BACKFILL or regel in _BACKFILL.replace("\n", " "), f"deze toets kent hem niet: {regel}"
 
 
-def test_de_database_draagt_echte_historie(db_wachtwoord: str) -> None:
+def test_de_database_draagt_echte_historie(db_wachtwoord: str, taken: str) -> None:
     """Zonder rijen in `async_tasks` meet alles hieronder een lege tabel, net als de unittests."""
-    code, uit = _psql(db_wachtwoord, "SELECT count(*) FROM async_tasks;")
-    assert code == 0, f"async_tasks is niet te bevragen: {uit}"
+    code, uit = _psql(db_wachtwoord, f"SELECT count(*) FROM {taken};")
+    assert code == 0, f"de momentopname van async_tasks is niet te bevragen: {uit}"
 
     aantallen = _getallen(uit)
     assert aantallen, f"geen telling terug: {uit}"
@@ -159,8 +216,8 @@ def test_de_database_draagt_echte_historie(db_wachtwoord: str) -> None:
     assert aantallen[0] > 0, "async_tasks is leeg; deze sandbox draagt geen historie om de backfill op te meten"
 
 
-def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: str) -> None:
-    """De kern: het statement uit de migratie, twee keer, op de echte `async_tasks`.
+def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: str, taken: str) -> None:
+    """De kern: het statement uit de migratie, twee keer, op de echte rijen.
 
     De eerste run meet of hij over echte payloads heen komt (rijen zonder `rollout`, rijen
     zonder payload). De tweede meet de `ON CONFLICT`, en daarmee of de unieke index op
@@ -170,6 +227,7 @@ def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: s
     """
     tabel = f"rc227_backfill_{uuid.uuid4().hex[:8]}"
     opzet = f"""
+        DROP TABLE IF EXISTS {tabel};
         CREATE TABLE {tabel} (
             project_name VARCHAR(63) NOT NULL,
             deployment_name VARCHAR(63),
@@ -181,12 +239,12 @@ def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: s
     assert code == 0, f"de proeftabel kon niet worden aangemaakt: {uit}"
 
     try:
-        code, uit = _psql(db_wachtwoord, _BACKFILL.format(tabel=tabel) + f"SELECT count(*) FROM {tabel};")
-        assert code == 0, f"de backfill viel om op de echte async_tasks: {uit}"
+        code, uit = _psql(db_wachtwoord, _BACKFILL.format(tabel=tabel, bron=taken) + f"SELECT count(*) FROM {tabel};")
+        assert code == 0, f"de backfill viel om op de echte rijen uit async_tasks: {uit}"
         na_een = _getallen(uit)
         assert na_een, f"geen telling na de eerste backfill: {uit}"
 
-        code, uit = _psql(db_wachtwoord, _BACKFILL.format(tabel=tabel) + f"SELECT count(*) FROM {tabel};")
+        code, uit = _psql(db_wachtwoord, _BACKFILL.format(tabel=tabel, bron=taken) + f"SELECT count(*) FROM {tabel};")
         assert code == 0, f"de tweede backfill viel om: {uit}"
         na_twee = _getallen(uit)
         assert na_twee, f"geen telling na de tweede backfill: {uit}"
@@ -196,11 +254,29 @@ def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: s
             f"de tweede backfill voegde rijen toe ({na_een[0]} -> {na_twee[0]}); dan houdt de unieke index "
             "de projectbrede rij niet uniek en telt elke migratieherhaling dubbel"
         )
+
+        # De twee runs hierboven raken de ON CONFLICT alleen als de echte `async_tasks`
+        # toevallig een `refresh_project` of `delete_component` draagt; op deze database was
+        # dat eerder nul, en dan vergelijkt de gelijkheid hierboven 0 met 0. Daarom de
+        # NULL-scope er ook met een eigen rij naast, zodat die belofte niet van de data hangt.
+        botsing = (
+            f"INSERT INTO {tabel} (project_name, deployment_name, reconciled_at) "
+            "VALUES ('rc227-proef', NULL, now()) "
+            "ON CONFLICT (project_name, COALESCE(deployment_name, '')) DO NOTHING;"
+        )
+        code, uit = _psql(db_wachtwoord, botsing + botsing + f"SELECT count(*) FROM {tabel};")
+        assert code == 0, f"de NULL-scope liet zich niet tweemaal aanbieden: {uit}"
+        na_botsing = _getallen(uit)
+        assert na_botsing, f"geen telling na de botsingsproef: {uit}"
+        assert na_botsing[0] == na_twee[0] + 1, (
+            f"dezelfde projectbrede rij landde niet precies een keer ({na_twee[0]} -> {na_botsing[0]}); "
+            "zonder COALESCE in de index staan twee rijen met deployment_name IS NULL naast elkaar"
+        )
     finally:
         _psql(db_wachtwoord, f"DROP TABLE IF EXISTS {tabel};")
 
 
-def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str) -> None:
+def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str, taken: str) -> None:
     """De belofte van de backfill: "zodat de teller op het omschakelmoment hetzelfde leest".
 
     Dat is een gelijkheid tussen twee metingen over dezelfde rijen, en niet een aantal. Op
@@ -212,6 +288,7 @@ def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str) -
     code, uit = _psql(
         db_wachtwoord,
         f"""
+        DROP TABLE IF EXISTS {tabel};
         CREATE TABLE {tabel} (
             project_name VARCHAR(63) NOT NULL,
             deployment_name VARCHAR(63),
@@ -225,7 +302,9 @@ def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str) -
     try:
         code, uit = _psql(
             db_wachtwoord,
-            _BACKFILL.format(tabel=tabel) + _OUDE_METING + f"SELECT count(*) FROM {tabel};",
+            _BACKFILL.format(tabel=tabel, bron=taken)
+            + _OUDE_METING.format(bron=taken)
+            + f"SELECT count(*) FROM {tabel};",
         )
         assert code == 0, f"de vergelijking viel om: {uit}"
 
@@ -252,17 +331,33 @@ def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str) -
 
 def test_de_echte_tabel_en_index_staan_er(db_wachtwoord: str) -> None:
     """De migratie is op dit cluster gedraaid: tabel, index en de revisie in alembic."""
+    # Elk antwoord met zijn eigen label. Zonder die labels staan drie losse waarden in een
+    # ongesorteerde bak en kan een assertie de waarde van een ANDERE oppakken: de controle op
+    # de alembic-revisie ("006 of hoger") werd afgedekt door de "1" van de indextelling, en
+    # bleef daardoor ook groen op revisie 003.
     code, uit = _psql(
         db_wachtwoord,
-        "SELECT to_regclass('public.project_reconciliation') IS NOT NULL;"
-        "SELECT count(*) FROM pg_indexes WHERE indexname = 'idx_project_reconciliation_scope';"
-        "SELECT version_num FROM alembic_version;",
+        "SELECT 'tabel=' || (to_regclass('public.project_reconciliation') IS NOT NULL);"
+        "SELECT 'index=' || count(*) FROM pg_indexes WHERE indexname = 'idx_project_reconciliation_scope';"
+        "SELECT 'indexdef=' || indexdef FROM pg_indexes WHERE indexname = 'idx_project_reconciliation_scope';"
+        "SELECT 'revisie=' || version_num FROM alembic_version;",
     )
     assert code == 0, f"de controle viel om: {uit}"
-    regels = [regel.strip() for regel in uit.splitlines() if regel.strip()]
-
-    assert "t" in regels, f"project_reconciliation bestaat niet op dit cluster: {uit}"
-    assert "1" in regels, f"idx_project_reconciliation_scope ontbreekt: {uit}"
-    assert any(regel.startswith("006") or regel > "006" for regel in regels if regel[:1].isdigit()), (
-        f"alembic staat niet op 006 of hoger: {json.dumps(regels)}"
+    antwoord = dict(
+        regel.strip().split("=", 1) for regel in uit.splitlines() if "=" in regel and not regel.startswith("pod ")
     )
+    logger.info("stand op het cluster: %s", json.dumps(antwoord))
+
+    # "true" en niet "t": een boolean die met `||` aan tekst geplakt wordt komt uitgeschreven mee.
+    assert antwoord.get("tabel") == "true", f"project_reconciliation bestaat niet op dit cluster: {uit}"
+    assert antwoord.get("index") == "1", f"idx_project_reconciliation_scope ontbreekt: {uit}"
+
+    # De scherpste regel van de migratie, gemeten op de ECHTE index en niet op de kopie in
+    # deze toets: zonder de COALESCE laat Postgres twee projectbrede rijen naast elkaar staan.
+    assert "COALESCE" in antwoord.get("indexdef", "").upper(), (
+        f"de index houdt de projectbrede rij niet uniek via COALESCE: {antwoord.get('indexdef')}"
+    )
+
+    # De revisies zijn met nullen opgevuld en even lang (001..006), dus dit vergelijkt goed.
+    revisie = antwoord.get("revisie", "")
+    assert revisie >= "006", f"alembic staat niet op 006 of hoger maar op {revisie!r}"

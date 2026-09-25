@@ -83,7 +83,10 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
   geeft exitcode, stdout en stderr terug (`run(...)`, `assert_ok()`, `assert_faalt()`,
   `json()`). De CLI woont in een eigen repository en wordt hier niet meegeleverd:
   `skip_zonder_cli()` slaat over als hij niet op het PATH staat (`zad`, of `zadctl`, of het
-  pad in `ZAD_CLI`), net zoals een sandboxtoets overslaat zonder `E2E_BASE_URL`.
+  pad in `ZAD_CLI`), net zoals een sandboxtoets overslaat zonder `E2E_BASE_URL`. De modules die
+  niet zonder hem kunnen zetten die skip op de MODULE (`skipif(cli_pad() is None, reason=GEEN_CLI)`),
+  want een skip in een fixture die aan het project hangt maakt eerst een project op het cluster
+  aan om daarna alles over te slaan.
 
 There is deliberately no separate cleanup registry: a suite that creates projects owns
 their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That

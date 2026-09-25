@@ -68,13 +68,17 @@ def cli_pad() -> str | None:
     return None
 
 
+#: De skipreden, ook bruikbaar als ``pytest.mark.skipif``-tekst.
+GEEN_CLI = (
+    f"zad-cli niet gevonden ({' of '.join(CLI_NAMEN)} op het PATH, of {CLI_ENV}). "
+    "De CLI zit in een eigen repository en wordt hier niet meegeleverd."
+)
+
+
 def skip_zonder_cli() -> str:
     pad = cli_pad()
     if not pad:
-        pytest.skip(
-            f"zad-cli niet gevonden ({' of '.join(CLI_NAMEN)} op het PATH, of {CLI_ENV}). "
-            "De CLI zit in een eigen repository en wordt hier niet meegeleverd."
-        )
+        pytest.skip(GEEN_CLI)
     return pad
 
 
@@ -98,11 +102,6 @@ class ZadCli:
         self.api_key = api_key
         self.project = project
         self.timeout = timeout
-
-    def voor_project(self, project: str, api_key: str) -> ZadCli:
-        return ZadCli(
-            self.pad, self.api_url.removesuffix("/api"), api_key=api_key, project=project, timeout=self.timeout
-        )
 
     def run(self, *args: str, verwacht_json: bool = False, extra_env: dict[str, str] | None = None) -> CliResultaat:
         argv = [self.pad, *args]

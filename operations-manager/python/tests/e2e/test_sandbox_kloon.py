@@ -32,7 +32,7 @@ from tests.e2e.conftest import SANDBOX_TEST_USER
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_with_services
 from tests.e2e.helpers.wizard import unique_project_name
-from tests.e2e.helpers.zad_cli import ZadCli, skip_zonder_cli
+from tests.e2e.helpers.zad_cli import GEEN_CLI, ZadCli, cli_pad, skip_zonder_cli
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -43,7 +43,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.slow]
+# Zonder de CLI is er geen kloon te maken, en dan meten de toetsen na de eerste een
+# deployment die er nooit kwam. De skip staat daarom op de module, voor het project.
+# `serial`: het merkteken gaat in de bron, daarna kloont de volgende toets hem, en de
+# laatste meet wat een TWEEDE run doet. Die volgorde is het onderwerp, niet een gemak.
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.sandbox,
+    pytest.mark.slow,
+    pytest.mark.serial,
+    pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
+]
 
 _VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 _SERVICES = ["publish-on-web", "postgresql-database"]
@@ -144,16 +154,27 @@ def _psql(secret: dict[str, str], sql: str, *, database: str = "") -> tuple[int,
     return resultaat.returncode, (resultaat.stdout + resultaat.stderr).strip()
 
 
+#: Laatste regel van de leesquery hieronder. `kubectl run --rm -i` hangt aan een container die
+#: nog moet starten en kan terugkomen met exitcode NUL terwijl alles wat psql schreef weg is
+#: (gemeten in ``test_sandbox_migratie_006.py``). Voor een LEESquery is opnieuw proberen gratis,
+#: en zonder dit onderscheid ziet "niets teruggekregen" eruit als "geen database gevonden".
+_SLUITSTUK = "rc227-databases-klaar"
+
+
 def _databases(secret: dict[str, str], prefix: str) -> list[str]:
     """Elke database op de server waarvan de naam met ``prefix`` begint."""
-    code, uit = _psql(
-        secret,
-        f"SELECT datname FROM pg_database WHERE datname LIKE '{prefix}%' ORDER BY datname",
-        database="postgres",
-    )
-    assert code == 0, f"pg_database uitlezen mislukt: {uit}"
-    # kubectl run --rm schrijft zijn eigen regel ("pod ... deleted") op stderr mee.
-    return [regel.strip() for regel in uit.splitlines() if regel.strip().startswith(prefix)]
+    for _ in (1, 2, 3):
+        code, uit = _psql(
+            secret,
+            f"SELECT datname FROM pg_database WHERE datname LIKE '{prefix}%' ORDER BY datname; SELECT '{_SLUITSTUK}'",
+            database="postgres",
+        )
+        assert code == 0, f"pg_database uitlezen mislukt: {uit}"
+        if _SLUITSTUK in uit:
+            # kubectl run --rm schrijft zijn eigen regel ("pod ... deleted") op stderr mee.
+            return [regel.strip() for regel in uit.splitlines() if regel.strip().startswith(prefix)]
+        logger.warning("de psql-pod gaf niets terug, opnieuw: %s", uit[:200])
+    raise AssertionError(f"pg_database bleef onleesbaar; laatste uitvoer: {uit[:300]}")
 
 
 def _deployment_secret(project: str, deployment: str) -> dict[str, str]:
@@ -233,6 +254,10 @@ def test_de_kloon_kostte_geen_generatie(kloon_project: CreatedProject, doel_depl
     prefix = f"{kloon_project.name.replace('-', '_')}_{doel_deployment.replace('-', '_')}"
 
     gevonden = _databases(doel, prefix)
+    # Eerst dat de doeldatabase zelf in de lijst staat. Zonder die regel is "geen generatie"
+    # ook waar als de LIKE niets vindt, en dan blijft deze toets groen op een naamgeving die
+    # verandert of op een kloon die er helemaal niet kwam.
+    assert gevonden, f"geen enkele database begint met '{prefix}'; dan meet 'geen _vN' niets"
     generaties = [naam for naam in gevonden if naam.startswith(f"{prefix}_v")]
     assert not generaties, f"er staat een generatie naast de doeldatabase: {gevonden}"
 
@@ -266,7 +291,7 @@ def test_nog_een_run_zet_er_geen_generatie_naast(
     daarna nog steeds geen `_vN` staat en dat het merkteken er precies EEN keer in staat:
     een tweede kloon over hetzelfde schema zou de rij verdubbelen of de run laten vastlopen.
     """
-    # `project refresh` kent geen --yes (gemeten op zad-cli 1.0.0: alleen --force-clone
+    # `project refresh` kent geen --yes (gemeten op zad-cli 0.13.1: alleen --force-clone
     # en --dry-run), dus die vlag hoort er niet bij.
     resultaat = cli.run("project", "refresh")
     logger.info("project refresh: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:400])
@@ -274,7 +299,9 @@ def test_nog_een_run_zet_er_geen_generatie_naast(
 
     doel = _deployment_secret(kloon_project.name, doel_deployment)
     prefix = f"{kloon_project.name.replace('-', '_')}_{doel_deployment.replace('-', '_')}"
-    generaties = [naam for naam in _databases(doel, prefix) if naam.startswith(f"{prefix}_v")]
+    gevonden = _databases(doel, prefix)
+    assert gevonden, f"geen enkele database begint met '{prefix}'; dan meet 'geen _vN' niets"
+    generaties = [naam for naam in gevonden if naam.startswith(f"{prefix}_v")]
     assert not generaties, f"de tweede run zette er een generatie naast: {generaties}"
 
     code, uit = _psql(doel, f'SELECT count(*) FROM "{doel["DATABASE_SCHEMA"]}".rc227_kloon')

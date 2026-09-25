@@ -61,8 +61,9 @@ def sessiekoek(sandbox_context: BrowserContext) -> dict[str, str]:
 
 
 def _haal(sandbox_url: str, pad: str, *, accept: str, cookies: dict[str, str] | None = None) -> httpx.Response:
-    with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0, follow_redirects=False) as client:
-        return client.get(f"{sandbox_url.rstrip('/')}{pad}", headers={"Accept": accept}, cookies=cookies or {})
+    # Cookies op de client en niet per verzoek: httpx heeft die tweede vorm afgeschaft.
+    with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0, follow_redirects=False, cookies=cookies or {}) as client:
+        return client.get(f"{sandbox_url.rstrip('/')}{pad}", headers={"Accept": accept})
 
 
 def test_een_onbekend_api_pad_geeft_json_ook_aan_een_browser(sandbox_url: str) -> None:
@@ -109,6 +110,14 @@ def test_een_client_buiten_api_krijgt_geen_markup(sandbox_url: str, sessiekoek: 
 def test_er_lekt_geen_techniek_in_een_foutantwoord(sandbox_url: str, pad: str, sessiekoek: dict[str, str]) -> None:
     """De reden dat dit blok bestaat: er stond een intern IP en een poort op het scherm."""
     respons = _haal(sandbox_url, pad, accept=_BROWSER_ACCEPT, cookies=sessiekoek)
+
+    # Eerst dat er een FOUTANTWOORD is. Zonder die regel is een 302 naar de login met een lege
+    # body ook "geen lek", en dan wordt deze toets groen op precies het moment dat het
+    # sessiecookie het niet meer doet.
+    assert respons.status_code >= 400, (
+        f"{pad} gaf HTTP {respons.status_code} en dus geen foutantwoord om op te meten: {respons.text[:200]}"
+    )
+    assert respons.text.strip(), f"{pad} gaf een leeg antwoord; dan zegt 'geen lek' niets"
 
     gevonden = [spoor for spoor in _LEKSPOREN if spoor in respons.text]
     assert not gevonden, f"{pad} (HTTP {respons.status_code}) lekt {gevonden}:\n{respons.text[:600]}"
@@ -200,10 +209,15 @@ def envelop_server() -> Generator[str]:
 def test_de_cli_maakt_van_de_envelop_een_leesbare_regel(envelop_server: str) -> None:
     """Wat de CLI met de gedocumenteerde envelop doet.
 
-    Drie eisen, en ze meten elk iets anders: de zin uit `detail` moet te zien zijn (de
-    envelop is een uitbreiding en geen breuk, dus dat veld blijft leidend), het kenmerk
-    moet erbij staan (anders heeft de gebruiker niets te melden), en er mag geen traceback
-    of kale JSON-dump uitkomen.
+    Drie eisen: de zin uit `detail` moet te zien zijn (de envelop is een uitbreiding en geen
+    breuk, dus dat veld blijft leidend), het kenmerk moet erbij staan (anders heeft de
+    gebruiker niets te melden), en er mag geen traceback of kale JSON-dump uitkomen.
+
+    Dat kenmerk komt langs via de ZIN en niet via het veld `reference`, en dat is precies waar
+    de belofte van deze repo zit. Gemeten op zad-cli 0.13.1: met een `reference` die niet in
+    `detail` voorkomt staat hij NERGENS in de uitvoer, en met een leeg `reference` verandert er
+    niets. Een `detail` zonder kenmerk laat een CLI-gebruiker dus met niets achter, ook al zit
+    het kenmerk netjes in de envelop.
     """
     cli = ZadCli(skip_zonder_cli(), envelop_server, api_key="rc227-nep-sleutel", project="proef", timeout=90.0)
 

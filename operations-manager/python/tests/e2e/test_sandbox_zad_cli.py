@@ -23,7 +23,7 @@ import pytest
 from tests.e2e.helpers import sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_via_wizard
 from tests.e2e.helpers.wizard import unique_project_name
-from tests.e2e.helpers.zad_cli import ZadCli, skip_zonder_cli
+from tests.e2e.helpers.zad_cli import GEEN_CLI, ZadCli, cli_pad, skip_zonder_cli
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -34,7 +34,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
+# De skip staat op de MODULE en niet in de cli-fixture: die hangt aan het project, dus een
+# skip daarbinnen laat eerst een project op het gedeelde cluster aanmaken om het daarna
+# ongebruikt op te ruimen.
+# `serial` omdat deze doorloop een doorloop is: de component die de ene toets toevoegt is
+# waar de volgende hem weigert. Zonder die marker schudt `task test-e2e-random` hem door
+# elkaar en meet de weigering een component die er nog niet is.
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.sandbox,
+    pytest.mark.serial,
+    pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
+]
 
 _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")
@@ -153,14 +164,13 @@ def test_een_component_in_gebruik_wordt_geweigerd_en_de_uitweg_staat_in_de_api(
 
     De component uit de vorige toets hangt aan een deployment. De API weigert hem dan met
     409 en biedt `confirm_in_use` als uitweg; het antwoord noemt volgens het
-    OpenAPI-document elke plek waar hij nog gebruikt wordt. `zad component delete` kent die
-    vlag niet (gemeten op zad-cli 1.0.0: alleen `--yes` en `--dry-run`), dus opruimen over
-    de CLI eindigt hier.
+    OpenAPI-document elke plek waar hij nog gebruikt wordt.
 
-    Wat deze toets vastlegt is daarom niet "de CLI kan het niet" - dat zou een gebrek
-    vastpinnen dat morgen gerepareerd mag worden. Hij legt de twee dingen vast die hoe dan
-    ook moeten blijven gelden: de weigering is leesbaar en zonder traceback, en de API
-    HOUDT de uitweg.
+    Wat de CLI daarmee doet verschuift per versie en wordt hier niet vastgepind: op zad-cli
+    0.13.1 draagt `component delete` een `--force` die "delete it even though something still
+    uses it" belooft, en deze toets roept hem juist ZONDER die vlag aan. Wat hij vastlegt
+    zijn de twee dingen die hoe dan ook moeten blijven gelden: zonder de vlag is de weigering
+    leesbaar en zonder traceback, en de API HOUDT de uitweg.
     """
     naam = "cli-web"
     if naam not in forgejo.component_names(cli_project.name):

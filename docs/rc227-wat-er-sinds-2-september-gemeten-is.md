@@ -68,7 +68,7 @@ er al stond.
 | Geplakte URL en vrij label rechttrekken | **niet gemeten.** Vergt invullen en opslaan in het formulier; de unittests dekken de converter en de clustertoets zou dezelfde converter meten. |
 | De upstream volgt uit de images die het project al heeft | **niet gemeten.** Zelfde reden: een `default` die alleen bij een NIEUWE lege rij geldt, en die weg loopt niet over de API. |
 | De eigendomscontrole en het serviceaccount per project | **al gedekt** door `test_sandbox_registry_ownership.py`, ongewijzigd. |
-| De registrykeuze staat bij de image, en het pull-secret landt | **gemeten**, zie `test_sandbox_registry_pull.py`. Uitkomst staat in de PR. |
+| De registrykeuze staat bij de image, en het pull-secret landt | **gemeten**, zie `test_sandbox_registry_pull.py`. Uitkomst staat in de PR. Let op de ORDE: het secret komt via de `_project`-applicatie en de pod via de deployment-applicatie, en in de meting stond de pod er ruim twee minuten voor het secret. Zelfherstellend (kubelet probeert opnieuw), maar op een node zonder het image in zijn cache is dat zolang `ImagePullBackOff`. |
 | Standaardoptie heet "Automatisch" | **niet gemeten.** Komt op de componentkant van de dienst; de modal op projectniveau toont hem niet. |
 
 **Waarneming, geen bevinding.** Het tokenveld heet op het scherm "Token *Optioneel*", terwijl
@@ -90,7 +90,7 @@ Wat er niet vanzelf uit volgde staat in "Wat de uitrol zelf kostte" hierboven.
 
 | Functie | Uitspraak |
 |---|---|
-| Speelruimte per veld, drie lezers uit een declaratie | **gemeten** over de API (`test_sandbox_speelruimte.py`): binnen de grenzen wordt opgeslagen, onder de ondergrens en boven de bovengrens geweigerd, de weigering noemt de grenzen, en het projectbestand blijft onveranderd. Niet over de CLI, want die kan dit veld niet versturen; zie "Wat de CLI-weg opleverde". |
+| Speelruimte per veld, drie lezers uit een declaratie | **gemeten** over de API (`test_sandbox_speelruimte.py`): binnen de grenzen wordt opgeslagen, onder de ondergrens en boven de bovengrens geweigerd, de weigering noemt de grenzen, en het projectbestand blijft onveranderd. Ook over de CLI gemeten, als paar: een te lage waarde raakt het projectbestand niet en een geldige wel. Zie "Wat de CLI-weg opleverde" voor waarom die helft er eerst niet stond. |
 | De guard sluit ook als het veld ontbreekt | **gemeten** als de servertoets op een niet-gedeclareerd veld. |
 | De weigering noemt de speelruimte | **gemeten en goed**, letterlijk: `Project 'speel-lco': configuratie van service 'postgresql-database' op projectniveau is ongeldig: 'connection-limit' moet tussen 1 en 500 liggen; je gaf 501.` |
 | Een laag die de dienst niet openzet | **gemeten en goed.** `connection-limit` staat op project en deployment; de componentlaag bestaat als route niet eens (`/services/postgresql-database/config/component/...` staat niet in het OpenAPI-document van de draaiende server). |
@@ -155,46 +155,49 @@ geen 404. Dat is juist (de inlogpoort zit voor de routering), maar het betekent 
 ## Wat de CLI-weg opleverde
 
 Het plan verwachtte hiervan het meest: *"Een API-wijziging die de UI niet raakt maar de CLI
-wel, valt vandaag nergens om."* Twee dingen vielen meteen om. Allebei zitten ze in de
+wel, valt vandaag nergens om."* Twee dingen vielen meteen om. Ze zaten allebei in de
 **zad-cli-repository** en niet hier, dus ze zijn gemeld en niet gerepareerd.
 
-**1. `connection-limit` is vanaf de CLI niet te zetten.** Precies het veld waar de hele
-speelruimte op rust. Geisoleerd met losse bodies uit een bestand, op zad-cli 1.0.0:
+**In de testfase opnieuw gemeten, en ze zijn allebei dicht.** De CLI is daarvoor uit
+`github.com/RijksICTGilde/zad-cli` gehaald en geinstalleerd; `zadctl --version` zegt dan
+**0.13.1**. De versie waar de eerste meting op stond, 1.0.0, bestaat niet als uitgave: de
+CHANGELOG van de CLI schrijft bij `v0.10.0` dat het nummer 1.0.0 tijdens het schrijven is
+teruggedraaid naar 0.10.0 voor de uitgave. Wat hieronder staat is dus wat de installeerbare
+CLI doet.
 
-| body | uitkomst |
+**1. `connection-limit` was vanaf de CLI niet te zetten, en is dat nu wel.** Precies het veld
+waar de hele speelruimte op rust. De eerste meting (losse bodies uit een bestand) gaf exit 2
+op elk body waarin het veld voorkwam, met een melding die een heel ander veld aanwees
+(`'scope' is 'shared', which is not one of shared, project`). Op 0.13.1 komt het veld gewoon
+de deur uit, gemeten met `--dry-run` tegen de sandbox:
+
+| aanroep | uitkomst |
 |---|---|
-| `{scope: shared}` | exit 0 |
-| `{scope: shared, schemas: [{postfix: ''}]}` (zijn eigen `--generate-skeleton`) | exit 0 |
-| `{scope: shared, connection-limit: 42}` | exit 2 |
-| `{scope: shared, connection-limit: null}` | exit 2 |
-| `{scope: project}` | exit 0 |
-| `{scope: project, storage: 2Gi}` | exit 0 |
+| `service config set postgresql-database --target project --file <body met connection-limit: 42>` | exit 0, payload draagt het veld |
+| `service config set postgresql-database --target project --set connection-limit=0` | exit 0, payload draagt het veld |
+| dezelfde aanroepen zonder `--target` | geweigerd, met de reden: een dienst met meer dan een laag eist `--target` |
 
-Elk body waarin `connection-limit` voorkomt wordt geweigerd door de client-side
-schemacontrole van de CLI, met een melding die een heel ander veld aanwijst:
+De CHANGELOG van de CLI draagt in zijn `Unreleased` een regel over precies deze vorm:
+`anyOf: [X, null]`, waarmee een Pydantic-spec elk optioneel veld schrijft, telde als "twee
+geaccepteerde vormen", en de klacht van de verkeerde tak werd gerapporteerd. Dat is dezelfde
+vorm als `connection-limit`. Of de reparatie die hier gemeten is dezelfde is, is vanaf deze
+kant niet vast te stellen.
 
-```
-'scope' is 'shared', which is not one of shared, project.
-```
+**2. `zad component delete` heeft nu wel een uitweg voor een component in gebruik.** De API
+draagt `confirm_in_use` en zegt over de 409 dat de body elke plek noemt waar de component nog
+gebruikt wordt. De eerste meting zag alleen `--yes` en `--dry-run`. Op 0.13.1 zijn de vlaggen
+`--name --force --yes --dry-run`, en `--force` belooft *"delete it even though something still
+uses it, and removes those references"*.
 
-`scope` is dus niet het probleem (de laatste twee rijen laten zien dat beide scopes gewoon
-doorkomen), en de waarde die "niet in de lijst" zou staan staat er letterlijk in.
-`connection-limit` is het enige veld in dat schema met de vorm `anyOf: [integer, null]`.
+**Wat dit over de toetsen zegt.** De keuze om de **serverkant** vast te pinnen en niet het
+gebrek is de goede geweest, en dat is nu ook gemeten in plaats van beweerd: de twee toetsen
+zijn niet rood geworden van de reparaties aan de CLI-kant. Het document moet beide scopes
+blijven noemen en `confirm_in_use` moet blijven bestaan; dat is wat ze eisen.
 
-**2. `zad component delete` heeft geen uitweg voor een component in gebruik.** De API draagt
-`confirm_in_use` en zegt over de 409 dat de body elke plek noemt waar de component nog
-gebruikt wordt. De CLI kent alleen `--yes` en `--dry-run`, en drukt af:
-
-```
-✗ Conflict (HTTP 409): the resource is in a state that blocks this action.
-```
-
-De gebruiker leest een toestand en krijgt geen volgende stap.
-
-Beide toetsen pinnen daarom de **serverkant** vast, niet het gebrek: het document moet beide
-scopes blijven noemen, en `confirm_in_use` moet blijven bestaan. Een toets die de
-CLI-weigering vastpint wordt rood zodra iemand de CLI repareert, en dat is precies verkeerd
-om.
+Er is er wel een toets bijgekomen. De speelruimte werd alleen over de API gemeten omdat de
+CLI het veld niet kon versturen, en die reden is weg:
+`test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt` loopt de weg af die het plan
+vroeg, als paar (een te lage waarde raakt het projectbestand niet, een geldige wel).
 
 **Waarneming zonder eigenaar.** De grenzen van `connection-limit` (1 tot 500) staan NIET in
 het OpenAPI-document: het veld is daar een kale `integer`. Een client kan de speelruimte dus
@@ -224,3 +227,20 @@ Twee dingen die buiten deze ronde vallen maar wel een eigenaar nodig hebben:
    zetten die hier niet kon.
 2. **De productiepin is niet herbouwbaar.** Dat is geen probleem zolang het gepubliceerde
    image bestaat, en een probleem op de dag dat dat niet meer zo is.
+3. **De container registry van Forgejo op dit cluster geeft anoniem pull.** De aanname "hij
+   weigert anoniem, want `GET /v2/` geeft 401" klopt niet: die 401 is de auth-UITDAGING die elke
+   Docker-registry geeft. Doe je de tokendans die een client ook doet, dan levert
+   `/v2/token?scope=repository:rig-admin/e2e-allservices:pull` ANONIEM een token op en komt de
+   manifest met 200 terug (nagemeten met curl). Gevolg aan de kubelet-kant, twee keer gezien met
+   een vaste EN met een eigen tag en `imagePullPolicy: Always`: het image was er "in 50ms"
+   terwijl kubelet in dezelfde events `FailedToRetrieveImagePullSecret` meldde en het secret nog
+   niet bestond. Een ontbrekend pull-secret is bij kubelet een WAARSCHUWING, geen fout.
+
+   Wat daarmee nog wel gemeten is: de entry landt AGE-versleuteld in het projectbestand, en ZAD
+   zet het `dockerconfigjson`-secret in de namespace met de juiste upstream en gebruiker. Wat
+   niet: dat het zonder dat secret niet zou lukken. Wie die stap wil, heeft op deze sandbox een
+   image nodig dat anoniem echt geweigerd wordt.
+
+4. **Het pull-secret komt na de workload.** Het secret landt via de `_project`-applicatie en de
+   pod via de deployment-applicatie; in de meting stond de pod er ruim twee minuten eerder. Op
+   een registry die anoniem weigert is dat zolang `ImagePullBackOff`.
