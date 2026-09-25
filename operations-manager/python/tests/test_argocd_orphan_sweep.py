@@ -362,6 +362,20 @@ class TestRefusal:
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 
+    def test_an_unreadable_namespace_list_is_not_a_clean_cluster(self, capsys) -> None:
+        """Without ``--namespace`` that map IS the work list. Measured with the refusal
+        replaced by ``label_map = {}``: the sweep prints SCHOON and exits 0 over a cluster it
+        read nothing in."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.get_namespace_label_map = AsyncMock(side_effect=KubectlExecutionError("Failed to list namespaces: x"))
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main([]) == 2
+
+        printed = capsys.readouterr()
+        assert CLEAN not in printed.out
+        assert "namespaces OPI created" in printed.err
+        kubectl.list_tracked_resources.assert_not_awaited()
+
 
 class TestTheCommandLine:
     """What the flags promise. The default is a REPORT: this tool deletes cluster
