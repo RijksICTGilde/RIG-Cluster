@@ -195,8 +195,15 @@ class TestWieHetProjectniveauDraagt:
 
 class TestDeArgoApplicatie:
     def test_het_projectniveau_gaat_op_wave_0_en_een_deployment_op_1(self) -> None:
-        """Ordening, geen gereedheid: wat namespace-breed is staat er voor de pods die het
-        nodig hebben."""
+        """De annotatie, en niet de ordening.
+
+        De wave zegt welke applicatie de umbrella eerst AANMAAKT. Hij ordent de syncs
+        eronder niet: een net aangemaakte kind-Application beheert nul resources en meldt
+        zich daarmee binnen een seconde Healthy, dus de wave-0-grendel gaat open voordat het
+        projectniveau zijn ServiceAccount heeft uitgerold (RC-229, gemeten in
+        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md). Wat de ordening wel draagt
+        staat in tests/test_project_level_ordering.py.
+        """
 
         base = {
             "name": "demo-app",

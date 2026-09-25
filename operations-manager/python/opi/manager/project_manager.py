@@ -12,7 +12,11 @@ import os
 import secrets
 import shutil
 import time
-from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
+from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
+    AsyncIterator,
+    Callable,
+)
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -83,6 +87,8 @@ from opi.handlers.project_file_handler import (
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
+    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     UMBRELLA_REFRESH_MAX_POGINGEN,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
@@ -2744,27 +2750,12 @@ class ProjectManager:
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
-            # Dezelfde bewaker als bij de deployment-applicaties: de refresh die de umbrella
-            # onze infrastructuurmap moet laten zien kan opgaan in een reconcile die zijn
-            # revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile niets.
-            umbrella_watcher = asyncio.create_task(
-                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
-            )
-            try:
+            async with self._umbrella_verversbewaker(argo_connector):
                 await self._argo_manager.wait_for_application_created(
                     app_name=infra_app_name,
-                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
                     poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
                 )
-            finally:
-                umbrella_watcher.cancel()
-                try:
-                    await umbrella_watcher
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
-                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
@@ -2967,6 +2958,90 @@ class ProjectManager:
             f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
             "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
         )
+
+    @asynccontextmanager
+    async def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AsyncIterator[None]:
+        """Draai `_keep_umbrella_refreshed` naast een wacht en ruim hem daarna op.
+
+        Elke wacht op het BESTAAN van een kind-Application heeft deze bewaker nodig: onze
+        refresh kan opgaan in een reconcile die zijn revisie al had opgehaald, en dan
+        gebeurt er tot de volgende reconcile niets. Eén bewaker per wacht, ook als die wacht
+        op meerdere applicaties tegelijk staat: drie bewakers zouden drie keer tegelijk
+        verversen.
+
+        De generieke ``except`` hoort hier en niet bij de aanroepers: de bewaker is een
+        vangnet en mag de wacht die hij bewaakt nooit meeslepen, ongeacht waarop hij zelf
+        omvalt.
+        """
+        bewaker = asyncio.create_task(
+            self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+        )
+        try:
+            yield
+        finally:
+            bewaker.cancel()
+            try:
+                await bewaker
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
+
+    async def wait_for_project_level_application(self, app_name: str) -> None:
+        """Wacht tot het PROJECTNIVEAU van dit project echt gesynchroniseerd is.
+
+        De ServiceAccount van het project komt uit deze applicatie, en de podspec van elke
+        Deployment eronder noemt hem. Daarom staat deze wacht voor het aanmaken van de
+        deployment-applicaties: bestaat hun CR nog niet, dan kan ArgoCD ze ook niet
+        zelfstandig synchroniseren.
+
+        Dezelfde vorm als de infrastructuurapplicatie, die ook op wave 0 staat: aanmaken,
+        wachten tot ArgoCD hem heeft aangemaakt, hem ZELF verversen, en dan wachten op een
+        sync die aantoonbaar NA die verversing komt. Zonder dat laatste stelt een
+        ``Synced`` van voor onze commit de wacht bij een herhaalrun meteen tevreden.
+
+        De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
+        resources en meldt zich daarmee binnen een seconde Healthy. Zie
+        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
+
+        Args:
+            app_name: Naam van de applicatie van het projectniveau.
+
+        Raises:
+            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
+            TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
+        """
+        argo_connector = create_argo_connector()
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        # De umbrella alleen verversen als de applicatie er nog niet is: zo'n refresh
+        # hertekent alle child-apps (issue #130) en kan minuten duren
+        # (features/argocd-refresh-performance.md). Dezelfde keuze, bron en fail-safe als
+        # bij de deployment-applicaties verderop.
+        exists = await self._kubectl_connector.argocd_application_exists(
+            app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
+        )
+        if exists is not True:
+            async with self._umbrella_verversbewaker(argo_connector):
+                await self._argo_manager.wait_for_application_created(
+                    app_name=app_name,
+                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+                    poll_interval=1,
+                )
+
+        # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
+        # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
+        reconciled_at = await argo_connector.refresh_application(app_name)
+        if not reconciled_at:
+            raise RuntimeError(f"Failed to refresh ArgoCD project-level application '{app_name}'")
+
+        await self._argo_manager.wait_for_application_synced(
+            app_name=app_name,
+            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+            refreshed_after=reconciled_at,
+        )
+        logger.info(f"Project-level application '{app_name}' is synced; de ServiceAccount staat er")
 
     async def process_project_from_git(
         self,
@@ -3311,10 +3386,10 @@ class ProjectManager:
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
 
-                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments,
-                # dus zonder deze regel werd de umbrella niet ververst zolang de
-                # deployment-applicaties al bestonden, en kreeg een Deployment zijn
-                # serviceAccountName voordat de ServiceAccount er was.
+                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments.
+                # `create_argocd_resources` heeft hem via `wait_for_project_level_application`
+                # al aangemaakt en gesynchroniseerd, dus normaal voegt dit niets toe; het
+                # blijft staan voor paden die hier zonder die grendel binnenkomen.
                 project_app_name = generate_argocd_project_application_name(project_name)
                 project_app_exists = await self._kubectl_connector.argocd_application_exists(
                     project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
@@ -3333,52 +3408,24 @@ class ProjectManager:
                     async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
-                                app_name=app_name, timeout=360, poll_interval=1
+                                app_name=app_name, timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN, poll_interval=1
                             )
                             return None
                         except TimeoutError:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    # Eén bewaker naast alle wachters, niet één per applicatie: die zou bij
-                    # drie nieuwe applicaties drie keer tegelijk verversen. Hij doet de
-                    # eerste refresh en herhaalt die alleen zolang de umbrella onze commit
-                    # aantoonbaar nog niet vergeleken heeft.
-                    umbrella_watcher = asyncio.create_task(
-                        self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
-                    )
-                    try:
+                    async with self._umbrella_verversbewaker(argo_connector):
                         created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
-                    finally:
-                        umbrella_watcher.cancel()
-                        try:
-                            await umbrella_watcher
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception as e:
-                            # De bewaker is een vangnet; als hij zelf omvalt, mag dat het
-                            # wachten op de applicaties niet meeslepen.
-                            logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
                     sync_failures.extend(result for result in created_results if result)
                 else:
                     logger.info(
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
                     )
 
-                # Wachten tot het projectniveau GESYNCT is, want de ServiceAccount komt pas
-                # dan en de deployments hieronder zetten hun podspec erop. De sync-wave
-                # dekt dit niet: OPI ververst de deployment-applicatie ook rechtstreeks.
-                # Mislukken is geen reden om af te breken, een te vroege pod herstelt zelf.
-                try:
-                    await self._argo_manager.wait_for_application_synced(
-                        app_name=project_app_name, timeout=180, poll_interval=2
-                    )
-                    logger.info(f"Project-level application '{project_app_name}' is synced")
-                except (TimeoutError, RuntimeError) as e:
-                    logger.warning(
-                        f"Project-level application '{project_app_name}' not synced yet ({e}); "
-                        f"deployments may briefly wait for its ServiceAccount"
-                    )
+                # Op dit punt heeft een wacht op het projectniveau geen zin: de
+                # deployment-applicaties bestaan al en ArgoCD synchroniseert ze zelfstandig.
+                # De ordening ligt in `create_argocd_resources`, voor het aanmaken ervan.
 
                 # Refresh each application that was created, then wait for sync+healthy.
                 # Refresh + wait run concurrently per application (read-only polls);
