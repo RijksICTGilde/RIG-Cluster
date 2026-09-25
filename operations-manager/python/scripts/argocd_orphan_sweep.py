@@ -121,8 +121,17 @@ def undecidable_resources(tracked: list[TrackedResource], existing_applications:
     They are kept out of the orphan list, because ``--delete`` acts on it and the first
     reading is a running deployment. They are reported all the same: reading them as owned
     without saying so is a real orphan answered with SCHOON.
+
+    A mark that IS the name of a living Application is nothing to report: the resource is
+    then that one's or the longer sister's, and neither of those is an orphan. That is this
+    caller's own condition, not the predicate's, because the force draws the opposite
+    conclusion from the same equality.
     """
-    return [resource for resource in tracked if may_be_cut_from(resource, existing_applications)]
+    return [
+        resource
+        for resource in tracked
+        if resource.app_name not in existing_applications and may_be_cut_from(resource, existing_applications)
+    ]
 
 
 def render_roots(repo_root: Path) -> list[str]:
