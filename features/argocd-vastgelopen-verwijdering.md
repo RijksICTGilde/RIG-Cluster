@@ -169,6 +169,16 @@ Uit `manifests/argocd-application.yaml.jinja` zijn twee regels weg die ArgoCD st
 negeerde: `Timeout=300` bestaat niet als sync option (en las als een bovengrens op het
 wachten die er dus niet was), en `Delete` kent op app-niveau alleen `false` en `confirm`.
 
+Dezelfde vorm stond op de twee handgeschreven platform-Applications onder
+`bootstrap/rig-system/kustomize/overlays/odcn-production/`: `SyncTimeout=60s`, om dezelfde
+reden weg. ArgoCD v3.5.1 kent die naam niet als sync option; wat hij wel `SyncTimeout`
+noemt is een interne wachttijd op een informer-cache in de API-server. Een bovengrens op
+het wachten bestaat wel, maar als instelling op de ArgoCD-instantie:
+`controller.sync.timeout.seconds: "300"` in de `extraConfig` van `argocd-deployment.yaml`,
+op odcn-production gezet en op de twee andere overlays niet. Die grens breekt een
+hangende sync niet af, want hij vraagt om beëindiging en de operatie blijft staan tot
+`.operation` zelf weg is.
+
 `PruneLast=true` blijft staan. Die kwam mee met de eerste commit van de repo en nergens in
 de historie of documentatie staat waarvoor hij nodig was. Zonder die reden is weghalen
 gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin.
@@ -273,7 +283,9 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
 | `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, en de merktekens zelf |
-| `tests/test_argocd_application_syncoptions.py` | De syncOptions die ArgoCD kent |
+| `tests/argocd_sync_options.py` | De syncOptions die ArgoCD leest, gedeeld door beide grendels |
+| `tests/test_argocd_generated_application_syncoptions.py` | De syncOptions van de gegenereerde Application |
+| `tests/test_argocd_handwritten_application_syncoptions.py` | De syncOptions van de handgeschreven platform-Applications |
 | `tests/test_argocd_orphan_sweep.py` | De veegactie |
 
 ## Wat hier niet in zit
