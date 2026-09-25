@@ -83,9 +83,7 @@ WHERE status = 'completed'
 #: gang die deze tabellen op dat moment nodig heeft.
 _EIGEN_PREFIX = "rc227_"
 
-#: Het blok draagt een BENOEMDE dollar-quote en niet `$$`: de args van een pod gaan langs de
-#: variabele-expansie van Kubernetes, en die leest `$$` als een ontsnapte `$`. Postgres krijgt
-#: dan `DO $` en antwoordt met `syntax error at or near "$"`. Nagemeten via ``cluster.run_psql``.
+#: Een BENOEMDE dollar-quote en geen `$$`, om de reden die in ``cluster.run_psql`` staat.
 _OPRUIMEN = f"""
 DO $leegmaken$
 DECLARE tabel text;
@@ -106,10 +104,6 @@ def db_wachtwoord(sandbox_url: str) -> str:
     ``sandbox_url`` wordt hier niet gebruikt maar wel gevraagd: die fixture is de poort die
     de hele suite dicht houdt zonder ``E2E_BASE_URL``. Zonder hem draaien deze toetsen op
     welk cluster ``kubectl`` ook maar aanwijst, en dat is precies wat de afspraak voorkomt.
-
-    Het lezen gaat via ``cluster.secret_values``, dat het kubectl-commando, de jsonpath en de
-    base64 al doet. Hier stond een eigen wrapper naast, en dat is precies de dubbeling die
-    deze repo niet wil.
     """
     # OSError staat erbij voor de machine zonder kubectl: dan is er geen cluster om op te
     # meten, en dat is een skip en geen fout.
@@ -176,7 +170,8 @@ def test_de_backfill_is_die_uit_de_migratie(sandbox_url: str) -> None:
     Vergeleken op het HELE blok en niet op een lijst kenmerkende regels. Die lijst stond er
     eerst en keek of vijf regels in beide teksten voorkwamen, en daar glipt een regel die in
     de migratie BIJKOMT gewoon langs: met `AND project_name NOT LIKE ...` erbij bleef deze
-    toets groen terwijl de drie toetsen hieronder een ander statement meten dan er draait.
+    toets groen terwijl de toetsen die `_BACKFILL` draaien een ander statement meten dan de
+    migratie.
     De vergelijking gaat over genormaliseerde witruimte, want de migratie laat het statement
     inspringen; de twee parameters staan op de waarden die de migratie zelf gebruikt, dus
     juist het verschil dat met opzet bestaat (een eigen doeltabel en brontabel) telt niet mee.
