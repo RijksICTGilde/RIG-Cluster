@@ -605,11 +605,10 @@ class TestDockerInlog:
 class TestSandboxmodulesBijElkaar:
     """De hook die de modulegrens terugzet, ``tests/e2e/conftest.py``.
 
-    Wat hij voorkomt kost geld en geen falen: pytest groepeert op de parameters van
-    fixtures met een scope boven function en breekt daarmee de modulegrens op, waarna een
-    module-fixture opnieuw wordt opgezet. Elke extra opbouw is een volledig project op het
-    gedeelde cluster, en de suite blijft er groen bij. Gemeten op de sandboxselectie: zonder
-    deze hook 40 blokken over 30 modules, zeven modules gesplitst.
+    Wat hij voorkomt kost geld en geen falen: zonder hem wordt een module-fixture opnieuw
+    opgezet, en dat is een volledig project op het gedeelde cluster terwijl de suite groen
+    blijft. Het mechanisme staat in de docstring van de hook. Gemeten op de sandboxselectie:
+    zonder deze hook 40 blokken over 30 modules, zeven modules gesplitst.
     """
 
     class _Item:

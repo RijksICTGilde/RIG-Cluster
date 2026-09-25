@@ -127,13 +127,13 @@ fails halfway.
   van een module-fixture: zonder eigen marker eindigt een aanmaakwacht van 600s op
   "Timeout (>300.0s) from pytest-timeout" en wordt de hele module ERROR.
 - **Do** weet wat een ruimere `create_timeout` wel en niet koopt, want de knop staat aan de
-  CLIENT-kant. Hij gaat naar twee wachten in `create_project_with_services`: de wacht tot de
-  AANMAAKTAAK klaar is, en daarna de wacht tot de applicaties gezond zijn. Die eerste is
-  begrensd door de server en niet door jou: de taak geeft per ArgoCD-applicatie na 300s op
-  (`opi/manager/project_manager.py:3525`) en legt zichzelf dan als mislukt vast. Een project dat
-  op dit gedeelde cluster te langzaam is haalt het dus niet door hier een groter getal te
-  zetten. Wat het WEL koopt is dat de fout die de toets leest de REDEN van de server is en niet
-  je eigen time-out, en zo is de vertraagde ServiceAccount van RC-229 gevonden.
+  CLIENT-kant. In beide wizardhelpers (`create_project_with_services` en
+  `create_project_via_wizard`) gaat hij naar twee wachten: de wacht tot de AANMAAKTAAK klaar is,
+  en daarna de wacht tot de applicaties gezond zijn. Die eerste is begrensd door de server en
+  niet door jou: de taak geeft per ArgoCD-applicatie na 300s op
+  (`opi/manager/project_manager.py:3525`) en legt zichzelf dan als mislukt vast. Wat het WEL
+  koopt is dat de fout die de toets leest de REDEN van de server is en niet je eigen time-out,
+  en zo is de vertraagde ServiceAccount van RC-229 gevonden.
   **Don't** gebruik hem dus om een storing weg te wachten.
 
 ## Reference example
