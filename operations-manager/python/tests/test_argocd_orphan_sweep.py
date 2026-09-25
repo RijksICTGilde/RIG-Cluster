@@ -385,6 +385,24 @@ class TestRefusal:
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 
+    def test_an_unreachable_cluster_is_not_reported_as_a_failed_namespace_read(self, capsys) -> None:
+        """The namespace read is the one wrapped in an ``except KubectlExecutionError``, so it
+        is where the two failure kinds meet, and an unreachable cluster has to come out with
+        kubectl's own words: "did not answer which namespaces OPI created" sends an operator
+        to labels and RBAC on a cluster that is not there. Measured with that except widened
+        to KubectlConnectionError as well: 0 red over this file, test_argocd_stuck_delete and
+        test_kubectl_connector, because the exit code is 2 either way."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.get_namespace_label_map = AsyncMock(
+            side_effect=KubectlConnectionError("kubectl connection failed: connection refused")
+        )
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main([]) == 2
+
+        printed = capsys.readouterr()
+        assert "connection refused" in printed.err
+        assert "namespaces OPI created" not in printed.err
+
     def test_an_unreadable_namespace_list_is_not_a_clean_cluster(self, capsys) -> None:
         """Without ``--namespace`` that map IS the work list. Measured with the refusal
         replaced by ``label_map = {}``: the sweep prints SCHOON and exits 0 over a cluster it
