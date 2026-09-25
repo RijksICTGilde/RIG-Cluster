@@ -124,6 +124,25 @@ class TestDeAanmaakvolgorde:
         assert bij_de_grendel == ["cafebabe"]
 
     @pytest.mark.asyncio
+    async def test_de_tweede_push_onthoudt_zijn_commit(self) -> None:
+        """De splitsing in twee pushes schrijft ``last_pushed_argo_commit`` twee keer, en de
+        lezer erna is de verversbewaker bij de deployment-applicaties
+        (``project_manager.py``, ``_keep_umbrella_refreshed``). Die moet fase 2 zien. Blijft
+        fase 1 staan, dan matcht ``revision == pushed_commit`` meteen, want de grendel heeft
+        er net op gewacht dat de umbrella fase 1 gereconcilieerd had: de bewaker keert dan na
+        EEN refresh terug en meldt dat de umbrella onze commit vergeleken heeft terwijl hij
+        de deployment-commit niet zag. Twee verschillende hashes, want een assertie op een
+        enkele hash staat groen op de commit van fase 1."""
+        sporen: list[str] = []
+        manager = _argo_manager(sporen)
+        git = await manager.project_manager.get_git_connector_for_argocd()
+        git.get_local_commit_hash = AsyncMock(side_effect=["fase1", "fase2"])
+
+        await manager.create_argocd_resources()
+
+        assert manager.last_pushed_argo_commit == "fase2"
+
+    @pytest.mark.asyncio
     async def test_het_projectniveau_gaat_in_een_eigen_commit(self) -> None:
         """Eén commit zou de deployment-applicaties laten bestaan voordat er iets te
         wachten valt: de umbrella maakt dan beide CR's in dezelfde sync aan."""
