@@ -83,10 +83,8 @@ def _split_on_the_mark(
 ) -> tuple[list[TrackedResource], list[TrackedResource]]:
     """Split an inventory into what ``app_name`` unambiguously owns, and what stays undecided.
 
-    Equality is not enough on a mark that sits on the label cap: the resources of a living
-    neighbour ``<app_name>-x`` carry exactly ``app_name`` there (may_be_cut_from). So such a
-    mark only owns when no OTHER Application name starts with it, and without the names
-    nothing on the cap can be placed at all.
+    Equality is not enough on a mark that sits on the label cap (may_be_cut_from), and without
+    the names nothing on the cap can be placed at all.
 
     Args:
         known_names: Every Application name on the cluster, or ``None`` when that read failed.
@@ -139,10 +137,8 @@ class DeleteProjectManager:
         selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
         that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
 
-        The mark has to name this application UNAMBIGUOUSLY: here a match is a delete, and a
-        value on the label cap names a living neighbour just as well, whether it equals this
-        name or is a prefix of it (may_be_cut_from). Hence the list of Application names.
-        What stays ambiguous is reported instead of deleted.
+        The mark has to name this application UNAMBIGUOUSLY, because here a match is a delete
+        (_split_on_the_mark). What stays ambiguous is reported instead of deleted.
 
         Returns:
             True if the finalizer was removed.
