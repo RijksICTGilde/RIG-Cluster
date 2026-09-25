@@ -16,6 +16,7 @@ from opi.connectors.subdomain import (
     SubdomainValidationError,
     find_deployments_for_domain_item,
     validate_subdomain,
+    validate_subdomain_for_domain,
 )
 from opi.services.persistence.subdomain_registry import (
     SUBDOMAIN_REGISTRY_TABLE_SQL,
@@ -95,18 +96,13 @@ class TestValidateSubdomain:
         is_valid, error = validate_subdomain("MY-APP")
         assert is_valid is True  # Gets lowercased to my-app which is valid
 
-    def test_reserved_subdomains(self):
-        """Reserved subdomains fail validation with generic 'not available' message.
-
-        NOTE: Error message is intentionally generic to prevent enumeration attacks.
-        Attackers should not be able to distinguish reserved from taken subdomains.
+    def test_a_reserved_name_passes_the_form_rules(self):
+        """``www`` is een geldige DNS-naam. Of hij mag, hangt af van het domein, en dat
+        weet alleen ``validate_subdomain_for_domain``.
         """
-        reserved_examples = ["www", "api", "admin", "mail"]
-        for subdomain in reserved_examples:
+        for subdomain in ["www", "api", "admin", "mail", "test"]:
             is_valid, error = validate_subdomain(subdomain)
-            assert is_valid is False, f"'{subdomain}' is reserved"
-            # Generic error message - no "gereserveerd" to prevent enumeration
-            assert "niet beschikbaar" in error.lower()  # Dutch: "is niet beschikbaar"
+            assert is_valid is True, f"'{subdomain}' is een geldige DNS-naam: {error}"
 
     def test_reserved_subdomains_are_defined(self):
         """RESERVED_SUBDOMAINS contains expected entries."""
@@ -114,6 +110,74 @@ class TestValidateSubdomain:
         assert "api" in RESERVED_SUBDOMAINS
         assert "admin" in RESERVED_SUBDOMAINS
         assert len(RESERVED_SUBDOMAINS) > 50  # Reasonable number of reserved names
+
+
+class TestValidateSubdomainForDomain:
+    """De reserveringslijst geldt op onze eigen zones, niet op het domein van een tenant.
+
+    De aanleiding: ubbw-0i1 vroeg ``test.uitbetrouwbarebron.nl`` aan, zijn EIGEN domein, en
+    kreeg tweemaal "niet beschikbaar" omdat ``test`` in de lijst staat.
+    """
+
+    @pytest.mark.parametrize("subdomain", ["admin", "www", "api", "test"])
+    @pytest.mark.parametrize("base_domain", ["rijks.app", "rijksapp.nl", "rijksapp.dev"])
+    def test_reserved_names_stay_refused_on_a_platform_domain(self, subdomain, base_domain):
+        is_valid, error = validate_subdomain_for_domain(subdomain, base_domain, "odcn-production")
+        assert is_valid is False, f"'{subdomain}.{base_domain}' hoort geweigerd te blijven"
+        assert error == f"Subdomein '{subdomain}' is niet beschikbaar"
+
+    def test_the_message_stays_generic(self):
+        """Zonder het woord "gereserveerd": wie die tekst specifieker maakt, maakt de
+        lijst aftastbaar."""
+        _, error = validate_subdomain_for_domain("admin", "rijks.app", "odcn-production")
+        assert "gereserveerd" not in error.lower()
+        assert "reserved" not in error.lower()
+
+    @pytest.mark.parametrize("subdomain", ["admin", "www", "api", "test"])
+    def test_reserved_names_are_allowed_on_a_tenant_domain(self, subdomain):
+        is_valid, error = validate_subdomain_for_domain(subdomain, "uitbetrouwbarebron.nl", "odcn-production")
+        assert is_valid is True, f"'{subdomain}.uitbetrouwbarebron.nl' is hun zone: {error}"
+        assert error is None
+
+    def test_a_subzone_of_a_platform_domain_keeps_the_list(self):
+        """``team.rijks.app`` staat in geen enkele lijst, maar ``admin`` is er een label op
+        ONZE registreerbare zone. Dit valt om bij een controle op lidmaatschap."""
+        is_valid, _ = validate_subdomain_for_domain("admin", "team.rijks.app", "odcn-production")
+        assert is_valid is False
+
+    def test_the_cluster_postfix_zone_keeps_the_list(self):
+        """Valt om als de beheerlijst die zone niet noemt."""
+        is_valid, _ = validate_subdomain_for_domain("admin", "rig.prd1.gn2.quattro.rijksapps.nl", "odcn-production")
+        assert is_valid is False
+
+    def test_a_tenant_domain_under_the_postfix_parent_keeps_its_own_names(self):
+        """ug-zxt publiceert op ``ux-onderzoeken.rijksapps.nl``. Valt om bij een beheerlijst
+        die de ouder ``rijksapps.nl`` noemt in plaats van de postfix-zone zelf."""
+        is_valid, error = validate_subdomain_for_domain("admin", "ux-onderzoeken.rijksapps.nl", "odcn-production")
+        assert is_valid is True, error
+
+    def test_the_form_rules_still_apply_on_a_tenant_domain(self):
+        """De vormregels zijn domeinonafhankelijk en gaan niet mee de deur uit."""
+        for subdomain, fragment in [("", "leeg"), ("a" * 64, "63"), ("-x", "beginnen"), ("x-", "eindigen")]:
+            is_valid, error = validate_subdomain_for_domain(subdomain, "uitbetrouwbarebron.nl", "odcn-production")
+            assert is_valid is False, f"'{subdomain}' hoort ongeldig te zijn"
+            assert fragment in error.lower()
+
+    def test_uppercase_is_lowercased_and_valid(self):
+        is_valid, error = validate_subdomain_for_domain("MY-APP", "uitbetrouwbarebron.nl", "odcn-production")
+        assert is_valid is True, error
+
+    def test_case_is_no_way_around_the_list(self):
+        """Hoofdletters zijn in DNS hetzelfde adres. Zonder normalisatie van beide kanten
+        is ``ADMIN`` of ``RIJKS.APP`` een omweg om de lijst heen."""
+        assert validate_subdomain_for_domain("ADMIN", "rijks.app", "odcn-production")[0] is False
+        assert validate_subdomain_for_domain("admin", "RIJKS.APP", "odcn-production")[0] is False
+
+    def test_the_cluster_decides_which_zones_are_ours(self):
+        """Op sandboxed-local is robbertuittenbroek.nl WEL van ons, dus geldt de lijst daar.
+        Dat is de clusterconfig die zijn werk doet."""
+        assert validate_subdomain_for_domain("admin", "robbertuittenbroek.nl", "sandboxed-local")[0] is False
+        assert validate_subdomain_for_domain("admin", "robbertuittenbroek.nl", "odcn-production")[0] is True
 
 
 class TestSubdomainValidationInRegister:
@@ -136,8 +200,11 @@ class TestSubdomainValidationInRegister:
         assert "beginnen" in str(exc_info.value).lower()  # Dutch: "mag niet beginnen met"
 
     @pytest.mark.asyncio
-    async def test_register_rejects_reserved_subdomain(self):
+    async def test_register_rejects_reserved_subdomain_on_a_platform_domain(self):
         """register raises SubdomainValidationError for reserved subdomain.
+
+        Domein en cluster horen bij elkaar: op ``local`` is ``rijks.app`` geen zone van ons,
+        en dan legt deze toets het verkeerde gedrag vast.
 
         NOTE: Error message is intentionally generic to prevent enumeration attacks.
         """
@@ -149,11 +216,66 @@ class TestSubdomainValidationInRegister:
                 base_domain="rijks.app",
                 project_name="my-project",
                 deployment_name="prod",
-                cluster="local",
+                cluster="odcn-production",
             )
 
         # Generic error message - no "gereserveerd" to prevent enumeration
         assert "niet beschikbaar" in str(exc_info.value).lower()  # Dutch: "is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_register_lets_a_reserved_name_through_on_a_tenant_domain(self):
+        """Het publicatiepad is de andere helft: repareer je alleen het formulier, dan komt
+        de naam door de wizard en klapt het uitrollen alsnog hier.
+
+        De naam strandt pas op de beschikbaarheidscheck, en die andere uitzondering is juist
+        het bewijs: de reservering bijt niet meer, de check erna wel.
+        """
+        connector = SubdomainConnector()
+
+        with (
+            patch.object(SubdomainConnector, "check_availability", AsyncMock(return_value=False)),
+            pytest.raises(SubdomainNotAvailableError),
+        ):
+            await connector.register(
+                subdomain="test",
+                base_domain="uitbetrouwbarebron.nl",
+                project_name="ubbw-0i1",
+                deployment_name="prod",
+                cluster="odcn-production",
+            )
+
+    @pytest.mark.asyncio
+    async def test_register_or_update_lets_a_reserved_name_through_on_a_tenant_domain(self):
+        """De tweede ingang van het publicatiepad, dezelfde meting."""
+        connector = SubdomainConnector()
+
+        with (
+            patch.object(SubdomainConnector, "get_by_deployment", AsyncMock(return_value=None)),
+            patch.object(SubdomainConnector, "check_availability", AsyncMock(return_value=False)),
+            pytest.raises(SubdomainNotAvailableError),
+        ):
+            await connector.register_or_update_for_deployment(
+                subdomain="test",
+                base_domain="uitbetrouwbarebron.nl",
+                project_name="ubbw-0i1",
+                deployment_name="prod",
+                cluster="odcn-production",
+            )
+
+    @pytest.mark.asyncio
+    async def test_register_or_update_still_refuses_a_reserved_name_on_a_platform_domain(self):
+        connector = SubdomainConnector()
+
+        with pytest.raises(SubdomainValidationError) as exc_info:
+            await connector.register_or_update_for_deployment(
+                subdomain="admin",
+                base_domain="rijks.app",
+                project_name="my-project",
+                deployment_name="prod",
+                cluster="odcn-production",
+            )
+
+        assert "niet beschikbaar" in str(exc_info.value).lower()
 
 
 class TestValidateBaseDomain:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from opi.services.catalog.base import Service
 from opi.services.catalog.redis.variables import RedisVariables
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 
 
 class NamespaceRedisService(Service):
@@ -16,7 +16,7 @@ class NamespaceRedisService(Service):
         help_template="namespace_redis/help.md",
         icon="zandloper",
         color="rood",
-        binding=ServiceBinding.DEPLOYMENT,
+        shared_per_deployment=True,
         secret_class="RedisSecret",
         variables=[var.value for var in RedisVariables],
         hidden=True,

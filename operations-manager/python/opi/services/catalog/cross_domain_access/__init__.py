@@ -45,7 +45,7 @@ from opi.services.catalog.cross_domain_access.config_model import CrossDomainAcc
 from opi.services.catalog.cross_domain_access.merge import IncompleteRuleError, merge_rules, to_merged_rule
 from opi.services.catalog.cross_domain_access.resolve import ResolvedRule, resolve_rules
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceType
 from opi.utils.naming import generate_network_policy_name, generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -106,11 +106,13 @@ class CrossDomainAccessService(Service):
         help_template="cross_domain_access/help.md",
         icon="netwerk",
         color="donkerblauw",
-        # The rules apply per deployment (each gets its own NetworkPolicy); the effect
-        # lives entirely in generated manifests, so there is nothing server-side to clean
-        # up -- the generic manifest prune removes the policy files when the service is off.
-        binding=ServiceBinding.DEPLOYMENT,
+        # De componentkeuze bestaat wel, maar zit in de regel zelf (``to.component`` /
+        # ``from.component``) en dat is configuratie. Een vinkje voegt er niets aan toe.
+        selectable_per_component=False,
         variables=[],
+        # Het effect leeft volledig in gegenereerde manifesten, dus er is niets
+        # server-side op te ruimen: de generieke manifestprune haalt de policybestanden
+        # weg zodra de dienst uit gaat.
         cleanup_strategy=CleanupStrategy.NONE,
     )
     config_model = CrossDomainAccessConfig

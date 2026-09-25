@@ -23,7 +23,7 @@ from opi.services.catalog.base import (
 from opi.services.catalog.events import on
 from opi.services.catalog.sleep_mode.config_model import SleepModeConfig
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ActionEvent, ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ActionEvent, ServiceType, UIEvent
 
 
 class SleepModeService(Service):
@@ -37,7 +37,7 @@ class SleepModeService(Service):
         help_template="sleep_mode/help.md",
         icon="klok",
         color="donkerblauw",
-        binding=ServiceBinding.DEPLOYMENT,
+        selectable_per_component=False,
         # Selectable in the wizard with its own project-level config section
         # (SleepModeService.config_form_section). A cluster-wide default still
         # applies, and `match` scopes which deployments it affects.

@@ -19,6 +19,7 @@ from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
+from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,10 @@ logger = logging.getLogger(__name__)
 #: That is not an error the user did anything about -- a pod that never crashed simply has
 #: no earlier log -- so it belongs in the panel as a sentence, not as raw stderr.
 _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
+
+#: Types left out of the ArgoCD-ownership inventory. Events are never applied by ArgoCD,
+#: so they carry no ownership mark, but a busy namespace holds thousands of them.
+_TRACKING_SWEEP_SKIPPED_TYPES = {"events", "events.events.k8s.io"}
 
 
 def is_previous_attempt_missing(stderr_text: str) -> bool:
@@ -673,6 +678,209 @@ class KubectlConnector:
             return False
         logger.warning(f"Could not determine existence of ArgoCD Application '{app_name}': {stderr}")
         return None
+
+    async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
+        """
+        Remove the running operation from an ArgoCD Application.
+
+        A sync operation that waits on health blocks the deletion: while it runs, the
+        resources-finalizer never gets to its cascade, and it never ends when the
+        workloads it waits for cannot become healthy (an unpullable image, a crashloop).
+        Removing ``/operation`` releases that block, and the cascade then runs in seconds.
+        This is what a delete must do FIRST - removing the finalizer instead takes away
+        the lock that would have done the cascade, and leaves every resource behind.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
+
+        Returns:
+            True if no running operation remains (removed, none present, or app gone),
+            False if the patch failed for another reason.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        logger.info(f"Removing any running operation from ArgoCD Application '{app_name}' in namespace '{namespace}'")
+
+        stdout, stderr, code = await self._run_kubectl_command(
+            [
+                "patch",
+                "application",
+                app_name,
+                "-n",
+                namespace,
+                "--type",
+                "json",
+                "-p",
+                '[{"op":"remove","path":"/operation"}]',
+            ]
+        )
+
+        if code == 0:
+            logger.info(f"Removed the running operation from ArgoCD Application '{app_name}'")
+            return True
+
+        lowered = stderr.lower()
+        # A json-patch remove on an absent path is rejected, which is the normal case:
+        # the Application simply has no operation running. That is the state we wanted.
+        if "missing path" in lowered or "does not apply" in lowered:
+            logger.debug(f"ArgoCD Application '{app_name}' has no running operation")
+            return True
+        if "notfound" in lowered.replace(" ", ""):
+            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+            return True
+
+        logger.error(f"Failed to remove the running operation from ArgoCD Application '{app_name}': {stderr}")
+        return False
+
+    async def get_argocd_application_destination_namespace(
+        self, app_name: str, namespace: str | None = None
+    ) -> str | None:
+        """
+        The namespace an ArgoCD Application deploys into (``spec.destination.namespace``).
+
+        Read it while the Application still exists: once it is gone, nothing links its
+        leftover resources back to a namespace to look in.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
+
+        Returns:
+            The destination namespace, or None if it could not be read.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "jsonpath={.spec.destination.namespace}"]
+        )
+        if code != 0 or not stdout.strip():
+            logger.warning(f"Could not read the destination namespace of ArgoCD Application '{app_name}': {stderr}")
+            return None
+        return stdout.strip()
+
+    async def list_argocd_applications(self, namespace: str | None = None) -> list[dict[str, Any]]:
+        """
+        Every ArgoCD Application CR, read through the Kubernetes API.
+
+        Args:
+            namespace: Namespace holding the Application CRs; defaults to this instance's cluster
+
+        Returns:
+            The Application CRs, empty when the query failed.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        stdout, stderr, code = await self._run_kubectl_command(["get", "applications", "-n", namespace, "-o", "json"])
+        if code != 0:
+            logger.error(f"Failed to list ArgoCD Applications in namespace '{namespace}': {stderr}")
+            return []
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse the ArgoCD Application list: {e}")
+            return []
+        return data.get("items", []) if isinstance(data, dict) else []
+
+    async def list_namespaced_resource_types(self) -> list[str] | None:
+        """
+        The namespaced resource types this cluster can list and delete.
+
+        Discovered rather than hard-coded: a fixed list is a guaranteed blind spot for a
+        sweep whose whole job is finding what was left behind.
+
+        Returns:
+            kubectl type names (``secrets``, ``deployments.apps``, ...) minus
+            ``_TRACKING_SWEEP_SKIPPED_TYPES``, or ``None`` when the discovery itself
+            failed. A failed discovery must not read as 'this cluster has no types':
+            every namespace would then inventory as empty and a sweep would report
+            SCHOON without having looked at anything (RC-226).
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["api-resources", "--namespaced=true", "--verbs=list,delete", "-o", "name"]
+        )
+        if code != 0:
+            logger.error(f"Failed to list namespaced api-resources: {stderr}")
+            return None
+
+        types = []
+        for line in stdout.splitlines():
+            name = line.strip()
+            if not name or name in _TRACKING_SWEEP_SKIPPED_TYPES:
+                continue
+            types.append(name)
+        return types
+
+    async def list_tracked_resources(
+        self, namespace: str, resource_types: list[str] | None = None
+    ) -> tuple[list[TrackedResource], bool] | None:
+        """
+        Every resource in a namespace that ArgoCD marked as its own.
+
+        Args:
+            namespace: The namespace to inventory
+            resource_types: kubectl type names to query; defaults to every namespaced
+                type this cluster can list and delete
+
+        Returns:
+            The tracked resources found plus whether the inventory is COMPLETE, or ``None``
+            when the namespace could not be inventoried at all. Three answers and not two,
+            because a ``kubectl get`` over many types exits non-zero when ONE of them fails
+            and still prints the rest. Both callers act on all three, and for the same
+            reason: a force that reads a failed or a half answer as 'nothing here' deletes
+            nothing and reports success, and a sweep that does so reports SCHOON (RC-226).
+        """
+        types = resource_types if resource_types is not None else await self.list_namespaced_resource_types()
+        if not types:
+            logger.error(f"Cannot inventory namespace '{namespace}': no resource types to query")
+            return None
+
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", ",".join(types), "-n", namespace, "--ignore-not-found=true", "-o", "json"],
+            timeout=120,
+        )
+        if not stdout.strip():
+            if code != 0:
+                logger.error(f"Failed to inventory tracked resources in namespace '{namespace}': {stderr}")
+                return None
+            return [], True
+        complete = True
+        if code != 0:
+            # kubectl reports a non-zero exit when ONE of the queried types fails (an
+            # unavailable aggregated API, or a type this service account may not list in
+            # this namespace) but still prints what it did get. Keeping that part beats
+            # reporting nothing, as long as the caller hears that it IS a part: the types
+            # that stayed silent are exactly where a leftover resource hides.
+            complete = False
+            logger.warning(f"Partial inventory of namespace '{namespace}' (kubectl reported: {stderr})")
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse the resource inventory of namespace '{namespace}': {e}")
+            return None
+
+        items = data.get("items", []) if isinstance(data, dict) else []
+        tracked = [resource for item in items if (resource := tracked_resource_from_item(item)) is not None]
+        logger.debug(f"Namespace '{namespace}': {len(tracked)} of {len(items)} resources are ArgoCD-owned")
+        return tracked, complete
+
+    async def delete_tracked_resources(self, resources: list[TrackedResource]) -> list[TrackedResource]:
+        """
+        Delete tracked resources, one by one.
+
+        Args:
+            resources: The resources to delete
+
+        Returns:
+            The resources that could NOT be deleted.
+        """
+        failed = []
+        for resource in resources:
+            deleted = await self.delete_resource(resource.kubectl_type, resource.name, resource.namespace)
+            if not deleted:
+                failed.append(resource)
+        if failed:
+            logger.error(f"Failed to delete {len(failed)} of {len(resources)} tracked resources")
+        return failed
 
     async def wait_for_capsule_tenant_label(self, namespace: str, timeout: int = 30) -> bool:
         """

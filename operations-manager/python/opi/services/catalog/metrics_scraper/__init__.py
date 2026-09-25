@@ -16,7 +16,7 @@ from opi.services.catalog.metrics_scraper.config_model import MetricsScraperConf
 from opi.services.catalog.metrics_scraper.editables import METRICS_PATH_EDITABLE, METRICS_PORT_EDITABLE
 from opi.services.catalog.metrics_scraper.variables import MetricsScraperVariables
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 from opi.utils.secrets import MetricsAuthSecret
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,6 @@ class MetricsScraperService(Service):
         help_template="metrics_scraper/help.md",
         icon="grafiek",
         color="hemelblauw",
-        binding=ServiceBinding.COMPONENT,
         variables=[v.value for v in MetricsScraperVariables],
     )
     config_model = MetricsScraperConfig

@@ -136,7 +136,7 @@ def test_the_running_pod_received_the_address(vlam_project: CreatedProject) -> N
 
 @pytest.mark.timeout(600)
 def test_the_egress_policy_opens_only_the_proxy(vlam_project: CreatedProject) -> None:
-    """One policy for the deployment, egress only, pinned to the proxy pod."""
+    """One policy per component that ticked the service, egress only, pinned to the proxy pod."""
     if not cluster.kubectl_available():
         pytest.skip("kubectl niet beschikbaar; deze meting hoort op de sandboxmachine")
     endpoint = vlam_endpoint(_CLUSTER)
@@ -153,7 +153,9 @@ def test_the_egress_policy_opens_only_the_proxy(vlam_project: CreatedProject) ->
 
     spec = policies[0]["spec"]
     assert spec["policyTypes"] == ["Egress"]
-    assert spec["podSelector"]["matchLabels"]["deployment"] == vlam_project.deployment_name
+    # Het project van deze meting heeft een component, en de wizard vinkt de dienst daar
+    # standaard aan.
+    assert spec["podSelector"]["matchLabels"]["app"].startswith(f"{vlam_project.deployment_name}-")
     peer = spec["egress"][0]["to"][0]
     assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == endpoint.namespace
     assert peer["podSelector"]["matchLabels"] == endpoint.pod_labels
