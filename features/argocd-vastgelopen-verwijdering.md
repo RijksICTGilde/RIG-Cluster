@@ -131,9 +131,8 @@ destructief op:
 Allebei melden ze daarom wat ze niet konden plaatsen, met naam en toenaam. Welke van de
 twee lezingen klopt is aan de resource zelf te zien, en dat is mensenwerk.
 
-Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee; op de 63
-doet hij altijd mee, ook wanneer hij exact gelijk is aan de gezochte naam. Een naam uit
-de **annotatie** doet nooit mee: die kent de grens niet. Op `odcn-production`, het enige
+Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee. Een naam uit
+de **annotatie** ook niet: die kent de grens niet. Op `odcn-production`, het enige
 clustertype dat op de annotatie merkt en ook het clustertype waar dit plan over gaat, is
 de vergelijking dus gewoon exact.
 

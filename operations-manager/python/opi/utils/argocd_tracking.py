@@ -116,8 +116,7 @@ def may_be_cut_from(resource: TrackedResource, application_names: set[str]) -> b
     the cut form of every longer name starting with it, and both can be running at the same
     time: on a label cluster every resource of neighbour ``<value>-x`` carries ``<value>``.
     Answering False there let the force delete a living neighbour's PVC and report success
-    (RC-226, review round 11). So the only name that cannot make a mark ambiguous is the
-    mark itself.
+    (RC-226, review round 11).
     """
     if not resource.truncatable:
         return False
