@@ -83,9 +83,7 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
   (`secret_values`, `get_json_strict`, `resource_names`, `probe_in_pod`, ...) plus
   `run_psql` voor SQL tegen een databaseserver op het cluster, in een eigen pod. Het
   wachtwoord en het statement gaan daar over STDIN naar een `sh -s` in die pod, en niet als
-  `--env`/argument: alles in de argv van `kubectl run` komt in klare tekst in de podspec
-  terecht (`kubectl get pod -o yaml`, etcd, de body van het create-verzoek) en in de
-  procestabel van de machine die de suite draait.
+  `--env`/argument; `_run_psql_once` schrijft op waar die argv allemaal terechtkomt.
 - `zad_cli.py::ZadCli` - roept de zad-cli aan tegen de sandbox met een projectsleutel en
   geeft exitcode, stdout en stderr terug (`run(...)`, `assert_ok()`, `assert_faalt()`,
   `json()`). De CLI woont in een eigen repository en wordt hier niet meegeleverd:

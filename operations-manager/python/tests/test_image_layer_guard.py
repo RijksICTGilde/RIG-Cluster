@@ -260,12 +260,8 @@ class TestPinnedTools:
 
     @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
     def test_de_mc_checksum_is_een_literaal_en_komt_niet_van_de_download(self, dockerfile: Path) -> None:
-        """Een `.sha256sum` naast de binary komt van dezelfde bron als de binary.
-
-        Die controleert dus alleen de overdracht: wie het artefact kan wijzigen, wijzigt het
-        bestand ernaast mee, en dan is het geen grendel tegen een gewijzigd artefact. Een
-        literale som in het Dockerfile is dat wel, en een nieuwe waarde is een regel in een
-        diff die iemand goedkeurt.
+        """Waarom de som literaal staat en niet naast de binary wordt opgehaald: zie de
+        `ARG MC_SHA256_*`-regels in `operations-manager/Dockerfile`.
         """
         lines = [line for _, line in _instructions(dockerfile.read_text())]
 
