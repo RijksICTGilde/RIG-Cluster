@@ -150,7 +150,8 @@ maar ook uit een script dat de regels niet kent. Drie dingen zijn daarvoor dicht
   `UniqueSchemaEnforcer` en keek alleen naar de deployments die er op dat moment waren,
   dus een postfix die vandaag past werd stil ongeldig zodra er een langere deploymentnaam
   bijkwam -- en dat bleek dan pas bij het uitrollen. `validate_database_schema_names`
-  draait hem nu in `validate_project_structure`, waar elke opslag langskomt, dus het
+  hangt nu aan de haak `validate_project` van de dienst en draait daarmee in
+  `validate_project_structure`, waar elke opslag langskomt, dus het
   toevoegen van die deployment wordt geweigerd met een melding die zowel de deployment als
   de postfix noemt. Een gemarkeerd schema telt niet mee: dat is op weg naar buiten.
 
