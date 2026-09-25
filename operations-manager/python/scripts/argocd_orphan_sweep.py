@@ -123,9 +123,7 @@ def undecidable_resources(tracked: list[TrackedResource], existing_applications:
     without saying so is a real orphan answered with SCHOON.
 
     A mark that IS the name of a living Application is nothing to report: the resource is
-    then that one's or the longer sister's, and neither of those is an orphan. That is this
-    caller's own condition, not the predicate's, because the force draws the opposite
-    conclusion from the same equality.
+    then that one's or the longer sister's, and neither of those is an orphan.
     """
     return [
         resource
