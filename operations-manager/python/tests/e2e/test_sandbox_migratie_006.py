@@ -73,7 +73,13 @@ def _kubectl(args: list[str], *, timeout: float = 60.0) -> subprocess.CompletedP
 
 
 @pytest.fixture(scope="module")
-def db_wachtwoord() -> str:
+def db_wachtwoord(sandbox_url: str) -> str:
+    """Het admin-wachtwoord van de sandbox-database.
+
+    ``sandbox_url`` wordt hier niet gebruikt maar wel gevraagd: die fixture is de poort die
+    de hele suite dicht houdt zonder ``E2E_BASE_URL``. Zonder hem draaien deze toetsen op
+    welk cluster ``kubectl`` ook maar aanwijst, en dat is precies wat de afspraak voorkomt.
+    """
     gelezen = _kubectl(["-n", _NAMESPACE, "get", "secret", _ADMIN_SECRET, "-o", "jsonpath={.data.password}"])
     if gelezen.returncode != 0 or not gelezen.stdout.strip():
         pytest.skip(f"geen toegang tot {_ADMIN_SECRET} in {_NAMESPACE}: {gelezen.stderr[:200]}")
@@ -117,8 +123,12 @@ def _getallen(uitvoer: str) -> list[int]:
     return [int(regel.strip()) for regel in uitvoer.splitlines() if regel.strip().lstrip("-").isdigit()]
 
 
-def test_de_backfill_is_die_uit_de_migratie() -> None:
+def test_de_backfill_is_die_uit_de_migratie(sandbox_url: str) -> None:
     """De tekst hierboven moet die van de migratie zijn, anders meet de rest niets.
+
+    Leest alleen van schijf en heeft geen cluster nodig, maar vraagt toch ``sandbox_url``:
+    zo heeft deze module EEN regel over wanneer hij draait, in plaats van een toets die
+    stilletjes meedoet in een gewone unittestronde.
 
     Vergeleken op de kenmerkende regels en niet op het hele blok: de migratie schrijft in
     `project_reconciliation` en deze toets in een eigen tabel, dus die ene regel verschilt
