@@ -69,11 +69,13 @@ KNOWN_SYNC_OPTIONS = {
 def _handwritten_applications() -> list[tuple[str, list[str]]]:
     """Every Application manifest under the rig-system overlays, with its syncOptions.
 
-    Read from a glob rather than a list, so an overlay added later is covered without
-    anyone remembering to add it here.
+    Found by reading every yaml in the tree and keeping what declares ``kind: Application``,
+    rather than by matching a filename. An overlay or a manifest added later is then covered
+    without anyone remembering to add it here, and one that is renamed or moved into a
+    subdirectory stays covered instead of dropping out of the parametrize unnoticed.
     """
     found: list[tuple[str, list[str]]] = []
-    for path in sorted(_OVERLAYS.glob("*/argocd-application-*.yaml")):
+    for path in sorted(_OVERLAYS.rglob("*.yaml")):
         for document in yaml.safe_load_all(path.read_text()):
             if not document or document.get("kind") != "Application":
                 continue
@@ -90,8 +92,9 @@ _ODCN_ARGOCD = _OVERLAYS / "odcn-production" / "argocd-deployment.yaml"
 
 
 def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
-    """Without this the tests below pass on an empty list, which is how a moved file or a
-    renamed overlay would turn the whole guard off."""
+    """An empty parametrize skips rather than fails, so without this the two tests below
+    would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
+    wrong ``parents`` index leaves behind."""
     assert (
         "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-production-infrastructure.yaml"
         in _IDS
@@ -99,8 +102,12 @@ def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
     assert "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-ron-infrastructure.yaml" in _IDS
 
 
+# The name says *handwritten* because the RC-226 half of this file lands in this same
+# module with its own version of this check over the *generated* Application. Two test
+# functions of one name in one module is not a union: the later definition shadows the
+# earlier one, and pytest reports neither a failure nor a warning.
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
-def test_every_sync_option_is_one_argocd_knows(path: str, sync_options: list[str]) -> None:
+def test_every_sync_option_on_a_handwritten_application_is_one_argocd_knows(path: str, sync_options: list[str]) -> None:
     unknown = [option for option in sync_options if option.split("=", 1)[0] not in KNOWN_SYNC_OPTIONS]
     assert unknown == [], f"{path} carries sync options ArgoCD ignores: {unknown}"
 
