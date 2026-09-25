@@ -42,16 +42,25 @@ waarna de wizardhelper de link naar de detailpagina nooit ziet en op zijn eigen 
 strandt. De applicatie komt er daarna gewoon (nagemeten: `speel-2il-productie` stond op
 `Synced` en de pod draaide, kort nadat de taak al als mislukt was weggeschreven).
 
-**Het is niet systematisch, het hangt aan de drukte van het cluster.** In dezelfde ronde
-haalden projecten met dezelfde diensten het wel binnen de tijd, ook met `postgresql-database`
-erbij. Wat het betekent voor wie hier toetsen draait:
+**Het IS systematisch, alleen niet elke keer duur genoeg.** Dat is in de review van deze PR
+nagemeten en het corrigeert de eerdere lezing "het hangt aan de drukte van het cluster". De
+oorzaak is een ordening die altijd fout staat: de ServiceAccount waar de podspec naar wijst
+komt NA de Deployment, want hij zit in een andere ArgoCD-applicatie. In `rig-speel-wm1` was
+hij 173s te laat, met `FailedCreate ... serviceaccount "speel-wm1-sa" not found` ertussen, en
+haalde de taak zijn 300s niet. In `rig-speel-4d2` stond dezelfde `FailedCreate`, maar daar
+was hij 54s te laat en haalde hij het net. De drukte van het cluster beslist dus alleen of de
+vertraging onder het budget blijft, niet of hij er is. **Gemeten en stuk**, en dat staat als
+RC-229; het mechanisme staat in punt 4 van "Wat hieruit volgt". Wat het betekent voor wie hier
+toetsen draait:
 
 - **een sandboxsuite is niet betrouwbaar naast een andere suite**, en ook niet direct achter
   een reeks aanmaakrondes aan. Laat het cluster eerst leeglopen;
-- **de 300s die OPI aanhoudt voor de ArgoCD-sync is op dit cluster krap.** Een taak die daar
-  overheen gaat wordt als mislukt vastgelegd terwijl het project een halve minuut later
-  draait. Dat is een uitspraak over deze sandbox, niet over productie, maar het maakt elke
-  aanmaaktoets hier wankel.
+- **de 300s die OPI aanhoudt voor de ArgoCD-sync is niet krap, hij is te kort voor een
+  vertraging die OPI zelf veroorzaakt.** Een taak die daar overheen gaat wordt als mislukt
+  vastgelegd terwijl het project een halve minuut later draait;
+- **elke extra opbouw van een module-fixture is nog een lot in deze loterij.** Daarom houdt
+  `tests/e2e/conftest.py` de toetsen van een sandboxmodule bij elkaar: zonder dat brak pytest
+  de modulegrens op en maakte een module meer dan een project per run aan.
 
 Een module-ERROR heeft op deze suite nog een TWEEDE oorzaak, en die is van de toetsen zelf: het
 `--timeout=300` van `task test-e2e-sandbox` begrenst ook het opzetten van een module-fixture, dus
@@ -252,6 +261,13 @@ De backfill leverde deze keer **3 rijen tegen 3 uit de oude meting**. De eerdere
 1, 0 en 0 rijen (zie de fixture `taken`), dus die vergeleken de gelijkheid grotendeels op een
 lege verzameling. Nu is hij op een niet-lege gemeten.
 
+`foutmeldingen` en `speelruimte` zijn daarna nog een keer SAMEN in een pytest-aanroep
+gedraaid, want dat is de vorm van `task test-e2e-sandbox` en dat is waar de gesplitste
+modulegrens zichtbaar werd: **13 passed, 2 skipped in 179,6s**, met een project
+(`speel-ghh`). De gang ervoor gaf op dezelfde twee modules 12 passed, 2 skipped en 1 ERROR,
+met twee projecten en de twee parametrisaties van dezelfde toets bijna zeven minuten na
+elkaar. De twee skips zijn de CLI-toetsen.
+
 ## Wat hieruit volgt
 
 Wat buiten deze ronde valt en een eigenaar nodig heeft:
@@ -275,7 +291,18 @@ Wat buiten deze ronde valt en een eigenaar nodig heeft:
    niet: dat het zonder dat secret niet zou lukken. Wie die stap wil, heeft op deze sandbox een
    image nodig dat anoniem echt geweigerd wordt.
 
-4. **Het pull-secret komt na de workload.** Het secret landt via de `_project`-applicatie en de
-   pod via de deployment-applicatie; in de meting stond de pod er ruim twee minuten eerder. Dat
-   herstelt zichzelf (kubelet probeert opnieuw), maar op een registry die anoniem weigert en een
-   node zonder het image in zijn cache is dat zolang `ImagePullBackOff`.
+4. **Het projectniveau komt na de workload, en dat is RC-229.** Alles wat via de
+   `_project`-applicatie landt kan na de pod van de deployment-applicatie komen: het zijn twee
+   applicaties met twee syncs. Twee symptomen gemeten, met hetzelfde mechanisme en een heel
+   ander prijskaartje. Het pull-secret stond er ruim twee minuten later dan de pod; dat herstelt
+   zichzelf (kubelet probeert opnieuw), maar op een registry die anoniem weigert en een node
+   zonder het image in zijn cache is dat zolang `ImagePullBackOff`. De ServiceAccount stond er
+   173s later dan de Deployment die hem noemt, en dat herstelt zich niet binnen de 300s die de
+   aanmaaktaak zichzelf geeft: de aanmaak meldt zich mislukt terwijl het project er daarna komt.
+   Zie de nulmeting hierboven voor de meting.
+5. **Een mislukte aanmaak laat zijn projectbestand staan.** De opruiming van een sandboxmodule
+   hangt aan de naam die de helper pas bij SUCCES teruggeeft, terwijl het projectbestand al in
+   `zad-projects` staat zodra de aanmaaktaak begint. De app-of-apps maakt de applicaties daar
+   steeds opnieuw uit aan, dus zo'n wees verdwijnt niet door hem op het cluster op te ruimen.
+   Drie van deze ronde zijn met de hand weggehaald (`speel-3ub`, `speel-wm1`, `zadcl-huv`); het
+   gat zit in `tests/e2e/helpers/lifecycle.py` en staat als RC-230.
