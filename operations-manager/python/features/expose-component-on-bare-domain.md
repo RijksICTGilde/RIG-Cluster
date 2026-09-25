@@ -31,12 +31,18 @@ deployments:
 
 ## How It Works
 
-When `expose-component-on-bare-domain` is set:
+The apex hangs on the approval of the base domain, not on this field alone. With the domain
+approved for this project:
 
 1. An additional Kubernetes Ingress is created for the bare domain (`voorbeeld.nl`), pointing to the selected component's service
 2. The bare domain gets its own TLS certificate via cert-manager
 3. The bare domain is registered in the subdomain registry (as `@.voorbeeld.nl`) to prevent other projects from claiming it
 4. Keycloak redirect URIs include the bare domain
+
+Without approval none of the four happens and the deployment publishes on the cluster
+address; the form saves the setting anyway, with a warning that says to request the domain.
+The split between saving and applying is in
+[webadres-onder-de-dienst.md](../../../features/webadres-onder-de-dienst.md).
 
 ## Wizard
 
@@ -61,4 +67,4 @@ The client must configure an **A record** for the bare/apex domain pointing to t
 
 The bare domain is tracked in the subdomain registry with `@` as the subdomain value (DNS convention for apex). This prevents multiple projects from claiming the same bare domain.
 
-When the bare domain component is deselected (set to none), the registry entry is automatically cleaned up.
+When the bare domain component is deselected (set to none), or the domain's approval is withdrawn, the registry entry is automatically cleaned up.

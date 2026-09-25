@@ -5,7 +5,7 @@ from __future__ import annotations
 from opi.services.catalog.base import ProjectManifestContext, ProjectManifestSpec, Service
 from opi.services.catalog.platform.variables import PlatformVariables
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ServiceKind, ServiceType
 from opi.utils.naming import generate_project_service_account_name
 
 
@@ -17,7 +17,6 @@ class PlatformService(Service):
         help_template="platform/help.md",
         icon="info",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         secret_class="PlatformSecret",
         variables=[var.value for var in PlatformVariables],
         # Always on, never chosen by a project -> a system service. kind=SYSTEM

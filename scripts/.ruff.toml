@@ -1,0 +1,5 @@
+# scan-secrets.py draait op een kale python3 (zie scripts/README.md), en met OPI's
+# target-version py314 SCHRIJFT `ruff format` de PEP 758-vorm `except A, B:` terug, die op 3.13
+# en ouder een SyntaxError is. Vandaar: alles uit de OPI-config, alleen de target-version omlaag.
+extend = "../operations-manager/python/pyproject.toml"
+target-version = "py312"

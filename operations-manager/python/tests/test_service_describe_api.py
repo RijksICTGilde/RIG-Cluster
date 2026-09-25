@@ -55,7 +55,7 @@ def test_catalog_lists_every_registered_service() -> None:
 
 @pytest.mark.parametrize("service", _SERVICES, ids=lambda s: s.value)
 def test_catalog_reports_the_declared_nature_of_a_service(service: ServiceType) -> None:
-    """kind/binding/hidden/requires come straight off the definition.
+    """kind/selection/hidden/requires come straight off the definition.
 
     Without these a client cannot tell what it may pick itself (`user`), what the
     platform always runs (`system`), what is deliberately kept out of the picker
@@ -65,7 +65,8 @@ def test_catalog_reports_the_declared_nature_of_a_service(service: ServiceType) 
     entry = next(e for e in _catalog().services if e.name == service.value)
 
     assert entry.kind is definition.kind
-    assert entry.binding is definition.binding
+    assert entry.selectable_per_component is definition.selectable_per_component
+    assert entry.shared_per_deployment is definition.shared_per_deployment
     assert entry.hidden is definition.hidden
     assert entry.requires == list(definition.requires)
 
@@ -101,7 +102,8 @@ def test_every_service_has_a_describe_without_empty_mandatory_fields(service: Se
         "the explanation is the service's own help document, not a second text written for the API"
     )
     assert described.kind is not None
-    assert described.binding is not None
+    assert isinstance(described.selectable_per_component, bool)
+    assert isinstance(described.shared_per_deployment, bool)
     assert isinstance(described.variables, list)
     assert isinstance(described.requires, list)
     assert described.cleanup_strategy is not None
@@ -134,7 +136,8 @@ def test_the_describe_agrees_with_the_catalog_row(service: ServiceType) -> None:
 
     assert described.description == entry.description
     assert described.kind is entry.kind
-    assert described.binding is entry.binding
+    assert described.selectable_per_component is entry.selectable_per_component
+    assert described.shared_per_deployment is entry.shared_per_deployment
     assert described.hidden is entry.hidden
     assert described.requires == entry.requires
     assert described.configurable is entry.configurable

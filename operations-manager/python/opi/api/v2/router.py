@@ -86,7 +86,11 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import (
+    get_supported_base_domains,
+    validate_base_domain,
+    validate_subdomain_for_domain,
+)
 from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import (
     get_domain_supports_dots,
@@ -145,7 +149,7 @@ from opi.services.services import (
     service_entry_config,
     service_entry_name,
 )
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -642,7 +646,7 @@ async def check_subdomain_availability_v2(
     # oplossen is.
     cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
 
-    is_valid, validation_error = validate_subdomain(subdomain)
+    is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
     if not is_valid:
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
@@ -2034,13 +2038,22 @@ class ServiceCatalogEntry(BaseModel):
             "file. A client can only select a `user` service."
         ),
     )
-    binding: ServiceBinding = Field(
+    selectable_per_component: bool = Field(
         ...,
         description=(
-            "Whether an individual component ticks this service (`component`) or the whole "
-            "deployment gets it at once (`deployment`). This is about selection, not about where "
-            "the config lives: that is `targets`, and the two genuinely differ (keycloak binds "
-            "per component while its config is one realm for the whole project)."
+            "Whether an individual component switches this service on and off for itself. False "
+            "means the project-level selection is the whole answer and the service decides for "
+            "itself where it works. This is about selection, not about where the config lives: "
+            "that is `targets`, and the two genuinely differ (keycloak is ticked per component "
+            "while its config is one realm for the whole project)."
+        ),
+    )
+    shared_per_deployment: bool = Field(
+        ...,
+        description=(
+            "Whether one provision of this service serves a whole deployment, so every component "
+            "of it that takes the service gets the same database, bucket or cache. Independent of "
+            "`selectable_per_component`: postgres is both."
         ),
     )
     hidden: bool = Field(
@@ -2078,7 +2091,8 @@ def _catalog_entry(service_type: ServiceType, service: Any) -> ServiceCatalogEnt
         value_targets=_values_targets(service),
         configurable=bool(targets),
         kind=definition.kind,
-        binding=definition.binding,
+        selectable_per_component=definition.selectable_per_component,
+        shared_per_deployment=definition.shared_per_deployment,
         hidden=definition.hidden,
         requires=list(definition.requires),
     )
@@ -2097,8 +2111,8 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
     OpenAPI document, so a generated client learned nothing here while the per-service
     config endpoints did carry their schema.
 
-    Carries `kind`, `binding`, `hidden` and `requires` as well, so this list alone is
-    enough to *choose* a service -- which one a project may pick, which one the platform
+    Carries `kind`, the two selection flags, `hidden` and `requires` as well, so this list
+    alone is enough to *choose* a service -- which one a project may pick, which one the platform
     runs regardless, and what a service needs before it can be used. Applying it then
     only needs `GET /api/v2/services/{service_name}`.
     """
@@ -2188,8 +2202,11 @@ class ServiceDescription(BaseModel):
     name: str = Field(..., description="Service identifier, as used in the endpoint paths")
     description: str = Field("", description="What the service does, in one Dutch sentence")
     kind: ServiceKind = Field(..., description="`user` when a project chooses it, `system` when the platform runs it")
-    binding: ServiceBinding = Field(
-        ..., description="Whether a component ticks this service or the whole deployment gets it"
+    selectable_per_component: bool = Field(
+        ..., description="Whether a component ticks this service or the project's own choice settles it"
+    )
+    shared_per_deployment: bool = Field(
+        ..., description="Whether one provision of this service serves a whole deployment"
     )
     hidden: bool = Field(..., description="Whether the service is kept out of the service picker")
     explanation: str = Field(
@@ -2311,7 +2328,8 @@ async def describe_service_v2(service_name: str) -> ServiceDescription:
         name=service_type.value,
         description=definition.description,
         kind=definition.kind,
-        binding=definition.binding,
+        selectable_per_component=definition.selectable_per_component,
+        shared_per_deployment=definition.shared_per_deployment,
         hidden=definition.hidden,
         explanation=service_help_markdown(service_type),
         guide=service_guide_markdown(service_type) or None,

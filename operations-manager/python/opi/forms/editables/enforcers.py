@@ -3,16 +3,18 @@ from __future__ import annotations
 from typing import Any
 
 from opi.connectors.subdomain import (
+    BARE_DOMAIN_PLATFORM_MESSAGE,
     BARE_DOMAIN_SUBDOMAIN,
+    bare_domain_not_owned_message,
     get_project_allowed_domain_config,
     get_subdomain_status,
     get_supported_base_domains,
     is_domain_allowed_for_project,
     is_subdomain_allowed_for_project,
-    validate_bare_domain_allowed,
+    validate_subdomain_for_domain,
 )
 from opi.core import config as opi_config
-from opi.core.cluster_config import get_domain_supports_dots
+from opi.core.cluster_config import get_domain_supports_dots, get_ingress_postfix
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
     custom_domain_certificate_note,
@@ -22,7 +24,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
 from opi.services.persistence.subdomain_registry import SubdomainConnector
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import service_entry_name
-from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES
+from opi.utils.naming import DOMAIN_FORMAT_TEMPLATES, resolve_domain_tail
 
 
 class FieldError(ValueError):
@@ -247,20 +249,38 @@ class DomainConfigEnforcer:
         # can set it without ever setting a domain-format. Behind the early return the
         # rule was reachable from the wizard only.
         #
-        # ``validate_bare_domain_allowed`` carries the whole rule: not a platform domain,
-        # and approved for THIS project. The one exemption is the same as for the
-        # subdomain checks below -- an approver revoking a domain a deployment already
-        # exposes on the apex must be able to save that verdict. Only an explicit
-        # ``denied`` status qualifies, and only in the save gate; a domain with no entry
-        # or a self-created ``requested`` entry is refused on every path. Publication
-        # refuses the revoked case outright, so no apex is claimed on it.
+        # Dezelfde goedkeuring als de domein- en subdomeinblokken verderop, dus dezelfde
+        # afhandeling. Alleen het platformdomein weigert onvoorwaardelijk: die apex is van
+        # iedereen op het cluster.
+        #
+        # Een openstaande aanvraag mag door omdat het CLAIMEN elders wordt tegengehouden
+        # (``is_deployment_domain_approved`` op het publicatiepad). Weigeren had hier geen
+        # uitgang: de aanvraag die het zou oplossen wordt pas bij PRE_SAVE geschreven
+        # (RIG-Cluster#179). De waarschuwing wordt daarom vastgehouden, om dezelfde reden
+        # als ``certificate_note`` hieronder.
         bare_domain_component = get_domain_setting(dep, DomainSetting.BARE_DOMAIN_COMPONENT)
+        bare_field = domain_setting_path(DomainSetting.BARE_DOMAIN_COMPONENT, self.deployment_index)
+        bare_domain_note: str | None = None
         if bare_domain_component and actual_domain:
-            bare_config = get_project_allowed_domain_config(value, actual_domain)
-            bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
-            if self.denied_blocks or bare_status != "denied":
-                validate_bare_domain_allowed(actual_domain, supported, value)
-            await self._check_bare_domain_availability(actual_domain, context)
+            if actual_domain.lower() in supported:
+                raise FieldError(bare_field, BARE_DOMAIN_PLATFORM_MESSAGE)
+            is_owned, _ = is_domain_allowed_for_project(actual_domain, value)
+            if not is_owned:
+                bare_config = get_project_allowed_domain_config(value, actual_domain)
+                bare_status = bare_config.get("status") if isinstance(bare_config, dict) else None
+                if bare_status is None and dep.get("_request-domain"):
+                    pass  # DomainRequestHook schrijft de aanvraag bij het opslaan
+                elif bare_status == "requested":
+                    pass
+                elif bare_status == "denied":
+                    if self.denied_blocks:
+                        raise FieldError(bare_field, bare_domain_not_owned_message(actual_domain))
+                else:
+                    bare_domain_note = (
+                        f"Het kale domein van '{actual_domain}' kan pas gebruikt worden als het domein is "
+                        "goedgekeurd. Vink 'Domein aanvragen' aan."
+                    )
+            await self._check_bare_domain_availability(actual_domain, context, bare_field)
 
         # Whether this cluster can certify the domain at all, computed here for the same
         # reason the bare-domain rule sits here: it does not depend on the domain-format,
@@ -275,6 +295,11 @@ class DomainConfigEnforcer:
 
         domain_format = get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT)
         if not domain_format:
+            # Uitgang voor de vastgehouden waarschuwing, en de enige die de config-PUT
+            # bereikt. Vóór de certificaatnotitie, want hij gaat over het veld dat de
+            # gebruiker zojuist aanvinkte.
+            if bare_domain_note:
+                raise FieldWarning(bare_field, bare_domain_note)
             if certificate_note:
                 raise FieldWarning(certificate_field, certificate_note)
             return value
@@ -340,6 +365,18 @@ class DomainConfigEnforcer:
                     f"Kies een ander URL-formaat of een ander domein."
                 )
 
+        # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
+        # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
+        # basisdomein is de clusterstandaard en dus een eigen zone (op ``actual_domain is
+        # None`` afgaan liet 'admin' daar gewoon door), en dit moet VOOR de
+        # goedkeuringscheck hieronder, die bij een domein zonder allowlist-entry een
+        # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
+        if subdomain and "{subdomain}" in template:
+            reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
+            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
+            if not is_valid and error_msg:
+                raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
+
         # Check domain approval for any non-platform domain (a domain not in the
         # cluster's supported set), whether it arrived via the wizard's custom
         # input ("__custom__") or as a literal base-domain on an API upsert.
@@ -371,8 +408,11 @@ class DomainConfigEnforcer:
                         msg = error_msg or f"Het domein '{actual_domain}' is afgewezen."
                         raise FieldError(domain_field, msg)
                 else:
-                    warning = f"Gebruik van het domein '{actual_domain}' is op aanvraag."
-                    raise FieldWarning(domain_field, f"{warning} {certificate_note}" if certificate_note else warning)
+                    # De kaal-domeinmelding wint, want hij noemt dezelfde goedkeuring en
+                    # zegt erbij wat hem tegenhoudt.
+                    warning = bare_domain_note or f"Gebruik van het domein '{actual_domain}' is op aanvraag."
+                    field = bare_field if bare_domain_note else domain_field
+                    raise FieldWarning(field, f"{warning} {certificate_note}" if certificate_note else warning)
 
         # Check subdomain restrictions for restricted domains
         if subdomain and actual_domain and "{subdomain}" in template:
@@ -448,6 +488,7 @@ class DomainConfigEnforcer:
     async def _check_bare_domain_availability(
         base_domain: str,
         context: dict[str, Any],
+        field_path: str,
     ) -> None:
         """Check if the bare domain is available for registration.
 
@@ -465,7 +506,7 @@ class DomainConfigEnforcer:
         if project_name and registration.get("project_name") == project_name:
             return  # Owned by this project
 
-        raise ValueError(f"Het kale domein '{base_domain}' is niet beschikbaar")
+        raise FieldError(field_path, f"Het kale domein '{base_domain}' is niet beschikbaar")
 
 
 class UniqueInviteKeyEnforcer:

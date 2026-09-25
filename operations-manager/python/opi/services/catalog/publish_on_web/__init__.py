@@ -33,7 +33,7 @@ from opi.services.catalog.publish_on_web.config_model import (
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.publish_on_web.variables import WebVariables
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 
 
 def _to_status(stored: str | None) -> ApprovalStatus:
@@ -244,7 +244,6 @@ class PublishOnWebService(Service):
         guide_template="publish_on_web/guide.md",
         icon="wereldbol",
         color="hemelblauw",
-        binding=ServiceBinding.COMPONENT,
         variables=[var.value for var in WebVariables],
     )
     #: The component model: this service is bound at the component layer, and its entries

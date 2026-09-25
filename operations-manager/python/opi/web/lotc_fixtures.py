@@ -118,7 +118,7 @@ def build_details_context(name: str) -> dict[str, Any] | None:
         "user": {"email": "beheerder@voorbeeld.nl", "name": "Voorbeeldbeheerder"},
         "user_role": "admin",
         "ServiceAdapter": ServiceAdapter,
-        "service_binding_label": {},
+        "service_selection_labels": {},
         "service_config_hint": {},
         "prometheus_available": False,
         "argocd_available": False,
@@ -249,8 +249,7 @@ def page_data(slug: str) -> dict[str, Any]:
 
     if slug == "services":
         # Filteren op "kies ik dit zelf of is het er altijd" - dat is de vraag waarmee
-        # iemand deze pagina opent. De binding (per component, per deployment) staat als
-        # chip op de kaart; dat is verdieping, geen keuze vooraf.
+        # iemand deze pagina opent.
         alle = services_overview(projects)
         return {
             "projects": projects,
@@ -534,21 +533,11 @@ def page_data(slug: str) -> dict[str, Any]:
     return {}
 
 
-# Hoe een dienst gebonden is, in gewone taal. De registry noemt dit "binding" en dat zegt
-# een gebruiker niets; dit zegt wat het voor hem betekent.
-BINDING_LABELS = {
-    "component": "per component",
-    "deployment": "per deployment",
-    "project": "per project",
-}
-
-
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Alle zichtbare diensten uit de ECHTE registry, met wie ze afneemt.
 
-    Bewust de registry en geen eigen lijst: naam, omschrijving, icoon, kleur, binding en
-    hulptekst staan daar al, en een tweede lijst ernaast gaat vroeg of laat afwijken van
-    wat de applicatie werkelijk aanbiedt.
+    Bewust de registry en geen eigen lijst: een tweede lijst ernaast gaat vroeg of laat
+    afwijken van wat de applicatie werkelijk aanbiedt.
     """
     from opi.services.services import ServiceAdapter
     from opi.web.navigation_lotc import to_nldd_icon
@@ -564,14 +553,7 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if getattr(definition, "hidden", False):
             continue
 
-        binding = getattr(definition.binding, "value", str(definition.binding))
         is_platform = definition.kind.value == "system"
-
-        chips = [BINDING_LABELS.get(binding, binding)]
-        if definition.variables:
-            chips.append(f"{len(definition.variables)} variabelen")
-        if definition.requires:
-            chips.append(f"vereist {len(definition.requires)}")
 
         overview.append(
             {
@@ -583,7 +565,6 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # Zonder deze stap blijft het icoon leeg, en dat gebeurt STIL.
                 "icon": to_nldd_icon(definition.icon),
                 "color": definition.color,
-                "chips": chips,
                 # Alleen een label waar het iets zegt. Een dienst die je zelf kiest heeft
                 # geen label nodig; dat is de normale situatie.
                 "kind_label": "altijd aan" if is_platform else "",
