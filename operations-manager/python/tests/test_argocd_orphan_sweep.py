@@ -557,6 +557,48 @@ class TestTheCommandLine:
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 1
 
+    @staticmethod
+    def _cluster_with_an_orphan_and_an_undecidable() -> AsyncMock:
+        """Both at once, which is what makes the delete run at all.
+
+        With only an undecidable there is nothing to delete, so ``remove()`` is never
+        reached and every promise about what it is handed passes by default.
+        """
+        return _kubectl(
+            [{"metadata": {"name": LONG_APP}, "spec": {"source": {"path": "p"}}}],
+            {
+                "rig-prd-mpfm-w3h": [
+                    _resource("mpfm-w3h-pr-310", "db-creds"),
+                    _resource(CUT_NAME, "maybe-the-neighbours", from_label=True),
+                ]
+            },
+        )
+
+    def test_a_delete_that_does_run_hands_over_only_the_orphans(self) -> None:
+        """The undecidable one goes along the moment it is in the same list, and half of
+        those belong to a running deployment."""
+        kubectl = self._cluster_with_an_orphan_and_an_undecidable()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(["--namespace", "rig-prd-mpfm-w3h", "--delete"])
+
+        deleted = kubectl.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["db-creds"]
+
+    def test_after_the_delete_what_could_not_be_placed_is_still_reported(self, capsys) -> None:
+        """The second report is the one a delete test reads. Leaving it out there says the
+        cluster is empty while the resource nobody could place is still standing."""
+        kubectl = self._cluster_with_an_orphan_and_an_undecidable()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h", "--delete"]) == 1
+
+        out = capsys.readouterr().out
+        # Anchored on the index, not on a split: absent, a split falls back to the whole
+        # output and the FIRST report answers for the second.
+        assert "Still standing" in out, out
+        still_standing = out[out.index("Still standing") :]
+        assert f"1 resource(s) whose mark sits on the {LABEL_VALUE_MAX}-character label cap" in still_standing
+        assert f"{CUT_NAME}  rig-prd-mpfm-w3h/secret/maybe-the-neighbours" in still_standing
+
     def test_a_deployments_repo_that_is_not_a_directory_is_refused(self, tmp_path: Path) -> None:
         """Not 1: nothing was measured, so the git side cannot be called clean either."""
         not_a_repo = tmp_path / "zad-deployments"

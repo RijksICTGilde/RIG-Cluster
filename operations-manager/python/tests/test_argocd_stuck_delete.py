@@ -112,6 +112,16 @@ class TestTrackingId:
         assert resource is not None
         assert (resource.app_name, resource.from_label) == ("app-a", False)
 
+    def test_a_malformed_annotation_does_not_fall_back_to_the_label(self) -> None:
+        """It is the annotation's ABSENCE that hands over to the label, not its emptiness.
+
+        On an annotation cluster a Helm release writes ``instance`` too, and there it names
+        the release. Falling back would let it name the owner of a resource ArgoCD tracks by
+        annotation, and what follows a claim is a delete.
+        """
+        item = _item("Secret", "v1", "db-creds", ":apps/Deployment:ns/x", instance_label="ingress-nginx")
+        assert tracked_resource_from_item(item) is None
+
     def test_an_empty_label_owns_nothing(self) -> None:
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="   "))
         assert resource is None
