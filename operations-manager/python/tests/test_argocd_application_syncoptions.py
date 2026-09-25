@@ -94,12 +94,21 @@ _ODCN_ARGOCD = _OVERLAYS / "odcn-production" / "argocd-deployment.yaml"
 def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
     """An empty parametrize skips rather than fails, so without this the two tests below
     would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
-    wrong ``parents`` index leaves behind."""
+    wrong ``parents`` index leaves behind.
+
+    The two files are named because the ``SyncTimeout`` lines came off them. The three
+    cluster overlays are named next to them because naming only those two files leaves the
+    other direction open: a walk that narrows to odcn-production keeps both of them and
+    drops the five Applications in the other overlays without failing anything."""
     assert (
         "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-production-infrastructure.yaml"
         in _IDS
     )
     assert "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-ron-infrastructure.yaml" in _IDS
+
+    overlays_from_repo_root = _OVERLAYS.relative_to(_REPO_ROOT)
+    covered = {Path(path).relative_to(overlays_from_repo_root).parts[0] for path in _IDS}
+    assert covered == {"local", "odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
 
 
 # The name says *handwritten* because the RC-226 half of this file lands in this same
@@ -124,3 +133,19 @@ def test_the_controller_level_sync_timeout_is_still_set() -> None:
 def test_synctimeout_is_gone(path: str, sync_options: list[str]) -> None:
     """It was never a sync option, so it never bounded anything."""
     assert not [option for option in sync_options if option.startswith("SyncTimeout")], path
+
+
+# Named for the *handwritten* Applications for the same reason as the check above: the
+# RC-226 half carries ``test_delete_true_is_gone`` over the generated one.
+@pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
+def test_delete_carries_a_value_argocd_reads_on_a_handwritten_application(path: str, sync_options: list[str]) -> None:
+    """``Delete`` is in ``KNOWN_SYNC_OPTIONS``, so the name check above passes it whatever
+    it says after the ``=``. The docstring at the top of this module writes down that
+    application level reads only ``false`` and ``confirm`` there, and a line that says
+    anything else is ignored exactly as silently as ``SyncTimeout=60s`` was."""
+    wrong = []
+    for option in sync_options:
+        name, _, value = option.partition("=")
+        if name == "Delete" and value not in {"false", "confirm"}:
+            wrong.append(option)
+    assert wrong == [], f"{path} carries {wrong}; at application level Delete reads only false or confirm"
