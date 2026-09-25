@@ -4,13 +4,16 @@
 >
 > To put your PR's code on the shared sandbox, use the baked **`sandbox-deploy`** command
 > (details at the bottom: "Deploying your PR to the shared sandbox"). It does the whole
-> working path: claim the lock → build → `kind load` → `kubectl set image` → rollout →
-> verify `/version`. Then `sandbox-release` when done.
+> working path: claim the lock → build → push to the registry next to the cluster →
+> point the overlay at that tag → rollout → verify `/version`. Then `sandbox-release` when
+> done.
 >
-> **Do NOT run `task sandbox:update-operations-manager` (or `sandbox:setup`) in a session.**
-> Those are for a *full local dev* setup: they need `kustomize`, the SOPS `security/sandbox-key.txt`,
-> and a cluster that knows the registry next to Kind (`docs/sandbox-kind-registry.md`) - none
-> of which apply to a session-based local-build deploy, so they will fail.
+> **Do NOT run `task sandbox:update-operations-manager` (or `sandbox:setup`) by hand in a
+> session.** `sandbox-deploy` runs that task for you, and it first supplies what the task
+> needs: a symlink to the SOPS `security/sandbox-key.txt`, `CLUSTER_TYPE=sandboxed-local`,
+> and `task sandbox:configure-local-images` so the overlay points at the image just built
+> instead of the published one. Run the task on its own and those are missing, so it either
+> fails or quietly deploys the published image.
 > `sandbox-deploy` is the one blessed path here. The rest of this doc describes the full local
 > dev setup (for context), not the session flow.
 
@@ -26,7 +29,7 @@ Two things make the loopback URL work with valid TLS:
 
 There is **no remote server and no shared state**. If a colleague also runs the sandbox, they have their own independent cluster. "Live sandbox" in the tests just means "a Kind sandbox is currently running and reachable at those URLs."
 
-(On the shared Linux dev server the same Kind cluster sits behind Caddy on ports 8880/8443 - see `docs/sandbox-on-dev-server.md`. Still local Kind.)
+(On the shared Linux dev server the same Kind cluster sits behind Caddy on ports 80/443 - see `docs/sandbox-on-dev-server.md`. Still local Kind.)
 
 ## What runs in it
 
@@ -104,13 +107,16 @@ testing. Only run the sandbox E2E suite once the running version is your build.
 ### In the dclaude orchestrator flow (dev server)
 
 The **sandbox test stage** does step 1 automatically: the runner checks out the PR
-branch, builds the image with a per-PR tag, `kind load`s it, swaps the deployment
-image (`imagePullPolicy: IfNotPresent`, so the loaded image is used and not re-pulled),
-waits for the rollout, then runs the tests. Step 2 (version verification) should be
-part of the PR's own sandbox test so a stale/failed deploy fails the stage loudly -
+branch, builds the image with a per-commit tag, pushes it to the registry next to the
+cluster (`docs/sandbox-kind-registry.md`), points the overlay at that tag
+(`imagePullPolicy: IfNotPresent` on a tag that is new every commit, so the node pulls it
+once and reuses it), waits for the rollout, then runs the tests. Step 2 (version
+verification) should be part of the PR's own sandbox test so a stale/failed deploy fails
+the stage loudly -
 add a `test_version_endpoint`-style assertion that the running `/version` equals the
-commit under test. You do **not** run `task sandbox:update-operations-manager` by hand
-there; but you **do** when testing manually in a dclaude session.
+commit under test. You do **not** run `task sandbox:update-operations-manager` by hand,
+there or anywhere else in a session: `sandbox-deploy` runs it for you, with the key, the
+cluster type and the image overlay already set up. See the warning at the top.
 
 ## Running tests against the live sandbox
 
@@ -157,12 +163,13 @@ On the shared dev server the sandbox is a **single** Kind cluster used by **one 
 
 ```bash
 sandbox-deploy      # claim the lock → build operations-manager from THIS repo
-                    # → load into Kind → roll out → verify /version
+                    # → push to the registry next to the cluster → roll out
+                    # → verify /version
 # ... run your E2E against https://zad.sandbox.rijksapp.dev ...
 sandbox-release     # free the lock for the next PR - ALWAYS run when done
 ```
 
-- `sandbox-deploy` **holds** the lock so you can iterate: change code, run `sandbox-deploy` again to redeploy. It runs `task version:generate` first so `/version` reflects your commit, builds with `--network=host` (DNS), `kind load`s the image, rolls it out, and confirms the running `GET /version` matches what you built.
+- `sandbox-deploy` **holds** the lock so you can iterate: change code, run `sandbox-deploy` again to redeploy. It runs `task version:generate` first so `/version` reflects your commit, builds with `--network=host` (DNS), pushes the image to the registry next to the cluster, points the overlay at that tag, rolls it out, and confirms the running `GET /version` matches what you built.
 - `sandbox-release` frees the lock. The lease auto-expires if you forget, but always release so others aren't blocked.
 - `orch sandbox status` shows who holds the sandbox and who is queued.
 
