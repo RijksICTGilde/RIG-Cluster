@@ -53,13 +53,12 @@ erbij. Wat het betekent voor wie hier toetsen draait:
   draait. Dat is een uitspraak over deze sandbox, niet over productie, maar het maakt elke
   aanmaaktoets hier wankel.
 
-Een module-ERROR heeft op deze suite nog een TWEEDE oorzaak, en die is van de toetsen zelf.
-`task test-e2e-sandbox` draait met `--timeout=300`, en dat budget van pytest-timeout geldt ook
-voor het opzetten van een module-fixture. Een module die 600s voor het aanmaken uittrekt kan
-daar dus nooit aan toe komen: de setup eindigt op "Timeout (>300.0s) from pytest-timeout" en
-alle toetsen in de module worden ERROR. De metingen van deze ronde liepen per module zonder
-die vlag, dus daar viel het niet op. De zes nieuwe modules dragen nu een eigen
-`pytest.mark.timeout(...)`; de regel staat in `features/e2e-sandbox-tests.md`.
+Een module-ERROR heeft op deze suite nog een TWEEDE oorzaak, en die is van de toetsen zelf: het
+`--timeout=300` van `task test-e2e-sandbox` begrenst ook het opzetten van een module-fixture, dus
+een aanmaakwacht van 600s komt daar nooit aan toe en de hele module wordt ERROR (de regel staat
+in `features/e2e-sandbox-tests.md`). De metingen van deze ronde liepen per module zonder die
+vlag, dus daar viel het niet op. De zes nieuwe modules dragen nu een eigen
+`pytest.mark.timeout(...)`.
 
 **Een nulmeting hoort dus nog te gebeuren, op een leeg en rustig cluster en als enige run.**
 Zonder die meting is niet te zeggen of iets wat later rood staat van de nieuwe code komt of
