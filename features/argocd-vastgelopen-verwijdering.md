@@ -64,19 +64,34 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    de blokkade uit dit plan kan daar niet ontstaan.
 
 2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
-   `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna gaat de
-   finalizer weg. Welke resources dat zijn leest `opi/utils/argocd_tracking.py`, en dat
-   kijkt naar allebei de merktekens die ArgoCD kan zetten (zie hieronder).
+   `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna, en alleen als
+   dat helemaal gelukt is, gaat de finalizer weg. Welke resources dat zijn leest
+   `opi/utils/argocd_tracking.py`, en dat kijkt naar allebei de merktekens die ArgoCD kan
+   zetten (zie hieronder).
 
-Kan de bestemmingsnamespace niet gelezen worden, lukt de inventaris van die namespace
-niet, of antwoordt hij maar voor een deel van zijn resourcetypes, dan gaat de finalizer
-alsnog weg (een Application die blijft staan blokkeert de parent voor iedereen) maar komt
-dat als fout in `deletion_results["errors"]` terecht, met status `partial`. Zwijgend
-forceren is precies wat de schade maakte. Een mislukte inventaris leest anders als een
-lege namespace, en dan meldt de forcering `deleted: 0` zonder fout terwijl de resources
-gewoon blijven staan. Een halve inventaris is dezelfde fout een slag subtieler: wat wel
-geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
-resources, terwijl de melding `success` is.
+Heeft die veegactie wel gedraaid maar niet alles meegenomen, dan is de status `partial` en
+blijft de finalizer staan: hij is wat de cascade uitvoert, en dat is dan de enige weg
+waarlangs de rest alsnog onder zijn eigen Application verdwijnt. Zwijgend forceren over
+resources die blijven staan is precies wat de schade maakte. Drie dingen maken de veegactie
+`partial`, en elk ervan betekent dat er resources van deze Application kunnen blijven staan:
+
+* een delete die mislukte;
+* een merkteken dat de veegactie niet kon plaatsen (zie de labelcap hieronder): dat kan van
+  een buur zijn, maar net zo goed van deze Application zelf;
+* een namespace die maar voor een deel van zijn resourcetypes antwoordde: wat wel
+  geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
+  resources. Zonder die derde uitkomst mee te geven is de melding `success`.
+
+Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en antwoordt
+`_force_delete_stuck_application()` met `False`, dus de aanroeper meldt
+`finalizer_removed: false` en wacht niet op een Application die er expres nog staat.
+
+Kan de bestemmingsnamespace niet gelezen worden of lukt de inventaris van die namespace
+helemaal niet, dan gaat de finalizer wel weg (een Application die blijft staan blokkeert de
+parent voor iedereen, en er viel hier langs deze weg toch niets te verwijderen), maar ook
+dat komt als fout binnen, met status `unknown_namespace` of `inventory_failed`. Een mislukte
+inventaris leest anders als een lege namespace, en dan meldt de forcering `deleted: 0`
+zonder fout terwijl de resources gewoon blijven staan.
 
 ### Twee merktekens, niet een
 
