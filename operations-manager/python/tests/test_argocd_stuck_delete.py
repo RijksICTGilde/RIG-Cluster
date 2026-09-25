@@ -130,14 +130,6 @@ class TestTrackingId:
 
 
 class TestIsTrackedBy:
-    """A label value is capped at 63 characters, an Application name is not.
-
-    The schema allows a 94-character name (project 30 + deployment 63) and
-    ``generate_argocd_application_name`` only caps at 253, so on a label cluster the value
-    on the resource can be the name cut to the cap. An exact comparison then calls a live
-    resource an orphan, and ``--delete`` takes it along.
-    """
-
     #: A name longer than a label value can hold, in the shape the schema allows.
     LONG_APP = "a" * 30 + "-" + "b" * 63
 
@@ -160,7 +152,6 @@ class TestIsTrackedBy:
         assert is_tracked_by("mpfm-w3h-pr-31", {"mpfm-w3h-pr-310"}) is False
 
     def test_a_value_over_the_cap_is_not_a_prefix_match(self) -> None:
-        """Only a value AT the cap can be a cut one; a longer value was never cut."""
         assert is_tracked_by(self.LONG_APP[:-1], {self.LONG_APP}) is False
 
 

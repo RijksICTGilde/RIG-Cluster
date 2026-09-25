@@ -68,12 +68,7 @@ class TestOrphanedResources:
         assert orphaned_resources(tracked, set()) == tracked
 
     def test_a_label_cut_to_the_cap_does_not_make_a_live_resource_an_orphan(self) -> None:
-        """The destructive direction: --delete acts on whatever this returns.
-
-        A label value holds 63 characters and an Application name may be 94, so on a label
-        cluster the mark on the resource can be the name cut off. Comparing that to the
-        full name of a LIVE Application would offer its resources for deletion.
-        """
+        """The destructive direction: ``--delete`` acts on whatever this returns."""
         app = "a" * 30 + "-" + "b" * 63
         orphans = orphaned_resources([_resource(app[:63], "db-creds")], {app})
         assert orphans == []
