@@ -223,6 +223,45 @@ def artifact_dir() -> Path:
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items: list) -> None:
+    """Twee correcties op de volgorde die pytest oplevert, in deze orde.
+
+    ``trylast`` omdat pytest-randomly en de fixture-groepering van pytest zelf in dezelfde
+    hook zitten: wij moeten daarna.
+    """
+    _houd_sandboxmodules_bij_elkaar(items)
+    _serial_op_bestandsvolgorde(items)
+
+
+def _houd_sandboxmodules_bij_elkaar(items: list) -> None:
+    """Zet de toetsen van een sandboxmodule weer achter elkaar.
+
+    pytest groepeert de toetsen op de parameters van fixtures met een scope boven function
+    (``_pytest.fixtures.reorder_items``), en verliest daarbij de modulegrens. De enige zo'n
+    parameter is hier ``browser_name`` van pytest-playwright, en de toetsen die GEEN browser
+    vragen dragen hem niet. Gemeten op deze suite: twee parametrisaties van dezelfde toets
+    liepen bijna zeven minuten na elkaar, met toetsen uit een andere module ertussen.
+
+    Een module-fixture wordt afgebroken zodra de volgende toets uit een andere module komt.
+    Elke onderbreking is dus nog een volledige projectlevenscyclus op het gedeelde cluster,
+    en nog een kans op de ordeningsstoring van RC-229. Wat pytest met die groepering wil
+    besparen is hier niets: ``task test-e2e-sandbox`` draait een browser, dus er is geen
+    tweede parameterwaarde om syncs op te sparen.
+
+    De POSITIES blijven wat ze waren: alleen de toetsen die op een sandbox-positie staan
+    worden onderling herschikt, zodat een gemengde selectie er verder niets van merkt.
+    """
+    posities = [positie for positie, item in enumerate(items) if item.get_closest_marker("sandbox") is not None]
+
+    per_module: dict[str, list] = {}
+    for positie in posities:
+        per_module.setdefault(items[positie].module.__name__, []).append(items[positie])
+
+    op_module = [item for groep in per_module.values() for item in groep]
+    for positie, item in zip(posities, op_module, strict=True):
+        items[positie] = item
+
+
+def _serial_op_bestandsvolgorde(items: list) -> None:
     """Geef modules met de marker ``serial`` hun bestandsvolgorde terug.
 
     pytest-randomly schudt de tests binnen een module, en dat is precies de bedoeling:
@@ -234,8 +273,7 @@ def pytest_collection_modifyitems(items: list) -> None:
     minuten aan echte provisioning.
 
     Zo'n module zegt dat expliciet met ``pytest.mark.serial``, en hier zetten we hem
-    terug op zijn bestandsvolgorde. ``trylast`` omdat pytest-randomly in dezelfde hook
-    schudt: wij moeten daarna.
+    terug op zijn bestandsvolgorde.
     """
     serial_positions: dict[str, list[int]] = {}
     for position, item in enumerate(items):

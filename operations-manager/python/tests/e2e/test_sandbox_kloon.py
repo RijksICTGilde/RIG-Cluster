@@ -84,8 +84,8 @@ def kloon_project(
             unique_project_name(prefix="kloon"),
             user_email=SANDBOX_TEST_USER["email"],
             services=_SERVICES,
-            # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
-            # met diensten dat niet altijd.
+            # Ruimer dan de 240s van de helper, en wat dat wel en niet koopt staat in
+            # `features/e2e-sandbox-tests.md`.
             create_timeout=600.0,
         )
         logger.info("kloonproject %s, brondeployment %s", gemaakt.name, gemaakt.deployment_name)

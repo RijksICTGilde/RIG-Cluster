@@ -188,8 +188,8 @@ def registry_project(
             forgejo,
             unique_project_name(prefix="registry"),
             user_email=SANDBOX_TEST_USER["email"],
-            # 240s is de default van de helper; op dit GEDEELDE cluster haalt de wizard
-            # dat niet altijd.
+            # Ruimer dan de 240s van de helper, en wat dat wel en niet koopt staat in
+            # `features/e2e-sandbox-tests.md`.
             create_timeout=600.0,
         )
         yield gemaakt
