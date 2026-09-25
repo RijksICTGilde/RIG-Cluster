@@ -11,6 +11,7 @@ import re
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -1937,14 +1938,17 @@ def apply_domain_approval_fallback(
     if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
         return domain_format, base_domain
 
-    # Not approved — fall back to safe format on cluster domain
+    # Not approved: fall back to safe format on cluster domain. The log names the address
+    # that lapses, because that is what someone wondering where their address went will
+    # search for.
+    cluster_domain = ingress_postfix.lstrip(".")
     logger.warning(
-        "Domain '%s' with subdomain '%s' not approved, falling back to %s on cluster domain",
+        "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
+        f"{subdomain}.{base_domain}" if subdomain else base_domain,
         base_domain,
-        subdomain,
+        cluster_domain,
         SAFE_FALLBACK_FORMAT,
     )
-    cluster_domain = ingress_postfix.lstrip(".")
     return SAFE_FALLBACK_FORMAT, cluster_domain
 
 
@@ -2115,8 +2119,9 @@ def get_deployment_hostnames(
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
 
-    # Add bare domain hostname when expose-on-bare-domain is enabled
-    if expose_on_bare_domain and base_domain:
+    # The apex hangs on the same approval as the root address above. Ungated, it stayed in
+    # the list while every other address of that domain fell back to the cluster one.
+    if domain_approved and expose_on_bare_domain and base_domain:
         bare_hostname = generate_bare_domain_hostname(base_domain)
         if bare_hostname not in hostnames:
             hostnames.append(bare_hostname)
@@ -2146,7 +2151,7 @@ def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypt
         >>> generate_helm_values_filename("local-deployment", "docs", encrypted=False)
         'local-deployment-docs-helm-values.yaml'
     """
-    extension = ".sops.yaml" if encrypted else ".yaml"
+    extension = SOPS_SUFFIX if encrypted else ".yaml"
     deployment_clean = _sanitize_for_lowercase(deployment_name)
     chart_clean = _sanitize_for_lowercase(chart_name)
     return f"{deployment_clean}-{chart_clean}-helm-values{extension}"

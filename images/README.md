@@ -1,5 +1,10 @@
 We created the following images because there was no default solution:
 
+mc: onze spiegel van de MinIO-client, een scratch-image met alleen /usr/bin/mc. MinIO distribueert
+mc zelf niet meer op een adres dat een build kan gebruiken (401 op docker.io en quay.io, 410 op
+dl.min.io), dus halen operations-manager/Dockerfile en de backup-image hem hier vandaan in plaats van
+uit de GitHub-release. Zie images/mc/README.md. Build+publish: `task publish-mc`.
+
 e2e-allservices: minimal, fast-booting test workload that round-trips every platform service it is
 bound to (PostgreSQL incl. extra schemas + RO role, Redis, MinIO/S3, Keycloak/OIDC, PVCs) and reports
 over HTTP (/, /healthz, /status). Used as the sandbox E2E all-services fixture; what it tests is
