@@ -107,8 +107,7 @@ vraagt het cluster terwijl een andere PR erop test.
 Een labelwaarde die precies op de 63 zit is daarmee dubbelzinnig: hij is de hele naam van
 een Application, of de afgekapte vorm van een langere naam die ermee begint. Meer dan dat
 zegt `may_be_cut_from` niet, want een predikaat dat "hoort bij" antwoordt keert van
-betekenis om per aanroeper: voor de veegactie betekent een treffer afblijven, voor de
-forcering verwijderen. Geen van tweeën beslist er dus destructief op.
+betekenis om per aanroeper. Geen van tweeën beslist er dus destructief op:
 
 * De **forcering** verwijdert alleen wat haar Application NOEMT. Een label dat haar naam
   afgekapt kan zijn is net zo goed de volledige naam van een buur in dezelfde namespace:
@@ -129,12 +128,12 @@ de vergelijking dus gewoon exact.
 
 Dat een merkteken van ArgoCD komt gaat voor de veegactie niet zonder meer op, want het
 label is niet van ArgoCD alleen: Helm zet `app.kubernetes.io/instance` ook, en bedoelt er
-de release mee. Op de sandbox dragen zes
-resources in `ingress-nginx` het label `instance: ingress-nginx` terwijl er geen
-Application met die naam bestaat. Daarom kijkt de veegactie alleen in namespaces die OPI
-zelf heeft aangemaakt: die dragen `created-by: operations-manager`
-(`manifests/namespace.yaml.jinja`). Dat is een toelatingslijst, geen lijst met namen om
-over te slaan, en ook een met de hand opgegeven `--namespace` moet erop staan.
+de release mee. Op de sandbox dragen zes resources in `ingress-nginx` het label
+`instance: ingress-nginx` terwijl er geen Application met die naam bestaat. Daarom kijkt de
+veegactie alleen in namespaces die OPI zelf heeft aangemaakt: die dragen
+`created-by: operations-manager` (`manifests/namespace.yaml.jinja`). Dat is een
+toelatingslijst, geen lijst met namen om over te slaan, en ook een met de hand opgegeven
+`--namespace` moet erop staan.
 
 ### syncOptions die niets deden
 
@@ -224,8 +223,8 @@ hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
 
 Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er staat iets, wezen of
 resources die hij niet kon plaatsen, `2` geweigerd, waaronder elke mislukte lezing
-hierboven. Dat maakt hem bruikbaar als laatste stap van een
-verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn.
+hierboven. Dat maakt hem bruikbaar als laatste stap van een verwijdertoets: hij meet wat
+er OVER is, niet wat er gebeurd lijkt te zijn.
 
 ## Bestanden
 

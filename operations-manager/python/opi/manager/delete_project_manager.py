@@ -114,10 +114,9 @@ class DeleteProjectManager:
         selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
         that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
 
-        The mark has to NAME this application; a mark that may be its name cut to the label
-        cap is not enough here, because that value is just as likely the whole name of a
-        neighbour in the same namespace, and here a match is a delete. Those are reported
-        instead, see may_be_cut_from.
+        The mark has to NAME this application: here a match is a delete, and a value at the
+        label cap is just as likely a neighbour's whole name (may_be_cut_from). Those are
+        reported instead.
 
         Returns:
             True if the finalizer was removed.
