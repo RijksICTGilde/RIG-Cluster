@@ -19,13 +19,18 @@ wave-annotatie blijft groen terwijl de ordening stuk is.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from opi.generation.manifests import ManifestGenerator
-from opi.manager.argo_manager import PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN, ArgoManager
+from opi.manager.argo_manager import (
+    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+    ArgoManager,
+)
 from opi.utils.naming import generate_argocd_project_application_name
 
 PROJECT_APP = "demo-project"
@@ -96,6 +101,27 @@ class TestDeAanmaakvolgorde:
         # deployment-applicaties ook maar geschreven worden.
         assert sporen.index("projectapplicatie") < sporen.index("push:projectniveau") < wacht
         assert wacht < sporen.index("deployment-applicaties") < sporen.index("push:deployments")
+
+    @pytest.mark.asyncio
+    async def test_de_eerste_push_onthoudt_zijn_commit_voor_de_grendel(self) -> None:
+        """De verversbewaker naast de grendel krijgt deze commit mee, en zonder commit doet
+        ``_keep_umbrella_refreshed`` EEN refresh en keert terug. Raakt de eerste push zijn
+        commit kwijt, dan verliest juist deze grendel dus het herhaalmechanisme dat een
+        verloren refresh-vlaggetje opvangt, loopt hij zijn bovengrens vol, en dat is sinds
+        RC-229 geen warning meer maar ``return False`` voor het hele project."""
+        sporen: list[str] = []
+        manager = _argo_manager(sporen)
+        bij_de_grendel: list[str | None] = []
+
+        async def _wacht(app_name: str) -> None:
+            sporen.append(f"wacht:{app_name}")
+            bij_de_grendel.append(manager.last_pushed_argo_commit)
+
+        manager.project_manager.wait_for_project_level_application = AsyncMock(side_effect=_wacht)
+
+        await manager.create_argocd_resources()
+
+        assert bij_de_grendel == ["cafebabe"]
 
     @pytest.mark.asyncio
     async def test_het_projectniveau_gaat_in_een_eigen_commit(self) -> None:
@@ -215,7 +241,15 @@ def _project_manager(monkeypatch: Any, connector: AsyncMock, *, bestaat_al: bool
     manager = pm_module.ProjectManager.__new__(pm_module.ProjectManager)
     manager._argo_manager = MagicMock()
     manager._argo_manager.last_pushed_argo_commit = "cafebabe"
-    manager._argo_manager.wait_for_application_created = AsyncMock(return_value=True)
+
+    async def _created(**_kwargs: Any) -> bool:
+        # Even de lus in: de bewaker draait als losse taak naast deze wacht, en zonder een
+        # enkel punt waarop de wacht afgeeft komt hij nooit aan de beurt. Een assertie op
+        # hem zou dan de planning meten in plaats van de code.
+        await asyncio.sleep(0)
+        return True
+
+    manager._argo_manager.wait_for_application_created = AsyncMock(side_effect=_created)
     manager._argo_manager.wait_for_application_synced = AsyncMock(return_value=True)
     manager._kubectl_connector = MagicMock()
     manager._kubectl_connector.argocd_application_exists = AsyncMock(return_value=bestaat_al)
@@ -318,19 +352,26 @@ class TestDeGrendelZelf:
         await manager.wait_for_project_level_application(PROJECT_APP)
 
         manager._argo_manager.wait_for_application_created.assert_awaited_once()
+        # En die wacht staat in de verversbewaker: zonder hem kan onze refresh opgaan in een
+        # reconcile die zijn revisie al had, en wacht deze grendel op een CR die pas bij de
+        # volgende reconcile komt. De commit is wat de bewaker een herhaling laat doen.
+        manager._keep_umbrella_refreshed.assert_awaited_once_with(connector, "cafebabe")
 
     @pytest.mark.asyncio
     async def test_de_wacht_krijgt_de_afgesproken_bovengrens_mee(self, monkeypatch: Any) -> None:
         """``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN`` is de grens waar de constante zijn
-        onderbouwing bij draagt: ruimte voor de umbrella plus een sync. Een eigen getal hier
-        zou die onderbouwing stil loskoppelen van wat er gebeurt."""
+        onderbouwing bij draagt: ruimte voor de umbrella plus een sync. Hetzelfde voor
+        ``APPLICATIE_AANMAAK_TIMEOUT_SECONDEN`` op de wacht ervoor. Een eigen getal hier zou
+        die onderbouwing stil loskoppelen van wat er gebeurt."""
         connector = AsyncMock()
         connector.login = AsyncMock(return_value=True)
         connector.refresh_application = AsyncMock(return_value="2026-09-25T09:32:17Z")
-        manager = _project_manager(monkeypatch, connector, bestaat_al=True)
+        manager = _project_manager(monkeypatch, connector, bestaat_al=False)
 
         await manager.wait_for_project_level_application(PROJECT_APP)
 
+        aanmaak = manager._argo_manager.wait_for_application_created.await_args.kwargs
+        assert aanmaak["timeout"] == APPLICATIE_AANMAAK_TIMEOUT_SECONDEN
         kwargs = manager._argo_manager.wait_for_application_synced.await_args.kwargs
         assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN
 
@@ -470,8 +511,17 @@ class TestDeVerversbewaker:
             async with manager._umbrella_verversbewaker(AsyncMock()):
                 await asyncio.sleep(0)
 
-        # Met een timeout, want zonder de cancel wacht het afsluiten van de bewaker op een
-        # taak die nooit eindigt: dat moet hier rood worden en niet blijven hangen.
-        await asyncio.wait_for(_wacht(), timeout=5)
+        # Gemeten op het AFLOPEN van de wacht als losse taak, niet met een
+        # ``asyncio.wait_for`` eromheen: die annuleert de wacht zelf, de
+        # ``except asyncio.CancelledError`` in de bewaker slikt die annulering, en dan keert
+        # ``wait_for`` gewoon terug. Zo bleef deze toets groen zonder de ``cancel()``.
+        # De grens is een vangnet: met de cancel is de taak binnen een paar lusrondes klaar.
+        taak = asyncio.create_task(_wacht())
+        _klaar, lopend = await asyncio.wait([taak], timeout=2)
+        for hangend in lopend:
+            hangend.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await hangend
 
+        assert not lopend, "de wacht kwam niet uit zijn finally: de bewaker is niet geannuleerd"
         assert gestopt.is_set()
