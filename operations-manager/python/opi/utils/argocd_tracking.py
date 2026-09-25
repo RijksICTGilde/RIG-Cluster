@@ -103,17 +103,13 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
 def may_be_cut_from(resource: TrackedResource, application_names: set[str]) -> bool:
     """Whether the mark may be one of these names cut to the label cap, instead of a name.
 
-    True means UNDECIDABLE, not owned. A value sitting exactly on the cap is equally well the
+    True means UNDECIDABLE, not owned: a value sitting exactly on the cap is equally well the
     whole name of another Application, and nothing in the mark says which of the two it is.
-    So this states that fact and leaves the conclusion to the caller, because the two callers
-    draw the opposite one: for the sweep a match means leaving a resource alone, for the force
-    it means deleting it. One predicate that answered "belongs to" therefore flipped meaning
-    between them, and the relaxation that protects a live resource on the sweep took a living
-    neighbour's resources on the force (RC-226, review round 9).
-
-    Neither caller may act destructively on a true. Both report it instead: an undecidable
-    resource is something a human can settle by looking at it, and silently picking one of
-    the two readings is what this task exists to stop.
+    The conclusion is the caller's, because the two callers draw the opposite one: for the
+    sweep a match means leaving a resource alone, for the force it means deleting it. One
+    predicate that answered "belongs to" therefore flipped meaning between them, and the
+    relaxation that protects a live resource on the sweep took a living neighbour's resources
+    on the force (RC-226, review round 9). Neither caller may act destructively on a true.
 
     Equality is decided by the caller and is not undecidable here. A name that fits within the
     cap is written whole, so the mark IS the name; one that does not fit is cut, and then this
