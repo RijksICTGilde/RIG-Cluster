@@ -57,10 +57,10 @@ def _run(args: list[str], *, timeout: float = 30.0, invoer: str | None = None) -
             input=invoer,
         )
     except subprocess.TimeoutExpired:
-        # `from None` en niet `from fout`: de oorspronkelijke uitzondering draagt de argv in
-        # zijn tekst en een gekoppelde uitzondering wordt in de traceback gewoon afgedrukt.
-        # De eerste argumenten benoemen de aanroep; de rest blijft eruit, zodat een aanroeper
-        # die er ooit een waarde in zet hem hier niet alsnog opschrijft.
+        # `from None` en niet `from fout`: een gekoppelde uitzondering wordt in de traceback
+        # gewoon afgedrukt, argv en al. De eerste argumenten benoemen de aanroep; de rest
+        # blijft eruit, zodat een aanroeper die er ooit een waarde in zet hem hier niet
+        # alsnog opschrijft.
         raise KubectlTimeout(f"kubectl {' '.join(args[:4])} haalde {timeout:.0f}s niet") from None
 
 
@@ -141,12 +141,9 @@ def run_psql(
     Zet dus ``DROP TABLE IF EXISTS`` voor een ``CREATE TABLE``, en een ``ON CONFLICT`` op
     een INSERT die niet mag verdubbelen.
 
-    Het statement en het wachtwoord gaan over stdin, zie ``_run_psql_once``. Daarmee is de
-    eis vervallen die hier eerst stond: zolang het statement een ARGUMENT van de pod was,
-    ging het langs de variabele-expansie van Kubernetes, en die leest ``$$`` als een
-    ontsnapte ``$`` (postgres kreeg ``DO $`` en antwoordde ``syntax error at or near "$"``).
-    De bestaande aanroepers gebruiken een BENOEMDE dollar-quote, en die werkt langs beide
-    wegen.
+    Het statement en het wachtwoord gaan over stdin, zie ``_run_psql_once``. Wat daar wel als
+    ARGUMENT van de pod meegaat, loopt langs de variabele-expansie van Kubernetes: die leest
+    ``$$`` als een ontsnapte ``$``, en postgres antwoordt dan ``syntax error at or near "$"``.
 
     Geeft (exitcode, uitvoer) terug, met de sluitstukregel eruit gefilterd. De uitvoer is
     stdout en stderr aan elkaar: ``kubectl run --rm`` schrijft zijn eigen "pod ... deleted"
@@ -196,9 +193,6 @@ def _run_psql_once(
     ``opi/connectors/postgres.py`` doet, en om dezelfde reden: "Connection parameters are
     passed via the environment, never via the command line". Binnen de pod staat het
     wachtwoord in de omgeving van psql en niet in zijn argv.
-
-    De time-out van ``_run`` komt terug als ``KubectlTimeout``, die het commando niet
-    meeneemt.
     """
     script = (
         f"export PGPASSWORD={shlex.quote(password)}\n"
