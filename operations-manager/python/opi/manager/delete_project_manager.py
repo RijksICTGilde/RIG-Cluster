@@ -195,6 +195,8 @@ class DeleteProjectManager:
 
         try:
             argo_connector = create_argo_connector()
+            kubectl = self.project_manager._kubectl_connector
+            argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
 
             # List all applications and find ones matching this project
             all_applications = await argo_connector.list_applications()
@@ -215,7 +217,7 @@ class DeleteProjectManager:
 
                     try:
                         await self._terminate_application_operation(app_name, deletion_results)
-                        delete_success = await argo_connector.delete_application(app_name)
+                        delete_success = await kubectl.delete_resource("application", app_name, argo_namespace)
                         if delete_success:
                             deletion_results["operations"].append(
                                 {
@@ -245,10 +247,6 @@ class DeleteProjectManager:
             # Also check for orphaned AppProjects
             # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
             # (matched by `project_name in line` below).
-            argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
-
-            # Use kubectl to list AppProjects matching the pattern
-            kubectl = self.project_manager._kubectl_connector
             stdout, stderr, code = await kubectl._run_kubectl_command(
                 ["get", "appproject", "-n", argo_namespace, "-o", "name"]
             )

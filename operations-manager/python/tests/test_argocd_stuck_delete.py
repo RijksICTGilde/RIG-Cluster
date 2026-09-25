@@ -15,6 +15,7 @@ So these tests assert sequences, not just that the calls happened.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.argo import ArgoConnector
 from opi.connectors.kubectl import KubectlConnector
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.utils.argocd_tracking import (
@@ -346,6 +347,7 @@ def _recording_kubectl(
     kubectl.list_tracked_resources = step("list_resources", tracked)
     kubectl.delete_tracked_resources = step("delete_resources", [])
     kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
+    kubectl.delete_resource = step("delete_resource", True)
     kubectl.delete_namespace = AsyncMock(return_value=True)
     kubectl._run_kubectl_command = AsyncMock(return_value=("", "", 0))
     return kubectl
@@ -717,23 +719,32 @@ class TestOperationClearedBeforeTheWait:
 
     @pytest.mark.asyncio
     async def test_orphan_cleanup_clears_the_operation_before_deleting(self) -> None:
-        """The orphan cleanup deletes directly instead of via GitOps, and hits the same gate."""
+        """The orphan cleanup deletes directly instead of via GitOps, and hits the same gate.
+
+        ``spec=ArgoConnector`` is the point of the mock here: an open AsyncMock invents any
+        method you name, and that is how a call to a method the connector does not have
+        stayed green while it did nothing (the AttributeError landed in the except below).
+        """
         calls: list[str] = []
         pm = AsyncMock()
         pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
-        pm._kubectl_connector._run_kubectl_command = AsyncMock(return_value=("", "", 0))
 
-        async def _delete(*args, **kwargs):
-            calls.append("delete_application")
-            return True
-
-        argo = AsyncMock()
+        argo = MagicMock(spec=ArgoConnector)
         argo.list_applications = AsyncMock(return_value=[{"metadata": {"name": "mpfm-w3h-pr-310"}}])
-        argo.delete_application = AsyncMock(side_effect=_delete)
 
         results: dict = {"operations": [], "errors": []}
-        with patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo):
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_argo_namespace", return_value="argocd-test"),
+        ):
             await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
 
-        assert calls == ["terminate_operation", "delete_application"]
+        assert calls == ["terminate_operation", "delete_resource"]
         assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
+        assert pm._kubectl_connector.delete_resource.await_args.args == (
+            "application",
+            "mpfm-w3h-pr-310",
+            "argocd-test",
+        )
+        assert results["errors"] == []
+        assert [operation["status"] for operation in results["operations"]] == ["success", "success"]
