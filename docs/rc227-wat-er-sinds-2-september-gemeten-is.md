@@ -159,7 +159,7 @@ wel, valt vandaag nergens om."* Twee dingen vielen meteen om. Allebei zitten ze 
 **zad-cli-repository** en niet hier, dus ze zijn gemeld en niet gerepareerd.
 
 **1. `connection-limit` is vanaf de CLI niet te zetten.** Precies het veld waar de hele
-speelruimte op rust. Geisoleerd met vier bodies uit een bestand, op zad-cli 1.0.0:
+speelruimte op rust. Geisoleerd met losse bodies uit een bestand, op zad-cli 1.0.0:
 
 | body | uitkomst |
 |---|---|

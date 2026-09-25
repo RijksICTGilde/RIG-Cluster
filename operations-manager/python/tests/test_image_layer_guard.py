@@ -237,7 +237,7 @@ class TestPinnedTools:
 
     @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
     def test_mc_comes_from_the_pinned_github_release(self, dockerfile: Path) -> None:
-        """Both bronnen die MinIO zelf aanbood zijn dicht, en allebei zwijgend.
+        """Beide bronnen die MinIO zelf aanbood zijn dicht, en allebei zwijgend.
 
         dl.min.io geeft 410 met een tekstbody die `curl -LO` als binary opsloeg, en sinds
         MinIO zijn images achter een abonnement zette geeft quay.io 401 op elke tag. Wat
