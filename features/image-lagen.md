@@ -12,11 +12,12 @@ codewijziging OPNIEUW gebouwd en dus verstuurd wordt.
 
 ## De vorm
 
-Vier stages, van zelden naar vaak wijzigend:
+Vijf stages, van zelden naar vaak wijzigend:
 
 | Stage | Wat erin zit | Wanneer hij opnieuw bouwt |
 |---|---|---|
 | `uv` | het gepinde uv-image, alleen als bron voor de uv-binary | `UV_VERSION` verandert |
+| `mc` | onze eigen mc-spiegel, alleen als bron voor de mc-binary (`images/mc`) | `MC_VERSION` verandert |
 | `base-system` | apt-pakketten, kubectl, sops, mc, kopia, skopeo, chisel, uv | een van de gepinde `ARG *_VERSION` verandert |
 | `dependencies` | `uv sync` van de productie-dependencies | `pyproject.toml` of `uv.lock` verandert |
 | `application` | alembic.ini, entrypoint, `opi`, `manifests`, `static` | de broncode verandert |

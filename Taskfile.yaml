@@ -1382,6 +1382,24 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  publish-mc:
+    desc: "Vul de mc-spiegel in GHCR uit de GitHub-release (zie images/mc/README.md)"
+    deps: [requirements-check]
+    vars:
+      # De tag komt uit het Dockerfile, want daar staat ook de checksum van precies die
+      # release. Twee plekken zouden uit elkaar lopen zonder dat een build dat merkt.
+      MC_VERSION:
+        sh: sed -n 's/^ARG MC_VERSION=//p' images/mc/Dockerfile | head -1
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/mc
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: mc
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          IMAGE_TAG: '{{.MC_VERSION}}'
+          PLATFORMS: linux/amd64,linux/arm64
+
   publish-haproxy-redirect:
     desc: "Build and publish the haproxy-redirect image to GitHub Container Registry"
     deps: [requirements-check]

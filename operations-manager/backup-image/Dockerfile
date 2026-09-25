@@ -2,6 +2,11 @@
 # Supports: PVC backups (kopia), PostgreSQL backups (pg_dump/pg_restore), MinIO backups (mc)
 # Target image: ghcr.io/minbzk/base-images/rig-backup:latest
 
+# mc uit onze eigen spiegel: MinIO distribueert hem niet meer. Waarom die spiegel er is
+# staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
+ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
+FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
+
 FROM python:3.14-slim
 
 # Set environment variables
@@ -27,19 +32,8 @@ RUN curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}
     && chmod +x /usr/local/bin/kopia \
     && rm -rf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" "kopia-${KOPIA_VERSION}-linux-x64"
 
-# Install MinIO client - for bucket operations.
-# Zelfde bron en zelfde grendel als in operations-manager/Dockerfile: MinIO distribueert de
-# image niet meer (401 op docker.io/minio en quay.io/minio, 410 op dl.min.io), de
-# GitHub-release van dezelfde tag wel, en de checksum staat LITERAAL en komt niet naast de
-# binary vandaan. Deze image bouwt alleen voor amd64, net als de kopia-regel hierboven, dus
-# een som.
-ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
-ARG MC_SHA256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
-RUN MC_ASSET="mc.linux-amd64.${MC_VERSION}" \
-    && MC_URL="https://github.com/minio/mc/releases/download/${MC_VERSION}/${MC_ASSET}" \
-    && curl -fsSL -o /usr/local/bin/mc "${MC_URL}" \
-    && echo "${MC_SHA256}  /usr/local/bin/mc" | sha256sum -c - \
-    && chmod 755 /usr/local/bin/mc
+# Install MinIO client - for bucket operations
+COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
 
 # Create non-root user with home directory for Kopia cache
 RUN groupadd -g 1001 backupuser 2>/dev/null || true && \
