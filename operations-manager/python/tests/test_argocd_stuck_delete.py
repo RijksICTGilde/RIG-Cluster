@@ -344,24 +344,33 @@ class TestListTrackedResources:
         import json
 
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(json.dumps(payload), "", 0))):
-            tracked = await connector.list_tracked_resources("rig-prd-mpfm-w3h", ["secrets", "deployments.apps"])
+            tracked, complete = await connector.list_tracked_resources(
+                "rig-prd-mpfm-w3h", ["secrets", "deployments.apps"]
+            )
 
         assert [(r.name, r.app_name) for r in tracked] == [("db-creds", "app-a"), ("web", "app-b")]
+        assert complete is True
 
     @pytest.mark.asyncio
-    async def test_partial_output_is_kept(self, connector) -> None:
+    async def test_partial_output_is_kept_and_reported_as_partial(self, connector) -> None:
         """kubectl exits non-zero when ONE queried type fails, but prints the rest.
 
         Dropping that would report an empty namespace while resources are still standing.
+        Handing it over as a WHOLE answer is the other half of the same failure, and the
+        one that got through review: the force then deletes the part that was printed,
+        reports ``success`` with no errors, and takes the finalizer off, while the types
+        that stayed silent keep their resources. Measured with ``complete`` pinned to
+        ``True``: 0 red here and green all the way out to the force and the sweep.
         """
         import json
 
         payload = {"items": [_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds")]}
         stderr = "error: unable to retrieve the complete list of server APIs: metrics.k8s.io/v1beta1"
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(json.dumps(payload), stderr, 1))):
-            tracked = await connector.list_tracked_resources("rig-prd-mpfm-w3h", ["secrets"])
+            tracked, complete = await connector.list_tracked_resources("rig-prd-mpfm-w3h", ["secrets"])
 
         assert [r.name for r in tracked] == ["db-creds"]
+        assert complete is False
 
     @pytest.mark.asyncio
     async def test_without_types_nothing_was_read_and_nothing_is_claimed(self, connector) -> None:
@@ -392,7 +401,7 @@ class TestListTrackedResources:
     async def test_an_empty_answer_from_a_successful_query_is_an_empty_namespace(self, connector) -> None:
         """The other side of the same coin: exit 0 and nothing found really is nothing."""
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "", 0))):
-            assert await connector.list_tracked_resources("ns", ["secrets"]) == []
+            assert await connector.list_tracked_resources("ns", ["secrets"]) == ([], True)
 
     @pytest.mark.asyncio
     async def test_unparsable_output_is_not_read_as_empty_silently(self, connector) -> None:
@@ -442,6 +451,7 @@ def _recording_kubectl(
     *,
     destination: str | None,
     tracked: list[TrackedResource] | None,
+    complete: bool = True,
     deleted: bool = True,
     applications: list[str] | None = None,
 ) -> AsyncMock:
@@ -454,6 +464,9 @@ def _recording_kubectl(
     ``applications`` are the Application names the cluster answers with; the default is the
     one every platform cluster runs, so it is a read that SUCCEEDED and found no neighbour.
     An empty list is how the connector answers a failed read.
+
+    ``complete`` is the second half of the inventory answer: False is a namespace that
+    answered for only part of its resource types.
     """
 
     def step(name: str, result):
@@ -466,7 +479,7 @@ def _recording_kubectl(
     kubectl = AsyncMock(spec_set=KubectlConnector)
     kubectl.terminate_argocd_application_operation = step("terminate_operation", True)
     kubectl.get_argocd_application_destination_namespace = step("read_namespace", destination)
-    kubectl.list_tracked_resources = step("list_resources", tracked)
+    kubectl.list_tracked_resources = step("list_resources", None if tracked is None else (tracked, complete))
     kubectl.delete_tracked_resources = step("delete_resources", [])
     kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
     kubectl.delete_argocd_application = step("delete_application", deleted)
@@ -776,6 +789,33 @@ class TestForceDeleteStuckApplication:
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "inventory_failed"
         assert any("Could not inventory namespace" in error for error in results["errors"])
+
+    @pytest.mark.asyncio
+    async def test_a_half_inventory_is_deleted_but_never_reported_as_a_clean_sweep(self) -> None:
+        """The third answer: the namespace answered for SOME of its types.
+
+        ``kubectl get a,b,c`` exits non-zero when one type fails and prints the rest, so
+        the part that came back is worth deleting, but the part that did not is where the
+        leftovers stand. Measured with the connector handing this over as complete: status
+        ``success``, ``failed: 0``, ``undecidable: 0``, ``errors: []`` and the finalizer
+        gone, which is the exact shape that left 350 resources in rig-prd-mpfm-w3h.
+        """
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            calls, destination="rig-prd-mpfm-w3h", tracked=[_tracked("app-a", "db-creds")], complete=False
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+
+        # The part that DID answer still goes: half a sweep beats none.
+        assert [r.name for r in pm._kubectl_connector.delete_tracked_resources.await_args_list[0].args[0]] == [
+            "db-creds"
+        ]
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert (operation["status"], operation["deleted"]) == ("partial", 1)
+        assert any("only part of its resource types" in error for error in results["errors"])
 
 
 def _deployment_harness(
