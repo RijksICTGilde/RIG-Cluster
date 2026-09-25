@@ -92,5 +92,35 @@ async def test_apply_manifest_failure(connector, manifest_file, variables):
             await connector.apply_manifest(manifest_file, variables)
 
 
+async def test_a_failed_namespace_listing_raises_instead_of_answering_empty(connector):
+    """argocd_orphan_sweep catches this exception to refuse (RC-226). Answering with an
+    empty map instead would leave that except dead and the sweep would report SCHOON over a
+    cluster it read nothing in, because without --namespace this map IS its work list."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Error from server (Forbidden): namespaces is forbidden", 1)
+
+        with pytest.raises(KubectlExecutionError, match="Forbidden"):
+            await connector.get_namespace_label_map("created-by")
+
+
+async def test_a_namespace_without_the_label_is_present_with_an_empty_value(connector):
+    """``labels: null`` is how a namespace with no labels at all comes back, and
+    argocd_orphan_sweep builds its allowlist from the value of every namespace it is given."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = (
+            '{"items": [{"metadata": {"name": "rig-prd-mpfm-w3h", "labels": {"created-by": "operations-manager"}}},'
+            ' {"metadata": {"name": "ingress-nginx", "labels": {"app": "x"}}},'
+            ' {"metadata": {"name": "kube-node-lease", "labels": null}}]}',
+            "",
+            0,
+        )
+
+        assert await connector.get_namespace_label_map("created-by") == {
+            "rig-prd-mpfm-w3h": "operations-manager",
+            "ingress-nginx": "",
+            "kube-node-lease": "",
+        }
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

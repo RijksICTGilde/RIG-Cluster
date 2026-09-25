@@ -204,29 +204,35 @@ overneemt en wanneer niet.
 
 **Het kale domein wordt op elke schrijfweg getoetst.** `expose-component-on-bare-domain` is
 sinds deze verhuizing ook via de dienstconfiguratie-PUT te zetten, en die body hoeft geen
-`domain-format` te bevatten. De regel "kaal domein alleen voor eigen domeinen, nooit voor een
-platformdomein" stond in `DomainConfigEnforcer` achter de vroege `if not domain_format:
-return` en was daarmee alleen vanuit de wizard bereikbaar. Hij staat nu vóór die uitstap —
-de regel hangt niet van het formaat af — en wordt bovendien op het publicatiepad afgedwongen,
-vlak voor `register_bare_domain` en voor het renderen van de apex-ingress. Eén regel,
-`validate_bare_domain_allowed()` in `connectors/subdomain.py`, aangeroepen door beide.
+`domain-format` te bevatten. De regel stond in `DomainConfigEnforcer` achter de vroege
+`if not domain_format: return` en was daarmee alleen vanuit de wizard bereikbaar. Hij staat
+nu vóór die uitstap, want hij hangt niet van het formaat af.
 
-Die regel bestaat uit twee helften, en beide zitten in die ene functie. "Geen
-platformdomein" is de eerste. De tweede is **van wie het domein is**: een domein dat niet
-voor dít project is goedgekeurd, mag ook niet. Het DNS ervan kan al naar dit cluster wijzen
-omdat een andere tenant er zijn subdomeinen op serveert, en dan neemt een apex-claim vanuit
-deze namespace hun domein over, certificaat inbegrepen. Die eigendomstoets
-(`is_domain_allowed_for_project`) stond eerder alleen in de formulierlaag achter dezelfde
-vroege uitstap, en het publicatiepad had er geen tweede poort voor:
-`apply_domain_approval_fallback` draait uitsluitend in de `DOMAIN_FORMAT_TEMPLATES`-tak van
-`get_component_ingress_map`, terwijl `register_bare_domain` en de apex-ingress daarbuiten
-vallen. Nu dragen alle drie de aanroepen de volledige regel.
+Die regel bestaat uit twee helften. "Geen platformdomein" is de eerste, en die verzacht
+nooit: de apex van een platformdomein is van iedereen op het cluster, en geen goedkeuring
+maakt hem van één project. De tweede is **van wie het domein is**: een domein dat niet voor
+dít project is goedgekeurd, mag ook niet. Het DNS ervan kan al naar dit cluster wijzen omdat
+een andere tenant er zijn subdomeinen op serveert, en dan neemt een apex-claim vanuit deze
+namespace hun domein over, certificaat inbegrepen.
 
-Eén uitzondering, en alleen in de opslagpoort (`denied_blocks=False`): een beheerder die een
-goedkeuring intrekt op een domein waarvan een deployment de apex al gebruikt, moet dat
-oordeel kunnen opslaan. Alleen een expliciete status `denied` telt daarvoor; een domein
-zonder ingang of met een zelf aangemaakte `requested`-ingang wordt op elke weg geweigerd. Het
-publicatiepad weigert het ingetrokken geval sowieso, dus er wordt niets op geclaimd.
+Op die tweede helft loopt de scheidslijn tussen **opslaan** en **toepassen**:
+
+- *Opslaan mag.* Een kaal domein op een eigen domein dat nog op goedkeuring wacht mag in het
+  projectbestand staan; het projectbestand legt vast wat het project wil. Het formulier laat
+  je in één keer door met een waarschuwing bij het vinkje, en `DomainRequestHook` schrijft de
+  `requested`-regel bij het opslaan. Daarvoor weigerde de enforcer hier zonder uitgang: de
+  aanvraag die de weigering zou oplossen wordt pas bij PRE_SAVE geschreven.
+- *Toepassen mag niet.* De apex hangt aan `is_deployment_domain_approved`, dezelfde
+  voorwaarde als het rootadres, op alle drie de plekken die hem opleveren:
+  `get_deployment_hostnames`, `register_bare_domain` en de apex-ingress. De rest van de
+  deployment blijft op het clusteradres (`apply_domain_approval_fallback`, dat logt welk
+  adres daarmee vervalt); de deploymentpagina en de API melden het via
+  `collect_deployment_approval_notices`.
+- *Een ingetrokken goedkeuring* (`denied`) weigert in het formulier en gaat door de
+  opslagpoort (`denied_blocks=False`), zodat een beheerder zijn eigen oordeel kan opslaan.
+
+`validate_bare_domain_allowed()` in `connectors/subdomain.py` draagt beide helften en staat
+op het publicatiepad, achter diezelfde goedkeuringspoort.
 
 **Een kaal domein afmelden raakt alleen de eigen registratie.** `delete_bare_domain()` deed
 zijn `DELETE` op `(subdomain='@', base_domain)` zonder eigenaarsfilter, terwijl de

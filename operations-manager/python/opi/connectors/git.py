@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.sops import TO_SOPS_SUFFIX
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
@@ -1199,7 +1200,7 @@ class GitConnector:
             leftover.extend(
                 os.path.relpath(os.path.join(root, name), working_dir)
                 for name in files
-                if name.endswith(".to-sops.yaml")
+                if name.endswith(TO_SOPS_SUFFIX)
             )
 
         if leftover:
