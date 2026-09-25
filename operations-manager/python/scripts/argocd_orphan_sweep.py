@@ -259,9 +259,19 @@ async def inventory(
     undecidable: list[TrackedResource] = []
     for namespace in namespaces:
         print(f"  inventorying {namespace}", file=sys.stderr)
-        tracked = await kubectl.list_tracked_resources(namespace, resource_types)
-        if tracked is None:
+        inventory_of_namespace = await kubectl.list_tracked_resources(namespace, resource_types)
+        if inventory_of_namespace is None:
             raise SweepRefused(f"namespace '{namespace}' could not be inventoried; refusing to call it clean")
+        tracked, complete = inventory_of_namespace
+        if not complete:
+            # A namespace that answered for part of its types is no more measured than one
+            # that did not answer at all: the types that stayed silent are exactly where an
+            # orphan would be. The type list is discovered ONCE for the whole run, against
+            # the verbs of the cluster, so a type this service account may not list in this
+            # namespace gets here rather than being caught by the discovery refusal above.
+            raise SweepRefused(
+                f"namespace '{namespace}' answered for only part of its resource types; refusing to call it clean"
+            )
         orphans.extend(orphaned_resources(tracked, existing))
         undecidable.extend(undecidable_resources(tracked, existing))
 
