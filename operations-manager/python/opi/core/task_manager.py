@@ -59,8 +59,8 @@ def format_step_line(name: str, subject: str | None) -> str:
 # twee componenten, maal vijftien deployments.
 #
 # De grens staat bewust ruim. Hij is geen opmaakmiddel maar een vangnet: elke eerlijke zin
-# blijft eronder (de langste bestaande melding, de ArgoCD-geruststelling bij een nieuw
-# project, is 195 tekens) en elke machinedump gaat eroverheen. Wie hem raakt hoort dat te
+# blijft eronder (de langste bestaande melding, de uitleg bij het uitrollen van een nieuw
+# project, is 355 tekens) en elke machinedump gaat eroverheen. Wie hem raakt hoort dat te
 # merken, dus het volledige bericht gaat naar de log en niet stilletjes verloren.
 MAX_STEP_NAME = 400
 
