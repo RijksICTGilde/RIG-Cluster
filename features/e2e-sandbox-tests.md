@@ -79,6 +79,13 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
+- `cluster.py` - kubectl-wrappers om te meten wat er ECHT in het cluster staat
+  (`secret_values`, `get_json_strict`, `resource_names`, `probe_in_pod`, ...) plus
+  `run_psql` voor SQL tegen een databaseserver op het cluster, in een eigen pod. Het
+  wachtwoord en het statement gaan daar over STDIN naar een `sh -s` in die pod, en niet als
+  `--env`/argument: alles in de argv van `kubectl run` komt in klare tekst in de podspec
+  terecht (`kubectl get pod -o yaml`, etcd, de body van het create-verzoek) en in de
+  procestabel van de machine die de suite draait.
 - `zad_cli.py::ZadCli` - roept de zad-cli aan tegen de sandbox met een projectsleutel en
   geeft exitcode, stdout en stderr terug (`run(...)`, `assert_ok()`, `assert_faalt()`,
   `json()`). De CLI woont in een eigen repository en wordt hier niet meegeleverd:
@@ -112,6 +119,10 @@ fails halfway.
 - **Do** name projects with `_unique_project_name()` and register cleanup. **Don't** leave test
   projects on the sandbox.
 - **Do** keep new tests behind the right marker(s) so they never run in the default suite.
+- **Do** geef een wachtwoord of token over stdin mee, nooit als argument: `run_psql` doet dat
+  met zijn script, `docker login` met `--password-stdin`. En zet de waarde van zo'n vlag niet
+  in de tekst van een assertie (`ZadCli` maskeert hem, zie `leesbare_argv`), want die tekst
+  komt in het pytest-verslag en in de uitvoer van de CI-stap.
 - **Do** zet `pytest.mark.timeout(...)` in de `pytestmark` van een module die langer dan
   vijf minuten kan doen over een toets OF over het opzetten van zijn fixtures.
   `task test-e2e-sandbox` draait met `--timeout=300`, en dat budget geldt ook voor de SETUP

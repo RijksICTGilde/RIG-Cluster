@@ -16,6 +16,7 @@ import base64
 import contextlib
 import json
 import logging
+import shlex
 import socket
 import subprocess
 import time
@@ -31,14 +32,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _run(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["kubectl", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+class KubectlTimeout(subprocess.SubprocessError):
+    """Een kubectl-aanroep die zijn tijd niet haalde, zonder het commando in de melding.
+
+    ``subprocess.TimeoutExpired`` zet de hele argv in zijn tekst, en pytest schrijft de tekst
+    van een uitzondering in het verslag. Erft van ``SubprocessError``, zodat
+    ``kubectl_available`` hem blijft vangen zoals hij de time-out eerst ving.
+    """
+
+
+def _run(args: list[str], *, timeout: float = 30.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
+    """kubectl met deze argumenten. ``invoer`` gaat over stdin naar het proces.
+
+    Die stdin is er voor ``_run_psql_once``: het wachtwoord gaat daarlangs in plaats van via
+    de argv.
+    """
+    try:
+        return subprocess.run(
+            ["kubectl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            input=invoer,
+        )
+    except subprocess.TimeoutExpired:
+        # `from None` en niet `from fout`: de oorspronkelijke uitzondering draagt de argv in
+        # zijn tekst en een gekoppelde uitzondering wordt in de traceback gewoon afgedrukt.
+        # De eerste argumenten benoemen de aanroep; de rest blijft eruit, zodat een aanroeper
+        # die er ooit een waarde in zet hem hier niet alsnog opschrijft.
+        raise KubectlTimeout(f"kubectl {' '.join(args[:4])} haalde {timeout:.0f}s niet") from None
 
 
 @lru_cache(maxsize=1)
@@ -118,10 +141,12 @@ def run_psql(
     Zet dus ``DROP TABLE IF EXISTS`` voor een ``CREATE TABLE``, en een ``ON CONFLICT`` op
     een INSERT die niet mag verdubbelen.
 
-    En een tweede eis, die uit de pod komt: ``$$`` haalt het niet. De args van een pod gaan
-    langs de variabele-expansie van Kubernetes, en die leest ``$$`` als een ontsnapte ``$``.
-    Postgres krijgt dan ``DO $`` en antwoordt ``syntax error at or near "$"``. Gebruik een
-    BENOEMDE dollar-quote (``DO $naam$ ... END $naam$``), die komt ongeschonden aan.
+    Het statement en het wachtwoord gaan over stdin, zie ``_run_psql_once``. Daarmee is de
+    eis vervallen die hier eerst stond: zolang het statement een ARGUMENT van de pod was,
+    ging het langs de variabele-expansie van Kubernetes, en die leest ``$$`` als een
+    ontsnapte ``$`` (postgres kreeg ``DO $`` en antwoordde ``syntax error at or near "$"``).
+    De bestaande aanroepers gebruiken een BENOEMDE dollar-quote, en die werkt langs beide
+    wegen.
 
     Geeft (exitcode, uitvoer) terug, met de sluitstukregel eruit gefilterd. De uitvoer is
     stdout en stderr aan elkaar: ``kubectl run --rm`` schrijft zijn eigen "pod ... deleted"
@@ -157,6 +182,29 @@ def _run_psql_once(
     namespace: str,
     timeout: float,
 ) -> tuple[int, str]:
+    """Een pod die het statement uitvoert, met het wachtwoord over STDIN.
+
+    Het wachtwoord stond hier eerst als ``--env PGPASSWORD=<waarde>`` in de argv van
+    ``kubectl run``, en dat is drie keer een lek voor een wachtwoord dat langs deze weg het
+    SUPERUSER-wachtwoord van de gedeelde sandbox-database kan zijn: kubectl zet zo'n ``--env``
+    in klare tekst in ``spec.containers[].env[].value`` (leesbaar met ``kubectl get pod -o
+    yaml`` zolang de pod leeft, in etcd, en in de body van het create-verzoek), een time-out
+    schrijft de hele argv in het pytest-verslag, en de argv staat in de procestabel van de
+    machine die de suite draait.
+
+    Daarom is de argv van de pod ``sh -s`` en komt het script over stdin. Dat is ook wat
+    ``opi/connectors/postgres.py`` doet, en om dezelfde reden: "Connection parameters are
+    passed via the environment, never via the command line". Binnen de pod staat het
+    wachtwoord in de omgeving van psql en niet in zijn argv.
+
+    De time-out van ``_run`` komt terug als ``KubectlTimeout``, die het commando niet
+    meeneemt.
+    """
+    script = (
+        f"export PGPASSWORD={shlex.quote(password)}\n"
+        f"exec psql -h {shlex.quote(host)} -U {shlex.quote(user)} -d {shlex.quote(database)}"
+        f" -v ON_ERROR_STOP=1 -tAc {shlex.quote(sql)}\n"
+    )
     result = _run(
         [
             "-n",
@@ -167,23 +215,13 @@ def _run_psql_once(
             "-i",
             "--restart=Never",
             "--image=postgres:16-alpine",
-            "--env",
-            f"PGPASSWORD={password}",
             "--command",
             "--",
-            "psql",
-            "-h",
-            host,
-            "-U",
-            user,
-            "-d",
-            database,
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-tAc",
-            sql,
+            "sh",
+            "-s",
         ],
         timeout=timeout,
+        invoer=script,
     )
     return result.returncode, (result.stdout + result.stderr).strip()
 
