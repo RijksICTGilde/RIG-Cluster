@@ -156,10 +156,16 @@ bekeken is:
 * geen enkele Application terug: dat leest hetzelfde als een mislukte query, en in beide
   lezingen wordt elke resource een wees;
 * geen lijst van resourcetypes terug: dan inventariseert elke namespace als leeg;
-* een namespace die niet te inventariseren was: die is niet leeg, hij heeft niet geantwoord.
+* een namespace die niet te inventariseren was: die is niet leeg, hij heeft niet geantwoord;
+* geen lijst van namespaces terug: dan lijkt er geen enkele door OPI gemaakt, dus zonder
+  `--namespace` valt er niets te vegen en met `--namespace` valt de opgegeven namespace
+  buiten de toelatingslijst.
 
 `list_tracked_resources` en `list_namespaced_resource_types` dragen dat verschil zelf, met
 `None` voor een mislukte lezing naast een lege lijst voor "niets gevonden".
+`get_namespace_label_map` is de enige die in plaats daarvan een `KubectlExecutionError`
+gooit; de veegactie vangt die en weigert, want ongevangen eindigt hij op exitcode 1 en dat
+betekent hier "er zijn wezen".
 
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
