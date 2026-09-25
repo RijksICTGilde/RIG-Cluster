@@ -216,7 +216,13 @@ Alles gemeten tegen build `65b90336` op het sandboxcluster.
 | `test_sandbox_migratie_006.py` | 5 / 5 |
 | `test_sandbox_kloon.py` | 5 / 5 |
 | `test_sandbox_registry_pull.py` | 3 / 3 |
-| `test_sandbox_speelruimte.py` | 6 / 6 |
+| `test_sandbox_speelruimte.py` | 6 van de 7 |
+
+De zeven in `test_sandbox_speelruimte.py` zijn er zes geweest: de zevende,
+`test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt`, kwam er na `sandbox-release`
+bij en heeft dus geen clusteruitslag. Precies de toets die het plan vroeg, en precies de
+toets die nog niemand op een cluster heeft zien draaien. Wie de sandbox als volgende claimt,
+draait hem.
 
 ## Wat hieruit volgt
 
