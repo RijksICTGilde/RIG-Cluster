@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from tests.e2e.helpers import cluster
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -47,10 +48,6 @@ _NAMESPACE = "rig-system"
 _DB_HOST = "rig-db-rw"
 _DB_NAAM = "operations_manager"
 _ADMIN_SECRET = "postgres-admin-credentials"
-
-#: Laatste regel van elk statement. Komt hij niet terug, dan heeft de pod de uitvoer van psql
-#: niet doorgegeven en is er niets gemeten; zie ``_psql``.
-_SLUITSTUK = "rc227-psql-klaar"
 
 #: De backfill uit de migratie, letterlijk. Doeltabel en brontabel zijn een parameter: de
 #: toets schrijft niet in `project_reconciliation`, en hij leest uit een MOMENTOPNAME van
@@ -97,62 +94,22 @@ def db_wachtwoord(sandbox_url: str) -> str:
 
 
 def _psql(wachtwoord: str, sql: str, *, timeout: float = 300.0) -> tuple[int, str]:
-    """SQL tegen de sandbox-database, in een eigen pod.
+    """SQL tegen de sandbox-database, met de vaste gegevens van deze server.
 
-    Drie pogingen, en dat is geen ruimte voor toeval maar voor de pod. `kubectl run --rm -i`
-    hangt aan een container die nog moet starten, en op een druk cluster haalt hij die
-    soms niet: dan komt hij terug met exitcode NUL en alleen zijn eigen opruimregel, en is
-    alles wat psql schreef weg. Dat is de vorm die hier rood gaf op werk dat gewoon gelukt
-    was, dus het sluitstuk hieronder moet echt terugkomen voordat een uitkomst geldig is.
-    Een echte SQL-fout draagt `ERROR:` en gaat meteen terug, zodat een fout in het statement
-    niet achter een herhaling verdwijnt.
-
-    Die herhaling stelt een eis aan de aanroeper: bij een verloren uitvoer is het statement
-    wel UITGEVOERD, dus elk statement hier moet een tweede keer kunnen. Daarom staat er
-    `DROP TABLE IF EXISTS` voor elke `CREATE TABLE`, en staat op elke INSERT de `ON CONFLICT`
-    die de migratie zelf ook draagt.
+    De afdichting tegen een pod die zijn uitvoer verliest zit in ``cluster.run_psql``, en
+    daar staat ook de eis die dat aan een statement stelt: het moet een tweede keer kunnen.
+    Daarom staat er hieronder `DROP TABLE IF EXISTS` voor elke `CREATE TABLE`, en op elke
+    INSERT de `ON CONFLICT` die de migratie zelf ook draagt.
     """
-    for poging in (1, 2, 3):
-        code, uit = _psql_eenmaal(wachtwoord, f"{sql.rstrip().rstrip(';')}; SELECT '{_SLUITSTUK}';", timeout=timeout)
-        if "ERROR:" in uit:
-            return code, uit
-        if _SLUITSTUK in uit:
-            schoon = "\n".join(regel for regel in uit.splitlines() if regel.strip() != _SLUITSTUK)
-            return code, schoon.strip()
-        logger.warning("psql-pod gaf niets terug (exit %d, poging %d): %s", code, poging, uit[:200])
-    return code or 1, uit
-
-
-def _psql_eenmaal(wachtwoord: str, sql: str, *, timeout: float) -> tuple[int, str]:
-    resultaat = _kubectl(
-        [
-            "-n",
-            _NAMESPACE,
-            "run",
-            f"psql-mig006-{uuid.uuid4().hex[:8]}",
-            "--rm",
-            "-i",
-            "--restart=Never",
-            "--image=postgres:16-alpine",
-            "--env",
-            f"PGPASSWORD={wachtwoord}",
-            "--command",
-            "--",
-            "psql",
-            "-h",
-            _DB_HOST,
-            "-U",
-            "postgres",
-            "-d",
-            _DB_NAAM,
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-tAc",
-            sql,
-        ],
+    return cluster.run_psql(
+        sql,
+        host=_DB_HOST,
+        user="postgres",
+        database=_DB_NAAM,
+        password=wachtwoord,
+        namespace=_NAMESPACE,
         timeout=timeout,
     )
-    return resultaat.returncode, (resultaat.stdout + resultaat.stderr).strip()
 
 
 @pytest.fixture(scope="module")

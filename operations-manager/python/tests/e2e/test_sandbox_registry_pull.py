@@ -33,17 +33,17 @@ Draaien:
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import os
 import shutil
 import subprocess
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
-from tests.e2e.conftest import SANDBOX_TEST_USER
+from opi.utils.age import carries_encrypted_value
+from tests.e2e.conftest import FORGEJO_PASSWORD, FORGEJO_USER, SANDBOX_TEST_USER
 from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers.lifecycle import create_project_via_wizard
 from tests.e2e.helpers.wizard import unique_project_name
@@ -59,7 +59,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Zonder de CLI komt de registry er niet in, en dan meet de pod-toets een component die
-# nooit is toegevoegd. De skip staat daarom op de module, voor het project.
+# nooit is toegevoegd. Zonder docker komt het image niet in de registry, en dan is er geen
+# image om uit te halen. Beide skips staan op de MODULE en niet op een fixture: de fixture
+# die het project aanmaakt wordt eerder opgelost dan een fixture die verderop in de
+# signatuur staat, dus een skip daarbinnen laat een project op dit GEDEELDE cluster
+# achter om daarna alles over te slaan.
 # `serial`: de registry moet er zijn voor de component hem kan kiezen, en het pull-secret
 # voor de pod kan starten. Dat is de keten die deze module meet.
 pytestmark = [
@@ -68,17 +72,23 @@ pytestmark = [
     pytest.mark.slow,
     pytest.mark.serial,
     pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
+    pytest.mark.skipif(
+        shutil.which("docker") is None,
+        reason="docker ontbreekt; het testimage kan niet in de registry gezet worden",
+    ),
 ]
 
 _VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 
-#: De private registry op dit cluster. Forgejo's eigen container registry: hij weigert
-#: anoniem, de node kan hem bereiken, en hij overleeft geen clusterherbouw (net als de
-#: rest van de sandbox).
+#: De registry op dit cluster: Forgejo's eigen container registry. Het pushen vraagt
+#: inloggegevens en de node kan hem bereiken, en hij overleeft geen clusterherbouw (net als
+#: de rest van de sandbox). Hij weigert een anonieme PULL niet, zie de module-docstring:
+#: dat is de reden dat de pod-toets hieronder op het secret eindigt en niet op de pull.
+#: Gebruiker en token komen uit de conftest, die ze al uit de omgeving leest.
 _REGISTRY_HOST = os.environ.get("FORGEJO_REGISTRY_HOST", "forgejo.sandbox.rijksapp.dev")
-_REGISTRY_ORG = os.environ.get("FORGEJO_USER", "rig-admin")
+_REGISTRY_ORG = FORGEJO_USER
 _REGISTRY_USER = _REGISTRY_ORG
-_REGISTRY_PASSWORD = os.environ.get("FORGEJO_PASSWORD", "admin1234")
+_REGISTRY_PASSWORD = FORGEJO_PASSWORD
 
 #: De naam die het project aan deze registry geeft. Vrij te kiezen, en dat is het punt:
 #: de component verwijst met deze naam, niet met de host.
@@ -140,9 +150,6 @@ def prive_image() -> str:
     waarschuwing en geen weigering: de rest van deze module meet nog steeds wat ZAD doet, maar
     de pod-toets kan er zijn sterkste claim niet op bouwen.
     """
-    if not shutil.which("docker"):
-        pytest.skip("docker ontbreekt; de fixture kan het image niet in de registry zetten")
-
     inlog = _docker("login", _REGISTRY_HOST, "-u", _REGISTRY_USER, "-p", _REGISTRY_PASSWORD, timeout=120.0)
     assert inlog.returncode == 0, f"inloggen op {_REGISTRY_HOST} mislukte: {inlog.stderr[:400]}"
 
@@ -185,15 +192,10 @@ def cli(sandbox_url: str, registry_project: CreatedProject) -> ZadCli:
     return ZadCli(skip_zonder_cli(), sandbox_url, api_key=registry_project.api_key, project=registry_project.name)
 
 
-def _kubectl_json(args: list[str]) -> dict[str, Any]:
-    ruw = subprocess.run(["kubectl", *args, "-o", "json"], capture_output=True, text=True, timeout=60, check=True)
-    return json.loads(ruw.stdout)
-
-
 def _pull_secrets(namespace: str) -> dict[str, dict]:
     """Elke dockerconfigjson-secret in de namespace, met zijn ontcijferde inhoud."""
     gevonden: dict[str, dict] = {}
-    for item in _kubectl_json(["get", "secrets", "-n", namespace])["items"]:
+    for item in cluster.get_json_strict("get", "secrets", "-n", namespace)["items"]:
         if item.get("type") != "kubernetes.io/dockerconfigjson":
             continue
         ruw = (item.get("data") or {}).get(".dockerconfigjson")
@@ -264,8 +266,12 @@ def test_de_registry_wordt_opgeslagen_via_de_cli(
     assert entry, f"de entry '{_REGISTRY_NAAM}' is niet terug te lezen"
     opgeslagen = str(entry.get("password") or "")
     assert opgeslagen != _REGISTRY_PASSWORD, "het token staat in klare tekst in het projectbestand"
-    assert opgeslagen.startswith("-----BEGIN AGE ENCRYPTED FILE-----"), (
-        f"het token is niet AGE-versleuteld opgeslagen: {opgeslagen[:80]!r}"
+    # Het schema laat TWEE opslagvormen toe (`$defs/age-encrypted`): het armored blok en de
+    # `base64+age:`-regel. Welke van de twee dit veld draagt is een opslagkeuze, dus op een
+    # ervan pinnen maakt deze toets rood op een wijziging die niets met het geheim te maken
+    # heeft. `carries_encrypted_value` waarschuwt daar in zijn docstring precies voor.
+    assert carries_encrypted_value(opgeslagen), (
+        f"het token is in geen van beide AGE-vormen opgeslagen: {opgeslagen[:80]!r}"
     )
 
 
@@ -359,7 +365,7 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
         """
         return [
             pod
-            for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]
+            for pod in cluster.get_json_strict("get", "pods", "-n", namespace)["items"]
             if any(
                 houder.get("image", "").startswith(prive_image.split(":")[0]) for houder in pod["spec"]["containers"]
             )
@@ -375,7 +381,7 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
     if not cluster.wait_for(_pod_draait, timeout=420.0):
         beeld = [
             (pod["metadata"]["name"], [s.get("state") for s in (pod.get("status", {}).get("containerStatuses") or [])])
-            for pod in _kubectl_json(["get", "pods", "-n", namespace])["items"]
+            for pod in cluster.get_json_strict("get", "pods", "-n", namespace)["items"]
         ]
         pytest.fail(f"geen draaiende pod uit de private registry in {namespace}: {beeld}")
 
@@ -384,12 +390,17 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
         for pod in _pods_uit_de_registry()
         for verwijzing in (pod["spec"].get("imagePullSecrets") or [])
     ]
-    assert namen, "de pod draait maar noemt geen imagePullSecret; dan is de registry niet privaat genoeg"
+    assert namen, (
+        "de pod draait maar noemt geen imagePullSecret; dan heeft ZAD de registrykeuze niet "
+        "op de deployment doorgezet, en haalt kubelet het image anoniem of uit de cache van de node"
+    )
 
     # En het secret dat hij noemt moet er ECHT zijn. Dit is de regel die de valse groene vangt:
     # kubelet meldt een ontbrekend pull-secret als een waarschuwing en gaat door, dus een pod
     # kan draaien terwijl het secret nooit is aangekomen.
-    aanwezig = {item["metadata"]["name"] for item in _kubectl_json(["get", "secrets", "-n", namespace])["items"]}
+    aanwezig = {
+        item["metadata"]["name"] for item in cluster.get_json_strict("get", "secrets", "-n", namespace)["items"]
+    }
     ontbreekt = [naam for naam in namen if naam not in aanwezig]
     assert not ontbreekt, (
         f"de pod noemt {ontbreekt} als imagePullSecret maar die staat niet in {namespace}; "

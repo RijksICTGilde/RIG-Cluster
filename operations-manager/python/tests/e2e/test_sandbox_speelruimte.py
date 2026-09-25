@@ -118,7 +118,17 @@ def _zet(sandbox_url: str, project: CreatedProject, waarde: object, *, scope: st
 
 
 def _limiet_in_projectbestand(forgejo: ForgejoClient, project: str) -> object:
-    yaml = forgejo.get_project_yaml(project) or {}
+    return _limiet_uit_yaml(forgejo.get_project_yaml(project) or {})
+
+
+def _limiet_uit_yaml(yaml: dict) -> object:
+    """De waarde van het veld in een AL GELEZEN projectbestand.
+
+    ``wait_for_condition`` geeft zijn predicate het bestand dat het net ophaalde. Dat
+    gebruiken scheelt niet alleen een ronde over het netwerk: haal je het bestand binnen de
+    predicate nog een keer op, dan beslis je op een ANDERE lezing dan de lezing die hij
+    straks teruggeeft.
+    """
     for entry in yaml.get("services") or []:
         naam = entry if isinstance(entry, str) else (entry.get("name") or next(iter(entry), ""))
         if naam != _DIENST:
@@ -150,7 +160,7 @@ def test_een_waarde_binnen_de_speelruimte_wordt_opgeslagen(
 
     assert forgejo.wait_for_condition(
         db_project.name,
-        lambda yaml: _limiet_in_projectbestand(forgejo, db_project.name) == waarde,
+        lambda yaml: _limiet_uit_yaml(yaml) == waarde,
         timeout=180.0,
     ), f"'{_VELD}: {waarde}' staat niet in het projectbestand van '{db_project.name}'"
 
@@ -327,7 +337,7 @@ def test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt(
 
     assert not forgejo.wait_for_condition(
         db_project.name,
-        lambda yaml: _limiet_in_projectbestand(forgejo, db_project.name) == _MINIMUM - 1,
+        lambda yaml: _limiet_uit_yaml(yaml) == _MINIMUM - 1,
         # Een negatief bewijs kost de volle wachttijd, dus korter dan de 180s hieronder: een
         # geslaagde schrijfactie staat er binnen die tijd wel.
         timeout=60.0,
@@ -341,7 +351,7 @@ def test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt(
 
     assert forgejo.wait_for_condition(
         db_project.name,
-        lambda yaml: _limiet_in_projectbestand(forgejo, db_project.name) == geldig,
+        lambda yaml: _limiet_uit_yaml(yaml) == geldig,
         timeout=180.0,
     ), "een geldige waarde kwam via de CLI niet in het projectbestand; de weigering hierboven bewijst dan niets"
 
