@@ -17,6 +17,7 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from opi.services.catalog.image_registries.rules import resolve_image
+from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX
 from opi.utils.yaml_util import dump_yaml_documents_to_string, load_yaml_documents_from_string
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 _POD_TEMPLATE_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "Job"}
 _CRONJOB_KIND = "CronJob"
 
-_SKIP_SUFFIXES = (".sops.yaml", ".to-sops.yaml")
+_SKIP_SUFFIXES = (SOPS_SUFFIX, TO_SOPS_SUFFIX)
 _SKIP_NAMES = ("kustomization.yaml", "decrypt-sops.yaml")
 
 
