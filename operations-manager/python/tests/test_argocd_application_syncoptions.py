@@ -6,10 +6,10 @@ which is worse than no line at all. And ``Delete`` only takes ``false`` or ``con
 application level, so ``Delete=true`` was silently ignored.
 
 RC-228 asked the same question of ``SyncTimeout=60s`` on the two handwritten platform
-Applications, and the answer is the same: ArgoCD v3.5.1 (the version
-``bootstrap/rig-system/kustomize/overlays/*/argocd-deployment.yaml`` pins, through the
-``argocd-rig`` image) reads no such option. Its only ``SyncTimeout`` is the resync timeout
-of the cluster cache, a controller setting.
+Applications, and the answer is the same. Those two live on odcn-production, whose
+``argocd-deployment.yaml`` pins ``argocd-rig:v3.5.1-rig2``, upstream ArgoCD v3.5.1, and
+v3.5.1 reads no such option: its only ``SyncTimeout`` is the resync timeout of the cluster
+cache, a controller setting.
 
 Nothing but a test keeps these out. The Application CRD types ``syncOptions`` as a plain
 array of strings, so ArgoCD accepts an option it has never heard of without complaint.
