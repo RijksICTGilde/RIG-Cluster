@@ -5,12 +5,16 @@ ARG UV_VERSION=0.12.15
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
+# mc uit onze eigen spiegel: MinIO distribueert hem niet meer, en een build die de
+# GitHub-release ophaalt hangt aan het kanaal dat als vierde kan sluiten. Waarom die spiegel
+# er is staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
+FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
+
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
-ARG MC_VERSION
 ARG SOPS_VERSION=v3.13.2
 ARG KOPIA_VERSION=0.23.1
 ARG CHISEL_VERSION=1.11.8
@@ -53,30 +57,8 @@ RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/
     && chmod +x "sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && mv "sops-${SOPS_VERSION}.linux.${TARGETARCH}" /usr/local/bin/sops
 
-# Install MinIO client - layer cached unless MC_VERSION ARG changes.
-# Niet uit een image: MinIO heeft zowel docker.io/minio als quay.io/minio achter een
-# abonnement gezet (401 op elke tag, en anoniem ook op de repo-API; een publiek quay-repo
-# ernaast geeft wel 200). dl.min.io geeft 410 Gone. De GitHub-release van dezelfde tag
-# staat er nog.
-#
-# De checksum staat hier LITERAAL en wordt niet naast de binary opgehaald. Die .sha256sum
-# komt van dezelfde bron als de binary zelf, dus hij controleert alleen de overdracht: wie
-# het artefact kan wijzigen, wijzigt het bestand ernaast mee. Een literaal in dit bestand is
-# de grendel: hij laat een gewijzigd artefact omvallen, en een nieuwe waarde is een regel in
-# een diff die iemand goedkeurt. Bij een nieuwe MC_VERSION horen dus twee nieuwe sommen
-# (`sha256sum mc.linux-<arch>.<tag>` van de gedownloade assets).
-ARG MC_SHA256_AMD64=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
-ARG MC_SHA256_ARM64=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c
-RUN MC_ASSET="mc.linux-${TARGETARCH}.${MC_VERSION}" \
-    && MC_URL="https://github.com/minio/mc/releases/download/${MC_VERSION}/${MC_ASSET}" \
-    && case "${TARGETARCH}" in \
-         amd64) MC_SHA256="${MC_SHA256_AMD64}" ;; \
-         arm64) MC_SHA256="${MC_SHA256_ARM64}" ;; \
-         *) echo "geen mc-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
-       esac \
-    && curl -fsSL -o /usr/local/bin/mc "${MC_URL}" \
-    && echo "${MC_SHA256}  /usr/local/bin/mc" | sha256sum -c - \
-    && chmod 755 /usr/local/bin/mc
+# Install MinIO client
+COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64
