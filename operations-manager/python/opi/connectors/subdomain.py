@@ -135,11 +135,13 @@ def validate_bare_domain_allowed(base_domain: str, supported_domains: set[str], 
       already point at this cluster because another tenant serves subdomains on it, so
       claiming the apex from here takes over their domain, certificate included.
 
-    "Not a platform domain" alone is therefore only half the rule. Both halves live in
-    this one function so the form enforcer and both publication call sites (bare-domain
-    registration and the apex ingress) refuse for the same reason, in the same words --
-    the approval check used to sit behind the form's ``domain-format`` early return,
-    where the service-config write path never reached it.
+    "Not a platform domain" alone is therefore only half the rule. Both halves live here
+    so both publication call sites (bare-domain registration and the apex ingress) refuse
+    for the same reason, in the same words. The form enforcer does NOT call this function:
+    since RC-216 it runs its own per-status version and shares only the messages
+    (``BARE_DOMAIN_PLATFORM_MESSAGE``, ``bare_domain_not_owned_message``). Widen the rule
+    here and ``DomainConfigEnforcer`` needs the same change, or the form silently lags
+    behind.
 
     The supported set is passed in rather than looked up here: the caller already knows
     which cluster it is deciding for.

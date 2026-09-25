@@ -395,21 +395,22 @@ def test_strip_and_preserve_attachment_content_roundtrip() -> None:
     assert "content" not in fv["attachments"]["data"][0]
 
 
-def test_modal_edit_attachments_flow_leaves_services_in_base_data() -> None:
-    """De uploadstap ziet de bestaande bijlagen, maar via base_data en niet via step_data.
+def test_modal_edit_attachments_flow_keeps_services_in_base_data() -> None:
+    """De losse bijlagenmodal ziet de bestaande bijlagen via base_data, niet via step_data.
 
-    De bijlagensectie heeft een READONLY carrier op ``services``: die schrijft nooit, hij
-    is er alleen zodat de uploadpartial de bestaande bijlagen kan tonen. Waar die lijst
-    vandaan komt is niet vrijblijvend (559eaa60): een kopie in step_data is gezaghebbend,
-    en de naam-unie in merge_service_lists bracht daarmee elke dienst terug die de
-    gebruiker in de dienstenmodal had uitgevinkt.
+    DEZE TEST STOND OM. Hij eiste dat de readonly services-carrier een kopie van de
+    dienstenlijst IN step_data zette. Dat is precies wat 559eaa60 heeft weggehaald, en met
+    reden: de naam-unie in merge_service_lists verwijdert nooit, dus die kopie bracht elke
+    uitgevinkte dienst terug. De test bleef achter en stond sindsdien rood op de basistak.
 
-    De verdeling die daaruit volgt, en die deze test vastlegt:
+    De verdeling die eruit volgt, en die deze test in twee helften vastlegt:
 
     - ``_split_data_across_sections`` slaat de carrier over, dus step_data krijgt geen
       dienstenlijst;
     - ``_fully_owned_list_keys`` rekent de carrier niet als eigenaar, dus ``services``
       blijft in base_data staan en de uploadstap houdt zijn context.
+
+    Valt er een weg, dan is de modal leeg of komt een verwijderde dienst terug.
     """
     from opi.forms.visualizers.flows import get_flow
     from opi.web.router_detail_edit import _fully_owned_list_keys
@@ -424,8 +425,17 @@ def test_modal_edit_attachments_flow_leaves_services_in_base_data() -> None:
             {"attachments": {"data": [{"id": "sso", "filename": "cert.pem", "content": "AGEBLOCK"}]}},
         ]
     }
+
     step_data = _split_data_across_sections(flow, project)
-    assert "services" not in step_data.get("attachments", {}), "de readonly carrier hoort niets in step_data te zetten"
+    assert "services" not in step_data.get("attachments", {}), (
+        "de readonly carrier zet weer een gezaghebbende kopie in step_data; dan brengt de "
+        "naam-unie in merge_service_lists een uitgevinkte dienst terug"
+    )
+
+    assert "services" not in _fully_owned_list_keys(flow), (
+        "services geldt hier als bezit van de flow, en dan haalt base_data de lijst weg; "
+        "de uploadstap heeft dan geen enkele bron voor de bestaande bijlagen"
+    )
 
     # Wat base_data overhoudt is wat de uploadpartial leest: de lijst zelf, met de catalogus erin.
     base_data = {k: v for k, v in project.items() if k not in _fully_owned_list_keys(flow)}

@@ -536,9 +536,8 @@ def page_data(slug: str) -> dict[str, Any]:
 def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Alle zichtbare diensten uit de ECHTE registry, met wie ze afneemt.
 
-    Bewust de registry en geen eigen lijst: naam, omschrijving, icoon, kleur, selectie en
-    hulptekst staan daar al, en een tweede lijst ernaast gaat vroeg of laat afwijken van
-    wat de applicatie werkelijk aanbiedt.
+    Bewust de registry en geen eigen lijst: een tweede lijst ernaast gaat vroeg of laat
+    afwijken van wat de applicatie werkelijk aanbiedt.
     """
     from opi.services.services import ServiceAdapter
     from opi.web.navigation_lotc import to_nldd_icon
@@ -556,14 +555,6 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         is_platform = definition.kind.value == "system"
 
-        chips = ["per component" if definition.selectable_per_component else "per project"]
-        if definition.shared_per_deployment:
-            chips.append("gedeeld per deployment")
-        if definition.variables:
-            chips.append(f"{len(definition.variables)} variabelen")
-        if definition.requires:
-            chips.append(f"vereist {len(definition.requires)}")
-
         overview.append(
             {
                 "name": service_type.value,
@@ -574,7 +565,6 @@ def services_overview(projects: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 # Zonder deze stap blijft het icoon leeg, en dat gebeurt STIL.
                 "icon": to_nldd_icon(definition.icon),
                 "color": definition.color,
-                "chips": chips,
                 # Alleen een label waar het iets zegt. Een dienst die je zelf kiest heeft
                 # geen label nodig; dat is de normale situatie.
                 "kind_label": "altijd aan" if is_platform else "",

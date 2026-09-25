@@ -340,9 +340,11 @@ ontsleutelen. Er komt geen waarschuwing.
 *Losse taak — dit is een beveiligingspunt, niet alleen een netheidspunt.*
 
 De ODCN-recipient in de bestaande sops-bestanden is
-`age1efv94gmdq8l60au5gslnxunkqrftcyyfvscfeysv9j44q8g8ages2gl4dd` (o.a.
-`infrastructure/.../secrets/config/overlays/odcn/keycloak-admin-secret.yaml.sops.yaml:13`).
-Fundament krijgt een eigen recipient; dat is precies het punt van (p).
+`age1gdue9pqusk9y7hehz2ajdl60c7udsrv3sl8wxmg3svqqlg29h45shhvquw` (o.a.
+`infrastructure/.../secrets/config/overlays/odcn/keycloak-admin-secret.yaml.sops.yaml:21`).
+De sleutel die hier eerder stond is op 24 september 2026 geroteerd en opent niets meer; zie
+`features/sops-sleutel-roteren.md`. Fundament krijgt een eigen recipient; dat is precies het
+punt van (p).
 
 ### 2.3 Samenvatting: wat naar configuratie moet
 
