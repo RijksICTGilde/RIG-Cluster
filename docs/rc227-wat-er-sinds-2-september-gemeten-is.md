@@ -92,10 +92,19 @@ Wat er niet vanzelf uit volgde staat in "Wat de uitrol zelf kostte" hierboven.
 |---|---|
 | Speelruimte per veld, drie lezers uit een declaratie | **gemeten** over de API (`test_sandbox_speelruimte.py`): binnen de grenzen wordt opgeslagen, onder de ondergrens en boven de bovengrens geweigerd, de weigering noemt de grenzen, en het projectbestand blijft onveranderd. Niet over de CLI, want die kan dit veld niet versturen; zie "Wat de CLI-weg opleverde". |
 | De guard sluit ook als het veld ontbreekt | **gemeten** als de servertoets op een niet-gedeclareerd veld. |
+| De weigering noemt de speelruimte | **gemeten en goed**, letterlijk: `Project 'speel-lco': configuratie van service 'postgresql-database' op projectniveau is ongeldig: 'connection-limit' moet tussen 1 en 500 liggen; je gaf 501.` |
 | Een laag die de dienst niet openzet | **gemeten en goed.** `connection-limit` staat op project en deployment; de componentlaag bestaat als route niet eens (`/services/postgresql-database/config/component/...` staat niet in het OpenAPI-document van de draaiende server). |
 | Een `grow_only`-veld staat op precies een laag | **niet gemeten, en dat kan ook niet.** `grow_only` bestaat in het mechanisme, maar geen enkele dienst declareert een veld met die vlag: buiten `config_settings.py` komt het woord in `opi/` niet voor. Er is niets om op te richten. Zodra een dienst er een declareert, hoort er een clustertoets bij. |
 | De connectielimiet is instelbaar | **gemeten**, dit is het veld waarop het bovenstaande gemeten is. |
 | Een kale dienst is de standaard, ook als VORIGE versie | **niet gemeten.** Een uitspraak over twee versies van hetzelfde bestand; op een cluster alleen te maken door twee keer op te slaan, en dan meet je de opslagvolgorde. |
+
+**Waarneming die in de feature-doc ontbreekt.** De grendel zit in de VERWERKING en niet op
+de HTTP-grens. `PUT .../services/postgresql-database/config/project` antwoordt **202** met
+een taak-id, ook op een waarde buiten de speelruimte; de weigering komt pas terug in de
+uitkomst van die taak. Voor een gebruiker ziet een ongeldige waarde er dus eerst aangenomen
+uit. Het projectbestand blijft wel onveranderd, dus er gaat niets mis, maar wie op de
+HTTP-status afgaat leest het verkeerd. Een toets die op een 4xx wacht meet hier niets, en
+daar is deze suite ook eerst op omgevallen.
 
 ## 4. Klonen en herstellen
 
@@ -192,6 +201,19 @@ het OpenAPI-document: het veld is daar een kale `integer`. Een client kan de spe
 niet vooraf kennen en komt er pas achter door een weigering. Dat is verdedigbaar (de grens
 staat op een plek, zoals de feature-doc eist) maar het betekent wel dat elke client die het
 vooraf wil weten, het moet raden.
+
+## De stand van de nieuwe toetsen
+
+Alles gemeten tegen build `65b90336` op het sandboxcluster.
+
+| bestand | uitslag |
+|---|---|
+| `test_sandbox_zad_cli.py` | 5 / 5 |
+| `test_sandbox_foutmeldingen.py` | 8 / 8 |
+| `test_sandbox_migratie_006.py` | 5 / 5 |
+| `test_sandbox_kloon.py` | 5 / 5 |
+| `test_sandbox_registry_pull.py` | 3 / 3 |
+| `test_sandbox_speelruimte.py` | 6 / 6 |
 
 ## Wat hieruit volgt
 
