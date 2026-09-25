@@ -48,6 +48,13 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    `delete_deployment_from_yaml_change`. Het werkt ook als de oorzaak buiten ons ligt: een
    registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
 
+   Drie van die vier verwijderen via GitOps: het manifest gaat uit de
+   argo-applications-repo en ArgoCD ruimt de Application op. De wezenopruiming heeft dat
+   manifest per definitie niet meer en verwijdert de Application zelf, met
+   `kubectl delete application -n <argo-namespace>`. De cascade komt daar van de
+   `resources-finalizer.argocd.argoproj.io` die `manifests/argocd-application.yaml.jinja`
+   meeschrijft, en dat is dezelfde cascade die de operatie hierboven blokkeerde.
+
 2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
    `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna gaat de
    finalizer weg. Welke resources dat zijn leest `opi/utils/argocd_tracking.py`, en dat
@@ -131,7 +138,10 @@ bestaat de Application waar dit ding bij hoort nog?
 Een `spec.source.path` wordt genormaliseerd voordat hij met een map vergeleken wordt: OPI
 schrijft hem kaal, maar de Applications op het cluster dragen hem als
 `./sandboxed-local/<project>/<deployment>` (gemeten op de sandbox), en die twee vormen
-letterlijk vergelijken zou elk levend pad een wees noemen.
+letterlijk vergelijken zou elk levend pad een wees noemen. Een pad dat ONDER een map ligt
+beschermt hem ook: de diepte drie is de vorm van deze repo vandaag, en een repository-entry
+met een niet-lege `path` legt de boom een niveau dieper. Zonder die regel was daar elke
+levende projectmap een wees, en `--delete` had ze allemaal meegenomen.
 
 Of een Application bestaat wordt via de Kubernetes-API gelezen, nooit via die van ArgoCD:
 die antwoordt onder druk een dubbelzinnige `permission denied` voor Applications die wel
