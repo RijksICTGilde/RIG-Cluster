@@ -197,9 +197,28 @@ def test_buiten_de_speelruimte_wordt_geweigerd(
 
     respons = _zet(sandbox_url, db_project, waarde)
     logger.info("%s (%s): HTTP %d %s", wat, waarde, respons.status_code, respons.text[:300])
-    assert respons.status_code >= 400, f"{waarde} werd geaccepteerd (HTTP {respons.status_code})"
 
-    tekst = respons.text
+    # DIT ENDPOINT IS ASYNCHROON. Het antwoordt 202 met een taak-id, ook op een waarde die
+    # buiten de speelruimte valt: de grendel zit in de VERWERKING en niet op de HTTP-grens.
+    # Een toets die hier op een 4xx wacht meet daarom niets, en voor een gebruiker betekent
+    # het dat een ongeldige waarde er eerst aangenomen uitziet.
+    assert respons.status_code == 202, (
+        f"verwachtte 202 van dit asynchrone endpoint, kreeg {respons.status_code}: {respons.text[:300]}"
+    )
+
+    taak_id = respons.json().get("task_id")
+    assert taak_id, f"geen taak-id in het antwoord: {respons.text[:300]}"
+    uitkomst, reden = sandbox_api.task_outcome(
+        sandbox_url,
+        taak_id,
+        db_project.api_key,
+        verify_ssl=_API_VERIFY_SSL,
+        timeout=300.0,
+    )
+    logger.info("%s (%s): taak %s -- %s", wat, waarde, uitkomst, (reden or "")[:400])
+    assert uitkomst == "failed", f"de taak accepteerde {waarde} ({uitkomst}); de speelruimte hield niet"
+
+    tekst = reden or ""
     assert "Traceback (most recent call last)" not in tekst, f"weigering met traceback:\n{tekst}"
 
     # Op de hele ZIN en niet op de twee getallen apart: "1" komt in bijna elke tekst voor
