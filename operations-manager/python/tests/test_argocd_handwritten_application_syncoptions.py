@@ -64,8 +64,14 @@ _IDS = [path for path, _ in _APPLICATIONS]
 
 _ODCN_ARGOCD = _OVERLAYS / "odcn-production" / "argocd-deployment.yaml"
 
+#: Written out rather than derived from ``_OVERLAYS``, which is what the check below
+#: pins: an anchor that moves with the thing it anchors holds nothing down.
+_OVERLAYS_FROM_REPO_ROOT = "bootstrap/rig-system/kustomize/overlays"
+_PRODUCTION_INFRA = f"{_OVERLAYS_FROM_REPO_ROOT}/odcn-production/argocd-application-production-infrastructure.yaml"
+_RON_INFRA = f"{_OVERLAYS_FROM_REPO_ROOT}/odcn-production/argocd-application-ron-infrastructure.yaml"
 
-def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
+
+def test_the_walk_finds_the_applications_and_reads_their_sync_options() -> None:
     """An empty parametrize skips rather than fails, so without this the checks below
     would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
     wrong ``parents`` index leaves behind.
@@ -73,16 +79,23 @@ def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
     The two files are named because the ``SyncTimeout`` lines came off them. The three
     cluster overlays are named next to them because naming only those two files leaves the
     other direction open: a walk that narrows to odcn-production keeps both of them and
-    drops the five Applications in the other overlays without failing anything."""
-    assert (
-        "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-production-infrastructure.yaml"
-        in _IDS
-    )
-    assert "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-application-ron-infrastructure.yaml" in _IDS
+    drops the five Applications in the other overlays without failing anything.
 
-    overlays_from_repo_root = _OVERLAYS.relative_to(_REPO_ROOT)
-    covered = {Path(path).relative_to(overlays_from_repo_root).parts[0] for path in _IDS}
+    Finding the files is not enough, because ``_handwritten_applications`` falls back to
+    an empty list for anything it cannot read: rename the ``syncOptions`` key or lose
+    ``spec.syncPolicy`` and every check below passes over nothing while the manifests
+    still carry whatever they carry. So what it read off the two files is asserted here
+    as well. The sibling guard needs no such line: it indexes into the rendered manifest
+    and raises a ``KeyError`` instead of falling back."""
+    assert _PRODUCTION_INFRA in _IDS
+    assert _RON_INFRA in _IDS
+
+    covered = {Path(path).relative_to(_OVERLAYS_FROM_REPO_ROOT).parts[0] for path in _IDS}
     assert covered == {"local", "odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
+
+    for named in (_PRODUCTION_INFRA, _RON_INFRA):
+        read = [options for path, options in _APPLICATIONS if path == named]
+        assert read == [["CreateNamespace=false"]], f"{named} yielded {read}"
 
 
 # The name says *handwritten* because the generated Application has its own version of
