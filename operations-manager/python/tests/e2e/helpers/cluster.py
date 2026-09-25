@@ -118,6 +118,11 @@ def run_psql(
     Zet dus ``DROP TABLE IF EXISTS`` voor een ``CREATE TABLE``, en een ``ON CONFLICT`` op
     een INSERT die niet mag verdubbelen.
 
+    En een tweede eis, die uit de pod komt: ``$$`` haalt het niet. De args van een pod gaan
+    langs de variabele-expansie van Kubernetes, en die leest ``$$`` als een ontsnapte ``$``.
+    Postgres krijgt dan ``DO $`` en antwoordt ``syntax error at or near "$"``. Gebruik een
+    BENOEMDE dollar-quote (``DO $naam$ ... END $naam$``), die komt ongeschonden aan.
+
     Geeft (exitcode, uitvoer) terug, met de sluitstukregel eruit gefilterd. De uitvoer is
     stdout en stderr aan elkaar: ``kubectl run --rm`` schrijft zijn eigen "pod ... deleted"
     daar tussendoor.

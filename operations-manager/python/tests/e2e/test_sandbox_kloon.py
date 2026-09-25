@@ -44,11 +44,16 @@ logger = logging.getLogger(__name__)
 # deployment die er nooit kwam. De skip staat daarom op de module, voor het project.
 # `serial`: het merkteken gaat in de bron, daarna kloont de volgende toets hem, en de
 # laatste meet wat een TWEEDE run doet. Die volgorde is het onderwerp, niet een gemak.
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# Ruim boven wat hier op elkaar kan komen: het aanmaken (600s) in de setup, en per toets
+# een CLI-aanroep (300s) plus `run_psql`, dat bij een pod die zijn uitvoer verliest drie
+# pogingen van 300s doet.
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.sandbox,
     pytest.mark.slow,
     pytest.mark.serial,
+    pytest.mark.timeout(1800),
     pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
 ]
 
