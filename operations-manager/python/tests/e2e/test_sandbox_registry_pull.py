@@ -60,10 +60,7 @@ logger = logging.getLogger(__name__)
 
 # Zonder de CLI komt de registry er niet in, en dan meet de pod-toets een component die
 # nooit is toegevoegd. Zonder docker komt het image niet in de registry, en dan is er geen
-# image om uit te halen. Beide skips staan op de MODULE en niet op een fixture: de fixture
-# die het project aanmaakt wordt eerder opgelost dan een fixture die verderop in de
-# signatuur staat, dus een skip daarbinnen laat een project op dit GEDEELDE cluster
-# achter om daarna alles over te slaan.
+# image om uit te halen. Beide skips staan op de MODULE, zie `features/e2e-sandbox-tests.md`.
 # `serial`: de registry moet er zijn voor de component hem kan kiezen, en het pull-secret
 # voor de pod kan starten. Dat is de keten die deze module meet.
 pytestmark = [
@@ -100,9 +97,8 @@ _UPSTREAM = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}"
 _BRON_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
 
 #: Een eigen tag per run, zodat de pod niet uit een verwijzing komt die een vorige run heeft
-#: achtergelaten. Dat is hygiene en geen bewijs: met een eigen tag haalde kubelet het image
-#: nog steeds binnen 50ms en zonder pull-secret, want de registry laat anoniem halen toe (zie
-#: de module-docstring). De lagen zijn gedeeld, dus dit kost geen extra overdracht.
+#: achtergelaten. Dat is hygiene en geen bewijs, zie de module-docstring. De lagen zijn
+#: gedeeld, dus dit kost geen extra overdracht.
 _PRIVE_TAG = f"rc227-{uuid.uuid4().hex[:8]}"
 _PRIVE_IMAGE = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}/e2e-allservices:{_PRIVE_TAG}"
 
@@ -346,13 +342,8 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
     """De pod komt op met het image uit de registry, en noemt een secret dat er echt is.
 
     Wat hij NIET bewijst is dat de inloggegevens gebruikt zijn: deze registry laat een
-    anonieme pull toe, zie de module-docstring. Het omgekeerde is hier zelfs gemeten, met een
-    eigen tag en `imagePullPolicy: Always`: het image kwam er terwijl kubelet
-    `FailedToRetrieveImagePullSecret` meldde.
-
-    Daarom eindigt deze toets op de aanwezigheid van het secret dat de pod noemt. Dat is de
-    regel die een ontbrekend secret wel vangt, want kubelet gaat er met een WAARSCHUWING langs
-    en de pod draait door.
+    anonieme pull toe, zie de module-docstring. Daarom eindigt deze toets op de aanwezigheid
+    van het secret dat de pod noemt.
     """
     namespace = f"rig-{registry_project.name}"
 
