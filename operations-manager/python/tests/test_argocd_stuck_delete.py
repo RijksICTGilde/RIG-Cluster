@@ -641,6 +641,9 @@ class TestForceDeleteStuckApplication:
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
         assert any("not decidable" in error for error in results["errors"])
+        # The names WERE read here. Fired unconditionally, this one sends the reader after a
+        # cluster fault, while the error above says the resource itself is what decides.
+        assert not any("Could not read the ArgoCD Application names" in error for error in results["errors"])
 
     @pytest.mark.asyncio
     async def test_without_a_longer_neighbour_a_label_at_the_cap_is_this_applications_own(self) -> None:
