@@ -43,9 +43,8 @@ Exit codes: 0 when nothing was found (or everything found was deleted), 1 when s
 remains, 2 when it refused to sweep. That makes it usable as the last step of a delete
 test: it measures what is left over, not what appeared to happen.
 
-What remains is not only orphans. A resource whose mark cannot be placed either way is
-reported too and never deleted (``undecidable_resources``), because reporting it as owned
-would answer a real orphan with SCHOON.
+What remains is not only orphans: a resource whose mark cannot be placed either way is
+reported too and never deleted (``undecidable_resources``).
 """
 
 from __future__ import annotations
@@ -121,8 +120,7 @@ def undecidable_resources(tracked: list[TrackedResource], existing_applications:
 
     They are kept out of the orphan list, because ``--delete`` acts on it and the first
     reading is a running deployment. They are reported all the same: reading them as owned
-    without saying so is a real orphan answered with SCHOON, and that all-clear is what this
-    tool exists to make trustworthy. Which of the two it is a human can see from the resource.
+    without saying so is a real orphan answered with SCHOON.
     """
     return [resource for resource in tracked if may_be_cut_from(resource, existing_applications)]
 
@@ -165,7 +163,7 @@ def format_report(
     after_delete: bool = False,
 ) -> str:
     """The findings: the orphans grouped by their Application, then what could not be
-    placed, then the repo paths. Same order as inventory() answers with them."""
+    placed, then the repo paths."""
     if not resources and not paths and not undecidable:
         return CLEAN
 
@@ -290,8 +288,6 @@ async def _sweep(namespaces: list[str] | None, deployments_repo: Path | None, de
     print(format_report(resources, undecidable, paths))
 
     if delete and (resources or paths):
-        # The undecidable ones are not offered to remove(): they travel to the second report
-        # untouched, because nothing deleted them and they are still standing.
         resources, paths = await remove(resources, paths, deployments_repo)
         print(format_report(resources, undecidable, paths, after_delete=True))
 
