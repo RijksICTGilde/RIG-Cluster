@@ -21,6 +21,7 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
+from opi.utils.argocd_tracking import is_tracked_by
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
@@ -149,7 +150,7 @@ class DeleteProjectManager:
                     f"'{app_name}'; its resources may be left behind"
                 )
             else:
-                tracked = [resource for resource in inventory if resource.app_name == app_name]
+                tracked = [resource for resource in inventory if is_tracked_by(resource.app_name, {app_name})]
                 failed = await kubectl.delete_tracked_resources(tracked)
                 deletion_results["operations"].append(
                     {
