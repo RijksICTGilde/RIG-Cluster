@@ -39,9 +39,13 @@ Usage:
     # repo directories are removed from the checkout, committing them stays yours.
     uv run python scripts/argocd_orphan_sweep.py --namespace rig-prd-mpfm-w3h --delete
 
-Exit codes: 0 when nothing was found (or everything found was deleted), 1 when orphans
-remain, 2 when it refused to sweep. That makes it usable as the last step of a delete
+Exit codes: 0 when nothing was found (or everything found was deleted), 1 when something
+remains, 2 when it refused to sweep. That makes it usable as the last step of a delete
 test: it measures what is left over, not what appeared to happen.
+
+What remains is not only orphans. A resource whose mark cannot be placed either way is
+reported too and never deleted (``undecidable_resources``), because reporting it as owned
+would answer a real orphan with SCHOON.
 """
 
 from __future__ import annotations
@@ -68,7 +72,7 @@ from opi.connectors.kubectl import (  # noqa: E402
     KubectlExecutionError,
     create_kubectl_connector,
 )
-from opi.utils.argocd_tracking import is_tracked_by  # noqa: E402
+from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from  # noqa: E402
 
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
@@ -98,9 +102,29 @@ class SweepRefused(RuntimeError):
 def orphaned_resources(tracked: list[TrackedResource], existing_applications: set[str]) -> list[TrackedResource]:
     """The tracked resources whose Application no longer exists.
 
-    Existence is not an exact name comparison; ``is_tracked_by`` says why.
+    A resource this tool cannot place is not one of them: ``undecidable_resources``.
     """
-    return [resource for resource in tracked if not is_tracked_by(resource.app_name, existing_applications)]
+    return [
+        resource
+        for resource in tracked
+        if resource.app_name not in existing_applications and not may_be_cut_from(resource, existing_applications)
+    ]
+
+
+def undecidable_resources(tracked: list[TrackedResource], existing_applications: set[str]) -> list[TrackedResource]:
+    """The tracked resources this tool cannot place either way.
+
+    Their mark sits on the label cap and a living Application's name starts with it, so the
+    resource is either that Application's, marked with its name cut to the cap, or the last
+    thing left of an Application that was called exactly this and is gone. ``may_be_cut_from``
+    says why nothing in the mark decides between those two.
+
+    They are kept out of the orphan list, because ``--delete`` acts on it and the first
+    reading is a running deployment. They are reported all the same: reading them as owned
+    without saying so is a real orphan answered with SCHOON, and that all-clear is what this
+    tool exists to make trustworthy. Which of the two it is a human can see from the resource.
+    """
+    return [resource for resource in tracked if may_be_cut_from(resource, existing_applications)]
 
 
 def render_roots(repo_root: Path) -> list[str]:
@@ -134,9 +158,15 @@ def orphaned_paths(repo_root: Path, referenced: set[str]) -> list[str]:
     ]
 
 
-def format_report(resources: list[TrackedResource], paths: list[str], after_delete: bool = False) -> str:
-    """The findings, grouped by the Application that should have taken them along."""
-    if not resources and not paths:
+def format_report(
+    resources: list[TrackedResource],
+    undecidable: list[TrackedResource],
+    paths: list[str],
+    after_delete: bool = False,
+) -> str:
+    """The findings: the orphans grouped by their Application, then what could not be
+    placed, then the repo paths. Same order as inventory() answers with them."""
+    if not resources and not paths and not undecidable:
         return CLEAN
 
     verb = "Still standing" if after_delete else "Found"
@@ -156,6 +186,18 @@ def format_report(resources: list[TrackedResource], paths: list[str], after_dele
                 f"    {resource.kind:<24} {resource.name}" for resource in sorted(owned, key=lambda r: (r.kind, r.name))
             )
 
+    if undecidable:
+        if lines:
+            lines.append("")
+        lines.append(
+            f"{verb} {len(undecidable)} resource(s) whose mark sits on the {LABEL_VALUE_MAX}-character label cap "
+            "and could be either a living Application's or an orphan's. Never deleted, judge them by hand:"
+        )
+        lines += [
+            f"  {resource.app_name}  {resource.namespace}/{resource.kind.lower()}/{resource.name}"
+            for resource in sorted(undecidable, key=lambda r: (r.app_name, r.namespace, r.kind, r.name))
+        ]
+
     if paths:
         if lines:
             lines.append("")
@@ -168,8 +210,8 @@ def format_report(resources: list[TrackedResource], paths: list[str], after_dele
 async def inventory(
     namespaces: list[str] | None,
     deployments_repo: Path | None,
-) -> tuple[list[TrackedResource], list[str]]:
-    """Both sources, measured: the tracked resources and the repo paths that are orphaned."""
+) -> tuple[list[TrackedResource], list[TrackedResource], list[str]]:
+    """Both sources, measured: the orphaned resources, the undecidable ones, and the repo paths."""
     kubectl = create_kubectl_connector()
 
     applications = await kubectl.list_argocd_applications()
@@ -209,15 +251,17 @@ async def inventory(
         raise SweepRefused("the cluster did not answer which resource types it has; nothing could be inventoried")
 
     orphans: list[TrackedResource] = []
+    undecidable: list[TrackedResource] = []
     for namespace in namespaces:
         print(f"  inventorying {namespace}", file=sys.stderr)
         tracked = await kubectl.list_tracked_resources(namespace, resource_types)
         if tracked is None:
             raise SweepRefused(f"namespace '{namespace}' could not be inventoried; refusing to call it clean")
         orphans.extend(orphaned_resources(tracked, existing))
+        undecidable.extend(undecidable_resources(tracked, existing))
 
     paths = orphaned_paths(deployments_repo, referenced) if deployments_repo else []
-    return orphans, paths
+    return orphans, undecidable, paths
 
 
 async def remove(
@@ -242,14 +286,16 @@ async def remove(
 
 
 async def _sweep(namespaces: list[str] | None, deployments_repo: Path | None, delete: bool) -> int:
-    resources, paths = await inventory(namespaces, deployments_repo)
-    print(format_report(resources, paths))
+    resources, undecidable, paths = await inventory(namespaces, deployments_repo)
+    print(format_report(resources, undecidable, paths))
 
     if delete and (resources or paths):
+        # The undecidable ones are not offered to remove(): they travel to the second report
+        # untouched, because nothing deleted them and they are still standing.
         resources, paths = await remove(resources, paths, deployments_repo)
-        print(format_report(resources, paths, after_delete=True))
+        print(format_report(resources, undecidable, paths, after_delete=True))
 
-    return 1 if resources or paths else 0
+    return 1 if resources or undecidable or paths else 0
 
 
 def main(argv: list[str] | None = None) -> int:
