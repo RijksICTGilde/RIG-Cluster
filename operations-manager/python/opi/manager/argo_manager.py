@@ -87,6 +87,13 @@ UMBRELLA_REFRESH_MAX_POGINGEN = 6
 #: haalt een deployment die zijn ServiceAccount mist zijn eigen sync-timeout ook niet.
 PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN = 240
 
+#: Hoe lang een wacht op het BESTAAN van een kind-Application mag duren. Dat wachten gaat
+#: niet over de applicatie zelf maar over de umbrella die hem moet aanmaken, en een refresh
+#: daarvan hertekent circa 90 child-apps (issue #130), dus onder last kost dat minuten.
+#: Dezelfde grens voor de infrastructuur-, project- en deployment-applicaties: ze wachten
+#: alle drie op diezelfde umbrella.
+APPLICATIE_AANMAAK_TIMEOUT_SECONDEN = 360
+
 #: Hoe vaak we tijdens het wachten zelf een refresh vragen zolang de status op
 #: ``Progressing`` blijft staan. ArgoCD hertoetst een applicatie alleen op een watch-event
 #: van een beheerde resource, en anders pas na ``timeout.reconciliation`` (op productie 15
@@ -160,6 +167,21 @@ class ArgoManager:
         Dit gaat in TWEE commits: eerst het projectniveau, dan de deployment-applicaties.
         De grendel ertussen wacht tot de ServiceAccount van het projectniveau er staat; in
         een commit zou er niets meer te wachten vallen.
+
+        Raises:
+            TimeoutError: Als het projectniveau niet binnen
+                ``PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN`` synchroniseert.
+            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
+
+        Die twee laten we DOOR, en dat is een gedragskeuze van RC-229. De oude wacht in
+        ``process_project_from_git`` ving ze af met een ``logger.warning`` en liep degraded
+        door; nu vertaalt de ``except Exception`` van ``process_project`` ze naar
+        ``return False`` en rolt het project helemaal niets uit. Dat is met opzet: mist de
+        ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen sync-timeout toch
+        niet, en dan is "degraded doorlopen" een mislukking die zich als succes voordoet.
+        De schade blijft bij dit ene project. De afgewezen health-override in
+        ``docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`` deed hetzelfde
+        clusterbreed, en juist daarop viel die af.
         """
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD resources for {project_name} on cluster {settings.CLUSTER_MANAGER}")

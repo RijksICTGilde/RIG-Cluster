@@ -86,3 +86,22 @@ aantoonbaar NA die verversing komt (`refreshed_after`). Pas daarna gaat de run v
 Het projectniveau volgt die vorm nu ook. Dat vraagt dat de deployment-applicaties niet meer
 in dezelfde commit staan als de projectapplicatie, want anders bestaan ze al voordat er iets
 te wachten valt.
+
+## De gedragskeuze die daarbij hoort
+
+De oude wacht in `process_project_from_git` ving `(TimeoutError, RuntimeError)` af met een
+`logger.warning` en liep degraded door. De nieuwe grendel in `create_argocd_resources` laat
+ze door, en de `except Exception` van `process_project` maakt daar `return False` van. Een
+project waarvan het projectniveau niet kan synchroniseren rolt daarmee helemaal niets meer
+uit, waar het eerst een waarschuwing in het log was.
+
+Dat is met opzet. Mist de ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen
+sync-timeout van 300s toch niet, en dan is degraded doorlopen een mislukking die zich als
+succes voordoet: precies het beeld waarmee RC-229 binnenkwam. De schade blijft bij dit ene
+project, terwijl de hierboven afgewezen health-override hetzelfde clusterbreed deed. Het
+onderscheid is de blast radius, niet de strengheid.
+
+Een project als `regis-0vf-project`, dat nooit meer synchroniseert, valt hier dus onder: dat
+komt met deze wijziging niet meer door een `process_project` heen. Dat is de bedoelde
+uitkomst, want zo'n project rolde ook voorheen niets werkends uit, alleen zonder het te
+melden.
