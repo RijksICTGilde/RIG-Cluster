@@ -224,6 +224,27 @@ bij en heeft dus geen clusteruitslag. Precies de toets die het plan vroeg, en pr
 toets die nog niemand op een cluster heeft zien draaien. Wie de sandbox als volgende claimt,
 draait hem.
 
+### Opnieuw gedraaid op 25 september, tegen `65bcf728`
+
+De tabel hierboven is van build `65b90336`, en de reworkrondes daarna hebben de TOETSEN zelf
+nog gewijzigd. Wat sindsdien opnieuw tegen het cluster gedraaid is (dezelfde serverbuild,
+nieuwe toetscode):
+
+| bestand | uitslag |
+|---|---|
+| `test_sandbox_migratie_006.py` | 5 / 5 |
+| `test_sandbox_foutmeldingen.py` | 7 van de 8 |
+| `test_sandbox_speelruimte.py` | 6 van de 7 |
+
+De drie modules die de zad-cli nodig hebben (`zad_cli`, `kloon`, `registry_pull`) en de twee
+losse CLI-toetsen sloegen over: de CLI zit in een eigen repository en stond niet op deze
+machine. `test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt` wacht daarmee nog steeds
+op een gang; dat is niet een tekort van deze ronde maar van de omgeving waarin hij draaide.
+
+De backfill leverde deze keer **3 rijen tegen 3 uit de oude meting**. De eerdere gangen zagen
+1, 0 en 0 rijen (zie de fixture `taken`), dus die vergeleken de gelijkheid grotendeels op een
+lege verzameling. Nu is hij op een niet-lege gemeten.
+
 ## Wat hieruit volgt
 
 Wat buiten deze ronde valt en een eigenaar nodig heeft:
