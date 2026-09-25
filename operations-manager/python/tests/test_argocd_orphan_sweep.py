@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
 from opi.utils.argocd_tracking import TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
@@ -352,6 +352,15 @@ class TestRefusal:
         """The refusal has to survive the whole way out: exit 0 is what was wrong."""
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
         kubectl.list_tracked_resources = AsyncMock(return_value=None)
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+    def test_an_unreadable_namespace_list_reaches_the_cli_as_exit_2(self) -> None:
+        """get_namespace_label_map is the only read the sweep does that RAISES instead of
+        answering with a sentinel. Uncaught it leaves main() on exit 1, and exit 1 is the
+        documented "there are orphans", so a failed read would answer the delete test."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.get_namespace_label_map = AsyncMock(side_effect=KubectlExecutionError("Failed to list namespaces: x"))
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 
