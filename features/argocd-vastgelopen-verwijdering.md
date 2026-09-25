@@ -108,8 +108,7 @@ Daarom vergelijkt `is_tracked_by` niet op exacte gelijkheid: een waarde die prec
 63 zit hoort ook bij een langere naam die ermee begint. Alleen die kant op. Het kan een
 resource bezet laten lijken waar een exacte vergelijking hem een wees noemde, nooit
 andersom, en een wees is waar `--delete` op afgaat. Een waarde korter of langer dan 63
-tekens is nooit afgekapt en doet dus niet mee aan die vergelijking. Blijkt ooit dat ArgoCD
-de apply juist weigert, dan kost deze regel niets, want dan bestaat de resource niet.
+tekens is nooit afgekapt en doet dus niet mee aan die vergelijking.
 
 Voor de veegactie ligt dat anders, want het label is niet van ArgoCD alleen: Helm zet
 `app.kubernetes.io/instance` ook, en bedoelt er de release mee. Op de sandbox dragen zes

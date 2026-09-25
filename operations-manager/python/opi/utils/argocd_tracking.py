@@ -33,11 +33,10 @@ LABEL_VALUE_MAX = 63
 def is_tracked_by(tracked_name: str, application_names: set[str]) -> bool:
     """Whether the Application in a resource's tracking mark is one of ``application_names``.
 
-    Not plain equality, because of the cap above. Measured with a server dry-run on
-    25 September 2026: the API server refuses a 94-character label value outright, so on a
-    label cluster an Application with a name that long either gets no resources at all
-    (nothing to match) or carries the value cut to the cap. Which of the two ArgoCD does is
-    not measured, so a value AT the cap also matches a longer name it is the start of.
+    Not plain equality, because of the cap above: on a label cluster the mark may be a longer
+    Application name cut to it. Whether ArgoCD then writes the cut value or never gets its
+    resources applied at all is not measured, so a value AT the cap also matches a longer name
+    it is the start of.
 
     Only that direction. It can make a resource look owned where an exact comparison called
     it an orphan, never the reverse, and an orphan is what ``--delete`` acts on.
