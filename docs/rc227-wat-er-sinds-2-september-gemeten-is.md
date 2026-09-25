@@ -42,10 +42,9 @@ waarna de wizardhelper de link naar de detailpagina nooit ziet en op zijn eigen 
 strandt. De applicatie komt er daarna gewoon (nagemeten: `speel-2il-productie` stond op
 `Synced` en de pod draaide, kort nadat de taak al als mislukt was weggeschreven).
 
-**Het IS systematisch, alleen niet elke keer duur genoeg.** Dat is in de review van deze PR
-nagemeten en het corrigeert de eerdere lezing "het hangt aan de drukte van het cluster". De
-oorzaak is een ordening die altijd fout staat: de ServiceAccount waar de podspec naar wijst
-komt NA de Deployment, want hij zit in een andere ArgoCD-applicatie. In `rig-speel-wm1` was
+**Het IS systematisch, alleen niet elke keer duur genoeg.** Nagemeten in de review van deze
+PR. De oorzaak is een ordening die altijd fout staat: de ServiceAccount waar de podspec naar
+wijst komt NA de Deployment, want hij zit in een andere ArgoCD-applicatie. In `rig-speel-wm1` was
 hij 173s te laat, met `FailedCreate ... serviceaccount "speel-wm1-sa" not found` ertussen, en
 haalde de taak zijn 300s niet. In `rig-speel-4d2` stond dezelfde `FailedCreate`, maar daar
 was hij 54s te laat en haalde hij het net. De drukte van het cluster beslist dus alleen of de
@@ -296,10 +295,9 @@ Wat buiten deze ronde valt en een eigenaar nodig heeft:
    applicaties met twee syncs. Twee symptomen gemeten, met hetzelfde mechanisme en een heel
    ander prijskaartje. Het pull-secret stond er ruim twee minuten later dan de pod; dat herstelt
    zichzelf (kubelet probeert opnieuw), maar op een registry die anoniem weigert en een node
-   zonder het image in zijn cache is dat zolang `ImagePullBackOff`. De ServiceAccount stond er
-   173s later dan de Deployment die hem noemt, en dat herstelt zich niet binnen de 300s die de
-   aanmaaktaak zichzelf geeft: de aanmaak meldt zich mislukt terwijl het project er daarna komt.
-   Zie de nulmeting hierboven voor de meting.
+   zonder het image in zijn cache is dat zolang `ImagePullBackOff`. De ServiceAccount komt na de
+   Deployment die hem noemt, en die vertraging past niet in de 300s van de aanmaaktaak: zie de
+   nulmeting hierboven.
 5. **Een mislukte aanmaak laat zijn projectbestand staan.** De opruiming van een sandboxmodule
    hangt aan de naam die de helper pas bij SUCCES teruggeeft, terwijl het projectbestand al in
    `zad-projects` staat zodra de aanmaaktaak begint. De app-of-apps maakt de applicaties daar
