@@ -32,8 +32,12 @@ ntfy-notificatie. Elke valse rode substap werd dus een pushbericht.
 enkele applicatie en geen enkele status. In productie draait het log op INFO, dus de vraag
 "waarom kon ArgoCD niet syncen" was niet te beantwoorden zonder debug-logging aan te zetten.
 
-De melding sprak bovendien de wizard tegen, die de gebruiker zelf vertelt: *"Een eventuele
-time-out-melding betekent niet dat het aanmaken is mislukt."*
+De melding sprak bovendien de wizard tegen, die de gebruiker toen zelf vertelde: *"Een
+eventuele time-out-melding betekent niet dat het aanmaken is mislukt."* Die zin staat er sinds
+RC-229 niet meer vooraf: de wachten voor deze wacht (het projectniveau en de sync per
+deployment-applicatie) zijn fail-closed, en daar betekent een time-out wel een mislukking. De
+geruststelling hoort dus alleen bij deze wacht, en staat nu in de melding die deze wacht zelf
+schrijft.
 
 ## Hoe het nu werkt
 
