@@ -147,9 +147,21 @@ class TestTerminateOperation:
         assert args[-1] == '[{"op":"remove","path":"/operation"}]'
 
     @pytest.mark.asyncio
-    async def test_no_operation_running_is_not_a_failure(self, connector) -> None:
-        """A json-patch remove on an absent path is rejected; that is the normal case."""
-        stderr = 'remove operation does not apply: doc is missing path: "/operation": missing value'
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            'remove operation does not apply: doc is missing path: "/operation": missing value',
+            'doc is missing path: "/operation"',
+            "remove operation does not apply",
+        ],
+    )
+    async def test_no_operation_running_is_not_a_failure(self, connector, stderr: str) -> None:
+        """A json-patch remove on an absent path is rejected; that is the normal case.
+
+        The branch reads two spellings and each one counts on its own. Narrowing it to one
+        turns 'nothing was running' into a reported failure on the most common path there
+        is: an Application with no operation on it.
+        """
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", stderr, 1))):
             assert await connector.terminate_argocd_application_operation("app-a") is True
 
@@ -330,7 +342,7 @@ class TestDeleteTrackedResources:
 
 
 def _recording_kubectl(
-    calls: list[str], *, destination: str | None, tracked: list[TrackedResource] | None
+    calls: list[str], *, destination: str | None, tracked: list[TrackedResource] | None, deleted: bool = True
 ) -> AsyncMock:
     """A kubectl stand-in that writes the name of each call into ``calls``."""
 
@@ -347,10 +359,24 @@ def _recording_kubectl(
     kubectl.list_tracked_resources = step("list_resources", tracked)
     kubectl.delete_tracked_resources = step("delete_resources", [])
     kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
-    kubectl.delete_resource = step("delete_resource", True)
+    kubectl.delete_resource = step("delete_resource", deleted)
     kubectl.delete_namespace = AsyncMock(return_value=True)
     kubectl._run_kubectl_command = AsyncMock(return_value=("", "", 0))
     return kubectl
+
+
+def _orphan_cleanup_harness(calls: list[str], *, deleted: bool = True) -> tuple[AsyncMock, MagicMock]:
+    """A project manager and an ArgoConnector for the orphan-cleanup route.
+
+    ``spec=ArgoConnector`` is the point of the mock here: an open AsyncMock invents any
+    method you name, and that is how a call to a method the connector does not have
+    stayed green while it did nothing (the AttributeError landed in the except below).
+    """
+    pm = AsyncMock()
+    pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[], deleted=deleted)
+    argo = MagicMock(spec=ArgoConnector)
+    argo.list_applications = AsyncMock(return_value=[{"metadata": {"name": "mpfm-w3h-pr-310"}}])
+    return pm, argo
 
 
 def _targets(pm: AsyncMock, method: str) -> list[str]:
@@ -719,18 +745,9 @@ class TestOperationClearedBeforeTheWait:
 
     @pytest.mark.asyncio
     async def test_orphan_cleanup_clears_the_operation_before_deleting(self) -> None:
-        """The orphan cleanup deletes directly instead of via GitOps, and hits the same gate.
-
-        ``spec=ArgoConnector`` is the point of the mock here: an open AsyncMock invents any
-        method you name, and that is how a call to a method the connector does not have
-        stayed green while it did nothing (the AttributeError landed in the except below).
-        """
+        """The orphan cleanup deletes directly instead of via GitOps, and hits the same gate."""
         calls: list[str] = []
-        pm = AsyncMock()
-        pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
-
-        argo = MagicMock(spec=ArgoConnector)
-        argo.list_applications = AsyncMock(return_value=[{"metadata": {"name": "mpfm-w3h-pr-310"}}])
+        pm, argo = _orphan_cleanup_harness(calls)
 
         results: dict = {"operations": [], "errors": []}
         with (
@@ -748,3 +765,24 @@ class TestOperationClearedBeforeTheWait:
         )
         assert results["errors"] == []
         assert [operation["status"] for operation in results["operations"]] == ["success", "success"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("deleted", "status"), [(True, "success"), (False, "failed")])
+    async def test_orphan_cleanup_reports_whether_the_application_actually_went(
+        self, deleted: bool, status: str
+    ) -> None:
+        """This route has no GitOps manifest to take away, so its own delete IS the
+        deletion. A kubectl that answers no leaves the orphan standing, and reporting that
+        as success is what makes it invisible."""
+        calls: list[str] = []
+        pm, argo = _orphan_cleanup_harness(calls, deleted=deleted)
+
+        results: dict = {"operations": [], "errors": []}
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_argo_namespace", return_value="argocd-test"),
+        ):
+            await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
+
+        cleanup = next(op for op in results["operations"] if op["type"] == "orphaned_argocd_application_cleanup")
+        assert (cleanup["target"], cleanup["status"]) == ("mpfm-w3h-pr-310", status)
