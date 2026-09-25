@@ -9,13 +9,19 @@ sandbox claimt. Deze toetsen draaien wel in een gewone ronde.
 
 from __future__ import annotations
 
+import base64
+import json
 import subprocess
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from _pytest.outcomes import Skipped
 from tests.e2e import test_sandbox_migratie_006 as migratie_006
+from tests.e2e import test_sandbox_registry_pull as registry_pull
 from tests.e2e.helpers import cluster, zad_cli
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestRunPsql:
@@ -95,6 +101,120 @@ class TestRunPsql:
         cluster.run_psql("SELECT 1;", host="h", user="u", database="d", password="w")
 
         assert verstuurd[0] == f"SELECT 1; SELECT '{cluster.PSQL_SLUITSTUK}';"
+
+
+class TestPsqlAanroep:
+    """Waar het wachtwoord langs gaat, en waar het niet mag staan.
+
+    ``TestRunPsql`` hierboven zet ``_run_psql_once`` weg om de herhaling te meten, en daarmee
+    is de OPBOUW van de aanroep daar ongepind. Die opbouw is hier de vondst: langs deze weg
+    gaat het superuser-wachtwoord van de gedeelde sandbox-database
+    (``test_sandbox_migratie_006``) en het DATABASE_PASSWORD van een deployment
+    (``test_sandbox_kloon``).
+    """
+
+    WACHTWOORD = "SuPeRgEhEiM-42"
+
+    @staticmethod
+    def _vang(monkeypatch: pytest.MonkeyPatch, *, stdout: str = "", tijd_op: bool = False) -> dict[str, Any]:
+        """Vang de aanroep die ``_run`` naar subprocess doet in plaats van hem te doen."""
+        gevangen: dict[str, Any] = {}
+
+        def _nep(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            gevangen["argv"] = argv
+            gevangen["invoer"] = kwargs.get("input")
+            if tijd_op:
+                raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs["timeout"])
+            return subprocess.CompletedProcess(args=argv, returncode=0, stdout=stdout, stderr="")
+
+        monkeypatch.setattr(cluster.subprocess, "run", _nep)
+        return gevangen
+
+    def _psql(self, wachtwoord: str = "", sql: str = "SELECT 1") -> tuple[int, str]:
+        return cluster.run_psql(
+            sql,
+            host="rig-db-rw",
+            user="postgres",
+            database="operations_manager",
+            password=wachtwoord or self.WACHTWOORD,
+        )
+
+    def test_het_wachtwoord_staat_niet_in_de_argv(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """De vorm die hier eerst stond was ``--env PGPASSWORD=<waarde>``, en die zet kubectl
+        in klare tekst in de podspec: leesbaar met ``kubectl get pod -o yaml`` zolang de pod
+        leeft, in etcd, en in de body van het create-verzoek. En de argv staat in de
+        procestabel van de machine die de suite draait.
+        """
+        gevangen = self._vang(monkeypatch, stdout=f"1\n{cluster.PSQL_SLUITSTUK}")
+
+        self._psql()
+
+        argv = gevangen["argv"]
+        assert self.WACHTWOORD not in " ".join(argv)
+        assert not [deel for deel in argv if deel.startswith("--env")], f"--env staat er weer in: {argv}"
+        assert argv[-2:] == ["sh", "-s"], f"de pod krijgt geen script over stdin: {argv}"
+
+    def test_het_script_zet_het_wachtwoord_in_de_omgeving_en_het_statement_in_de_argv(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Gemeten door het script ECHT te draaien, met een psql die opschrijft wat hij kreeg.
+
+        Een assertie op de tekst van het script zou de quoting niet meten, en die is hier de
+        valkuil: een wachtwoord met een apostrof erin breekt een script dat er alleen
+        aanhalingstekens omheen zet, en dan voert de pod iets anders uit dan er staat.
+        """
+        wachtwoord = "hij's 'al' weg $HOME"
+        nep_psql = tmp_path / "psql"
+        nep_psql.write_text('#!/bin/sh\nprintf "pgpassword=[%s]\\n" "$PGPASSWORD"\nprintf "argv=[%s]\\n" "$*"\n')
+        nep_psql.chmod(0o755)
+        gevangen = self._vang(monkeypatch, stdout=cluster.PSQL_SLUITSTUK)
+
+        self._psql(wachtwoord=wachtwoord, sql="SELECT 'een citaat'")
+
+        # De vangst zit op het subprocess-MODULE en niet op een eigen naam in cluster.py, dus
+        # zonder deze regel loopt de echte aanroep hieronder er ook in.
+        monkeypatch.undo()
+        # `/bin/sh` met naam en al, en een PATH die alleen de neppe psql bevat: zo kan het
+        # script niets anders aanroepen dan de psql van deze toets.
+        gedraaid = subprocess.run(
+            ["/bin/sh", "-s"],
+            input=gevangen["invoer"],
+            capture_output=True,
+            text=True,
+            env={"PATH": str(tmp_path)},
+            check=True,
+        )
+        assert f"pgpassword=[{wachtwoord}]" in gedraaid.stdout, gedraaid.stdout
+        argv_regel = next(regel for regel in gedraaid.stdout.splitlines() if regel.startswith("argv="))
+        assert wachtwoord not in argv_regel, f"het wachtwoord staat in de argv van psql: {argv_regel}"
+        assert "SELECT 'een citaat'" in argv_regel, argv_regel
+
+    def test_een_time_out_schrijft_het_commando_niet_op(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``TimeoutExpired`` zet de hele argv in zijn tekst, en pytest schrijft de tekst van
+        een uitzondering in het verslag. Geen hoekgeval: de docstring van ``run_psql`` zegt
+        zelf dat de pod het op een druk cluster soms niet haalt, en er staan drie pogingen van
+        300s.
+        """
+        self._vang(monkeypatch, tijd_op=True)
+
+        with pytest.raises(cluster.KubectlTimeout) as fout:
+            self._psql()
+
+        assert self.WACHTWOORD not in str(fout.value)
+        assert "--image=postgres:16-alpine" not in str(fout.value), "de volledige argv staat in de melding"
+        assert fout.value.__cause__ is None, "de oorspronkelijke uitzondering hangt eronder"
+        assert fout.value.__suppress_context__, "de traceback drukt de gekoppelde uitzondering alsnog af"
+
+    def test_een_time_out_bij_de_beschikbaarheidstoets_blijft_een_nee(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``kubectl_available`` ving de time-out als ``SubprocessError``. Erft
+        ``KubectlTimeout`` daar niet van, dan valt de eerste lezing van elke sandboxmodule om
+        met een fout in plaats van over te slaan."""
+        cluster.kubectl_available.cache_clear()
+        self._vang(monkeypatch, tijd_op=True)
+        try:
+            assert cluster.kubectl_available() is False
+        finally:
+            cluster.kubectl_available.cache_clear()
 
 
 class TestGetJsonStrict:
@@ -210,6 +330,63 @@ class TestZadCli:
                     bewering()
 
 
+class TestGeheimeVlaggen:
+    """Wat er van een aanroep in een melding terechtkomt.
+
+    ``registry add --password <token>`` is de aanroep die dit nodig maakt: het token is echt,
+    en alle vier de plekken hieronder zetten de argv in hun tekst. Die tekst komt in het
+    pytest-verslag en in de uitvoer van de CI-stap.
+    """
+
+    GEHEIM = "gEh31m-t0k3n-uit-forgejo"
+
+    def _argv(self, vorm: str) -> list[str]:
+        waarde = ["--password", self.GEHEIM] if vorm == "los" else [f"--password={self.GEHEIM}"]
+        return ["/pad/zad", "registry", "add", "prive", *waarde, "--yes"]
+
+    @pytest.mark.parametrize("vorm", ["los", "gelijkteken"])
+    def test_geen_bewering_zet_het_token_in_haar_melding(self, vorm: str) -> None:
+        """Drie meldingen apart, want een maskering op een van de drie laat de andere twee
+        staan; en beide vlagvormen, want de CLI accepteert ze allebei."""
+        argv = self._argv(vorm)
+        beweringen = [
+            zad_cli.CliResultaat(exitcode=1, stdout="", stderr="", argv=argv).assert_ok,
+            zad_cli.CliResultaat(exitcode=0, stdout="", stderr="", argv=argv).assert_faalt,
+            zad_cli.CliResultaat(exitcode=0, stdout="geen json", stderr="", argv=argv).json,
+        ]
+
+        for bewering in beweringen:
+            with pytest.raises(AssertionError) as fout:
+                bewering()
+
+            assert self.GEHEIM not in str(fout.value), f"{bewering.__name__} schrijft het token op"
+            assert "registry add prive" in str(fout.value), f"{bewering.__name__} noemt de aanroep niet meer"
+
+    @pytest.mark.parametrize("vorm", ["los", "gelijkteken"])
+    def test_een_time_out_schrijft_het_token_niet_op(self, monkeypatch: pytest.MonkeyPatch, vorm: str) -> None:
+        """De vierde plek, en de enige waar de melding niet van ``CliResultaat`` komt. De tekst
+        van ``TimeoutExpired`` draagt de hele argv, dus die mag ook niet als gekoppelde
+        uitzondering blijven hangen."""
+
+        def _nep(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            raise subprocess.TimeoutExpired(cmd=argv, timeout=kwargs["timeout"])
+
+        monkeypatch.setattr(zad_cli.subprocess, "run", _nep)
+        vlaggen = self._argv(vorm)[1:]
+
+        with pytest.raises(AssertionError) as fout:
+            zad_cli.ZadCli("/pad/zad", "https://proef").run(*vlaggen)
+
+        assert self.GEHEIM not in str(fout.value)
+        assert fout.value.__cause__ is None, "de oorspronkelijke uitzondering hangt eronder"
+        assert fout.value.__suppress_context__, "de traceback drukt de gekoppelde uitzondering alsnog af"
+
+    def test_een_gewoon_argument_blijft_leesbaar(self) -> None:
+        """Anders is de maskering een melding zonder aanroep, en dan moet je de toets openen
+        om te zien wat er misging."""
+        assert zad_cli.leesbare_argv(["/pad/zad", "project", "status"]) == "/pad/zad project status"
+
+
 class TestCliPad:
     """Of de CLI-toetsen draaien of overslaan hangt hieraan."""
 
@@ -251,10 +428,26 @@ class TestSecretValues:
             lambda *_, **__: subprocess.CompletedProcess(args=[], returncode=code, stdout=stdout, stderr=stderr),
         )
 
+    @staticmethod
+    def _secret_data(**waarden: str) -> str:
+        """De ``data`` van een secret zoals kubectl hem afdrukt: base64 per waarde.
+
+        Gecodeerd hier en niet als tekenreeks in de toets: zo'n literal is voor de
+        secretscan een generic-api-key, en een uitzondering erop kost meer dan de regel die
+        hem berekent. Dat is ook hoe de rest van de toetsen het doet (zie
+        ``test_compare_service_identity``).
+        """
+        data = {sleutel: base64.b64encode(waarde.encode()).decode() for sleutel, waarde in waarden.items()}
+        return json.dumps({"data": data})
+
     def test_de_waarden_komen_ontcijferd_terug(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Een secret draagt base64. Komt dat ongemoeid terug, dan gaat er een onbruikbaar
-        wachtwoord naar psql en is de melding een authenticatiefout ver van de oorzaak."""
-        self._kubectl(monkeypatch, 0, '{"data": {"password": "Z2Voei1tZXQtLcO6bmljw7bOng==", "user": "cG9zdGdyZXM="}}')
+        wachtwoord naar psql en is de melding een authenticatiefout ver van de oorzaak.
+
+        Het wachtwoord draagt niet-ASCII, want een ``.decode()`` zonder codering is precies
+        de plek waar dat omvalt.
+        """
+        self._kubectl(monkeypatch, 0, self._secret_data(password="gehz-met--únicöΞ", user="postgres"))
 
         assert cluster.secret_values("rig-system", "postgres-admin-credentials") == {
             "password": "gehz-met--únicöΞ",
@@ -334,3 +527,80 @@ class TestDbWachtwoord:
 
         with pytest.raises(TypeError):
             self._roep_aan()
+
+
+class TestOpruimlus:
+    """De DROP-lus van ``test_sandbox_migratie_006``, als superuser over de levende database.
+
+    De lus draait in de `operations_manager`-database van het cluster. Staat het voorvoegsel
+    leeg of anders, dan is het geen opruiming van de eigen tabellen meer maar een leegmaken
+    van het schema waar de sandbox zelf op draait.
+    """
+
+    def test_de_lus_staat_op_het_eigen_voorvoegsel(self) -> None:
+        sql = migratie_006._opruim_sql(migratie_006._EIGEN_PREFIX)
+
+        assert "starts_with(tablename, 'rc227_')" in sql
+        assert "LIKE" not in sql, "in een LIKE-patroon is de `_` van het voorvoegsel een jokerteken"
+
+    @pytest.mark.parametrize("prefix", ["", "rc", "%", "rc227"], ids=["leeg", "korter", "joker", "zonder-liggend"])
+    def test_een_ander_voorvoegsel_komt_er_niet_door(self, prefix: str) -> None:
+        """Een literale grendel en niet "de waarde is niet leeg": ook een voorvoegsel dat
+        KORTER is dan het eigen voorvoegsel pakt tabellen van iemand anders mee."""
+        with pytest.raises(AssertionError, match="voorvoegsel"):
+            migratie_006._opruim_sql(prefix)
+
+
+class TestDockerInlog:
+    """De inlog waarmee het testimage in de registry komt.
+
+    Het token is dat van de Forgejo-gebruiker van de sandbox, en dat is dezelfde gebruiker
+    waarmee OPI in `zad-projects` schrijft.
+    """
+
+    @staticmethod
+    def _vang(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+        """Vang elke docker-aanroep van de fixture in plaats van hem te doen."""
+        aanroepen: list[dict[str, Any]] = []
+
+        def _nep(*args: str, timeout: float = 0.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
+            aanroepen.append({"args": list(args), "invoer": invoer})
+            return subprocess.CompletedProcess(args=list(args), returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(registry_pull, "_docker", _nep)
+        monkeypatch.setattr(registry_pull, "_anoniem_te_halen", lambda: False)
+        return aanroepen
+
+    def test_het_token_gaat_over_stdin_en_niet_als_vlag(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`-p <token>` zet het token in de argv, en die staat in de procestabel van de machine
+        die de suite draait."""
+        aanroepen = self._vang(monkeypatch)
+
+        next(registry_pull.prive_image.__wrapped__())
+
+        inlog = aanroepen[0]
+        assert inlog["args"][0] == "login"
+        assert "--password-stdin" in inlog["args"]
+        assert "-p" not in inlog["args"], f"het token staat in de argv: {inlog['args']}"
+        assert registry_pull._REGISTRY_PASSWORD not in " ".join(inlog["args"])
+        assert inlog["invoer"] == registry_pull._REGISTRY_PASSWORD, "het token gaat niet over stdin mee"
+
+    def test_er_wordt_afgemeld_ook_als_de_push_mislukt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Een geslaagde inlog laat het token in `~/.docker/config.json` achter, en dat bestand
+        overleeft de toetsronde. De afmelding hoort daarom in een `finally` en niet achter de
+        laatste assertie."""
+        aanroepen = self._vang(monkeypatch)
+
+        def _mislukt(*args: str, timeout: float = 0.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
+            aanroepen.append({"args": list(args), "invoer": invoer})
+            code = 1 if args[0] == "push" else 0
+            return subprocess.CompletedProcess(args=list(args), returncode=code, stdout="", stderr="niet gelukt")
+
+        monkeypatch.setattr(registry_pull, "_docker", _mislukt)
+
+        with pytest.raises(AssertionError, match="push"):
+            next(registry_pull.prive_image.__wrapped__())
+
+        assert [aanroep["args"][0] for aanroep in aanroepen][-1] == "logout", (
+            f"er is niet afgemeld na een mislukte push: {[aanroep['args'] for aanroep in aanroepen]}"
+        )
