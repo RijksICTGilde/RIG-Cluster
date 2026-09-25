@@ -369,21 +369,19 @@ opnieuw en de OUDE pod blijft ondertussen draaien, dus er is geen storing, maar 
 2 minuten en 39 seconden nadat de serviceaccount er stond, want de ReplicaSet zit dan in zijn
 FailedCreate-backoff.
 
-De sync-wave lost dit niet op, en wel om een andere reden dan hier eerst stond. Een wave
-ordent wel over applicaties heen (de umbrella maakt wave 0 voor wave 1 aan), maar hij
-poortwacht op HEALTH, en een net aangemaakte kind-Application beheert nul resources en meldt
-zich daarmee binnen een seconde Healthy. De grendel gaat dus open voordat het projectniveau
-zijn serviceaccount heeft uitgerold. Gemeten op 2026-09-25, met de afgewezen alternatieven,
-in `docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+De sync-wave lost dit niet op. Een wave ordent wel over applicaties heen (de umbrella maakt
+wave 0 voor wave 1 aan), maar hij poortwacht op HEALTH, en een net aangemaakte
+kind-Application beheert nul resources en meldt zich daarmee binnen een seconde Healthy. De
+grendel gaat dus open voordat het projectniveau zijn serviceaccount heeft uitgerold. Gemeten
+op 2026-09-25, met de afgewezen alternatieven, in
+`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
 
 Wat het wel oplost is de AANMAAKVOLGORDE, in `ArgoManager.create_argocd_resources`. Die
 pusht in twee commits: eerst het projectniveau (met zijn AppProject en repository-secret),
-dan de deployment-applicaties. Daartussen staat
-`ProjectManager.wait_for_project_level_application`, die wacht tot de projectapplicatie
-bestaat, hem daarna ZELF ververst, en dan wacht op een sync die aantoonbaar ná die
-verversing komt. Bestaat de CR van een deployment-applicatie nog niet, dan kan ArgoCD hem ook
-niet zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten zelf.
-Dezelfde vorm gebruikt de infrastructuurapplicatie al.
+dan de deployment-applicaties. Daartussen wacht
+`ProjectManager.wait_for_project_level_application` tot de projectapplicatie gesynchroniseerd
+is. Bestaat de CR van een deployment-applicatie nog niet, dan kan ArgoCD hem ook niet
+zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten zelf.
 
 De toets erop staat in `tests/test_project_level_ordering.py`.
 
