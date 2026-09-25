@@ -19,7 +19,9 @@ import pytest
 from _pytest.outcomes import Skipped
 from tests.e2e import test_sandbox_migratie_006 as migratie_006
 from tests.e2e import test_sandbox_registry_pull as registry_pull
+from tests.e2e import test_sandbox_speelruimte as speelruimte
 from tests.e2e.conftest import _houd_sandboxmodules_bij_elkaar
+from tests.e2e.conftest import pytest_collection_modifyitems as ordeningshook
 from tests.e2e.helpers import cluster, zad_cli
 
 if TYPE_CHECKING:
@@ -407,6 +409,25 @@ class TestCliPad:
 
         assert zad_cli.cli_pad() == "/usr/bin/zadctl"
 
+    def test_een_kale_naam_in_de_variabele_gaat_langs_het_pad(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Wie ``ZAD_CLI=zadctl-dev`` zet bedoelt een naam op het PATH, geen bestand hier.
+
+        Zonder die opzoeking geeft ``cli_pad`` de kale naam terug, en een naam die niet op het
+        PATH staat geeft dan een ``FileNotFoundError`` uit ``subprocess`` in plaats van de
+        skipreden.
+        """
+        monkeypatch.setenv(zad_cli.CLI_ENV, "zadctl-dev")
+        monkeypatch.setattr(zad_cli.shutil, "which", lambda naam: f"/opt/bin/{naam}")
+
+        assert zad_cli.cli_pad() == "/opt/bin/zadctl-dev"
+
+    def test_een_lege_variabele_is_geen_keuze(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``ZAD_CLI=`` (of een paar spaties) uit een shellscript mag het PATH niet dichtzetten."""
+        monkeypatch.setenv(zad_cli.CLI_ENV, "   ")
+        monkeypatch.setattr(zad_cli.shutil, "which", lambda naam: "/usr/bin/zadctl" if naam == "zadctl" else None)
+
+        assert zad_cli.cli_pad() == "/usr/bin/zadctl"
+
     def test_geen_cli_is_none_en_geen_uitzondering(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``pytestmark`` roept dit aan tijdens de COLLECTIE. Gooit het hier, dan valt de
         hele module om in plaats van over te slaan."""
@@ -602,6 +623,25 @@ class TestDockerInlog:
         )
 
 
+class _OrdeningsItem:
+    """Het minimum dat de twee ordeningscorrecties van een item aanraken."""
+
+    def __init__(self, module: str, naam: str, *, sandbox: bool = True, serial: bool = False, regel: int = 0) -> None:
+        self.module = SimpleNamespace(__name__=module)
+        self.naam = naam
+        self._markers = {"sandbox": sandbox, "serial": serial}
+        self._regel = regel
+
+    def get_closest_marker(self, naam: str) -> object | None:
+        return object() if self._markers.get(naam) else None
+
+    def reportinfo(self) -> tuple[str, int, str]:
+        return "", self._regel, self.naam
+
+    def __repr__(self) -> str:
+        return self.naam
+
+
 class TestSandboxmodulesBijElkaar:
     """De hook die de modulegrens terugzet, ``tests/e2e/conftest.py``.
 
@@ -611,27 +651,13 @@ class TestSandboxmodulesBijElkaar:
     zonder deze hook 40 blokken over 30 modules, zeven modules gesplitst.
     """
 
-    class _Item:
-        """Het minimum dat de hook van een item aanraakt."""
-
-        def __init__(self, module: str, naam: str, *, sandbox: bool = True) -> None:
-            self.module = SimpleNamespace(__name__=module)
-            self.naam = naam
-            self._sandbox = sandbox
-
-        def get_closest_marker(self, naam: str) -> object | None:
-            return object() if naam == "sandbox" and self._sandbox else None
-
-        def __repr__(self) -> str:
-            return self.naam
-
     def test_de_toetsen_van_een_module_komen_achter_elkaar(self) -> None:
         items = [
-            self._Item("a", "a1"),
-            self._Item("b", "b1"),
-            self._Item("a", "a2"),
-            self._Item("b", "b2"),
-            self._Item("a", "a3"),
+            _OrdeningsItem("a", "a1"),
+            _OrdeningsItem("b", "b1"),
+            _OrdeningsItem("a", "a2"),
+            _OrdeningsItem("b", "b2"),
+            _OrdeningsItem("a", "a3"),
         ]
 
         _houd_sandboxmodules_bij_elkaar(items)
@@ -645,7 +671,7 @@ class TestSandboxmodulesBijElkaar:
         alfabetische bestandsnaam de volgorde waarin een suite van een uur zijn projecten
         aanmaakt.
         """
-        items = [self._Item("z", "z1"), self._Item("a", "a1"), self._Item("z", "z2")]
+        items = [_OrdeningsItem("z", "z1"), _OrdeningsItem("a", "a1"), _OrdeningsItem("z", "z2")]
 
         _houd_sandboxmodules_bij_elkaar(items)
 
@@ -658,13 +684,91 @@ class TestSandboxmodulesBijElkaar:
         is daar wel iets waard, dus die volgorde blijft zoals pytest hem oplevert.
         """
         items = [
-            self._Item("a", "a1"),
-            self._Item("lokaal", "l1", sandbox=False),
-            self._Item("b", "b1"),
-            self._Item("a", "a2"),
+            _OrdeningsItem("a", "a1"),
+            _OrdeningsItem("lokaal", "l1", sandbox=False),
+            _OrdeningsItem("b", "b1"),
+            _OrdeningsItem("a", "a2"),
         ]
 
         _houd_sandboxmodules_bij_elkaar(items)
 
         assert [item.naam for item in items] == ["a1", "l1", "a2", "b1"]
-        assert items[1].naam == "l1", "de toets zonder marker is van zijn plek gegaan"
+
+
+class TestDeOrdeningshook:
+    """``pytest_collection_modifyitems`` in ``tests/e2e/conftest.py``: de aanroep zelf.
+
+    De twee correcties zijn los getoetst, de hook die ze aanroept was dat niet, en elk van de
+    twee regels weghalen was nul rood. Gemeten op de sandboxselectie: zonder de
+    groeperingsregel splitst de collectie weer op (zie ``TestSandboxmodulesBijElkaar``), en
+    zonder de serial-regel verandert de volgorde zodra pytest-randomly aan staat, want dat is
+    de schudder waar die correctie tegen staat.
+    """
+
+    def test_de_hook_doet_beide_correcties(self) -> None:
+        """Een module die beide markers draagt, verspreid EN in de verkeerde regelvolgorde.
+
+        Zonder de groepering blijft ``a2`` op positie 2 staan; zonder de serial-correctie komt
+        hij voor ``a1``. Het antwoord hangt dus aan beide aanroepen.
+        """
+        items = [
+            _OrdeningsItem("a", "a2", serial=True, regel=20),
+            _OrdeningsItem("b", "b1"),
+            _OrdeningsItem("a", "a1", serial=True, regel=10),
+            _OrdeningsItem("b", "b2"),
+        ]
+
+        ordeningshook(items)
+
+        assert [item.naam for item in items] == ["a1", "a2", "b1", "b2"]
+
+    def test_de_hook_draait_na_de_groepering_van_pytest(self) -> None:
+        """``trylast``, want pytest doet ``items[:] = reorder_items(items)`` in deze hook.
+
+        Valt die optie weg, dan groepeert pytest de modules daarna alsnog uit elkaar en is de
+        correctie zonder effect, terwijl alles hierboven groen blijft.
+        """
+        opties = ordeningshook.pytest_impl
+
+        assert opties["trylast"] is True, f"de hook draait niet als laatste: {opties}"
+
+
+class TestLimietUitYaml:
+    """De lezer waarop de speelruimte-toetsen hun "niet veranderd" bouwen.
+
+    ``test_sandbox_speelruimte.py`` leest de waarde voor en na een geweigerde poging en
+    vergelijkt die twee. Vindt de lezer de vorm van het projectbestand niet, dan geeft hij
+    beide keren ``None`` en is die vergelijking groen zonder iets gemeten te hebben. Het
+    positieve gebruik in dezelfde module (``wait_for_condition`` op de opgeslagen waarde)
+    pint hem wel, maar dat is een ANDERE toets en die draait alleen op een cluster.
+    """
+
+    @pytest.mark.parametrize(
+        ("entry", "verwacht"),
+        [
+            ({"name": speelruimte._DIENST, "config": {speelruimte._VELD: 30}}, 30),
+            ({speelruimte._DIENST: {"config": {speelruimte._VELD: 30}}}, 30),
+            ({"name": speelruimte._DIENST, "config": {}}, None),
+            ({"name": speelruimte._DIENST}, None),
+            (speelruimte._DIENST, None),
+        ],
+        ids=["name-vorm", "sleutel-vorm", "config-zonder-veld", "zonder-config", "kale-dienst"],
+    )
+    def test_beide_vormen_van_een_dienstregel(self, entry: object, verwacht: object) -> None:
+        """Een dienst met config staat in het projectbestand in twee vormen.
+
+        ``{name: ..., config: ...}`` is wat de portaalkant schrijft (zie
+        ``tests/test_connection_limit.py``), en ``{<dienst>: {config: ...}}`` staat in
+        bestaande projectbestanden. Op een ervan lezen is een lezer die de helft niet vindt.
+        """
+        yaml = {"name": "proj", "services": ["publish-on-web", entry]}
+
+        assert speelruimte._limiet_uit_yaml(yaml) == verwacht
+
+    @pytest.mark.parametrize(
+        "yaml",
+        [{"services": ["publish-on-web"]}, {"services": []}, {"services": None}, {}],
+        ids=["andere-dienst", "leeg", "none", "geen-sleutel"],
+    )
+    def test_zonder_de_dienst_is_het_none_en_geen_uitzondering(self, yaml: dict) -> None:
+        assert speelruimte._limiet_uit_yaml(yaml) is None
