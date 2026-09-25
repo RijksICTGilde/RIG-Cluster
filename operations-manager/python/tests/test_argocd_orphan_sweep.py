@@ -169,9 +169,8 @@ def _kubectl(
 ) -> AsyncMock:
     """The kubectl the sweep reads the cluster through.
 
-    ``spec_set`` so that stubbing a method the connector does not have fails here instead
-    of against a real cluster: the sweep reads everything through this mock, so a name that
-    only exists on the mock is green in the suite and an AttributeError in the run.
+    ``spec_set`` because the sweep reads everything through this mock: a name that only
+    exists on the mock is green in the suite and an AttributeError in the run.
     """
     kubectl = AsyncMock(spec_set=KubectlConnector)
     kubectl.list_argocd_applications = AsyncMock(return_value=applications)
@@ -356,9 +355,8 @@ class TestRefusal:
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 
     def test_an_unreadable_namespace_list_reaches_the_cli_as_exit_2(self) -> None:
-        """get_namespace_label_map is the only read the sweep does that RAISES instead of
-        answering with a sentinel. Uncaught it leaves main() on exit 1, and exit 1 is the
-        documented "there are orphans", so a failed read would answer the delete test."""
+        """Exit 1 is the documented "there are orphans", so this read escaping would let a
+        failed sweep answer the delete test it is the last step of."""
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
         kubectl.get_namespace_label_map = AsyncMock(side_effect=KubectlExecutionError("Failed to list namespaces: x"))
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
