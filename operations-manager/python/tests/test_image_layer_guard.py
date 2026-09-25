@@ -13,6 +13,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
 BACKUP_DOCKERFILE = REPO_ROOT / "operations-manager" / "backup-image" / "Dockerfile"
+MC_DOCKERFILE = REPO_ROOT / "images" / "mc" / "Dockerfile"
+TASKFILE = REPO_ROOT / "Taskfile.yaml"
+MC_IMAGE = "ghcr.io/minbzk/base-images/mc"
 DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 STATIC_DIR = REPO_ROOT / "operations-manager" / "python" / "static"
 
@@ -53,6 +56,12 @@ def instructions() -> list[tuple[str, str]]:
 @pytest.fixture(scope="module")
 def app_stage(instructions: list[tuple[str, str]]) -> list[str]:
     return [instruction for stage, instruction in instructions if stage == APP_STAGE]
+
+
+def _mc_version(dockerfile: Path) -> str:
+    """De tag die dit Dockerfile aan de mc-spiegel geeft."""
+    match = re.search(r"^ARG MC_VERSION=(\S+)", dockerfile.read_text(), re.MULTILINE)
+    return match.group(1) if match else ""
 
 
 def _copy_sources(instruction: str) -> list[str]:
@@ -236,15 +245,95 @@ class TestPinnedTools:
             assert tag != "latest", base
 
     @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
-    def test_mc_comes_from_the_pinned_image(self, dockerfile: Path) -> None:
-        """dl.min.io answers 410 with a text body, which `curl -LO` saved as the binary."""
+    def test_mc_komt_uit_onze_eigen_spiegel(self, dockerfile: Path) -> None:
+        """Elk adres van MinIO zelf is dichtgegaan, en de GitHub-release kan de vierde zijn.
+
+        dl.min.io geeft 410 met een tekstbody die `curl -LO` als binary opsloeg, quay.io en
+        docker.io geven 401 sinds MinIO zijn images achter een abonnement zette, en de
+        productiepin van 2 september is daardoor niet meer te herbouwen. Daarom haalt een
+        OPI-build mc niet meer zelf op maar uit images/mc, onze eigen spiegel.
+        """
         lines = [line for _, line in _instructions(dockerfile.read_text())]
-        assert not [line for line in lines if "dl.min.io" in line]
-        assert "FROM quay.io/minio/mc:${MC_VERSION} AS mc" in lines
-        assert "COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc" in lines
-        # An ARG used in FROM only has a value when it is declared before the first FROM.
-        first_from = next(i for i, line in enumerate(lines) if line.upper().startswith("FROM "))
-        assert [line for line in lines[:first_from] if re.fullmatch(r"ARG MC_VERSION=RELEASE\.\S+", line)]
+
+        for dood in ("dl.min.io", "quay.io/minio", "docker.io/minio"):
+            assert not [line for line in lines if dood in line], f"{dood} staat nog in het bouwpad"
+        assert not [line for line in lines if "github.com/minio/mc/releases" in line], (
+            "de build haalt mc nog bij MinIO op en hangt dus aan dat kanaal"
+        )
+
+        stage = [
+            line
+            for line in lines
+            if line.upper().startswith("FROM ")
+            and line.split()[1] == f"{MC_IMAGE}:${{MC_VERSION}}"
+            and re.search(r"\bAS\s+mc$", line)
+        ]
+        assert stage, f"geen bouwfase op {MC_IMAGE}:${{MC_VERSION}}"
+
+        # Het pad is hetzelfde als de quay-image had, en de spiegel houdt het zo.
+        haal = [line for line in lines if line.upper().startswith("COPY ") and "--from=mc" in line]
+        assert haal, "de mc-stage wordt nergens uitgelezen"
+        for line in haal:
+            assert "/usr/bin/mc" in line, f"mc wordt op een ander pad gezocht dan de spiegel biedt: {line}"
+
+    def test_de_afnemers_pinnen_de_tag_die_de_spiegel_bouwt(self) -> None:
+        """Een afnemer die naar een ongevulde tag wijst, valt om op een manifest-404.
+
+        De spiegel wordt met de hand gevuld (`task publish-mc`), dus die twee waarden lopen
+        uit elkaar zodra iemand er een bijwerkt en de ander vergeet.
+        """
+        versies = {pad: _mc_version(pad) for pad in (MC_DOCKERFILE, DOCKERFILE, BACKUP_DOCKERFILE)}
+        for pad, versie in versies.items():
+            assert versie, f"{pad} pint geen MC_VERSION"
+        assert len(set(versies.values())) == 1, f"de mc-tags lopen uiteen: {versies}"
+
+    def test_de_spiegel_wordt_met_een_literale_checksum_gevuld(self) -> None:
+        """De grendel is verhuisd naar images/mc, want daar wordt de release nog opgehaald.
+
+        Waarom de som literaal staat en niet naast de binary opgehaald wordt: zie de kop van
+        images/mc/Dockerfile. In de twee afnemers is hij niet meer nodig, die adresseren een
+        image en krijgen de integriteitscontrole van het register.
+        """
+        lines = [line for _, line in _instructions(MC_DOCKERFILE.read_text())]
+
+        assert not [line for line in lines if ".sha256sum" in line], (
+            "de checksum wordt naast de binary opgehaald en komt dus van dezelfde bron"
+        )
+        sommen = {
+            regel.group(1)
+            for regel in (re.fullmatch(r"ARG (MC_SHA256\w*)=[0-9a-f]{64}", line) for line in lines)
+            if regel
+        }
+        assert sommen, "er staat geen literale mc-checksum in het Dockerfile"
+
+        haal = [line for line in lines if "github.com/minio/mc/releases/download" in line]
+        assert haal, "de spiegel haalt mc nergens uit de GitHub-release"
+        for line in haal:
+            assert "sha256sum -c -" in line, f"mc wordt gehaald zonder checksumcontrole: {line}"
+            # Per curl in de instructie en niet op de instructie als geheel: staan er ooit
+            # weer twee, dan dekt een -f op de ene de andere af.
+            zonder_f = [vlaggen for vlaggen in re.findall(r"curl\s+(-\S+)", line) if "f" not in vlaggen]
+            assert not zonder_f, f"een mc-download zonder -f slaat een foutpagina op: curl {zonder_f} in {line}"
+
+        controle = [line for line in lines if "sha256sum -c -" in line]
+        for naam in sorted(sommen):
+            assert any(naam in regel for regel in controle), f"de literale som {naam} wordt niet gecontroleerd"
+
+        # En de andere kant op, want de lus hierboven ziet alleen wat er STAAT: een som die
+        # de controle per arch opzoekt maar die hier geen literaal heeft, is een lege som.
+        zonder_waarde = {naam for regel in controle for naam in re.findall(r"\$\{(MC_SHA256_\w+)\}", regel)} - sommen
+        assert not zonder_waarde, f"deze som wordt opgezocht maar staat hier niet: {sorted(zonder_waarde)}"
+
+    def test_de_spiegel_heeft_een_beschreven_weg_om_gevuld_te_worden(self) -> None:
+        """Zonder die weg weet alleen degene die hem de eerste keer vulde hoe het moet."""
+        taken = TASKFILE.read_text()
+        assert "\n  publish-mc:\n" in taken, "er is geen task die de spiegel vult"
+        publish = taken.split("\n  publish-mc:\n", 1)[1].split("\n  publish-", 1)[0]
+        assert "images/mc" in publish, "publish-mc bouwt iets anders dan de spiegel"
+        assert f"REGISTRY_IMAGE: {MC_IMAGE.rsplit('/', 1)[0]}" in publish
+
+        uitleg = (MC_DOCKERFILE.parent / "README.md").read_text()
+        assert "task publish-mc" in uitleg, "de weg om de spiegel te vullen noemt de task niet"
 
 
 class TestAptLayers:

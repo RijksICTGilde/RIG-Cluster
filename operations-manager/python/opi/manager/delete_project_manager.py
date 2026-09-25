@@ -21,10 +21,12 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
+from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
+    from opi.utils.argocd_tracking import TrackedResource
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
@@ -76,6 +78,28 @@ def parse_retention_period_hours(value: str | None) -> int:
     return hours
 
 
+def _split_on_the_mark(
+    inventory: list[TrackedResource], app_name: str, known_names: set[str] | None
+) -> tuple[list[TrackedResource], list[TrackedResource]]:
+    """Split an inventory into what ``app_name`` unambiguously owns, and what stays undecided.
+
+    Equality is not enough on a mark that sits on the label cap (may_be_cut_from), and without
+    the names nothing on the cap can be placed at all.
+
+    Args:
+        known_names: Every Application name on the cluster, or ``None`` when that read failed.
+    """
+    tracked: list[TrackedResource] = []
+    undecidable: list[TrackedResource] = []
+    for resource in inventory:
+        if resource.app_name == app_name:
+            ambiguous = resource.truncatable if known_names is None else may_be_cut_from(resource, known_names)
+            (undecidable if ambiguous else tracked).append(resource)
+        elif may_be_cut_from(resource, {app_name}):
+            undecidable.append(resource)
+    return tracked, undecidable
+
+
 class DeleteProjectManager:
     """Manager for project and deployment deletion operations."""
 
@@ -87,6 +111,157 @@ class DeleteProjectManager:
             project_manager: The main ProjectManager instance for accessing shared resources
         """
         self.project_manager = project_manager
+
+    async def _terminate_application_operation(self, app_name: str, deletion_results: dict[str, Any]) -> None:
+        """Clear a running sync operation on an Application before it is deleted.
+
+        Why this has to come first: KubectlConnector.terminate_argocd_application_operation.
+        """
+        kubectl = self.project_manager._kubectl_connector
+        terminated = await kubectl.terminate_argocd_application_operation(app_name)
+        deletion_results["operations"].append(
+            {
+                "type": "argocd_app_operation_termination",
+                "target": app_name,
+                "status": "success" if terminated else "failed",
+            }
+        )
+        if not terminated:
+            logger.warning(f"Could not clear a running operation on ArgoCD application {app_name}")
+
+    async def _force_delete_stuck_application(self, app_name: str, deletion_results: dict[str, Any]) -> bool:
+        """Delete an Application that would not go away: its resources first, then its finalizer.
+
+        Removing the finalizer is what makes the Application disappear, but it also cancels
+        the cascade that would have deleted the resources underneath it. So they go first,
+        selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
+        that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
+
+        The mark has to name this application UNAMBIGUOUSLY, because here a match is a delete
+        (_split_on_the_mark). What stays ambiguous is reported instead of deleted.
+
+        A sweep that ran but did not get everything (``partial``) keeps the finalizer in
+        place: the cascade it carries is then the only route by which the rest is still
+        deleted under its own Application, and cancelling that while resources stand is the
+        exact shape that left the 350 behind. A sweep that could not run at all still forces,
+        because nothing was deleted there either way and an Application that stays blocks the
+        parent for everyone.
+
+        Returns:
+            True if the finalizer was removed.
+        """
+        kubectl = self.project_manager._kubectl_connector
+        swept_partially = False
+
+        destination = await kubectl.get_argocd_application_destination_namespace(app_name)
+        if destination is None:
+            deletion_results["operations"].append(
+                {
+                    "type": "argocd_app_tracked_resource_deletion",
+                    "target": app_name,
+                    "status": "unknown_namespace",
+                }
+            )
+            deletion_results["errors"].append(
+                f"Could not determine the destination namespace of ArgoCD application '{app_name}'; "
+                "its resources may be left behind"
+            )
+        else:
+            inventory = await kubectl.list_tracked_resources(destination)
+            if inventory is None:
+                # Not the same as an empty namespace: this read failed, so reporting it
+                # as swept is the silent force this function exists to prevent.
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_tracked_resource_deletion",
+                        "target": app_name,
+                        "namespace": destination,
+                        "status": "inventory_failed",
+                    }
+                )
+                deletion_results["errors"].append(
+                    f"Could not inventory namespace '{destination}' for resources of ArgoCD application "
+                    f"'{app_name}'; its resources may be left behind"
+                )
+            else:
+                resources, complete = inventory
+                known_names = await self._known_application_names()
+                tracked, undecidable = _split_on_the_mark(resources, app_name, known_names)
+                failed = await kubectl.delete_tracked_resources(tracked)
+                swept_partially = bool(failed) or bool(undecidable) or not complete
+                deletion_results["operations"].append(
+                    {
+                        "type": "argocd_app_tracked_resource_deletion",
+                        "target": app_name,
+                        "namespace": destination,
+                        "status": "partial" if swept_partially else "success",
+                        "deleted": len(tracked) - len(failed),
+                        "failed": len(failed),
+                        "undecidable": len(undecidable),
+                    }
+                )
+                if not complete:
+                    # A half answer that passes for a whole one is the same silent force as
+                    # a failed one: what is deleted here is only what kubectl got round to
+                    # printing, and the types that stayed silent are where the rest stands.
+                    deletion_results["errors"].append(
+                        f"Namespace '{destination}' answered for only part of its resource types, so resources "
+                        f"of ArgoCD application '{app_name}' outside that part may be left behind"
+                    )
+                if failed:
+                    deletion_results["errors"].append(
+                        f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
+                        f"in namespace '{destination}'"
+                    )
+                if undecidable and known_names is None:
+                    deletion_results["errors"].append(
+                        "Could not read the ArgoCD Application names, so no label value on the "
+                        f"{LABEL_VALUE_MAX}-character cap could be told apart from a neighbour's name"
+                    )
+                if undecidable:
+                    deletion_results["errors"].append(
+                        f"{len(undecidable)} resource(s) in namespace '{destination}' carry a label value on the "
+                        f"{LABEL_VALUE_MAX}-character cap that is as much a whole Application name as a longer one "
+                        f"cut to it, so whether they are '{app_name}'s or a living neighbour's is not decidable "
+                        "from the mark; left standing. Which of the two it is, the resource itself shows."
+                    )
+
+        if swept_partially:
+            deletion_results["operations"].append(
+                {
+                    "type": "argocd_app_finalizer_removal",
+                    "target": app_name,
+                    "status": "skipped_partial_sweep",
+                }
+            )
+            deletion_results["errors"].append(
+                f"ArgoCD application '{app_name}' was left standing with its finalizer: its resources are not "
+                "verifiably gone, and removing the finalizer would cancel the cascade that can still delete them"
+            )
+            return False
+
+        finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)
+        deletion_results["operations"].append(
+            {
+                "type": "argocd_app_finalizer_removal",
+                "target": app_name,
+                "status": "success" if finalizer_removed else "failed",
+            }
+        )
+        return finalizer_removed
+
+    async def _known_application_names(self) -> set[str] | None:
+        """Every ArgoCD Application name on this cluster, or ``None`` when the read failed.
+
+        ``list_argocd_applications`` answers a failure with an empty list, and the
+        Application being forced is itself still standing, so an empty answer is a failed
+        read and never "there are no neighbours". Reading it as the latter is what decides
+        destructively on a mark at the label cap.
+        """
+        applications = await self.project_manager._kubectl_connector.list_argocd_applications()
+        if not applications:
+            return None
+        return {application.get("metadata", {}).get("name", "") for application in applications}
 
     async def _cleanup_orphaned_argocd_resources(self, project_name: str, deletion_results: dict[str, Any]) -> None:
         """
@@ -106,6 +281,8 @@ class DeleteProjectManager:
 
         try:
             argo_connector = create_argo_connector()
+            kubectl = self.project_manager._kubectl_connector
+            argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
 
             # List all applications and find ones matching this project
             all_applications = await argo_connector.list_applications()
@@ -125,7 +302,8 @@ class DeleteProjectManager:
                     logger.info(f"Deleting orphaned ArgoCD application: {app_name}")
 
                     try:
-                        delete_success = await argo_connector.delete_application(app_name)
+                        await self._terminate_application_operation(app_name, deletion_results)
+                        delete_success = await kubectl.delete_argocd_application(app_name, argo_namespace)
                         if delete_success:
                             deletion_results["operations"].append(
                                 {
@@ -155,10 +333,6 @@ class DeleteProjectManager:
             # Also check for orphaned AppProjects
             # AppProjects typically follow pattern: {project_name}-{deployment_name} or {project_name}-infrastructure
             # (matched by `project_name in line` below).
-            argo_namespace = get_argo_namespace(settings.CLUSTER_MANAGER)
-
-            # Use kubectl to list AppProjects matching the pattern
-            kubectl = self.project_manager._kubectl_connector
             stdout, stderr, code = await kubectl._run_kubectl_command(
                 ["get", "appproject", "-n", argo_namespace, "-o", "name"]
             )
@@ -527,6 +701,7 @@ class DeleteProjectManager:
             infra_app_exists = await argo_connector.application_exists(infra_app_name)
             if infra_app_exists:
                 logger.info(f"Waiting for infrastructure Application {infra_app_name} to be deleted")
+                await self._terminate_application_operation(infra_app_name, deletion_results)
                 deletion_complete = await argo_connector.wait_for_application_deletion(
                     infra_app_name,
                     max_retries=20,
@@ -549,30 +724,14 @@ class DeleteProjectManager:
                     if force:
                         logger.warning(
                             f"Infrastructure Application {infra_app_name} deletion timed out - "
-                            "force mode: attempting to remove finalizers"
+                            "force mode: deleting its resources, then removing finalizers"
                         )
-                        kubectl = self.project_manager._kubectl_connector
-                        finalizer_removed = await kubectl.remove_argocd_application_finalizers(infra_app_name)
+                        finalizer_removed = await self._force_delete_stuck_application(infra_app_name, deletion_results)
                         if finalizer_removed:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "infrastructure_app_finalizer_removal",
-                                    "target": infra_app_name,
-                                    "status": "success",
-                                }
-                            )
                             infra_app_deleted = await argo_connector.wait_for_application_deletion(
                                 infra_app_name,
                                 max_retries=10,
                                 kubectl_connector=self.project_manager._kubectl_connector,
-                            )
-                        else:
-                            deletion_results["operations"].append(
-                                {
-                                    "type": "infrastructure_app_finalizer_removal",
-                                    "target": infra_app_name,
-                                    "status": "failed",
-                                }
                             )
 
                     deletion_results["operations"].append(
@@ -1117,7 +1276,8 @@ class DeleteProjectManager:
             deployment_name: Name of the deployment to delete
             force: If True, continues on errors and cleans up stuck resources.
                    In force mode:
-                   - Removes ArgoCD finalizers if app deletion times out
+                   - Deletes the resources of an Application whose deletion times out, and
+                     removes its finalizer only when that sweep got everything
                    - Skips database cleanup if secrets are inaccessible
                    - Only deletes namespace after ArgoCD app is confirmed deleted
 
@@ -1335,6 +1495,7 @@ class DeleteProjectManager:
                 app_exists = await argo_connector.application_exists(app_name)
                 if app_exists:
                     logger.info(f"Waiting for ArgoCD application {app_name} to be deleted via GitOps")
+                    await self._terminate_application_operation(app_name, deletion_results)
                     deletion_complete = await argo_connector.wait_for_application_deletion(
                         app_name,
                         max_retries=40,
@@ -1359,34 +1520,15 @@ class DeleteProjectManager:
                         if force:
                             logger.warning(
                                 f"ArgoCD application {app_name} deletion timed out - "
-                                "force mode: attempting to remove finalizers"
+                                "force mode: deleting its resources, then removing finalizers"
                             )
-                            finalizer_removed = (
-                                await self.project_manager._kubectl_connector.remove_argocd_application_finalizers(
-                                    app_name
-                                )
-                            )
+                            finalizer_removed = await self._force_delete_stuck_application(app_name, deletion_results)
                             if finalizer_removed:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "argocd_app_finalizer_removal",
-                                        "target": app_name,
-                                        "status": "success",
-                                    }
-                                )
                                 # Wait for the app to be garbage collected using proper retry logic
                                 argocd_app_deleted = await argo_connector.wait_for_application_deletion(
                                     app_name,
                                     max_retries=10,
                                     kubectl_connector=self.project_manager._kubectl_connector,
-                                )
-                            else:
-                                deletion_results["operations"].append(
-                                    {
-                                        "type": "argocd_app_finalizer_removal",
-                                        "target": app_name,
-                                        "status": "failed",
-                                    }
                                 )
 
                         deletion_results["operations"].append(
@@ -2062,6 +2204,7 @@ class DeleteProjectManager:
 
             if app_exists:
                 await argo_connector.refresh_application("user-applications")
+                await self._terminate_application_operation(app_name, deletion_results)
                 argocd_app_deleted = await argo_connector.wait_for_application_deletion(
                     app_name,
                     max_retries=40,
