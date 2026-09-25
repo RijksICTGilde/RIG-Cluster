@@ -31,8 +31,8 @@ de `*-project`-applicatie zijn ServiceAccount heeft uitgerold, en wave 1 mag met
 
 ### En daarna valt er alsnog niets te wachten
 
-De `*-project`-applicatie beheert precies één resource, en een ServiceAccount krijgt van
-ArgoCD geen health:
+De resources van de `*-project`-applicatie krijgen van ArgoCD geen health. Bij het gemeten
+project is dat er één, de ServiceAccount:
 
 ```
 $ kubectl -n rig-system get app pgsch-2iw-project -o json
@@ -44,17 +44,18 @@ Health `None` draagt niet bij aan de health van de applicatie. Er is dus op geen
 moment een `Progressing` waarop de wave kan wachten: niet voor de sync, niet tijdens, niet
 erna.
 
-## Grendel 2 en 3, voor de volledigheid
+## Grendel 2 en 3
 
-- **De expliciete wacht in OPI** (`project_manager.py:3354`) staat structureel te laat: hij
-  loopt nadat de deployment-applicaties bestaan, en elke gegenereerde applicatie draagt
-  `syncPolicy.automated` (`manifests/argocd-application.yaml.jinja`), dus ArgoCD
-  synchroniseert de deployment-applicatie zelfstandig zodra zijn CR er staat. Dat staat ook
-  in het commentaar erboven. Daarbij gaf hij `refreshed_after` niet mee, dus bij een
-  herhaalrun kon een `Synced` van VOOR onze commit hem al tevredenstellen.
-- **Het zelfherstel** werkt, maar duurt langer dan de 300s die de taak zichzelf geeft
-  (`project_manager.py:3525`), en dan is een aanmaak die uiteindelijk convergeert voor de
-  gebruiker toch mislukt.
+- **De expliciete wacht in OPI** (voor deze PR in `process_project_from_git`) stond
+  structureel te laat: hij liep nadat de deployment-applicaties bestonden, en elke
+  gegenereerde applicatie draagt `syncPolicy.automated`
+  (`manifests/argocd-application.yaml.jinja`), dus ArgoCD synchroniseert de
+  deployment-applicatie zelfstandig zodra zijn CR er staat. Daarbij gaf hij
+  `refreshed_after` niet mee, dus bij een herhaalrun kon een `Synced` van VOOR onze commit
+  hem al tevredenstellen.
+- **Het zelfherstel** werkt, maar duurt langer dan de 300s die `process_project_from_git`
+  per deployment-applicatie op de sync wacht, en dan is een aanmaak die uiteindelijk
+  convergeert voor de gebruiker toch mislukt.
 
 ## Waarom de reparatie niet in de waves zit
 
