@@ -163,9 +163,8 @@ bekeken is:
 
 `list_tracked_resources` en `list_namespaced_resource_types` dragen dat verschil zelf, met
 `None` voor een mislukte lezing naast een lege lijst voor "niets gevonden".
-`get_namespace_label_map` is de enige die in plaats daarvan een `KubectlExecutionError`
-gooit; de veegactie vangt die en weigert, want ongevangen eindigt hij op exitcode 1 en dat
-betekent hier "er zijn wezen".
+`get_namespace_label_map` gooit in plaats daarvan een `KubectlExecutionError`, die de
+veegactie vangt en als weigering meldt.
 
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster

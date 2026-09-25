@@ -178,9 +178,8 @@ async def inventory(
     try:
         label_map = await kubectl.get_namespace_label_map(NAMESPACE_OWNER_LABEL)
     except KubectlExecutionError as e:
-        # The only read here that raises instead of answering with a sentinel, so it needs
-        # its own refusal. Left to escape it ends main() on exit 1, and exit 1 means "there
-        # are orphans", not "nothing was measured".
+        # The only read here that raises instead of answering with a sentinel. Left to
+        # escape it ends the run on exit 1, and exit 1 means "there are orphans".
         raise SweepRefused(f"the cluster did not answer which namespaces OPI created: {e}") from e
 
     owned = {namespace for namespace, value in label_map.items() if value == NAMESPACE_OWNER_VALUE}

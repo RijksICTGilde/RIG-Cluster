@@ -180,11 +180,9 @@ class TestTerminateOperation:
 class TestDeleteApplication:
     @pytest.mark.asyncio
     async def test_an_application_that_is_already_gone_is_not_a_failure(self, connector) -> None:
-        """The orphan cleanup reports the outcome of this call, so 'already gone' reads as deleted.
-
-        ``--ignore-not-found=true`` is what makes kubectl exit 0 on an Application that went
-        away between the listing and the delete. Without the flag the cleanup would report
-        ``failed`` for precisely the case it exists to clean up.
+        """The orphan cleanup reports the outcome of this call, so an Application that went
+        away between the listing and the delete has to read as deleted and not as failed.
+        ``--ignore-not-found=true`` is what makes kubectl exit 0 there.
         """
         run = AsyncMock(return_value=("", "", 0))
         with patch.object(connector, "_run_kubectl_command", run):
@@ -370,9 +368,8 @@ def _recording_kubectl(
     """A kubectl stand-in that writes the name of each call into ``calls``.
 
     ``spec_set=KubectlConnector`` for the same reason the ArgoConnector mock below carries a
-    spec: an open AsyncMock answers to a method the connector does not have, so a route
-    calling one stays green while it deletes nothing. ``spec_set`` rather than ``spec``
-    because it is the stubbing that has to fail here, and only ``spec_set`` restricts that.
+    spec, and ``spec_set`` rather than ``spec`` because here it is the stubbing that has to
+    fail, which only ``spec_set`` restricts.
     """
 
     def step(name: str, result):
