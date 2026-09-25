@@ -85,8 +85,8 @@ def db_project(
             unique_project_name("speelrui"),
             user_email=_USER_EMAIL,
             services=["publish-on-web", _DIENST],
-            # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
-            # met diensten dat niet altijd.
+            # Ruimer dan de 240s van de helper, en wat dat wel en niet koopt staat in
+            # `features/e2e-sandbox-tests.md`.
             create_timeout=600.0,
         )
     finally:

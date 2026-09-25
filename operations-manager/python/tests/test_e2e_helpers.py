@@ -12,12 +12,14 @@ from __future__ import annotations
 import base64
 import json
 import subprocess
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from _pytest.outcomes import Skipped
 from tests.e2e import test_sandbox_migratie_006 as migratie_006
 from tests.e2e import test_sandbox_registry_pull as registry_pull
+from tests.e2e.conftest import _houd_sandboxmodules_bij_elkaar
 from tests.e2e.helpers import cluster, zad_cli
 
 if TYPE_CHECKING:
@@ -598,3 +600,72 @@ class TestDockerInlog:
         assert [aanroep["args"][0] for aanroep in aanroepen][-1] == "logout", (
             f"er is niet afgemeld na een mislukte push: {[aanroep['args'] for aanroep in aanroepen]}"
         )
+
+
+class TestSandboxmodulesBijElkaar:
+    """De hook die de modulegrens terugzet, ``tests/e2e/conftest.py``.
+
+    Wat hij voorkomt kost geld en geen falen: pytest groepeert op de parameters van
+    fixtures met een scope boven function en breekt daarmee de modulegrens op, waarna een
+    module-fixture opnieuw wordt opgezet. Elke extra opbouw is een volledig project op het
+    gedeelde cluster, en de suite blijft er groen bij. Gemeten op de sandboxselectie: zonder
+    deze hook 40 blokken over 30 modules, zeven modules gesplitst.
+    """
+
+    class _Item:
+        """Het minimum dat de hook van een item aanraakt."""
+
+        def __init__(self, module: str, naam: str, *, sandbox: bool = True) -> None:
+            self.module = SimpleNamespace(__name__=module)
+            self.naam = naam
+            self._sandbox = sandbox
+
+        def get_closest_marker(self, naam: str) -> object | None:
+            return object() if naam == "sandbox" and self._sandbox else None
+
+        def __repr__(self) -> str:
+            return self.naam
+
+    def test_de_toetsen_van_een_module_komen_achter_elkaar(self) -> None:
+        items = [
+            self._Item("a", "a1"),
+            self._Item("b", "b1"),
+            self._Item("a", "a2"),
+            self._Item("b", "b2"),
+            self._Item("a", "a3"),
+        ]
+
+        _houd_sandboxmodules_bij_elkaar(items)
+
+        assert [item.naam for item in items] == ["a1", "a2", "a3", "b1", "b2"]
+
+    def test_de_module_die_het_eerst_kwam_blijft_voorop(self) -> None:
+        """Op eerste verschijning en niet op naam: anders herschikt de hook de RUN zelf.
+
+        Zonder deze toets is ``sorted(per_module)`` een even goed antwoord, en dan bepaalt de
+        alfabetische bestandsnaam de volgorde waarin een suite van een uur zijn projecten
+        aanmaakt.
+        """
+        items = [self._Item("z", "z1"), self._Item("a", "a1"), self._Item("z", "z2")]
+
+        _houd_sandboxmodules_bij_elkaar(items)
+
+        assert [item.naam for item in items] == ["z1", "z2", "a1"]
+
+    def test_een_toets_zonder_de_sandbox_marker_blijft_op_zijn_plek(self) -> None:
+        """De hook mag alleen de posities van sandboxtoetsen onderling vullen.
+
+        De lokale e2e-suite heeft niets met dit probleem te maken en de groepering van pytest
+        is daar wel iets waard, dus die volgorde blijft zoals pytest hem oplevert.
+        """
+        items = [
+            self._Item("a", "a1"),
+            self._Item("lokaal", "l1", sandbox=False),
+            self._Item("b", "b1"),
+            self._Item("a", "a2"),
+        ]
+
+        _houd_sandboxmodules_bij_elkaar(items)
+
+        assert [item.naam for item in items] == ["a1", "l1", "a2", "b1"]
+        assert items[1].naam == "l1", "de toets zonder marker is van zijn plek gegaan"
