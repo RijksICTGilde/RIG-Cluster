@@ -63,7 +63,7 @@ _OPI_ROOT = Path(__file__).resolve().parents[1]
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
-from opi.connectors.kubectl import create_kubectl_connector  # noqa: E402
+from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector  # noqa: E402
 
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
@@ -175,11 +175,15 @@ async def inventory(
     referenced = {(app.get("spec", {}).get("source", {}) or {}).get("path", "") for app in applications}
     print(f"{len(existing)} ArgoCD Application(s) exist", file=sys.stderr)
 
-    owned = {
-        namespace
-        for namespace, value in (await kubectl.get_namespace_label_map(NAMESPACE_OWNER_LABEL)).items()
-        if value == NAMESPACE_OWNER_VALUE
-    }
+    try:
+        label_map = await kubectl.get_namespace_label_map(NAMESPACE_OWNER_LABEL)
+    except KubectlExecutionError as e:
+        # The only read here that raises instead of answering with a sentinel, so it needs
+        # its own refusal. Left to escape it ends main() on exit 1, and exit 1 means "there
+        # are orphans", not "nothing was measured".
+        raise SweepRefused(f"the cluster did not answer which namespaces OPI created: {e}") from e
+
+    owned = {namespace for namespace, value in label_map.items() if value == NAMESPACE_OWNER_VALUE}
     if namespaces is None:
         # Any OPI namespace can hold leftovers, including one whose Applications are all
         # gone, so the list comes from the cluster and not from the Applications that are
