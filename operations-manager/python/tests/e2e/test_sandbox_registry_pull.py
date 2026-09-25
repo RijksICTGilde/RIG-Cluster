@@ -148,6 +148,27 @@ def _pull_secrets(namespace: str) -> dict[str, dict]:
     return gevonden
 
 
+def _registries_van(yaml: dict) -> list[dict]:
+    """De registry-entries uit de dienstconfig van het project."""
+    for dienst in yaml.get("services") or []:
+        if isinstance(dienst, str) or dienst.get("name") != "image-registries":
+            continue
+        return (dienst.get("config") or {}).get("registries") or []
+    return []
+
+
+def _entry_staat_er(yaml: dict) -> bool:
+    return any(entry.get("name") == _REGISTRY_NAAM for entry in _registries_van(yaml))
+
+
+def _registry_entry(forgejo: ForgejoClient, project: str) -> dict:
+    yaml = forgejo.get_project_yaml(project) or {}
+    for entry in _registries_van(yaml):
+        if entry.get("name") == _REGISTRY_NAAM:
+            return entry
+    return {}
+
+
 def test_de_registry_wordt_opgeslagen_via_de_cli(
     cli: ZadCli,
     registry_project: CreatedProject,
@@ -175,22 +196,22 @@ def test_de_registry_wordt_opgeslagen_via_de_cli(
     logger.info("registry add: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:400])
     resultaat.assert_ok()
 
-    def _entry_staat_er(yaml: dict) -> bool:
-        for dienst in yaml.get("services") or []:
-            if isinstance(dienst, str):
-                continue
-            config = dienst.get("config") or (dienst.get("image-registries") or {}).get("config") or {}
-            for entry in config.get("registries") or []:
-                if entry.get("name") == _REGISTRY_NAAM:
-                    return True
-        return False
-
     assert forgejo.wait_for_condition(registry_project.name, _entry_staat_er, timeout=180.0), (
         f"de registry-entry '{_REGISTRY_NAAM}' staat niet in het projectbestand"
     )
 
-    inhoud = forgejo.get_project_file(registry_project.name) or ""
-    assert _REGISTRY_PASSWORD not in inhoud, "het token staat in klare tekst in het projectbestand"
+    # Op het VELD van deze entry en niet op het hele bestand. Dat laatste stond hier eerst
+    # en gaf een vals alarm: de sandbox zet de git-inloggegevens van het project als
+    # `password: plain:admin1234` in datzelfde bestand, en dat is hetzelfde wachtwoord als
+    # dat van deze registry. De meting sloeg dus aan op een regel die er niets mee te maken
+    # heeft.
+    entry = _registry_entry(forgejo, registry_project.name)
+    assert entry, f"de entry '{_REGISTRY_NAAM}' is niet terug te lezen"
+    opgeslagen = str(entry.get("password") or "")
+    assert opgeslagen != _REGISTRY_PASSWORD, "het token staat in klare tekst in het projectbestand"
+    assert opgeslagen.startswith("-----BEGIN AGE ENCRYPTED FILE-----"), (
+        f"het token is niet AGE-versleuteld opgeslagen: {opgeslagen[:80]!r}"
+    )
 
 
 def test_een_component_uit_de_private_registry_krijgt_een_pull_secret(
