@@ -166,6 +166,12 @@ bekeken is:
 `get_namespace_label_map` gooit in plaats daarvan een `KubectlExecutionError`, die de
 veegactie vangt en als weigering meldt.
 
+Daarnaast weigert hij op een cluster dat niet te bereiken is. Dat is geen lezing die als
+leeg doorgaat maar een `KubectlConnectionError`, die alle vier de lezingen kunnen gooien:
+bij de start als de connector niet verbonden is, en midden in de run zodra `kubectl` op
+stderr `connection refused` meldt. Ongevangen eindigt de run op een traceback met exitcode
+1, en exitcode 1 betekent hier "er zijn wezen".
+
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
 NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller

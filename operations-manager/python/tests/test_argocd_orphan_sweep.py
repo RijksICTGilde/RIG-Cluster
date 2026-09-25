@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
-from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 from opi.utils.argocd_tracking import TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
@@ -359,6 +359,29 @@ class TestRefusal:
         failed sweep answer the delete test it is the last step of."""
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
         kubectl.get_namespace_label_map = AsyncMock(side_effect=KubectlExecutionError("Failed to list namespaces: x"))
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+    def test_an_unreachable_cluster_reaches_the_cli_as_exit_2(self) -> None:
+        """KubectlConnectionError is the failure every read in inventory() shares: raised at
+        the start when isConnected is False (kubectl.py:229) and mid-run on a stderr saying
+        'connection refused' (kubectl.py:297). Measured with the except narrowed back to
+        SweepRefused alone: a traceback and exit 1, which means "there are orphans"."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.list_argocd_applications = AsyncMock(
+            side_effect=KubectlConnectionError("kubectl connection is not available")
+        )
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+    def test_a_cluster_that_drops_mid_run_reaches_the_cli_as_exit_2(self) -> None:
+        """The other half: the connection survives the Application query and dies on the
+        namespace inventory. Pinned separately because the first read failing is what
+        stops the run in the test above, so it alone would leave this path unmeasured."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.list_tracked_resources = AsyncMock(
+            side_effect=KubectlConnectionError("kubectl connection failed: connection refused")
+        )
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
             assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
 
