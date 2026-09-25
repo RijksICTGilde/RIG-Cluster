@@ -79,6 +79,19 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
+- `cluster.py` - kubectl-wrappers om te meten wat er ECHT in het cluster staat
+  (`secret_values`, `get_json_strict`, `resource_names`, `probe_in_pod`, ...) plus
+  `run_psql` voor SQL tegen een databaseserver op het cluster, in een eigen pod. Het
+  wachtwoord en het statement gaan daar over STDIN naar een `sh -s` in die pod, en niet als
+  `--env`/argument; `_run_psql_once` schrijft op waar die argv allemaal terechtkomt.
+- `zad_cli.py::ZadCli` - roept de zad-cli aan tegen de sandbox met een projectsleutel en
+  geeft exitcode, stdout en stderr terug (`run(...)`, `assert_ok()`, `assert_faalt()`,
+  `json()`). De CLI woont in een eigen repository en wordt hier niet meegeleverd:
+  `skip_zonder_cli()` slaat over als hij niet op het PATH staat (`zad`, of `zadctl`, of het
+  pad in `ZAD_CLI`), net zoals een sandboxtoets overslaat zonder `E2E_BASE_URL`. De modules die
+  niet zonder hem kunnen zetten die skip op de MODULE (`skipif(cli_pad() is None, reason=GEEN_CLI)`),
+  want een skip in een fixture die aan het project hangt maakt eerst een project op het cluster
+  aan om daarna alles over te slaan.
 
 There is deliberately no separate cleanup registry: a suite that creates projects owns
 their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That
@@ -104,6 +117,24 @@ fails halfway.
 - **Do** name projects with `_unique_project_name()` and register cleanup. **Don't** leave test
   projects on the sandbox.
 - **Do** keep new tests behind the right marker(s) so they never run in the default suite.
+- **Do** geef een wachtwoord of token over stdin mee, nooit als argument: `run_psql` doet dat
+  met zijn script, `docker login` met `--password-stdin`. En zet de waarde van zo'n vlag niet
+  in de tekst van een assertie (`ZadCli` maskeert hem, zie `leesbare_argv`), want die tekst
+  komt in het pytest-verslag en in de uitvoer van de CI-stap.
+- **Do** zet `pytest.mark.timeout(...)` in de `pytestmark` van een module die langer dan
+  vijf minuten kan doen over een toets OF over het opzetten van zijn fixtures.
+  `task test-e2e-sandbox` draait met `--timeout=300`, en dat budget geldt ook voor de SETUP
+  van een module-fixture: zonder eigen marker eindigt een aanmaakwacht van 600s op
+  "Timeout (>300.0s) from pytest-timeout" en wordt de hele module ERROR.
+- **Do** weet wat een ruimere `create_timeout` wel en niet koopt, want de knop staat aan de
+  CLIENT-kant. In beide wizardhelpers (`create_project_with_services` en
+  `create_project_via_wizard`) gaat hij naar twee wachten: de wacht tot de AANMAAKTAAK klaar is,
+  en daarna de wacht tot de applicaties gezond zijn. Die eerste is begrensd door de server en
+  niet door jou: de taak geeft per ArgoCD-applicatie na 300s op
+  (`opi/manager/project_manager.py:3525`) en legt zichzelf dan als mislukt vast. Wat het WEL
+  koopt is dat de fout die de toets leest de REDEN van de server is en niet je eigen time-out,
+  en zo is de vertraagde ServiceAccount van RC-229 gevonden.
+  **Don't** gebruik hem dus om een storing weg te wachten.
 
 ## Reference example
 
