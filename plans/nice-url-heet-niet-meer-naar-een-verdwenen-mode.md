@@ -4,6 +4,8 @@ Het blok `nice_url` in `opi/core/cluster_config.py` heet naar `domain-mode: nice
 
 Deze wijziging hernoemt het blok en de functies eromheen. **Er verandert geen gedrag.** Geen migratie, geen schemawijziging, geen nieuwe of vervallen configuratie.
 
+Kaartje: [#175](https://github.com/RijksICTGilde/RIG-Cluster/issues/175). Deze taak wacht op #174 (`plans/de-gereserveerde-namen-gelden-alleen-op-onze-eigen-zones.md`): dat is een bug op domeinen en gaat voor. Die taak zet een tweede sleutel in dit blok (`managed_zones`) plus een functie die hem leest; die horen bij de hernoeming mee te gaan, en de verify-greps hieronder dekken dat al.
+
 ## Waarom
 
 De naam kost tijd. Wie hem tegenkomt denkt naar legacy te kijken en gaat uitzoeken of het weg kan, terwijl het de huidige weg is. Dat is in deze codebase al minstens één keer gebeurd en het is een voorspelbare herhaling: de naam zegt iets anders dan de inhoud.
@@ -14,7 +16,7 @@ Wat `nice_url` ooit betekende leeft door als het veld `supports_dots`: dat bepaa
 
 ## Wat er nu is
 
-Gemeten op 29-08-2026 tegen `main`.
+Gemeten op 18-09-2026 tegen `main`. Het plan is van 29-08-2026; main is sindsdien 419 commits verder, dus de regelnummers en aantallen hieronder zijn opnieuw geteld. De vorm, de val en de naamkeuze zijn ongewijzigd.
 
 Het blok staat in `opi/core/cluster_config.py` (27 verwijzingen, inclusief de blokken van alle clusters) met deze vorm:
 
@@ -36,14 +38,14 @@ Vier functies dragen de naam, met hun aantal aanroepen in `opi/` en `tests/` sam
 
 | Functie | Plek | Aanroepen |
 |---|---|---|
-| `get_nice_url_config` | `cluster_config.py:1157` | 14 |
-| `get_nice_url_supported_domains` | `cluster_config.py:1180` | 14 |
-| `is_nice_url_domain_supported` | `cluster_config.py:1204` | 11 |
-| `generate_nice_url_root_hostname` | `naming.py:1772` | 11 |
+| `get_nice_url_config` | `cluster_config.py:1225` | 15 |
+| `get_nice_url_supported_domains` | `cluster_config.py:1248` | 15 |
+| `is_nice_url_domain_supported` | `cluster_config.py:1272` | 12 |
+| `generate_nice_url_root_hostname` | `naming.py:1834` | 12 |
 
 Lezers buiten `cluster_config.py`: `opi/utils/naming.py` (5), `opi/connectors/subdomain.py` (4), `opi/web/router_self_service.py` (2), `opi/manager/project_manager.py` (2), `opi/forms/visualizers/providers.py` (2), `opi/core/dns_config.py` (1).
 
-Tests: acht bestanden, waarvan `tests/test_nice_url_naming.py` (28) en `tests/test_cluster_config_extended.py` (13) de zwaarste zijn.
+Tests: acht bestanden, waarvan `tests/test_nice_url_naming.py` (28) en `tests/test_cluster_config_extended.py` (13) de zwaarste zijn. `tests/test_nice_url_auto_issuer.py` heeft er 3.
 
 **Buiten Python komt de naam niet voor als veld.** In `publish-on-web.deployment.v1.0.json` staat hij alleen in een beschrijvende tekst over de verdwenen `domain-mode`, en in `opi/schemas/` staat hij helemaal niet. Er is dus geen projectbestand dat hem draagt en geen migratie nodig.
 
@@ -104,9 +106,15 @@ De wijziging is goed als:
 
 1. `grep -rn "nice_url" --include="*.py" opi/ tests/` niets oplevert.
 2. `uv run ruff check .` en `uv run pyright` schoon zijn.
-3. De volledige testsuite hetzelfde resultaat geeft als vóór de wijziging. Meet dat vooraf en noteer het aantal; meet dat op main voordat je begint, en vergelijk erna. Op een naburige branch was dat op 27-08-2026 10028 geslaagd en 3 gefaald (`test_lotc_icon_mapping`, `test_template_structure`, `test_attachment_schema`); die drie falen los van deze wijziging, maar neem het getal van je eigen meting als ijkpunt.
+3. De volledige testsuite hetzelfde resultaat geeft als vóór de wijziging. Main is groen: op 18-09-2026 gaf `uv run pytest tests/` 11415 geslaagd, 1 overgeslagen, 0 gefaald. Meet het zelf op main voordat je begint en neem dat getal als ijkpunt, want er komt dagelijks werk bij. Er hoort geen enkele faler bij te komen; het aantal geslaagde tests blijft gelijk, op de hernoemde testbestanden na.
 4. `uv run python -c "from opi.core.cluster_config import get_domain_issuer; print(get_domain_issuer('fundament-poc','fundament-poc.rijksapp.dev'))"` geeft nog steeds `letsencrypt`. Dat is de kortste controle dat het blok na de hernoeming nog gelezen wordt.
 
 ## Wat er niet in zit
 
 Het veld `supports_dots` behoudt zijn naam: die beschrijft precies wat hij doet. `domain-format` in projectbestanden verandert niet. Er komt geen migratie, want de naam staat in geen enkel projectbestand of schema.
+
+## Waarom dit plan er al lag en toch opnieuw geshipt wordt
+
+Dit plan is op 29-08-2026 geschreven tegen main en staat sindsdien in `plans/`. Het is daarna uitgevoerd op de tak `claude/fundament`, in PR #159. Daar woont de clustercatalogus in `opi/configs/clusters.yaml` in plaats van in `cluster_config.py`, dus die diff raakte drie plekken en past hier niet: op main gaat het om 25 bestanden. De uitvoering moet dus opnieuw, het denkwerk niet.
+
+Let op een klein verschil met die PR: daar heette de eerste functie `get_cluster_domains_config`. De tabel hierboven is leidend, dus `get_domains_config`. Wijk je daarvan af, zeg dan in de PR waarom.

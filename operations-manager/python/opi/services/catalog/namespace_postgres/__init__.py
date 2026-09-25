@@ -15,7 +15,7 @@ from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin, database_actions
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 
 
 class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
@@ -26,7 +26,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         help_template="namespace_postgres/help.md",
         icon="database",
         color="donkerblauw",
-        binding=ServiceBinding.DEPLOYMENT,
+        shared_per_deployment=True,
         secret_class="DatabaseSecret",
         variables=[var.value for var in DatabaseVariables],
         hidden=True,

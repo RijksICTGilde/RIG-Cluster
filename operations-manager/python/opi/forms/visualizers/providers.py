@@ -13,7 +13,7 @@ from typing import Any, ClassVar, Final, Protocol
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
 from opi.forms.editables.service_path import smart_get_value
-from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.postgresql_database.connection_limit import (
@@ -166,20 +166,14 @@ class ServiceOptionsProvider:
     services that can be enabled for projects.
     """
 
-    def __init__(
-        self,
-        include_empty: bool = False,
-        filter_binding: str | None = None,
-    ) -> None:
+    def __init__(self, include_empty: bool = False) -> None:
         """
         Initialize the service options provider.
 
         Args:
             include_empty: Whether to include an empty "select" option
-            filter_binding: Filter services by binding ("component" or "deployment")
         """
         self.include_empty = include_empty
-        self.filter_binding = filter_binding
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
@@ -210,18 +204,12 @@ class ServiceOptionsProvider:
             if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
                 continue
 
-            # Filter by binding if specified (filter_binding is the plain string value)
-            if self.filter_binding and definition.binding.value != self.filter_binding:
-                continue
-
             option: dict[str, Any] = {
                 "value": service_type.value,
                 "label": definition.name,
                 "description": definition.description,
                 "icon": definition.icon,
                 "color": definition.color,
-                # .value so the view/JS gets "component", not "ServiceBinding.COMPONENT".
-                "binding": definition.binding.value,
             }
 
             if definition.requires:
@@ -642,8 +630,7 @@ class FilteredServiceOptionsProvider:
         for service_type in ServiceType:
             if service_type.value not in self.project_services:
                 continue
-            if get_service(service_type).component_selection_follows_config:
-                # Geen aan/uit op een component: het eigen keuzeveld IS de selectie.
+            if not offers_component_checkbox(get_service(service_type)):
                 continue
             definition = ServiceAdapter.get_service_definition(service_type)
             options.append(

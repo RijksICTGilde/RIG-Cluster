@@ -32,7 +32,7 @@ from pydantic import ValidationError
 
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
-from opi.services.services import ServiceDefinition
+from opi.services.services import ServiceDefinition, service_entry_name
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -822,14 +822,6 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
-    #: Where the selection that switches the per-component contribution on is read.
-    #: False (the default): the component's own ``services`` list, so each component
-    #: decides. True: the PROJECT's list, so every component of every deployment gets
-    #: the contribution. That is what ``ServiceBinding.DEPLOYMENT`` means for a service
-    #: that hands each pod the same thing and has no per-component choice to make
-    #: (vlam: one address, one egress rule) -- without it such a service could never
-    #: contribute at all, because no component ever ticks it.
-    manifest_activated_by_project: ClassVar[bool] = False
 
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
     #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
@@ -1623,3 +1615,34 @@ class Service(ABC):
         service-manifest prune both skip it.
         """
         return []
+
+    def components_using_service(self, ctx: DeploymentManifestContext) -> list[str]:
+        """The names of this deployment's components that ticked this service, sorted.
+
+        Read from the project's component definitions (that is where a component's
+        ``services`` list lives), restricted to the components this deployment actually
+        rolls out.
+        """
+        local: set[str] = {
+            component.get("reference")
+            for component in ctx.deployment.get("components", []) or []
+            if isinstance(component, dict) and component.get("reference")
+        }
+        using: set[str] = set()
+        for component in ctx.project_data.get("components", []) or []:
+            name = component.get("name")
+            if name not in local:
+                continue
+            names = [service_entry_name(entry) for entry in component.get("services", []) or []]
+            if self.service_type.value in names:
+                using.add(name)
+        return sorted(using)
+
+
+def offers_component_checkbox(service: Service) -> bool:
+    """Whether a component ticks this service on and off in the per-component picker.
+
+    The one place where the two declarations that take the checkbox away meet; they stay
+    separate because their consequences elsewhere differ (``instructions/services.md``).
+    """
+    return service.definition.selectable_per_component and not service.component_selection_follows_config

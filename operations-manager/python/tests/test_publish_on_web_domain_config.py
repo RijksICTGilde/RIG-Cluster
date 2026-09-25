@@ -9,10 +9,17 @@ block. These tests hold it to the two properties that make the relocation safe:
   split into two values that disagree.
 """
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 from opi.services.catalog.publish_on_web.domain_config import (
+    DOMAIN_NAME_SETTINGS,
     DOMAIN_SETTING_KEYS,
+    DOMAIN_SHAPE_SETTINGS,
     DomainSetting,
+    clear_domain_name_settings,
+    clear_domain_settings,
     ensure_domain_config,
     get_domain_config,
     get_domain_setting,
@@ -303,3 +310,84 @@ def test_the_two_service_root_declarations_agree() -> None:
     from opi.services.catalog.publish_on_web.domain_config import _SERVICE_ROOTS
 
     assert _SERVICE_ROOTS == SERVICE_VIRTUALIZE
+
+
+class TestDeNaamVormSplitsing:
+    """Elke instelling hoort bij precies een helft, en die helften staan hier (RC-217)."""
+
+    def test_samen_dekken_ze_alle_instellingen_precies_een_keer(self) -> None:
+        assert set(DOMAIN_NAME_SETTINGS) | set(DOMAIN_SHAPE_SETTINGS) == set(DomainSetting)
+        assert not set(DOMAIN_NAME_SETTINGS) & set(DOMAIN_SHAPE_SETTINGS)
+
+    def test_de_vorm_is_de_domain_format(self) -> None:
+        assert DOMAIN_SHAPE_SETTINGS == (DomainSetting.DOMAIN_FORMAT,)
+
+    def test_het_hele_adres_wissen_laat_niets_staan(self) -> None:
+        dep = _legacy_deployment()
+        clear_domain_settings(dep)
+        assert all(get_domain_setting(dep, setting) is None for setting in DomainSetting)
+
+    def test_alleen_de_naam_wissen_laat_de_vorm_staan(self) -> None:
+        dep = _legacy_deployment()
+        clear_domain_name_settings(dep)
+        assert all(get_domain_setting(dep, setting) is None for setting in DOMAIN_NAME_SETTINGS)
+        assert get_domain_setting(dep, DomainSetting.DOMAIN_FORMAT) == "component-deployment-project"
+
+    def test_alleen_de_naam_wissen_werkt_ook_onder_de_dienst(self) -> None:
+        dep = {
+            "name": "productie",
+            "services": [
+                {
+                    "reference": "publish-on-web",
+                    "config": {
+                        "base-domain": "rijksapp.nl",
+                        "subdomain": "wies",
+                        "domain-format": "deployment-project",
+                        "domain-mode": "nice-url",
+                    },
+                }
+            ],
+        }
+        clear_domain_name_settings(dep)
+        assert get_domain_config(dep) == {"domain-format": "deployment-project"}
+
+    def test_de_dienstingang_verdwijnt_als_er_niets_overblijft(self) -> None:
+        dep = {
+            "name": "productie",
+            "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies"}}],
+        }
+        clear_domain_name_settings(dep)
+        assert "services" not in dep
+
+
+_Wisser = Callable[[dict[str, Any]], None]
+
+
+@pytest.mark.parametrize("clear", [clear_domain_settings, clear_domain_name_settings], ids=["heel", "alleen-naam"])
+class TestDeStaartDieBeideWissersDelen:
+    """Tot RC-217 hing deze staart aan de kloonweg, die nog maar een van de twee aanroept.
+
+    De andere wisser had daarna geen enkele toets meer die rood werd als hij hem oversloeg.
+    """
+
+    def test_de_teruggetrokken_domain_mode_gaat_mee(self, clear: _Wisser) -> None:
+        dep = {
+            "name": "productie",
+            "domain-mode": "nice-url",
+            "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies", "domain-mode": "nice-url"}}],
+        }
+
+        clear(dep)
+
+        assert "domain-mode" not in dep
+        assert "domain-mode" not in (get_domain_config(dep) or {})
+
+    def test_een_leeg_record_blijft_niet_achter(self, clear: _Wisser) -> None:
+        dep = {
+            "name": "productie",
+            "services": [{"reference": "publish-on-web", "config": {"subdomain": "wies"}}],
+        }
+
+        clear(dep)
+
+        assert "services" not in dep

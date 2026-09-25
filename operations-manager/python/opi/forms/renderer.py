@@ -33,6 +33,8 @@ from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get
 from opi.services.services import service_entry_name
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.forms.widgets.base import WidgetAdapter
 
@@ -58,6 +60,18 @@ class IdentityTranslator:
 
     def __call__(self, key: str) -> str:
         return key
+
+
+#: De vertaler laat een onbekende sleutel staan, dus een sonde komt er ongewijzigd uit.
+_PROBE = "zad-probe-veld-"
+
+
+def _all_fields(fields: Iterable[FormField]) -> Iterator[FormField]:
+    """Elk veld in de boom, ook de rijen van een reeks."""
+    for field in fields:
+        yield field
+        if field.children:
+            yield from _all_fields(field.children)
 
 
 class FormRenderer:
@@ -310,6 +324,40 @@ class FormRenderer:
             content_parts = [self._render_layout_element(elem, fields_by_name, yaml_data) for elem in layout]
             return self.adapter.render_flow(content_parts)
         return self._render_layout_element(layout, fields_by_name, yaml_data)
+
+    def take_unrendered_errors(
+        self,
+        editables: list[EditableVisualizer],
+        yaml_data: dict[str, Any],
+        errors: dict[str, list[str]],
+        edit_mode: bool = False,
+    ) -> list[str]:
+        """Remove the errors no field on this screen carries, and return their messages.
+
+        An error keyed to a path this form does not draw has nowhere to appear, so the step
+        refuses to advance and says nothing. That has now cost two invisible messages
+        (RIG-Cluster#179).
+
+        Which paths are drawn is MEASURED, not derived from the paths: each one is offered
+        to the renderer as a unique probe message, and whatever comes back on a field was
+        drawn. Comparing paths cannot answer it: a virtualized field is keyed by its virtual
+        spelling while its errors are read under the real one, and a sequence keys only the
+        sequence itself while every row child carries its own.
+        """
+        paths = list(errors)
+        probes = {path: [f"{_PROBE}{index}"] for index, path in enumerate(paths)}
+        drawn = {
+            message
+            for field in _all_fields(
+                self._build_fields_from_editables(editables, yaml_data, probes, edit_mode).values()
+            )
+            for message in field.errors
+        }
+        unrendered: list[str] = []
+        for index, path in enumerate(paths):
+            if f"{_PROBE}{index}" not in drawn:
+                unrendered.extend(errors.pop(path))
+        return unrendered
 
     def _build_fields_from_editables(
         self,

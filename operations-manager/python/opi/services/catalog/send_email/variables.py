@@ -39,7 +39,7 @@ class SendEmailVariables(Enum):
     )
     FROM = VariableDefinition(
         name="SMTP_FROM",
-        description="Afzenderadres dat de relay voor dit project afdwingt",
+        description="Afzenderadres dat de relay voor dit project afdwingt (de weergavenaam stel je in bij de dienst)",
         source="secret",
         secret_key="from_address",
     )

@@ -71,8 +71,10 @@ MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 #: This is the exception, not the rule. Every account gets its address DERIVED from its
 #: account name (identity rule 1 in the relay's config.toml) and needs no key here; a key
 #: only exists for an account that has to send under a different address than its name
-#: gives it. Today that is ZAD's Keycloak account, whose login mail must be
-#: distinguishable from the portal's own post -- see ``settings.MAIL_KEYCLOAK_ACCOUNT``.
+#: gives it. Today there is NO such account: the Keycloak account was the one user, and
+#: RC-175 gave its login mail the bare base address back (see ``get_mail_from_address``),
+#: so every caller passes an empty ``sender_address`` and this series stays empty. It is
+#: kept because the relay side of it is live and measured, not because something uses it.
 #:
 #: It changes the ``From:`` header only. The ENVELOPE keeps the derived address (the
 #: ``rewrite`` rule in ``[session.mail]``, which no sieve variable reaches), and that is

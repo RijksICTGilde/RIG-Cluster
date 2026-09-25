@@ -24,7 +24,7 @@ from opi.services.catalog.aliases.config_model import AliasesConfig
 from opi.services.catalog.aliases.references import is_reference, validate_alias_value
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ServiceKind, ServiceType
 
 
 class AliasesService(Service):
@@ -40,7 +40,6 @@ class AliasesService(Service):
         help_template="aliases/help.md",
         icon="instellingen",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
         kind=ServiceKind.SYSTEM,
     )

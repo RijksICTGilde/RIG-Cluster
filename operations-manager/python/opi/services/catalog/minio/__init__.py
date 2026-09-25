@@ -11,7 +11,7 @@ from opi.services.catalog.minio.config_model import MinioStorageConfig
 from opi.services.catalog.minio.variables import MinIOVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import MinIOSecret
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class MinioStorageService(BackupsPageMixin, Service):
         help_template="minio/help.md",
         icon="map",
         color="rood",
-        binding=ServiceBinding.DEPLOYMENT,
+        shared_per_deployment=True,
         secret_class="MinIOSecret",
         variables=[var.value for var in MinIOVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,

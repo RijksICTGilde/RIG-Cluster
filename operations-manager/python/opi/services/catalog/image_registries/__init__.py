@@ -45,7 +45,7 @@ from opi.services.catalog.image_registries.visualizers import (
     REGISTRIES_SEQUENCE,
 )
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -63,7 +63,6 @@ class ImageRegistriesService(Service):
         help_template="image_registries/help.md",
         icon="server",
         color="lichtblauw",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
     )
     config_model = ImageRegistriesConfig
