@@ -160,14 +160,20 @@ class TestPsqlAanroep:
         Een assertie op de tekst van het script zou de quoting niet meten, en die is hier de
         valkuil: een wachtwoord met een apostrof erin breekt een script dat er alleen
         aanhalingstekens omheen zet, en dan voert de pod iets anders uit dan er staat.
+
+        Het statement draagt een `$$`, want de eis die ``run_psql`` daarover STELDE is met de
+        verhuizing naar stdin vervallen: een benoemde dollar-quote is niet meer nodig. Komt
+        het statement ooit weer als argument mee, dan is dat hier rood in plaats van pas op
+        het cluster, waar vandaag geen enkele aanroeper een kale `$$` gebruikt.
         """
         wachtwoord = "hij's 'al' weg $HOME"
+        statement = "DO $$ BEGIN RAISE NOTICE 'een citaat'; END $$"
         nep_psql = tmp_path / "psql"
         nep_psql.write_text('#!/bin/sh\nprintf "pgpassword=[%s]\\n" "$PGPASSWORD"\nprintf "argv=[%s]\\n" "$*"\n')
         nep_psql.chmod(0o755)
         gevangen = self._vang(monkeypatch, stdout=cluster.PSQL_SLUITSTUK)
 
-        self._psql(wachtwoord=wachtwoord, sql="SELECT 'een citaat'")
+        self._psql(wachtwoord=wachtwoord, sql=statement)
 
         # De vangst zit op het subprocess-MODULE en niet op een eigen naam in cluster.py, dus
         # zonder deze regel loopt de echte aanroep hieronder er ook in.
@@ -185,7 +191,7 @@ class TestPsqlAanroep:
         assert f"pgpassword=[{wachtwoord}]" in gedraaid.stdout, gedraaid.stdout
         argv_regel = next(regel for regel in gedraaid.stdout.splitlines() if regel.startswith("argv="))
         assert wachtwoord not in argv_regel, f"het wachtwoord staat in de argv van psql: {argv_regel}"
-        assert "SELECT 'een citaat'" in argv_regel, argv_regel
+        assert statement in argv_regel, argv_regel
 
     def test_een_time_out_schrijft_het_commando_niet_op(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Geen hoekgeval: ``run_psql`` zegt zelf dat de pod het op een druk cluster soms niet
