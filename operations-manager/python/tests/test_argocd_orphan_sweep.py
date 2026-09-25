@@ -104,8 +104,11 @@ class TestUndecidedResources:
         assert [r.name for r in undecidable] == ["db-creds"]
 
     def test_a_resource_of_a_live_application_is_not_undecidable(self) -> None:
-        """Its mark IS the name, so there is nothing to weigh up and nothing to report."""
-        assert undecidable_resources([_resource(CUT_NAME, "db-creds", from_label=True)], {CUT_NAME}) == []
+        """Its mark IS the name of a living Application, so whichever of the two readings
+        holds, the resource is of something that is still running and no orphan. That is this
+        caller's own condition: the predicate calls the same mark ambiguous, because the force
+        deletes on it and there the longer sister matters."""
+        assert undecidable_resources([_resource(CUT_NAME, "db-creds", from_label=True)], {CUT_NAME, LONG_APP}) == []
 
     def test_a_plain_orphan_is_not_undecidable(self) -> None:
         """It goes in the orphan list, where ``--delete`` can reach it."""
