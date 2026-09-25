@@ -232,7 +232,7 @@ def _kubectl(
         return_value=namespace_labels if namespace_labels is not None else dict.fromkeys(tracked, "operations-manager")
     )
     kubectl.list_namespaced_resource_types = AsyncMock(return_value=["secrets"])
-    kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: tracked.get(ns, []))
+    kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: (tracked.get(ns, []), True))
     kubectl.delete_tracked_resources = AsyncMock(return_value=[])
     return kubectl
 
@@ -388,12 +388,44 @@ class TestRefusal:
         """A namespace that did not answer is not an empty one. Reported as clean it is a
         false green on the test this tool exists for."""
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": [], "rig-prd-other": []})
-        kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: None if ns == "rig-prd-other" else [])
+        kubectl.list_tracked_resources = AsyncMock(
+            side_effect=lambda ns, _types: None if ns == "rig-prd-other" else ([], True)
+        )
         with (
             patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
             pytest.raises(SweepRefused, match="rig-prd-other"),
         ):
             await inventory(None, None)
+
+    @pytest.mark.asyncio
+    async def test_a_namespace_that_answered_only_in_part_stops_the_sweep_too(self) -> None:
+        """Half an inventory is no more a measurement than none at all.
+
+        The type list is discovered ONCE and handed to every namespace, and discovery reads
+        the verbs of the CLUSTER, not what the service account may list in this namespace.
+        One type it may not list and ``kubectl get`` prints the rest with exit 1, so the
+        refusal on discovery above does not cover this. Measured with the connector handing
+        a half answer over as complete: SCHOON on stdout and exit 0 over a namespace that
+        answered for part of its types, which is the signal step 4 of the plan leans on.
+        """
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": [], "rig-prd-other": []})
+        kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: ([], ns != "rig-prd-other"))
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="rig-prd-other"),
+        ):
+            await inventory(None, None)
+
+    def test_a_namespace_that_answered_only_in_part_reaches_the_cli_as_exit_2(self, capsys) -> None:
+        """Exit 0 plus SCHOON is what was wrong, so the refusal has to survive the way out."""
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
+        kubectl.list_tracked_resources = AsyncMock(return_value=([], False))
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            assert main(["--namespace", "rig-prd-mpfm-w3h"]) == 2
+
+        printed = capsys.readouterr()
+        assert CLEAN not in printed.out
+        assert "only part of its resource types" in printed.err
 
     def test_the_cli_answers_a_refusal_with_its_own_exit_code(self) -> None:
         """Not 0 (clean) and not 1 (orphans found): nothing was measured."""
