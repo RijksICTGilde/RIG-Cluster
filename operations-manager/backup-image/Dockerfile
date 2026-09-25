@@ -31,8 +31,8 @@ RUN curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}
 # Zelfde bron en zelfde grendel als in operations-manager/Dockerfile: MinIO distribueert de
 # image niet meer (401 op docker.io/minio en quay.io/minio, 410 op dl.min.io), de
 # GitHub-release van dezelfde tag wel, en de checksum staat LITERAAL en komt niet naast de
-# binary vandaan (dat bestand komt van dezelfde bron en controleert alleen de overdracht).
-# Deze image bouwt alleen voor amd64, net als de kopia-regel hierboven, dus een som.
+# binary vandaan. Deze image bouwt alleen voor amd64, net als de kopia-regel hierboven, dus
+# een som.
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 ARG MC_SHA256=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
 RUN MC_ASSET="mc.linux-amd64.${MC_VERSION}" \

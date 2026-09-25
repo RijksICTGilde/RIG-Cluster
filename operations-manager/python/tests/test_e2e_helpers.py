@@ -140,10 +140,8 @@ class TestPsqlAanroep:
         )
 
     def test_het_wachtwoord_staat_niet_in_de_argv(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """De vorm die hier eerst stond was ``--env PGPASSWORD=<waarde>``, en die zet kubectl
-        in klare tekst in de podspec: leesbaar met ``kubectl get pod -o yaml`` zolang de pod
-        leeft, in etcd, en in de body van het create-verzoek. En de argv staat in de
-        procestabel van de machine die de suite draait.
+        """De vorm die in ``_run_psql_once`` eerst stond was ``--env PGPASSWORD=<waarde>``;
+        waar die argv allemaal terechtkomt staat daar.
         """
         gevangen = self._vang(monkeypatch, stdout=f"1\n{cluster.PSQL_SLUITSTUK}")
 
@@ -190,10 +188,8 @@ class TestPsqlAanroep:
         assert "SELECT 'een citaat'" in argv_regel, argv_regel
 
     def test_een_time_out_schrijft_het_commando_niet_op(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``TimeoutExpired`` zet de hele argv in zijn tekst, en pytest schrijft de tekst van
-        een uitzondering in het verslag. Geen hoekgeval: de docstring van ``run_psql`` zegt
-        zelf dat de pod het op een druk cluster soms niet haalt, en er staan drie pogingen van
-        300s.
+        """Geen hoekgeval: ``run_psql`` zegt zelf dat de pod het op een druk cluster soms niet
+        haalt, en er staan drie pogingen van 300s.
         """
         self._vang(monkeypatch, tijd_op=True)
 
@@ -530,11 +526,8 @@ class TestDbWachtwoord:
 
 
 class TestOpruimlus:
-    """De DROP-lus van ``test_sandbox_migratie_006``, als superuser over de levende database.
-
-    De lus draait in de `operations_manager`-database van het cluster. Staat het voorvoegsel
-    leeg of anders, dan is het geen opruiming van de eigen tabellen meer maar een leegmaken
-    van het schema waar de sandbox zelf op draait.
+    """De DROP-lus van ``test_sandbox_migratie_006``, waarvan ``_opruim_sql`` opschrijft wat
+    een ander voorvoegsel daar aanricht.
     """
 
     def test_de_lus_staat_op_het_eigen_voorvoegsel(self) -> None:
@@ -545,8 +538,8 @@ class TestOpruimlus:
 
     @pytest.mark.parametrize("prefix", ["", "rc", "%", "rc227"], ids=["leeg", "korter", "joker", "zonder-liggend"])
     def test_een_ander_voorvoegsel_komt_er_niet_door(self, prefix: str) -> None:
-        """Een literale grendel en niet "de waarde is niet leeg": ook een voorvoegsel dat
-        KORTER is dan het eigen voorvoegsel pakt tabellen van iemand anders mee."""
+        """Ook een voorvoegsel dat KORTER is dan het eigen voorvoegsel pakt tabellen van
+        iemand anders mee, dus "niet leeg" is hier niet genoeg."""
         with pytest.raises(AssertionError, match="voorvoegsel"):
             migratie_006._opruim_sql(prefix)
 
@@ -572,8 +565,6 @@ class TestDockerInlog:
         return aanroepen
 
     def test_het_token_gaat_over_stdin_en_niet_als_vlag(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """`-p <token>` zet het token in de argv, en die staat in de procestabel van de machine
-        die de suite draait."""
         aanroepen = self._vang(monkeypatch)
 
         next(registry_pull.prive_image.__wrapped__())
@@ -586,9 +577,6 @@ class TestDockerInlog:
         assert inlog["invoer"] == registry_pull._REGISTRY_PASSWORD, "het token gaat niet over stdin mee"
 
     def test_er_wordt_afgemeld_ook_als_de_push_mislukt(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Een geslaagde inlog laat het token in `~/.docker/config.json` achter, en dat bestand
-        overleeft de toetsronde. De afmelding hoort daarom in een `finally` en niet achter de
-        laatste assertie."""
         aanroepen = self._vang(monkeypatch)
 
         def _mislukt(*args: str, timeout: float = 0.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
