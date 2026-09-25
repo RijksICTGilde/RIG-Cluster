@@ -64,11 +64,15 @@ logger = logging.getLogger(__name__)
 # image om uit te halen. Beide skips staan op de MODULE, zie `features/e2e-sandbox-tests.md`.
 # `serial`: de registry moet er zijn voor de component hem kan kiezen, en het pull-secret
 # voor de pod kan starten. Dat is de keten die deze module meet.
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# De ruimste van de zes: de setup doet een docker-login (120s) plus pull, tag en push
+# (600s elk) en maakt daarna het project aan (600s).
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.sandbox,
     pytest.mark.slow,
     pytest.mark.serial,
+    pytest.mark.timeout(2700),
     pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
     pytest.mark.skipif(
         shutil.which("docker") is None,
@@ -227,13 +231,16 @@ def test_de_registry_wordt_opgeslagen_via_de_cli(
     cli: ZadCli,
     registry_project: CreatedProject,
     forgejo: ForgejoClient,
-    prive_image: str,
 ) -> None:
     """`registry add` met url, gebruikersnaam en token; het token komt versleuteld op schijf.
 
     Dat laatste is geen bijzaak: de entry draagt een echt token, en als dat in klare tekst
     in `zad-projects` zou belanden staat het in de git-historie van een repo die meer mensen
     kunnen lezen.
+
+    Vraagt ``prive_image`` met opzet NIET: deze toets leest het projectbestand, en het image in
+    de registry zetten kost een pull, een tag en een push. De toetsen hieronder hebben hem wel
+    nodig, en daar wordt hij dus aangemaakt.
     """
     resultaat = cli.run(
         "registry",

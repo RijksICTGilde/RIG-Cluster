@@ -48,7 +48,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# Boven het aanmaken met diensten (600s) in de setup en de langste toets hieronder: twee
+# CLI-aanroepen (300s elk) met de wachten op het projectbestand ertussen.
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.timeout(1200)]
 
 _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 _USER_EMAIL = os.environ.get("E2E_SANDBOX_USER", "admin@sandbox.rijksapp.dev")

@@ -26,10 +26,8 @@ Drie dingen worden gemeten, en het derde is de reden dat de rest er staat:
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import subprocess
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -42,7 +40,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# Elk statement hieronder gaat via `run_psql`, dat bij een pod die zijn uitvoer verliest
+# drie pogingen van 300s doet; de zwaarste toets stuurt er vijf achter elkaar.
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.timeout(1800)]
 
 _NAMESPACE = "rig-system"
 _DB_HOST = "rig-db-rw"
@@ -75,8 +76,27 @@ WHERE status = 'completed'
 """
 
 
-def _kubectl(args: list[str], *, timeout: float = 60.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["kubectl", *args], capture_output=True, text=True, timeout=timeout, check=False)
+#: Elke tabel die deze module aanmaakt begint hiermee. Een gang die halverwege stopt (een
+#: ctrl-c, een pytest-timeout) slaat de ``finally`` over, en dan blijft zo'n tabel in de
+#: GEDEELDE database van dit cluster staan. Daarom ruimt de fixture ``taken`` eerst op wat een
+#: vorige gang liet liggen: er draait per keer EEN pr op deze sandbox, dus er is geen tweede
+#: gang die deze tabellen op dat moment nodig heeft.
+_EIGEN_PREFIX = "rc227_"
+
+#: Het blok draagt een BENOEMDE dollar-quote en niet `$$`: de args van een pod gaan langs de
+#: variabele-expansie van Kubernetes, en die leest `$$` als een ontsnapte `$`. Postgres krijgt
+#: dan `DO $` en antwoordt met `syntax error at or near "$"`. Nagemeten via ``cluster.run_psql``.
+_OPRUIMEN = f"""
+DO $leegmaken$
+DECLARE tabel text;
+BEGIN
+  FOR tabel IN
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '{_EIGEN_PREFIX}%'
+  LOOP
+    EXECUTE format('DROP TABLE IF EXISTS public.%I', tabel);
+  END LOOP;
+END $leegmaken$;
+"""
 
 
 @pytest.fixture(scope="module")
@@ -86,11 +106,17 @@ def db_wachtwoord(sandbox_url: str) -> str:
     ``sandbox_url`` wordt hier niet gebruikt maar wel gevraagd: die fixture is de poort die
     de hele suite dicht houdt zonder ``E2E_BASE_URL``. Zonder hem draaien deze toetsen op
     welk cluster ``kubectl`` ook maar aanwijst, en dat is precies wat de afspraak voorkomt.
+
+    Het lezen gaat via ``cluster.secret_values``, dat het kubectl-commando, de jsonpath en de
+    base64 al doet. Hier stond een eigen wrapper naast, en dat is precies de dubbeling die
+    deze repo niet wil.
     """
-    gelezen = _kubectl(["-n", _NAMESPACE, "get", "secret", _ADMIN_SECRET, "-o", "jsonpath={.data.password}"])
-    if gelezen.returncode != 0 or not gelezen.stdout.strip():
-        pytest.skip(f"geen toegang tot {_ADMIN_SECRET} in {_NAMESPACE}: {gelezen.stderr[:200]}")
-    return base64.b64decode(gelezen.stdout).decode()
+    # OSError staat erbij voor de machine zonder kubectl: dan is er geen cluster om op te
+    # meten, en dat is een skip en geen fout.
+    try:
+        return cluster.secret_values(_NAMESPACE, _ADMIN_SECRET)["password"]
+    except (RuntimeError, KeyError, OSError) as fout:
+        pytest.skip(f"geen toegang tot het wachtwoord in {_ADMIN_SECRET} ({_NAMESPACE}): {fout}")
 
 
 def _psql(wachtwoord: str, sql: str, *, timeout: float = 300.0) -> tuple[int, str]:
@@ -123,7 +149,10 @@ def taken(db_wachtwoord: str) -> Generator[str]:
     is: de idempotentietoets zou dat lezen als "de tweede backfill voegde rijen toe", en de
     vergelijking met de oude meting leest twee verschillende momenten.
     """
-    naam = f"rc227_taken_{uuid.uuid4().hex[:8]}"
+    opgeruimd, uit = _psql(db_wachtwoord, _OPRUIMEN)
+    assert opgeruimd == 0, f"de tabellen van een vorige gang konden niet worden opgeruimd: {uit}"
+
+    naam = f"{_EIGEN_PREFIX}taken_{uuid.uuid4().hex[:8]}"
     code, uit = _psql(db_wachtwoord, f"DROP TABLE IF EXISTS {naam}; CREATE TABLE {naam} AS SELECT * FROM async_tasks;")
     assert code == 0, f"de momentopname van async_tasks kon niet worden gemaakt: {uit}"
     try:
@@ -144,22 +173,25 @@ def test_de_backfill_is_die_uit_de_migratie(sandbox_url: str) -> None:
     zo heeft deze module EEN regel over wanneer hij draait, in plaats van een toets die
     stilletjes meedoet in een gewone unittestronde.
 
-    Vergeleken op de kenmerkende regels en niet op het hele blok: de migratie schrijft in
-    `project_reconciliation` en deze toets in een eigen tabel, dus die ene regel verschilt
-    met opzet.
+    Vergeleken op het HELE blok en niet op een lijst kenmerkende regels. Die lijst stond er
+    eerst en keek of vijf regels in beide teksten voorkwamen, en daar glipt een regel die in
+    de migratie BIJKOMT gewoon langs: met `AND project_name NOT LIKE ...` erbij bleef deze
+    toets groen terwijl de drie toetsen hieronder een ander statement meten dan er draait.
+    De vergelijking gaat over genormaliseerde witruimte, want de migratie laat het statement
+    inspringen; de twee parameters staan op de waarden die de migratie zelf gebruikt, dus
+    juist het verschil dat met opzet bestaat (een eigen doeltabel en brontabel) telt niet mee.
     """
     migratie = Path(__file__).resolve().parents[2] / "opi/migrations/versions/006_add_project_reconciliation.py"
-    bron = migratie.read_text()
+    bron = " ".join(migratie.read_text().split())
+    verwacht = " ".join(_BACKFILL.format(tabel="project_reconciliation", bron="async_tasks").split())
 
-    for regel in (
-        "SELECT project_name, NULL, max(coalesce(started_at, completed_at))",
-        "AND task_type IN ('refresh_project', 'delete_component')",
-        "AND (payload ->> 'rollout') IS DISTINCT FROM 'false'",
-        "HAVING max(coalesce(started_at, completed_at)) IS NOT NULL",
-        "ON CONFLICT (project_name, COALESCE(deployment_name, '')) DO NOTHING",
-    ):
-        assert regel in bron, f"de migratie kent deze regel niet (meer): {regel}"
-        assert regel in _BACKFILL or regel in _BACKFILL.replace("\n", " "), f"deze toets kent hem niet: {regel}"
+    # Alleen het stuk rond de INSERT in de melding: het hele genormaliseerde bestand maakt de
+    # regel onleesbaar, en het verschil zit per definitie in dit statement.
+    kern = bron[max(bron.find("INSERT INTO project_reconciliation"), 0) :][:700]
+    assert verwacht in bron, (
+        f"het statement in {migratie.name} is niet (meer) het statement dat deze toets draait.\n"
+        f"deze toets: {verwacht}\nde migratie: {kern}"
+    )
 
 
 def test_de_database_draagt_echte_historie(db_wachtwoord: str, taken: str) -> None:
@@ -182,7 +214,7 @@ def test_de_backfill_loopt_over_de_echte_taken_en_is_idempotent(db_wachtwoord: s
     COALESCE laat Postgres twee rijen met `deployment_name IS NULL` gewoon naast elkaar
     staan en telt de tweede run dubbel.
     """
-    tabel = f"rc227_backfill_{uuid.uuid4().hex[:8]}"
+    tabel = f"{_EIGEN_PREFIX}backfill_{uuid.uuid4().hex[:8]}"
     opzet = f"""
         DROP TABLE IF EXISTS {tabel};
         CREATE TABLE {tabel} (
@@ -241,7 +273,7 @@ def test_de_backfill_levert_precies_wat_de_oude_meting_zag(db_wachtwoord: str, t
     uit, en dan is nul het juiste antwoord; de toets valt om zodra de twee uit elkaar gaan
     lopen, en dat is wat hem een toets maakt in plaats van een telling.
     """
-    tabel = f"rc227_gelijk_{uuid.uuid4().hex[:8]}"
+    tabel = f"{_EIGEN_PREFIX}gelijk_{uuid.uuid4().hex[:8]}"
     code, uit = _psql(
         db_wachtwoord,
         f"""

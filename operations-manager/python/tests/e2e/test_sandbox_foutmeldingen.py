@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# Ruim voor wat deze module doet: de CLI-aanroep tegen de stub (90s) is de langste wacht.
+pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.timeout(600)]
 
 _API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 
