@@ -1,10 +1,10 @@
 # Een eigen domein aanvragen loopt vast op het kale domein
 
-Status: plan, 22 september 2026. Af en klaar om te shippen, NA RC-214. Dit plan is het contract: er staan geen open beslissingen in, en elke regelverwijzing staat tegen de tak van RC-214 (`de-gereserveerde-namen-gelden-alleen-op-onze-eigen`), want die wordt main voordat dit begint.
+Status: plan, 22 september 2026. Af en klaar om te shippen. Dit plan is het contract: er staan geen open beslissingen in. RC-214 is inmiddels gemerged (`48b226b2b`), en elke regelverwijzing hieronder is daarna hertoetst tegen main.
 
 Kaartje: [RijksICTGilde/RIG-Cluster#179](https://github.com/RijksICTGilde/RIG-Cluster/issues/179), op board ZAD (project #5). Sluit die issue als dit uitgevoerd en uitgerold is.
 
-**Waarom na RC-214 en niet ertegelijk.** Beide verbouwen de vololgorde van controles in dezelfde methode, `DomainConfigEnforcer.enforce()`. RC-214 verplaatst daar net het reserveringsblok naar voren; dit plan verbouwt het kaal-domein-blok erboven. Tegelijk werken levert een conflict op in dezelfde hunk en, erger, twee mensen die onafhankelijk aan dezelfde volgorde sleutelen. Bovendien kan dit plan pas naar de definitieve volgorde verwijzen als die vaststaat.
+**De volgorde in `DomainConfigEnforcer.enforce()` staat nu vast**, en daar bouwt dit plan op voort. Gemeten op main: het kaal-domein-blok op `:258` met zijn aanroep op `:263`, de reserveringscheck van RC-214 op `:352`, en de afhandeling van `_request-domain` op `:377`. Het kaal-domein-blok is dus het eerste van de drie, en dat is precies waarom een aanvraag er vandaag niet langs komt.
 
 ## Wat er gebeurde, gemeten in productie op 22 september 2026
 
@@ -59,7 +59,7 @@ Dit is een bevinding op zichzelf, en hij staat er nu naast. In `opi/utils/naming
 if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
     root_hostname = generate_root_hostname(subdomain, base_domain)      # gegrendeld op goedkeuring
 ...
-if expose_on_bare_domain and base_domain:                               # regel 2119, nergens op gegrendeld
+if expose_on_bare_domain and base_domain:                               # naming.py:2119, nergens op gegrendeld
     bare_hostname = generate_bare_domain_hostname(base_domain)
 ```
 
