@@ -26,6 +26,7 @@ from opi.utils.naming import generate_project_admin_username, generate_project_r
 
 if TYPE_CHECKING:
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
+    from opi.utils.argocd_tracking import TrackedResource
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
@@ -77,6 +78,30 @@ def parse_retention_period_hours(value: str | None) -> int:
     return hours
 
 
+def _split_on_the_mark(
+    inventory: list[TrackedResource], app_name: str, known_names: set[str] | None
+) -> tuple[list[TrackedResource], list[TrackedResource]]:
+    """Split an inventory into what ``app_name`` unambiguously owns, and what stays undecided.
+
+    Equality is not enough on a mark that sits on the label cap: the resources of a living
+    neighbour ``<app_name>-x`` carry exactly ``app_name`` there (may_be_cut_from). So such a
+    mark only owns when no OTHER Application name starts with it, and without the names
+    nothing on the cap can be placed at all.
+
+    Args:
+        known_names: Every Application name on the cluster, or ``None`` when that read failed.
+    """
+    tracked: list[TrackedResource] = []
+    undecidable: list[TrackedResource] = []
+    for resource in inventory:
+        if resource.app_name == app_name:
+            ambiguous = resource.truncatable if known_names is None else may_be_cut_from(resource, known_names)
+            (undecidable if ambiguous else tracked).append(resource)
+        elif may_be_cut_from(resource, {app_name}):
+            undecidable.append(resource)
+    return tracked, undecidable
+
+
 class DeleteProjectManager:
     """Manager for project and deployment deletion operations."""
 
@@ -114,9 +139,10 @@ class DeleteProjectManager:
         selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
         that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
 
-        The mark has to NAME this application: here a match is a delete, and a value at the
-        label cap is just as likely a neighbour's whole name (may_be_cut_from). Those are
-        reported instead.
+        The mark has to name this application UNAMBIGUOUSLY: here a match is a delete, and a
+        value on the label cap names a living neighbour just as well, whether it equals this
+        name or is a prefix of it (may_be_cut_from). Hence the list of Application names.
+        What stays ambiguous is reported instead of deleted.
 
         Returns:
             True if the finalizer was removed.
@@ -154,8 +180,8 @@ class DeleteProjectManager:
                     f"'{app_name}'; its resources may be left behind"
                 )
             else:
-                tracked = [resource for resource in inventory if resource.app_name == app_name]
-                undecidable = [resource for resource in inventory if may_be_cut_from(resource, {app_name})]
+                known_names = await self._known_application_names()
+                tracked, undecidable = _split_on_the_mark(inventory, app_name, known_names)
                 failed = await kubectl.delete_tracked_resources(tracked)
                 deletion_results["operations"].append(
                     {
@@ -173,12 +199,17 @@ class DeleteProjectManager:
                         f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
                         f"in namespace '{destination}'"
                     )
+                if undecidable and known_names is None:
+                    deletion_results["errors"].append(
+                        "Could not read the ArgoCD Application names, so no label value on the "
+                        f"{LABEL_VALUE_MAX}-character cap could be told apart from a neighbour's name"
+                    )
                 if undecidable:
                     deletion_results["errors"].append(
-                        f"{len(undecidable)} resource(s) in namespace '{destination}' carry a label value at the "
-                        f"{LABEL_VALUE_MAX}-character cap that '{app_name}' starts with, which is either this "
-                        "application's name cut to it or the whole name of a neighbour that is still running; "
-                        "left standing. scripts/argocd_orphan_sweep.py knows every Application name and can tell."
+                        f"{len(undecidable)} resource(s) in namespace '{destination}' carry a label value on the "
+                        f"{LABEL_VALUE_MAX}-character cap that is as much a whole Application name as a longer one "
+                        f"cut to it, so whether they are '{app_name}'s or a living neighbour's is not decidable "
+                        "from the mark; left standing. Which of the two it is, the resource itself shows."
                     )
 
         finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)
@@ -190,6 +221,19 @@ class DeleteProjectManager:
             }
         )
         return finalizer_removed
+
+    async def _known_application_names(self) -> set[str] | None:
+        """Every ArgoCD Application name on this cluster, or ``None`` when the read failed.
+
+        ``list_argocd_applications`` answers a failure with an empty list, and the
+        Application being forced is itself still standing, so an empty answer is a failed
+        read and never "there are no neighbours". Reading it as the latter is what decides
+        destructively on a mark at the label cap.
+        """
+        applications = await self.project_manager._kubectl_connector.list_argocd_applications()
+        if not applications:
+            return None
+        return {application.get("metadata", {}).get("name", "") for application in applications}
 
     async def _cleanup_orphaned_argocd_resources(self, project_name: str, deletion_results: dict[str, Any]) -> None:
         """

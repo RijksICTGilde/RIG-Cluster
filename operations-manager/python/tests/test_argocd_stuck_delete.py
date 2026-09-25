@@ -173,11 +173,19 @@ class TestMayBeCutFrom:
         name, which is also the cluster this task is about."""
         assert may_be_cut_from(self._annotated(self.LONG_APP[:LABEL_VALUE_MAX]), {self.LONG_APP}) is False
 
-    def test_a_mark_that_IS_one_of_the_names_is_decided(self) -> None:
-        """Equality is the caller's own test and it means owned. Calling it undecidable on top
-        of that would leave the force's own resources standing."""
+    def test_a_mark_that_IS_one_of_the_names_is_still_ambiguous(self) -> None:
+        """Equality settles nothing here: ``LONG_APP`` is running too, and on a label cluster
+        every resource of it carries this same value. Answering False let the force delete a
+        living neighbour's PVC and report success."""
         cut = self.LONG_APP[:LABEL_VALUE_MAX]
-        assert may_be_cut_from(self._labelled(cut), {cut, self.LONG_APP}) is False
+        assert may_be_cut_from(self._labelled(cut), {cut, self.LONG_APP}) is True
+
+    def test_the_mark_itself_is_not_a_name_it_could_be_cut_from(self) -> None:
+        """The only name that cannot make a mark ambiguous. Without this exclusion every mark
+        at the cap would be undecidable against its own Application and the force would delete
+        nothing."""
+        cut = self.LONG_APP[:LABEL_VALUE_MAX]
+        assert may_be_cut_from(self._labelled(cut), {cut}) is False
 
     def test_a_mark_at_the_cap_still_needs_a_name_it_could_be_cut_from(self) -> None:
         """Otherwise the cap would make every long orphan undecidable and nothing would ever
@@ -430,13 +438,22 @@ class TestDeleteTrackedResources:
 
 
 def _recording_kubectl(
-    calls: list[str], *, destination: str | None, tracked: list[TrackedResource] | None, deleted: bool = True
+    calls: list[str],
+    *,
+    destination: str | None,
+    tracked: list[TrackedResource] | None,
+    deleted: bool = True,
+    applications: list[str] | None = None,
 ) -> AsyncMock:
     """A kubectl stand-in that writes the name of each call into ``calls``.
 
     ``spec_set=KubectlConnector`` for the same reason the ArgoConnector mock below carries a
     spec, and ``spec_set`` rather than ``spec`` because here it is the stubbing that has to
     fail, which only ``spec_set`` restricts.
+
+    ``applications`` are the Application names the cluster answers with; the default is the
+    one every platform cluster runs, so it is a read that SUCCEEDED and found no neighbour.
+    An empty list is how the connector answers a failed read.
     """
 
     def step(name: str, result):
@@ -453,6 +470,10 @@ def _recording_kubectl(
     kubectl.delete_tracked_resources = step("delete_resources", [])
     kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
     kubectl.delete_argocd_application = step("delete_application", deleted)
+    kubectl.list_argocd_applications = step(
+        "list_applications",
+        [{"metadata": {"name": name}} for name in (["user-applications"] if applications is None else applications)],
+    )
     kubectl.delete_namespace = AsyncMock(return_value=True)
     kubectl._run_kubectl_command = AsyncMock(return_value=("", "", 0))
     return kubectl
@@ -527,7 +548,13 @@ class TestForceDeleteStuckApplication:
 
         assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
 
-        assert calls == ["read_namespace", "list_resources", "delete_resources", "remove_finalizers"]
+        assert calls == [
+            "read_namespace",
+            "list_resources",
+            "list_applications",
+            "delete_resources",
+            "remove_finalizers",
+        ]
 
     @pytest.mark.asyncio
     async def test_only_the_resources_of_this_application_are_deleted(self) -> None:
@@ -589,6 +616,77 @@ class TestForceDeleteStuckApplication:
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
         assert any("left standing" in error for error in results["errors"])
+
+    @pytest.mark.asyncio
+    async def test_a_label_equal_to_the_forced_name_is_not_taken_from_a_living_neighbour(self) -> None:
+        """The same doubt from the other side, and this is the side that deletes.
+
+        Here the 63-character name is the one being FORCED and the longer one is the
+        neighbour that is still running: on a label cluster every resource of that neighbour
+        carries exactly the forced name, so an exact comparison hands over its PVC, and a PVC
+        does not come back.
+        """
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked(self.NEIGHBOUR, "neighbours-pvc", from_label=True)],
+            applications=[self.NEIGHBOUR, self.FORCED],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.NEIGHBOUR, results)
+
+        assert pm._kubectl_connector.delete_tracked_resources.await_args.args[0] == []
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
+        assert any("not decidable" in error for error in results["errors"])
+
+    @pytest.mark.asyncio
+    async def test_without_a_longer_neighbour_a_label_at_the_cap_is_this_applications_own(self) -> None:
+        """The counterweight to the test above: 63 characters is an ordinary name too. Calling
+        it undecidable by itself leaves a force on a label cluster deleting nothing at all."""
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked(self.NEIGHBOUR, "db-creds", from_label=True)],
+            applications=[self.NEIGHBOUR],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.NEIGHBOUR, results)
+
+        deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["db-creds"]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_application_list_leaves_every_label_at_the_cap_standing(self) -> None:
+        """The connector answers a failed list with an empty one, and the Application being
+        forced is itself still standing, so an empty answer is a failed read. Taking it for
+        'there are no neighbours' is precisely the comparison that takes a neighbour's PVC.
+
+        What does not depend on the names still goes: a mark from the annotation knows no cap.
+        """
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[
+                _tracked(self.NEIGHBOUR, "maybe-the-neighbours", from_label=True),
+                _tracked(self.NEIGHBOUR, "annotated"),
+            ],
+            applications=[],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.NEIGHBOUR, results)
+
+        deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["annotated"]
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert operation["undecidable"] == 1
+        assert any("Could not read the ArgoCD Application names" in error for error in results["errors"])
 
     @pytest.mark.asyncio
     async def test_a_long_name_in_the_annotation_is_taken(self) -> None:
@@ -767,6 +865,7 @@ class TestOperationClearedBeforeTheWait:
             "wait_for_deletion",
             "read_namespace",
             "list_resources",
+            "list_applications",
             "delete_resources",
             "remove_finalizers",
             "wait_for_deletion",
@@ -852,11 +951,12 @@ class TestOperationClearedBeforeTheWait:
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
 
-        assert calls[:7] == [
+        assert calls[:8] == [
             "terminate_operation",
             "wait_for_deletion",
             "read_namespace",
             "list_resources",
+            "list_applications",
             "delete_resources",
             "remove_finalizers",
             "wait_for_deletion",

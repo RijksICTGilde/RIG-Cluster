@@ -101,7 +101,7 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
 
 
 def may_be_cut_from(resource: TrackedResource, application_names: set[str]) -> bool:
-    """Whether the mark may be one of these names cut to the label cap, instead of a name.
+    """Whether the mark is ambiguous: it may be one of these names cut to the label cap.
 
     True means UNDECIDABLE, not owned: a value sitting exactly on the cap is equally well the
     whole name of another Application, and nothing in the mark says which of the two it is.
@@ -109,14 +109,16 @@ def may_be_cut_from(resource: TrackedResource, application_names: set[str]) -> b
     sweep a match means leaving a resource alone, for the force it means deleting it. One
     predicate that answered "belongs to" therefore flipped meaning between them, and the
     relaxation that protects a live resource on the sweep took a living neighbour's resources
-    on the force (RC-226, review round 9). Neither caller may act destructively on a true.
+    on the force (RC-226, review round 9). Neither caller may act destructively on a true;
+    each keeps its own further condition beside it.
 
-    Equality is decided by the caller and is not undecidable here. A name that fits within the
-    cap is written whole, so the mark IS the name; one that does not fit is cut, and then this
-    is the only thing left to ask.
+    Equality does not settle it. A value on the cap is the whole name of one Application AND
+    the cut form of every longer name starting with it, and both can be running at the same
+    time: on a label cluster every resource of neighbour ``<value>-x`` carries ``<value>``.
+    Answering False there let the force delete a living neighbour's PVC and report success
+    (RC-226, review round 11). So the only name that cannot make a mark ambiguous is the
+    mark itself.
     """
     if not resource.truncatable:
         return False
-    if resource.app_name in application_names:
-        return False
-    return any(name.startswith(resource.app_name) for name in application_names)
+    return any(name != resource.app_name and name.startswith(resource.app_name) for name in application_names)

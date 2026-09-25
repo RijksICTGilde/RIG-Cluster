@@ -104,25 +104,36 @@ van die twee doet is **niet** gemeten: op het sandboxcluster is de langste
 Application-naam vandaag 24 tekens, dus de situatie komt er niet voor, en hem daar maken
 vraagt het cluster terwijl een andere PR erop test.
 
-Een labelwaarde die precies op de 63 zit is daarmee dubbelzinnig: hij is de hele naam van
-een Application, of de afgekapte vorm van een langere naam die ermee begint. Meer dan dat
-zegt `may_be_cut_from` niet, want een predikaat dat "hoort bij" antwoordt keert van
-betekenis om per aanroeper. Geen van tweeën beslist er dus destructief op:
+Een labelwaarde die precies op de 63 zit is daarmee dubbelzinnig, en in twee richtingen
+tegelijk: hij is de hele naam van een Application, én de afgekapte vorm van elke langere
+naam die ermee begint. Allebei die Applications kunnen op dat moment draaien, want op een
+labelcluster dragen de resources van buur `<waarde>-x` precies `<waarde>`. Gelijkheid
+beslist het dus niet; de enige naam die de waarde niet dubbelzinnig maakt is de waarde
+zelf. Meer dan die dubbelzinnigheid zegt `may_be_cut_from` niet, want een predikaat dat
+"hoort bij" antwoordt keert van betekenis om per aanroeper. Geen van tweeën beslist er
+destructief op:
 
-* De **forcering** verwijdert alleen wat haar Application NOEMT. Een label dat haar naam
-  afgekapt kan zijn is net zo goed de volledige naam van een buur in dezelfde namespace:
-  30 tekens project plus 63 deployment is wat het schema toestaat, en
-  `projects/simple-example.yaml` zet vier deployments in een namespace. Op die lezing
-  verwijderen is de secrets en PVC's van die buur meenemen.
+* De **forcering** verwijdert alleen wat haar Application ondubbelzinnig NOEMT. Daarvoor
+  haalt ze de namen van alle Applications op (`list_argocd_applications`): begint een
+  ANDERE naam met de waarde, dan is de resource net zo goed van een buur in dezelfde
+  namespace, ook als de waarde gelijk is aan de naam die geforceerd wordt. 30 tekens
+  project plus 63 deployment is wat het schema toestaat, en `projects/simple-example.yaml`
+  zet vier deployments in een namespace. Op die lezing verwijderen is de secrets en PVC's
+  van een draaiende buur meenemen, en een PVC komt niet terug. Lukt het lezen van de namen
+  niet, dan blijft elke waarde op de 63 staan: zonder die namen valt er niets te plaatsen.
 * De **veegactie** houdt zo'n resource buiten de wezenlijst, want `--delete` gaat daarop
   af en de andere lezing is een draaiende deployment. Hem daarmee ook buiten het rapport
-  houden mag niet: dan is een echte wees `SCHOON` zolang er een langere zuster leeft.
+  houden mag niet: dan is een echte wees `SCHOON` zolang er een langere zuster leeft. Is
+  de waarde zélf de naam van een levende Application, dan valt er niets te melden: de
+  resource is dan van die Application of van de langere zuster, en geen van beide is een
+  wees.
 
 Allebei melden ze daarom wat ze niet konden plaatsen, met naam en toenaam. Welke van de
 twee lezingen klopt is aan de resource zelf te zien, en dat is mensenwerk.
 
-Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee. Een naam uit
-de **annotatie** ook niet: die kent de grens niet. Op `odcn-production`, het enige
+Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee; op de 63
+doet hij altijd mee, ook wanneer hij exact gelijk is aan de gezochte naam. Een naam uit
+de **annotatie** doet nooit mee: die kent de grens niet. Op `odcn-production`, het enige
 clustertype dat op de annotatie merkt en ook het clustertype waar dit plan over gaat, is
 de vergelijking dus gewoon exact.
 
