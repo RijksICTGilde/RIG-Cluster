@@ -223,7 +223,7 @@ def artifact_dir() -> Path:
 
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(items: list) -> None:
-    """Twee correcties op de volgorde die pytest oplevert, in deze orde.
+    """Twee correcties op de volgorde die pytest oplevert.
 
     ``trylast`` omdat pytest-randomly en de fixture-groepering van pytest zelf in dezelfde
     hook zitten: wij moeten daarna.
