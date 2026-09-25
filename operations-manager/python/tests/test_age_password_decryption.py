@@ -10,6 +10,7 @@ Een toets die een sleutel nodig heeft, maakt er een.
 
 import base64
 import shutil
+from typing import TYPE_CHECKING
 
 import pytest
 from opi.utils.age import (
@@ -19,6 +20,9 @@ from opi.utils.age import (
     is_age_encrypted,
     parse_password_with_prefix,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.skipif(
     shutil.which("age") is None or shutil.which("age-keygen") is None,
@@ -35,7 +39,7 @@ def prive_sleutel(age_keypair: tuple[str, str]) -> str:
 
 
 @pytest.fixture
-def andere_prive_sleutel(make_age_keypair) -> str:
+def andere_prive_sleutel(make_age_keypair: Callable[[], tuple[str, str]]) -> str:
     """Een tweede paar, zodat de sleutel die het wachtwoord NIET opent ook uit age-keygen komt."""
     private_key, _public_key = make_age_keypair()
     return private_key
@@ -50,7 +54,7 @@ def versleuteld_wachtwoord(age_keypair: tuple[str, str]) -> str:
 
 
 class TestAgePasswordDecryption:
-    def test_parse_password_with_prefix(self, versleuteld_wachtwoord: str):
+    def test_parse_password_with_prefix(self, versleuteld_wachtwoord: str) -> None:
         """Test password prefix parsing."""
         # Test base64+age prefix
         password_type, content = parse_password_with_prefix(versleuteld_wachtwoord)
@@ -68,18 +72,18 @@ class TestAgePasswordDecryption:
         assert age_type == "age"
         assert extracted_content == age_content
 
-    def test_parse_password_none_returns_string_content(self):
+    def test_parse_password_none_returns_string_content(self) -> None:
         """parse_password_with_prefix(None) must return string content, not None."""
         password_type, content = parse_password_with_prefix(None)
         assert password_type == "plain"
         assert isinstance(content, str), "Content must be a string, not None"
 
-    def test_parse_password_empty_age_prefix_returns_plain(self):
+    def test_parse_password_empty_age_prefix_returns_plain(self) -> None:
         """parse_password_with_prefix('age:') with no content should fall back to plain, not return age type."""
-        password_type, content = parse_password_with_prefix("age:")
+        password_type, _content = parse_password_with_prefix("age:")
         assert password_type == "plain", "age: with no content is not valid encrypted data, should be treated as plain"
 
-    def test_is_age_encrypted(self, versleuteld_wachtwoord: str):
+    def test_is_age_encrypted(self, versleuteld_wachtwoord: str) -> None:
         """Test Age encryption detection."""
         # Decode base64 to get actual Age content
         age_content = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
@@ -88,23 +92,23 @@ class TestAgePasswordDecryption:
         assert is_age_encrypted("plain text") is False
         assert is_age_encrypted("") is False
 
-    def test_decrypt_password_smart_sync_base64_age(self, prive_sleutel: str, versleuteld_wachtwoord: str):
+    def test_decrypt_password_smart_sync_base64_age(self, prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
         """Test decryption of a base64+age password in the configmap format."""
         assert decrypt_password_smart_sync(versleuteld_wachtwoord, prive_sleutel) == WACHTWOORD
 
-    def test_decrypt_password_smart_sync_failure(self, andere_prive_sleutel: str, versleuteld_wachtwoord: str):
+    def test_decrypt_password_smart_sync_failure(self, andere_prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
         """Test handling of decryption failure."""
         # API now raises ValueError on decryption failure
         with pytest.raises(ValueError, match="Failed to decrypt"):
             decrypt_password_smart_sync(versleuteld_wachtwoord, andere_prive_sleutel)
 
-    def test_decrypt_password_smart_sync_no_key(self, versleuteld_wachtwoord: str):
+    def test_decrypt_password_smart_sync_no_key(self, versleuteld_wachtwoord: str) -> None:
         """Test behavior when no private key is provided."""
         # API now raises ValueError when no key is available
         with pytest.raises(ValueError, match="no private key available"):
             decrypt_password_smart_sync(versleuteld_wachtwoord, None)
 
-    def test_decrypt_password_smart_sync_plain_text(self, prive_sleutel: str):
+    def test_decrypt_password_smart_sync_plain_text(self, prive_sleutel: str) -> None:
         """Test handling of plain text passwords."""
         plain_password = "plain:simple_password"
         result = decrypt_password_smart_sync(plain_password, prive_sleutel)
@@ -112,7 +116,7 @@ class TestAgePasswordDecryption:
         # Should return the content without prefix
         assert result == "simple_password"
 
-    def test_configmap_password_integration(self, prive_sleutel: str, versleuteld_wachtwoord: str):
+    def test_configmap_password_integration(self, prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
         """De base64+age-vorm uit de configmap en het armored blok erin openen hetzelfde."""
         result = decrypt_password_smart_sync(versleuteld_wachtwoord, prive_sleutel)
         armored = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
