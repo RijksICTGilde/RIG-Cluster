@@ -63,7 +63,11 @@ _OPI_ROOT = Path(__file__).resolve().parents[1]
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
-from opi.connectors.kubectl import KubectlExecutionError, create_kubectl_connector  # noqa: E402
+from opi.connectors.kubectl import (  # noqa: E402
+    KubectlConnectionError,
+    KubectlExecutionError,
+    create_kubectl_connector,
+)
 
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
@@ -178,8 +182,10 @@ async def inventory(
     try:
         label_map = await kubectl.get_namespace_label_map(NAMESPACE_OWNER_LABEL)
     except KubectlExecutionError as e:
-        # The only read here that raises instead of answering with a sentinel. Left to
-        # escape it ends the run on exit 1, and exit 1 means "there are orphans".
+        # The only read here that answers a failure with KubectlExecutionError; the other
+        # three answer with a sentinel. Left to escape it ends the run on exit 1, and exit 1
+        # means "there are orphans". The KubectlConnectionError all four share is caught in
+        # main(), because there is no read left to reach once the cluster is unreachable.
         raise SweepRefused(f"the cluster did not answer which namespaces OPI created: {e}") from e
 
     owned = {namespace for namespace, value in label_map.items() if value == NAMESPACE_OWNER_VALUE}
@@ -270,7 +276,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         return asyncio.run(_sweep(args.namespaces, args.deployments_repo, args.delete))
-    except SweepRefused as e:
+    except (SweepRefused, KubectlConnectionError) as e:
+        # KubectlConnectionError is what every read in inventory() raises when the cluster is
+        # unreachable: at the start when isConnected is False, and mid-run on a stderr that
+        # says 'connection refused'. Escaping it ends the run on exit 1, which this tool has
+        # promised means "there are orphans".
         print(f"Refusing to sweep: {e}", file=sys.stderr)
         return 2
 
