@@ -53,7 +53,7 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    manifest per definitie niet meer en verwijdert de Application zelf, met
    `kubectl delete application -n <argo-namespace>`. De cascade komt daar van de
    `resources-finalizer.argocd.argoproj.io` die `manifests/argocd-application.yaml.jinja`
-   meeschrijft, en dat is dezelfde cascade die de operatie hierboven blokkeerde.
+   meeschrijft.
 
 2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
    `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna gaat de
