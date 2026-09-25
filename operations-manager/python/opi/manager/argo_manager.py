@@ -82,11 +82,9 @@ UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN = 5
 UMBRELLA_REFRESH_MAX_POGINGEN = 6
 
 #: Hoe lang de aanmaak wacht tot het PROJECTNIVEAU gesynchroniseerd is. Die applicatie
-#: beheert een handvol namespace-brede resources zonder eigen rollout, dus dit is de tijd
-#: voor de umbrella plus een sync, niet voor een pod die opstart. Ruim genoeg om een dure
-#: umbrella-refresh te overleven, en een bovengrens die past binnen de 300s die de
-#: aanmaaktaak zichzelf geeft: loopt hij hierin vast, dan is een deployment die zijn
-#: ServiceAccount mist ook niet meer op tijd.
+#: beheert namespace-brede resources zonder eigen rollout, dus dit is de tijd voor de
+#: umbrella plus een sync, niet voor een pod die opstart. Loopt hij hierin vast, dan
+#: haalt een deployment die zijn ServiceAccount mist zijn eigen sync-timeout ook niet.
 PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN = 240
 
 #: Hoe vaak we tijdens het wachten zelf een refresh vragen zolang de status op
@@ -160,9 +158,8 @@ class ArgoManager:
                 rewrite unrelated deployments and collide with a concurrent delete).
 
         Dit gaat in TWEE commits: eerst het projectniveau, dan de deployment-applicaties.
-        Daartussen wacht de grendel van RC-229 tot het projectniveau echt gesynchroniseerd
-        is, want de ServiceAccount komt pas dan en de podspecs eronder noemen hem. In een
-        commit zouden de deployment-applicaties al bestaan voordat er iets te wachten valt.
+        De grendel ertussen wacht tot de ServiceAccount van het projectniveau er staat; in
+        een commit zou er niets meer te wachten vallen.
         """
         project_name = await self.project_manager.get_name()
         logger.info(f"Creating ArgoCD resources for {project_name} on cluster {settings.CLUSTER_MANAGER}")
@@ -180,12 +177,9 @@ class ArgoManager:
             f"Added ArgoCD project-level resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}"
         )
 
-        # RC-229: hier ligt de ordening, en niet bij de sync-wave. Een net aangemaakte
-        # kind-Application meldt zich binnen een seconde Healthy (nul resources is niets
-        # ongezond), dus de wave-0-grendel van de umbrella gaat open voordat de
-        # ServiceAccount van het projectniveau bestaat. Zolang de deployment-applicatie er
-        # nog niet IS kan hij zich ook niet zelf synchroniseren, dus de commit met de
-        # deployment-applicaties gaat er pas na deze grendel heen.
+        # RC-229: hier ligt de ordening, en niet bij de sync-wave. Zolang de CR van een
+        # deployment-applicatie nog niet bestaat kan ArgoCD hem ook niet zelf
+        # synchroniseren, dus de commit daarmee gaat er pas na deze grendel heen.
         # Gemeten in docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
         if project_app_name:
             await self.project_manager.wait_for_project_level_application(project_app_name)
@@ -697,9 +691,9 @@ class ArgoManager:
         Naast de AppProject in dezelfde projectmap, op sync-wave 0 terwijl de
         deployment-applicaties op 1 staan.
 
-        Geeft de naam van de applicatie terug, of None als er voor dit project op dit
-        cluster geen projectniveau is. De aanroeper hangt zijn ordeningsgrendel aan die
-        naam: zonder applicatie is er niets om op te wachten.
+        Geeft de naam van de applicatie terug, of None als er niets geschreven is: geen
+        projectniveau voor dit project op dit cluster, of de repository niet gevonden. De
+        aanroeper hangt zijn ordeningsgrendel aan die naam.
         """
         project_name = await self.project_manager.get_name()
         deployments = await self.project_manager.get_deployments(cluster_filter=True)
