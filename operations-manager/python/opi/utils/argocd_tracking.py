@@ -24,6 +24,30 @@ TRACKING_ID_ANNOTATION = "argocd.argoproj.io/tracking-id"
 #: Label ArgoCD writes with resourceTrackingMethod ``label`` (its default).
 INSTANCE_LABEL = "app.kubernetes.io/instance"
 
+#: What Kubernetes allows in a label value. An Application name may be longer: the schema
+#: allows 30 for the project plus 63 for the deployment (``project_v2.json``) and
+#: ``generate_argocd_application_name`` only caps at 253.
+LABEL_VALUE_MAX = 63
+
+
+def is_tracked_by(tracked_name: str, application_names: set[str]) -> bool:
+    """Whether the Application in a resource's tracking mark is one of ``application_names``.
+
+    Not plain equality, because of the cap above. Measured with a server dry-run on
+    25 September 2026: the API server refuses a 94-character label value outright, so on a
+    label cluster an Application with a name that long either gets no resources at all
+    (nothing to match) or carries the value cut to the cap. Which of the two ArgoCD does is
+    not measured, so a value AT the cap also matches a longer name it is the start of.
+
+    Only that direction. It can make a resource look owned where an exact comparison called
+    it an orphan, never the reverse, and an orphan is what ``--delete`` acts on.
+    """
+    if tracked_name in application_names:
+        return True
+    if len(tracked_name) != LABEL_VALUE_MAX:
+        return False
+    return any(name.startswith(tracked_name) for name in application_names)
+
 
 def application_name_from_tracking_id(tracking_id: str) -> str | None:
     """The Application name inside a tracking-id, or ``None`` when there is none.

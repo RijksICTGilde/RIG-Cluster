@@ -68,6 +68,7 @@ from opi.connectors.kubectl import (  # noqa: E402
     KubectlExecutionError,
     create_kubectl_connector,
 )
+from opi.utils.argocd_tracking import is_tracked_by  # noqa: E402
 
 if TYPE_CHECKING:
     from opi.utils.argocd_tracking import TrackedResource
@@ -95,8 +96,11 @@ class SweepRefused(RuntimeError):
 
 
 def orphaned_resources(tracked: list[TrackedResource], existing_applications: set[str]) -> list[TrackedResource]:
-    """The tracked resources whose Application no longer exists."""
-    return [resource for resource in tracked if resource.app_name not in existing_applications]
+    """The tracked resources whose Application no longer exists.
+
+    Existence is not an exact name comparison; ``is_tracked_by`` says why.
+    """
+    return [resource for resource in tracked if not is_tracked_by(resource.app_name, existing_applications)]
 
 
 def render_roots(repo_root: Path) -> list[str]:
