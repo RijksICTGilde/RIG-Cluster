@@ -74,7 +74,7 @@ Wat er niet vanzelf uit volgde staat in "Wat de uitrol zelf kostte" hierboven.
 
 | Functie | Uitspraak |
 |---|---|
-| Speelruimte per veld, drie lezers uit een declaratie | **gemeten** via `zad service config set` (`test_sandbox_speelruimte.py`): binnen de grenzen wordt opgeslagen, onder de ondergrens en boven de bovengrens geweigerd, en de weigering noemt de grenzen. |
+| Speelruimte per veld, drie lezers uit een declaratie | **gemeten** over de API (`test_sandbox_speelruimte.py`): binnen de grenzen wordt opgeslagen, onder de ondergrens en boven de bovengrens geweigerd, de weigering noemt de grenzen, en het projectbestand blijft onveranderd. Niet over de CLI, want die kan dit veld niet versturen; zie "Wat de CLI-weg opleverde". |
 | De guard sluit ook als het veld ontbreekt | **gemeten** als de servertoets op een niet-gedeclareerd veld. |
 | Een laag die de dienst niet openzet | **gemeten en goed.** `connection-limit` staat op project en deployment; de componentlaag bestaat als route niet eens (`/services/postgresql-database/config/component/...` staat niet in het OpenAPI-document van de draaiende server). |
 | Een `grow_only`-veld staat op precies een laag | **niet gemeten, en dat kan ook niet.** `grow_only` bestaat in het mechanisme, maar geen enkele dienst declareert een veld met die vlag: buiten `config_settings.py` komt het woord in `opi/` niet voor. Er is niets om op te richten. Zodra een dienst er een declareert, hoort er een clustertoets bij. |
@@ -133,17 +133,28 @@ Het plan verwachtte hiervan het meest: *"Een API-wijziging die de UI niet raakt 
 wel, valt vandaag nergens om."* Twee dingen vielen meteen om. Allebei zitten ze in de
 **zad-cli-repository** en niet hier, dus ze zijn gemeld en niet gerepareerd.
 
-**1. `scope: project` is vanaf de CLI onbereikbaar.** De projectlaag van
-`postgresql-database` is in het OpenAPI-document een `oneOf` met een discriminator op
-`scope`, met `shared` en `project` als takken. De CLI valideert client-side tegen een tak en
-weigert de andere met een zin die zichzelf tegenspreekt:
+**1. `connection-limit` is vanaf de CLI niet te zetten.** Precies het veld waar de hele
+speelruimte op rust. Geisoleerd met vier bodies uit een bestand, op zad-cli 1.0.0:
+
+| body | uitkomst |
+|---|---|
+| `{scope: shared}` | exit 0 |
+| `{scope: shared, schemas: [{postfix: ''}]}` (zijn eigen `--generate-skeleton`) | exit 0 |
+| `{scope: shared, connection-limit: 42}` | exit 2 |
+| `{scope: shared, connection-limit: null}` | exit 2 |
+| `{scope: project}` | exit 0 |
+| `{scope: project, storage: 2Gi}` | exit 0 |
+
+Elk body waarin `connection-limit` voorkomt wordt geweigerd door de client-side
+schemacontrole van de CLI, met een melding die een heel ander veld aanwijst:
 
 ```
-'scope' is 'project', which is not one of shared, project.
+'scope' is 'shared', which is not one of shared, project.
 ```
 
-`scope=shared` komt er wel door, `scope=project` niet. Daarmee is de weg naar een eigen
-databasecluster vanaf de opdrachtregel dicht.
+`scope` is dus niet het probleem (de laatste twee rijen laten zien dat beide scopes gewoon
+doorkomen), en de waarde die "niet in de lijst" zou staan staat er letterlijk in.
+`connection-limit` is het enige veld in dat schema met de vorm `anyOf: [integer, null]`.
 
 **2. `zad component delete` heeft geen uitweg voor een component in gebruik.** De API draagt
 `confirm_in_use` en zegt over de 409 dat de body elke plek noemt waar de component nog
