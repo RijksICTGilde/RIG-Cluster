@@ -1,4 +1,4 @@
-"""De speelruimte van een dienst, gemeten op een draaiend cluster via de CLI.
+"""De speelruimte van een dienst, gemeten op een draaiend cluster.
 
 `features/speelruimte-van-een-dienst.md` zegt dat een dienst per veld declareert hoe ver
 een project mag gaan, en dat de grens op precies een plek staat. In de unittests klopt
@@ -100,29 +100,13 @@ def db_project(
         )
 
 
-@pytest.fixture(scope="module")
-def cli(sandbox_url: str, db_project: CreatedProject) -> ZadCli:
-    return ZadCli(skip_zonder_cli(), sandbox_url, api_key=db_project.api_key, project=db_project.name)
-
-
 def _zet(sandbox_url: str, project: CreatedProject, waarde: object, *, scope: str = "shared") -> httpx.Response:
     """De projectlaag van de dienst schrijven, rechtstreeks over de API.
 
-    NIET over de CLI, en dat is een meting en geen gemak. `zad service config set
-    postgresql-database` weigert ELK body waarin `connection-limit` voorkomt, op zijn eigen
-    client-side schemacontrole, met een zin die `scope` aanwijst terwijl daar niets mis mee
-    is. Geisoleerd met vier bodies uit een bestand, op zad-cli 1.0.0:
-
-        {scope: shared}                              -> exit 0
-        {scope: shared, schemas: [{postfix: ''}]}    -> exit 0   (zijn eigen skelet)
-        {scope: shared, connection-limit: 42}        -> exit 2
-        {scope: shared, connection-limit: null}      -> exit 2
-
-    `connection-limit` is het enige veld in dat schema met de vorm
-    `anyOf: [integer, null]`. Het veld waar de hele speelruimte op rust is daarmee vanaf de
-    opdrachtregel niet te zetten. Dat zit in de zad-cli-repository en is daar gemeld;
-    ``test_het_veld_staat_in_het_document_dat_de_cli_leest`` hieronder pint de kant vast die
-    deze repo bezit.
+    Dit is de kortste weg naar de grendel: geen browser, geen client ertussen. De CLI-weg
+    staat er als eigen toets naast
+    (``test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt``), want dat is een tweede
+    afnemer met een eigen beeld van het schema.
     """
     url = f"{sandbox_url.rstrip('/')}/api/v2/projects/{project.name}/services/{_DIENST}/config/project"
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=120.0) as client:
@@ -241,6 +225,12 @@ def test_de_server_weigert_een_laag_die_de_dienst_niet_openzet(
     Rechtstreeks over de API en niet over de CLI, met opzet: de CLI kent de lagen uit de
     catalogus en weigert de aanroep zelf. Wat hier gemeten moet worden is de SERVER, want
     die is wat een script, een oudere CLI of een curl-aanroep raakt.
+
+    De weigering is hier de ROUTERING: de server maakt per dienst alleen een endpoint voor
+    de lagen die de dienst openzet, dus de componentlaag bestaat voor deze dienst niet. Dat
+    staat er daarom naast gemeten op het document. Zonder die helft is een 404 op dit pad
+    net zo goed een typefout in de URL, en dan blijft deze toets groen als het hele
+    lagenmechanisme verdwijnt.
     """
     ervoor = _limiet_in_projectbestand(forgejo, db_project.name)
     url = (
@@ -253,11 +243,22 @@ def test_de_server_weigert_een_laag_die_de_dienst_niet_openzet(
             json={_VELD: 50},
             headers={"X-API-Key": db_project.api_key, "Content-Type": "application/json"},
         )
+        document = client.get(f"{sandbox_url.rstrip('/')}/openapi.json").raise_for_status().json()
 
     logger.info("componentlaag: HTTP %d %s", respons.status_code, respons.text[:300])
-    assert respons.status_code >= 400, (
+    assert respons.status_code == 404, (
         f"de server nam '{_VELD}' aan op de componentlaag (HTTP {respons.status_code}), "
         f"terwijl de dienst die laag niet openzet: {respons.text[:400]}"
+    )
+
+    lagen = {
+        pad.split(f"/services/{_DIENST}/config/", 1)[1]
+        for pad in document["paths"]
+        if f"/services/{_DIENST}/config/" in pad
+    }
+    assert "component/{component_name}" not in lagen, f"de dienst zet de componentlaag nu wel open: {sorted(lagen)}"
+    assert {"project", "deployment/{deployment_name}"} <= lagen, (
+        f"de lagen die deze dienst wel openzet zijn niet allebei meer bereikbaar: {sorted(lagen)}"
     )
 
     assert _limiet_in_projectbestand(forgejo, db_project.name) == ervoor, (
@@ -273,13 +274,17 @@ def test_een_veld_dat_de_dienst_niet_declareert_wordt_geweigerd(
 
     De feature-doc noemt dit als het antwoord op "mag een gebruiker dit zelf zetten".
     Zonder een toets erop is dat een zin in een document.
+
+    `scope` gaat mee, en dat is de hele meting. Zonder dat veld valt het body al op de
+    discriminator van de scope-unie, en dan zegt een 4xx niets over het onbekende veld: de
+    toets zou net zo groen zijn als elk veld gewoon werd aangenomen.
     """
     url = f"{sandbox_url.rstrip('/')}/api/v2/projects/{db_project.name}/services/{_DIENST}/config/project"
 
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0) as client:
         respons = client.put(
             url,
-            json={"deze-instelling-bestaat-niet-rc227": 1},
+            json={"scope": "shared", "deze-instelling-bestaat-niet-rc227": 1},
             headers={"X-API-Key": db_project.api_key, "Content-Type": "application/json"},
         )
 
@@ -289,16 +294,67 @@ def test_een_veld_dat_de_dienst_niet_declareert_wordt_geweigerd(
     )
 
 
-def test_het_veld_staat_in_het_document_dat_de_cli_leest(cli: ZadCli, sandbox_url: str) -> None:
-    """De serverkant van de CLI-bevinding, want dat is de kant die deze repo bezit.
+def test_de_speelruimte_houdt_ook_als_de_cli_de_waarde_stuurt(
+    sandbox_url: str,
+    db_project: CreatedProject,
+    forgejo: ForgejoClient,
+) -> None:
+    """Dezelfde grens, over de tweede afnemer: `zad service config set`.
+
+    Het plan van RC-227 vroeg hierom en noemde het de meest waardevolle toets van dit blok.
+    Hij staat er als PAAR: een te lage waarde mag het projectbestand niet raken, en daarna
+    verandert een geldige waarde het wel. Zonder die tweede helft bewijst de eerste niets,
+    want een CLI die de aanroep helemaal niet doet laat het bestand ook onveranderd.
+
+    Wat de CLI zelf van de weigering laat zien wordt hier NIET vastgepind: dit endpoint is
+    asynchroon (202 met een taak-id), dus of de CLI op de uitkomst wacht is een keuze in de
+    zad-cli-repository en geen belofte van deze repo.
+    """
+    cli = ZadCli(skip_zonder_cli(), sandbox_url, api_key=db_project.api_key, project=db_project.name)
+    geldig = 43
+    assert geldig != _STANDAARD, "kies een waarde die van de standaard verschilt"
+
+    ervoor = _limiet_in_projectbestand(forgejo, db_project.name)
+    assert ervoor != _MINIMUM - 1, "de beginstand mag niet al de te lage waarde zijn"
+
+    te_laag = cli.run(
+        "service", "config", "set", _DIENST, "--target", "project", "--set", f"{_VELD}={_MINIMUM - 1}", "--yes"
+    )
+    logger.info("CLI zet %d: exit %d %s", _MINIMUM - 1, te_laag.exitcode, te_laag.uitvoer.strip()[:400])
+    assert "Traceback (most recent call last)" not in te_laag.uitvoer, (
+        f"de CLI braakte een traceback uit:\n{te_laag.uitvoer}"
+    )
+
+    assert not forgejo.wait_for_condition(
+        db_project.name,
+        lambda yaml: _limiet_in_projectbestand(forgejo, db_project.name) == _MINIMUM - 1,
+        # Een negatief bewijs kost de volle wachttijd, dus korter dan de 180s hieronder: een
+        # geslaagde schrijfactie staat er binnen die tijd wel.
+        timeout=60.0,
+    ), f"'{_VELD}: {_MINIMUM - 1}' belandde via de CLI toch in het projectbestand"
+
+    geldige_run = cli.run(
+        "service", "config", "set", _DIENST, "--target", "project", "--set", f"{_VELD}={geldig}", "--yes"
+    )
+    logger.info("CLI zet %d: exit %d %s", geldig, geldige_run.exitcode, geldige_run.uitvoer.strip()[:400])
+    geldige_run.assert_ok()
+
+    assert forgejo.wait_for_condition(
+        db_project.name,
+        lambda yaml: _limiet_in_projectbestand(forgejo, db_project.name) == geldig,
+        timeout=180.0,
+    ), "een geldige waarde kwam via de CLI niet in het projectbestand; de weigering hierboven bewijst dan niets"
+
+
+def test_het_veld_staat_in_het_document_dat_de_cli_leest(sandbox_url: str) -> None:
+    """De serverkant, want dat is de kant die deze repo bezit.
 
     `connection-limit` moet in het OpenAPI-document blijven staan als een veld van de
-    projectlaag, in allebei de scope-takken. Daarop steunt de reparatie aan de CLI-kant, en
-    verdwijnt het hier, dan is die reparatie onmogelijk geworden.
+    projectlaag, in allebei de scope-takken. Daarop steunt elke client die het veld aanbiedt:
+    verdwijnt het hier, dan kan geen enkele CLI het nog versturen.
 
-    De CLI-weigering zelf wordt hier NIET vastgepind: dat zou deze toets rood maken zodra
-    iemand de CLI repareert, en dat is precies verkeerd om. Wat er gemeten is staat in de
-    docstring van ``_zet``.
+    Wat een CLI met het veld DOET wordt hier niet vastgepind; dat zou deze toets rood maken
+    zodra iemand daar iets repareert, en dat is precies verkeerd om.
     """
     with httpx.Client(verify=_API_VERIFY_SSL, timeout=60.0) as client:
         document = client.get(f"{sandbox_url.rstrip('/')}/openapi.json").raise_for_status().json()

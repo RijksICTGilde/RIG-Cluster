@@ -252,7 +252,10 @@ class TestPinnedTools:
         assert haal, "mc wordt nergens uit de GitHub-release gehaald"
         for line in haal:
             assert "sha256sum -c -" in line, f"mc wordt gehaald zonder checksumcontrole: {line}"
-            assert "curl -fsSL" in line, f"mc-download zonder -f slaat een foutpagina op: {line}"
+            # Per curl in de instructie en niet op de instructie als geheel: er staan er twee
+            # (de binary en zijn sha256sum), dus een -f op de ene dekte de andere af.
+            zonder_f = [vlaggen for vlaggen in re.findall(r"curl\s+(-\S+)", line) if "f" not in vlaggen]
+            assert not zonder_f, f"een mc-download zonder -f slaat een foutpagina op: curl {zonder_f} in {line}"
 
         assert [line for line in lines if re.fullmatch(r"ARG MC_VERSION(=RELEASE\.\S+)?", line)]
 
