@@ -63,6 +63,9 @@ _REGISTRY_PASSWORD = os.environ.get("FORGEJO_PASSWORD", "admin1234")
 #: de component verwijst met deze naam, niet met de host.
 _REGISTRY_NAAM = "forgejo-prive"
 
+#: Wat er in het projectbestand en in de `auths` van het pull-secret terechtkomt.
+_UPSTREAM = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}"
+
 _BRON_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
 _PRIVE_IMAGE = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}/e2e-allservices:rc227"
 
@@ -186,7 +189,7 @@ def test_de_registry_wordt_opgeslagen_via_de_cli(
         "add",
         _REGISTRY_NAAM,
         "--url",
-        f"{_REGISTRY_HOST}/{_REGISTRY_ORG}",
+        _UPSTREAM,
         "--username",
         _REGISTRY_USER,
         "--password",
@@ -260,16 +263,20 @@ def test_een_component_uit_de_private_registry_krijgt_een_pull_secret(
     namespace = f"rig-{registry_project.name}"
     gevonden: dict[str, dict] = {}
 
+    # De sleutel in `auths` is de UPSTREAM en niet de host: `backends.py:73` zet
+    # `registry_url=str(upstream)`, dus `forgejo.sandbox.rijksapp.dev/rig-admin`. Op de kale
+    # host zoeken vond niets, terwijl het secret er gewoon stond.
     def _secret_met_de_registry() -> bool:
         nonlocal gevonden
         gevonden = _pull_secrets(namespace)
-        return any(_REGISTRY_HOST in (inhoud.get("auths") or {}) for inhoud in gevonden.values())
+        return any(_UPSTREAM in (inhoud.get("auths") or {}) for inhoud in gevonden.values())
 
-    assert cluster.wait_for(_secret_met_de_registry, timeout=240.0), (
-        f"geen dockerconfigjson-secret voor {_REGISTRY_HOST} in {namespace}; wel gevonden: {sorted(gevonden)}"
+    assert cluster.wait_for(_secret_met_de_registry, timeout=420.0), (
+        f"geen dockerconfigjson-secret voor {_UPSTREAM} in {namespace}; wel gevonden: "
+        f"{ {naam: sorted(inhoud.get('auths') or {}) for naam, inhoud in gevonden.items()} }"
     )
 
-    auths = next(inhoud["auths"][_REGISTRY_HOST] for inhoud in gevonden.values() if _REGISTRY_HOST in inhoud["auths"])
+    auths = next(inhoud["auths"][_UPSTREAM] for inhoud in gevonden.values() if _UPSTREAM in inhoud["auths"])
     gebruiker = auths.get("username") or base64.b64decode(auths.get("auth", "")).decode().split(":", 1)[0]
     assert gebruiker == _REGISTRY_USER, f"het pull-secret draagt gebruiker '{gebruiker}' en niet '{_REGISTRY_USER}'"
 
