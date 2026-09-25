@@ -113,11 +113,10 @@ def orphaned_paths(repo_root: Path, referenced: set[str]) -> list[str]:
     sandbox, 24 September 2026), and comparing those two forms literally would call every
     live path an orphan.
 
-    A reference BELOW a render root protects it too. ``RENDER_ROOT_DEPTH`` is the layout of
-    this repo today, but a repository entry with a non-empty ``path`` puts the tree a level
-    deeper, and then an exact comparison would call every live project directory an orphan
-    and ``--delete`` would take them all. Living above a referenced path is proof enough of
-    life.
+    A reference BELOW a render root protects it too: a repository entry with a non-empty
+    ``path`` puts the tree a level deeper than ``RENDER_ROOT_DEPTH``, and an exact
+    comparison would then call every live project directory an orphan, which ``--delete``
+    would take along.
     """
     normalised = {posixpath.normpath(path).strip("/") for path in referenced if path}
     return [
