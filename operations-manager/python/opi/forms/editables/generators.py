@@ -11,13 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from opi.connectors.subdomain import (
-    get_project_allowed_domain_config,
-    get_supported_base_domains,
-)
 from opi.core import config as opi_config
-from opi.core.cluster_config import get_domain_issuer
-from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
+from opi.services.catalog.publish_on_web.issuer import derive_issuer
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
 from opi.services.component_values import encode as encode_component_values
@@ -93,9 +88,10 @@ class EncryptedAPIKeyGenerator:
 class IssuerGenerator:
     """Compute the TLS issuer based on the deployment's base-domain.
 
-    Looks up the domain in the cluster's supported_domains configuration.
-    Returns the per-domain issuer (e.g. ``"letsencrypt"``) or ``None``
-    when no issuer is needed (the cluster's default handles TLS).
+    Stores what the chosen domain implies, so the field reads as a normal setting the user
+    can then override. The manifest generation no longer depends on it being there: it
+    derives the same value through ``effective_issuer`` when the field is absent, which is
+    what the API and task write paths leave behind.
 
     The deployment index determines which deployment to read the
     base-domain from. It is set during editable materialization
@@ -113,23 +109,7 @@ class IssuerGenerator:
         if not isinstance(dep, dict):
             return None
 
-        base_domain = get_domain_setting(dep, DomainSetting.BASE_DOMAIN)
-        if not base_domain:
-            return None
-
-        cluster = opi_config.settings.CLUSTER_MANAGER
-        issuer = get_domain_issuer(cluster, base_domain)
-        if issuer:
-            return issuer
-
-        # Custom domains (not in cluster's supported_domains): check project config first
-        if base_domain not in get_supported_base_domains(cluster=cluster):
-            custom_config = get_project_allowed_domain_config(yaml_data, base_domain)
-            if custom_config and custom_config.get("issuer"):
-                return custom_config["issuer"]
-            return "letsencrypt"
-
-        return None
+        return derive_issuer(yaml_data, dep, opi_config.settings.CLUSTER_MANAGER)
 
 
 class AttachmentStagingResolveGenerator:

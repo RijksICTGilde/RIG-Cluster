@@ -24,7 +24,11 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+          # Dood adres: MinIO heeft docker.io/minio en quay.io/minio allebei achter een abonnement
+          # gezet, 401 op elke tag. Staat er nog als sleutel waar de odcn-overlay de eigen build op
+          # inhaakt; de reden staat daar. De lokale overlays vervangen hem niet, zie
+          # docs/KNOWN-ISSUES.md, "MinIO distribueert zijn eigen images niet meer".
+          image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
           args: ["server", "/data", "--console-address", ":9001"]
           env:
             - name: MINIO_ROOT_USER

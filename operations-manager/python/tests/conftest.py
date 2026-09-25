@@ -5,8 +5,6 @@ This module provides common fixtures used across unit and integration tests.
 """
 
 import os
-import shutil
-import subprocess
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -15,9 +13,41 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from opi.utils.sops import generate_sops_key_pair
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Iterator
+    from collections.abc import AsyncGenerator, Callable, Iterator
+
+
+@pytest.fixture(scope="session")
+def make_age_keypair() -> Callable[[], tuple[str, str]]:
+    """A factory that mints a throwaway AGE keypair, generated for this test run only.
+
+    A test that needs a key makes one, so no fixed key has to sit in the tree. That is what keeps
+    the scanner believable: it alarms on any valid ``AGE-SECRET-KEY-``, and an alarm with known
+    findings in it is one people learn to walk around. A working private key in the tree also
+    opens the encrypted values that sit elsewhere in it, and pytest prints the decrypted value
+    on a red assertion.
+
+    Session scope, because ``age-keygen`` is a subprocess and the pair is immutable -- but the
+    factory is called per test that wants one, so a test needing two distinct keys just calls it
+    twice.
+
+    Requires the ``age-keygen`` binary. Tests that use this should skip without it, the way
+    ``test_sops_skip_unchanged`` and the rotation tests do.
+    """
+
+    def make() -> tuple[str, str]:
+        """Returns (private_key, public_key)."""
+        return generate_sops_key_pair()
+
+    return make
+
+
+@pytest.fixture(scope="session")
+def age_keypair(make_age_keypair: Callable[[], tuple[str, str]]) -> tuple[str, str]:
+    """One throwaway AGE keypair as ``(private_key, public_key)``, for the whole run."""
+    return make_age_keypair()
 
 
 @pytest.fixture
@@ -490,23 +520,6 @@ async def orm_db(_orm_db_url):
         await session.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
     yield
     await dispose_engine()
-
-
-@pytest.fixture
-def age_sleutelpaar() -> tuple[str, str]:
-    """Een wegwerpsleutelpaar van age-keygen, in de vorm die in projectbestanden staat.
-
-    Toetsen die echt ontsleutelen maken hun eigen paar: een werkende private sleutel in de
-    repo opent ook de versleutelde waarden die elders in de boom staan, en pytest drukt bij
-    een rode assertie de ontsleutelde waarde af.
-    """
-    if shutil.which("age-keygen") is None:
-        pytest.skip("age-keygen is nodig voor een wegwerpsleutelpaar")
-
-    uitvoer = subprocess.run(["age-keygen"], capture_output=True, text=True, check=True).stdout
-    prive = next(r for r in uitvoer.splitlines() if r.startswith("AGE-SECRET-KEY-"))
-    publiek = next(r for r in uitvoer.splitlines() if "public key:" in r).split(": ", 1)[1].strip()
-    return publiek, prive
 
 
 # --- Live voortgang van een lange run ------------------------------------------------
