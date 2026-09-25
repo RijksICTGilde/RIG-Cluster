@@ -84,12 +84,14 @@ WHERE status = 'completed'
 _EIGEN_PREFIX = "rc227_"
 
 #: Een BENOEMDE dollar-quote en geen `$$`, om de reden die in ``cluster.run_psql`` staat.
+#: En ``starts_with`` en geen ``LIKE``: in een LIKE-patroon is de `_` van dit voorvoegsel een
+#: jokerteken voor een willekeurig teken, en dit is een DROP-lus.
 _OPRUIMEN = f"""
 DO $leegmaken$
 DECLARE tabel text;
 BEGIN
   FOR tabel IN
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename LIKE '{_EIGEN_PREFIX}%'
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND starts_with(tablename, '{_EIGEN_PREFIX}')
   LOOP
     EXECUTE format('DROP TABLE IF EXISTS public.%I', tabel);
   END LOOP;
