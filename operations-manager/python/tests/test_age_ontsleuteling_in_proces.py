@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(
 
 KLARE_TEKST = "een geheim\nmet twee regels"
 
-#: De vorm van de waarden die hier echt door lopen (een PAT uit een configmap), zonder er een te zijn.
+#: De vorm van de waarden die hier echt door lopen (een GitHub-PAT), zonder er een te zijn.
 GEHEIM = "ghp_" + "z" * 36
 
 
@@ -194,10 +194,8 @@ class TestRandenVanDeInvoer:
 
 
 class TestGeenGeheimInDeUitvoer:
-    """Een ontsleutelde waarde hoort in geen enkele logregel en in geen foutmelding.
-
-    Beide staan in de CI-uitvoer van elke rode run, en een rode run is precies het moment
-    waarop iemand anders meekijkt.
+    """Logregels en foutmeldingen staan in de CI-uitvoer van elke rode run, en een rode run
+    is precies het moment waarop iemand anders meekijkt.
     """
 
     @pytest.mark.asyncio

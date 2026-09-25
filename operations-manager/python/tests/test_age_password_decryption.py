@@ -6,9 +6,6 @@ de echte productie-private-sleutel op een regel, met een comment erbij waar hij 
 ("from security/key.txt") en de kopie van de configmap-waarde die hij opent er vlak boven.
 Drie andere toetsbestanden droegen ook een vaste sleutel, en daardoor las niemand er nog langs.
 Een toets die een sleutel nodig heeft, maakt er een.
-
-Er wordt hier niets gemockt: ontsleutelen loopt sinds RC-218 via pyrage en start geen proces
-meer, dus een mock op ``subprocess.run`` zou niets meer tegenhouden en niets meer meten.
 """
 
 import base64
