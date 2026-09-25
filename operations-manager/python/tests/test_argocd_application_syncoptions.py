@@ -11,6 +11,25 @@ Applications, and the answer is the same. Those two live on odcn-production, who
 version reads no such option: its only ``SyncTimeout`` is ``informerSyncTimeout``, an
 internal wait on an informer cache in the API server.
 
+Neither removal takes a bound away -- ``Timeout=300`` no more than these two -- because
+a sync option was never what set one. The bound that does exist is a controller
+setting, and on odcn-production it is already on: ``argocd-deployment.yaml`` there sets
+``controller.sync.timeout.seconds: "300"`` in the ``extraConfig`` the operator renders
+into ``argocd-cm`` (measured in that ConfigMap on rig-prd-operations). It is a setting
+on the ArgoCD instance, so it covers every Application on that cluster, the generated
+ones as much as these two handwritten ones. The place where an upper bound on a sync
+belongs is filled, which is why these lines should stay out rather than come back: they
+only add the impression of a second one. The local and sandboxed-local overlays leave
+it unset; if a bound is wanted there, that ``extraConfig`` is where it goes, not
+``syncOptions``.
+
+That setting is not a way out of a sync that hangs, and it should not be written up as
+one. The deletion that hung in issue #184 ran fourteen days on ``Running`` with the
+300s in place: the controller logged ``sync/terminate complete`` on every reconcile, so
+the bound did fire, every round. What it fires is a request to terminate, and that is
+all it is -- the operation stays until ``.operation`` itself is cleared, which is the
+removal RC-226 makes.
+
 Nothing but a test keeps these out. The Application CRD types ``syncOptions`` as a plain
 array of strings, so ArgoCD accepts an option it has never heard of without complaint.
 """
@@ -66,6 +85,9 @@ def _handwritten_applications() -> list[tuple[str, list[str]]]:
 _APPLICATIONS = _handwritten_applications()
 _IDS = [path for path, _ in _APPLICATIONS]
 
+#: The overlay that carries both Applications the ``SyncTimeout`` lines came off.
+_ODCN_ARGOCD = _OVERLAYS / "odcn-production" / "argocd-deployment.yaml"
+
 
 def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
     """Without this the tests below pass on an empty list, which is how a moved file or a
@@ -81,6 +103,14 @@ def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
 def test_every_sync_option_is_one_argocd_knows(path: str, sync_options: list[str]) -> None:
     unknown = [option for option in sync_options if option.split("=", 1)[0] not in KNOWN_SYNC_OPTIONS]
     assert unknown == [], f"{path} carries sync options ArgoCD ignores: {unknown}"
+
+
+def test_the_controller_level_sync_timeout_is_still_set() -> None:
+    """The docstring above argues the two ``SyncTimeout=60s`` lines can go because the
+    bound they read as is already set one level up. That argument holds only while this
+    setting is here, so it goes red with it rather than quietly becoming untrue."""
+    extra_config = yaml.safe_load(_ODCN_ARGOCD.read_text())["spec"]["extraConfig"]
+    assert extra_config.get("controller.sync.timeout.seconds") == "300"
 
 
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
