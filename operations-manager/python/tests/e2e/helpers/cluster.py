@@ -12,28 +12,56 @@ these checks only make sense on the machine that runs the sandbox.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
+import logging
+import shlex
 import socket
 import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
+logger = logging.getLogger(__name__)
 
-def _run(args: list[str], *, timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["kubectl", *args],
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-    )
+
+class KubectlTimeout(subprocess.SubprocessError):
+    """Een kubectl-aanroep die zijn tijd niet haalde, zonder het commando in de melding.
+
+    ``subprocess.TimeoutExpired`` zet de hele argv in zijn tekst, en pytest schrijft de tekst
+    van een uitzondering in het verslag. Erft van ``SubprocessError``, zodat
+    ``kubectl_available`` hem blijft vangen zoals hij de time-out eerst ving.
+    """
+
+
+def _run(args: list[str], *, timeout: float = 30.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
+    """kubectl met deze argumenten. ``invoer`` gaat over stdin naar het proces.
+
+    Die stdin is er voor ``_run_psql_once``: het wachtwoord gaat daarlangs in plaats van via
+    de argv.
+    """
+    try:
+        return subprocess.run(
+            ["kubectl", *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            input=invoer,
+        )
+    except subprocess.TimeoutExpired:
+        # `from None` en niet `from fout`: een gekoppelde uitzondering wordt in de traceback
+        # gewoon afgedrukt, argv en al. De eerste argumenten benoemen de aanroep; de rest
+        # blijft eruit, zodat een aanroeper die er ooit een waarde in zet hem hier niet
+        # alsnog opschrijft.
+        raise KubectlTimeout(f"kubectl {' '.join(args[:4])} haalde {timeout:.0f}s niet") from None
 
 
 @lru_cache(maxsize=1)
@@ -57,6 +85,139 @@ def get_json(kind: str, namespace: str) -> dict[str, Any]:
     if result.returncode != 0:
         return {"items": []}
     return json.loads(result.stdout or '{"items": []}')
+
+
+def get_json_strict(*args: str, timeout: float = 60.0) -> dict[str, Any]:
+    """``kubectl get <args> -o json``, waarbij een mislukte lezing een FOUT is.
+
+    ``get_json`` hierboven geeft bij een fout ``{"items": []}`` terug, en voor een toets die
+    op afwezigheid meet is dat precies verkeerd: een kubectl die niet kon lezen ziet er dan
+    uit als een cluster waar het gezochte niet staat. Neemt een vrije argumentenlijst, zodat
+    ook een enkel object (``get secret <naam> -n <ns>``) te lezen is.
+    """
+    result = _run([*args, "-o", "json"], timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"kubectl {' '.join(args)} mislukte (exit {result.returncode}): {result.stderr.strip()[:300]}"
+        )
+    return json.loads(result.stdout)
+
+
+def secret_values(namespace: str, name: str) -> dict[str, str]:
+    """De ontcijferde ``data`` van een secret."""
+    data = get_json_strict("get", "secret", name, "-n", namespace).get("data") or {}
+    return {sleutel: base64.b64decode(waarde).decode() for sleutel, waarde in data.items()}
+
+
+#: Laatste regel van elk statement dat via ``run_psql`` loopt. Komt hij niet terug, dan heeft
+#: de pod de uitvoer van psql niet doorgegeven en is er niets gemeten.
+PSQL_SLUITSTUK = "psql-uitvoer-compleet"
+
+
+def run_psql(
+    sql: str,
+    *,
+    host: str,
+    user: str,
+    database: str,
+    password: str,
+    namespace: str = "rig-system",
+    timeout: float = 300.0,
+    pogingen: int = 3,
+) -> tuple[int, str]:
+    """SQL tegen een databaseserver op het cluster, in een eigen pod.
+
+    De herhaling is geen ruimte voor toeval maar voor de pod. ``kubectl run --rm -i`` hangt
+    aan een container die nog moet starten, en op een druk cluster haalt hij die soms niet:
+    dan komt hij terug met exitcode NUL en alleen zijn eigen opruimregel, en is alles wat
+    psql schreef weg. Dat is de vorm die rood gaf op werk dat gewoon gelukt was, en erger:
+    op een SCHRIJFactie staat een kale ``assert code == 0`` dan groen terwijl er niets
+    geschreven is. Daarom moet ``PSQL_SLUITSTUK`` echt terugkomen voordat een uitkomst
+    geldig is. Een echte SQL-fout draagt ``ERROR:`` en gaat meteen terug, zodat een fout in
+    het statement niet achter een herhaling verdwijnt.
+
+    Die herhaling stelt een eis aan de aanroeper: bij een verloren uitvoer is het statement
+    wel UITGEVOERD, dus elk statement dat hier doorheen gaat moet een tweede keer kunnen.
+    Zet dus ``DROP TABLE IF EXISTS`` voor een ``CREATE TABLE``, en een ``ON CONFLICT`` op
+    een INSERT die niet mag verdubbelen.
+
+    Het statement en het wachtwoord gaan over stdin, zie ``_run_psql_once``. Wat daar wel als
+    ARGUMENT van de pod meegaat, loopt langs de variabele-expansie van Kubernetes: die leest
+    ``$$`` als een ontsnapte ``$``, en postgres antwoordt dan ``syntax error at or near "$"``.
+
+    Geeft (exitcode, uitvoer) terug, met de sluitstukregel eruit gefilterd. De uitvoer is
+    stdout en stderr aan elkaar: ``kubectl run --rm`` schrijft zijn eigen "pod ... deleted"
+    daar tussendoor.
+    """
+    code, uit = 1, ""
+    for poging in range(1, pogingen + 1):
+        code, uit = _run_psql_once(
+            f"{sql.rstrip().rstrip(';')}; SELECT '{PSQL_SLUITSTUK}';",
+            host=host,
+            user=user,
+            database=database,
+            password=password,
+            namespace=namespace,
+            timeout=timeout,
+        )
+        if "ERROR:" in uit:
+            return code, uit
+        if PSQL_SLUITSTUK in uit:
+            schoon = "\n".join(regel for regel in uit.splitlines() if regel.strip() != PSQL_SLUITSTUK)
+            return code, schoon.strip()
+        logger.warning("psql-pod gaf niets terug (exit %d, poging %d): %s", code, poging, uit[:200])
+    return code or 1, uit
+
+
+def _run_psql_once(
+    sql: str,
+    *,
+    host: str,
+    user: str,
+    database: str,
+    password: str,
+    namespace: str,
+    timeout: float,
+) -> tuple[int, str]:
+    """Een pod die het statement uitvoert, met het wachtwoord over STDIN.
+
+    Het wachtwoord stond hier eerst als ``--env PGPASSWORD=<waarde>`` in de argv van
+    ``kubectl run``, en dat is drie keer een lek voor een wachtwoord dat langs deze weg het
+    SUPERUSER-wachtwoord van de gedeelde sandbox-database kan zijn: kubectl zet zo'n ``--env``
+    in klare tekst in ``spec.containers[].env[].value`` (leesbaar met ``kubectl get pod -o
+    yaml`` zolang de pod leeft, in etcd, en in de body van het create-verzoek), een time-out
+    schrijft de hele argv in het pytest-verslag, en de argv staat in de procestabel van de
+    machine die de suite draait.
+
+    Daarom is de argv van de pod ``sh -s`` en komt het script over stdin. Dat is ook wat
+    ``opi/connectors/postgres.py`` doet, en om dezelfde reden: "Connection parameters are
+    passed via the environment, never via the command line". Binnen de pod staat het
+    wachtwoord in de omgeving van psql en niet in zijn argv.
+    """
+    script = (
+        f"export PGPASSWORD={shlex.quote(password)}\n"
+        f"exec psql -h {shlex.quote(host)} -U {shlex.quote(user)} -d {shlex.quote(database)}"
+        f" -v ON_ERROR_STOP=1 -tAc {shlex.quote(sql)}\n"
+    )
+    result = _run(
+        [
+            "-n",
+            namespace,
+            "run",
+            f"psql-e2e-{uuid.uuid4().hex[:8]}",
+            "--rm",
+            "-i",
+            "--restart=Never",
+            "--image=postgres:16-alpine",
+            "--command",
+            "--",
+            "sh",
+            "-s",
+        ],
+        timeout=timeout,
+        invoer=script,
+    )
+    return result.returncode, (result.stdout + result.stderr).strip()
 
 
 def resource_names(kind: str, namespace: str) -> list[str]:

@@ -971,13 +971,12 @@ async def submit_step(request: Request, flow_id: str, section_id: str) -> HTMLRe
 
     # Forward navigation (Next / Review): block on field-level validation errors
     if is_forward and errors:
-        # Extract group-level errors (e.g. from enforcers on GROUP editables)
-        # and surface them as global_errors so they appear in the alert box.
-        # Group paths like "deployments[0]" have no leaf field to attach to.
-        group_errors: list[str] = []
-        for path, msgs in list(errors.items()):
-            if path.endswith("]") and "/" not in path.split("]")[-1]:
-                group_errors.extend(msgs)
+        # Een fout op een pad dat deze stap niet tekent gaat naar de algemene balk. De
+        # vormtoets die hier stond zag niet welke paden een veld hebben: hij hield
+        # "deployments[0]" wel tegen en een virtueel dienstpad zonder veld niet.
+        group_errors = _create_renderer().take_unrendered_errors(
+            section.editables, submitted_yaml, errors, edit_mode=edit_mode
+        )
 
         step_html = _render_step_html(
             request,
