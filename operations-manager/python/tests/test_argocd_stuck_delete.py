@@ -624,11 +624,14 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results)
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results) is False
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
         assert any("left standing" in error for error in results["errors"])
+        # A resource it could not place may be this application's own, so the cascade that
+        # would still take it stays: the third way into partial, and its own measurement.
+        pm._kubectl_connector.remove_argocd_application_finalizers.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_label_equal_to_the_forced_name_is_not_taken_from_a_living_neighbour(self) -> None:
@@ -731,12 +734,17 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results)
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "success"
         assert operation["deleted"] == 2
         assert operation["namespace"] == "rig-prd-mpfm-w3h"
+        # The counterweight to the three refusals: gating the finalizer on the sweep may not
+        # turn the force itself into a no-op. Refusing always reads as green without this.
+        pm._kubectl_connector.remove_argocd_application_finalizers.assert_awaited_once_with("app-a")
+        removal = next(op for op in results["operations"] if op["type"] == "argocd_app_finalizer_removal")
+        assert removal["status"] == "success"
 
     @pytest.mark.asyncio
     async def test_resources_that_would_not_go_become_an_error(self) -> None:
@@ -745,11 +753,14 @@ class TestForceDeleteStuckApplication:
         pm._kubectl_connector.delete_tracked_resources = AsyncMock(return_value=[_tracked("app-a", "a")])
         results: dict = {"operations": [], "errors": []}
 
-        await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results)
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is False
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "partial"
         assert results["errors"]
+        # The inventory was WHOLE here and the deletes failed: gating the finalizer on
+        # completeness alone would take it off over resources demonstrably still standing.
+        pm._kubectl_connector.remove_argocd_application_finalizers.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_an_unreadable_namespace_is_reported_and_does_not_stop_the_force(self) -> None:
@@ -799,6 +810,10 @@ class TestForceDeleteStuckApplication:
         leftovers stand. Measured with the connector handing this over as complete: status
         ``success``, ``failed: 0``, ``undecidable: 0``, ``errors: []`` and the finalizer
         gone, which is the exact shape that left 350 resources in rig-prd-mpfm-w3h.
+
+        What the CALLER gets is the other half of that, and it is pinned here rather than
+        only on the deletion results: a half sweep answers ``False``, so the Application is
+        left standing with the cascade that can still take the rest.
         """
         calls: list[str] = []
         pm = AsyncMock()
@@ -807,19 +822,28 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is False
 
         # The part that DID answer still goes: half a sweep beats none.
         assert [r.name for r in pm._kubectl_connector.delete_tracked_resources.await_args_list[0].args[0]] == [
             "db-creds"
         ]
+        assert calls == ["read_namespace", "list_resources", "list_applications", "delete_resources"]
+        pm._kubectl_connector.remove_argocd_application_finalizers.assert_not_awaited()
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert (operation["status"], operation["deleted"]) == ("partial", 1)
         assert any("only part of its resource types" in error for error in results["errors"])
+        removal = next(op for op in results["operations"] if op["type"] == "argocd_app_finalizer_removal")
+        assert removal["status"] == "skipped_partial_sweep"
+        assert any("left standing with its finalizer" in error for error in results["errors"])
 
 
 def _deployment_harness(
-    calls: list[str], *, wait_results: list[bool] | None = None, tracked: list[TrackedResource] | None = None
+    calls: list[str],
+    *,
+    wait_results: list[bool] | None = None,
+    tracked: list[TrackedResource] | None = None,
+    complete: bool = True,
 ) -> tuple[AsyncMock, AsyncMock, dict, dict]:
     """A deployment delete with a live Application, recording the order of the calls.
 
@@ -827,7 +851,9 @@ def _deployment_harness(
     the first wait time out and reach the force branch.
     """
     pm = AsyncMock()
-    pm._kubectl_connector = _recording_kubectl(calls, destination="rig-mpfm-w3h", tracked=tracked or [])
+    pm._kubectl_connector = _recording_kubectl(
+        calls, destination="rig-mpfm-w3h", tracked=tracked or [], complete=complete
+    )
     pm._manifest_generator = MagicMock()
     pm._manifest_generator.create_kustomization_files = MagicMock(return_value=True)
     pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
@@ -1029,6 +1055,37 @@ class TestOperationClearedBeforeTheWait:
 
         assert "remove_finalizers" not in calls
         assert "delete_resources" not in calls
+
+    @pytest.mark.asyncio
+    async def test_a_half_swept_deployment_is_reported_as_not_forced_away(self) -> None:
+        """What the ROUTE makes of a half sweep, which is what an operator ends up reading.
+
+        The half answer reaches here as ``finalizer_removed: False``, and the wait that
+        follows the removal does not run: waiting for an Application that was deliberately
+        left standing would only end on its timeout.
+        """
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(
+            calls, wait_results=[False], tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")], complete=False
+        )
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
+
+        assert calls.count("wait_for_deletion") == 1
+        assert "remove_finalizers" not in calls
+        gitops = next(op for op in results["operations"] if op["type"] == "argocd_app_gitops_deletion")
+        assert gitops["finalizer_removed"] is False
+        assert any("left standing with its finalizer" in error for error in results["errors"])
 
     @pytest.mark.asyncio
     async def test_yaml_change_delete_clears_the_operation_before_waiting(self) -> None:

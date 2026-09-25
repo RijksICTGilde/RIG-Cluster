@@ -140,10 +140,18 @@ class DeleteProjectManager:
         The mark has to name this application UNAMBIGUOUSLY, because here a match is a delete
         (_split_on_the_mark). What stays ambiguous is reported instead of deleted.
 
+        A sweep that ran but did not get everything (``partial``) keeps the finalizer in
+        place: the cascade it carries is then the only route by which the rest is still
+        deleted under its own Application, and cancelling that while resources stand is the
+        exact shape that left the 350 behind. A sweep that could not run at all still forces,
+        because nothing was deleted there either way and an Application that stays blocks the
+        parent for everyone.
+
         Returns:
             True if the finalizer was removed.
         """
         kubectl = self.project_manager._kubectl_connector
+        swept_partially = False
 
         destination = await kubectl.get_argocd_application_destination_namespace(app_name)
         if destination is None:
@@ -180,12 +188,13 @@ class DeleteProjectManager:
                 known_names = await self._known_application_names()
                 tracked, undecidable = _split_on_the_mark(resources, app_name, known_names)
                 failed = await kubectl.delete_tracked_resources(tracked)
+                swept_partially = bool(failed) or bool(undecidable) or not complete
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_tracked_resource_deletion",
                         "target": app_name,
                         "namespace": destination,
-                        "status": "success" if not failed and not undecidable and complete else "partial",
+                        "status": "partial" if swept_partially else "success",
                         "deleted": len(tracked) - len(failed),
                         "failed": len(failed),
                         "undecidable": len(undecidable),
@@ -216,6 +225,20 @@ class DeleteProjectManager:
                         f"cut to it, so whether they are '{app_name}'s or a living neighbour's is not decidable "
                         "from the mark; left standing. Which of the two it is, the resource itself shows."
                     )
+
+        if swept_partially:
+            deletion_results["operations"].append(
+                {
+                    "type": "argocd_app_finalizer_removal",
+                    "target": app_name,
+                    "status": "skipped_partial_sweep",
+                }
+            )
+            deletion_results["errors"].append(
+                f"ArgoCD application '{app_name}' was left standing with its finalizer: its resources are not "
+                "verifiably gone, and removing the finalizer would cancel the cascade that can still delete them"
+            )
+            return False
 
         finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)
         deletion_results["operations"].append(
@@ -1253,7 +1276,8 @@ class DeleteProjectManager:
             deployment_name: Name of the deployment to delete
             force: If True, continues on errors and cleans up stuck resources.
                    In force mode:
-                   - Removes ArgoCD finalizers if app deletion times out
+                   - Deletes the resources of an Application whose deletion times out, and
+                     removes its finalizer only when that sweep got everything
                    - Skips database cleanup if secrets are inaccessible
                    - Only deletes namespace after ArgoCD app is confirmed deleted
 
