@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pyrage
 import pytest
+from opi.core.metrics import _connector_subprocess_calls
 from opi.utils.age import (
     decrypt_age_content,
     decrypt_age_content_sync,
@@ -65,6 +66,7 @@ class TestUitwisselbaarMetHetBinary:
         prive, publiek = age_keypair
         blok = await encrypt_age_content(KLARE_TEKST, publiek)
 
+        assert is_age_encrypted(blok), "de opgeslagen vorm is armored; --armor hoort op de versleutelkant te blijven"
         gelezen = _binary_ontsleutelt(blok.encode(), prive)
         assert gelezen.returncode == 0, gelezen.stderr.decode()
         assert gelezen.stdout.decode() == KLARE_TEKST
@@ -180,6 +182,17 @@ class TestRandenVanDeInvoer:
         assert decrypt_age_content_sync(blok, prive + "\n") == KLARE_TEKST
 
     @pytest.mark.asyncio
+    async def test_een_blok_zonder_inhoud_geeft_een_lege_tekst_terug(self, age_keypair):
+        """Leeg blijft leeg in plaats van een fout te worden: ``decrypt_if_encrypted`` en
+        ``decrypt_password_smart`` toetsen hierna alleen op ``None``.
+        """
+        prive, publiek = age_keypair
+        blok = _binary_versleutelt("", publiek)
+
+        assert await decrypt_age_content(blok, prive) == ""
+        assert decrypt_age_content_sync(blok, prive) == ""
+
+    @pytest.mark.asyncio
     async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, age_keypair):
         """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort doorlaat
         moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar. Wijder dan het
@@ -227,3 +240,61 @@ class TestGeenGeheimInDeUitvoer:
         uitvoer = str(fout.value) + "\n".join(r.getMessage() for r in caplog.records)
         assert andere not in uitvoer
         assert blok.strip() not in uitvoer
+
+
+class TestDeProcesteller:
+    """``opi_connector_subprocess_calls_total{connector="age"}`` blijft op het versleutelen staan
+    en is tegelijk het bewijs voor deze wijziging: hij hoort niet meer op te lopen terwijl iemand
+    detailpagina's opent. ``_connector_subprocess_calls`` is de dict waaruit die gauge wordt
+    gevuld (``opi/core/metrics.py``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_versleutelen_telt_nog_mee_en_ontsleutelen_niet_meer(self, age_keypair):
+        prive, publiek = age_keypair
+
+        voor = _connector_subprocess_calls.get("age", 0)
+        blok = await encrypt_age_content(KLARE_TEKST, publiek)
+        na_versleutelen = _connector_subprocess_calls.get("age", 0)
+        assert na_versleutelen == voor + 1, "versleutelen start een proces en hoort geteld te blijven"
+
+        assert await decrypt_age_content(blok, prive) == KLARE_TEKST
+        assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
+        assert _connector_subprocess_calls.get("age", 0) == na_versleutelen, (
+            "ontsleutelen start geen proces en hoort de procesteller niet te laten oplopen"
+        )
+
+
+class TestGeenCache:
+    """Het plan sluit caching uit: een ontsleuteld geheim dat blijft liggen is een risico dat
+    terugkomt voor tijdwinst die de omzetting zelf al geeft.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dezelfde_cijfertekst_wordt_elke_keer_opnieuw_ontsleuteld(self, age_keypair):
+        prive, publiek = age_keypair
+        blok = _binary_versleutelt(GEHEIM, publiek)
+
+        with patch("pyrage.decrypt", wraps=pyrage.decrypt) as spion:
+            assert await decrypt_age_content(blok, prive) == GEHEIM
+            assert await decrypt_age_content(blok, prive) == GEHEIM
+            assert decrypt_age_content_sync(blok, prive) == GEHEIM
+
+        assert spion.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_een_geslaagde_ontsleuteling_opent_hetzelfde_blok_niet_voor_een_andere_sleutel(
+        self, age_keypair, make_age_keypair
+    ):
+        """De vorm die een cache op de cijfertekst alleen zou verbergen: eerst met de goede
+        sleutel, daarna met een sleutel die er geen recht op heeft.
+        """
+        prive, publiek = age_keypair
+        andere, _ = make_age_keypair()
+        blok = _binary_versleutelt(GEHEIM, publiek)
+
+        assert await decrypt_age_content(blok, prive) == GEHEIM
+
+        with pytest.raises(Exception, match="Age decryption failed"):
+            await decrypt_age_content(blok, andere)
+        assert decrypt_age_content_sync(blok, andere) is None

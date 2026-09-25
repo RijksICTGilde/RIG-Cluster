@@ -1,4 +1,7 @@
-"""De CI-testjob installeert sops, op de versie van de Dockerfile, voor de testrun."""
+"""De CI-testjob installeert sops, op de versie van de Dockerfile, voor de testrun.
+
+Plus de andere kant van diezelfde afspraak: welke crypto-binaries de image meelevert.
+"""
 
 import re
 from pathlib import Path
@@ -51,3 +54,23 @@ def test_sops_version_matches_the_dockerfile(ci_test_steps: list[dict]) -> None:
     assert ci_versions == {(dockerfile_version[1], dockerfile_version[1])}, (
         f"CI haalt sops {sorted(ci_versions)}, de Dockerfile pint {dockerfile_version[1]}"
     )
+
+
+def _apt_pakketten(dockerfile: str) -> set[str]:
+    """De pakketnamen uit elke ``apt-get install`` in de Dockerfile, een eventuele versiepin eraf."""
+    doorlopend = re.sub(r"\\\n\s*", " ", dockerfile)
+    namen: set[str] = set()
+    for blok in re.findall(r"apt-get install\s+(.*?)(?:&&|$)", doorlopend, re.MULTILINE):
+        for woord in blok.split():
+            if not woord.startswith("-"):
+                namen.add(woord.split("=")[0])
+    return namen
+
+
+def test_de_image_installeert_het_age_binary_nog() -> None:
+    """Ontsleutelen loopt sinds RC-218 in het proces, maar versleutelen en SOPS draaien nog op
+    het binary; zie features/age-ontsleuteling-in-proces.md. Zonder deze toets is het een
+    voor de hand liggend pakket om weg te halen bij de volgende opruimronde van de image.
+    """
+    pakketten = _apt_pakketten(DOCKERFILE.read_text())
+    assert "age" in pakketten, f"de Dockerfile installeert age niet meer, wel {sorted(pakketten)}"
