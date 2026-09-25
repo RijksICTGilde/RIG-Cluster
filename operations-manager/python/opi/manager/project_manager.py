@@ -83,6 +83,7 @@ from opi.handlers.project_file_handler import (
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     UMBRELLA_REFRESH_MAX_POGINGEN,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
@@ -2954,6 +2955,87 @@ class ProjectManager:
             "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
         )
 
+    async def wait_for_project_level_application(self, app_name: str) -> None:
+        """Wacht tot het PROJECTNIVEAU van dit project echt gesynchroniseerd is.
+
+        De ServiceAccount van het project komt uit deze applicatie, en de podspec van elke
+        Deployment eronder noemt hem. Daarom staat deze wacht voor het aanmaken van de
+        deployment-applicaties: bestaat hun CR nog niet, dan kan ArgoCD ze ook niet
+        zelfstandig synchroniseren, en is de ordening een feit in plaats van een hoop.
+
+        Dezelfde vorm als de infrastructuurapplicatie, die net zo goed op wave 0 staat en er
+        net zo goed moet staan voordat de pods komen: aanmaken, wachten tot ArgoCD hem heeft
+        aangemaakt, hem ZELF verversen, en dan wachten op een sync die aantoonbaar NA die
+        verversing komt. Zonder dat laatste stelt een ``Synced`` van voor onze commit de
+        wacht bij een herhaalrun meteen tevreden.
+
+        Het wachten op de AANMAAK, en de dure umbrella-refresh die daarbij hoort, gebeurt
+        alleen als de applicatie er nog niet is. Het verversen van de applicatie zelf en het
+        wachten op zijn sync gebeuren altijd.
+
+        De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul resources
+        en meldt zich daarmee binnen een seconde Healthy, dus de wave-0-grendel van de
+        umbrella gaat open voordat deze applicatie zijn ServiceAccount heeft uitgerold. Zie
+        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
+
+        Args:
+            app_name: Naam van de applicatie van het projectniveau.
+
+        Raises:
+            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
+            TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
+        """
+        argo_connector = create_argo_connector()
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        # De umbrella alleen verversen als de applicatie er nog niet is. Zo'n refresh
+        # hertekent circa 90 child-apps (issue #130) en kan minuten duren als hij samenvalt
+        # met een cache-invalidatie (features/argocd-refresh-performance.md); bij een
+        # herhaalrun bestaat de applicatie al en is dat puur verlies in het kritieke pad.
+        # Dezelfde keuze als bij de deployment-applicaties verderop, en op dezelfde bron:
+        # de Kubernetes-API is de waarheid, de ArgoCD-API liegt bij een verouderde cache.
+        # Fail safe: alles wat niet aantoonbaar bestaat (False of onbekend None) ververst.
+        exists = await self._kubectl_connector.argocd_application_exists(
+            app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
+        )
+        if exists is not True:
+            # Dezelfde bewaker als bij de infrastructuur- en deployment-applicaties: de
+            # refresh die de umbrella onze commit moet laten zien kan opgaan in een reconcile
+            # die zijn revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile
+            # niets.
+            umbrella_watcher = asyncio.create_task(
+                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+            )
+            try:
+                await self._argo_manager.wait_for_application_created(
+                    app_name=app_name,
+                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    poll_interval=1,
+                )
+            finally:
+                umbrella_watcher.cancel()
+                try:
+                    await umbrella_watcher
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
+                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
+
+        # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
+        # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
+        reconciled_at = await argo_connector.refresh_application(app_name)
+        if not reconciled_at:
+            raise RuntimeError(f"Failed to refresh ArgoCD project-level application '{app_name}'")
+
+        await self._argo_manager.wait_for_application_synced(
+            app_name=app_name,
+            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+            refreshed_after=reconciled_at,
+        )
+        logger.info(f"Project-level application '{app_name}' is synced; de ServiceAccount staat er")
+
     async def process_project_from_git(
         self,
         relative_project_file_path: str,
@@ -3297,10 +3379,10 @@ class ProjectManager:
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
 
-                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments,
-                # dus zonder deze regel werd de umbrella niet ververst zolang de
-                # deployment-applicaties al bestonden, en kreeg een Deployment zijn
-                # serviceAccountName voordat de ServiceAccount er was.
+                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments.
+                # `wait_for_project_level_application` heeft hem hierboven al aangemaakt EN
+                # gesynchroniseerd, dus normaal voegt dit niets toe; het blijft staan voor de
+                # paden die hier binnenkomen zonder door die grendel te zijn gegaan.
                 project_app_name = generate_argocd_project_application_name(project_name)
                 project_app_exists = await self._kubectl_connector.argocd_application_exists(
                     project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
@@ -3351,20 +3433,11 @@ class ProjectManager:
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
                     )
 
-                # Wachten tot het projectniveau GESYNCT is, want de ServiceAccount komt pas
-                # dan en de deployments hieronder zetten hun podspec erop. De sync-wave
-                # dekt dit niet: OPI ververst de deployment-applicatie ook rechtstreeks.
-                # Mislukken is geen reden om af te breken, een te vroege pod herstelt zelf.
-                try:
-                    await self._argo_manager.wait_for_application_synced(
-                        app_name=project_app_name, timeout=180, poll_interval=2
-                    )
-                    logger.info(f"Project-level application '{project_app_name}' is synced")
-                except (TimeoutError, RuntimeError) as e:
-                    logger.warning(
-                        f"Project-level application '{project_app_name}' not synced yet ({e}); "
-                        f"deployments may briefly wait for its ServiceAccount"
-                    )
+                # Hier stond de wacht op het projectniveau. Die is verhuisd naar
+                # `wait_for_project_level_application`, en draait nu VOOR het aanmaken van
+                # de deployment-applicaties (`create_argocd_resources`). Hier hielp hij niet:
+                # op dit punt bestaan die applicaties al en synchroniseert ArgoCD ze
+                # zelfstandig, dus de ServiceAccount kon nog steeds na de Deployment komen.
 
                 # Refresh each application that was created, then wait for sync+healthy.
                 # Refresh + wait run concurrently per application (read-only polls);
