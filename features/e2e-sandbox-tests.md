@@ -112,6 +112,12 @@ fails halfway.
 - **Do** name projects with `_unique_project_name()` and register cleanup. **Don't** leave test
   projects on the sandbox.
 - **Do** keep new tests behind the right marker(s) so they never run in the default suite.
+- **Do** zet `pytest.mark.timeout(...)` in de `pytestmark` van een module die langer dan
+  vijf minuten kan doen over een toets OF over het opzetten van zijn fixtures.
+  `task test-e2e-sandbox` draait met `--timeout=300`, en dat budget geldt ook voor de SETUP
+  van een module-fixture: zonder eigen marker eindigt een aanmaakwacht van 600s op
+  "Timeout (>300.0s) from pytest-timeout" en wordt de hele module ERROR, terwijl de
+  wachttijden die de module zelf declareert nooit aan bod komen.
 
 ## Reference example
 

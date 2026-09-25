@@ -38,10 +38,14 @@ logger = logging.getLogger(__name__)
 # `serial` omdat deze doorloop een doorloop is: de component die de ene toets toevoegt is
 # waar de volgende hem weigert. Zonder die marker schudt `task test-e2e-random` hem door
 # elkaar en meet de weigering een component die er nog niet is.
+# Eigen tijdsbudget, en waarom dat moet staat in `features/e2e-sandbox-tests.md`.
+# Boven het aanmaken via de wizard (240s) in de setup en de langste toets hieronder: een
+# CLI-aanroep (300s), de wacht op het projectbestand (240s) en nog een CLI-aanroep.
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.sandbox,
     pytest.mark.serial,
+    pytest.mark.timeout(1200),
     pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
 ]
 
