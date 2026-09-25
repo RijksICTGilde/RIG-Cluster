@@ -112,9 +112,19 @@ def orphaned_paths(repo_root: Path, referenced: set[str]) -> list[str]:
     the cluster carry it as ``./sandboxed-local/<project>/<deployment>`` (measured on the
     sandbox, 24 September 2026), and comparing those two forms literally would call every
     live path an orphan.
+
+    A reference BELOW a render root protects it too. ``RENDER_ROOT_DEPTH`` is the layout of
+    this repo today, but a repository entry with a non-empty ``path`` puts the tree a level
+    deeper, and then an exact comparison would call every live project directory an orphan
+    and ``--delete`` would take them all. Living above a referenced path is proof enough of
+    life.
     """
     normalised = {posixpath.normpath(path).strip("/") for path in referenced if path}
-    return [root for root in render_roots(repo_root) if root not in normalised]
+    return [
+        root
+        for root in render_roots(repo_root)
+        if not any(reference == root or reference.startswith(f"{root}/") for reference in normalised)
+    ]
 
 
 def format_report(resources: list[TrackedResource], paths: list[str], after_delete: bool = False) -> str:

@@ -117,6 +117,18 @@ class TestOrphanedPaths:
         repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310")
         assert orphaned_paths(repo, {reference}) == []
 
+    def test_a_reference_below_a_render_root_protects_it(self, tmp_path: Path) -> None:
+        """A repository entry with a non-empty ``path`` puts the tree a level deeper than
+        ``RENDER_ROOT_DEPTH``. Without this, every live project directory is an orphan and
+        ``--delete`` takes them all."""
+        repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-310/infra")
+        assert orphaned_paths(repo, {"odcn-production/mpfm-w3h/pr-310/infra"}) == []
+
+    def test_a_sibling_prefix_does_not_protect(self, tmp_path: Path) -> None:
+        """``pr-31`` is a prefix of ``pr-310`` as a string, but not as a path."""
+        repo = self._repo(tmp_path, "odcn-production/mpfm-w3h/pr-31", "odcn-production/mpfm-w3h/pr-310")
+        assert orphaned_paths(repo, {"odcn-production/mpfm-w3h/pr-310"}) == ["odcn-production/mpfm-w3h/pr-31"]
+
     def test_an_application_without_a_path_protects_nothing(self, tmp_path: Path) -> None:
         """An empty string normalises to ``.``; reading that as a render root would
         silently protect a directory named after nothing."""
