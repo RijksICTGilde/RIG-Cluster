@@ -176,20 +176,29 @@ class DeleteProjectManager:
                     f"'{app_name}'; its resources may be left behind"
                 )
             else:
+                resources, complete = inventory
                 known_names = await self._known_application_names()
-                tracked, undecidable = _split_on_the_mark(inventory, app_name, known_names)
+                tracked, undecidable = _split_on_the_mark(resources, app_name, known_names)
                 failed = await kubectl.delete_tracked_resources(tracked)
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_tracked_resource_deletion",
                         "target": app_name,
                         "namespace": destination,
-                        "status": "success" if not failed and not undecidable else "partial",
+                        "status": "success" if not failed and not undecidable and complete else "partial",
                         "deleted": len(tracked) - len(failed),
                         "failed": len(failed),
                         "undecidable": len(undecidable),
                     }
                 )
+                if not complete:
+                    # A half answer that passes for a whole one is the same silent force as
+                    # a failed one: what is deleted here is only what kubectl got round to
+                    # printing, and the types that stayed silent are where the rest stands.
+                    deletion_results["errors"].append(
+                        f"Namespace '{destination}' answered for only part of its resource types, so resources "
+                        f"of ArgoCD application '{app_name}' outside that part may be left behind"
+                    )
                 if failed:
                     deletion_results["errors"].append(
                         f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
