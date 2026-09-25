@@ -68,12 +68,15 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    finalizer weg. Welke resources dat zijn leest `opi/utils/argocd_tracking.py`, en dat
    kijkt naar allebei de merktekens die ArgoCD kan zetten (zie hieronder).
 
-Kan de bestemmingsnamespace niet gelezen worden, of lukt de inventaris van die namespace
-niet, dan gaat de finalizer alsnog weg (een Application die blijft staan blokkeert de
-parent voor iedereen) maar komt dat als fout in `deletion_results["errors"]` terecht.
-Zwijgend forceren is precies wat de schade maakte. Een mislukte inventaris leest anders
-als een lege namespace, en dan meldt de forcering `deleted: 0` zonder fout terwijl de
-resources gewoon blijven staan.
+Kan de bestemmingsnamespace niet gelezen worden, lukt de inventaris van die namespace
+niet, of antwoordt hij maar voor een deel van zijn resourcetypes, dan gaat de finalizer
+alsnog weg (een Application die blijft staan blokkeert de parent voor iedereen) maar komt
+dat als fout in `deletion_results["errors"]` terecht, met status `partial`. Zwijgend
+forceren is precies wat de schade maakte. Een mislukte inventaris leest anders als een
+lege namespace, en dan meldt de forcering `deleted: 0` zonder fout terwijl de resources
+gewoon blijven staan. Een halve inventaris is dezelfde fout een slag subtieler: wat wel
+geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
+resources, terwijl de melding `success` is.
 
 ### Twee merktekens, niet een
 
@@ -209,12 +212,21 @@ bekeken is:
   lezingen wordt elke resource een wees;
 * geen lijst van resourcetypes terug: dan inventariseert elke namespace als leeg;
 * een namespace die niet te inventariseren was: die is niet leeg, hij heeft niet geantwoord;
+* een namespace die maar voor een deel van zijn resourcetypes antwoordde: `kubectl get`
+  eindigt niet-nul zodra EEN type faalt en drukt de rest gewoon af, en precies in het stuk
+  dat zweeg staat de wees. De typelijst wordt een keer ontdekt en aan elke namespace
+  meegegeven, en die ontdekking kijkt naar de verbs van het CLUSTER, niet naar wat de
+  serviceaccount in die namespace mag opvragen, dus de weigering hierboven vangt dit niet;
 * geen lijst van namespaces terug: dan lijkt er geen enkele door OPI gemaakt, dus zonder
   `--namespace` valt er niets te vegen en met `--namespace` valt de opgegeven namespace
   buiten de toelatingslijst.
 
 `list_tracked_resources` en `list_namespaced_resource_types` dragen dat verschil zelf, met
 `None` voor een mislukte lezing naast een lege lijst voor "niets gevonden".
+`list_tracked_resources` geeft er een derde antwoord bij: naast de gevonden resources zegt
+hij of de inventaris VOLLEDIG is (`tuple[list[TrackedResource], bool]`). De veegactie
+weigert op een halve inventaris net zo hard als op een mislukte; de forcering verwijdert
+het deel dat wel geantwoord heeft, maar meldt `partial` met een fout erbij.
 `get_namespace_label_map` gooit in plaats daarvan een `KubectlExecutionError`, die de
 veegactie vangt en als weigering meldt.
 
