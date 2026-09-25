@@ -104,14 +104,32 @@ van die twee doet is **niet** gemeten: op het sandboxcluster is de langste
 Application-naam vandaag 24 tekens, dus de situatie komt er niet voor, en hem daar maken
 vraagt het cluster terwijl een andere PR erop test.
 
-Daarom vergelijkt `is_tracked_by` niet op exacte gelijkheid: een waarde die precies op de
-63 zit hoort ook bij een langere naam die ermee begint. Alleen die kant op. Het kan een
-resource bezet laten lijken waar een exacte vergelijking hem een wees noemde, nooit
-andersom, en een wees is waar `--delete` op afgaat. Een waarde korter of langer dan 63
-tekens is nooit afgekapt en doet dus niet mee aan die vergelijking.
+Een labelwaarde die precies op de 63 zit is daarmee dubbelzinnig: hij is de hele naam van
+een Application, of de afgekapte vorm van een langere naam die ermee begint. Meer dan dat
+zegt `may_be_cut_from` niet, want een predikaat dat "hoort bij" antwoordt keert van
+betekenis om per aanroeper: voor de veegactie betekent een treffer afblijven, voor de
+forcering verwijderen. Geen van tweeën beslist er dus destructief op.
 
-Voor de veegactie ligt dat anders, want het label is niet van ArgoCD alleen: Helm zet
-`app.kubernetes.io/instance` ook, en bedoelt er de release mee. Op de sandbox dragen zes
+* De **forcering** verwijdert alleen wat haar Application NOEMT. Een label dat haar naam
+  afgekapt kan zijn is net zo goed de volledige naam van een buur in dezelfde namespace:
+  30 tekens project plus 63 deployment is wat het schema toestaat, en
+  `projects/simple-example.yaml` zet vier deployments in een namespace. Op die lezing
+  verwijderen is de secrets en PVC's van die buur meenemen.
+* De **veegactie** houdt zo'n resource buiten de wezenlijst, want `--delete` gaat daarop
+  af en de andere lezing is een draaiende deployment. Hem daarmee ook buiten het rapport
+  houden mag niet: dan is een echte wees `SCHOON` zolang er een langere zuster leeft.
+
+Allebei melden ze daarom wat ze niet konden plaatsen, met naam en toenaam. Welke van de
+twee lezingen klopt is aan de resource zelf te zien, en dat is mensenwerk.
+
+Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee. Een naam uit
+de **annotatie** ook niet: die kent de grens niet. Op `odcn-production`, het enige
+clustertype dat op de annotatie merkt en ook het clustertype waar dit plan over gaat, is
+de vergelijking dus gewoon exact.
+
+Dat een merkteken van ArgoCD komt gaat voor de veegactie niet zonder meer op, want het
+label is niet van ArgoCD alleen: Helm zet `app.kubernetes.io/instance` ook, en bedoelt er
+de release mee. Op de sandbox dragen zes
 resources in `ingress-nginx` het label `instance: ingress-nginx` terwijl er geen
 Application met die naam bestaat. Daarom kijkt de veegactie alleen in namespaces die OPI
 zelf heeft aangemaakt: die dragen `created-by: operations-manager`
@@ -204,15 +222,16 @@ NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
 Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
 hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
 
-Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er zijn wezen, `2` geweigerd,
-waaronder elke mislukte lezing hierboven. Dat maakt hem bruikbaar als laatste stap van een
+Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er staat iets, wezen of
+resources die hij niet kon plaatsen, `2` geweigerd, waaronder elke mislukte lezing
+hierboven. Dat maakt hem bruikbaar als laatste stap van een
 verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn.
 
 ## Bestanden
 
 | Bestand | Wat het doet |
 |---|---|
-| `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `is_tracked_by` voor de vergelijking op de naam |
+| `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
 | `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
