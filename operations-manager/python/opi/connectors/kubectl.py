@@ -788,10 +788,11 @@ class KubectlConnector:
         sweep whose whole job is finding what was left behind.
 
         Returns:
-            kubectl type names (``secrets``, ``deployments.apps``, ...), or ``None`` when
-            the discovery itself failed. A failed discovery must not read as 'this cluster
-            has no types': every namespace would then inventory as empty and a sweep would
-            report SCHOON without having looked at anything (RC-226).
+            kubectl type names (``secrets``, ``deployments.apps``, ...) minus
+            ``_TRACKING_SWEEP_SKIPPED_TYPES``, or ``None`` when the discovery itself
+            failed. A failed discovery must not read as 'this cluster has no types':
+            every namespace would then inventory as empty and a sweep would report
+            SCHOON without having looked at anything (RC-226).
         """
         stdout, stderr, code = await self._run_kubectl_command(
             ["api-resources", "--namespaced=true", "--verbs=list,delete", "-o", "name"]

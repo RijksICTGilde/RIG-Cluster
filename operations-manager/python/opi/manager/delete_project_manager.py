@@ -217,7 +217,7 @@ class DeleteProjectManager:
 
                     try:
                         await self._terminate_application_operation(app_name, deletion_results)
-                        delete_success = await kubectl.delete_resource("application", app_name, argo_namespace)
+                        delete_success = await kubectl.delete_argocd_application(app_name, argo_namespace)
                         if delete_success:
                             deletion_results["operations"].append(
                                 {

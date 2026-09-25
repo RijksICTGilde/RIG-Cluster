@@ -359,7 +359,7 @@ def _recording_kubectl(
     kubectl.list_tracked_resources = step("list_resources", tracked)
     kubectl.delete_tracked_resources = step("delete_resources", [])
     kubectl.remove_argocd_application_finalizers = step("remove_finalizers", True)
-    kubectl.delete_resource = step("delete_resource", deleted)
+    kubectl.delete_argocd_application = step("delete_application", deleted)
     kubectl.delete_namespace = AsyncMock(return_value=True)
     kubectl._run_kubectl_command = AsyncMock(return_value=("", "", 0))
     return kubectl
@@ -756,10 +756,9 @@ class TestOperationClearedBeforeTheWait:
         ):
             await DeleteProjectManager(pm)._cleanup_orphaned_argocd_resources("mpfm-w3h", results)
 
-        assert calls == ["terminate_operation", "delete_resource"]
+        assert calls == ["terminate_operation", "delete_application"]
         assert _targets(pm, "terminate_argocd_application_operation") == ["mpfm-w3h-pr-310"]
-        assert pm._kubectl_connector.delete_resource.await_args.args == (
-            "application",
+        assert pm._kubectl_connector.delete_argocd_application.await_args.args == (
             "mpfm-w3h-pr-310",
             "argocd-test",
         )
