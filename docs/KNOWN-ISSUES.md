@@ -54,6 +54,50 @@ besluit dat groter is dan deze taak.
 Tot dat besluit valt: versiebeheer uitzetten kan met `mc version suspend` op de bucket
 zelf, en het bestand is dan al in orde.
 
+## MinIO distribueert zijn eigen images niet meer (niet gerepareerd)
+
+Genoteerd bij RC-227, gemeten op 24 en 25 september 2026.
+
+MinIO heeft zijn publicatiekanalen dichtgezet. Gemeten anoniem, met een publieke buur als
+controlebeeld zodat het antwoord over het account gaat en niet over de host:
+
+| adres | uitkomst | controlebeeld |
+|---|---|---|
+| `docker.io/minio/minio` | 401 op elke tag | `docker.io/library/alpine` geeft 200 |
+| `quay.io/minio/minio` | 401 op elke tag | `quay.io/prometheus/busybox` geeft 200 |
+| `quay.io/minio/mc` | 401 op elke tag | idem |
+| `dl.min.io` | 410 Gone | nvt |
+
+Twee dingen zijn daarmee gerepareerd, en twee blijven staan.
+
+**Gerepareerd.** De server op productie komt uit een eigen build uit de broncode van tag
+`RELEASE.2025-07-23T15-54-02Z`; de reden en de bouwwijze staan in
+`infrastructure/bootstrap/infrastructure/minio/controller/overlays/odcn/kustomization.yaml`.
+De `mc`-client komt uit de GitHub-release van dezelfde tag, met de sha256 van het artefact
+literaal in `operations-manager/Dockerfile`; waarom die som literaal staat en niet naast de
+binary opgehaald wordt, staat daar.
+
+**Blijft staan 1: de huidige productiepin is niet meer te herbouwen.** Productie draait
+`2026.09.02.2241-d81cdab4`, en de Dockerfile op die commit haalt `mc` van `dl.min.io`. Die
+build eindigt vandaag op een 410. Een terugrol naar deze pin kan dus alleen met het al
+gepubliceerde image, niet met een build uit de bron. Dat lost zichzelf op zodra productie
+een pin krijgt van na de reparatie hierboven; tot die tijd is het al gepubliceerde image het
+enige exemplaar dat er is.
+
+**Blijft staan 2: local en sandboxed-local wijzen nog naar het dode adres.** Alleen de
+odcn-overlays vervangen `quay.io/minio/minio` door de eigen build. De base-deployments
+eronder, en `bootstrap/rig-system/kustomize/backup-destination/base/deployment.yaml` die
+helemaal geen odcn-overlay heeft, houden de kale quay-referentie. Wat er draait, draait op
+wat de node al in zijn cache had: op de sandbox staat de minio-pod nog op
+`docker.io/minio/minio` uit augustus, terwijl de base inmiddels quay zegt. Een node zonder
+die cache krijgt de image niet meer.
+
+Waarom het hier blijft staan: de eigen build in `ghcr-rig` is een proxypad naar het
+rijksregister, en of een Kind-cluster op een werkplek daaruit mag pullen is een andere vraag
+dan wat deze taak meet. De keuze (het rijksregister ook voor lokaal gebruiken, een eigen
+build ergens publiek neerzetten, of de image in de sandbox-setup meebakken) hoort een eigen
+taak te zijn.
+
 ## Sandbox Setup
 
 ### Forgejo pod restart causing sandbox:sync failure (fixed)
