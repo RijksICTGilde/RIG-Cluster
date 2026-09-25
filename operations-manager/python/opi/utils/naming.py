@@ -61,6 +61,17 @@ ROOT_COMPONENT_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
 ]
 
+#: The formats that build a hostname out of the deployment alone: no subdomain to fill in,
+#: and no dot-separated labels to certify.
+#:
+#: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
+#: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
+#: produces a multi-label host the single-label wildcard certificate cannot cover (the
+#: regel-k4c regression).
+SELF_CONTAINED_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
+]
+
 
 def resolve_domain_tail(
     base_domain: str | None,

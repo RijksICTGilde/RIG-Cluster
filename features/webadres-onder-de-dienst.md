@@ -187,16 +187,20 @@ Drie dingen die stil kapot waren en dit werk blokkeerden:
 
 ## Twee gevolgen van de verhuizing die eigen poorten kregen
 
-**Een clone erft het webadres niet.** `upsert_deployment` kopieerde de brondeployment en
-sloot daarbij de vijf wortelsleutels uit (`subdomain`, `base-domain`, `domain-mode`,
-`domain-format`, `issuer`). Zodra die waarden onder de dienst staan is dat een no-op: ze
-reizen mee in het `services`-blok, dat als geheel gekopieerd wordt. Het webadres wordt nu
-**na** de kopie verwijderd, met `clear_domain_settings()` — dezelfde autoriteit over de
-locatie als de lezers en schrijvers — en de door de aanroeper gevraagde instellingen worden
-daarna opnieuw geschreven, want de kopie liep er anders overheen. Een clone landt dus op het
-clusteradres, niet op de hostnamen van de bron. Merk op dat de clone nu ook
-`root-component` en `expose-component-on-bare-domain` laat vallen; die werden voorheen
+**Een clone erft de hostnamen van het webadres niet.** `upsert_deployment` kopieerde de
+brondeployment en sloot daarbij de vijf wortelsleutels uit (`subdomain`, `base-domain`,
+`domain-mode`, `domain-format`, `issuer`). Zodra die waarden onder de dienst staan is dat
+een no-op: ze reizen mee in het `services`-blok, dat als geheel gekopieerd wordt. Het adres
+wordt nu **na** de kopie verwijderd, met `clear_domain_name_settings()` (dezelfde
+autoriteit over de locatie als de lezers en schrijvers), en de door de aanroeper gevraagde
+instellingen worden daarna opnieuw geschreven, want de kopie liep er anders overheen. Een
+clone landt dus op het clusteradres, niet op de hostnamen van de bron. Merk op dat de clone
+ook `root-component` en `expose-component-on-bare-domain` laat vallen; die werden voorheen
 geërfd en daarna voorwaardelijk opgeruimd.
+
+De **vorm** blijft wel staan, want die noemt geen hostnaam. Zie
+`features/kloon-erft-de-vorm-van-het-webadres.md` voor wat een clone van `domain-format`
+overneemt en wanneer niet.
 
 **Het kale domein wordt op elke schrijfweg getoetst.** `expose-component-on-bare-domain` is
 sinds deze verhuizing ook via de dienstconfiguratie-PUT te zetten, en die body hoeft geen
