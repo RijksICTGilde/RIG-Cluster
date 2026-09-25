@@ -93,6 +93,24 @@ schade die dit moet voorkomen. Daarom tellen allebei de merktekens, met de annot
 voorop. Geen van tweeën is hier dubbelzinnig: OPI's eigen manifesten schrijven ze geen van
 beide, dus wat er staat komt van ArgoCD.
 
+Het label heeft een maat die de annotatie niet heeft: Kubernetes laat 63 tekens in een
+labelwaarde toe, en een Application-naam mag langer zijn. Het schema staat 30 tekens toe
+voor de projectnaam en 63 voor de deploymentnaam (`project_v2.json`) en
+`generate_argocd_application_name` kapt pas op 253, dus 94 tekens is haalbaar. Gemeten met
+een server-dry-run op 25 september 2026: de API-server weigert een labelwaarde van 94
+tekens ronduit. Zo'n Application krijgt op een labelcluster dus of geen enkele resource
+(niets om te vergelijken), of resources met de naam afgekapt op 63 tekens erop. Wat ArgoCD
+van die twee doet is **niet** gemeten: op het sandboxcluster is de langste
+Application-naam vandaag 24 tekens, dus de situatie komt er niet voor, en hem daar maken
+vraagt het cluster terwijl een andere PR erop test.
+
+Daarom vergelijkt `is_tracked_by` niet op exacte gelijkheid: een waarde die precies op de
+63 zit hoort ook bij een langere naam die ermee begint. Alleen die kant op. Het kan een
+resource bezet laten lijken waar een exacte vergelijking hem een wees noemde, nooit
+andersom, en een wees is waar `--delete` op afgaat. Een waarde korter of langer dan 63
+tekens is nooit afgekapt en doet dus niet mee aan die vergelijking. Blijkt ooit dat ArgoCD
+de apply juist weigert, dan kost deze regel niets, want dan bestaat de resource niet.
+
 Voor de veegactie ligt dat anders, want het label is niet van ArgoCD alleen: Helm zet
 `app.kubernetes.io/instance` ook, en bedoelt er de release mee. Op de sandbox dragen zes
 resources in `ingress-nginx` het label `instance: ingress-nginx` terwijl er geen
@@ -195,12 +213,12 @@ verwijdertoets: hij meet wat er OVER is, niet wat er gebeurd lijkt te zijn.
 
 | Bestand | Wat het doet |
 |---|---|
-| `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens |
+| `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `is_tracked_by` voor de vergelijking op de naam |
 | `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
-| `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute |
+| `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, en de merktekens zelf |
 | `tests/test_argocd_application_syncoptions.py` | De syncOptions die ArgoCD kent |
 | `tests/test_argocd_orphan_sweep.py` | De veegactie |
 

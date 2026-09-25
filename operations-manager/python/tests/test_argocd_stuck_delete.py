@@ -20,9 +20,11 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.utils.argocd_tracking import (
     INSTANCE_LABEL,
+    LABEL_VALUE_MAX,
     TRACKING_ID_ANNOTATION,
     TrackedResource,
     application_name_from_tracking_id,
+    is_tracked_by,
     tracked_resource_from_item,
 )
 
@@ -125,6 +127,41 @@ class TestTrackingId:
         assert deployment.kubectl_type == "deployment.apps"
         assert secret is not None
         assert secret.kubectl_type == "secret"
+
+
+class TestIsTrackedBy:
+    """A label value is capped at 63 characters, an Application name is not.
+
+    The schema allows a 94-character name (project 30 + deployment 63) and
+    ``generate_argocd_application_name`` only caps at 253, so on a label cluster the value
+    on the resource can be the name cut to the cap. An exact comparison then calls a live
+    resource an orphan, and ``--delete`` takes it along.
+    """
+
+    #: A name longer than a label value can hold, in the shape the schema allows.
+    LONG_APP = "a" * 30 + "-" + "b" * 63
+
+    def test_the_same_name_matches(self) -> None:
+        assert is_tracked_by("app-a", {"app-a", "app-b"}) is True
+
+    def test_another_name_does_not(self) -> None:
+        assert is_tracked_by("app-c", {"app-a", "app-b"}) is False
+
+    def test_a_value_at_the_cap_matches_the_longer_name_it_starts(self) -> None:
+        assert len(self.LONG_APP) > LABEL_VALUE_MAX
+        assert is_tracked_by(self.LONG_APP[:LABEL_VALUE_MAX], {self.LONG_APP}) is True
+
+    def test_a_value_at_the_cap_still_needs_an_application_to_belong_to(self) -> None:
+        """Otherwise the cap would turn every long orphan into something to leave alone."""
+        assert is_tracked_by("z" * LABEL_VALUE_MAX, {self.LONG_APP}) is False
+
+    def test_a_value_below_the_cap_is_not_a_prefix_match(self) -> None:
+        """``mpfm-w3h-pr-31`` was never cut, so ``mpfm-w3h-pr-310`` does not protect it."""
+        assert is_tracked_by("mpfm-w3h-pr-31", {"mpfm-w3h-pr-310"}) is False
+
+    def test_a_value_over_the_cap_is_not_a_prefix_match(self) -> None:
+        """Only a value AT the cap can be a cut one; a longer value was never cut."""
+        assert is_tracked_by(self.LONG_APP[:-1], {self.LONG_APP}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +514,25 @@ class TestForceDeleteStuckApplication:
 
         deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
         assert [r.name for r in deleted] == ["mine"]
+
+    @pytest.mark.asyncio
+    async def test_a_resource_whose_label_was_cut_to_the_cap_is_still_taken(self) -> None:
+        """Otherwise the force reports ``deleted: 0`` without an error and leaves them.
+
+        That is the silent force this task is about, arriving through the other door: not a
+        failed inventory, but a successful one whose names do not compare equal.
+        """
+        app = "a" * 30 + "-" + "b" * 63
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [], destination="rig-prd-mpfm-w3h", tracked=[_tracked(app[:LABEL_VALUE_MAX], "db-creds")]
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(app, results)
+
+        deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
+        assert [r.name for r in deleted] == ["db-creds"]
 
     @pytest.mark.asyncio
     async def test_reports_how_much_it_deleted(self) -> None:
