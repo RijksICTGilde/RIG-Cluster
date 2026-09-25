@@ -1,12 +1,10 @@
-"""The syncOptions on the Applications in this repo must all be options ArgoCD knows.
+"""The syncOptions on the handwritten platform Applications must all be options ArgoCD knows.
 
-RC-226 found two that were not, on the generated Application. ``Timeout=300`` does not
-exist as a sync option, so it reads as an upper bound on the waiting that is not there,
-which is worse than no line at all. And ``Delete`` only takes ``false`` or ``confirm`` at
-application level, so ``Delete=true`` was silently ignored.
-
-RC-228 asked the same question of ``SyncTimeout=60s`` on the two handwritten platform
-Applications, and the answer is the same. Those two live on odcn-production, whose
+RC-226 asked this of the *generated* Application and found two that were not; that half
+lives next to this one, in ``test_argocd_generated_application_syncoptions.py``, and the
+reasoning for its two removals is written up there. RC-228 asked the same question of
+``SyncTimeout=60s`` on the two handwritten platform Applications under ``bootstrap/``,
+and the answer is the same. Those two live on odcn-production, whose
 ``argocd-deployment.yaml`` pins ``argocd-rig:v3.5.1-rig2``, upstream ArgoCD v3.5.1. That
 version reads no such option: its only ``SyncTimeout`` is ``informerSyncTimeout``, an
 internal wait on an informer cache in the API server.
@@ -40,30 +38,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from tests.argocd_sync_options import KNOWN_SYNC_OPTIONS
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _OVERLAYS = _REPO_ROOT / "bootstrap" / "rig-system" / "kustomize" / "overlays"
-
-#: Every option ArgoCD v3.5.1 reads from ``spec.syncPolicy.syncOptions``, measured on the
-#: ``SyncOptions.HasOption`` and ``SyncOptions.GetOptionValue`` calls in ``controller/``.
-#: ``Force=true`` is deliberately not here: the only reader of it is
-#: ``HasAnnotationOption`` in gitops-engine, so it works as a resource annotation and does
-#: nothing on an Application.
-KNOWN_SYNC_OPTIONS = {
-    "ApplyOutOfSyncOnly",
-    "ClientSideApplyMigration",
-    "CreateNamespace",
-    "Delete",
-    "FailOnSharedResource",
-    "Prune",
-    "PruneLast",
-    "PrunePropagationPolicy",
-    "Replace",
-    "RespectIgnoreDifferences",
-    "ServerSideApply",
-    "SkipDryRunOnMissingResource",
-    "Validate",
-}
 
 
 def _handwritten_applications() -> list[tuple[str, list[str]]]:
@@ -111,10 +89,9 @@ def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
     assert covered == {"local", "odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
 
 
-# The name says *handwritten* because the RC-226 half of this file lands in this same
-# module with its own version of this check over the *generated* Application. Two test
-# functions of one name in one module is not a union: the later definition shadows the
-# earlier one, and pytest reports neither a failure nor a warning.
+# The name says *handwritten* because the generated Application has its own version of
+# this check, in the sibling module. A failure report names the test, so the name has to
+# say which of the two sources went red.
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
 def test_every_sync_option_on_a_handwritten_application_is_one_argocd_knows(path: str, sync_options: list[str]) -> None:
     unknown = [option for option in sync_options if option.split("=", 1)[0] not in KNOWN_SYNC_OPTIONS]
@@ -136,7 +113,7 @@ def test_synctimeout_is_gone(path: str, sync_options: list[str]) -> None:
 
 
 # Named for the *handwritten* Applications for the same reason as the check above: the
-# RC-226 half carries ``test_delete_true_is_gone`` over the generated one.
+# sibling module carries ``test_delete_true_is_gone`` over the generated one.
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
 def test_delete_carries_a_value_argocd_reads_on_a_handwritten_application(path: str, sync_options: list[str]) -> None:
     """``Delete`` is in ``KNOWN_SYNC_OPTIONS``, so the name check above passes it whatever

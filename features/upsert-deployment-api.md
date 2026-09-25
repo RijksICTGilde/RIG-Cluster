@@ -36,8 +36,8 @@ When `cloneFrom` is specified on create, the following properties are copied fro
 | `namespace` | `components` |
 | `repository` | `subdomain` |
 | `configuration` | `base-domain` |
-| `services` | `domain-mode` |
-| (other custom fields) | `issuer` |
+| `services` (incl. `domain-format`) | `domain-mode` |
+| (other custom fields) | `issuer`, `root-component`, `expose-component-on-bare-domain` |
 
 ### Why custom domain fields are excluded
 
@@ -46,6 +46,10 @@ The `base-domain`, `domain-mode`, and `issuer` fields configure a custom domain 
 - DNS conflicts between source and clone
 - Unnecessary Let's Encrypt certificate issuance for temporary deployments
 - Coupling preview deployments to production domain configuration
+
+### Why domain-format is not excluded
+
+`domain-format` names no hostname, so it cannot collide: it is inherited, except for the formats that need the name that was just dropped (dotted ones, and the ones that interpolate `{subdomain}`). See `features/kloon-erft-de-vorm-van-het-webadres.md`.
 
 ### Subdomain heuristic
 
