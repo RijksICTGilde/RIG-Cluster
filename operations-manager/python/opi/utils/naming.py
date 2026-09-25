@@ -11,6 +11,7 @@ import re
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,17 @@ assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  
 SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
 ROOT_COMPONENT_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
+]
+
+#: The formats that build a hostname out of the deployment alone: no subdomain to fill in,
+#: and no dot-separated labels to certify.
+#:
+#: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
+#: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
+#: produces a multi-label host the single-label wildcard certificate cannot cover (the
+#: regel-k4c regression).
+SELF_CONTAINED_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
 ]
 
 
@@ -2150,7 +2162,7 @@ def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypt
         >>> generate_helm_values_filename("local-deployment", "docs", encrypted=False)
         'local-deployment-docs-helm-values.yaml'
     """
-    extension = ".sops.yaml" if encrypted else ".yaml"
+    extension = SOPS_SUFFIX if encrypted else ".yaml"
     deployment_clean = _sanitize_for_lowercase(deployment_name)
     chart_clean = _sanitize_for_lowercase(chart_name)
     return f"{deployment_clean}-{chart_clean}-helm-values{extension}"

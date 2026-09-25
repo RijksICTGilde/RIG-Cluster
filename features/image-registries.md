@@ -369,11 +369,26 @@ opnieuw en de OUDE pod blijft ondertussen draaien, dus er is geen storing, maar 
 2 minuten en 39 seconden nadat de serviceaccount er stond, want de ReplicaSet zit dan in zijn
 FailedCreate-backoff.
 
-De sync-wave lost dit niet op: die ordent RESOURCES binnen één applicatie, en het
-projectniveau en een deployment zijn twee applicaties. Wat hem wel oplost staat in
-`ProjectManager._process_application_manifests`: de projectapplicatie telt mee in de
-bestaanscontrole die de umbrella-refresh aanzet, en er wordt op gewacht tot hij GESYNCT is
-(niet alleen tot zijn CR bestaat) voordat de deployments uitrollen.
+De sync-wave lost dit niet op. Een wave ordent wel over applicaties heen (de umbrella maakt
+wave 0 voor wave 1 aan), maar hij poortwacht op HEALTH, en een net aangemaakte
+kind-Application beheert nul resources en meldt zich daarmee binnen een seconde Healthy. De
+grendel gaat dus open voordat het projectniveau zijn serviceaccount heeft uitgerold. Gemeten
+op 2026-09-25, met de afgewezen alternatieven, in
+`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+
+Wat het wel oplost is de AANMAAKVOLGORDE, in `ArgoManager.create_argocd_resources`. Die
+pusht in twee commits: eerst het projectniveau (met zijn AppProject en repository-secret),
+dan de deployment-applicaties. Daartussen wacht
+`ProjectManager.wait_for_project_level_application` tot de projectapplicatie gesynchroniseerd
+is. Bestaat de CR van een deployment-applicatie nog niet, dan kan ArgoCD hem ook niet
+zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten zelf.
+
+Loopt die wacht vast, dan gaat de commit met de deployment-applicaties er niet meer heen en
+breekt de verwerking van het project af. Eerder was dat een waarschuwing in het log en liep
+de verwerking degraded door; waarom de afbrekende kant hier de veilige is, staat in
+`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+
+De toets erop staat in `tests/test_project_level_ordering.py`.
 
 ## Migratie (schemaversie 2.9)
 

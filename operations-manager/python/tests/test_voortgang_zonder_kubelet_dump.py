@@ -75,14 +75,20 @@ class TestDeStapnaamIsEenLabel:
         assert geknipt.endswith("…")
 
     def test_een_gewone_melding_blijft_heel(self) -> None:
-        """De grens is een vangnet, geen opmaakmiddel: de langste bestaande melding, de
-        ArgoCD-geruststelling bij een nieuw project, moet er ongeschonden doorheen."""
+        """De grens is een vangnet, geen opmaakmiddel: een eerlijke melding gaat er heel door.
+
+        De langste die er echt staat is de uitleg bij het uitrollen van een nieuw project, 355
+        tekens. Die staat hier niet nog een keer uitgeschreven maar wordt op zijn eigen plek
+        tegen deze grens gehouden (``test_project_level_ordering.py``), want een kopie hier
+        veroudert stil zodra die tekst verandert.
+        """
         melding = (
-            "Duurt het wachten op ArgoCD lang, dan betekent een time-out-melding niet dat het "
-            "aanmaken is mislukt: alleen dat de wachttijd is verstreken. Het project wordt dan "
-            "vrijwel zeker gewoon aangemaakt."
+            "Een melding in de vorm die hier heel doorheen moet: een paar volle zinnen die "
+            "uitleggen wat er gebeurt en wat de gebruiker daarvan mag verwachten, zonder een "
+            "enkel stuk machine-uitvoer erin, want dat laatste is waar de grens voor bedoeld is."
         )
 
+        assert len(melding) < MAX_STEP_NAME
         assert clamp_step_text(melding) == melding
 
 
