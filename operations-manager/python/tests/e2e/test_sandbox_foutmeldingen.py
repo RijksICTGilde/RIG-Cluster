@@ -198,7 +198,7 @@ def envelop_server() -> Generator[str]:
 
 
 def test_de_cli_maakt_van_de_envelop_een_leesbare_regel(envelop_server: str) -> None:
-    """De CLI is de tweede afnemer van de envelop; hier staat vast wat hij ermee doet.
+    """Wat de CLI met de gedocumenteerde envelop doet.
 
     Drie eisen, en ze meten elk iets anders: de zin uit `detail` moet te zien zijn (de
     envelop is een uitbreiding en geen breuk, dus dat veld blijft leidend), het kenmerk

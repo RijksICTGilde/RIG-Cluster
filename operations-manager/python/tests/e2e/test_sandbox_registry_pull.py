@@ -116,9 +116,8 @@ def registry_project(
             forgejo,
             unique_project_name(prefix="registry"),
             user_email=SANDBOX_TEST_USER["email"],
-            # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
-            # met diensten dat niet altijd. Een ruimere wacht is hier geen verdoezeling: de
-            # toets meet wat er daarna gebeurt, niet hoe snel de wizard is.
+            # 240s is de default van de helper; op dit GEDEELDE cluster haalt de wizard
+            # dat niet altijd.
             create_timeout=600.0,
         )
         yield gemaakt

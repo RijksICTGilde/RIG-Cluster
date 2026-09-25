@@ -5,11 +5,8 @@ antwoordvorm: de UI leest een HTML-pagina of een HTMX-fragment, de CLI leest de 
 en de foutenvelop eronder. Een wijziging die de UI niet raakt maar de CLI wel viel
 daarom tot nu toe nergens om, want geen enkele toets liep dat pad af.
 
-De CLI woont in een eigen repository (`zad-cli`, commando `zad`) en wordt niet door
-deze repo meegeleverd. Staat hij niet op het PATH, dan slaan de toetsen die hem
-gebruiken over, net zoals de sandboxtoetsen overslaan zonder ``E2E_BASE_URL``. Dat is
-een keuze: een CLI die ontbreekt is geen falende toets, en een pad dat niet gemeten is
-moet niet als groen wegschrijven.
+Een pad dat niet gemeten is mag niet als groen wegschrijven: ontbreekt de CLI, dan slaan
+de toetsen die hem gebruiken over in plaats van te slagen.
 """
 
 from __future__ import annotations
@@ -22,9 +19,8 @@ from dataclasses import dataclass
 
 import pytest
 
-#: Namen waaronder de CLI geinstalleerd kan zijn. `zad` is de entry point uit
-#: zad-cli's pyproject; `zadctl` staat in het plan van RC-227 en wordt meegenomen
-#: zodat een omgeving met die naam ook meet in plaats van over te slaan.
+#: `zad` is de entry point uit zad-cli's pyproject; `zadctl` staat in het plan van RC-227
+#: en wordt meegenomen zodat een omgeving met die naam ook meet in plaats van over te slaan.
 CLI_NAMEN = ("zad", "zadctl")
 
 #: Overschrijft het zoeken, voor een CLI die niet op het PATH staat.
@@ -33,8 +29,6 @@ CLI_ENV = "ZAD_CLI"
 
 @dataclass(frozen=True)
 class CliResultaat:
-    """Wat een CLI-aanroep opleverde: de drie dingen waar een toets iets over zegt."""
-
     exitcode: int
     stdout: str
     stderr: str
@@ -46,7 +40,6 @@ class CliResultaat:
         return f"{self.stdout}\n{self.stderr}"
 
     def json(self) -> object:
-        """De stdout als JSON, met de hele aanroep in de fout als dat niet lukt."""
         try:
             return json.loads(self.stdout)
         except json.JSONDecodeError as fout:
@@ -65,7 +58,6 @@ class CliResultaat:
 
 
 def cli_pad() -> str | None:
-    """Het pad naar de CLI, of None als hij er niet is."""
     uit_env = os.environ.get(CLI_ENV, "").strip()
     if uit_env:
         return uit_env if os.path.isabs(uit_env) else shutil.which(uit_env)
@@ -77,7 +69,6 @@ def cli_pad() -> str | None:
 
 
 def skip_zonder_cli() -> str:
-    """Het CLI-pad, of een skip met de reden erbij."""
     pad = cli_pad()
     if not pad:
         pytest.skip(
@@ -88,11 +79,9 @@ def skip_zonder_cli() -> str:
 
 
 class ZadCli:
-    """Aanroeper voor een vaste sandbox en, optioneel, een vast project.
-
-    De instellingen gaan via de omgeving en niet via vlaggen: dat is de weg die een
-    gebruiker in een script ook neemt (``ZAD_API_URL``, ``ZAD_API_KEY``,
-    ``ZAD_PROJECT_ID``), en hij dekt daarmee ook de resolutie in de CLI zelf.
+    """Aanroeper voor een vaste sandbox, met de instellingen via de omgeving en niet via
+    vlaggen: dat is de weg die een gebruiker in een script ook neemt, en hij dekt daarmee
+    ook de resolutie in de CLI zelf.
     """
 
     def __init__(
@@ -111,17 +100,11 @@ class ZadCli:
         self.timeout = timeout
 
     def voor_project(self, project: str, api_key: str) -> ZadCli:
-        """Dezelfde CLI, gericht op een ander project."""
         return ZadCli(
             self.pad, self.api_url.removesuffix("/api"), api_key=api_key, project=project, timeout=self.timeout
         )
 
     def run(self, *args: str, verwacht_json: bool = False, extra_env: dict[str, str] | None = None) -> CliResultaat:
-        """Roep de CLI aan en geef exitcode, stdout en stderr terug zonder te oordelen.
-
-        Oordelen doet de toets: een niet-nul exitcode is voor de helft van de toetsen
-        hieronder juist wat gemeten wordt.
-        """
         argv = [self.pad, *args]
         if verwacht_json:
             argv += ["-o", "json"]

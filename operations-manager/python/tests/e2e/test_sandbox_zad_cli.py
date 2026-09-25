@@ -1,14 +1,8 @@
 """De zad-cli als tweede afnemer van de API, tegen een draaiende sandbox.
 
-Waarom dit bestand bestaat: de UI en de CLI lopen over dezelfde endpoints, maar lezen
-een ander deel van het antwoord. De browsertoetsen hiernaast lezen een pagina; de CLI
-leest de JSON en de foutenvelop. Een wijziging in de antwoordvorm die de pagina niet
-raakt viel daarom tot nu toe nergens om. Deze doorloop is de rookmelder daarvoor:
-project zien, component toevoegen, uitkomst opvragen, opruimen, allemaal over de CLI.
-
-De CLI komt uit een eigen repository en zit niet in deze repo. Zonder hem op het PATH
-(of ``ZAD_CLI``) slaan deze toetsen over, net als elke sandboxtoets zonder
-``E2E_BASE_URL``. Zie ``tests/e2e/helpers/zad_cli.py``.
+Deze doorloop is de rookmelder voor de CLI-weg: project zien, component toevoegen, uitkomst
+opvragen, opruimen, allemaal over de CLI. Waarom die weg apart gemeten wordt en wanneer
+deze toetsen overslaan staat in ``tests/e2e/helpers/zad_cli.py``.
 
 Draaien:
 
@@ -56,8 +50,7 @@ def cli_project(
 
     Aanmaken gaat NIET over de CLI: ``zad project create`` meldt zich aan met het account
     van de gebruiker (OIDC), en deze suite heeft geen browserlogin maar een voorgetekend
-    sessiecookie. De CLI werkt vanaf hier met de PROJECTSLEUTEL, en dat is ook de weg die
-    een script in een pijplijn neemt.
+    sessiecookie. De CLI werkt vanaf hier met de PROJECTSLEUTEL.
     """
     page = sandbox_context.new_page()
     try:
@@ -95,10 +88,8 @@ def cli(sandbox_url: str, cli_project: CreatedProject) -> ZadCli:
 def test_cli_ziet_het_project(cli: ZadCli, cli_project: CreatedProject) -> None:
     """`project status` over de CLI noemt het project dat de wizard aanmaakte.
 
-    Dit is de eerste helft van de rookmelder: de CLI komt binnen, de sleutel wordt
-    geaccepteerd en het antwoord is te lezen. De tweede helft staat in
-    ``test_cli_valt_om_op_een_dood_adres``: zonder die is een groene regel hier ook
-    groen tegen een CLI die stilletjes niets deed.
+    De sleutel wordt geaccepteerd en het antwoord is te lezen. De tegencontrole staat in
+    ``test_cli_valt_om_op_een_dood_adres``.
     """
     resultaat = cli.run("project", "status", verwacht_json=True).assert_ok()
     payload = resultaat.json()
@@ -169,8 +160,7 @@ def test_een_component_in_gebruik_wordt_geweigerd_en_de_uitweg_staat_in_de_api(
     Wat deze toets vastlegt is daarom niet "de CLI kan het niet" - dat zou een gebrek
     vastpinnen dat morgen gerepareerd mag worden. Hij legt de twee dingen vast die hoe dan
     ook moeten blijven gelden: de weigering is leesbaar en zonder traceback, en de API
-    HOUDT de uitweg. Verdwijnt `confirm_in_use` uit het document, dan is er geen weg meer
-    en valt dit om.
+    HOUDT de uitweg.
     """
     naam = "cli-web"
     if naam not in forgejo.component_names(cli_project.name):
@@ -211,9 +201,8 @@ def test_een_component_in_gebruik_wordt_geweigerd_en_de_uitweg_staat_in_de_api(
 def test_onbekend_project_geeft_een_leesbare_fout(cli: ZadCli) -> None:
     """Een projectsleutel die niet bij dit project hoort mag geen stapel JSON opleveren.
 
-    Dit hangt tegen het foutmeldingenblok aan (``features/foutmeldingen.md``): de CLI is
-    de tweede afnemer van dezelfde envelop. Wat hier gemeten wordt is het minimum: een
-    niet-nul exitcode en een melding zonder traceback.
+    Wat hier gemeten wordt is het minimum: een niet-nul exitcode en een melding zonder
+    traceback. Het blok eromheen staat in ``features/foutmeldingen.md``.
     """
     vreemd = ZadCli(cli.pad, cli.api_url.removesuffix("/api"), api_key=cli.api_key, project="bestaat-echt-niet-rc227")
     resultaat = vreemd.run("project", "status").assert_faalt()

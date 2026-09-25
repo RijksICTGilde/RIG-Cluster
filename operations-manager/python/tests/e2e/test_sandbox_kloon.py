@@ -6,14 +6,6 @@ mag geen nieuwe generatie naast de bestaande database zetten. Dat is precies het
 uitspraak die je op een unittest niet kunt doen, want daar bestaat de database niet en is
 de naam een string.
 
-Wat hier gemeten wordt, in deze volgorde:
-
-1. een kloon over de CLI doet zijn werk: de rij uit de brondatabase staat in de doeldatabase;
-2. de generatie blijft op nul: er is geen `<project>_<deployment>_v1` bijgekomen;
-3. het projectbestand meldt de kloon als afgerond en houdt geen `in-progress` over;
-4. dezelfde deployment nog een keer laten draaien zet er nog steeds geen `_v1` naast, en
-   kloont niet opnieuw over bestaande schema's heen.
-
 Wat hier NIET gemeten wordt, met de reden: het plan van RC-227 vroeg om een run die
 HALVERWEGE wordt afgebroken. De vlag `clone-from.status.in-progress` gaat aan vlak voor de
 databasekloon en uit bij het vastleggen, dus de afgebroken staat is "vlag op schijf,
@@ -21,8 +13,8 @@ doeldatabase aanwezig, doelschema's afwezig". Die staat is op dit cluster alleen
 door OPI midden in een run om te leggen of het projectbestand met de hand te schrijven. Het
 eerste is op een GEDEELD cluster niet te doen zonder de run van een ander te raken, en het
 tweede meet de toets zelf in plaats van de code. Die helft blijft dus bij de unittests
-(`tests/test_clone_attempt_flag.py`); punt 4 hieronder dekt wel de kant die er in de praktijk
-toe doet, namelijk dat een tweede run geen generatie kost.
+(`tests/test_clone_attempt_flag.py`); de laatste toets hieronder dekt wel de kant die er in
+de praktijk toe doet, namelijk dat een tweede run geen generatie kost.
 """
 
 from __future__ import annotations
@@ -81,8 +73,7 @@ def kloon_project(
             user_email=SANDBOX_TEST_USER["email"],
             services=_SERVICES,
             # 240s is de default van de helper; op dit GEDEELDE cluster haalt een project
-            # met diensten dat niet altijd. Een ruimere wacht is hier geen verdoezeling: de
-            # toets meet wat er daarna gebeurt, niet hoe snel de wizard is.
+            # met diensten dat niet altijd.
             create_timeout=600.0,
         )
         logger.info("kloonproject %s, brondeployment %s", gemaakt.name, gemaakt.deployment_name)
