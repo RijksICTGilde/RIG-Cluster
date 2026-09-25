@@ -184,8 +184,8 @@ async def inventory(
     except KubectlExecutionError as e:
         # The only read here that answers a failure with KubectlExecutionError; the other
         # three answer with a sentinel. Left to escape it ends the run on exit 1, and exit 1
-        # means "there are orphans". The KubectlConnectionError all four share is caught in
-        # main(), because there is no read left to reach once the cluster is unreachable.
+        # means "there are orphans". KubectlConnectionError, which all four can raise, is
+        # caught in main().
         raise SweepRefused(f"the cluster did not answer which namespaces OPI created: {e}") from e
 
     owned = {namespace for namespace, value in label_map.items() if value == NAMESPACE_OWNER_VALUE}
@@ -277,10 +277,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return asyncio.run(_sweep(args.namespaces, args.deployments_repo, args.delete))
     except (SweepRefused, KubectlConnectionError) as e:
-        # KubectlConnectionError is what every read in inventory() raises when the cluster is
-        # unreachable: at the start when isConnected is False, and mid-run on a stderr that
-        # says 'connection refused'. Escaping it ends the run on exit 1, which this tool has
-        # promised means "there are orphans".
+        # Every read in inventory() raises KubectlConnectionError once the cluster is
+        # unreachable, and exit 1 would mean "there are orphans".
         print(f"Refusing to sweep: {e}", file=sys.stderr)
         return 2
 
