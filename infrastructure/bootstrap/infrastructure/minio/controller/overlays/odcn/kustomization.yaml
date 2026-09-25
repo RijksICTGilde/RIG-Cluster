@@ -26,7 +26,7 @@ patches:
 # (7ced9663e6a7). ghcr-rig is hetzelfde proxypad waar ArgoCD zijn eigen image vandaan haalt.
 #
 # Dit is de plek voor die reden; wie ernaar verwijst hoort hier te landen. De mc-client is
-# een andere vraag met een eigen plek, zie operations-manager/Dockerfile.
+# een andere vraag met een eigen plek, zie images/mc/Dockerfile.
 images:
   - name: quay.io/minio/minio
     newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/minio

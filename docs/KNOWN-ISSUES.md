@@ -70,12 +70,16 @@ controlebeeld zodat het antwoord over het account gaat en niet over de host:
 
 Twee dingen zijn daarmee gerepareerd, en twee blijven staan.
 
-**Gerepareerd.** De server op productie komt uit een eigen build uit de broncode van tag
-`RELEASE.2025-07-23T15-54-02Z`; de reden en de bouwwijze staan in
-`infrastructure/bootstrap/infrastructure/minio/controller/overlays/odcn/kustomization.yaml`.
-De `mc`-client komt uit de GitHub-release van dezelfde tag, met de sha256 van het artefact
-literaal in `operations-manager/Dockerfile`; waarom die som literaal staat en niet naast de
-binary opgehaald wordt, staat daar.
+**Gerepareerd.** Server en client staan nu op hetzelfde patroon: een eigen exemplaar in
+`ghcr.io/minbzk/base-images`, zodat geen van beide nog van een adres van MinIO afhangt.
+
+* De server op productie komt uit een eigen build uit de broncode van tag
+  `RELEASE.2025-07-23T15-54-02Z`; de reden en de bouwwijze staan in
+  `infrastructure/bootstrap/infrastructure/minio/controller/overlays/odcn/kustomization.yaml`.
+* De `mc`-client komt uit onze eigen spiegel `ghcr.io/minbzk/base-images/mc`, gevuld uit de
+  GitHub-release van dezelfde tag. Waarom die spiegel er is en waarom de checksum bij het
+  vullen literaal staat, staat in `images/mc/Dockerfile`; hoe je hem bijwerkt bij een nieuwe
+  versie, in `images/mc/README.md`.
 
 **Blijft staan 1: de huidige productiepin is niet meer te herbouwen.** Productie draait
 `2026.09.02.2241-d81cdab4`, en de Dockerfile op die commit haalt `mc` van `dl.min.io`. Die
