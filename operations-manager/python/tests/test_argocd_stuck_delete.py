@@ -370,7 +370,8 @@ def _orphan_cleanup_harness(calls: list[str], *, deleted: bool = True) -> tuple[
 
     ``spec=ArgoConnector`` is the point of the mock here: an open AsyncMock invents any
     method you name, and that is how a call to a method the connector does not have
-    stayed green while it did nothing (the AttributeError landed in the except below).
+    stayed green while it did nothing (the AttributeError landed in the ``except Exception``
+    of ``_cleanup_orphaned_argocd_resources``).
     """
     pm = AsyncMock()
     pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[], deleted=deleted)
