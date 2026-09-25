@@ -68,7 +68,7 @@ er al stond.
 | Geplakte URL en vrij label rechttrekken | **niet gemeten.** Vergt invullen en opslaan in het formulier; de unittests dekken de converter en de clustertoets zou dezelfde converter meten. |
 | De upstream volgt uit de images die het project al heeft | **niet gemeten.** Zelfde reden: een `default` die alleen bij een NIEUWE lege rij geldt, en die weg loopt niet over de API. |
 | De eigendomscontrole en het serviceaccount per project | **al gedekt** door `test_sandbox_registry_ownership.py`, ongewijzigd. |
-| De registrykeuze staat bij de image, en het pull-secret landt | **gemeten**, zie `test_sandbox_registry_pull.py`. Uitkomst staat in de PR. Let op de ORDE: het secret komt via de `_project`-applicatie en de pod via de deployment-applicatie, en in de meting stond de pod er ruim twee minuten voor het secret. Zelfherstellend (kubelet probeert opnieuw), maar op een node zonder het image in zijn cache is dat zolang `ImagePullBackOff`. |
+| De registrykeuze staat bij de image, en het pull-secret landt | **gemeten**, zie `test_sandbox_registry_pull.py`. Uitkomst staat in de PR. Let op de ORDE waarin het landt, zie "Wat hieruit volgt". |
 | Standaardoptie heet "Automatisch" | **niet gemeten.** Komt op de componentkant van de dienst; de modal op projectniveau toont hem niet. |
 
 **Waarneming, geen bevinding.** Het tokenveld heet op het scherm "Token *Optioneel*", terwijl
@@ -226,7 +226,7 @@ draait hem.
 
 ## Wat hieruit volgt
 
-Twee dingen die buiten deze ronde vallen maar wel een eigenaar nodig hebben:
+Wat buiten deze ronde valt en een eigenaar nodig heeft:
 
 1. **Er is geen enkele dienst met een `grow_only`-veld.** Het mechanisme is gebouwd en
    getoetst, maar draait nergens. Wie de eerste declareert, hoort er de clustertoets bij te
@@ -248,5 +248,6 @@ Twee dingen die buiten deze ronde vallen maar wel een eigenaar nodig hebben:
    image nodig dat anoniem echt geweigerd wordt.
 
 4. **Het pull-secret komt na de workload.** Het secret landt via de `_project`-applicatie en de
-   pod via de deployment-applicatie; in de meting stond de pod er ruim twee minuten eerder. Op
-   een registry die anoniem weigert is dat zolang `ImagePullBackOff`.
+   pod via de deployment-applicatie; in de meting stond de pod er ruim twee minuten eerder. Dat
+   herstelt zichzelf (kubelet probeert opnieuw), maar op een registry die anoniem weigert en een
+   node zonder het image in zijn cache is dat zolang `ImagePullBackOff`.

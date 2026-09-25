@@ -106,9 +106,7 @@ def _psql(secret: dict[str, str], sql: str, *, database: str = "") -> tuple[int,
 
     ``database`` maakt het mogelijk om de serverlijst (``postgres``) te bevragen in plaats
     van de eigen database. De afdichting tegen een pod die zijn uitvoer verliest zit in
-    ``cluster.run_psql``: zonder die afdichting staat een schrijfactie hier groen op werk
-    dat nooit gebeurd is, want dan komt `kubectl run` terug met exitcode NUL en een lege
-    uitvoer. Wat dat van een statement vraagt, staat in de docstring daar.
+    ``cluster.run_psql``, met de eis die dat aan een statement stelt.
     """
     return cluster.run_psql(
         sql,

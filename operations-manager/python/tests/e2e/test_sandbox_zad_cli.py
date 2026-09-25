@@ -34,9 +34,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# De skip staat op de MODULE en niet in de cli-fixture: die hangt aan het project, dus een
-# skip daarbinnen laat eerst een project op het gedeelde cluster aanmaken om het daarna
-# ongebruikt op te ruimen.
+# De skip staat op de MODULE en niet in de cli-fixture, zie `features/e2e-sandbox-tests.md`.
 # `serial` omdat deze doorloop een doorloop is: de component die de ene toets toevoegt is
 # waar de volgende hem weigert. Zonder die marker schudt `task test-e2e-random` hem door
 # elkaar en meet de weigering een component die er nog niet is.
