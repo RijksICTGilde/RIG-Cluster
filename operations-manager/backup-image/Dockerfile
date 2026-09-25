@@ -2,9 +2,10 @@
 # Supports: PVC backups (kopia), PostgreSQL backups (pg_dump/pg_restore), MinIO backups (mc)
 # Target image: ghcr.io/minbzk/base-images/rig-backup:latest
 
-# dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
+# mc uit onze eigen spiegel: MinIO distribueert hem niet meer. Waarom die spiegel er is
+# staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
-FROM quay.io/minio/mc:${MC_VERSION} AS mc
+FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
 
 FROM python:3.14-slim
 

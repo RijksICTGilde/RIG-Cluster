@@ -243,17 +243,24 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     # project 42,9 seconden, waarvan 6 seconden wachten tot ArgoCD de applicatie had
     # aangemaakt.
     #
-    # Wat er WEL blijft staan is de enige zin die er echt toe deed: een time-out betekent
-    # niet dat het is mislukt. Dat is nog steeds waar, en het is uitgerekend het bericht
-    # dat je nodig hebt als het lang duurt. De meting hierboven komt van de SANDBOX; op
-    # productie is niet nagemeten of de Argo-fix hetzelfde oplevert, en daarom verdwijnt
-    # de geruststelling niet mee met het excuus.
+    # Daarna stond hier de geruststelling dat een time-out-melding niet betekent dat het
+    # aanmaken is mislukt. Die is met RC-229 onwaar geworden, en wel op deze taak: de wacht
+    # op het projectniveau is fail-closed, dus loopt die vol, dan gaan de
+    # deployment-applicaties nooit naar git en is er niets uitgerold. De gebruiker zag de
+    # geruststelling dan naast de time-out-melding die ze ontkende.
+    #
+    # De wacht waarvoor de geruststelling nog WEL opgaat is `_monitor_argocd_and_deployment`
+    # (simple_background.py), en die schrijft hem daar zelf op het moment dat hij nodig is,
+    # met de app-status erbij. Hier staat daarom alleen nog waarom een nieuw project langer
+    # duurt, en wat een time-out betekent.
     if payload.get("is_new_project", False):
         notice = progress.add_subtask(
             deploy_task,
-            "Duurt het wachten op ArgoCD lang, dan betekent een time-out-melding niet dat het "
-            "aanmaken is mislukt: alleen dat de wachttijd is verstreken. Het project wordt dan "
-            "vrijwel zeker gewoon aangemaakt.",
+            "Een nieuw project wordt in twee stappen uitgerold: eerst het projectniveau, dat "
+            "elke deployment nodig heeft, en daarna de deployments zelf. Daarom duurt dit "
+            "langer dan een wijziging op een bestaand project. Loopt het wachten op het "
+            "projectniveau in een time-out, dan stopt het uitrollen daar: het project is "
+            "opgeslagen, de deployments zijn niet uitgerold.",
         )
         progress.complete_task(notice)
 

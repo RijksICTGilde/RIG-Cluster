@@ -12,7 +12,11 @@ import os
 import secrets
 import shutil
 import time
-from collections.abc import Callable  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
+from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
+    AsyncIterator,
+    Callable,
+)
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -83,6 +87,8 @@ from opi.handlers.project_file_handler import (
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
+    APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     UMBRELLA_REFRESH_MAX_POGINGEN,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
@@ -109,9 +115,10 @@ from opi.services.catalog.image_registries.resolution import (
 )
 from opi.services.catalog.publish_on_web.domain_config import (
     DomainSetting,
-    clear_domain_settings,
+    clear_domain_name_settings,
     custom_domain_certificate_note,
     get_domain_setting,
+    pop_domain_setting,
     set_domain_setting,
 )
 from opi.services.catalog.publish_on_web.issuer import effective_issuer
@@ -154,6 +161,7 @@ from opi.utils.env_vars import (
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
     ROOT_COMPONENT_FORMAT_IDS,
+    SELF_CONTAINED_FORMAT_IDS,
     generate_argocd_application_name,
     generate_argocd_project_application_name,
     generate_bare_domain_hostname,
@@ -195,7 +203,13 @@ from opi.utils.secrets import (
     RedisSecret,
     UserSecret,
 )
-from opi.utils.sops import decrypt_sops_with_key, encrypt_to_sops_files_or_fail
+from opi.utils.sops import (
+    SOPS_SUFFIX,
+    TO_SOPS_SUFFIX,
+    decrypt_sops_with_key,
+    encrypt_to_sops_files_or_fail,
+    sops_filenames,
+)
 from opi.utils.yaml_util import (
     find_value_by_jsonpath,
 )
@@ -217,6 +231,8 @@ logger = logging.getLogger(__name__)
 # conflict before giving up. Matches the store's own MAX_MUTATION_ATTEMPTS: a handful
 # absorbs the bursts a busy pipeline produces without masking a genuine, persistent clash.
 _UPSERT_CONFLICT_RETRIES = 5
+
+_EXTERNAL_DNS_TARGET_ANNOTATION = "external-dns.alpha.kubernetes.io/target"
 
 
 def enforce_namespace_pin(project_data: dict[str, Any]) -> None:
@@ -285,8 +301,8 @@ def _resolve_deployment_filter(deployment_name: str | None, deployment_names: li
 # considered for pruning when it ends with one of these (covers plain manifests
 # and both pre/post SOPS-encryption secret files).
 _COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
-    ".sops.yaml",
-    ".to-sops.yaml",
+    SOPS_SUFFIX,
+    TO_SOPS_SUFFIX,
     ".yaml",
     ".yml",
 )
@@ -300,8 +316,8 @@ def _is_generated(basename: str, generated_files: set[str]) -> bool:
     """
     if basename in generated_files:
         return True
-    if basename.endswith(".sops.yaml"):
-        return basename.removesuffix(".sops.yaml") + ".to-sops.yaml" in generated_files
+    if basename.endswith(SOPS_SUFFIX):
+        return sops_filenames(basename).plaintext in generated_files
     return False
 
 
@@ -1614,7 +1630,9 @@ class ProjectManager:
         secret_data = dict(spec.secret_pairs)
         manifest_name = f"{spec.secret_name}-secret"
         if spec.keep_existing_values:
-            existing = _existing_secret_pairs(os.path.join(output_dir, f"{manifest_name}.sops.yaml"), private_key)
+            existing = _existing_secret_pairs(
+                os.path.join(output_dir, sops_filenames(manifest_name).encrypted), private_key
+            )
             secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
         if spec.resolve_aliases and spec.secret_type:
             aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
@@ -1639,7 +1657,7 @@ class ProjectManager:
             output_filename=manifest_name,
             use_sops=True,
         )
-        sops_filename = f"{manifest_name}.to-sops.yaml"
+        sops_filename = sops_filenames(manifest_name).plaintext
         created_files.append(sops_filename)
         logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
         logger.debug(f"Successfully created secret manifest: {secret_path}")
@@ -2568,7 +2586,9 @@ class ProjectManager:
             os.makedirs(infra_resources_dir, exist_ok=True)
 
             # Write manifests - secret as .to-sops.yaml for encryption
-            secret_path = os.path.join(infra_resources_dir, f"{project_clean}-postgres-superuser-secret.to-sops.yaml")
+            secret_path = os.path.join(
+                infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
+            )
             cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
 
             with open(secret_path, "w") as f:
@@ -2654,7 +2674,7 @@ class ProjectManager:
                 )
 
                 # Write registry secret to infrastructure directory
-                registry_secret_path = os.path.join(infra_resources_dir, f"{registry_secret_name}.to-sops.yaml")
+                registry_secret_path = os.path.join(infra_resources_dir, sops_filenames(registry_secret_name).plaintext)
                 with open(registry_secret_path, "w") as f:
                     f.write(registry_secret_manifest)
 
@@ -2730,27 +2750,12 @@ class ProjectManager:
             if progress_manager and infra_task:
                 progress_manager.update_task(infra_task, "Wachten tot ArgoCD de infrastructuur aanmaakt")
 
-            # Dezelfde bewaker als bij de deployment-applicaties: de refresh die de umbrella
-            # onze infrastructuurmap moet laten zien kan opgaan in een reconcile die zijn
-            # revisie al had opgehaald, en dan gebeurt er tot de volgende reconcile niets.
-            umbrella_watcher = asyncio.create_task(
-                self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
-            )
-            try:
+            async with self._umbrella_verversbewaker(argo_connector):
                 await self._argo_manager.wait_for_application_created(
                     app_name=infra_app_name,
-                    timeout=360,  # 6 min: umbrella app-of-apps refresh can take minutes under load
+                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
                     poll_interval=1,  # goedkope exists-check; 5s-rooster kostte ~4s per wachtstap
                 )
-            finally:
-                umbrella_watcher.cancel()
-                try:
-                    await umbrella_watcher
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    # De bewaker is een vangnet en mag het wachten nooit meeslepen.
-                    logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
 
             logger.info(f"Infrastructure application '{infra_app_name}' has been created, refreshing it")
 
@@ -2953,6 +2958,90 @@ class ProjectManager:
             f"{self._argo_manager.last_umbrella_revision or 'onbekend'} in plaats van {pushed_commit}; "
             "hier is meer aan de hand dan een verloren wekker, doorprikken helpt niet"
         )
+
+    @asynccontextmanager
+    async def _umbrella_verversbewaker(self, argo_connector: ArgoConnector) -> AsyncIterator[None]:
+        """Draai `_keep_umbrella_refreshed` naast een wacht en ruim hem daarna op.
+
+        Elke wacht op het BESTAAN van een kind-Application heeft deze bewaker nodig: onze
+        refresh kan opgaan in een reconcile die zijn revisie al had opgehaald, en dan
+        gebeurt er tot de volgende reconcile niets. Eén bewaker per wacht, ook als die wacht
+        op meerdere applicaties tegelijk staat: drie bewakers zouden drie keer tegelijk
+        verversen.
+
+        De generieke ``except`` hoort hier en niet bij de aanroepers: de bewaker is een
+        vangnet en mag de wacht die hij bewaakt nooit meeslepen, ongeacht waarop hij zelf
+        omvalt.
+        """
+        bewaker = asyncio.create_task(
+            self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
+        )
+        try:
+            yield
+        finally:
+            bewaker.cancel()
+            try:
+                await bewaker
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
+
+    async def wait_for_project_level_application(self, app_name: str) -> None:
+        """Wacht tot het PROJECTNIVEAU van dit project echt gesynchroniseerd is.
+
+        De ServiceAccount van het project komt uit deze applicatie, en de podspec van elke
+        Deployment eronder noemt hem. Daarom staat deze wacht voor het aanmaken van de
+        deployment-applicaties: bestaat hun CR nog niet, dan kan ArgoCD ze ook niet
+        zelfstandig synchroniseren.
+
+        Dezelfde vorm als de infrastructuurapplicatie, die ook op wave 0 staat: aanmaken,
+        wachten tot ArgoCD hem heeft aangemaakt, hem ZELF verversen, en dan wachten op een
+        sync die aantoonbaar NA die verversing komt. Zonder dat laatste stelt een
+        ``Synced`` van voor onze commit de wacht bij een herhaalrun meteen tevreden.
+
+        De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
+        resources en meldt zich daarmee binnen een seconde Healthy. Zie
+        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
+
+        Args:
+            app_name: Naam van de applicatie van het projectniveau.
+
+        Raises:
+            RuntimeError: Als ArgoCD niet bereikbaar is of de refresh niets oplevert.
+            TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
+        """
+        argo_connector = create_argo_connector()
+        if not await argo_connector.login():
+            raise RuntimeError("Failed to login to ArgoCD")
+
+        # De umbrella alleen verversen als de applicatie er nog niet is: zo'n refresh
+        # hertekent alle child-apps (issue #130) en kan minuten duren
+        # (features/argocd-refresh-performance.md). Dezelfde keuze, bron en fail-safe als
+        # bij de deployment-applicaties verderop.
+        exists = await self._kubectl_connector.argocd_application_exists(
+            app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
+        )
+        if exists is not True:
+            async with self._umbrella_verversbewaker(argo_connector):
+                await self._argo_manager.wait_for_application_created(
+                    app_name=app_name,
+                    timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+                    poll_interval=1,
+                )
+
+        # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
+        # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
+        reconciled_at = await argo_connector.refresh_application(app_name)
+        if not reconciled_at:
+            raise RuntimeError(f"Failed to refresh ArgoCD project-level application '{app_name}'")
+
+        await self._argo_manager.wait_for_application_synced(
+            app_name=app_name,
+            timeout=PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
+            refreshed_after=reconciled_at,
+        )
+        logger.info(f"Project-level application '{app_name}' is synced; de ServiceAccount staat er")
 
     async def process_project_from_git(
         self,
@@ -3297,10 +3386,10 @@ class ProjectManager:
                 )
                 apps_to_create = [app_names[i] for i, exists in enumerate(existence) if exists is not True]
 
-                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments,
-                # dus zonder deze regel werd de umbrella niet ververst zolang de
-                # deployment-applicaties al bestonden, en kreeg een Deployment zijn
-                # serviceAccountName voordat de ServiceAccount er was.
+                # Ook de applicatie van het PROJECTNIVEAU: die staat niet in app_deployments.
+                # `create_argocd_resources` heeft hem via `wait_for_project_level_application`
+                # al aangemaakt en gesynchroniseerd, dus normaal voegt dit niets toe; het
+                # blijft staan voor paden die hier zonder die grendel binnenkomen.
                 project_app_name = generate_argocd_project_application_name(project_name)
                 project_app_exists = await self._kubectl_connector.argocd_application_exists(
                     project_app_name, get_argo_namespace(settings.CLUSTER_MANAGER)
@@ -3319,52 +3408,24 @@ class ProjectManager:
                     async def _wait_created(app_name: str) -> str | None:
                         try:
                             await self._argo_manager.wait_for_application_created(
-                                app_name=app_name, timeout=360, poll_interval=1
+                                app_name=app_name, timeout=APPLICATIE_AANMAAK_TIMEOUT_SECONDEN, poll_interval=1
                             )
                             return None
                         except TimeoutError:
                             logger.error(f"Timed out waiting for ArgoCD application '{app_name}' to be created")
                             return f"{app_name}: timed out waiting for application to be created"
 
-                    # Eén bewaker naast alle wachters, niet één per applicatie: die zou bij
-                    # drie nieuwe applicaties drie keer tegelijk verversen. Hij doet de
-                    # eerste refresh en herhaalt die alleen zolang de umbrella onze commit
-                    # aantoonbaar nog niet vergeleken heeft.
-                    umbrella_watcher = asyncio.create_task(
-                        self._keep_umbrella_refreshed(argo_connector, self._argo_manager.last_pushed_argo_commit)
-                    )
-                    try:
+                    async with self._umbrella_verversbewaker(argo_connector):
                         created_results = await asyncio.gather(*(_wait_created(name) for name in apps_to_create))
-                    finally:
-                        umbrella_watcher.cancel()
-                        try:
-                            await umbrella_watcher
-                        except asyncio.CancelledError:
-                            pass
-                        except Exception as e:
-                            # De bewaker is een vangnet; als hij zelf omvalt, mag dat het
-                            # wachten op de applicaties niet meeslepen.
-                            logger.warning(f"Verversbewaker voor user-applications gestopt: {e}")
                     sync_failures.extend(result for result in created_results if result)
                 else:
                     logger.info(
                         f"All {len(app_names)} target application(s) already exist; skipping user-applications refresh"
                     )
 
-                # Wachten tot het projectniveau GESYNCT is, want de ServiceAccount komt pas
-                # dan en de deployments hieronder zetten hun podspec erop. De sync-wave
-                # dekt dit niet: OPI ververst de deployment-applicatie ook rechtstreeks.
-                # Mislukken is geen reden om af te breken, een te vroege pod herstelt zelf.
-                try:
-                    await self._argo_manager.wait_for_application_synced(
-                        app_name=project_app_name, timeout=180, poll_interval=2
-                    )
-                    logger.info(f"Project-level application '{project_app_name}' is synced")
-                except (TimeoutError, RuntimeError) as e:
-                    logger.warning(
-                        f"Project-level application '{project_app_name}' not synced yet ({e}); "
-                        f"deployments may briefly wait for its ServiceAccount"
-                    )
+                # Op dit punt heeft een wacht op het projectniveau geen zin: de
+                # deployment-applicaties bestaan al en ArgoCD synchroniseert ze zelfstandig.
+                # De ordening ligt in `create_argocd_resources`, voor het aanmaken ervan.
 
                 # Refresh each application that was created, then wait for sync+healthy.
                 # Refresh + wait run concurrently per application (read-only polls);
@@ -4057,7 +4118,7 @@ class ProjectManager:
                     use_sops=spec.encrypt,
                 )
                 if spec.encrypt:
-                    created_files.append(f"{spec.filename}.to-sops.yaml")
+                    created_files.append(sops_filenames(spec.filename).plaintext)
                 else:
                     created_files.append(f"{spec.filename}.yaml")
                 logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
@@ -4180,7 +4241,7 @@ class ProjectManager:
 
         # List .to-sops.yaml files before encryption for debugging
 
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files for final encryption:")
         for file_path in to_sops_files:
@@ -4572,7 +4633,7 @@ class ProjectManager:
             # Write values as .to-sops.yaml (will be encrypted later)
             # Use naming convention that matches CMP plugin pattern: *-helm-values.sops.yaml
             values_file_sops = generate_helm_values_filename(deployment_name, chart_reference, encrypted=True)
-            values_file_to_sops = values_file_sops.replace(".sops.yaml", ".to-sops.yaml")
+            values_file_to_sops = sops_filenames(values_file_sops).plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
             yaml = YAML()
@@ -4695,7 +4756,7 @@ class ProjectManager:
         logger.info(f"Encrypting helm values files for deployment: {deployment_name}")
 
         # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
         for file_path in to_sops_files:
@@ -4901,6 +4962,17 @@ class ProjectManager:
         # Add namespace to context for alias resolution
         context["NAMESPACE"] = prefixed_namespace
 
+        # De chart rendert de ingresses van een helmfile-deployment zelf, dus de annotatie uit
+        # manifests/ingress.yaml.jinja bereikt ze niet. Zonder target schrijft external-dns een
+        # CNAME naar de router-hostname van het cluster, en zo'n verwijzing over de zonegrens
+        # overleeft de DNSSEC-validatie bij Google niet (docs.rijksapp.nl gaf SERVFAIL, EDE 12).
+        # De chart rendert meer hostnames dan deze ene (docs en static-docs) uit dezelfde
+        # annotatiemap: dat gaat goed zolang ze in dezelfde zone zitten.
+        helmfile_hostname = context.get("PUBLIC_HOSTNAME")
+        external_dns_target = (
+            get_external_dns_target_for_hostname(cluster_name, helmfile_hostname) if helmfile_hostname else None
+        )
+
         # Process each helmfile reference
         for helmfile_ref in helmfile_refs:
             helmfile_reference = helmfile_ref.get("reference")
@@ -4966,12 +5038,24 @@ class ProjectManager:
             # Deep merge values (deployment overrides base)
             merged_values = self._deep_merge_dicts(base_values, deployment_values)
 
+            # Als basis gemerged, niet eroverheen: bestaande annotaties blijven staan en een
+            # target uit de projectvalues wint, net als elke andere waarde in dit pad.
+            if external_dns_target:
+                merged_values = self._deep_merge_dicts(
+                    {"cluster": {"ingress": {"annotations": {_EXTERNAL_DNS_TARGET_ANNOTATION: external_dns_target}}}},
+                    merged_values,
+                )
+                logger.info(
+                    f"Set external-dns target '{external_dns_target}' on helmfile values for "
+                    f"{deployment_name} ({helmfile_hostname})"
+                )
+
             # Resolve $ALIAS references in the merged values
             resolved_values = self._resolve_nested_aliases(merged_values, context)
 
             # Write values as .to-sops.yaml (will be encrypted later)
             # CMP plugin looks for values.sops.yaml in helmfile directories
-            values_file_to_sops = "values.to-sops.yaml"
+            values_file_to_sops = sops_filenames("values").plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
             yaml = YAML()
@@ -5063,7 +5147,7 @@ class ProjectManager:
         # The CMP plugin will run BOTH kustomize build AND helmfile template
         # This ensures Let's Encrypt Issuer, secrets, and other resources are applied alongside helmfile output
         # Convert .to-sops.yaml filenames to .sops.yaml (they get encrypted below)
-        sops_files = [f.replace(".to-sops.yaml", ".sops.yaml") for f in secret_files]
+        sops_files = [sops_filenames(f).encrypted for f in secret_files]
 
         if regular_files or sops_files:
             logger.info(
@@ -5092,7 +5176,7 @@ class ProjectManager:
         logger.info(f"Encrypting helmfile values files for deployment: {deployment_name}")
 
         # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
         for file_path in to_sops_files:
@@ -5153,7 +5237,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Keycloak secret manifest: {manifest_name}")
 
         # Create Database secret if available
@@ -5173,7 +5257,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Database secret manifest: {manifest_name}")
 
         # Create MinIO secret if available
@@ -5193,7 +5277,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created MinIO secret manifest: {manifest_name}")
 
         # Create Redis secret if available
@@ -5213,7 +5297,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Redis secret manifest: {manifest_name}")
 
         return created_files
@@ -6433,7 +6517,7 @@ class ProjectManager:
                                         output_filename=provided_tls_manifest_name,
                                         use_sops=True,
                                     )
-                                    provided_tls_sops_filename = f"{provided_tls_manifest_name}.to-sops.yaml"
+                                    provided_tls_sops_filename = sops_filenames(provided_tls_manifest_name).plaintext
                                     if provided_tls_sops_filename not in created_files:
                                         created_files.append(provided_tls_sops_filename)
 
@@ -6754,7 +6838,7 @@ class ProjectManager:
                 )
 
                 # All secrets are SOPS encrypted for security
-                sops_filename = f"{sso_manifest_name}.to-sops.yaml"
+                sops_filename = sops_filenames(sso_manifest_name).plaintext
                 created_files.append(sops_filename)
                 logger.info(f"SSO secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created SSO secret manifest: {sso_secret_path}")
@@ -6823,7 +6907,7 @@ class ProjectManager:
                 )
 
                 # All secrets are SOPS encrypted for security
-                sops_filename = f"{user_manifest_name}.to-sops.yaml"
+                sops_filename = sops_filenames(user_manifest_name).plaintext
                 created_files.append(sops_filename)
                 logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created user secret manifest: {user_secret_path}")
@@ -6849,7 +6933,7 @@ class ProjectManager:
                         output_filename=attachment_manifest_name,
                         use_sops=True,
                     )
-                    attachment_sops_filename = f"{attachment_manifest_name}.to-sops.yaml"
+                    attachment_sops_filename = sops_filenames(attachment_manifest_name).plaintext
                     if attachment_sops_filename not in created_files:
                         created_files.append(attachment_sops_filename)
                     logger.info(f"Created attachment secret manifest: {secret_name}")
@@ -7573,17 +7657,23 @@ class ProjectManager:
                             }
                         )
 
-                        # A clone uses its own (target) domain setup, never the source's:
-                        # it must land on the default cluster domain rather than inherit
-                        # the source's DNS config, or two deployments claim the same
-                        # hostnames. domain-format in particular must be dropped: a
-                        # dot-based format (e.g. component.subdomain) inherited without
-                        # the source's base-domain resolves onto the cluster wildcard,
-                        # producing a multi-label host the single-label wildcard cert
-                        # cannot cover. The web address now travels inside the source's
-                        # `services` block, so it is removed AFTER the copy -- excluding
-                        # the old root key names would be a silent no-op.
-                        clear_domain_settings(new_deployment)
+                        # A clone uses its own (target) domain setup, never the source's
+                        # hostnames, or two deployments claim the same ones. The web
+                        # address travels inside the source's `services` block, so it is
+                        # removed AFTER the copy -- excluding the old root key names would
+                        # be a silent no-op.
+                        #
+                        # The SHAPE stays, unless it leans on the name it is about to lose
+                        # (SELF_CONTAINED_FORMAT_IDS): dropping it handed the clone the
+                        # platform default of the day it was processed (RC-217). Dropped
+                        # first, so clearing the names also tidies away a service entry
+                        # that has nothing left in it.
+                        if (
+                            get_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
+                            not in SELF_CONTAINED_FORMAT_IDS
+                        ):
+                            pop_domain_setting(new_deployment, DomainSetting.DOMAIN_FORMAT)
+                        clear_domain_name_settings(new_deployment)
 
                         # The caller's own request was written before that copy and got
                         # overwritten by it. Write it again; it must beat the source.
