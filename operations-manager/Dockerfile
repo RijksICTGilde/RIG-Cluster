@@ -57,16 +57,26 @@ RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/
 # Niet uit een image: MinIO heeft zowel docker.io/minio als quay.io/minio achter een
 # abonnement gezet (401 op elke tag, en anoniem ook op de repo-API; een publiek quay-repo
 # ernaast geeft wel 200). dl.min.io geeft 410 Gone. De GitHub-release van dezelfde tag
-# staat er nog. De sha256sum die daar naast de binary hangt is hier de grendel: zonder die
-# controle wordt een foutpagina als binary opgeslagen en valt dat pas bij de eerste
-# aanroep op.
+# staat er nog.
+#
+# De checksum staat hier LITERAAL en wordt niet naast de binary opgehaald. Die .sha256sum
+# komt van dezelfde bron als de binary zelf, dus hij controleert alleen de overdracht: wie
+# het artefact kan wijzigen, wijzigt het bestand ernaast mee. Een literaal in dit bestand is
+# de grendel: hij laat een gewijzigd artefact omvallen, en een nieuwe waarde is een regel in
+# een diff die iemand goedkeurt. Bij een nieuwe MC_VERSION horen dus twee nieuwe sommen
+# (`sha256sum mc.linux-<arch>.<tag>` van de gedownloade assets).
+ARG MC_SHA256_AMD64=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891
+ARG MC_SHA256_ARM64=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c
 RUN MC_ASSET="mc.linux-${TARGETARCH}.${MC_VERSION}" \
     && MC_URL="https://github.com/minio/mc/releases/download/${MC_VERSION}/${MC_ASSET}" \
+    && case "${TARGETARCH}" in \
+         amd64) MC_SHA256="${MC_SHA256_AMD64}" ;; \
+         arm64) MC_SHA256="${MC_SHA256_ARM64}" ;; \
+         *) echo "geen mc-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+       esac \
     && curl -fsSL -o /usr/local/bin/mc "${MC_URL}" \
-    && curl -fsSL -o /tmp/mc.sha256sum "${MC_URL}.sha256sum" \
-    && echo "$(cut -d' ' -f1 /tmp/mc.sha256sum)  /usr/local/bin/mc" | sha256sum -c - \
-    && chmod 755 /usr/local/bin/mc \
-    && rm /tmp/mc.sha256sum
+    && echo "${MC_SHA256}  /usr/local/bin/mc" | sha256sum -c - \
+    && chmod 755 /usr/local/bin/mc
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64

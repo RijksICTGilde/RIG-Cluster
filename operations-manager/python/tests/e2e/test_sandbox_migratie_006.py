@@ -83,15 +83,25 @@ WHERE status = 'completed'
 #: gang die deze tabellen op dat moment nodig heeft.
 _EIGEN_PREFIX = "rc227_"
 
-#: Een BENOEMDE dollar-quote en geen `$$`, om de reden die in ``cluster.run_psql`` staat.
-#: En ``starts_with`` en geen ``LIKE``: in een LIKE-patroon is de `_` van dit voorvoegsel een
-#: jokerteken voor een willekeurig teken, en dit is een DROP-lus.
-_OPRUIMEN = f"""
+
+def _opruim_sql(prefix: str) -> str:
+    """De DROP-lus over de tabellen van deze module.
+
+    De grendel is LITERAAL en niet "de waarde is niet leeg": dit is een DROP-lus als
+    superuser over de levende `operations_manager`-database van het cluster, en met een leeg
+    voorvoegsel veegt hij het hele schema leeg. Een voorvoegsel dat verandert is daarmee een
+    rode toets in plaats van een verwijdering.
+
+    ``starts_with`` en geen ``LIKE``: in een LIKE-patroon is de `_` van dit voorvoegsel een
+    jokerteken voor een willekeurig teken.
+    """
+    assert prefix == "rc227_", f"het voorvoegsel van de DROP-lus is {prefix!r} en niet 'rc227_'"
+    return f"""
 DO $leegmaken$
 DECLARE tabel text;
 BEGIN
   FOR tabel IN
-    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND starts_with(tablename, '{_EIGEN_PREFIX}')
+    SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND starts_with(tablename, '{prefix}')
   LOOP
     EXECUTE format('DROP TABLE IF EXISTS public.%I', tabel);
   END LOOP;
@@ -145,7 +155,7 @@ def taken(db_wachtwoord: str) -> Generator[str]:
     is: de idempotentietoets zou dat lezen als "de tweede backfill voegde rijen toe", en de
     vergelijking met de oude meting leest twee verschillende momenten.
     """
-    opgeruimd, uit = _psql(db_wachtwoord, _OPRUIMEN)
+    opgeruimd, uit = _psql(db_wachtwoord, _opruim_sql(_EIGEN_PREFIX))
     assert opgeruimd == 0, f"de tabellen van een vorige gang konden niet worden opgeruimd: {uit}"
 
     naam = f"{_EIGEN_PREFIX}taken_{uuid.uuid4().hex[:8]}"

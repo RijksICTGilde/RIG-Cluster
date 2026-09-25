@@ -108,8 +108,9 @@ _PRIVE_TAG = f"rc227-{uuid.uuid4().hex[:8]}"
 _PRIVE_IMAGE = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}/e2e-allservices:{_PRIVE_TAG}"
 
 
-def _docker(*args: str, timeout: float = 600.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
+def _docker(*args: str, timeout: float = 600.0, invoer: str | None = None) -> subprocess.CompletedProcess[str]:
+    """docker met deze argumenten. ``invoer`` gaat over stdin, voor ``login --password-stdin``."""
+    return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False, input=invoer)
 
 
 def _anoniem_te_halen() -> bool:
@@ -141,7 +142,7 @@ def _anoniem_te_halen() -> bool:
 
 
 @pytest.fixture(scope="module")
-def prive_image() -> str:
+def prive_image() -> Generator[str]:
     """Zet het image in de registry, en meet of die registry anoniem iets weggeeft.
 
     Die meting staat hier omdat ze bepaalt wat de toetsen hieronder kunnen betekenen, en ze
@@ -151,15 +152,25 @@ def prive_image() -> str:
     waarschuwing en geen weigering: de rest van deze module meet nog steeds wat ZAD doet, maar
     de pod-toets kan er zijn sterkste claim niet op bouwen.
     """
-    inlog = _docker("login", _REGISTRY_HOST, "-u", _REGISTRY_USER, "-p", _REGISTRY_PASSWORD, timeout=120.0)
+    # `--password-stdin` en niet `-p`: `-p` zet het token in de argv, en die staat in de
+    # procestabel van de machine die de suite draait. De afmelding staat in een `finally`
+    # omdat een geslaagde login het token in `~/.docker/config.json` achterlaat, en dat
+    # bestand overleeft de toetsronde.
+    inlog = _docker(
+        "login", _REGISTRY_HOST, "-u", _REGISTRY_USER, "--password-stdin", timeout=120.0, invoer=_REGISTRY_PASSWORD
+    )
     assert inlog.returncode == 0, f"inloggen op {_REGISTRY_HOST} mislukte: {inlog.stderr[:400]}"
+    try:
+        for argv in (("pull", _BRON_IMAGE), ("tag", _BRON_IMAGE, _PRIVE_IMAGE), ("push", _PRIVE_IMAGE)):
+            stap = _docker(*argv)
+            assert stap.returncode == 0, f"docker {argv[0]} mislukte: {(stap.stderr or stap.stdout)[:400]}"
 
-    for argv in (("pull", _BRON_IMAGE), ("tag", _BRON_IMAGE, _PRIVE_IMAGE), ("push", _PRIVE_IMAGE)):
-        stap = _docker(*argv)
-        assert stap.returncode == 0, f"docker {argv[0]} mislukte: {(stap.stderr or stap.stdout)[:400]}"
-
-    logger.info("anoniem te halen: %s", _anoniem_te_halen())
-    return _PRIVE_IMAGE
+        logger.info("anoniem te halen: %s", _anoniem_te_halen())
+        yield _PRIVE_IMAGE
+    finally:
+        afmelden = _docker("logout", _REGISTRY_HOST, timeout=60.0)
+        if afmelden.returncode != 0:
+            logger.warning("docker logout mislukte: %s", (afmelden.stderr or afmelden.stdout)[:200])
 
 
 @pytest.fixture(scope="module")

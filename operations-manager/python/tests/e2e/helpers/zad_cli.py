@@ -26,6 +26,32 @@ CLI_NAMEN = ("zad", "zadctl")
 #: Overschrijft het zoeken, voor een CLI die niet op het PATH staat.
 CLI_ENV = "ZAD_CLI"
 
+#: Vlaggen waarvan de WAARDE niet in een melding hoort. ``registry add --password <token>`` is
+#: de aanroep die dat hier doet, en elke bewering hieronder zet de argv in haar melding: die
+#: komt in het pytest-verslag en in de uitvoer van de CI-stap terecht.
+GEHEIME_VLAGGEN = ("--password", "--token", "--api-key", "--secret")
+
+MASKER = "***"
+
+
+def leesbare_argv(argv: list[str]) -> str:
+    """De argv als tekst, met de waarde achter een geheime vlag gemaskeerd.
+
+    Ook de ``--vlag=waarde``-vorm: dan staat de waarde in hetzelfde argument, en een
+    maskering die alleen naar het volgende argument kijkt laat hem staan.
+    """
+    delen: list[str] = []
+    volgende_is_geheim = False
+    for deel in argv:
+        if volgende_is_geheim:
+            delen.append(MASKER)
+            volgende_is_geheim = False
+            continue
+        met_gelijkteken = next((vlag for vlag in GEHEIME_VLAGGEN if deel.startswith(f"{vlag}=")), None)
+        delen.append(f"{met_gelijkteken}={MASKER}" if met_gelijkteken else deel)
+        volgende_is_geheim = deel in GEHEIME_VLAGGEN
+    return " ".join(delen)
+
 
 @dataclass(frozen=True)
 class CliResultaat:
@@ -39,21 +65,26 @@ class CliResultaat:
         """stdout en stderr samen, want de CLI kiest zelf waar een melding heen gaat."""
         return f"{self.stdout}\n{self.stderr}"
 
+    @property
+    def aanroep(self) -> str:
+        """De aanroep zoals hij in een melding hoort: zonder de waarde van een geheime vlag."""
+        return leesbare_argv(self.argv)
+
     def json(self) -> object:
         try:
             return json.loads(self.stdout)
         except json.JSONDecodeError as fout:
             raise AssertionError(
-                f"{' '.join(self.argv)} gaf geen JSON terug (exit {self.exitcode}): {fout}\n"
+                f"{self.aanroep} gaf geen JSON terug (exit {self.exitcode}): {fout}\n"
                 f"stdout: {self.stdout!r}\nstderr: {self.stderr!r}"
             ) from fout
 
     def assert_ok(self) -> CliResultaat:
-        assert self.exitcode == 0, f"{' '.join(self.argv)} gaf exit {self.exitcode}\n{self.uitvoer}"
+        assert self.exitcode == 0, f"{self.aanroep} gaf exit {self.exitcode}\n{self.uitvoer}"
         return self
 
     def assert_faalt(self) -> CliResultaat:
-        assert self.exitcode != 0, f"{' '.join(self.argv)} slaagde onverwacht\n{self.uitvoer}"
+        assert self.exitcode != 0, f"{self.aanroep} slaagde onverwacht\n{self.uitvoer}"
         return self
 
 
@@ -131,8 +162,10 @@ class ZadCli:
                 env=env,
                 check=False,
             )
-        except subprocess.TimeoutExpired as fout:
-            raise AssertionError(f"{' '.join(argv)} liep langer dan {self.timeout}s") from fout
+        except subprocess.TimeoutExpired:
+            # `from None`: de tekst van ``TimeoutExpired`` draagt de HELE argv, en een
+            # gekoppelde uitzondering wordt in de traceback gewoon afgedrukt.
+            raise AssertionError(f"{leesbare_argv(argv)} liep langer dan {self.timeout}s") from None
 
         return CliResultaat(
             exitcode=proces.returncode,

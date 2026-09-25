@@ -21,7 +21,7 @@ omdat ze precies de vraag beantwoorden die dit plan stelde.
 | Wat | Uitkomst |
 |---|---|
 | Het cluster miste `containerdConfigPatches` | **gemeten en stuk, opgelost buiten git.** `sandbox-deploy` stopte met exit 4. Een kind-config geldt alleen bij `kind create cluster`, dus een cluster van voor 2026-09-16 mist de regel. Bijgeschreven volgens `docs/sandbox-kind-registry.md`, sectie "Een bestaand cluster bijwerken zonder herbouw". De nieuwe bouwweg werkt, maar niet op een cluster dat er al stond. |
-| `quay.io/minio/mc` geeft 401 | **gemeten en stuk, gerepareerd** (commit `65b90336`). Controlebeeld: `quay.io/prometheus/busybox` geeft 200 vanaf dezelfde machine, `quay.io/minio/mc` en `quay.io/minio/minio` allebei 401. mc komt nu uit de GitHub-release van dezelfde tag, met de sha256sum ernaast als grendel. |
+| `quay.io/minio/mc` geeft 401 | **gemeten en stuk, gerepareerd** (commit `65b90336`). Controlebeeld: `quay.io/prometheus/busybox` geeft 200 vanaf dezelfde machine, `quay.io/minio/mc` en `quay.io/minio/minio` allebei 401. mc komt nu uit de GitHub-release van dezelfde tag, met de sha256 van het artefact LITERAAL in het Dockerfile als grendel (`ARG MC_SHA256_AMD64`/`_ARM64`). Niet de `.sha256sum` naast de binary: die komt van dezelfde bron en controleert dus alleen de overdracht. |
 | De productiepin is niet meer te herbouwen | **gemeten en stuk, niet gerepareerd.** De Dockerfile op `d81cdab4` haalt mc van `dl.min.io`, en dat adres geeft 410. Een terugrol naar de huidige productiepin kan alleen met het al gepubliceerde image, niet met een build. |
 
 ## De nulmeting, en waarom er geen volledige staat

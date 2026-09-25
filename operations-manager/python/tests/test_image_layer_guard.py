@@ -241,8 +241,7 @@ class TestPinnedTools:
 
         dl.min.io geeft 410 met een tekstbody die `curl -LO` als binary opsloeg, en sinds
         MinIO zijn images achter een abonnement zette geeft quay.io 401 op elke tag. Wat
-        overblijft is de GitHub-release. De sha256sum ernaast is wat een foutpagina hier
-        laat omvallen in plaats van bij de eerste aanroep.
+        overblijft is de GitHub-release.
         """
         lines = [line for _, line in _instructions(dockerfile.read_text())]
         assert not [line for line in lines if "dl.min.io" in line]
@@ -252,12 +251,37 @@ class TestPinnedTools:
         assert haal, "mc wordt nergens uit de GitHub-release gehaald"
         for line in haal:
             assert "sha256sum -c -" in line, f"mc wordt gehaald zonder checksumcontrole: {line}"
-            # Per curl in de instructie en niet op de instructie als geheel: er staan er twee
-            # (de binary en zijn sha256sum), dus een -f op de ene dekte de andere af.
+            # Per curl in de instructie en niet op de instructie als geheel: staan er ooit
+            # weer twee, dan dekt een -f op de ene de andere af.
             zonder_f = [vlaggen for vlaggen in re.findall(r"curl\s+(-\S+)", line) if "f" not in vlaggen]
             assert not zonder_f, f"een mc-download zonder -f slaat een foutpagina op: curl {zonder_f} in {line}"
 
         assert [line for line in lines if re.fullmatch(r"ARG MC_VERSION(=RELEASE\.\S+)?", line)]
+
+    @pytest.mark.parametrize("dockerfile", [DOCKERFILE, BACKUP_DOCKERFILE], ids=["opi", "backup"])
+    def test_de_mc_checksum_is_een_literaal_en_komt_niet_van_de_download(self, dockerfile: Path) -> None:
+        """Een `.sha256sum` naast de binary komt van dezelfde bron als de binary.
+
+        Die controleert dus alleen de overdracht: wie het artefact kan wijzigen, wijzigt het
+        bestand ernaast mee, en dan is het geen grendel tegen een gewijzigd artefact. Een
+        literale som in het Dockerfile is dat wel, en een nieuwe waarde is een regel in een
+        diff die iemand goedkeurt.
+        """
+        lines = [line for _, line in _instructions(dockerfile.read_text())]
+
+        assert not [line for line in lines if ".sha256sum" in line], (
+            "de checksum wordt naast de binary opgehaald en komt dus van dezelfde bron"
+        )
+        sommen = [
+            regel.group(1)
+            for regel in (re.fullmatch(r"ARG MC_SHA256\w*=([0-9a-f]{64})", line) for line in lines)
+            if regel
+        ]
+        assert sommen, "er staat geen literale mc-checksum in het Dockerfile"
+        for som in sommen:
+            assert [line for line in lines if "MC_SHA256" in line and "sha256sum -c -" in line], (
+                f"de literale som {som[:12]} wordt niet gecontroleerd"
+            )
 
 
 class TestAptLayers:
