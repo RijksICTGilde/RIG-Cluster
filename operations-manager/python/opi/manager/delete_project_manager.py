@@ -21,7 +21,7 @@ from opi.services.project_store import get_project_store
 from opi.services.registry import get_service
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ManagerKey
-from opi.utils.argocd_tracking import is_tracked_by
+from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
@@ -114,6 +114,11 @@ class DeleteProjectManager:
         selected by the mark ArgoCD put on them (opi.utils.argocd_tracking). Forcing without
         that step is what left 350 resources behind in rig-prd-mpfm-w3h (RC-226).
 
+        The mark has to NAME this application; a mark that may be its name cut to the label
+        cap is not enough here, because that value is just as likely the whole name of a
+        neighbour in the same namespace, and here a match is a delete. Those are reported
+        instead, see may_be_cut_from.
+
         Returns:
             True if the finalizer was removed.
         """
@@ -150,22 +155,31 @@ class DeleteProjectManager:
                     f"'{app_name}'; its resources may be left behind"
                 )
             else:
-                tracked = [resource for resource in inventory if is_tracked_by(resource.app_name, {app_name})]
+                tracked = [resource for resource in inventory if resource.app_name == app_name]
+                undecidable = [resource for resource in inventory if may_be_cut_from(resource, {app_name})]
                 failed = await kubectl.delete_tracked_resources(tracked)
                 deletion_results["operations"].append(
                     {
                         "type": "argocd_app_tracked_resource_deletion",
                         "target": app_name,
                         "namespace": destination,
-                        "status": "success" if not failed else "partial",
+                        "status": "success" if not failed and not undecidable else "partial",
                         "deleted": len(tracked) - len(failed),
                         "failed": len(failed),
+                        "undecidable": len(undecidable),
                     }
                 )
                 if failed:
                     deletion_results["errors"].append(
                         f"{len(failed)} resource(s) of ArgoCD application '{app_name}' could not be deleted "
                         f"in namespace '{destination}'"
+                    )
+                if undecidable:
+                    deletion_results["errors"].append(
+                        f"{len(undecidable)} resource(s) in namespace '{destination}' carry a label value at the "
+                        f"{LABEL_VALUE_MAX}-character cap that '{app_name}' starts with, which is either this "
+                        "application's name cut to it or the whole name of a neighbour that is still running; "
+                        "left standing. scripts/argocd_orphan_sweep.py knows every Application name and can tell."
                     )
 
         finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)

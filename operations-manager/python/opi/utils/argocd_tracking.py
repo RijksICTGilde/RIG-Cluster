@@ -30,24 +30,6 @@ INSTANCE_LABEL = "app.kubernetes.io/instance"
 LABEL_VALUE_MAX = 63
 
 
-def is_tracked_by(tracked_name: str, application_names: set[str]) -> bool:
-    """Whether the Application in a resource's tracking mark is one of ``application_names``.
-
-    Not plain equality, because of the cap above: on a label cluster the mark may be a longer
-    Application name cut to it. Whether ArgoCD then writes the cut value or never gets its
-    resources applied at all is not measured, so a value AT the cap also matches a longer name
-    it is the start of.
-
-    Only that direction. It can make a resource look owned where an exact comparison called
-    it an orphan, never the reverse, and an orphan is what ``--delete`` acts on.
-    """
-    if tracked_name in application_names:
-        return True
-    if len(tracked_name) != LABEL_VALUE_MAX:
-        return False
-    return any(name.startswith(tracked_name) for name in application_names)
-
-
 def application_name_from_tracking_id(tracking_id: str) -> str | None:
     """The Application name inside a tracking-id, or ``None`` when there is none.
 
@@ -69,6 +51,17 @@ class TrackedResource:
     name: str
     namespace: str
     app_name: str
+    from_label: bool
+
+    @property
+    def truncatable(self) -> bool:
+        """Whether ``app_name`` may be a longer Application name cut to the label cap.
+
+        Only the label has that cap, so only a name read from one can be a cut one. On
+        ``odcn-production``, the one cluster type that sets ``resourceTrackingMethod:
+        annotation``, this is never true and every comparison on the name is plain equality.
+        """
+        return self.from_label and len(self.app_name) == LABEL_VALUE_MAX
 
     @property
     def kubectl_type(self) -> str:
@@ -86,6 +79,7 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
         return None
 
     tracking_id = (metadata.get("annotations") or {}).get(TRACKING_ID_ANNOTATION)
+    from_label = not tracking_id
     if tracking_id:
         app_name = application_name_from_tracking_id(tracking_id)
     else:
@@ -102,4 +96,31 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
         name=name,
         namespace=metadata.get("namespace", ""),
         app_name=app_name,
+        from_label=from_label,
     )
+
+
+def may_be_cut_from(resource: TrackedResource, application_names: set[str]) -> bool:
+    """Whether the mark may be one of these names cut to the label cap, instead of a name.
+
+    True means UNDECIDABLE, not owned. A value sitting exactly on the cap is equally well the
+    whole name of another Application, and nothing in the mark says which of the two it is.
+    So this states that fact and leaves the conclusion to the caller, because the two callers
+    draw the opposite one: for the sweep a match means leaving a resource alone, for the force
+    it means deleting it. One predicate that answered "belongs to" therefore flipped meaning
+    between them, and the relaxation that protects a live resource on the sweep took a living
+    neighbour's resources on the force (RC-226, review round 9).
+
+    Neither caller may act destructively on a true. Both report it instead: an undecidable
+    resource is something a human can settle by looking at it, and silently picking one of
+    the two readings is what this task exists to stop.
+
+    Equality is decided by the caller and is not undecidable here. A name that fits within the
+    cap is written whole, so the mark IS the name; one that does not fit is cut, and then this
+    is the only thing left to ask.
+    """
+    if not resource.truncatable:
+        return False
+    if resource.app_name in application_names:
+        return False
+    return any(name.startswith(resource.app_name) for name in application_names)

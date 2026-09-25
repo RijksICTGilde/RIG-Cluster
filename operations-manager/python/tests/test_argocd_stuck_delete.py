@@ -24,7 +24,7 @@ from opi.utils.argocd_tracking import (
     TRACKING_ID_ANNOTATION,
     TrackedResource,
     application_name_from_tracking_id,
-    is_tracked_by,
+    may_be_cut_from,
     tracked_resource_from_item,
 )
 
@@ -102,7 +102,7 @@ class TestTrackingId:
         """
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="app-a"))
         assert resource is not None
-        assert resource.app_name == "app-a"
+        assert (resource.app_name, resource.from_label) == ("app-a", True)
 
     def test_the_annotation_wins_over_a_label(self) -> None:
         """With annotation tracking the label may be a leftover from another tool."""
@@ -110,7 +110,7 @@ class TestTrackingId:
             _item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds", instance_label="something-else")
         )
         assert resource is not None
-        assert resource.app_name == "app-a"
+        assert (resource.app_name, resource.from_label) == ("app-a", False)
 
     def test_an_empty_label_owns_nothing(self) -> None:
         resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label="   "))
@@ -129,30 +129,58 @@ class TestTrackingId:
         assert secret.kubectl_type == "secret"
 
 
-class TestIsTrackedBy:
+class TestMayBeCutFrom:
+    """A mark sitting exactly on the label cap may be a longer name cut to it.
+
+    That, and nothing more: the answer is 'undecidable', not 'owned'. What the two callers
+    then do with an undecidable mark is the opposite of each other, which is why it is not
+    a predicate about belonging (see may_be_cut_from).
+    """
+
     #: A name longer than a label value can hold, in the shape the schema allows.
     LONG_APP = "a" * 30 + "-" + "b" * 63
 
-    def test_the_same_name_matches(self) -> None:
-        assert is_tracked_by("app-a", {"app-a", "app-b"}) is True
+    @staticmethod
+    def _labelled(app_name: str) -> TrackedResource:
+        """A resource as a LABEL cluster marks it, read the way the connector reads it."""
+        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", None, instance_label=app_name))
+        assert resource is not None
+        return resource
 
-    def test_another_name_does_not(self) -> None:
-        assert is_tracked_by("app-c", {"app-a", "app-b"}) is False
+    @staticmethod
+    def _annotated(app_name: str) -> TrackedResource:
+        resource = tracked_resource_from_item(_item("Secret", "v1", "db-creds", f"{app_name}:/Secret:ns/db-creds"))
+        assert resource is not None
+        return resource
 
-    def test_a_value_at_the_cap_matches_the_longer_name_it_starts(self) -> None:
+    def test_a_label_at_the_cap_may_be_the_longer_name_it_starts(self) -> None:
         assert len(self.LONG_APP) > LABEL_VALUE_MAX
-        assert is_tracked_by(self.LONG_APP[:LABEL_VALUE_MAX], {self.LONG_APP}) is True
+        assert may_be_cut_from(self._labelled(self.LONG_APP[:LABEL_VALUE_MAX]), {self.LONG_APP}) is True
 
-    def test_a_value_at_the_cap_still_needs_an_application_to_belong_to(self) -> None:
-        """Otherwise the cap would turn every long orphan into something to leave alone."""
-        assert is_tracked_by("z" * LABEL_VALUE_MAX, {self.LONG_APP}) is False
+    def test_an_annotation_is_never_a_cut_name(self) -> None:
+        """Only the label has the cap. odcn-production is the one cluster type that tracks by
+        annotation, so there nothing is ever undecidable and every comparison is on the whole
+        name, which is also the cluster this task is about."""
+        assert may_be_cut_from(self._annotated(self.LONG_APP[:LABEL_VALUE_MAX]), {self.LONG_APP}) is False
 
-    def test_a_value_below_the_cap_is_not_a_prefix_match(self) -> None:
-        """``mpfm-w3h-pr-31`` was never cut, so ``mpfm-w3h-pr-310`` does not protect it."""
-        assert is_tracked_by("mpfm-w3h-pr-31", {"mpfm-w3h-pr-310"}) is False
+    def test_a_mark_that_IS_one_of_the_names_is_decided(self) -> None:
+        """Equality is the caller's own test and it means owned. Calling it undecidable on top
+        of that would leave the force's own resources standing."""
+        cut = self.LONG_APP[:LABEL_VALUE_MAX]
+        assert may_be_cut_from(self._labelled(cut), {cut, self.LONG_APP}) is False
 
-    def test_a_value_over_the_cap_is_not_a_prefix_match(self) -> None:
-        assert is_tracked_by(self.LONG_APP[:-1], {self.LONG_APP}) is False
+    def test_a_mark_at_the_cap_still_needs_a_name_it_could_be_cut_from(self) -> None:
+        """Otherwise the cap would make every long orphan undecidable and nothing would ever
+        be reported as one."""
+        assert may_be_cut_from(self._labelled("z" * LABEL_VALUE_MAX), {self.LONG_APP}) is False
+
+    def test_a_mark_below_the_cap_was_never_cut(self) -> None:
+        """``mpfm-w3h-pr-31`` fits, so it is a whole name and ``mpfm-w3h-pr-310`` says nothing
+        about it."""
+        assert may_be_cut_from(self._labelled("mpfm-w3h-pr-31"), {"mpfm-w3h-pr-310"}) is False
+
+    def test_a_mark_over_the_cap_was_never_cut(self) -> None:
+        assert may_be_cut_from(self._labelled(self.LONG_APP[:-1]), {self.LONG_APP}) is False
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +391,7 @@ class TestDeleteTrackedResources:
             name=name,
             namespace="rig-prd-mpfm-w3h",
             app_name="app-a",
+            from_label=False,
         )
 
     @pytest.mark.asyncio
@@ -444,13 +473,14 @@ def _targets(pm: AsyncMock, method: str) -> list[str]:
     return [call.args[0] for call in getattr(pm._kubectl_connector, method).await_args_list]
 
 
-def _tracked(app_name: str, name: str) -> TrackedResource:
+def _tracked(app_name: str, name: str, from_label: bool = False) -> TrackedResource:
     return TrackedResource(
         kind="Secret",
         api_version="v1",
         name=name,
         namespace="rig-prd-mpfm-w3h",
         app_name=app_name,
+        from_label=from_label,
     )
 
 
@@ -506,21 +536,65 @@ class TestForceDeleteStuckApplication:
         deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
         assert [r.name for r in deleted] == ["mine"]
 
-    @pytest.mark.asyncio
-    async def test_a_resource_whose_label_was_cut_to_the_cap_is_still_taken(self) -> None:
-        """Otherwise the force reports ``deleted: 0`` without an error and leaves them.
+    #: 63 characters, so a whole Application name AND what a longer one is cut to. The schema
+    #: allows 30 for the project plus 63 for the deployment, and several deployments share a
+    #: namespace (projects/simple-example.yaml), so this neighbour is an ordinary situation.
+    NEIGHBOUR = "p-" + "b" * 61
+    FORCED = NEIGHBOUR + "-x"
 
-        That is the silent force this task is about, arriving through the other door: not a
-        failed inventory, but a successful one whose names do not compare equal.
+    @pytest.mark.asyncio
+    async def test_a_label_at_the_cap_is_not_taken_for_this_applications_own(self) -> None:
+        """Its secrets and PVCs are as likely the neighbour's, and here a match is a delete.
+
+        The sister test above says a delete may only take its own; this is the name length at
+        which an exact comparison stops being able to tell, which app-a and app-b never reach.
         """
-        app = "a" * 30 + "-" + "b" * 63
+        assert len(self.NEIGHBOUR) == LABEL_VALUE_MAX
         pm = AsyncMock()
         pm._kubectl_connector = _recording_kubectl(
-            [], destination="rig-prd-mpfm-w3h", tracked=[_tracked(app[:LABEL_VALUE_MAX], "db-creds")]
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked(self.NEIGHBOUR, "neighbours-secret", from_label=True)],
         )
         results: dict = {"operations": [], "errors": []}
 
-        await DeleteProjectManager(pm)._force_delete_stuck_application(app, results)
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results)
+
+        assert pm._kubectl_connector.delete_tracked_resources.await_args.args[0] == []
+
+    @pytest.mark.asyncio
+    async def test_what_it_could_not_place_is_reported_instead_of_left_in_silence(self) -> None:
+        """Leaving them without a word is the silent force this task is about, through the
+        other door: not a failed inventory, but a successful one it cannot act on."""
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked(self.NEIGHBOUR, "neighbours-secret", from_label=True)],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results)
+
+        operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
+        assert any("left standing" in error for error in results["errors"])
+
+    @pytest.mark.asyncio
+    async def test_a_long_name_in_the_annotation_is_taken(self) -> None:
+        """The annotation has no cap, so on odcn-production a long name compares equal and
+        nothing is undecidable. Without this the force reports ``deleted: 0`` on exactly the
+        cluster type this task is about.
+        """
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            [],
+            destination="rig-prd-mpfm-w3h",
+            tracked=[_tracked(self.FORCED, "db-creds"), _tracked(self.NEIGHBOUR, "neighbours-secret")],
+        )
+        results: dict = {"operations": [], "errors": []}
+
+        await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results)
 
         deleted = pm._kubectl_connector.delete_tracked_resources.await_args.args[0]
         assert [r.name for r in deleted] == ["db-creds"]
