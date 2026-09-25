@@ -81,20 +81,9 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
   `delete_project_via_api` (force teardown / cleanup safety net).
 - `zad_cli.py::ZadCli` - roept de zad-cli aan tegen de sandbox met een projectsleutel en
   geeft exitcode, stdout en stderr terug (`run(...)`, `assert_ok()`, `assert_faalt()`,
-  `json()`). De CLI is de TWEEDE afnemer van dezelfde API en leest een ander deel van het
-  antwoord dan de pagina: de JSON en de foutenvelop eronder. Een wijziging die de pagina
-  niet raakt viel daarom nergens om.
-
-  De CLI woont in een eigen repository en wordt hier niet meegeleverd. `skip_zonder_cli()`
-  slaat over als hij niet op het PATH staat (`zad`, of `zadctl`, of het pad in `ZAD_CLI`),
-  net zoals een sandboxtoets overslaat zonder `E2E_BASE_URL`: een CLI die ontbreekt is
-  geen falende toets, maar mag ook niet als groen wegschrijven.
-
-  De instellingen gaan via de omgeving (`ZAD_API_URL`, `ZAD_API_KEY`, `ZAD_PROJECT_ID`) en
-  niet via vlaggen, want dat is de weg die een script in een pijplijn ook neemt. Aanmaken
-  van een project gaat NIET over de CLI: `zad project create` meldt zich aan met het
-  account van de gebruiker, en deze suite heeft geen browserlogin maar een voorgetekend
-  sessiecookie. Maak het project met de wizardhelper en werk daarna met de projectsleutel.
+  `json()`). De CLI woont in een eigen repository en wordt hier niet meegeleverd:
+  `skip_zonder_cli()` slaat over als hij niet op het PATH staat (`zad`, of `zadctl`, of het
+  pad in `ZAD_CLI`), net zoals een sandboxtoets overslaat zonder `E2E_BASE_URL`.
 
 There is deliberately no separate cleanup registry: a suite that creates projects owns
 their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That
