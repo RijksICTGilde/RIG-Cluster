@@ -4,6 +4,7 @@ import logging
 import shutil
 import subprocess
 import tempfile
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pyrage
@@ -15,6 +16,9 @@ from opi.utils.age import (
     encrypt_age_content,
     is_age_encrypted,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.skipif(
     shutil.which("age") is None or shutil.which("age-keygen") is None,
@@ -51,7 +55,7 @@ def _binary_ontsleutelt(blok: bytes, prive_sleutel: str) -> subprocess.Completed
 
 class TestUitwisselbaarMetHetBinary:
     @pytest.mark.asyncio
-    async def test_blok_van_het_binary_opent_in_het_proces(self, age_keypair):
+    async def test_blok_van_het_binary_opent_in_het_proces(self, age_keypair: tuple[str, str]) -> None:
         """Wat het binary schreef moet de nieuwe weg lezen: alle bestaande bestanden zijn zo gemaakt."""
         prive, publiek = age_keypair
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
@@ -61,7 +65,7 @@ class TestUitwisselbaarMetHetBinary:
         assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_blok_van_opi_blijft_leesbaar_voor_het_binary(self, age_keypair):
+    async def test_blok_van_opi_blijft_leesbaar_voor_het_binary(self, age_keypair: tuple[str, str]) -> None:
         """OPI schrijft nog met het binary; de heenweg en de terugweg blijven op elkaar passen."""
         prive, publiek = age_keypair
         blok = await encrypt_age_content(KLARE_TEKST, publiek)
@@ -73,7 +77,7 @@ class TestUitwisselbaarMetHetBinary:
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, age_keypair):
+    async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, age_keypair: tuple[str, str]) -> None:
         """Niet-ascii loopt over ``decode("utf-8")``; het regeleinde aan het eind valt weg,
         want beide varianten strippen hun uitkomst, ook de oude.
         """
@@ -84,7 +88,7 @@ class TestUitwisselbaarMetHetBinary:
             await decrypt_age_content(blok, prive) == "WELKOM=Groetjes uit Noord\nMUNT=\u20ac 12,50\nPAD=/tmp/caf\u00e9"
         )
 
-    def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, age_keypair):
+    def test_blok_uit_de_bibliotheek_opent_in_het_binary(self, age_keypair: tuple[str, str]) -> None:
         """De meting waar de versleutelkant later op kan rusten."""
         prive, publiek = age_keypair
         blok = pyrage.encrypt(KLARE_TEKST.encode(), [pyrage.x25519.Recipient.from_str(publiek)])
@@ -96,11 +100,11 @@ class TestUitwisselbaarMetHetBinary:
 
 class TestGeenSubprocessOpHetLeespad:
     @pytest.mark.asyncio
-    async def test_ontsleutelen_start_geen_proces(self, age_keypair):
+    async def test_ontsleutelen_start_geen_proces(self, age_keypair: tuple[str, str]) -> None:
         prive, publiek = age_keypair
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
-        def ontploft(*args, **kwargs):
+        def ontploft(*args: object, **kwargs: object) -> None:
             raise AssertionError("ontsleutelen mag geen subprocess starten")
 
         with (
@@ -111,11 +115,11 @@ class TestGeenSubprocessOpHetLeespad:
             assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_prive_sleutel_gaat_niet_naar_schijf(self, age_keypair):
+    async def test_prive_sleutel_gaat_niet_naar_schijf(self, age_keypair: tuple[str, str]) -> None:
         prive, publiek = age_keypair
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
-        def ontploft(*args, **kwargs):
+        def ontploft(*args: object, **kwargs: object) -> None:
             raise AssertionError("de private sleutel mag niet naar een tempfile")
 
         with patch.object(tempfile, "NamedTemporaryFile", side_effect=ontploft):
@@ -125,7 +129,9 @@ class TestGeenSubprocessOpHetLeespad:
 
 class TestFoutgedrag:
     @pytest.mark.asyncio
-    async def test_verkeerde_sleutel_faalt_luid(self, age_keypair, make_age_keypair):
+    async def test_verkeerde_sleutel_faalt_luid(
+        self, age_keypair: tuple[str, str], make_age_keypair: Callable[[], tuple[str, str]]
+    ) -> None:
         _prive, publiek = age_keypair
         andere_prive, _ = make_age_keypair()
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
@@ -134,14 +140,14 @@ class TestFoutgedrag:
             await decrypt_age_content(blok, andere_prive)
 
     @pytest.mark.asyncio
-    async def test_onleesbare_invoer_faalt_luid(self, age_keypair):
+    async def test_onleesbare_invoer_faalt_luid(self, age_keypair: tuple[str, str]) -> None:
         prive, _publiek = age_keypair
 
         with pytest.raises(Exception, match="Age decryption failed"):
             await decrypt_age_content("geen age-blok", prive)
 
     @pytest.mark.asyncio
-    async def test_kapotte_sleutel_faalt_luid(self, age_keypair):
+    async def test_kapotte_sleutel_faalt_luid(self, age_keypair: tuple[str, str]) -> None:
         _prive, publiek = age_keypair
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
@@ -149,7 +155,7 @@ class TestFoutgedrag:
             await decrypt_age_content(blok, "AGE-SECRET-KEY-GEENGELDIGESLEUTEL")
 
     @pytest.mark.asyncio
-    async def test_ontbrekende_invoer_blijft_een_valuefout(self, age_keypair):
+    async def test_ontbrekende_invoer_blijft_een_valuefout(self, age_keypair: tuple[str, str]) -> None:
         prive, _publiek = age_keypair
 
         with pytest.raises(ValueError, match="Missing encrypted content or private key"):
@@ -157,7 +163,7 @@ class TestFoutgedrag:
         with pytest.raises(ValueError, match="Missing encrypted content or private key"):
             await decrypt_age_content("iets", "")
 
-    def test_sync_geeft_none_bij_een_fout(self, age_keypair):
+    def test_sync_geeft_none_bij_een_fout(self, age_keypair: tuple[str, str]) -> None:
         _prive, publiek = age_keypair
         blok = _binary_versleutelt(KLARE_TEKST, publiek)
 
@@ -170,7 +176,7 @@ class TestRandenVanDeInvoer:
     """De twee ``strip()``-aanroepen in ``_decrypt_in_process``: pyrage is strenger dan het binary."""
 
     @pytest.mark.asyncio
-    async def test_sleutel_met_een_regeleinde_erachter_opent(self, age_keypair):
+    async def test_sleutel_met_een_regeleinde_erachter_opent(self, age_keypair: tuple[str, str]) -> None:
         """``age -d -i`` opende een sleutelbestand met een regeleinde erachter (gemeten: exit 0),
         en die vorm komt voor: de sleutel bereikt OPI via een omgevingsvariabele uit een
         k8s-secret. ``Identity.from_str`` weigert hem met ``IdentityError``.
@@ -182,7 +188,7 @@ class TestRandenVanDeInvoer:
         assert decrypt_age_content_sync(blok, prive + "\n") == KLARE_TEKST
 
     @pytest.mark.asyncio
-    async def test_een_blok_zonder_inhoud_geeft_een_lege_tekst_terug(self, age_keypair):
+    async def test_een_blok_zonder_inhoud_geeft_een_lege_tekst_terug(self, age_keypair: tuple[str, str]) -> None:
         """Leeg blijft leeg in plaats van een fout te worden: ``decrypt_if_encrypted`` en
         ``decrypt_password_smart`` toetsen hierna alleen op ``None``.
         """
@@ -193,7 +199,7 @@ class TestRandenVanDeInvoer:
         assert decrypt_age_content_sync(blok, prive) == ""
 
     @pytest.mark.asyncio
-    async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, age_keypair):
+    async def test_blok_opent_in_elke_vorm_die_is_age_encrypted_accepteert(self, age_keypair: tuple[str, str]) -> None:
         """``is_age_encrypted`` stript voor het de markers herkent, dus wat die poort doorlaat
         moet hierna ook opengaan; ``decrypt_tree`` zet die twee achter elkaar. Wijder dan het
         binary, dat op een blok met witruimte ervoor afketste met "unexpected intro".
@@ -212,7 +218,9 @@ class TestGeenGeheimInDeUitvoer:
     """
 
     @pytest.mark.asyncio
-    async def test_de_klare_tekst_komt_niet_in_de_logs(self, age_keypair, caplog):
+    async def test_de_klare_tekst_komt_niet_in_de_logs(
+        self, age_keypair: tuple[str, str], caplog: pytest.LogCaptureFixture
+    ) -> None:
         prive, publiek = age_keypair
         blok = _binary_versleutelt(GEHEIM, publiek)
 
@@ -226,8 +234,11 @@ class TestGeenGeheimInDeUitvoer:
 
     @pytest.mark.asyncio
     async def test_een_mislukte_ontsleuteling_noemt_sleutel_noch_cijfertekst(
-        self, age_keypair, make_age_keypair, caplog
-    ):
+        self,
+        age_keypair: tuple[str, str],
+        make_age_keypair: Callable[[], tuple[str, str]],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         _prive, publiek = age_keypair
         andere, _ = make_age_keypair()
         blok = _binary_versleutelt(GEHEIM, publiek)
@@ -250,7 +261,7 @@ class TestDeProcesteller:
     """
 
     @pytest.mark.asyncio
-    async def test_versleutelen_telt_nog_mee_en_ontsleutelen_niet_meer(self, age_keypair):
+    async def test_versleutelen_telt_nog_mee_en_ontsleutelen_niet_meer(self, age_keypair: tuple[str, str]) -> None:
         prive, publiek = age_keypair
 
         voor = _connector_subprocess_calls.get("age", 0)
@@ -271,7 +282,7 @@ class TestGeenCache:
     """
 
     @pytest.mark.asyncio
-    async def test_dezelfde_cijfertekst_wordt_elke_keer_opnieuw_ontsleuteld(self, age_keypair):
+    async def test_dezelfde_cijfertekst_wordt_elke_keer_opnieuw_ontsleuteld(self, age_keypair: tuple[str, str]) -> None:
         prive, publiek = age_keypair
         blok = _binary_versleutelt(GEHEIM, publiek)
 
@@ -284,8 +295,8 @@ class TestGeenCache:
 
     @pytest.mark.asyncio
     async def test_een_geslaagde_ontsleuteling_opent_hetzelfde_blok_niet_voor_een_andere_sleutel(
-        self, age_keypair, make_age_keypair
-    ):
+        self, age_keypair: tuple[str, str], make_age_keypair: Callable[[], tuple[str, str]]
+    ) -> None:
         """De vorm die een cache op de cijfertekst alleen zou verbergen: eerst met de goede
         sleutel, daarna met een sleutel die er geen recht op heeft.
         """
