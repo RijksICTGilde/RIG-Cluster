@@ -43,10 +43,10 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    kubectl -n <ns> patch application <naam> --type=json -p '[{"op":"remove","path":"/operation"}]'
    ```
 
-   Dit gebeurt op alle vier de plekken waar OPI een Application laat verwijderen: de
-   wezenopruiming, de infrastructuur-Application, `delete_deployment` en
-   `delete_deployment_from_yaml_change`. Het werkt ook als de oorzaak buiten ons ligt: een
-   registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
+   Dit gebeurt op elke plek waar OPI een Application laat verwijderen die een workload
+   onder zich heeft: de wezenopruiming, de infrastructuur-Application, `delete_deployment`
+   en `delete_deployment_from_yaml_change`. Het werkt ook als de oorzaak buiten ons ligt:
+   een registry die plat gaat, een kapot image, een crashloop bij de gebruiker.
 
    Drie van die vier verwijderen via GitOps: het manifest gaat uit de
    argo-applications-repo en ArgoCD ruimt de Application op. De wezenopruiming heeft dat
@@ -54,6 +54,14 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    `kubectl delete application -n <argo-namespace>`. De cascade komt daar van de
    `resources-finalizer.argocd.argoproj.io` die `manifests/argocd-application.yaml.jinja`
    meeschrijft.
+
+   De projectapplicatie `{project}-project` krijgt die patch niet. Die verdwijnt ook niet
+   via een eigen delete-aanroep, maar doordat `_delete_project_argocd_folder` de hele
+   argo-map `{cluster}/{project}/` weghaalt, met het manifest van die applicatie erin.
+   Nodig is het daar ook niet: de bron van die applicatie is de `_project`-map, en die
+   draagt geen workload, alleen de serviceaccount van het project, pull-secrets en
+   eventueel een quay-organisatie. Zonder workload is er niets om op health te wachten, dus
+   de blokkade uit dit plan kan daar niet ontstaan.
 
 2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
    `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna gaat de
