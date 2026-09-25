@@ -35,6 +35,23 @@ jobs:
       - name: Run pip-audit
         run: uv run pip-audit --strict --desc --skip-editable -s osv
 
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # De scan roept age-keygen aan om een sleutelvormige string op geldigheid te toetsen.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Scan the branch tree for committed secrets
+        run: python scripts/scan-secrets.py
+
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
