@@ -5,13 +5,23 @@ imagenaam). Wat daar niet in zit is de weg die een afnemer echt loopt: registry 
 invullen, bij een image aanwijzen welke registry erbij hoort, en dan een pod die het image
 eruit haalt. Dat is het grootste blok sinds 2 september en het had geen clustertoets.
 
-**De registry hier is echt privaat.** Forgejo op dit cluster draagt een container registry
-die anoniem 401 geeft (`GET /v2/` zonder inloggegevens), en de node kan hem bereiken. Het
-image wordt door de fixture naar die registry gekopieerd. Een pod die daarna start kan dat
-alleen met de credentials die ZAD in het pull-secret zette: zonder dat secret geeft de pull
-401 en komt de pod niet verder dan `ImagePullBackOff`. Dat is wat deze toets tot een toets
-maakt in plaats van een rondleiding, en het is ook waarom hier niet met een publieke image
-gewerkt wordt: die zou ook zonder pull-secret starten.
+**Let op wat een draaiende pod hier WEL en NIET bewijst.** De eerste versie van dit bestand
+ging ervan uit dat de registry privaat is, want `GET /v2/` geeft anoniem 401. Dat is
+nagemeten en die aanname klopt niet: die 401 is de auth-UITDAGING die elke Docker-registry
+geeft, publiek of niet. Doe je de tokendans die een client ook doet, dan geeft
+`/v2/token?scope=repository:<org>/<image>:pull` ANONIEM een token, en daarmee komt de
+manifest met 200 terug. Het image is dus publiek te halen.
+
+Dat is twee keer waargenomen aan de kubelet-kant, met een vaste en met een eigen tag, en met
+`imagePullPolicy: Always`: het image kwam er "in 50ms" terwijl kubelet in dezelfde events
+`FailedToRetrieveImagePullSecret` meldde en het secret nog niet bestond. Een draaiende pod
+bewijst hier dus NIET dat de inloggegevens gebruikt zijn.
+
+Wat dit bestand wel meet, en dat is de kern van het blok: de entry landt AGE-versleuteld in
+het projectbestand, ZAD zet een `dockerconfigjson`-secret in de namespace van het project met
+de juiste upstream en gebruiker, en de deployment komt op met het image uit die registry en
+met dat secret erbij. Alleen de stap "en zonder dat secret zou het niet lukken" is op deze
+registry niet te meten. Wie dat wil, heeft een image nodig dat anoniem echt geweigerd wordt.
 
 Draaien:
 
@@ -28,6 +38,7 @@ import logging
 import os
 import shutil
 import subprocess
+import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -36,7 +47,7 @@ from tests.e2e.conftest import SANDBOX_TEST_USER
 from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers.lifecycle import create_project_via_wizard
 from tests.e2e.helpers.wizard import unique_project_name
-from tests.e2e.helpers.zad_cli import ZadCli, skip_zonder_cli
+from tests.e2e.helpers.zad_cli import GEEN_CLI, ZadCli, cli_pad, skip_zonder_cli
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -47,7 +58,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-pytestmark = [pytest.mark.e2e, pytest.mark.sandbox, pytest.mark.slow]
+# Zonder de CLI komt de registry er niet in, en dan meet de pod-toets een component die
+# nooit is toegevoegd. De skip staat daarom op de module, voor het project.
+# `serial`: de registry moet er zijn voor de component hem kan kiezen, en het pull-secret
+# voor de pod kan starten. Dat is de keten die deze module meet.
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.sandbox,
+    pytest.mark.slow,
+    pytest.mark.serial,
+    pytest.mark.skipif(cli_pad() is None, reason=GEEN_CLI),
+]
 
 _VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 
@@ -67,29 +88,60 @@ _REGISTRY_NAAM = "forgejo-prive"
 _UPSTREAM = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}"
 
 _BRON_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
-_PRIVE_IMAGE = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}/e2e-allservices:rc227"
+
+#: Een eigen tag per run, zodat de pod niet uit een verwijzing komt die een vorige run heeft
+#: achtergelaten. Dat is hygiene en geen bewijs: met een eigen tag haalde kubelet het image
+#: nog steeds binnen 50ms en zonder pull-secret, want de registry laat anoniem halen toe (zie
+#: de module-docstring). De lagen zijn gedeeld, dus dit kost geen extra overdracht.
+_PRIVE_TAG = f"rc227-{uuid.uuid4().hex[:8]}"
+_PRIVE_IMAGE = f"{_REGISTRY_HOST}/{_REGISTRY_ORG}/e2e-allservices:{_PRIVE_TAG}"
 
 
 def _docker(*args: str, timeout: float = 600.0) -> subprocess.CompletedProcess[str]:
     return subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def _anoniem_te_halen() -> bool:
+    """Kan een client zonder inloggegevens de manifest van het testimage ophalen?
+
+    De tokendans zoals containerd hem ook doet: eerst een token vragen bij het
+    token-endpoint, dan de manifest met dat token. Zonder die twee stappen meet je de
+    auth-uitdaging en niet de toegang.
+    """
+    with httpx.Client(verify=_VERIFY_SSL, timeout=30.0) as client:
+        token = client.get(
+            f"https://{_REGISTRY_HOST}/v2/token",
+            params={"scope": f"repository:{_REGISTRY_ORG}/e2e-allservices:pull", "service": "container_registry"},
+        )
+        if token.status_code != 200 or not token.json().get("token"):
+            return False
+        manifest = client.get(
+            f"https://{_REGISTRY_HOST}/v2/{_REGISTRY_ORG}/e2e-allservices/manifests/{_PRIVE_TAG}",
+            headers={
+                "Authorization": f"Bearer {token.json()['token']}",
+                "Accept": (
+                    "application/vnd.oci.image.manifest.v1+json,"
+                    "application/vnd.docker.distribution.manifest.v2+json,"
+                    "application/vnd.oci.image.index.v1+json"
+                ),
+            },
+        )
+    return manifest.status_code == 200
+
+
 @pytest.fixture(scope="module")
 def prive_image() -> str:
-    """Zorg dat het image in de private registry staat, en dat hij echt privaat is.
+    """Zet het image in de registry, en meet of die registry anoniem iets weggeeft.
 
-    De controle op 401 staat hier en niet in een toets: is de registry niet privaat, dan
-    meet elke toets hieronder niets en hoort de suite dat meteen te zeggen.
+    Die meting staat hier omdat ze bepaalt wat de toetsen hieronder kunnen betekenen, en ze
+    doet de TOKENDANS in plaats van naar de kale 401 te kijken: `GET /v2/` antwoordt met 401
+    bij elke Docker-registry, ook een publieke, want dat is de auth-uitdaging. De vraag is of
+    een anonieme client daarna een token krijgt dat pull toestaat. De uitkomst is een
+    waarschuwing en geen weigering: de rest van deze module meet nog steeds wat ZAD doet, maar
+    de pod-toets kan er zijn sterkste claim niet op bouwen.
     """
     if not shutil.which("docker"):
         pytest.skip("docker ontbreekt; de fixture kan het image niet in de registry zetten")
-
-    with httpx.Client(verify=_VERIFY_SSL, timeout=30.0) as client:
-        anoniem = client.get(f"https://{_REGISTRY_HOST}/v2/")
-    assert anoniem.status_code == 401, (
-        f"de registry op {_REGISTRY_HOST} weigert anoniem niet (HTTP {anoniem.status_code}); "
-        "dan bewijst een startende pod niets over het pull-secret"
-    )
 
     inlog = _docker("login", _REGISTRY_HOST, "-u", _REGISTRY_USER, "-p", _REGISTRY_PASSWORD, timeout=120.0)
     assert inlog.returncode == 0, f"inloggen op {_REGISTRY_HOST} mislukte: {inlog.stderr[:400]}"
@@ -98,6 +150,7 @@ def prive_image() -> str:
         stap = _docker(*argv)
         assert stap.returncode == 0, f"docker {argv[0]} mislukte: {(stap.stderr or stap.stdout)[:400]}"
 
+    logger.info("anoniem te halen: %s", _anoniem_te_halen())
     return _PRIVE_IMAGE
 
 
@@ -241,7 +294,7 @@ def test_een_component_uit_de_private_registry_krijgt_een_pull_secret(
     toevoegen.assert_ok()
 
     # De keuze staat op de COMPONENTLAAG van de dienst en niet als vlag op `component add`:
-    # `zad component add` heeft geen --registry (gemeten op zad-cli 1.0.0), en de laag die
+    # `zad component add` heeft geen --registry (gemeten op zad-cli 0.13.1), en de laag die
     # de dienst ervoor openzet is image-registries/config/component/<naam>.
     kiezen = cli.run(
         "service",
@@ -284,11 +337,16 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
     registry_project: CreatedProject,
     prive_image: str,
 ) -> None:
-    """De echte uitkomst: de pod draait.
+    """De pod komt op met het image uit de registry, en noemt een secret dat er echt is.
 
-    Anoniem geeft deze registry 401, dus een draaiende pod betekent dat het pull-secret
-    gebruikt IS. Zonder de vorige toets zou een groene regel hier ook kunnen betekenen dat
-    de node het image nog in zijn cache had; daarom staat het secret daar apart gemeten.
+    Wat hij NIET bewijst is dat de inloggegevens gebruikt zijn: deze registry laat een
+    anonieme pull toe, zie de module-docstring. Het omgekeerde is hier zelfs gemeten, met een
+    eigen tag en `imagePullPolicy: Always`: het image kwam er terwijl kubelet
+    `FailedToRetrieveImagePullSecret` meldde.
+
+    Daarom eindigt deze toets op de aanwezigheid van het secret dat de pod noemt. Dat is de
+    regel die een ontbrekend secret wel vangt, want kubelet gaat er met een WAARSCHUWING langs
+    en de pod draait door.
     """
     namespace = f"rig-{registry_project.name}"
 
@@ -327,3 +385,14 @@ def test_de_pod_haalt_het_image_uit_de_private_registry(
         for verwijzing in (pod["spec"].get("imagePullSecrets") or [])
     ]
     assert namen, "de pod draait maar noemt geen imagePullSecret; dan is de registry niet privaat genoeg"
+
+    # En het secret dat hij noemt moet er ECHT zijn. Dit is de regel die de valse groene vangt:
+    # kubelet meldt een ontbrekend pull-secret als een waarschuwing en gaat door, dus een pod
+    # kan draaien terwijl het secret nooit is aangekomen.
+    aanwezig = {item["metadata"]["name"] for item in _kubectl_json(["get", "secrets", "-n", namespace])["items"]}
+    ontbreekt = [naam for naam in namen if naam not in aanwezig]
+    assert not ontbreekt, (
+        f"de pod noemt {ontbreekt} als imagePullSecret maar die staat niet in {namespace}; "
+        f"dan kwam het image uit de cache van de node en is er niets over de registry gemeten. "
+        f"Aanwezig: {sorted(aanwezig)}"
+    )
