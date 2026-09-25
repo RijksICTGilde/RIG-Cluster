@@ -811,7 +811,7 @@ class KubectlConnector:
 
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None
-    ) -> list[TrackedResource] | None:
+    ) -> tuple[list[TrackedResource], bool] | None:
         """
         Every resource in a namespace that ArgoCD marked as its own.
 
@@ -821,10 +821,12 @@ class KubectlConnector:
                 type this cluster can list and delete
 
         Returns:
-            The tracked resources found, empty when there are none, or ``None`` when the
-            namespace could not be inventoried. Both callers act on the difference: a
-            force that reads a failure as 'nothing here' deletes nothing and reports
-            success, and a sweep that does so reports SCHOON (RC-226).
+            The tracked resources found plus whether the inventory is COMPLETE, or ``None``
+            when the namespace could not be inventoried at all. Three answers and not two,
+            because a ``kubectl get`` over many types exits non-zero when ONE of them fails
+            and still prints the rest. Both callers act on all three, and for the same
+            reason: a force that reads a failed or a half answer as 'nothing here' deletes
+            nothing and reports success, and a sweep that does so reports SCHOON (RC-226).
         """
         types = resource_types if resource_types is not None else await self.list_namespaced_resource_types()
         if not types:
@@ -839,11 +841,15 @@ class KubectlConnector:
             if code != 0:
                 logger.error(f"Failed to inventory tracked resources in namespace '{namespace}': {stderr}")
                 return None
-            return []
+            return [], True
+        complete = True
         if code != 0:
             # kubectl reports a non-zero exit when ONE of the queried types fails (an
-            # unavailable aggregated API, for instance) but still prints what it did get.
-            # Reporting nothing would be worse than reporting the part it could read.
+            # unavailable aggregated API, or a type this service account may not list in
+            # this namespace) but still prints what it did get. Keeping that part beats
+            # reporting nothing, as long as the caller hears that it IS a part: the types
+            # that stayed silent are exactly where a leftover resource hides.
+            complete = False
             logger.warning(f"Partial inventory of namespace '{namespace}' (kubectl reported: {stderr})")
 
         try:
@@ -855,7 +861,7 @@ class KubectlConnector:
         items = data.get("items", []) if isinstance(data, dict) else []
         tracked = [resource for item in items if (resource := tracked_resource_from_item(item)) is not None]
         logger.debug(f"Namespace '{namespace}': {len(tracked)} of {len(items)} resources are ArgoCD-owned")
-        return tracked
+        return tracked, complete
 
     async def delete_tracked_resources(self, resources: list[TrackedResource]) -> list[TrackedResource]:
         """
