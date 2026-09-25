@@ -19,17 +19,14 @@ de praktijk toe doet, namelijk dat een tweede run geen generatie kost.
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 import os
-import subprocess
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import pytest
 from tests.e2e.conftest import SANDBOX_TEST_USER
-from tests.e2e.helpers import sandbox_api
+from tests.e2e.helpers import cluster, sandbox_api
 from tests.e2e.helpers.lifecycle import RUNNABLE_IMAGE, create_project_with_services
 from tests.e2e.helpers.wizard import unique_project_name
 from tests.e2e.helpers.zad_cli import GEEN_CLI, ZadCli, cli_pad, skip_zonder_cli
@@ -104,88 +101,45 @@ def doel_deployment() -> str:
     return "kopie"
 
 
-def _kubectl_json(args: list[str]) -> dict[str, Any]:
-    ruw = subprocess.run(["kubectl", *args, "-o", "json"], capture_output=True, text=True, timeout=60, check=True)
-    return json.loads(ruw.stdout)
-
-
-def _secret(namespace: str, naam: str) -> dict[str, str]:
-    data = _kubectl_json(["get", "secret", naam, "-n", namespace])["data"]
-    return {sleutel: base64.b64decode(waarde).decode() for sleutel, waarde in data.items()}
-
-
 def _psql(secret: dict[str, str], sql: str, *, database: str = "") -> tuple[int, str]:
     """SQL tegen de databaseserver van de deployment, met zijn eigen inloggegevens.
 
-    Dezelfde vorm als in ``test_sandbox_restore_generation.py``; ``database`` maakt het
-    mogelijk om de serverlijst (``postgres``) te bevragen in plaats van de eigen database.
+    ``database`` maakt het mogelijk om de serverlijst (``postgres``) te bevragen in plaats
+    van de eigen database. De afdichting tegen een pod die zijn uitvoer verliest zit in
+    ``cluster.run_psql``: zonder die afdichting staat een schrijfactie hier groen op werk
+    dat nooit gebeurd is, want dan komt `kubectl run` terug met exitcode NUL en een lege
+    uitvoer. Wat dat van een statement vraagt, staat in de docstring daar.
     """
-    resultaat = subprocess.run(
-        [
-            "kubectl",
-            "run",
-            f"psql-rc227-{uuid.uuid4().hex[:8]}",
-            "-n",
-            "rig-system",
-            "--rm",
-            "-i",
-            "--restart=Never",
-            "--image=postgres:16-alpine",
-            "--env",
-            f"PGPASSWORD={secret['DATABASE_PASSWORD']}",
-            "--command",
-            "--",
-            "psql",
-            "-h",
-            secret["DATABASE_SERVER_HOST"],
-            "-U",
-            secret["DATABASE_SERVER_USER"],
-            "-d",
-            database or secret["DATABASE_DB"],
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-tAc",
-            sql,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
+    return cluster.run_psql(
+        sql,
+        host=secret["DATABASE_SERVER_HOST"],
+        user=secret["DATABASE_SERVER_USER"],
+        database=database or secret["DATABASE_DB"],
+        password=secret["DATABASE_PASSWORD"],
     )
-    return resultaat.returncode, (resultaat.stdout + resultaat.stderr).strip()
-
-
-#: Laatste regel van de leesquery hieronder. `kubectl run --rm -i` hangt aan een container die
-#: nog moet starten en kan terugkomen met exitcode NUL terwijl alles wat psql schreef weg is
-#: (gemeten in ``test_sandbox_migratie_006.py``). Voor een LEESquery is opnieuw proberen gratis,
-#: en zonder dit onderscheid ziet "niets teruggekregen" eruit als "geen database gevonden".
-_SLUITSTUK = "rc227-databases-klaar"
 
 
 def _databases(secret: dict[str, str], prefix: str) -> list[str]:
     """Elke database op de server waarvan de naam met ``prefix`` begint."""
-    for _ in (1, 2, 3):
-        code, uit = _psql(
-            secret,
-            f"SELECT datname FROM pg_database WHERE datname LIKE '{prefix}%' ORDER BY datname; SELECT '{_SLUITSTUK}'",
-            database="postgres",
-        )
-        assert code == 0, f"pg_database uitlezen mislukt: {uit}"
-        if _SLUITSTUK in uit:
-            # kubectl run --rm schrijft zijn eigen regel ("pod ... deleted") op stderr mee.
-            return [regel.strip() for regel in uit.splitlines() if regel.strip().startswith(prefix)]
-        logger.warning("de psql-pod gaf niets terug, opnieuw: %s", uit[:200])
-    raise AssertionError(f"pg_database bleef onleesbaar; laatste uitvoer: {uit[:300]}")
+    code, uit = _psql(
+        secret,
+        f"SELECT datname FROM pg_database WHERE datname LIKE '{prefix}%' ORDER BY datname",
+        database="postgres",
+    )
+    assert code == 0, f"pg_database uitlezen mislukt: {uit}"
+    # kubectl run --rm schrijft zijn eigen regel ("pod ... deleted") op stderr mee.
+    return [regel.strip() for regel in uit.splitlines() if regel.strip().startswith(prefix)]
 
 
 def _deployment_secret(project: str, deployment: str) -> dict[str, str]:
     namespace = f"rig-{project}"
     namen = [
         item["metadata"]["name"]
-        for item in _kubectl_json(["get", "secrets", "-n", namespace])["items"]
+        for item in cluster.get_json_strict("get", "secrets", "-n", namespace)["items"]
         if deployment in item["metadata"]["name"] and "database" in item["metadata"]["name"].lower()
     ]
     assert namen, f"geen databasesecret voor deployment '{deployment}' in {namespace}"
-    return _secret(namespace, namen[0])
+    return cluster.secret_values(namespace, namen[0])
 
 
 def _clone_blok(forgejo: ForgejoClient, project: str, deployment: str) -> dict[str, Any]:
@@ -201,9 +155,13 @@ def test_de_brondatabase_krijgt_een_merkteken(kloon_project: CreatedProject) -> 
     secret = _deployment_secret(kloon_project.name, kloon_project.deployment_name)
     schema = secret["DATABASE_SCHEMA"]
 
+    # Herhaalbaar, want ``_psql`` mag een statement een tweede keer sturen als de pod de
+    # uitvoer van de eerste verloor. Een kale `CREATE TABLE IF NOT EXISTS` + `INSERT` zou
+    # dan twee rijen achterlaten, en de laatste toets hieronder telt er precies een.
     code, uit = _psql(
         secret,
-        f'CREATE TABLE IF NOT EXISTS "{schema}".rc227_kloon (merk text); '
+        f'DROP TABLE IF EXISTS "{schema}".rc227_kloon; '
+        f'CREATE TABLE "{schema}".rc227_kloon (merk text); '
         f"INSERT INTO \"{schema}\".rc227_kloon VALUES ('{_MERKTEKEN}')",
     )
     assert code == 0, f"het merkteken kon niet in de brondatabase: {uit}"
