@@ -26,20 +26,36 @@ omdat ze precies de vraag beantwoorden die dit plan stelde.
 
 ## De nulmeting, en waarom er geen volledige staat
 
-Fase 0 van het plan vroeg om de bestaande 26 sandboxtoetsen als nulmeting. Die run is
-gestart en na 25 van de 74 toetsen afgebroken, omdat hij toen al geen oordeel meer droeg:
-vanaf dat moment liep er een tweede suite naast op hetzelfde cluster, en elke module die
-een project aanmaakt viel daardoor om op de wizardwacht van 240 seconden. De applicaties
-kwamen er wel, alleen later.
+Fase 0 van het plan vroeg om de bestaande sandboxtoetsen als nulmeting. Die run is gestart
+en na 25 van de 74 toetsen afgebroken. Wat er tot dat punt stond: 22 groen, en drie ERRORs
+in de fixture van `test_sandbox_all_services.py`.
 
-Wat er VOOR die vervuiling stond en dus wel telt: `test_sandbox_all_services.py` gaf drie
-ERRORs in zijn fixture, en de overige 22 toetsen tot dat punt stonden groen. De drie
-ERRORs zijn van dezelfde soort (de wizardwacht), dus ook daar is de uitspraak
-"omgevingsartefact" waarschijnlijker dan "kapot", maar dat is niet nagemeten.
+Die drie zijn later thuisgebracht, en het is geen codefout maar ook niet zomaar ruis. Elke
+fixture-ERROR in elke gang van deze ronde komt van dezelfde plek: de aanmaaktaak van OPI
+eindigt met
 
-**Een nulmeting hoort dus nog te gebeuren, op een rustig cluster en als enige run.** Dat
-is geen detail: zonder die meting is niet te zeggen of iets wat in de toekomst rood staat
-van de nieuwe code komt of er al stond.
+```
+Failed: <project>-productie (productie): timed out after 300s waiting for sync
+```
+
+waarna de wizardhelper de link naar de detailpagina nooit ziet en op zijn eigen wacht
+strandt. De applicatie komt er daarna gewoon (nagemeten: `speel-2il-productie` stond op
+`Synced` en de pod draaide, kort nadat de taak al als mislukt was weggeschreven).
+
+**Het is niet systematisch, het hangt aan de drukte van het cluster.** In dezelfde ronde
+haalden projecten met dezelfde diensten het wel binnen de tijd, ook met `postgresql-database`
+erbij. Wat het betekent voor wie hier toetsen draait:
+
+- **een sandboxsuite is niet betrouwbaar naast een andere suite**, en ook niet direct achter
+  een reeks aanmaakrondes aan. Laat het cluster eerst leeglopen;
+- **de 300s die OPI aanhoudt voor de ArgoCD-sync is op dit cluster krap.** Een taak die daar
+  overheen gaat wordt als mislukt vastgelegd terwijl het project een halve minuut later
+  draait. Dat is een uitspraak over deze sandbox, niet over productie, maar het maakt elke
+  aanmaaktoets hier wankel.
+
+**Een nulmeting hoort dus nog te gebeuren, op een leeg en rustig cluster en als enige run.**
+Zonder die meting is niet te zeggen of iets wat later rood staat van de nieuwe code komt of
+er al stond.
 
 ## 1. Eigen container registries
 
