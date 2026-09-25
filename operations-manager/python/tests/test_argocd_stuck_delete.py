@@ -177,6 +177,29 @@ class TestTerminateOperation:
             assert await connector.terminate_argocd_application_operation("app-a") is False
 
 
+class TestDeleteApplication:
+    @pytest.mark.asyncio
+    async def test_an_application_that_is_already_gone_is_not_a_failure(self, connector) -> None:
+        """The orphan cleanup reports the outcome of this call, so 'already gone' reads as deleted.
+
+        ``--ignore-not-found=true`` is what makes kubectl exit 0 on an Application that went
+        away between the listing and the delete. Without the flag the cleanup would report
+        ``failed`` for precisely the case it exists to clean up.
+        """
+        run = AsyncMock(return_value=("", "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            assert await connector.delete_argocd_application("mpfm-w3h-pr-310", "argocd-test") is True
+
+        args = run.await_args.args[0]
+        assert args[:5] == ["delete", "application", "mpfm-w3h-pr-310", "-n", "argocd-test"]
+        assert "--ignore-not-found=true" in args
+
+    @pytest.mark.asyncio
+    async def test_a_refused_delete_is_reported_as_one(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "connection reset", 1))):
+            assert await connector.delete_argocd_application("app-a", "argocd") is False
+
+
 class TestDestinationNamespace:
     @pytest.mark.asyncio
     async def test_reads_the_destination_namespace(self, connector) -> None:
@@ -344,7 +367,13 @@ class TestDeleteTrackedResources:
 def _recording_kubectl(
     calls: list[str], *, destination: str | None, tracked: list[TrackedResource] | None, deleted: bool = True
 ) -> AsyncMock:
-    """A kubectl stand-in that writes the name of each call into ``calls``."""
+    """A kubectl stand-in that writes the name of each call into ``calls``.
+
+    ``spec_set=KubectlConnector`` for the same reason the ArgoConnector mock below carries a
+    spec: an open AsyncMock answers to a method the connector does not have, so a route
+    calling one stays green while it deletes nothing. ``spec_set`` rather than ``spec``
+    because it is the stubbing that has to fail here, and only ``spec_set`` restricts that.
+    """
 
     def step(name: str, result):
         async def _run(*args, **kwargs):
@@ -353,7 +382,7 @@ def _recording_kubectl(
 
         return AsyncMock(side_effect=_run)
 
-    kubectl = AsyncMock()
+    kubectl = AsyncMock(spec_set=KubectlConnector)
     kubectl.terminate_argocd_application_operation = step("terminate_operation", True)
     kubectl.get_argocd_application_destination_namespace = step("read_namespace", destination)
     kubectl.list_tracked_resources = step("list_resources", tracked)

@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
+from opi.connectors.kubectl import KubectlConnector
 from opi.utils.argocd_tracking import TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
@@ -166,7 +167,13 @@ def _kubectl(
     tracked: dict[str, list[TrackedResource]],
     namespace_labels: dict[str, str] | None = None,
 ) -> AsyncMock:
-    kubectl = AsyncMock()
+    """The kubectl the sweep reads the cluster through.
+
+    ``spec_set`` so that stubbing a method the connector does not have fails here instead
+    of against a real cluster: the sweep reads everything through this mock, so a name that
+    only exists on the mock is green in the suite and an AttributeError in the run.
+    """
+    kubectl = AsyncMock(spec_set=KubectlConnector)
     kubectl.list_argocd_applications = AsyncMock(return_value=applications)
     kubectl.get_namespace_label_map = AsyncMock(
         return_value=namespace_labels if namespace_labels is not None else dict.fromkeys(tracked, "operations-manager")
