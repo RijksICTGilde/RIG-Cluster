@@ -268,16 +268,22 @@ class TestPinnedTools:
         assert not [line for line in lines if ".sha256sum" in line], (
             "de checksum wordt naast de binary opgehaald en komt dus van dezelfde bron"
         )
-        sommen = [
+        sommen = {
             regel.group(1)
-            for regel in (re.fullmatch(r"ARG MC_SHA256\w*=([0-9a-f]{64})", line) for line in lines)
+            for regel in (re.fullmatch(r"ARG (MC_SHA256\w*)=[0-9a-f]{64}", line) for line in lines)
             if regel
-        ]
+        }
         assert sommen, "er staat geen literale mc-checksum in het Dockerfile"
-        for som in sommen:
-            assert [line for line in lines if "MC_SHA256" in line and "sha256sum -c -" in line], (
-                f"de literale som {som[:12]} wordt niet gecontroleerd"
-            )
+
+        controle = [line for line in lines if "sha256sum -c -" in line]
+        assert controle, "de binary wordt nergens tegen een checksum gehouden"
+        for naam in sorted(sommen):
+            assert any(naam in regel for regel in controle), f"de literale som {naam} wordt niet gecontroleerd"
+
+        # En de andere kant op, want de lus hierboven ziet alleen wat er STAAT: een som die
+        # de controle per arch opzoekt maar die hier geen literaal heeft, is een lege som.
+        zonder_waarde = {naam for regel in controle for naam in re.findall(r"\$\{(MC_SHA256_\w+)\}", regel)} - sommen
+        assert not zonder_waarde, f"deze som wordt opgezocht maar staat hier niet: {sorted(zonder_waarde)}"
 
 
 class TestAptLayers:
