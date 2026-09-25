@@ -116,8 +116,7 @@ fails halfway.
   vijf minuten kan doen over een toets OF over het opzetten van zijn fixtures.
   `task test-e2e-sandbox` draait met `--timeout=300`, en dat budget geldt ook voor de SETUP
   van een module-fixture: zonder eigen marker eindigt een aanmaakwacht van 600s op
-  "Timeout (>300.0s) from pytest-timeout" en wordt de hele module ERROR, terwijl de
-  wachttijden die de module zelf declareert nooit aan bod komen.
+  "Timeout (>300.0s) from pytest-timeout" en wordt de hele module ERROR.
 
 ## Reference example
 
