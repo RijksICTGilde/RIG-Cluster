@@ -114,6 +114,7 @@ from opi.services.catalog.publish_on_web.domain_config import (
     get_domain_setting,
     set_domain_setting,
 )
+from opi.services.catalog.publish_on_web.issuer import effective_issuer
 from opi.services.catalog.publish_on_web.urls import public_url_map_for_deployment
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
@@ -194,7 +195,13 @@ from opi.utils.secrets import (
     RedisSecret,
     UserSecret,
 )
-from opi.utils.sops import decrypt_sops_with_key, encrypt_to_sops_files_or_fail
+from opi.utils.sops import (
+    SOPS_SUFFIX,
+    TO_SOPS_SUFFIX,
+    decrypt_sops_with_key,
+    encrypt_to_sops_files_or_fail,
+    sops_filenames,
+)
 from opi.utils.yaml_util import (
     find_value_by_jsonpath,
 )
@@ -286,8 +293,8 @@ def _resolve_deployment_filter(deployment_name: str | None, deployment_names: li
 # considered for pruning when it ends with one of these (covers plain manifests
 # and both pre/post SOPS-encryption secret files).
 _COMPONENT_MANIFEST_EXTENSIONS: tuple[str, ...] = (
-    ".sops.yaml",
-    ".to-sops.yaml",
+    SOPS_SUFFIX,
+    TO_SOPS_SUFFIX,
     ".yaml",
     ".yml",
 )
@@ -301,8 +308,8 @@ def _is_generated(basename: str, generated_files: set[str]) -> bool:
     """
     if basename in generated_files:
         return True
-    if basename.endswith(".sops.yaml"):
-        return basename.removesuffix(".sops.yaml") + ".to-sops.yaml" in generated_files
+    if basename.endswith(SOPS_SUFFIX):
+        return sops_filenames(basename).plaintext in generated_files
     return False
 
 
@@ -1615,7 +1622,9 @@ class ProjectManager:
         secret_data = dict(spec.secret_pairs)
         manifest_name = f"{spec.secret_name}-secret"
         if spec.keep_existing_values:
-            existing = _existing_secret_pairs(os.path.join(output_dir, f"{manifest_name}.sops.yaml"), private_key)
+            existing = _existing_secret_pairs(
+                os.path.join(output_dir, sops_filenames(manifest_name).encrypted), private_key
+            )
             secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
         if spec.resolve_aliases and spec.secret_type:
             aliases = self._deployment_aliases.get(deployment_name, {}).get("secret", {}).get(spec.secret_type, {})
@@ -1640,7 +1649,7 @@ class ProjectManager:
             output_filename=manifest_name,
             use_sops=True,
         )
-        sops_filename = f"{manifest_name}.to-sops.yaml"
+        sops_filename = sops_filenames(manifest_name).plaintext
         created_files.append(sops_filename)
         logger.info(f"Secret '{spec.secret_name}' will be SOPS encrypted: {sops_filename}")
         logger.debug(f"Successfully created secret manifest: {secret_path}")
@@ -2569,7 +2578,9 @@ class ProjectManager:
             os.makedirs(infra_resources_dir, exist_ok=True)
 
             # Write manifests - secret as .to-sops.yaml for encryption
-            secret_path = os.path.join(infra_resources_dir, f"{project_clean}-postgres-superuser-secret.to-sops.yaml")
+            secret_path = os.path.join(
+                infra_resources_dir, sops_filenames(f"{project_clean}-postgres-superuser-secret").plaintext
+            )
             cluster_path = os.path.join(infra_resources_dir, f"{project_clean}-db-cluster.yaml")
 
             with open(secret_path, "w") as f:
@@ -2655,7 +2666,7 @@ class ProjectManager:
                 )
 
                 # Write registry secret to infrastructure directory
-                registry_secret_path = os.path.join(infra_resources_dir, f"{registry_secret_name}.to-sops.yaml")
+                registry_secret_path = os.path.join(infra_resources_dir, sops_filenames(registry_secret_name).plaintext)
                 with open(registry_secret_path, "w") as f:
                     f.write(registry_secret_manifest)
 
@@ -4058,7 +4069,7 @@ class ProjectManager:
                     use_sops=spec.encrypt,
                 )
                 if spec.encrypt:
-                    created_files.append(f"{spec.filename}.to-sops.yaml")
+                    created_files.append(sops_filenames(spec.filename).plaintext)
                 else:
                     created_files.append(f"{spec.filename}.yaml")
                 logger.info(f"Created project manifest '{spec.filename}' for project '{project_name}'")
@@ -4181,7 +4192,7 @@ class ProjectManager:
 
         # List .to-sops.yaml files before encryption for debugging
 
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files for final encryption:")
         for file_path in to_sops_files:
@@ -4256,7 +4267,9 @@ class ProjectManager:
         cluster_name = deployment.get("cluster", settings.CLUSTER_MANAGER)
         subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        # record_base=False: a projection that only needs the project's domain block, so it
+        # must not become the compare-and-swap base of whoever saves next.
+        issuer_config = effective_issuer(await self.get_contents(record_base=False), deployment, cluster_name)
         use_https = get_ingress_tls_enabled(cluster_name)
 
         # Calculate hostname based on configuration
@@ -4571,7 +4584,7 @@ class ProjectManager:
             # Write values as .to-sops.yaml (will be encrypted later)
             # Use naming convention that matches CMP plugin pattern: *-helm-values.sops.yaml
             values_file_sops = generate_helm_values_filename(deployment_name, chart_reference, encrypted=True)
-            values_file_to_sops = values_file_sops.replace(".sops.yaml", ".to-sops.yaml")
+            values_file_to_sops = sops_filenames(values_file_sops).plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
             yaml = YAML()
@@ -4604,7 +4617,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         # Only auto-generate issuer if issuer_config is exactly "letsencrypt" or "letsencrypt-staging"
@@ -4694,7 +4707,7 @@ class ProjectManager:
         logger.info(f"Encrypting helm values files for deployment: {deployment_name}")
 
         # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
         for file_path in to_sops_files:
@@ -4993,7 +5006,7 @@ class ProjectManager:
 
             # Write values as .to-sops.yaml (will be encrypted later)
             # CMP plugin looks for values.sops.yaml in helmfile directories
-            values_file_to_sops = "values.to-sops.yaml"
+            values_file_to_sops = sops_filenames("values").plaintext
             values_path = os.path.join(target_path, values_file_to_sops)
 
             yaml = YAML()
@@ -5020,7 +5033,7 @@ class ProjectManager:
 
         # Create Let's Encrypt Issuer manifest if configured
         regular_files: list[str] = []
-        issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+        issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
         if issuer_config and issuer_config in ("letsencrypt", "letsencrypt-staging") and base_domain:
@@ -5085,7 +5098,7 @@ class ProjectManager:
         # The CMP plugin will run BOTH kustomize build AND helmfile template
         # This ensures Let's Encrypt Issuer, secrets, and other resources are applied alongside helmfile output
         # Convert .to-sops.yaml filenames to .sops.yaml (they get encrypted below)
-        sops_files = [f.replace(".to-sops.yaml", ".sops.yaml") for f in secret_files]
+        sops_files = [sops_filenames(f).encrypted for f in secret_files]
 
         if regular_files or sops_files:
             logger.info(
@@ -5114,7 +5127,7 @@ class ProjectManager:
         logger.info(f"Encrypting helmfile values files for deployment: {deployment_name}")
 
         # List .to-sops.yaml files before encryption for debugging
-        to_sops_pattern = os.path.join(target_path, "*.to-sops.yaml")
+        to_sops_pattern = os.path.join(target_path, f"*{TO_SOPS_SUFFIX}")
         to_sops_files = glob.glob(to_sops_pattern)
         logger.info(f"Found {len(to_sops_files)} .to-sops.yaml files to encrypt:")
         for file_path in to_sops_files:
@@ -5175,7 +5188,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Keycloak secret manifest: {manifest_name}")
 
         # Create Database secret if available
@@ -5195,7 +5208,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Database secret manifest: {manifest_name}")
 
         # Create MinIO secret if available
@@ -5215,7 +5228,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created MinIO secret manifest: {manifest_name}")
 
         # Create Redis secret if available
@@ -5235,7 +5248,7 @@ class ProjectManager:
                 output_filename=manifest_name,
                 use_sops=True,
             )
-            created_files.append(f"{manifest_name}.to-sops.yaml")
+            created_files.append(sops_filenames(manifest_name).plaintext)
             logger.info(f"Created Redis secret manifest: {manifest_name}")
 
         return created_files
@@ -5721,7 +5734,14 @@ class ProjectManager:
         # Register or clean up bare domain in subdomain registry
         expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT)
         bare_domain_registered = False
-        if expose_on_bare_domain and base_domain:
+        # Opslaan mag, toepassen niet: het formulier laat een kaal domein op een nog niet
+        # goedgekeurd eigen domein door (RC-216), dus de goedkeuring hangt hier, aan
+        # dezelfde voorwaarde als het rootadres.
+        if (
+            expose_on_bare_domain
+            and base_domain
+            and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+        ):
             # The publication path enforces the bare-domain rule itself, not just the form
             # layer: the setting is also writable through the service config API, which the
             # form enforcer never sees. This is the point of no return -- past it a
@@ -5739,8 +5759,15 @@ class ProjectManager:
             )
             bare_domain_registered = True
             logger.info(f"Bare domain '{base_domain}' registered for project '{project_name}'")
-        elif base_domain and not expose_on_bare_domain:
-            # Bare domain deselected — clean up any existing registration
+        elif base_domain:
+            # Bare domain deselected, or not (yet) approved: clean up any existing registration
+            if expose_on_bare_domain:
+                logger.warning(
+                    "Bare domain '%s' not applied for deployment '%s': the domain is not approved for project '%s'",
+                    base_domain,
+                    deployment_name,
+                    project_name,
+                )
             if subdomain_connector is None:
                 subdomain_connector = SubdomainConnector()
             # Scoped to this project: the base-domain is just a string in a project file,
@@ -5990,7 +6017,7 @@ class ProjectManager:
             use_https = get_ingress_tls_enabled(cluster)
             subdomain = get_domain_setting(deployment, DomainSetting.SUBDOMAIN)
             base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
-            issuer_config = get_domain_setting(deployment, DomainSetting.ISSUER)
+            issuer_config = effective_issuer(project_data, deployment, cluster)
             domain_format = get_domain_setting(deployment, DomainSetting.DOMAIN_FORMAT)
             expose_on_bare_domain = get_domain_setting(deployment, DomainSetting.BARE_DOMAIN_COMPONENT, False)
             logger.info(
@@ -6441,7 +6468,7 @@ class ProjectManager:
                                         output_filename=provided_tls_manifest_name,
                                         use_sops=True,
                                     )
-                                    provided_tls_sops_filename = f"{provided_tls_manifest_name}.to-sops.yaml"
+                                    provided_tls_sops_filename = sops_filenames(provided_tls_manifest_name).plaintext
                                     if provided_tls_sops_filename not in created_files:
                                         created_files.append(provided_tls_sops_filename)
 
@@ -6578,7 +6605,12 @@ class ProjectManager:
 
                     # Create bare domain ingress for expose-component-on-bare-domain mode.
                     # expose_on_bare_domain holds the component name that should serve the bare domain.
-                    if expose_on_bare_domain and base_domain and component_name == expose_on_bare_domain:
+                    if (
+                        expose_on_bare_domain
+                        and base_domain
+                        and component_name == expose_on_bare_domain
+                        and is_deployment_domain_approved(project_data, base_domain, subdomain, cluster)
+                    ):
                         # Same rule as at registration: never an apex ingress plus
                         # certificate from a tenant namespace on a platform domain, nor on
                         # a domain that is not approved for this project.
@@ -6757,7 +6789,7 @@ class ProjectManager:
                 )
 
                 # All secrets are SOPS encrypted for security
-                sops_filename = f"{sso_manifest_name}.to-sops.yaml"
+                sops_filename = sops_filenames(sso_manifest_name).plaintext
                 created_files.append(sops_filename)
                 logger.info(f"SSO secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created SSO secret manifest: {sso_secret_path}")
@@ -6826,7 +6858,7 @@ class ProjectManager:
                 )
 
                 # All secrets are SOPS encrypted for security
-                sops_filename = f"{user_manifest_name}.to-sops.yaml"
+                sops_filename = sops_filenames(user_manifest_name).plaintext
                 created_files.append(sops_filename)
                 logger.info(f"User secret will be SOPS encrypted: {sops_filename}")
                 logger.info(f"Successfully created user secret manifest: {user_secret_path}")
@@ -6852,7 +6884,7 @@ class ProjectManager:
                         output_filename=attachment_manifest_name,
                         use_sops=True,
                     )
-                    attachment_sops_filename = f"{attachment_manifest_name}.to-sops.yaml"
+                    attachment_sops_filename = sops_filenames(attachment_manifest_name).plaintext
                     if attachment_sops_filename not in created_files:
                         created_files.append(attachment_sops_filename)
                     logger.info(f"Created attachment secret manifest: {secret_name}")
