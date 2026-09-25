@@ -7,9 +7,9 @@ application level, so ``Delete=true`` was silently ignored.
 
 RC-228 asked the same question of ``SyncTimeout=60s`` on the two handwritten platform
 Applications, and the answer is the same. Those two live on odcn-production, whose
-``argocd-deployment.yaml`` pins ``argocd-rig:v3.5.1-rig2``, upstream ArgoCD v3.5.1, and
-v3.5.1 reads no such option: its only ``SyncTimeout`` is the resync timeout of the cluster
-cache, a controller setting.
+``argocd-deployment.yaml`` pins ``argocd-rig:v3.5.1-rig2``, upstream ArgoCD v3.5.1. That
+version reads no such option: its only ``SyncTimeout`` is ``informerSyncTimeout``, an
+internal wait on an informer cache in the API server.
 
 Nothing but a test keeps these out. The Application CRD types ``syncOptions`` as a plain
 array of strings, so ArgoCD accepts an option it has never heard of without complaint.
@@ -85,5 +85,5 @@ def test_every_sync_option_is_one_argocd_knows(path: str, sync_options: list[str
 
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
 def test_synctimeout_is_gone(path: str, sync_options: list[str]) -> None:
-    """It bounded nothing, and reading like it did is the damage RC-226 documented."""
+    """It was never a sync option, so it never bounded anything."""
     assert not [option for option in sync_options if option.startswith("SyncTimeout")], path
