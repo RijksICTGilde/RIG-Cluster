@@ -15,18 +15,15 @@ setting, and on odcn-production it is already on: ``argocd-deployment.yaml`` the
 ``controller.sync.timeout.seconds: "300"`` in the ``extraConfig`` the operator renders
 into ``argocd-cm`` (measured in that ConfigMap on rig-prd-operations). It is a setting
 on the ArgoCD instance, so it covers every Application on that cluster, the generated
-ones as much as these two handwritten ones. The place where an upper bound on a sync
-belongs is filled, which is why these lines should stay out rather than come back: they
-only add the impression of a second one. The local and sandboxed-local overlays leave
+ones as much as these two handwritten ones. The local and sandboxed-local overlays leave
 it unset; if a bound is wanted there, that ``extraConfig`` is where it goes, not
 ``syncOptions``.
 
-That setting is not a way out of a sync that hangs, and it should not be written up as
-one. The deletion that hung in issue #184 ran fourteen days on ``Running`` with the
-300s in place: the controller logged ``sync/terminate complete`` on every reconcile, so
-the bound did fire, every round. What it fires is a request to terminate, and that is
-all it is -- the operation stays until ``.operation`` itself is cleared, which is the
-removal RC-226 makes.
+That setting is no way out of a sync that hangs. The deletion in
+``features/argocd-vastgelopen-verwijdering.md`` ran fourteen days on ``Running`` with the
+300s in place, and the controller logged ``sync/terminate complete`` on every reconcile:
+the bound fired every round. What it fires is a request to terminate, and the operation
+stays until ``.operation`` itself is cleared, which is the removal RC-226 makes.
 
 Nothing but a test keeps these out. The Application CRD types ``syncOptions`` as a plain
 array of strings, so ArgoCD accepts an option it has never heard of without complaint.
@@ -65,12 +62,11 @@ def _handwritten_applications() -> list[tuple[str, list[str]]]:
 _APPLICATIONS = _handwritten_applications()
 _IDS = [path for path, _ in _APPLICATIONS]
 
-#: The overlay that carries both Applications the ``SyncTimeout`` lines came off.
 _ODCN_ARGOCD = _OVERLAYS / "odcn-production" / "argocd-deployment.yaml"
 
 
 def test_the_glob_finds_the_applications_this_guard_is_about() -> None:
-    """An empty parametrize skips rather than fails, so without this the two tests below
+    """An empty parametrize skips rather than fails, so without this the checks below
     would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
     wrong ``parents`` index leaves behind.
 
@@ -117,9 +113,9 @@ def test_synctimeout_is_gone(path: str, sync_options: list[str]) -> None:
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)
 def test_delete_carries_a_value_argocd_reads_on_a_handwritten_application(path: str, sync_options: list[str]) -> None:
     """``Delete`` is in ``KNOWN_SYNC_OPTIONS``, so the name check above passes it whatever
-    it says after the ``=``. The docstring at the top of this module writes down that
-    application level reads only ``false`` and ``confirm`` there, and a line that says
-    anything else is ignored exactly as silently as ``SyncTimeout=60s`` was."""
+    it says after the ``=``. At application level ArgoCD reads only ``false`` and
+    ``confirm`` there, which RC-226 measured and the sibling guard writes up. Any other
+    value is ignored as silently as ``SyncTimeout=60s`` was."""
     wrong = []
     for option in sync_options:
         name, _, value = option.partition("=")
