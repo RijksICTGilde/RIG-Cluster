@@ -544,3 +544,97 @@ class TestDeVerversbewaker:
 
         assert not lopend, "de wacht kwam niet uit zijn finally: de bewaker is niet geannuleerd"
         assert gestopt.is_set()
+
+
+def _voortgang() -> MagicMock:
+    """Een voortgangsmanager die zijn taak- en substapnamen teruggeeft als id.
+
+    Zo staat in de assertie welke taak een substap draagt, en dat is hier de vraag.
+    """
+    voortgang = MagicMock()
+    voortgang.add_task.side_effect = lambda naam: f"taak:{naam}"
+    voortgang.add_subtask.side_effect = lambda _ouder, naam: f"substap:{naam}"
+    return voortgang
+
+
+class TestDeMeldingNaastDeGrendel:
+    """De uitleg bij een nieuw project staat op dezelfde taak als de time-out van de grendel.
+
+    Hier stond tot RC-229 de geruststelling dat een time-out-melding niet betekent dat het
+    aanmaken is mislukt. Met een fail-open wacht was dat waar; met de grendel erbij is het
+    precies omgekeerd, want loopt die vol, dan gaan de deployment-applicaties nooit naar git.
+    De gebruiker kreeg de geruststelling dus in EEN taak naast de melding die ze ontkende.
+
+    Deze toetsen staan daarom op de tekst NAAST de faaltak: los van elkaar is de tekst
+    groen (het is maar een string) en is de faaltak groen (hij faalt netjes). Alleen samen
+    valt de tegenspraak om.
+    """
+
+    TIME_OUT = "Timeout waiting for application 'demo-project' to be synced and healthy after 240s"
+    UITROL = "taak:Project uitrollen"
+
+    async def _een_aanmaak_die_op_de_grendel_strandt(self, monkeypatch: Any) -> MagicMock:
+        """De aanmaaktaak van een nieuw project, met de grendel in een time-out.
+
+        ``process_project`` maakt van de doorgelaten ``TimeoutError`` een ``return False``
+        met de melding in ``get_processing_error``; dat is wat de handler hier ziet.
+        """
+        from opi.core import task_handlers_project
+
+        store = MagicMock()
+        store.reconcile = AsyncMock(return_value=None)
+        store.read_path = AsyncMock(return_value=None)
+        monkeypatch.setattr("opi.services.project_store.get_project_store", lambda: store)
+
+        manager = AsyncMock()
+        manager.process_project_from_git = AsyncMock(return_value=False)
+        manager.get_processing_error = MagicMock(return_value=self.TIME_OUT)
+        manager.get_component_failures = MagicMock(return_value=None)
+        monkeypatch.setattr("opi.manager.project_manager.ProjectManager", lambda **_kwargs: manager)
+
+        voortgang = _voortgang()
+        resultaat = await task_handlers_project.handle_create_project(
+            {"project_name": "demo", "yaml_content": "name: demo\n", "is_new_project": True},
+            voortgang,
+        )
+
+        # Zonder deze twee meet de rest van de toets een taak die helemaal niet faalde.
+        assert resultaat["status"] == "failed"
+        assert resultaat["error"] == self.TIME_OUT
+        return voortgang
+
+    @pytest.mark.asyncio
+    async def test_de_melding_hangt_aan_de_taak_die_op_de_grendel_faalt(self, monkeypatch: Any) -> None:
+        """De tegenspraak zat hierin: dezelfde taak draagt beide. Verhuist de melding naar een
+        eigen taak, dan is dit geen tegenspraak meer en mag de tekst weer wat anders zeggen."""
+        voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
+
+        voortgang.fail_task.assert_called_once_with(self.UITROL, self.TIME_OUT)
+        assert [aanroep.args[0] for aanroep in voortgang.add_subtask.call_args_list] == [self.UITROL]
+
+    @pytest.mark.asyncio
+    async def test_de_melding_spreekt_de_time_out_niet_tegen(self, monkeypatch: Any) -> None:
+        """Wat de tekst moet zeggen is wat de grendel doet: hij stopt de uitrol. Wat hij niet
+        meer mag zeggen is dat het project er dan vrijwel zeker gewoon staat."""
+        voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
+        (melding,) = [aanroep.args[1] for aanroep in voortgang.add_subtask.call_args_list]
+
+        assert "stopt het uitrollen" in melding
+        assert "de deployments zijn niet uitgerold" in melding
+        # De twee helften van de geruststelling die hier stond, elk apart: de ene ontkent de
+        # melding, de andere belooft de uitkomst die er juist niet is.
+        assert "niet dat het aanmaken is mislukt" not in melding
+        assert "vrijwel zeker" not in melding
+
+    @pytest.mark.asyncio
+    async def test_de_melding_past_heel_in_een_regeltitel(self, monkeypatch: Any) -> None:
+        """Een substapnaam gaat door ``clamp_step_text`` naar de titel van een lijstregel. Deze
+        melding is de langste die er staat, en de zin die eraf valt bij een overschrijding is
+        juist de laatste: wat een time-out betekent."""
+        from opi.core.task_manager import MAX_STEP_NAME, clamp_step_text
+
+        voortgang = await self._een_aanmaak_die_op_de_grendel_strandt(monkeypatch)
+        (melding,) = [aanroep.args[1] for aanroep in voortgang.add_subtask.call_args_list]
+
+        assert len(melding) <= MAX_STEP_NAME
+        assert clamp_step_text(melding) == melding
