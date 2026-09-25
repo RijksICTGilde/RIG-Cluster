@@ -383,6 +383,11 @@ dan de deployment-applicaties. Daartussen wacht
 is. Bestaat de CR van een deployment-applicatie nog niet, dan kan ArgoCD hem ook niet
 zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten zelf.
 
+Loopt die wacht vast, dan gaat de commit met de deployment-applicaties er niet meer heen en
+breekt de verwerking van het project af. Eerder was dat een waarschuwing in het log en liep
+de verwerking degraded door; waarom de afbrekende kant hier de veilige is, staat in
+`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+
 De toets erop staat in `tests/test_project_level_ordering.py`.
 
 ## Migratie (schemaversie 2.9)
