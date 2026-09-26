@@ -17,7 +17,7 @@
     <c-button type="warning-subtle" size="sm"
               label="Verwijderen"
               show-icon="before" icon="trash"
-              :attrs="{'onclick': verwijder_js}"
+              @click="{{ verwijder_js }}"
               :disabled="remove_disabled" />
     {% endif %}
 </div>

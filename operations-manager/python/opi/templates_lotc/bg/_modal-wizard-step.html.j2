@@ -87,7 +87,7 @@
                         accessible-label="Uitleg over {{ section.title }}"
                         variant="neutral-transparent"
                         size="sm"
-                        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
+                        @click="{{ hulp_js }}" :attrs="{'class': 'service-card__help-btn'}" />
                 {% endif %}
             </c-cluster>
             {% if section.description %}
@@ -150,7 +150,7 @@
                             html-type="button"
                             type="tertiary"
                             label="Annuleren"
-                            :attrs="{'onclick': annuleren_js}" />
+                            @click="{{ annuleren_js }}" />
                     {% endif %}
 
                     <c-cluster gap="sm" align="center">

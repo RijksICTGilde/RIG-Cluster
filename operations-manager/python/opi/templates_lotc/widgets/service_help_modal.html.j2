@@ -37,7 +37,7 @@
             accessible-label="Sluiten"
             variant="neutral-transparent"
             size="sm"
-            :attrs="{'onclick': sluiten_js, 'class': 'service-help-modal__close'}" />
+            @click="{{ sluiten_js }}" :attrs="{'class': 'service-help-modal__close'}" />
     </div>
     <div id="service-help-content" class="service-help-modal__body"></div>
 </div>
