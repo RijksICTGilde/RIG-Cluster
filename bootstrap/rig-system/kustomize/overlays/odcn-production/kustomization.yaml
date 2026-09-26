@@ -17,6 +17,7 @@ resources:
 - network-policies/argocd-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-production
+- argocd-appproject-rig-platform.yaml
 - argocd-application-production-infrastructure.yaml
 - argocd-application-user-applications.yaml
 # De mailrelay in zijn eigen RON-namespace (RC-114). UIT gezet op de avond van

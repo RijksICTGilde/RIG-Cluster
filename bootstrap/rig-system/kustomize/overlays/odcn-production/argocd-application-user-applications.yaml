@@ -6,7 +6,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"  # Deploy after infrastructure
 spec:
-  project: default
+  project: rig-platform
   sources:
     - repoURL: https://user-applications@github.com/RijksICTGilde/argo-applications.git
       path: odcn-production

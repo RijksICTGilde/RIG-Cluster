@@ -5,7 +5,7 @@ metadata:
   name: user-applications
   namespace: rig-system
 spec:
-  project: default
+  project: rig-platform
   sources:
     - repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-user-applications.git
       path: .
