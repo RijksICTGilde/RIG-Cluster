@@ -29,8 +29,10 @@ spec:
           type: RuntimeDefault
       containers:
         - name: minio
-          # Docker Hub serveert minio/minio niet meer (project gearchiveerd), quay wel: zelfde
-          # digest, andere host. Dezelfde reden waarom mc uit quay.io/minio/mc komt.
+          # Dood adres: MinIO heeft docker.io/minio en quay.io/minio allebei achter een abonnement
+          # gezet, 401 op elke tag. Deze boom draait alleen op local en sandboxed-local en heeft geen
+          # overlay die hem vervangt, dus een node die de image niet al heeft krijgt hem niet meer.
+          # Zie docs/KNOWN-ISSUES.md, "MinIO distribueert zijn eigen images niet meer".
           image: quay.io/minio/minio:RELEASE.2025-01-20T14-49-07Z
           command: ["minio", "server", "/data", "--console-address", ":9001"]
           env:

@@ -44,6 +44,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `argo_diagnostics.py` | ArgoCD diagnostics. |
+| `argocd_orphan_sweep.py` | Find what a deleted ArgoCD Application left behind: cluster resources ArgoCD marked as its own whose Application no longer exists, and deployments-repo paths no Application points at. Reports (`SCHOON` when there is nothing), deletes only with `--delete`. Exit 0 clean, 1 orphans, 2 refused. Also as `task argocd-orphan-sweep`; see `features/argocd-vastgelopen-verwijdering.md`. |
 | `diagnose_oom.py` | OOM-kill diagnostics for tuning/analysis. |
 | `oom_growth_report.py` | Read-only report: per project, which deployment components sit above the auto-tune growth ceiling (current memory limit vs the limit declared on the catalog component), with the `oom-watcher` history entries that got them there. Left behind by the unbounded escalation RC-157 fixed. Also as `PROJECTS=... task oom-growth-report`. |
 

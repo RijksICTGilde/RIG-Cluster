@@ -147,3 +147,4 @@ vooraan stond (`rapportage` < `v2`). Zie "Welk schema een database-restore herno
 | Secret/variabelen | `opi/utils/secrets.py` (`DatabaseSecret`) |
 | UI | `opi/services/catalog/postgresql_database/{editables,visualizers}.py` + `config_form_section` |
 | Save-validatie | `opi/forms/editables/validators.py` (`SchemaPostfixValidator`), `opi/forms/editables/enforcers.py` (`UniqueSchemaEnforcer`) |
+| Projectbrede naamcontrole | `opi/services/catalog/postgresql_database/schema_names.py`, aan de haak `validate_project` |

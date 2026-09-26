@@ -21,13 +21,11 @@ from opi.core.cluster_config import CLUSTER_CONFIG
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
-from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
 from opi.services import ServiceAdapter
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
-from opi.services.postgres_scope import get_postgres_schemas
 from opi.services.project import Project
 from opi.services.registry import SERVICES, get_service, project_validating_services, property_owning_services
 from opi.services.services import (
@@ -39,7 +37,6 @@ from opi.services.services import (
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import (
     RESERVED_DEPLOYMENT_NAMES,
-    generate_extra_database_schema,
     normalize_registry_repo,
     registry_tag_owner,
     split_image_reference,
@@ -607,6 +604,10 @@ def validate_declared_choices(project_data: dict[str, Any]) -> list[str]:
     Opt-in per field with ``Editable.values_must_exist``, because an options list is
     usually a menu rather than a closed set (see that flag). Only fields that carry it are
     looked at, and only the layers the service declares config on.
+
+    Not a service's ``validate_project`` (RC-182): the walk is over the fields of EVERY
+    service, so handing it to the one service whose field carries the flag today (invite)
+    would make that service judge the others.
     """
     from opi.forms.editables.service_path import expand_wildcard_path
     from opi.forms.visualizers.providers import PROVIDER_REGISTRY, UNDECLARED_SOURCE, OptionsSource
@@ -657,51 +658,6 @@ def validate_declared_choices(project_data: dict[str, Any]) -> list[str]:
                     errors.append(
                         f"'{value}' op {path} bestaat niet in dit project. {what}Nu beschikbaar: {', '.join(offered)}."
                     )
-    return errors
-
-
-def validate_database_schema_names(project_data: dict[str, Any]) -> list[str]:
-    """The composed schema names of every extra schema, against every deployment (RC-59).
-
-    ``{project}_{deployment}_{postfix}`` has to fit in PostgreSQL's 63 characters, and how
-    much room the postfix has depends on the project and deployment names -- so this cannot
-    be a field rule and cannot be decided when the postfix is typed.
-
-    ``UniqueSchemaEnforcer`` already ran it, but only when the *schema list* was being
-    saved, and only against the deployments that existed at that moment. That leaves the
-    real hole: a postfix that fits today stops fitting the moment a deployment with a
-    longer name is added, and nothing on that road looks at schemas. The failure then
-    surfaced at rollout, as a ``ValueError`` out of ``generate_extra_database_schema``,
-    long after the change that caused it.
-
-    Running it here, in the structural validation every save passes through, closes that:
-    adding the deployment is refused, with a message that names both the deployment and
-    the postfix that no longer fits.
-
-    Schemas marked for deletion are skipped -- they are on their way out and must not
-    block a save.
-    """
-    errors: list[str] = []
-    project_name = project_data.get("name") or ""
-    deployment_names = [
-        name for d in (project_data.get("deployments") or []) if isinstance(d, dict) and (name := d.get("name"))
-    ]
-    if not deployment_names:
-        return errors
-
-    for entry in get_postgres_schemas(project_data):
-        postfix = entry.get("postfix")
-        if not postfix:
-            continue
-        for deployment_name in deployment_names:
-            try:
-                generate_extra_database_schema(project_name, deployment_name, postfix)
-            except ValueError:
-                errors.append(
-                    f"schema '{postfix}' levert voor deployment '{deployment_name}' een naam op die langer is "
-                    f"dan de 63 tekens die PostgreSQL toestaat. Kies een kortere postfix of een kortere "
-                    f"deploymentnaam."
-                )
     return errors
 
 
@@ -982,28 +938,6 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
             pass
         except ValueError as e:
             raise ProjectIntegrityError(str(e)) from e
-
-    # Attachment references must resolve to a catalog entry, so an unknown id
-    # is rejected at save time instead of failing later at deploy/resolve time.
-    attachment_errors = validate_attachment_references(project_data)
-    if attachment_errors:
-        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(attachment_errors)}")
-
-    # Attachment couplings must be structurally valid: no reference coupled
-    # twice, no empty delivery target, no colliding path/env-var. The base
-    # component 'services' list is not covered by the JSON schema, so this is
-    # the only place a duplicate reference with an empty path is rejected
-    # before it can be committed.
-    coupling_errors = validate_attachment_couplings(project_data)
-    if coupling_errors:
-        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(coupling_errors)}")
-
-    # Extra database schemas: the composed name has to fit for EVERY deployment, so this
-    # belongs here rather than only on the road that edits the schema list -- adding a
-    # deployment is the other way a valid schema name becomes an impossible one.
-    schema_errors = validate_database_schema_names(project_data)
-    if schema_errors:
-        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(schema_errors)}")
 
     # A service is only usable where the cluster can deliver it. Here rather than at the
     # form field because a project reaches this point from the wizard, the API and a
