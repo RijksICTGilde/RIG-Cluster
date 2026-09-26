@@ -5,6 +5,14 @@ This module provides common fixtures used across unit and integration tests.
 """
 
 import os
+
+# Voor elke import van opi: setup_components leest LOTC_STRICT tijdens het importeren van
+# opi.core.templates_lotc, dus na die import verandert zetten niets meer. Strict laat de
+# componentlaag een onbekende attribuutWAARDE weigeren (een iconnaam die nergens op
+# uitkomt, een literal buiten een enum) in plaats van hem stil te renderen. Alleen in de
+# tests en in CI: in productie mag zo'n aanroep geen 500 opleveren.
+os.environ.setdefault("LOTC_STRICT", "1")
+
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any

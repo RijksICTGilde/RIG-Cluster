@@ -51,8 +51,8 @@
             text="Voortgang"
             :value="progress"
             max="100"
-            value-display="true"
-            color="{{ 'error' if status == 'failed' else 'success' if status == 'completed' else 'info' }}"
+            value-display="inline"
+            color="{{ 'critical' if status == 'failed' else 'success' if status == 'completed' else 'accent' }}"
             accessible-label="Voortgang: {{ progress }} procent" />
 
         {% if status == "completed" %}
