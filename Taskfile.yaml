@@ -1382,6 +1382,24 @@ tasks:
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
           PLATFORMS: linux/amd64,linux/arm64
 
+  publish-mc:
+    desc: "Vul de mc-spiegel in GHCR uit de GitHub-release (zie images/mc/README.md)"
+    deps: [requirements-check]
+    vars:
+      # De tag komt uit het Dockerfile, want daar staat ook de checksum van precies die
+      # release. Twee plekken zouden uit elkaar lopen zonder dat een build dat merkt.
+      MC_VERSION:
+        sh: sed -n 's/^ARG MC_VERSION=//p' images/mc/Dockerfile | head -1
+    cmds:
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: images/mc
+          DOCKERFILE_PATH: Dockerfile
+          IMAGE_NAME: mc
+          REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          IMAGE_TAG: '{{.MC_VERSION}}'
+          PLATFORMS: linux/amd64,linux/arm64
+
   publish-haproxy-redirect:
     desc: "Build and publish the haproxy-redirect image to GitHub Container Registry"
     deps: [requirements-check]
@@ -2094,6 +2112,30 @@ tasks:
       - >-
         uv run python scripts/oom_growth_report.py "{{.PROJECTS}}"
         {{if .FACTOR}}--factor {{.FACTOR}}{{end}} {{if .ALL}}--all{{end}}
+    silent: true
+
+  argocd-orphan-sweep:
+    desc: "Spoor resources op die achterbleven toen hun ArgoCD-Application verdween"
+    summary: |
+      Zoekt in het cluster naar resources die ArgoCD als de zijne merkte terwijl hun
+      Application niet meer bestaat, en in een checkout van de deployments-repo naar paden
+      waar geen enkele Application naar verwijst. Meldt alleen; met DELETE=1 verwijdert hij
+      wat hij vond. Meldt hij SCHOON, dan is er niets achtergebleven.
+
+        task argocd-orphan-sweep                                  # het hele cluster
+        NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
+        REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+        NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+    dir: operations-manager/python
+    # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
+    # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
+    # een typefout niets te doen.
+    cmds:
+      - >-
+        uv run python scripts/argocd_orphan_sweep.py
+        {{if .NAMESPACE}}--namespace {{.NAMESPACE}}{{end}}
+        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
+        {{if eq (default "0" .DELETE) "1"}}--delete{{end}}
     silent: true
 
   upgrade-safety-diff:

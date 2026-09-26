@@ -5,8 +5,10 @@ ARG UV_VERSION=0.12.15
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
-# dl.min.io levert mc niet meer (410 Gone, het project is gearchiveerd); de image op quay wel.
-FROM quay.io/minio/mc:${MC_VERSION} AS mc
+# mc uit onze eigen spiegel: MinIO distribueert hem niet meer, en een build die de
+# GitHub-release ophaalt hangt aan het kanaal dat als vierde kan sluiten. Waarom die spiegel
+# er is staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
+FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
 
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
