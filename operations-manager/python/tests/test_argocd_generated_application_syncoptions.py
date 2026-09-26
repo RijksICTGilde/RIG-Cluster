@@ -5,6 +5,12 @@ upper bound on the waiting that is not there, which is worse than no line at all
 ``Delete`` only takes ``false`` or ``confirm`` at application level, so ``Delete=true``
 was silently ignored. ArgoCD accepts both without complaint: nothing but a test keeps
 them out once they are gone.
+
+This guard is about the *generated* Application, the one ``ArgoManager`` renders from
+``manifests/argocd-application.yaml.jinja``. The handwritten platform Applications in
+``bootstrap/`` have their own guard next to this one,
+``test_argocd_handwritten_application_syncoptions.py`` (RC-228). They ask the same
+question of two different sources, so one cannot stand in for the other.
 """
 
 from unittest.mock import MagicMock
@@ -12,21 +18,7 @@ from unittest.mock import MagicMock
 import yaml
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import ArgoManager
-
-#: Everything ArgoCD accepts at application level, per its sync-options documentation.
-KNOWN_SYNC_OPTIONS = {
-    "ApplyOutOfSyncOnly",
-    "CreateNamespace",
-    "Delete",
-    "FailOnSharedResource",
-    "PruneLast",
-    "PrunePropagationPolicy",
-    "Replace",
-    "RespectIgnoreDifferences",
-    "ServerSideApply",
-    "SkipDryRunOnMissingResource",
-    "Validate",
-}
+from tests.argocd_sync_options import KNOWN_SYNC_OPTIONS
 
 
 def _rendered_application() -> dict:
