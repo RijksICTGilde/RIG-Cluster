@@ -104,7 +104,7 @@
                         icon="puzzle-piece"
                         title="{{ component.reference }}"
                         sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}"
-                        :attrs="{'onclick': comp_bewerken, 'style': 'cursor: pointer'}" />
+                        @click="{{ comp_bewerken }}" :attrs="{'style': 'cursor: pointer'}" />
                 {% else %}
                     <c-layer
                         icon="puzzle-piece"

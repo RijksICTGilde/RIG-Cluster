@@ -103,7 +103,7 @@
             {% if user_role in ["admin", "owner"] %}
                 {% set identiteit_bewerken = "openEditModal('modal-edit-identity', 'Projectgegevens bewerken')" %}
                 <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before"
-                          :attrs="{'onclick': identiteit_bewerken}" />
+                          @click="{{ identiteit_bewerken }}" />
             {% endif %}
         </c-cluster>
         {% if project.description %}
@@ -143,12 +143,12 @@
         {% if user_role in ["admin", "owner"] %}
             {% call panel("Acties", "gear") %}
                 <c-action-group align="start">
-                    <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+                    <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
                     {# Uit de Gevarenzone hierheen: herverwerken is een gewone handeling en
                        geen onomkeerbare. De aanroep wordt boven de tag opgebouwd omdat een
                        genest aanhalingsteken binnen :attrs als het einde van het attribuut
                        gelezen wordt. #}
-                    <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" :attrs="{'onclick': project_herverwerken}" />
+                    <c-button type="secondary" size="sm" label="Project herverwerken" icon="refresh" show-icon="before" @click="{{ project_herverwerken }}" />
                 </c-action-group>
             {% endcall %}
         {% endif %}
@@ -355,7 +355,7 @@
                    die kop zijn betekenis. #}
                 {% set verwijderen = "openServiceModal('/projects/" ~ project.name ~ "/actions/delete-project/confirm', 'Project verwijderen')" %}
                 <c-action-group align="start">
-                    <c-button type="warning" label="Project verwijderen" :attrs="{'onclick': verwijderen}" />
+                    <c-button type="warning" label="Project verwijderen" @click="{{ verwijderen }}" />
                 </c-action-group>
             {% endcall %}
         {% endif %}
@@ -377,7 +377,7 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set team_bewerken = "openEditModal('modal-edit-team', 'Projectleden beheren')" %}
-        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': team_bewerken}" />{% endif %}{% endset %}
+        {% set team_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ team_bewerken }}" />{% endif %}{% endset %}
         {% call panel("Team", "person-2", aside=team_bewerken_knop, info_text="Een beheerder mag alles, inclusief het project verwijderen. Een ontwikkelaar mag wijzigen en uitrollen, maar het project niet opheffen.") %}
             <c-table columns="2fr 1fr">
                 <c-table-head>
@@ -406,7 +406,7 @@
             {% call panel("Acties", "gear") %}
                 {% set component_toevoegen = "openEditModal('modal-edit-component-" ~ (project.components | length) ~ "', 'Component toevoegen')" %}
                 <c-cluster gap="sm">
-                    <c-button type="secondary" size="sm" label="Component toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': component_toevoegen}" />
+                    <c-button type="secondary" size="sm" label="Component toevoegen" icon="plus" show-icon="before" @click="{{ component_toevoegen }}" />
                 </c-cluster>
             {% endcall %}
         {% endif %}
@@ -451,8 +451,8 @@
                                     </c-stack>
                                     {% if user_role in ["admin", "owner"] %}
                                         <c-action-group align="end">
-                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': component_bewerken}" />
-                                            <c-button type="warning" size="sm" label="Verwijderen" :attrs="{'onclick': component_verwijderen}" />
+                                            <c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ component_bewerken }}" />
+                                            <c-button type="warning" size="sm" label="Verwijderen" @click="{{ component_verwijderen }}" />
                                         </c-action-group>
                                     {% endif %}
                                 </c-cluster>
@@ -476,7 +476,7 @@
                                                     label="{{ link.deployment_name }} ({{ link.cluster }}){% if link.path and link.path != '/' %} {{ link.path }}{% endif %}"
                                                     icon="link"
                                                     show-icon="after"
-                                                    :attrs="{'data-url': link.url, 'onclick': open_link}" />
+                                                    @click="{{ open_link }}" :attrs="{'data-url': link.url}" />
                                             {% endfor %}
                                         </c-cluster>
                                         {# Een adres hierboven is het adres dat ECHT bediend wordt, en dat is niet
@@ -567,7 +567,7 @@
                                                    ernaast was precies wat de rij rommelig maakte. #}
                                                 {% if definition and definition.help_template %}
                                                     {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
-                                                    <c-list-item-action button accessible-label="Uitleg over {{ definition.name }}" :attrs="{'onclick': uitleg_js}">
+                                                    <c-list-item-action button accessible-label="Uitleg over {{ definition.name }}" @click="{{ uitleg_js }}">
                                                         <c-icon-cell icon="question-mark-circle" size="20" />
                                                     </c-list-item-action>
                                                 {% endif %}
@@ -786,7 +786,7 @@
            titel herhaalt, en helemaal rechts in de kopregel zag het eruit als nog een
            knop. Een van de twee moet daar weg, en het is niet de knop. #}
         {% set diensten_bewerken = "openEditModal('modal-edit-services', 'Services beheren')" %}
-        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" :attrs="{'onclick': diensten_bewerken}" />{% endif %}{% endset %}
+        {% set diensten_bewerken_knop %}{% if user_role in ["admin", "owner"] %}<c-button type="secondary" size="sm" label="Bewerken" icon="pencil-on-square" show-icon="before" @click="{{ diensten_bewerken }}" />{% endif %}{% endset %}
         {% call panel("Services & Integraties", "cylinder-split", aside=diensten_bewerken_knop, info_text="Services en features worden door het platform geleverd en beheerd. Je hoeft ze voor gebruik alleen te activeren en eventueel configureren.") %}
             {% if project.services %}
                 <c-auto-grid min="280px" gap="md">
@@ -826,7 +826,7 @@
                                 {% if user_role in ["admin", "owner"] and service.value in service_config_sections %}
                                     {% set configureer = "openEditModal('" ~ service_config_sections[service.value] ~ "', '" ~ service_def.name ~ " configuratie')" %}
                                     <c-action-group align="start">
-                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" :attrs="{'onclick': configureer}" />
+                                        <c-button type="tertiary" size="sm" label="Configureer" icon="gear" show-icon="before" @click="{{ configureer }}" />
                                     </c-action-group>
                                 {% endif %}
                             </c-stack>
@@ -901,7 +901,7 @@
            er geen enkele weg naar een eerste deployment zijn. #}
         {% if user_role in ["admin", "owner"] and not project.deployments %}
             <c-action-group align="start">
-                <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" :attrs="{'onclick': deployment_toevoegen}" />
+                <c-button type="secondary" size="sm" label="Deployment toevoegen" icon="plus" show-icon="before" @click="{{ deployment_toevoegen }}" />
             </c-action-group>
         {% endif %}
 

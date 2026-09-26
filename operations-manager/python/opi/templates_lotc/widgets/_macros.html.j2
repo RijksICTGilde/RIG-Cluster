@@ -176,7 +176,7 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
         accessible-label="Uitleg over {{ name|e }}"
         variant="neutral-transparent"
         size="sm"
-        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
+        @click="{{ hulp_js }}" :attrs="{'class': 'service-card__help-btn'}" />
     {% endif %}
 </c-cluster>
 <c-paragraph size="sm" class="service-card__description">{{ description|e }}</c-paragraph>

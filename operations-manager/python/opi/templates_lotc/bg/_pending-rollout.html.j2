@@ -37,7 +37,7 @@
        onclick als los attribuut toe. Zelfde vorm als de andere knoppen op deze pagina. #}
     {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
     <c-button size="sm" label="Nu verwerken" icon="refresh" show-icon="before"
-              :attrs="{'onclick': herverwerken}" />
+              @click="{{ herverwerken }}" />
     {% endif %}
 </c-alert>
 {% endif %}

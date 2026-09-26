@@ -54,7 +54,7 @@
                         accessible-label="Uitleg over {{ service.label }}"
                         variant="neutral-transparent"
                         size="sm"
-                        :attrs="{'onclick': help_js, 'class': 'service-card__help-btn'}" />
+                        @click="{{ help_js }}" :attrs="{'class': 'service-card__help-btn'}" />
                 {% endif %}
             </c-cluster>
 

@@ -50,7 +50,7 @@
                        het id vallen: het script zoekt #submit-btn op, kreeg null, en de
                        knop deed niets. #}
                     {% set verwerken %}handleSubmit(event){% endset %}
-                    <c-button id="submit-btn" label="Process" :attrs="{'onclick': verwerken}"/>
+                    <c-button id="submit-btn" label="Process" @click="{{ verwerken }}"/>
                 </c-layout-flow>
             </form>
         </c-card>
