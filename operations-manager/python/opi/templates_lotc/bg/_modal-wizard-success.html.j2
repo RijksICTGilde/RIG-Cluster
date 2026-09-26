@@ -22,7 +22,7 @@
         <div class="edit-section-actions wizard-modal-success__actions">
             {% set sluiten_js %}closeEditModalAndReload(){% endset %}
             <c-action-group align="end">
-                <c-button type="primary" label="Sluiten" :attrs="{'onclick': sluiten_js}" />
+                <c-button type="primary" label="Sluiten" @click="{{ sluiten_js }}" />
             </c-action-group>
         </div>
     </c-stack>

@@ -31,7 +31,7 @@
                             <c-cluster gap="sm" align="center">
                                 <c-code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</c-code>
                                 <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
-                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                                          class="copy-btn" @click="{{ kopieer }}" />
                             </c-cluster>
                         </c-stack>
                     </div>

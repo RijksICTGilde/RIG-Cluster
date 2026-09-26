@@ -46,7 +46,7 @@
                     {% for failure in group.members %}
                         {% if failure.deployment %}
                             {% set logboek_js %}event.preventDefault(); if(typeof openLogViewer==='function'){openLogViewer('{{ project_name }}','{{ failure.deployment }}','{{ failure.component }}',[{reference:'{{ failure.component }}'}])}{% endset %}
-                            <c-link href="#" :attrs="{'onclick': logboek_js}">Bekijk logs voor '{% if group.deployments | length > 1 %}{{ failure.deployment }} / {% endif %}{{ failure.component }}'</c-link>
+                            <c-link href="#" @click="{{ logboek_js }}">Bekijk logs voor '{% if group.deployments | length > 1 %}{{ failure.deployment }} / {% endif %}{{ failure.component }}'</c-link>
                         {% endif %}
                     {% endfor %}
                 {% endif %}
