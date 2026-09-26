@@ -1,0 +1,62 @@
+{# ONZE KOPIE van components/checkbox-field.html.j2 uit lotc-forms, met EEN wijziging:
+   de foutlijst van de LOSSE aankruisvakje-tak krijgt ``for="<id>"``.
+
+   Die tak zet ``invalid unmet="<id>-error"`` netjes op de besturing, maar staat als enige
+   veldsoort NIET in een ``<nldd-form-field>``: het is een eigen ``<div>``. En juist
+   ``nldd-form-field`` is wat de foutlijst aan de besturing knoopt (``_adoptValidationLists``
+   zet ``list.control``). Zonder ouder blijft ``_resolved`` leeg, leest de lijst nergens
+   ``invalid`` of ``unmet``, en tekent ze een leeg vak.
+
+   Gemeten in een browser met NLDD 0.8.92: zoals lotc-forms het nu doet is de foutregel 0
+   px hoog, met ``for="<id>"`` erbij 20 px en in de kritieke kleur. ``for`` zoekt het
+   element met dat id op in de light DOM, en dat is hier het host-element dat de bedrading
+   al draagt.
+
+   De GROEPS-tak (met ``content``) en ``radio-button-field`` hebben hetzelfde gebrek en
+   zijn hier NIET gerepareerd: daar hangt de lijst wel aan een ``nldd-form-field``, maar
+   die knoopt haar aan het eerste invoerelement BINNEN de omhulling en niet aan de
+   omhulling zelf, dus de reparatie hoort in lotc-forms. Geen veld van dit portaal met die
+   twee widgets is ``required`` of heeft een validator, dus er is vandaag geen weg naar een
+   serverfout op zo'n veld. Het verzoek staat in request_for_components.md.
+
+   De rest is letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt onze kopie
+   naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
+
+   ---- vanaf hier de kopie ---- #}
+{% import 'components/_forms.j2' as f %}
+{% macro lotc_render(_component_context) %}
+{% set c = _component_context %}
+{% set id = c.get('id', '') %}{% set name = c.get('name', '') %}{% set label = c.get('label', '') %}
+{% set help = c.get('help', '') %}{% set error = c.get('error', '') %}
+{% set required = c.get('required', false) %}{% set checked = c.get('checked', false) %}
+{% set disabled = c.get('disabled', false) %}
+{% set value = c.get('value', '') %}{% set content = c.get('content', '') %}
+{% set db = f.describedby(id, help, error) %}
+{% if content %}
+{# a group of <c-checkbox> children, labelled by the field #}
+{% if 'nldd' in lotc_design_systems %}
+{% call f.nldd_field(id, label, help, error, required, 'checkbox-field') %}<div{{ f.render_attrs(c) }}>{{ content | safe }}</div>{% endcall %}
+{% else %}
+{% call f.rvo_group(id, label, help, error, required, 'checkbox-field') %}<div class="rvo-checkbox__group{% if error %} rvo-checkbox__group--error{% endif %}"{{ f.render_attrs(c) }}>{{ content | safe }}</div>{% endcall %}
+{% endif %}
+{% else %}
+{# a single checkbox: the control carries the label, help/error below #}
+{% if 'nldd' in lotc_design_systems %}
+<div class="lotc-checkbox-field" data-lotc-component="checkbox-field">
+<nldd-checkbox-field{% if id %} id="{{ id }}"{% endif %} name="{{ name }}"{% if value %} value="{{ value }}"{% endif %} label="{{ label }}"{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}{% if error %} invalid unmet="{{ id }}-error"{% endif %}{{ f.render_attrs(c) }}></nldd-checkbox-field>
+{% if help %}<nldd-form-field-help-text id="{{ id }}-help">{{ help }}</nldd-form-field-help-text>{% endif %}
+{# nldd-form-field-error-text is verwijderd in 0.8.84; zie _forms.j2 voor het mechanisme #}
+{% if error %}<nldd-validation-list for="{{ id }}"><nldd-validation-item id="{{ id }}-error">{{ error }}</nldd-validation-item></nldd-validation-list>{% endif %}
+</div>
+{% else %}
+<div class="utrecht-form-field rvo-form-field{% if error %} rvo-form-field--error{% endif %}" data-lotc-component="checkbox-field">
+<label class="rvo-checkbox{% if checked %} rvo-checkbox--checked{% endif %}">
+<input class="rvo-checkbox__input" type="checkbox" id="{{ id }}" name="{{ name }}"{% if value %} value="{{ value }}"{% endif %}{% if checked %} checked{% endif %}{% if disabled %} disabled{% endif %}{% if required %} required{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if db %} aria-describedby="{{ db }}"{% endif %}{{ f.render_attrs(c) }}>
+<span class="rvo-checkbox__label">{{ label }}</span>
+</label>
+{% if help %}<div class="utrecht-form-field-description" id="{{ id }}-help">{{ help }}</div>{% endif %}
+{% if error %}<div class="utrecht-form-field-description utrecht-form-field-description--invalid rvo-form-feedback rvo-form-feedback--error" id="{{ id }}-error">{{ error }}</div>{% endif %}
+</div>
+{% endif %}
+{% endif %}
+{% endmacro %}
