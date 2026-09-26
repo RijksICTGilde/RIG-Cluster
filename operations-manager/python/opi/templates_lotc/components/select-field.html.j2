@@ -1,0 +1,63 @@
+{# ONZE KOPIE van components/select-field.html.j2 uit lotc-forms, met EEN wijziging:
+   de besturing draagt bij een serverfout ``invalid unmet="<id>-error"``.
+
+   Zonder dat staat de foutmelding er wel en is hij niet te zien. Gemeten in een browser
+   op de markup die lotc-forms zelf oplevert, met NLDD 0.8.92:
+
+   | besturing                                  | hoogte foutregel |
+   |--------------------------------------------|------------------|
+   | ``<select ... aria-invalid="true">``        | 0                |
+   | ``<nldd-combo-box ... invalid>``            | 0                |
+   | met ``invalid unmet="<id>-error"`` erbij    | 20               |
+
+   ``nldd-validation-list`` vraagt de BESTURING welke items onvervuld zijn: het item is
+   zichtbaar als de besturing ``invalid`` draagt EN het id van het item in haar ``unmet``
+   staat. De veldsjablonen van tekst, tekstvlak, datum en bestand schrijven dat sinds
+   0.8.84 zelf; deze twee takken zijn vergeten, en een native ``<select>`` mist ook de
+   ``invalid`` (het heeft alleen ``aria-invalid``, en dat leest de lijst niet).
+
+   De rest is letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt onze kopie
+   naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
+
+   Weghalen zodra lotc-forms deze twee takken zelf bedraadt. Het verzoek staat in
+   request_for_components.md.
+
+   ---- vanaf hier de kopie ---- #}
+{% import 'components/_forms.j2' as f %}
+{% macro lotc_render(_component_context) %}
+{% set c = _component_context %}
+{% set id = c.get('id', '') %}{% set name = c.get('name', '') %}{% set label = c.get('label', '') %}
+{% set help = c.get('help', '') %}{% set error = c.get('error', '') %}
+{% set required = c.get('required', false) %}{% set disabled = c.get('disabled', false) %}
+{% set placeholder = c.get('placeholder', '') %}{% set content = c.get('content', '') %}
+{% set native = c.get('native', false) %}{% set value = c.get('value', '') %}
+{% set db = f.describedby(id, help, error) %}
+{% if 'nldd' in lotc_design_systems and native %}
+{# A real native <select> with an NLDD skin — for screens whose JS manipulates the
+   list (value / new Option() / change). Use native <option> children (c-option
+   would theme-swap to nldd-menu-item, which a native <select> drops).
+
+   The skin is in forms.css and the selected option is applied by forms.js from
+   `data-lotc-value` — <select value="…"> is not a thing in HTML, and both used
+   to be emitted inline, per field. #}
+{% call f.nldd_field(id, label, help, error, required, 'select-field') %}
+<select id="{{ id }}" name="{{ name }}" class="lotc-native-select{% if error %} lotc-native-select--invalid{% endif %}"{% if value %} data-lotc-value="{{ value | e }}"{% endif %}{% if db %} aria-describedby="{{ db }}"{% endif %}{% if error %} aria-invalid="true" invalid unmet="{{ id }}-error"{% endif %}{% if required %} required{% endif %}{% if disabled %} disabled{% endif %}{{ f.render_attrs(c) }}>
+{% if placeholder %}<option value="">{{ placeholder }}</option>{% endif %}{{ content | safe }}</select>
+{% endcall %}
+{% elif 'nldd' in lotc_design_systems %}
+{% call f.nldd_field(id, label, help, error, required, 'select-field') %}
+{# NLDD's native select is nldd-combo-box > nldd-menu > nldd-menu-item; a raw
+   <select> would DROP the nldd-menu-item options a browser can't nest there. #}
+<nldd-combo-box id="{{ id }}" name="{{ name }}"{% if value %} value="{{ value }}"{% endif %}{% if error %} invalid unmet="{{ id }}-error"{% endif %}{% if disabled %} disabled{% endif %}{% if required %} required{% endif %}{% if db %} aria-describedby="{{ db }}"{% endif %}{{ f.render_attrs(c) }}>
+<nldd-menu>{% if placeholder %}<c-option value="" label="{{ placeholder }}"/>{% endif %}{{ content | safe }}</nldd-menu>
+</nldd-combo-box>
+{% endcall %}
+{% else %}
+{% call f.rvo_field(id, label, help, error, required, 'select-field') %}
+<div class="rvo-select-wrapper">
+<select id="{{ id }}" name="{{ name }}" class="utrecht-select utrecht-select--html-select{% if error %} utrecht-select--invalid{% endif %}"{% if value %} data-lotc-value="{{ value | e }}"{% endif %}{% if db %} aria-describedby="{{ db }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if required %} required{% endif %}{% if disabled %} disabled{% endif %}{{ f.render_attrs(c) }}>
+{% if placeholder %}<option value="">{{ placeholder }}</option>{% endif %}{{ content | safe }}</select>
+</div>
+{% endcall %}
+{% endif %}
+{% endmacro %}
