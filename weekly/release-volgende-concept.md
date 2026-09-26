@@ -6,79 +6,93 @@ Dit is alles wat er sinds de release van 2 september bij is gekomen: 40 opgeleve
 
 ##### Eigen container registries
 
-- **Je kunt images draaien uit je eigen private registry.** Je vult eenmalig op projectniveau de registry, een gebruikersnaam en een token in, en per component welke registry bij die image hoort. Wat daaronder gebeurt verschilt per cluster, en dat verschil merk je niet: je projectbestand is overal hetzelfde.
-- **De registrykeuze staat bij de image**, op de plek in de componentvorm waar je de image invult.
-- **De upstream volgt uit de images die je project al heeft**, dus je hoeft hem niet zelf op te zoeken. Een geplakte URL en een vrij label worden onder water rechtgetrokken.
-- **Het token wordt getoetst voordat het wordt opgeslagen**, en het staat als wachtwoordveld in het formulier. Een onleesbaar token wordt niet stilletjes gewist.
-- **De registries staan als blok op je projectpagina**, zodat je ziet wat er is ingesteld. Kies je niets, dan geldt je eigen registry alsnog, en de optie heet nu ook "Automatisch".
-- **Elk project krijgt een eigen serviceaccount**, zodat het ene project niet bij de registry van het andere kan.
-- **Een image wordt niet meer uitgeschakeld op een onduidelijk antwoord.** Dat gebeurt alleen nog als de registry bevestigt dat de image er niet is.
+Nieuw. Een project kan images draaien uit een eigen private registry. Op projectniveau vul je de registry, een gebruikersnaam en een token in; per component kies je welke registry bij die image hoort. Wat er onder water gebeurt verschilt per cluster, maar het projectbestand is overal hetzelfde.
 
-##### Je eigen domein
+Wat daarbij hoort:
 
-- **Een eigen domein op het kale domein aanvragen werkt.** Dit liep muurvast: de weigering had geen veld om in te landen, dus het scherm bleef staan en de knop leek kapot, en het vinkje om het domein aan te vragen zat achter die weigering. Er was geen uitgang. Nu mag je opslaan wat je WIL, en de aanvraag komt tot stand.
-- **Gereserveerde namen gelden alleen op zones die ZAD zelf bedient.** Namen als `admin` en `www` worden op je eigen domein niet meer geweigerd.
-- **Het domeinenblok heet niet meer naar een instelling die niet meer bestaat.**
+- De registrykeuze staat in de componentvorm, op de plek waar je de image invult.
+- De upstream volgt uit de images die het project al heeft, dus je zoekt hem niet zelf op. Een geplakte URL en een vrij label worden omgezet naar de juiste schrijfwijze.
+- Het token wordt getoetst voordat het wordt opgeslagen, en staat als wachtwoordveld in het formulier. Een onleesbaar token wordt niet gewist.
+- De ingestelde registries staan als blok op de projectpagina. Zonder keuze geldt de eigen registry alsnog; die optie heet "Automatisch".
+- Elk project krijgt een eigen serviceaccount, dus het ene project kan niet bij de registry van het andere.
+- Een image wordt alleen uitgeschakeld als de registry bevestigt dat hij er niet is, niet meer op een onduidelijk antwoord.
 
-##### Diensten instellen
+##### Speelruimte per service
 
-- **Een dienst zegt zelf hoe ver je mag gaan.** Per instelbaar veld staat de ondergrens, de bovengrens en op welke laag je het mag zetten. Een waarde daarbuiten wordt geweigerd met een melding die zegt wat wél mag, bijvoorbeeld "moet tussen 1 en 500 liggen; je gaf 501".
-- **De connectielimiet van je databaserollen is instelbaar.**
-- **De keuzelijst met diensten op een component toont alleen wat daar ook echt per component te kiezen valt**, in plaats van bijna alles wat het project aanheeft.
-- **De uitrolwacht leest wat er werkelijk is gereconcilieerd** per deployment, in plaats van af te gaan op een teller die daar niet over ging.
+Nieuw. Een service legt per instelbaar veld vast wat de grenzen zijn: de ondergrens, de bovengrens en op welke laag het veld gezet mag worden. Een waarde daarbuiten wordt geweigerd met een melding die de grenzen noemt, bijvoorbeeld `'connection-limit' moet tussen 1 en 500 liggen; je gaf 501`.
+
+Het eerste veld dat hierop draait is de connectielimiet van de databaserollen, en die is daarmee instelbaar geworden.
+
+##### Een eigen domein aanvragen
+
+Gerepareerd. Een eigen domein met het kale domein op een component was niet aan te vragen: de weigering had geen veld om in te landen, dus er kwam geen melding in beeld, en het vinkje om het domein aan te vragen zat achter die weigering. Een eigen domein, een subdomein daarop en een kaal domein mogen nu alle drie in het projectbestand staan voordat de goedkeuring rond is, en de aanvraag komt tot stand.
+
+Verder op domeinen:
+
+- Gereserveerde namen als `admin` en `www` gelden alleen op zones die ZAD zelf bedient, dus niet meer op een eigen domein.
+- Het domeinenblok is niet meer genoemd naar een instelling die niet meer bestaat.
+
+##### Services op een component
+
+Gerepareerd. De keuzelijst met services op een component toonde bijna alles wat het project aanhad. Een service zegt nu zelf of hij per component aan te vinken is, en de lijst toont alleen die.
 
 ##### Uitnodigingen en accounts
 
-- **Wie zichzelf via een uitnodiging toevoegt, bevestigt eerst zijn e-mailadres.** De bevestigingsmail komt meteen bij het aanmaken van het account, niet pas bij de eerste keer inloggen. Wie via SSO Rijk binnenkomt merkt er niets van.
-- **De bestemming van een uitnodiging beweegt mee met je project.** Er wordt opgeslagen welk component de bestemming is in plaats van de uitgerekende URL, dus een uitnodiging blijft naar de goede plek wijzen als die URL later verandert.
-- **Een afgekeurde bestemming komt niet meer terug in de foutmelding.**
+- Een account dat via een uitnodiging wordt aangemaakt, krijgt de bevestigingsmail meteen bij het aanmaken in plaats van bij de eerste keer inloggen, en bevestigt zijn adres voordat inloggen werkt. Dit geldt niet voor SSO Rijk.
+- Een uitnodiging slaat op welk component de bestemming is, niet de uitgerekende URL. Verandert die URL later, dan blijft de uitnodiging naar de goede plek wijzen.
 
 ##### Klonen, backups en herstellen
 
-- **Een afgebroken kloon wordt afgemaakt in plaats van opnieuw begonnen.** Er komt geen tweede database naast de eerste te staan.
-- **Een kloon erft het webadres van zijn bron.** Een gekloonde deployment kreeg de componenten van de bron mee maar niet diens webadresvorm, en viel dan terug op een andere standaard dan de bron had.
-- **Het bronschema van een externe bron blijft staan** in plaats van weggegooid te worden.
-- **Een losse PVC-restore weet op welk cluster hij draait.**
-- **Backup- en restorepods draaien op het serviceaccount van je project.**
+- Een run die afbreekt na een geslaagde kloon maakt die kloon bij de volgende run af, in plaats van een tweede database ernaast te zetten.
+- Een gekloonde deployment erft de webadresvorm van zijn bron. Eerder kreeg hij de componenten wel mee maar die vorm niet, en viel hij terug op een andere standaard dan de bron.
+- Het bronschema van een externe bron blijft staan in plaats van weggegooid te worden.
+- Een losse PVC-restore krijgt het cluster waarop hij draait doorgegeven.
+- Backup- en restorepods draaien op het serviceaccount van het project.
 
-##### Sites die onbereikbaar waren
+##### Sites achter een helmfile
 
-- **Sites die via een helmfile uitrollen zijn weer bereikbaar.** Hun DNS-record wees over de zonegrens, en dat overleeft de DNSSEC-validatie niet: bezoekers kregen een SERVFAIL en de site bestond voor hen simpelweg niet. Dat raakte onder andere de documentatiesites.
+Gerepareerd. Sites die via een helmfile uitrollen waren onbereikbaar: hun DNS-record wees over de zonegrens, en dat overleeft de DNSSEC-validatie niet. Bezoekers kregen een SERVFAIL. Dit raakte onder andere de documentatiesites.
 
-##### Verwijderen dat bleef hangen
+##### Een project verwijderen
 
-- **Een project verwijderen blijft niet meer eeuwig hangen.** Een verwijdering kon achter een uitrol vast komen te zitten die op gezondheid wachtte, en die wachtte op iets wat nooit gezond zou worden. Eén vastgelopen verwijdering hield daarmee de uitrol van álle projecten op het cluster tegen.
-- **En het laat geen rommel meer achter.** De noodgreep die dat moest oplossen maakte het erger: de applicatie verdween, maar haar resources bleven staan zonder dat er ooit een verwijderverzoek voor was geweest. Eén meting vond zo 350 achtergebleven resources, waaronder 140 secrets, opgebouwd over drie weken. Er is nu ook gereedschap dat opspoort wat er nog ligt.
-- **Een projectaanmaak die slaagt wordt niet meer als mislukt weggeschreven.** De uitrol van het projectniveau kon na de workload komen die er op wacht, en dan liep de aanmaaktaak in zijn tijdslimiet terwijl het project een halve minuut later gewoon draaide.
+Gerepareerd, en dit had brede gevolgen. Een verwijdering kon achter een lopende uitrol vast komen te zitten die op gezondheid wachtte, terwijl die gezondheid nooit zou komen. Eén vastgelopen verwijdering hield daarmee de uitrol van alle projecten op het cluster tegen.
+
+De noodgreep die daarvoor was ingebouwd maakte het erger: de applicatie verdween, maar haar resources bleven staan zonder dat er ooit een verwijderverzoek voor was geweest. Eén meting vond 350 achtergebleven resources, waaronder 140 secrets, opgebouwd over drie weken. De verwijderroute beëindigt de lopende uitrol nu eerst, en verwijdert de resources zelf voordat er geforceerd wordt. Er is gereedschap bij dat opspoort wat er nog ligt.
+
+Daarnaast: een projectaanmaak die slaagt wordt niet meer als mislukt weggeschreven. De uitrol van het projectniveau kon na de workload komen die erop wacht, waardoor de aanmaaktaak in zijn tijdslimiet liep terwijl het project een halve minuut later draaide.
 
 ##### VLAM
 
-- **De doorlus wijst naar overheid-i**, met de bundel die daarbij hoort, en de dienst biedt die CA-bundel aan om te downloaden bij het dienstblok.
-- **Het model kies je uit een lijst** in plaats van een voorgevulde naam te moeten overtypen.
+- De doorlus wijst naar overheid-i, met de bundel die daarbij hoort. De service biedt die CA-bundel aan om te downloaden bij het serviceblok.
+- Het model kies je uit een lijst in plaats van de naam over te typen.
 
 ##### Foutmeldingen
 
-- **Een fout vertelt wat je eraan kunt doen**, in plaats van wat er technisch stukging.
-- **Een serverfout komt aan als pagina of als nette envelop**, niet meer als kale JSON, en die vorm staat nu ook in het OpenAPI-document beschreven.
-- **Technische details lekken niet meer in foutmeldingen.** Op meerdere plekken kwam de onderliggende uitzondering mee naar buiten, en een geweigerde waarde werd in de melding herhaald.
+- Een fout noemt wat je eraan kunt doen in plaats van wat er technisch stukging.
+- Een serverfout komt aan als pagina of als envelop, niet meer als kale JSON. Die envelopvorm staat nu ook in het OpenAPI-document.
+- Een melding herhaalt de afgekeurde waarde niet meer. Wat iemand invult kan van elders geplakt zijn, en dan zet een foutmelding die waarde op het scherm van de persoon die hem invoerde. Dit gold onder andere voor de bestemming van een uitnodiging en voor een geweigerde instelling.
+- Technische details lekken niet meer naar buiten. Op meerdere plekken kwam de onderliggende uitzondering mee in het antwoord.
 
 ##### Sneller
 
-- **Een deploy na een codewijziging verstuurt 8,6 MB in plaats van 92,2 MB.** De image is zo ingedeeld dat een wijziging in de applicatiecode alleen de bovenste laag ongeldig maakt. Het hele image werd daarbij ook kleiner, van 877 naar 801 MB.
-- **Een secret dat niet wijzigt blijft staan.** Versleutelen levert elke keer andere bytes op, dus werd bij elke uitrol elk geheim opnieuw weggeschreven. Dat is voorbij, en een deploy logt daardoor ook niemand meer uit.
-- **Geheimen ontsleutelen gebeurt in het proces zelf** in plaats van met een apart programma per veld. Dat is minder werk per verzoek, en de sleutel staat onderweg niet meer in een tijdelijk bestand op schijf.
+- Een deploy na een codewijziging verstuurt 8,6 MB in plaats van 92,2 MB. De image is zo ingedeeld dat een wijziging in de applicatiecode alleen de bovenste laag ongeldig maakt. Het image werd daarbij ook kleiner, van 877 naar 801 MB.
+- Versleuteling loopt via een efficiëntere weg.
+- Het bepalen van de gezondheid van een deployment is verbeterd.
 
 ##### Beveiliging en beschikbaarheid
 
-- **De platformsleutel en het GitHub-token zijn vervangen.** Terugkerend onderhoud volgens BIO2 8.24: de oude sleutel opent niets meer en het oude token geeft nergens meer toegang. Hier is niets van te merken.
-- **MinIO komt uit een eigen build.** De leverancier heeft zijn images achter een abonnement gezet en het project gearchiveerd, waardoor de opslagdienst niet meer opstartte. Zowel de opslag als het bijbehorende gereedschap komt nu uit ons eigen register, dus een volgende stap van de leverancier raakt ons niet.
-- **Een projectpad kan de repository niet meer verlaten.**
+- De platformsleutel en het GitHub-token zijn vervangen. Terugkerend onderhoud volgens BIO2 8.24: de oude sleutel opent niets meer en het oude token geeft nergens toegang. Voor gebruikers verandert er niets.
+- MinIO komt uit een eigen build. De leverancier heeft zijn images achter een abonnement gezet en het project gearchiveerd, waardoor de opslag niet meer opstartte. Zowel de opslag als het bijbehorende gereedschap komt nu uit ons eigen register, dus een volgende stap van de leverancier raakt ons niet.
+- Een projectpad kan de repository niet meer verlaten.
+
+##### Uitgelogd raken na een deploy
+
+Gerepareerd. Bij een applicatie achter de authorization wall raakte iedereen uitgelogd zodra er een deploy was geweest. Het cookie-secret van oauth2-proxy kreeg bij elke uitrol een nieuwe waarde, waardoor alle lopende sessies ongeldig werden. Dat secret houdt nu zijn waarde.
 
 ##### Verder opgelost
 
-- **Een leeg projectbestand werd als `null` teruggeschreven** in plaats van leeg te blijven.
-- **Het inlogscherm toont de template uit je projectbestand**, en de rolcontrole stuurt door in plaats van te blijven hangen.
-- **Een schemamigratie zet de stempel op de nieuwste versie**, ook als er onderweg niets te doen was.
+- Het inlogscherm toont de template uit het projectbestand, en de rolcontrole stuurt door in plaats van te blijven hangen.
+- Een schemamigratie zet de stempel op de nieuwste versie, ook als er onderweg niets te doen was.
 
 ##### Feedback
 

@@ -24,6 +24,7 @@ Gebruik de rechterkolom, nooit de linker:
 | grendel (een controle die weigert) | guard |
 | grendel (een fase die groen of rood geeft) | gate |
 | vergrendeld (een veld dat niet te wijzigen is) | locked, of read-only voor het attribuut |
+| dienst, diensten | service, services |
 
 Pas dit toe op nieuw werk. Bestaande teksten worden niet met terugwerkende kracht omgezet: dat levert een grote diff op die niets aan de code verandert.
 
