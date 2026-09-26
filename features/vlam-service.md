@@ -24,8 +24,8 @@ En op een cluster dat het **doorlus-pad** aanbiedt (RC-167) daarnaast:
 
 | | |
 |---|---|
-| `VLAM_API_URL_DIRECT` | het adres van de doorlus-poort, met de VLAM-hostnaam erin: `https://vlam-api.rijksweb.nl:8443` |
-| `VLAM_CA_BUNDLE_PATH` | `/etc/ssl/vlam/rijksdienst-ca.pem`, de uitgever waartegen je het certificaat van VLAM verifieert |
+| `VLAM_API_URL_DIRECT` | het adres van de doorlus-poort, met de VLAM-hostnaam erin: `https://vlam-api.overheid-i.nl:8443` |
+| `VLAM_CA_BUNDLE_PATH` | `/etc/ssl/vlam/vlam-ca.pem`, de uitgevers waartegen je het certificaat van VLAM verifieert |
 | een regel in `/etc/hosts` | die de VLAM-naam naar het ClusterIP van onze proxy wijst (`hostAliases`) |
 | het bestand zelf | als Secret per deployment, read-only gemount op dat pad |
 
@@ -249,20 +249,29 @@ peer. Dat is er nu, als **wildcard-peer** (`config_schema_version` 1.1):
 - **De inkomende regel voor 8443 in `vlam-wt8`.** De dienst opent de uitgaande weg naar beide
   poorten; de inkomende wildcard aan de VLAM-kant bestaat vandaag alleen voor 8081. Die tweede regel
   hoort bij de eerste keer dat het doorlus-pad echt gebruikt wordt.
-- **De CA-bundel zelf.** `opi/services/catalog/vlam/rijksdienst-ca.pem` is het bestand dat de
-  productieconfiguratie noemt. Zolang het er niet staat biedt de dienst het doorlus-pad NIET aan:
-  geen tweede adres, geen alias, geen mount, geen downloadknop. De keten van RC-142 blijft gewoon
-  werken. Zodra iemand met toegang tot `rig-prd-vlam-wt8` de keten uit de bijlage van
-  `vlam-proxy-intern` (`/etc/haproxy/rijksdienst-ca.pem`) daar neerzet, gaat de rest vanzelf aan.
+- **De herkomst van de Rijksdienst Root CA bij SSC-ICT bevestigen.** De bundel zelf staat er sinds
+  22 september als `opi/services/catalog/vlam/vlam-ca.pem` (drie certificaten, geen private keys) en
+  het doorlus-pad is daarmee aan. Twee van de drie zijn tegen een publieke bron te verifiëren:
+  `DigiCert Global Root G2` en zijn intermediate `DigiCert G2 TLS EU RSA4096 SHA384 2022 CA1`. De
+  derde, `Rijksdienst Root CA` van SSC-ICT, staat in geen publieke distributie. Op 25 september
+  gemeten is de repo-kopie wel gelijk aan wat de draaiende proxy gebruikt: de bijlage
+  `productie-attch-rijksdienst-ca` in `rig-prd-vlam-wt8` bevat dezelfde drie certificaten, en de
+  Rijksdienst-root heeft daar dezelfde SHA256-vingerafdruk
+  `1A:04:61:6F:8D:6A:2F:6E:90:3A:7B:56:E3:7F:75:BF:9F:76:B9:16:0C:D4:D2:27:71:7E:C9:FC:95:5F:33:6D`.
+  Wat daarmee nog niet vastligt is dat die bytes ooit van SSC-ICT kwamen. Dat is een eenmalige
+  bevestiging, en die is het waard omdat dit certificaat in elke afnemerpod belandt en via de
+  downloadknop wordt uitgedeeld. Leg de vingerafdruk daarna hier vast als bevestigd.
 - **Verloopt het geconfigureerde ClusterIP ooit stilzwijgend?** Bewust uitgesteld. Twee latere
   mogelijkheden, geen van beide nu nodig: een controle die het geconfigureerde adres vergelijkt met
   de draaiende Service en klaagt bij verschil, of alsnog een vaste `clusterIP`, wat een kleine
   uitbreiding van ZAD vraagt.
-- **Welke naam zet de alias?** `vlam-api.rijksweb.nl` en `vlam-api.overheid-i.nl` werken allebei bij
-  VLAM. De keuze is `rijksweb.nl` geworden, omdat dat de naam is waar deze hele keten op gebouwd is
-  (de SNI-ACL van de proxy, het certificaat, het runbook) en de enige van de twee die publiek
-  resolvet. Het is een expliciete keuze en geen bijproduct van volgorde; hij staat als `api_host` in
-  de clusterconfiguratie en is daar met een regel te wijzigen.
+- **Welke naam zet de alias?** Dit was een keuze tussen `vlam-api.rijksweb.nl` en
+  `vlam-api.overheid-i.nl`, en hij is op 21 september voor ons beslist: SSC-ICT heeft rijksweb
+  uitgezet, dat adres sluit de verbinding meteen na de TCP-handshake terwijl overheid-i 200 geeft.
+  De doorlus wijst daarom naar `vlam-api.overheid-i.nl` (commit `2fad03076`). De keten waarop dit
+  gebouwd is draagt nog wel de oude naam (de SNI-ACL van de proxy, het certificaat, het runbook),
+  dus verwacht `rijksweb` nog op plekken die niet de `api_host` zijn. Hij staat als `api_host` in de
+  clusterconfiguratie en is daar met een regel te wijzigen.
 - **`chat.rijksweb.nl` ontsluiten.** Kan (tweede frontend op 8082 met een eigen vaste backend en een
   `VLAM_CHAT_URL`), maar pas als er een concrete afnemer voor is.
 
