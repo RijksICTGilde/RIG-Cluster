@@ -47,7 +47,6 @@ spec:
       allowEmpty: false
     syncOptions:
       - CreateNamespace=false
-      - SyncTimeout=60s
     retry:
       limit: 2
       backoff:
