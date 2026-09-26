@@ -61,15 +61,23 @@ def choose(question: str, options: list[str]) -> int:
         print(f"Kies 1 tot en met {len(options)}.")
 
 
-def ask_field(field: Field, current: str | None) -> tuple[Choice, str | None]:
+def ask_field(field: Field, current: str | None, *, is_new_secret: bool) -> tuple[Choice, str | None]:
     """Wat er met één veld moet gebeuren.
 
-    KEEP staat alleen in de lijst als er een waarde is om te behouden, en staat dan bovenaan:
-    een secret aanpassen betekent bijna altijd één veld aanraken en de rest laten staan.
+    De standaardkeuze staat bovenaan en verandert niets. Voor een veld dat het secret al heeft is
+    dat KEEP; voor een veld dat de TEMPLATE wel kent en het secret niet, is dat OMIT.
+
+    Dat tweede geval is de normale toestand en niet de uitzondering: het odcn-keycloak-secret
+    kent twee van de zes velden van zijn template, want KEYCLOAK_ADMIN_CLIENT_SECRET en de drie
+    OTP-velden zijn later aan de template toegevoegd. Zonder OMIT zou een ronde die alleen het
+    wachtwoord roteert er vier velden bij zetten, en dat is een andere wijziging dan gevraagd.
+    Bij een secret dat nog niet bestaat is er niets om weg te laten en vervalt de keuze.
     """
     options: list[tuple[Choice, str]] = []
     if current is not None:
         options.append((Choice.KEEP, "laat staan"))
+    elif not is_new_secret:
+        options.append((Choice.OMIT, "laat weg (staat nu niet in het secret)"))
     if field.generatable:
         options.append((Choice.GENERATE, f"genereer opnieuw ({field.describe()})"))
     options.append((Choice.ENTER, "zelf opgeven"))
@@ -77,7 +85,7 @@ def ask_field(field: Field, current: str | None) -> tuple[Choice, str | None]:
     if len(options) == 1:
         choice = options[0][0]
     else:
-        status = "nog geen waarde" if current is None else f"{len(current)} tekens"
+        status = "nieuw in de template" if current is None else f"{len(current)} tekens"
         index = choose(f"{field.name} ({field.describe()}, nu: {status})", [label for _, label in options])
         choice = options[index][0]
 
@@ -89,6 +97,8 @@ def ask_field(field: Field, current: str | None) -> tuple[Choice, str | None]:
             print("  Leeg is geen wachtwoord.")
     if choice is Choice.GENERATE:
         return choice, generate(str(field.kind), field.length)
+    if choice is Choice.OMIT:
+        return choice, None
     return choice, current
 
 
@@ -142,24 +152,30 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Sleutel:   {key_file} ({public_key_of(read_key(key_file))})")
     print(f"Namespace: {cluster.namespace}")
 
+    is_new_secret = not destination.exists()
     values: dict[str, str] = {}
     decisions: list[tuple[str, Choice]] = []
     for field in fields_of(template.read_text(encoding="utf-8")):
-        choice, value = ask_field(field, current.get(field.name))
+        choice, value = ask_field(field, current.get(field.name), is_new_secret=is_new_secret)
         decisions.append((field.name, choice))
         if value is not None:
             values[field.name] = value
 
     print("\nDit gaat er gebeuren:")
     for name, choice in decisions:
-        label = {Choice.KEEP: "blijft staan", Choice.GENERATE: "NIEUW gegenereerd", Choice.ENTER: "NIEUW opgegeven"}
+        label = {
+            Choice.KEEP: "blijft staan",
+            Choice.OMIT: "blijft weg",
+            Choice.GENERATE: "NIEUW gegenereerd",
+            Choice.ENTER: "NIEUW opgegeven",
+        }
         print(f"  {name:<34} {label[choice]}")
 
     if args.dry_run:
         print(f"\n--dry-run: {destination} is niet aangeraakt.")
         return 0
 
-    if not any(choice is not Choice.KEEP for _, choice in decisions):
+    if not any(choice not in (Choice.KEEP, Choice.OMIT) for _, choice in decisions):
         print("\nNiets gewijzigd, niets geschreven.")
         return 0
 

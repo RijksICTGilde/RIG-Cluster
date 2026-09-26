@@ -69,6 +69,7 @@ class Choice(StrEnum):
     KEEP = "keep"
     GENERATE = "generate"
     ENTER = "enter"
+    OMIT = "omit"  # het veld komt niet in het secret
 
 
 @dataclass(frozen=True)
@@ -253,8 +254,16 @@ def apply(template_text: str, values: dict[str, str], namespace: str) -> str:
     yaml = YAML()
     yaml.preserve_quotes = True
     data = yaml.load(template_text)
+
+    # `values` is de VOLLEDIGE inhoud van stringData. Een veld dat er niet in staat gaat eruit,
+    # want anders blijft de placeholder van de template staan ("changeMe123!") en belandt die in
+    # een secret. Dat is geen theoretisch geval: het odcn-secret kent vier van de zes velden van
+    # deze template niet, dus bij een gewone wachtwoordronde blijven die vier ongekozen.
+    for name in [name for name in data["stringData"] if name not in values]:
+        del data["stringData"][name]
     for name, value in values.items():
         data["stringData"][name] = value
+
     if namespace:
         data.setdefault("metadata", {})["namespace"] = namespace
 

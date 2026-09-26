@@ -246,6 +246,42 @@ def test_de_template_is_de_bron_van_de_annotaties() -> None:
     assert fields["TOKEN"].length == 32
 
 
+def test_een_veld_dat_niet_gekozen_is_gaat_uit_het_secret() -> None:
+    """`values` is de VOLLEDIGE inhoud van stringData, geen aanvulling op de template.
+
+    Het odcn-keycloak-secret kent twee van de zes velden van zijn template, want de andere vier
+    zijn later aan de template toegevoegd en nooit naar dat secret doorgevoerd. Bij een ronde die
+    alleen het wachtwoord roteert blijven die vier dus ongekozen, en ze moeten dan wegblijven.
+    """
+    result = tool.apply(TEMPLATE, {"USERNAME": "admin", "PASSWORD": "geheim"}, "rig-system")
+    fields = {field.name for field in tool.fields_of(result)}
+
+    assert fields == {"USERNAME", "PASSWORD"}
+    assert "TOKEN" not in result
+    assert "LEAVE_ALONE" not in result
+
+
+def test_de_placeholder_van_de_template_belandt_nooit_in_een_secret() -> None:
+    """De scherpe kant van de vorige toets: een ongekozen veld hield eerst de template-waarde.
+
+    Dat is geen cosmetisch verschil maar een secret met `changeMe123!` erin, uitgerold door
+    ArgoCD. Toetst op de placeholder zelf, zodat het ook opvalt als het weglaten anders wordt
+    opgelost dan met een delete.
+    """
+    result = tool.apply(TEMPLATE, {"PASSWORD": "geheim"}, "rig-system")
+
+    assert "changeMe123!" not in result
+
+
+def test_alle_velden_kiezen_levert_alle_velden_op() -> None:
+    """De andere kant op: weglaten mag geen veld verliezen dat wel gekozen is."""
+    values = {field.name: "x" for field in tool.fields_of(TEMPLATE)}
+
+    fields = {field.name for field in tool.fields_of(tool.apply(TEMPLATE, values, "rig-system"))}
+
+    assert fields == set(values)
+
+
 @needs_sops
 @needs_age
 def test_de_namespace_van_het_cluster_komt_in_het_secret(tmp_path: Path, key: Path) -> None:

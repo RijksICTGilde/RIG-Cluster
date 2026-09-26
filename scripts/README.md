@@ -75,6 +75,22 @@ Het loopt de templates in `infrastructure/.../secrets/templates/` en
 per veld of de waarde blijft staan, opnieuw gegenereerd wordt volgens zijn `@secret-gen`-annotatie
 of door jou wordt opgegeven. Daarna schrijft het het secret opnieuw en versleutelt het met SOPS.
 
+**De template is het uitgangspunt, het bestaande secret is de controle.** De template zegt welke
+velden er zijn en hoe ze gemaakt worden; het versleutelde bestand zegt welke waarden er nu staan.
+Die twee lopen uiteen, en dat is de normale toestand: het odcn-keycloak-secret kent twee van de zes
+velden van zijn template, want `KEYCLOAK_ADMIN_CLIENT_SECRET` en de drie OTP-velden zijn later aan
+de template toegevoegd (4c1d09228, 09edef8c2) terwijl `_generate-secrets-shared` een bestaand
+secret overslaat. Daarom is de standaardkeuze per veld altijd de keuze die niets verandert:
+"laat staan" voor een veld dat er is, "laat weg" voor een veld dat alleen de template kent. Wie
+één wachtwoord roteert zet er zo geen vier velden bij, en wie de achterstand wel wil inlopen kan
+dat per veld alsnog kiezen.
+
+Een veld dat je weglaat gaat ook echt uit het secret. Het alternatief, de template-waarde laten
+staan, zou `changeMe123!` in een uitgerold secret zetten; `test_secret_edit.py` pint dat vast.
+
+De controle gaat tegen het secret in **git**, niet tegen het cluster: dat is de laag waar ArgoCD
+van uitrolt. Loopt het cluster daarvan af, dan is dat drift die je apart moet vaststellen.
+
 Dit is wat `task generate-infrastructure-secrets-for-cluster` niet kan. Die slaat een secret dat er
 al staat over, en dat is opzet: overschrijven zou élk veld erin roteren. Het enige alternatief was
 het `.sops.yaml`-bestand weggooien en alles opnieuw laten genereren, en dat roteert Keycloak, MinIO
