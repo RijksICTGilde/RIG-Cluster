@@ -1,8 +1,6 @@
 #### ZAD release, nog te schrijven
 
-Concept. Hernoem dit bestand naar `release-<datum>.md` zodra de releasedatum bekend is.
-
-Dit is alles wat er sinds de release van 2 september bij is gekomen: 40 opgeleverde brokken werk. De vorige uitgebrachte notitie is `release-2026-09-02.md`, en dat is ook de versie die productie vandaag draait.
+> **Concept, nog niet uit te brengen.** Hernoem dit bestand naar `release-<datum>.md` zodra de datum bekend is, en haal dit blok en de notitie onderaan weg. De inhoud dekt alles sinds de release van 2 september, want dat is de versie die productie vandaag draait.
 
 ##### Eigen container registries
 
@@ -100,8 +98,8 @@ Mocht er iets niet goed of lekker werken, of word je juist ergens heel blij van,
 
 ##### Notitie: issues die bij deze release dicht mogen
 
-- **#153** SOPS-secret lifecycle na component-prune. Gemerged als RC-202.
-- **#56** Generational failover creates zombie databases. Gemerged als RC-203. Let op bij het sluiten: bestaande `_vN`-databases zijn niet opgeruimd, dat is een losse actie.
-- **#167** Een kloon erft de vorm van het webadres. Gemerged als RC-217.
-- **#179** Een eigen domein aanvragen loopt vast op het kale domein. Gemerged als RC-216.
-- **#184** App-delete kan eeuwig hangen. Gemerged als RC-226, issue al gesloten.
+- **#153** SOPS-secret lifecycle na component-prune.
+- **#56** Generational failover creates zombie databases. Let op bij het sluiten: bestaande `_vN`-databases zijn niet opgeruimd, dat is een losse actie.
+- **#167** Een kloon erft de vorm van het webadres.
+- **#179** Een eigen domein aanvragen loopt vast op het kale domein.
+- **#184** App-delete kan eeuwig hangen. Al gesloten.
