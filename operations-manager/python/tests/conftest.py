@@ -25,7 +25,9 @@ def make_age_keypair() -> Callable[[], tuple[str, str]]:
 
     A test that needs a key makes one, so no fixed key has to sit in the tree. That is what keeps
     the scanner believable: it alarms on any valid ``AGE-SECRET-KEY-``, and an alarm with known
-    findings in it is one people learn to walk around.
+    findings in it is one people learn to walk around. A working private key in the tree also
+    opens the encrypted values that sit elsewhere in it, and pytest prints the decrypted value
+    on a red assertion.
 
     Session scope, because ``age-keygen`` is a subprocess and the pair is immutable -- but the
     factory is called per test that wants one, so a test needing two distinct keys just calls it
