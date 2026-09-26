@@ -1,8 +1,6 @@
-{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met DRIE wijzigingen in nldd_field:
+{# ONZE KOPIE van components/_forms.j2 uit lotc-forms, met TWEE wijzigingen in nldd_field:
 
-   1. De foutmelding wordt bedraad, zodat je hem ook ZIET. Zie de macro onderaan en
-      opi/forms/lotc_attrs.py (bedraad_foutmelding) voor de meting en de reden.
-   2. Een veld dat ``data-no-optional-badge`` draagt krijgt geen "Optioneel" mee.
+   1. Een veld dat ``data-no-optional-badge`` draagt krijgt geen "Optioneel" mee.
       lotc-forms zet dat label op elk veld dat niet verplicht is (rijksconventie: markeer
       optioneel, niet verplicht). Voor een invoerveld klopt dat; voor een KIEZER met een
       vaste selectie, of voor het enige veld van een regel die je zelf toevoegde ("URI
@@ -10,12 +8,22 @@
       dan zegt de HTML dat er iets ingevuld MOET worden - een andere onwaarheid. Dit
       attribuut zegt alleen wat het is: geen badge. Het derde standje hoort in het thema
       te zitten en staat als verzoek in request_for_components.md.
-   3. Een KEUZELIJST krijgt nooit "Optioneel", ongeacht dat attribuut. Bij een tekstveld
+   2. Een KEUZELIJST krijgt nooit "Optioneel", ongeacht dat attribuut. Bij een tekstveld
       zegt de badge iets - je mag het leeg laten - maar in een keuzelijst staat altijd al
-      een waarde geselecteerd, dus hij belooft een vrijheid die er niet is. Wijziging 2
+      een waarde geselecteerd, dus hij belooft een vrijheid die er niet is. Wijziging 1
       dekt dit geval NIET: bij ``c-select-field`` landt ``data-no-optional-badge`` op de
       omhulling en niet op de besturing, dus de toets op ``besturing`` ziet hem daar nooit.
       Vandaar de voorwaarde op ``kind``, de naam die het veldsjabloon zelf meegeeft.
+
+   Beide wijzigingen lezen de gerenderde besturing, dus die wordt EEN keer in een
+   variabele gezet in plaats van twee keer aangeroepen.
+
+   Hier stond een derde wijziging: de foutmelding werd bedraad zodat je hem ook ZAG. Die
+   is met NLDD 0.8.84 opgelost aan de kant van lotc-forms. ``nldd-form-field-error-text``
+   en ``error-message-ids`` zijn verdwenen; het veldsjabloon zet nu ``invalid
+   unmet="<id>"`` op de besturing en de frame emitteert een ``nldd-validation-list``. Het
+   filter ``foutbedrading`` en ``bedraad_foutmelding`` in opi/forms/lotc_attrs.py zijn
+   daarmee weg.
 
    Dit bestand ligt op de searchpath VOOR de sjablonen van de design systems (die zet
    setup_components erachteraan), dus elk veldsjabloon van lotc-forms dat
@@ -24,35 +32,47 @@
    De rest is met opzet letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt
    onze kopie naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
 
-   Weghalen zodra lotc-forms zelf ``error-message`` op het invoerveld schrijft: dit
-   bestand weg, en de bedrading in lotc_attrs.py weg.
+   Weghalen zodra lotc-forms zelf ``no-optional-badge`` kent: dit bestand weg.
 
-   ---- vanaf hier de kopie ----
-
-   Shared helpers for the lotc-forms field wrappers.
+   ---- vanaf hier de kopie ---- #}
+{% import 'components/_generic_attributes.j2' as generic %}
+{# Shared helpers for the lotc-forms field wrappers.
 
    Each field template branches on the active VISUAL theme (membership in
    `lotc_design_systems`, robust regardless of declared order) and calls the
    matching frame macro; the control — raw, theme-native markup — is the
    {% call %} body. The frames guarantee the ARIA wiring identically across
    themes: label for/id, help + error linked via id, aria-invalid on error
-   (RVO: explicit on our markup; NLDD: input-id + error-message-ids on the
-   native field, help/error text as its own child elements). #}
+   (RVO: explicit on our markup; NLDD: input-id on the native field, the help
+   text as its own child element and the error as a validation list). #}
 
-{# Spread: emit a flat {name: value} dict (`:attrs="expr"`) as HTML attributes on
-   the control. None or '' means omit (same rule as :prop="expr or none"). One
-   attribute covers the whole hx-* / data-* / aria-* / generic bundle. #}
+{# Everything an author hangs on a field, onto the CONTROL: the `:attrs="expr"`
+   spread, plus `@event`, `data-*`, `aria-*` and `hx-*` written directly on the
+   tag. In the spread, None or '' means omit (same rule as :prop="expr or none").
+
+   The spread used to be all of it, which left a field with no supported way to
+   carry a handler at all: `on*` keys are refused in a spread (they would turn a
+   data value into executable script), and `@event` was dropped here — so both
+   doors were shut. `data-*`/`aria-*`/`hx-*` written directly were dropped too.
+
+   The events go through the same macro every other component uses, so a field
+   and a plain component agree on what `@click` does. #}
 {% macro render_attrs(c) -%}
 {%- for k, v in (c.get('attrs') or {}).items() -%}
-{%- if v is not none and v != '' %} {{ k }}="{{ v | e }}"{% endif -%}
+{%- if v is sameas true %} {{ k | lotc_attr_name }}
+{%- elif v is not none and v is not sameas false and v != '' %} {{ k | lotc_attr_name }}="{{ v | e }}"{% endif -%}
+{%- endfor -%}
+{{- generic.render_events(c) -}}
+{%- for k, v in c.items() -%}
+{%- if k.startswith('data-') or k.startswith('aria-') or k.startswith('hx-') %} {{ k | lotc_attr_name }}="{{ v | e }}"{% endif -%}
 {%- endfor -%}
 {%- endmacro %}
 
 {# Read-only copyable value box — same chrome as secret-field (value + in-field
    clipboard), so a stack of secret and non-secret copyable values lines up. Under
    NLDD it uses the same nldd-icon clipboard as secret-field; under other themes an
-   inline SVG (no clean copy glyph in the RVO set). The copy handler is delegated and
-   initialised once (guard), so N boxes on a page share it. Styling is in forms.css. #}
+   inline SVG (no clean copy glyph in the RVO set). The copy handler and the styling both
+   live in the package's own static files (forms.js / forms.css), loaded once. #}
 {% macro copy_value_box(value) -%}
 <div class="lotc-copyfield">
   <code class="lotc-copyfield__value" data-value="{{ value | e }}">{{ value }}</code>
@@ -60,15 +80,6 @@
     {% if 'nldd' in lotc_design_systems %}<nldd-icon name="clipboard" size="20"></nldd-icon>{% else %}<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" role="img" aria-label="Kopiëren"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path></svg>{% endif %}
   </button>
 </div>
-<script>
-(function(){if(window.__lotcCopyFieldInit)return;window.__lotcCopyFieldInit=1;
-document.addEventListener('click',function(e){
-  var b=e.target.closest('[data-lotc-copy]');if(!b)return;
-  var box=b.closest('.lotc-copyfield'),v=box&&box.querySelector('.lotc-copyfield__value');if(!v)return;
-  if(navigator.clipboard)navigator.clipboard.writeText(v.dataset.value);
-  var t=b.getAttribute('title');b.setAttribute('title','Gekopieerd');setTimeout(function(){b.setAttribute('title',t);},1200);
-});})();
-</script>
 {%- endmacro %}
 
 {# space-joined describedby target ids, only for the parts actually rendered #}
@@ -108,8 +119,20 @@ document.addEventListener('click',function(e){
 {% macro nldd_field(id, label, help, error, required, kind) -%}
 {% set besturing = caller() %}
 <nldd-form-field label="{{ label }}"{% if not required and kind != 'select-field' and 'data-no-optional-badge' not in besturing %} optional{% endif %} data-lotc-component="{{ kind }}">
-  {% if error %}{{ besturing | foutbedrading(id ~ '-error') }}{% else %}{{ besturing }}{% endif %}
+  {{ besturing }}
   {% if help %}<nldd-form-field-help-text id="{{ id }}-help">{{ help }}</nldd-form-field-help-text>{% endif %}
-  {% if error %}<nldd-form-field-error-text id="{{ id }}-error" invalid>{{ error }}</nldd-form-field-error-text>{% endif %}
+  {# A server-side error is a requirement the value does not satisfy, and NLDD
+     0.8.84 states those as a validation list: `nldd-form-field-error-text` is
+     gone and `error-message-ids` with it.
+
+     Read out of the list's own implementation, because the manifest is
+     ambiguous about it: an item with no rule cannot judge itself, so the list
+     asks the CONTROL — `unmet` there is a space-separated list of item ids, and
+     an item is shown when the control is `invalid` AND its id is in that list.
+     So the item needs an id, the control needs `unmet` (see the field
+     templates), and `judging` is NOT set by hand: the list latches it itself
+     from the control's `invalid`. Setting `unmet` on the item does nothing —
+     the list overwrites it, and the message stays in the DOM at display:none. #}
+  {% if error %}<nldd-validation-list><nldd-validation-item id="{{ id }}-error">{{ error }}</nldd-validation-item></nldd-validation-list>{% endif %}
 </nldd-form-field>
 {%- endmacro %}
