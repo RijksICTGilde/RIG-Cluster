@@ -882,13 +882,14 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
         assert arguments.argo_applications, f"the final check walks the fifth place: {line}"
 
 
-#: The five entry points under ``scripts/``.
+#: The six entry points under ``scripts/``.
 ENTRY_SCRIPTS = (
     "rotate-sops-key.py",
     "rotate-project-keys.py",
     "replace-git-pat.py",
     "set-sops-key-secret.py",
     "scan-secrets.py",
+    "edit-secret.py",
 )
 
 #: The documents that hand an operator a command line to paste.

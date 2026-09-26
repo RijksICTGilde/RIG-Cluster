@@ -62,6 +62,36 @@ Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt t
 de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
 hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
+## Een wachtwoord in een secret vervangen
+
+`task edit-secret`, of rechtstreeks:
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py
+```
+
+Het loopt de templates in `infrastructure/.../secrets/templates/` en
+`bootstrap/rig-system/kustomize/secrets/templates/` af, vraagt welk secret je wilt aanpassen, en
+per veld of de waarde blijft staan, opnieuw gegenereerd wordt volgens zijn `@secret-gen`-annotatie
+of door jou wordt opgegeven. Daarna schrijft het het secret opnieuw en versleutelt het met SOPS.
+
+Dit is wat `task generate-infrastructure-secrets-for-cluster` niet kan. Die slaat een secret dat er
+al staat over, en dat is opzet: overschrijven zou élk veld erin roteren. Het enige alternatief was
+het `.sops.yaml`-bestand weggooien en alles opnieuw laten genereren, en dat roteert Keycloak, MinIO
+en PostgreSQL tegelijk. Daarom kent dit script per veld ook "laat staan".
+
+Twee dingen die het anders doet dan `task decrypt-secret` en `task encrypt-secret`:
+
+- **De sleutel komt uit het bestand.** Staat er al een versleutelde versie, dan wordt de recipient
+  uit zijn SOPS-metadata gelezen en het bijbehorende sleutelbestand in `security/` gezocht.
+  `task encrypt-secret` las `security/key.txt` hard, en versleutelde een sandbox-secret dus op de
+  productiesleutel zonder dat iemand het zag.
+- **De leesbare versie raakt de schijf niet.** Het gevulde secret gaat via stdin naar `sops`.
+  `task decrypt-secret` schrijft hem uit, en laat hem staan als de stap erna faalt.
+
+De logica zit in `secret_edit.py`; de sleutels, de recipients en het ontsleutelen komen uit
+`key_rotation.py`, zodat er geen tweede set naast de rotatiemotor ontstaat.
+
 ## De rest
 
 | bestand | doet |

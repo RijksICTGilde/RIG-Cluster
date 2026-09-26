@@ -331,8 +331,13 @@ tasks:
           exit 1
         fi
 
-        # Determine output filename (remove .sops from the name)
-        OUTPUT_FILE=$(echo "{{.FILE}}" | sed 's/\.sops\.yaml$/.yaml/')
+        # De inverse van encrypt-secret, en dat luistert nauw. De conventie is
+        # <naam>.yaml.sops.yaml, dus de basisnaam eindigt zelf al op .yaml. Wie hier
+        # .sops.yaml door .yaml vervangt krijgt <naam>.yaml.yaml terug, en encrypt-secret
+        # maakt daar <naam>.yaml.yaml.sops.yaml van: een tweede bestand naast het origineel
+        # in plaats van een bewerking ervan. Zo ontstond
+        # keycloak-admin-secret.yaml.yaml.sops.yaml, en die wees werd door niets gerenderd.
+        OUTPUT_FILE=$(echo "{{.FILE}}" | sed -E 's/(\.yaml)?\.sops\.yaml$/.yaml/')
 
         if [[ "$OUTPUT_FILE" == "{{.FILE}}" ]]; then
           echo "❌ File doesn't have .sops.yaml extension: {{.FILE}}"
@@ -396,6 +401,14 @@ tasks:
           exit 1
         fi
 
+        # Een naam op .yaml.yaml komt uit de oude decrypt-secret en levert na versleutelen
+        # .yaml.yaml.sops.yaml op: geen bewerking maar een wees. Weigeren in plaats van hem
+        # alsnog maken, want het bestand dat bedoeld was blijft dan ongemoeid achter.
+        if [[ "{{.FILE}}" == *.yaml.yaml ]]; then
+          echo "❌ {{.FILE}} eindigt op .yaml.yaml. Bedoelde je $(echo "{{.FILE}}" | sed 's/\.yaml$//')?"
+          exit 1
+        fi
+
         # Determine output filename (add .sops before .yaml)
         if [[ "{{.FILE}}" == *.yaml ]]; then
           OUTPUT_FILE=$(echo "{{.FILE}}" | sed 's/\.yaml$/.yaml.sops.yaml/')
@@ -404,8 +417,28 @@ tasks:
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Staat er al een versleutelde versie, dan wint de recipient daaruit. Anders zou een
+        # sandbox-secret hier op de productiesleutel worden teruggeschreven, zonder melding.
+        EXISTING="$OUTPUT_FILE"
+        AGE_PUBLIC_KEY=""
+        if [[ -f "$EXISTING" ]]; then
+          RECIPIENT=$(grep -oE 'age1[a-z0-9]+' "$EXISTING" | head -1)
+          for KEY in security/*.txt; do
+            [[ -f "$KEY" ]] || continue
+            if [[ "$(age-keygen -y "$KEY" 2>/dev/null)" == "$RECIPIENT" ]]; then
+              AGE_PUBLIC_KEY="$RECIPIENT"
+              echo "🔑 Sleutel uit $EXISTING: $KEY"
+              break
+            fi
+          done
+          if [[ -z "$AGE_PUBLIC_KEY" ]]; then
+            echo "❌ Geen sleutel in security/ hoort bij recipient $RECIPIENT van $EXISTING"
+            exit 1
+          fi
+        else
+          AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+          echo "🔑 Nieuw bestand, sleutel: security/key.txt"
+        fi
 
         echo "🔐 Encrypting: {{.FILE}}"
         echo "📄 Output: $OUTPUT_FILE"
@@ -424,6 +457,12 @@ tasks:
           echo "⚠️  Original unencrypted file kept: {{.FILE}}"
           echo "   Remember to delete it manually for security!"
         fi
+
+  edit-secret:
+    desc: "Eén veld in een secret vervangen (genereren of zelf opgeven), zonder de rest te roteren"
+    interactive: true
+    cmds:
+      - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
 
   generate-local-ca:
     desc: "Generate root CA for local development HTTPS (one-time)"
