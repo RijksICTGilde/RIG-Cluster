@@ -44,8 +44,8 @@
             text="Voortgang"
             :value="progress"
             max="100"
-            value-display="true"
-            color="{{ 'error' if status == 'failed' else 'success' if status == 'completed' else 'info' }}"
+            value-display="inline"
+            color="{{ 'critical' if status == 'failed' else 'success' if status == 'completed' else 'accent' }}"
             accessible-label="Voortgang: {{ progress }} procent" />
 
         {% if status == "completed" %}
@@ -63,8 +63,8 @@
                 {% set voortgang_js %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}
                 {% set ok_js %}closeEditModalAndReload(){% endset %}
                 <c-action-group align="end">
-                    <c-button type="tertiary" label="Bekijk volledige voortgang" :attrs="{'onclick': voortgang_js}" />
-                    <c-button type="primary" label="Ok" :attrs="{'onclick': ok_js}" />
+                    <c-button type="tertiary" label="Bekijk volledige voortgang" @click="{{ voortgang_js }}" />
+                    <c-button type="primary" label="Ok" @click="{{ ok_js }}" />
                 </c-action-group>
             </div>
         {% elif status == "failed" %}
@@ -72,8 +72,8 @@
                 {% set details_js %}window.open('/projects/progress/{{ task_id }}', '_blank'){% endset %}
                 {% set sluiten_js %}closeEditModalAndReload(){% endset %}
                 <c-action-group align="end">
-                    <c-button type="tertiary" label="Bekijk details" :attrs="{'onclick': details_js}" />
-                    <c-button type="primary" label="Sluiten" :attrs="{'onclick': sluiten_js}" />
+                    <c-button type="tertiary" label="Bekijk details" @click="{{ details_js }}" />
+                    <c-button type="primary" label="Sluiten" @click="{{ sluiten_js }}" />
                 </c-action-group>
             </div>
         {% endif %}
