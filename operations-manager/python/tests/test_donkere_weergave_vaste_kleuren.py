@@ -139,21 +139,27 @@ def test_onze_eigen_opmaak_valt_niet_terug_op_een_onbekende_kleurvariabele() -> 
 
 
 #: De namen die de componentenlaag opvraagt zonder dat iemand ze zet, en die wij BEWUST
-#: niet invullen - met de reden erbij. Ze staan alle drie op een vlak dat het component
-#: ZELF ook vastzet, dus voorgrond en achtergrond horen bij elkaar en zijn in beide standen
-#: even leesbaar; er alsnog een themawaarde achter zetten zou een van de twee kanten laten
-#: meebewegen en juist het contrast slopen.
+#: niet invullen - met de reden erbij.
 #:
-#:   --semantics-action-primary-background-color   .lotc-avatar: wit op een vast #154273
-#:   --semantics-feedback-warning-color            .lotc-unimplemented (vaste donkere tekst
-#:                                                 op een vast gestreept lichtvlak) en de
-#:                                                 border-left van .lotc-action--warning
-#:   --semantics-feedback-error-color              border-left van .lotc-action--critical:
-#:                                                 een randkleur, geen tekst op een vlak
+#: Hier stonden drie ``--semantics-*``-namen uit app-components.css. Die vraagt geen enkel
+#: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de tweede test hieronder wees ze
+#: aan).
+#:
+#: Wat er nu staat komt uit de bundelherstructurering van 0.8.83: onder
+#: ``lord_of_the_components/static/lotc/`` staat sindsdien een ``dist/`` met ``lotc.css`` en
+#: de ``@nl-rvo``-stijlbladen erin, en die vragen de focus-tokens van Utrecht op. Twee
+#: redenen om ze niet in te vullen, allebei gemeten:
+#:
+#:   1. De terugval is ``transparent`` en niet een vaste LICHTE kleur. Waar deze test voor
+#:      bestaat is een vlak dat in de donkere stand licht blijft; transparant is in beide
+#:      standen hetzelfde en kan het contrast niet omklappen.
+#:   2. Geen van die bestanden wordt door dit portaal geladen. Een pagina haalt
+#:      app-components.css, forms/forms.css, layout/layout.css, nldd/dist/css/global.css en
+#:      nldd/lotc-nldd.css op (gemeten in de <head> van een gerenderde pagina); lotc.css en
+#:      de @nl-rvo-bladen zitten daar niet bij.
 BEWUST_NIET_INGEVULD = {
-    "--semantics-action-primary-background-color",
-    "--semantics-feedback-warning-color",
-    "--semantics-feedback-error-color",
+    "--utrecht-focus-inverse-outline-color",
+    "--utrecht-focus-box-shadow-color",
 }
 
 

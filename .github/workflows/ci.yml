@@ -51,7 +51,14 @@ jobs:
           chmod +x /tmp/sops
           sudo mv /tmp/sops /usr/local/bin/sops
           sops --version --disable-version-check
+      # LOTC_STRICT=1 laat de componentlaag een onbekende ATTRIBUUTWAARDE weigeren (een
+      # iconnaam die nergens op uitkomt, een literal buiten een enum) in plaats van hem
+      # stil te renderen. Hier en niet in de productie-image: in CI hoort zo'n aanroep
+      # rood te zijn, in productie mag hij geen 500 opleveren. tests/conftest.py zet hem
+      # ook, zodat een lokale run hetzelfde meet; dit is de poort die bindt.
       - name: Run tests with coverage
+        env:
+          LOTC_STRICT: "1"
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report
         run: uv run coverage report --fail-under=21
