@@ -14,3 +14,7 @@ Voor bestanden die bij één pod horen en niet gedeeld hoeven te worden is **Per
 ## Wat wordt er ingesteld?
 
 Er worden een bucket en toegangssleutels aangemaakt. Je component krijgt **OBJECT_STORE_HOST**, **OBJECT_STORE_PORT**, **OBJECT_STORE_USER**, **OBJECT_STORE_PASSWORD**, **OBJECT_STORE_BUCKET_NAME** en **OBJECT_STORE_REGION**. Bij het verwijderen van de service wordt de bucket gemarkeerd voor uitgestelde verwijdering, zodat je bestanden niet meteen weg zijn.
+
+## Eén bucket per deployment
+
+De bucket en toegangssleutels horen bij een deployment. Heeft je deployment meerdere componenten die deze service gebruiken, dan delen ze allemaal dezelfde bucket en dezelfde toegangssleutels.
