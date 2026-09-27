@@ -105,6 +105,37 @@ Onderwerp: `Request to purge unreachable objects and cached views after history 
 
 Verwacht dat Support vraagt om bevestiging dat forks weg zijn en pull requests gesloten. Houd de lijst met oude SHA's bij de hand; die is te maken met `git rev-list --all` op de mirror van vóór de rewrite.
 
+## De Forgejo-lijn, uitgevoerd op 27 september 2026
+
+Forgejo droeg dezelfde sleutel: de oudste commit met `tests/test_age_password_decryption.py` had hem gewoon in de boom staan. Daar is dezelfde rewrite op toegepast, met `main` als doel, want dat wordt de nieuwe basis die straks naar GitHub gaat.
+
+Gedaan, in deze volgorde:
+
+1. De acht wachtende commits met een gewone push naar `forgejo/main`, zodat ze in de rewrite meegaan in plaats van erna opnieuw te moeten.
+2. Mirror-clone van Forgejo, plus een backup ervan als terugvaloptie.
+3. Dezelfde `--replace-text`-regel, alleen het AGE-patroon.
+4. Geforceerde push van uitsluitend `refs/heads/main`.
+5. De werkcheckout met `git reset --hard forgejo/main` op de herschreven lijn gezet, na te hebben vastgesteld dat de boom identiek was.
+
+Gemeten uitkomst:
+
+| Controle | Uitkomst |
+|---|---|
+| Bestanden in `main` | 2929, ongewijzigd |
+| Commits in `main` | 2897, ongewijzigd |
+| Verschillen in de boom van `main` | 0 |
+| Branches en refs | 210 en 416, ongewijzigd |
+| Blobs met een volledige AGE-sleutel, over alle refs | 0 van 19025 |
+| Nieuwe tip van `main` | `253760e0` |
+
+Eén waarneming die uitleg verdient. Over alle refs samen daalde het aantal commits van 4996 naar 4941. Er is niets verwijderd: geen enkele commit is naar leeg gemapt. Van de 4997 mappingregels wijzen er 56 naar een gedeelde nieuwe SHA, dus 55 paren commits die al dubbel in de historie zaten zijn na de redactie identiek geworden en samengevallen. `main` zelf is niet geraakt, zoals de telling van 2897 laat zien.
+
+### Wat op Forgejo nog openstaat
+
+Alleen `main` is herschreven. De andere 209 branches dragen de oude historie nog, en dus ook de sleutel. Dat is een bewuste keuze: een geforceerde push over alle branches zou de negentien openstaande worktrees onbruikbaar maken. Zolang die branches bestaan blijft de sleutel op de Forgejo-server bereikbaar. Forgejo is intern, dus dat is een ander risiconiveau dan GitHub, maar het is niet nul en het hoort opgeruimd te worden zodra die takken zijn afgerond of vervallen.
+
+De GitHub-lijn is hierna niet meer verwant aan de Forgejo-lijn: `origin/main` staat 2029 commits uit de pas. Dat komt doordat filter-repo ook commit-SHA's vervangt die in commitberichten staan, en die mapping verschilt per repository. De eerste afwijking zit bij commit `64d7bc49`, waarvan het bericht een SHA noemt die op GitHub niet bestaat. Vanaf daar lopen alle SHA's uiteen. Het samenbrengen van beide lijnen is bewust uitgesteld; Forgejo `main` is de nieuwe basis en de rest wordt daartegen opgeruimd.
+
 ## Collateral
 
 - Alle commit-SHA's veranderen. Verwijzingen naar commits in issues, pull requests, changelogs en documentatie kloppen daarna niet meer.
