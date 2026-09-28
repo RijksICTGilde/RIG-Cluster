@@ -22,6 +22,10 @@ jobs:
       - name: Install dependencies
         working-directory: operations-manager/python
         run: uv sync
+      # De secret-scan-hook roept age-keygen aan om een sleutelvormige string op geldigheid te
+      # toetsen, net als de secret-scan-job in security.yml.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
       - uses: pre-commit/action@v3.0.1
 
   test:
@@ -104,5 +108,8 @@ jobs:
         run: |
           uv sync --all-groups
           uv pip install pip
+      # liccheck importeert pkg_resources, en dat zit sinds setuptools 82 niet meer in
+      # setuptools. De lock heeft een nieuwere setuptools (pip-audit), dus alleen deze stap
+      # krijgt er een oude bij.
       - name: License check
-        run: uv run liccheck -s pyproject.toml
+        run: uv run --with 'setuptools<82' liccheck -s pyproject.toml
