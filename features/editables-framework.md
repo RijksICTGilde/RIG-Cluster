@@ -78,6 +78,8 @@ class EditableVisualizer:
 
 Dit maakt hetzelfde `Editable` herbruikbaar met verschillende widgets — tekstveld in een wizard, readonly op een detailpagina, verborgen in een API-context.
 
+Een geheim (een token, een wachtwoord) krijgt `WidgetType.PASSWORD`: een tekstveld met `type="password"`, zodat de waarde niet leesbaar op het scherm staat. Verder gedraagt het zich als `TEXT`, ook in de brug: het krijgt `converter.read()` en niet `view()`, anders zou een ongewijzigde opslag de weergave van het geheim als nieuw geheim terugschrijven. Let op: afgeschermd is niet afwezig, de waarde staat nog wel in de pagina. Eerste gebruiker is het token van `image-registries`.
+
 ### FormField — resolved en klaar voor rendering
 
 De bridge-laag lost het pad op tegen de actuele data, past converters toe, evalueert condities, en levert een volledig resolved veld op dat de template direct kan renderen.
@@ -226,6 +228,13 @@ class DomainConfigEnforcer:
 ```
 
 Het verschil met validators: validators checken de waarde van een enkel veld, enforcers checken relaties tussen velden en externe regels (is dit subdomein beschikbaar? Mag deze gebruiker dit?).
+
+**Waar de melding landt.** Een gewone `ValueError` uit een enforcer op een GROUP landt op
+het pad van die groep (`deployments[1]`), en daar staat geen invoerveld: het formulier
+rendert de melding dan nergens en de stap blijft staan zonder te zeggen waarom. Wat geen
+getekend veld heeft gaat daarom naar de algemene foutbalk, via
+`FormRenderer.take_unrendered_errors()` in beide wizardroutes. Hang een melding liever
+meteen aan het veld waar hij over gaat: de balk is het vangnet, niet de bestemming.
 
 ### Converter — waarde-transformatie in 3 fasen
 

@@ -108,8 +108,8 @@ Dit hoeft alleen beantwoord te worden voor fundament; de code leest het al via e
 | `uses_capsule` | `:165` | `true` | multi-tenancy waar OPI op wacht bij namespace-creatie |
 | `supports_vpa` | `:169` | `true` | een draaiende VPA-recommender, waar de resource-tuner op leunt |
 | `letsencrypt.contact_email` | `:170`-`:172` | `rig-platform@rijksoverheid.nl` | contactadres voor de ACME-account |
-| `nice_url.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
-| `extensions` | `:198` | `["odcn-registry-rewrite"]` | een registry-mirror; ghcr is op ODCN geblokkeerd |
+| `domains.supported_domains` | `:173`-`:197` | `rijks.app`, `rijksapp.nl`, `rijksapp.dev`, elk met `external_dns_target` | eigen DNS-zones plus een werkende external-dns |
+| `image_registries` | `:310`-`:346` | backend `quay-proxy-organization`, `registry_host`, `customer_name`, `tenants`, `organization_api_version` en de tabel van gedeelde proxy-caches | een registry-mirror; ghcr is op ODCN geblokkeerd. `organization_api_version` is per cluster, zie vraag 15 |
 | `create_wizard_clusters` | alleen in `local` (`:16`) | — | ontbreekt bewust in productie: de wizard biedt dan alleen het eigen cluster |
 
 Oordeel voor alle regels in deze tabel: **staat al goed** — het is een invulopgave, geen
@@ -340,9 +340,11 @@ ontsleutelen. Er komt geen waarschuwing.
 *Losse taak — dit is een beveiligingspunt, niet alleen een netheidspunt.*
 
 De ODCN-recipient in de bestaande sops-bestanden is
-`age1efv94gmdq8l60au5gslnxunkqrftcyyfvscfeysv9j44q8g8ages2gl4dd` (o.a.
-`infrastructure/.../secrets/config/overlays/odcn/keycloak-admin-secret.yaml.sops.yaml:13`).
-Fundament krijgt een eigen recipient; dat is precies het punt van (p).
+`age1gdue9pqusk9y7hehz2ajdl60c7udsrv3sl8wxmg3svqqlg29h45shhvquw` (o.a.
+`infrastructure/.../secrets/config/overlays/odcn/keycloak-admin-secret.yaml.sops.yaml:21`).
+De sleutel die hier eerder stond is op 24 september 2026 geroteerd en opent niets meer; zie
+`features/sops-sleutel-roteren.md`. Fundament krijgt een eigen recipient; dat is precies het
+punt van (p).
 
 ### 2.3 Samenvatting: wat naar configuratie moet
 
@@ -409,7 +411,7 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
 10. Welke DNS-zone krijgen wij als default voor deployments? Krijgen wij daar een wildcard
     op, of moet elke hostnaam apart aangevraagd?
 11. Draait er external-dns? Zo ja: op welke API/host praat die, en mogen wij er records in
-    zetten via annotaties? *(Vult `nice_url.supported_domains[].external_dns_target`.)*
+    zetten via annotaties? *(Vult `domains.supported_domains[].external_dns_target`.)*
 12. Mag het ZAD-portaal publiek op internet bereikbaar zijn, of moet het achter een
     afscherming? Zo afgeschermd: op IP-niveau, via VPN, of alleen intern? **Zie paragraaf 5 —
     dit antwoord bepaalt de hele hub-en-spoke-opzet.**
@@ -422,13 +424,25 @@ overgaan of eruit moeten — punten 2.2c, 2.2d en 2.2e.)*
 ### 3.4 Images
 
 15. Is er een registry-mirror zoals `rcr.rijksapps.nl` op ODCN? Onder welke paden zijn
-    ghcr.io, docker.io, quay.io, gcr.io en registry.k8s.io bereikbaar?
+    ghcr.io, docker.io, quay.io, gcr.io en registry.k8s.io bereikbaar? Draait die achter
+    dezelfde Quay-operator: onder welke apiVersion staat de `Organization`-CRD? Dat vraag je
+    het cluster zelf met `kubectl api-resources --api-group=<groep>`; op ODCN geeft
+    `--api-group=quay.k8s.rijksapps.nl` de waarde `quay.k8s.rijksapps.nl/v1alpha1`. Neem hem
+    niet over uit de operator-documentatie: die noemt `quay.redhat.com/v1`, en daarmee weigert
+    de API-server elk gegenereerd manifest.
 16. Zijn ghcr.io en docker.io direct bereikbaar vanuit pods, of geblokkeerd?
 17. Welke pull-secrets hebben wij nodig, en hoe komen we eraan?
 18. Mogen wij zelf images pushen naar die registry? Onder welk pad?
 
-*(Zonder mirror is de `registry-rewrite`-extensie niet nodig; met een ándere mirror is het één
-nieuw yaml-bestand naast `operations-manager/python/extensions/odcn-registry-rewrite.yaml`.)*
+*(Zonder mirror volstaat `"image_registries": {"backend": "direct-secret"}`: dan wordt een
+private registry een dockerconfigjson-secret in de namespace en blijft de image ongewijzigd,
+precies zoals op `local` en `sandboxed-local`. Met een ándere mirror achter dezelfde
+Quay-operator is het het `image_registries`-blok in `cluster_config.py` met een eigen
+`registry_host`, `customer_name`, `tenants`, `organization_api_version` en `rules`-tabel. Laat je
+`organization_api_version` weg, dan erft het cluster stilzwijgend de ODCN-groep uit de terugval
+in `backends.py`. Laat je `tenants` weg, dan krijgt de `Organization` een lege lijst en weigert
+het schema van de operator hem (`minItems: 1`). Een mirror met een ánder mechanisme is een derde backend in
+`opi/services/catalog/image_registries/backends.py`. Zie `features/image-registries.md`.)*
 
 ### 3.5 Opslag en back-up
 
@@ -518,7 +532,7 @@ te voorkomen.
 | 16 | `bootstrap/.../operations-manager/overlays/fundament/` invullen (configmap-checklist uit 2.2l) | 3.3, 3.4, 3.6, 3.7 |
 | 17 | `infrastructure/bootstrap/clusters/fundament/kustomization.yaml` samenstellen — begin bij de 9 componenten die op ODCN echt draaien | 3.2-5 (wat levert het platform zelf) |
 | 18 | Per meegaand component een `overlays/fundament/` aanmaken; let op de vijf storageclass-plaatsen (2.2n) en de tenant-selector in de backup-networkpolicy (2.2o) | 3.5, 3.2-6 |
-| 19 | Registry-extensie: `extensions/fundament-registry-rewrite.yaml` óf `extensions: []` | 3.4 |
+| 19 | Het `image_registries`-blok in `cluster_config.py`: backend `quay-proxy-organization` met eigen `registry_host`/`customer_name`/`tenants`/`organization_api_version`/`rules`, óf `{"backend": "direct-secret"}` als er geen mirror is | 3.4 |
 | 20 | `ip_whitelist`-equivalent bouwen (punt 2.3-8) | 3.3-12, alleen als afgeschermd |
 | 21 | Publish/pin-taken clusteronafhankelijk maken (punt 2.3-7) | alleen als fundament eigen image-pins krijgt |
 | 22 | Hub-en-spoke inrichten, of niet | paragraaf 5, beslissing 5.6 |

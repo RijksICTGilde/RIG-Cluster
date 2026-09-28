@@ -5,6 +5,7 @@ This module provides common fixtures used across unit and integration tests.
 """
 
 import os
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
@@ -24,7 +25,9 @@ def make_age_keypair() -> Callable[[], tuple[str, str]]:
 
     A test that needs a key makes one, so no fixed key has to sit in the tree. That is what keeps
     the scanner believable: it alarms on any valid ``AGE-SECRET-KEY-``, and an alarm with known
-    findings in it is one people learn to walk around.
+    findings in it is one people learn to walk around. A working private key in the tree also
+    opens the encrypted values that sit elsewhere in it, and pytest prints the decrypted value
+    on a red assertion.
 
     Session scope, because ``age-keygen`` is a subprocess and the pair is immutable -- but the
     factory is called per test that wants one, so a test needing two distinct keys just calls it
@@ -307,9 +310,14 @@ ZAD_TEST_PG_PASSWORD = "zadtest"
 #: werkelijke poort uit Docker: die is leidend, anders praat een tweede run tegen een
 #: poort waar niets luistert.
 ZAD_TEST_PG_PORT = os.environ.get("ZAD_TEST_PG_PORT", "55432")
-#: Prefix van de database per run. ``zad_test_<pid>``: de pid maakt een verweesde database
-#: herkenbaar, precies zoals het pid-label dat eerder voor containers deed.
-ZAD_TEST_DB_PREFIX = "zad_test_"
+#: Prefix van de database per run: ``zadtest_<namespace>_<pid>_<epoch>``. De pid maakt een
+#: verweesde database herkenbaar, de namespace zegt of we die pid mogen geloven.
+#: Bewust niet ``zad_test_``: de veeg van oudere takken leest die naam als ``zad_test_<pid>``,
+#: crasht op deze vorm in ``os.kill`` en geeft alle ORM-tests van die run een ERROR.
+ZAD_TEST_DB_PREFIX = "zadtest_"
+#: Een database uit een VREEMDE pid-namespace mag pas weg als geen enkele run nog zo lang
+#: kan draaien. De volledige suite doet zo'n 27 minuten.
+ZAD_TEST_DB_MAX_LEEFTIJD_S = 12 * 3600
 
 
 class TestPostgresError(RuntimeError):
@@ -441,20 +449,47 @@ def _maker_leeft(pid_tekst: str) -> bool:
     return True
 
 
+def _pid_namespace() -> str:
+    """Alleen binnen deze namespace zegt ``os.kill`` iets over een pid."""
+    try:
+        return str(os.stat("/proc/self/ns/pid").st_ino)
+    except OSError:
+        return "0"
+
+
+def _is_wees(naam: str, nu: float) -> bool:
+    """Bij twijfel nee: een wees kost niets, een weggehaalde levende database alle ORM-tests.
+
+    Databases met het oude prefix ``zad_test_`` ziet de veeg niet; die haalt
+    ``task test-db-reset`` weg.
+    """
+    namespace, _, rest = naam.removeprefix(ZAD_TEST_DB_PREFIX).partition("_")
+    pid, _, gemaakt = rest.partition("_")
+    if not pid or not gemaakt:
+        return False
+    if namespace == _pid_namespace():
+        return not _maker_leeft(pid)
+    try:
+        return nu - float(gemaakt) > ZAD_TEST_DB_MAX_LEEFTIJD_S
+    except ValueError:
+        return False
+
+
 def _ruim_verweesde_databases_op() -> None:
     """Weg met de databases van runs die niet meer draaien.
 
     Hergebruik van pids kan een wees even laten staan; die valt bij een volgende run
     alsnog om. Een database van een LEVENDE run blijft staan, en dat is niet vrijblijvend:
-    hier draaien suites naast elkaar (agents in eigen worktrees), en dat is precies waarom
-    elke run zijn eigen database heeft in plaats van zijn eigen container.
+    hier draaien suites naast elkaar (agents in eigen worktrees en in eigen containers), en
+    dat is precies waarom elke run zijn eigen database heeft in plaats van zijn eigen
+    container.
     """
+    nu = time.time()
     namen = _psql(f"SELECT datname FROM pg_database WHERE datname LIKE '{ZAD_TEST_DB_PREFIX}%'")
     for naam in namen.splitlines():
         naam = naam.strip()
-        if not naam or _maker_leeft(naam.removeprefix(ZAD_TEST_DB_PREFIX)):
-            continue
-        _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
+        if naam and _is_wees(naam, nu):
+            _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
 
 
 @pytest.fixture(scope="session")
@@ -463,7 +498,7 @@ def _orm_db_url() -> Iterator[str]:
     poort = _zorg_voor_container()
     _ruim_verweesde_databases_op()
 
-    naam = f"{ZAD_TEST_DB_PREFIX}{os.getpid()}"
+    naam = f"{ZAD_TEST_DB_PREFIX}{_pid_namespace()}_{os.getpid()}_{int(time.time())}"
     # IF EXISTS, want een pid kan hergebruikt zijn en de vorige eigenaar is dan dood.
     _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
     _psql(f'CREATE DATABASE "{naam}"')

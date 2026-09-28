@@ -281,6 +281,7 @@ MODAL_FLOWS = [f for f in FLOW_REGISTRY if f.startswith("modal-") and f != "moda
     "modal-edit-deployment-0",
     "modal-edit-backup-schedule-0",
     "modal-edit-cross-domain-deployment-0",
+    "modal-edit-postgresql-deployment-0",
 ]
 
 

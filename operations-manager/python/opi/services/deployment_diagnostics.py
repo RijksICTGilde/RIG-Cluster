@@ -17,11 +17,9 @@ from typing import TYPE_CHECKING, Any
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.extensions.pipeline import get_registry_rewrite_mappings
-from opi.extensions.registry_rewrite import original_image
-from opi.manager.project_validation import _split_image_reference
+from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.event_interpreter import _friendly_resource_name
-from opi.utils.naming import generate_unique_name
+from opi.utils.naming import generate_unique_name, split_image_reference
 
 if TYPE_CHECKING:
     from opi.connectors.argo import ArgoConnector
@@ -379,6 +377,7 @@ def summarize_component_pods(
     pods: list[dict[str, Any]],
     *,
     deployment: dict[str, Any],
+    project_data: dict[str, Any] | None = None,
 ) -> list[ComponentPodSummary]:
     """Per component of ``deployment``: what is serving, on which image, since when.
 
@@ -395,7 +394,7 @@ def summarize_component_pods(
     replicas are the intended end state, the card already names them and their reason, and
     a red "nothing is running" next to that would contradict it.
     """
-    mappings = get_registry_rewrite_mappings(settings.CLUSTER_MANAGER)
+    cluster = settings.CLUSTER_MANAGER
     deployment_name = deployment.get("name") or ""
 
     components = [
@@ -423,7 +422,9 @@ def summarize_component_pods(
     for comp in components:
         reference = comp["reference"]
         configured = comp.get("image")
-        configured_source = original_image(configured, mappings) if isinstance(configured, str) and configured else None
+        configured_source = (
+            display_image(configured, cluster, project_data) if isinstance(configured, str) and configured else None
+        )
 
         pod = serving_by_reference.get(reference)
         if pod is None:
@@ -432,7 +433,7 @@ def summarize_component_pods(
             )
             continue
 
-        running_source = original_image(pod.get("image", ""), mappings) or None
+        running_source = display_image(pod.get("image", ""), cluster, project_data) or None
         summaries.append(
             ComponentPodSummary(
                 reference=reference,
@@ -458,8 +459,8 @@ def _compare_image_references(running: str | None, configured: str | None) -> bo
     """
     if not running or not configured:
         return None
-    _, _, running_has_digest = _split_image_reference(running)
-    _, _, configured_has_digest = _split_image_reference(configured)
+    _, _, running_has_digest = split_image_reference(running)
+    _, _, configured_has_digest = split_image_reference(configured)
     if running_has_digest != configured_has_digest:
         return None
     return running == configured

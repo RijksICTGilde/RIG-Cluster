@@ -6,7 +6,7 @@ would give one zone two conflicting policies. This module is the single source.
 """
 
 # Zone apex at TransIP -> the issuers allowed to issue for anything in it.
-# Issuer names are the same ones ``nice_url.supported_domains`` uses.
+# Issuer names are the same ones ``domains.supported_domains`` uses.
 MANAGED_DNS_ZONES: dict[str, list[str]] = {
     "rijks.app": ["letsencrypt"],
     "rijksapp.nl": ["letsencrypt"],

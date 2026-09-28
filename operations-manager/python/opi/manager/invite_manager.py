@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any, cast
 
+from keycloak.exceptions import KeycloakError
+
 from opi.connectors.keycloak import KeycloakConnector, create_keycloak_connector
 from opi.handlers.project_file_handler import ProjectFileHandler
 
@@ -375,7 +377,8 @@ class InviteManager:
             realm_name: The project's Keycloak realm name
 
         Returns:
-            Dict with user_id, email, created (bool), and assigned permissions
+            Dict with user_id, email, created (bool), assigned permissions and
+            verification_mail_sent (bool)
 
         Raises:
             InviteDomainError: If email doesn't match domain restriction
@@ -433,6 +436,15 @@ class InviteManager:
         user_id = created_user["id"]
         logger.info(f"Created new local user {email} in realm {realm_name}")
 
+        # Nu, want de succespagina vraagt om te bevestigen. Mislukt het, dan stuurt Keycloak
+        # de mail bij de eerste login alsnog: het account draagt de required action.
+        verification_mail_sent = True
+        try:
+            await keycloak.send_verify_email(realm_name, user_id)
+        except KeycloakError as e:
+            logger.warning(f"Could not send the verification mail to {email} in realm {realm_name}: {e}")
+            verification_mail_sent = False
+
         # Assign permissions
         assigned = await self.assign_invite_permissions(keycloak, realm_name, user_id, invite)
 
@@ -441,6 +453,7 @@ class InviteManager:
             "email": email,
             "created": True,
             "assigned": assigned,
+            "verification_mail_sent": verification_mail_sent,
         }
 
     def _validate_password(self, password: str) -> None:

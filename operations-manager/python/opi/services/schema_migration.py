@@ -10,7 +10,9 @@ number directly.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.postgres_scope import database_generation_service_type
+from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
 from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_storage_name
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8)
+SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 
@@ -126,8 +128,12 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
         if version < step_version and step(project_data):
             migrated = True
 
-    if migrated:
+    # De stamp zegt "dit bestand voldoet aan versie X", niet "er is iets veranderd": ook als
+    # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie, dus dat hoort de
+    # stamp te zeggen.
+    if migrated or version < LATEST_SCHEMA_VERSION:
         project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        migrated = True
 
     # Always run v2 fixups to clean up corruption from past bugs
     if _fixup_v2_data(project_data):
@@ -1195,6 +1201,81 @@ def _normalize_path_to_list(entity: dict[str, Any]) -> bool:
     return changed
 
 
+def relocate_registries_to_service(project_data: dict[str, Any]) -> bool:
+    """Verhuis de registries naar de dienst ``image-registries`` (v2.8 -> v2.9, RC-177).
+
+    Twee bewegingen: de top-level lijst ``registries:`` gaat naar de dienstconfig met
+    ``url`` hernoemd naar ``upstream``, en de sleutel ``registry:`` op een
+    deployment-component wordt een dienstvermelding op datzelfde component. Een verwijzing
+    bij naam van binnen een andere dienstconfig blijft staan.
+
+    Idempotent. Retourneert True als er iets veranderd is.
+    """
+    registries = project_data.get("registries")
+    changed = False
+
+    if isinstance(registries, list) and registries:
+        relocated: list[dict[str, Any]] = []
+        for entry in registries:
+            if not isinstance(entry, dict):
+                continue
+            moved = {k: v for k, v in entry.items() if k != "url"}
+            if "url" in entry:
+                moved["upstream"] = _normalize_upstream(entry["url"])
+            relocated.append(moved)
+        _set_service_config(project_data, ServiceType.IMAGE_REGISTRIES.value, {"registries": relocated})
+        del project_data["registries"]
+        changed = True
+    elif "registries" in project_data:
+        # Een lege lijst is geen dienst waard, alleen een sleutel die weg kan.
+        del project_data["registries"]
+        changed = True
+
+    svc = ServiceType.IMAGE_REGISTRIES.value
+    for deployment in project_data.get("deployments", []) or []:
+        if not isinstance(deployment, dict):
+            continue
+        for component in deployment.get("components", []) or []:
+            if not isinstance(component, dict) or "registry" not in component:
+                continue
+            registry_name = component.pop("registry")
+            changed = True
+            if not registry_name:
+                continue
+            # Op een deployment-component is ``services`` een dict keyed op dienstnaam,
+            # niet de lijst die een gewoon component draagt.
+            services = component.get("services")
+            if not isinstance(services, dict):
+                services = {}
+                component["services"] = services
+            services.setdefault(svc, {"config": {"registry": registry_name}})
+
+    if changed:
+        logger.info(
+            f"Registries van project '{project_data.get('name', 'unknown')}' verhuisd naar de dienst "
+            f"'{ServiceType.IMAGE_REGISTRIES.value}'"
+        )
+    return changed
+
+
+def _normalize_upstream(url: Any) -> Any:
+    """Zet een 2.8-``url`` om in de vorm die ``UPSTREAM_PATTERN`` op 2.9 nog toelaat.
+
+    Het oude patroon liet een protocol, hoofdletters en een afsluitende schuine streep toe;
+    zonder deze omzetting sneuvelt zo'n bestand bij de eerste save.
+
+    Dezelfde omzetting die het configmodel op een NIEUWE invoer draait, en met opzet
+    dezelfde functie: een bestaand bestand hoort niet door een andere regel te gaan dan
+    wat een afnemer vandaag intypt.
+    """
+    return normalize_upstream(url) if isinstance(url, str) else url
+
+
+def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
+    """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
+    Project(project_data).set(f"services/{service_name}/config", config)
+
+
 #: The migration chain as data: (version this step produces, step). ``migrate_to_latest``
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
@@ -1208,6 +1289,7 @@ MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...
     (2.6, relocate_invites_to_service),
     (2.7, relocate_domain_settings_to_service),
     (2.8, remove_domain_mode),
+    (2.9, relocate_registries_to_service),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

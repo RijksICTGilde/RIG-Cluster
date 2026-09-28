@@ -64,7 +64,7 @@ Adding a service touches exactly three places:
 1. `opi/services/services_enums.py` - a `ServiceType` member. This is the typed identity,
    used with Pyright coverage across the codebase.
 2. `catalog/<name>/__init__.py` - a `ServiceDefinition` as the class attribute
-   `definition`: display name, description, icon, colour, binding, the variables it exposes
+   `definition`: display name, description, icon, colour, the variables it exposes
    to an app, and optionally `requires`, `backup_label`, `cleanup_strategy`. This is what the
    `/services` page renders. `ServiceAdapter.SERVICE_DEFINITIONS` is assembled from what the
    services declare, in `ServiceType` order; there is no shared list to add to. A subclass
@@ -175,28 +175,57 @@ config_path(ConfigLayer.COMPONENT, ServiceType.PUBLISH_ON_WEB, "config", "tls")
 | `DEPLOYMENT` | `deployments[*]/services{<svc>}` | Per-deployment state, usually OPI-managed |
 | `DEPLOYMENT_COMPONENT` | `deployments[*]/components[*]/services{<svc>}` | Per-deployment override of a component setting |
 
-### Binding is not a config layer
+### Selection is not a config layer
 
-`ServiceDefinition.binding` (`ServiceBinding.COMPONENT` / `DEPLOYMENT`) and `ConfigLayer`
-look like the same question and are not:
+`ServiceDefinition.selectable_per_component` and `ConfigLayer` look like the same question
+and are not:
 
 | | Answers | Read it for |
 |---|---|---|
-| `binding` | Does an individual component tick this service, or does a whole deployment get it at once | Selection: the per-component services checkbox group, "is this component-bound" checks |
+| `selectable_per_component` | Does an individual component switch this service on and off for itself, or does the project's own choice settle it | Selection: the per-component services checkbox group, and where the manifest contribution reads its selection |
 | `config_layers()` | At which levels of the project file this service carries settings | Configuration: which screen a setting is edited on |
 
-They genuinely disagree, so neither is a stand-in for the other. keycloak binds per
+They genuinely disagree, so neither is a stand-in for the other. keycloak is ticked per
 component (each component decides whether it sits behind login) while its configuration is
 one realm for the whole project, so its config lives at `ConfigLayer.PROJECT` and nowhere
 else. The field was called `scope` until RC-33, which read like an answer to "where do I
 configure this" -- and the project-details card rendered it as literally "Component scope",
 which is how a user came to expect a keycloak settings screen per component.
 
+It is a *default*, `True`, and the exceptions declare themselves (RC-213). `False` means
+the service decides for itself where it works, the way sleep-mode picks its deployments
+with `match:`. Which services declare it and why, and what its required predecessor
+`binding` drifted into, is `features/dienst-per-component-aanvinken.md`.
+
 **Anything that tells a user where to configure something reads the layers**, via
-`service.config_layers()` / `service.config_form_section(layer)`, never `binding`.
+`service.config_layers()` / `service.config_form_section(layer)`, never the selection.
 `opi/services/config_location.py` holds the derived, user-facing phrasing
-(`project_step_config_hint`, `binding_label`); `tests/test_service_config_location.py`
+(`project_step_config_hint`, `selection_labels`); `tests/test_service_config_location.py`
 locks which of the two is the source of truth, with keycloak as the counterexample.
+
+### The two declarations that take the checkbox away
+
+Two different facts both remove a service's checkbox from the per-component picker, and
+they must not be folded together:
+
+| declaration | means | example |
+|---|---|---|
+| `component_selection_follows_config` | there IS a per-component choice, but it lives in the service's own config field with its "none" option | image-registries |
+| `selectable_per_component = False` | there is no per-component choice; the service decides for itself where it works | sleep-mode |
+
+Their consequences elsewhere differ, which is why they stay apart. The first also drives
+the emptying (`_prune_service_map_entry`, `ServiceAdapter.remove_service_config`) and the
+skip in `_strip_removed_services_from_components`; the second decides where the manifest
+contribution reads its selection. The picker asks one derived question,
+`offers_component_checkbox(service)` (`catalog/base.py`), so there is one place where the
+two meet. `tests/test_dienst_kiest_zijn_componentvinkje.py` holds the catalogue to it:
+`selectable_per_component = False` means no config on the component layers, and a service
+that carries such config keeps the default. image-registries does, and loses its checkbox
+to the other declaration.
+
+A third, separate fact is `shared_per_deployment`: one provision serves a whole deployment.
+It says nothing about who ticks the service, and a service can carry both
+(`features/dienst-per-component-aanvinken.md`).
 
 That module is also the answer to a service that carries no project-level config at all.
 The project-wide services step can only show sections for `ConfigLayer.PROJECT`, so ticking
@@ -204,6 +233,56 @@ a component-only service there used to produce nothing and explain nothing. The 
 carries one derived line ("Geen projectbrede instellingen; u stelt deze dienst per
 component, bij Componenten in."). A new service needs no template change to get it: the
 sentence is built from the layers the service declares.
+
+### How far may a project go: the declared latitude
+
+A bound on a user-settable field belongs to the *service*, not to whoever writes the
+project file. `config_settings()` is where a service says it, per field: the minimum, the
+maximum (or the allowed set), the default, and the layers a project may set it on.
+
+```python
+def config_settings(self):
+    return (
+        IntegerSetting(path="connection-limit", layers=(ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT),
+                       default=20, minimum=1, maximum=500, label="Connectielimiet"),
+        QuantitySetting(path="storage", layers=(ConfigLayer.PROJECT,), default="1Gi",
+                        minimum="1Gi", maximum="100Gi", kind=QuantityKind.MEMORY,
+                        grow_only=True, label="Opslag"),
+    )
+```
+
+Three consumers read that one declaration, which is the whole reason it exists: the merge
+across layers (`resolve_setting`, "more specific wins" -- deployment over project over the
+service default), the project-file validation (`project_validation`, so the wizard, the
+API and a hand-edited file are judged alike), and the wizard field
+(`setting_field(...)`, which takes its yaml path, its input check, its help text and its
+prefill from here). A bound restated as `le=100` next to it is a second rule that drifts.
+
+Three kinds and no fourth: `IntegerSetting`, `QuantitySetting` (parsed and compared as a
+number -- `1Gi` is larger than `512Mi`, `2` larger than `100m`) and `ChoiceSetting`.
+`grow_only=True` marks a field that can only move up; that is a rule about a *change*, so
+it runs where both versions are in hand (`ProjectStore` hands the previous one to
+`validate_project_structure`). Both versions are read the same way -- the value if it is
+there, the service default if it is not -- so leaving the field, or the whole config block,
+out is the same reduction as writing a smaller number.
+
+A `grow_only` field may name **exactly one layer**, and any other declaration is refused
+at import time. The change is compared per config block, while the effective value comes
+from the most specific layer that says something: spread the same field over two layers
+and a reduction can be written on the layer that wins without any block getting smaller.
+One layer makes "this block did not shrink" and "this value did not shrink" the same
+sentence. Which layer it is does not matter.
+
+That pairing is per *place*, and a place goes finer than a layer: where a service keeps a
+record per mount (the storage services, on the deployment-component layer), each mount is
+its own effective value, so the walk names the mount in the location. Give a place more
+than one block of the same service without saying which is which and the comparison runs
+between unrelated values.
+
+What a service does not declare is not settable, and a layer it does not name is refused.
+A service that declares nothing behaves exactly as before; `postgresql-database`
+(`connection_limit.py`) is the working example.
+See `features/speelruimte-van-een-dienst.md`.
 
 ## Forms and wizard screens
 
@@ -215,6 +294,17 @@ hand. Skipping this is the most common way a new service lands "finished" but un
 for a user: sleep-mode shipped that way, fully working, with no wizard presence whatsoever.
 
 A service therefore has two independent UI questions, and you must answer both.
+
+**One path for the form and the API.** Whatever a user can configure, the form and the REST
+API reach through the *same* declarations: the editables define the yaml path and the
+validators, the `config_model` defines the shape, and `validate_service_configs` is the one
+gate both go through. So: no endpoint written by hand for a service that has a config model,
+no validator that only the form runs, no second place where a value is normalised, and no
+field the API accepts that the form silently drops. Where the two genuinely differ, that
+difference is declared and lives with the service (`api_actions()`, see "When editables are
+not enough"), never improvised on one side. The two failure modes this rules out are a form
+that writes a shape the API rejects, and an API that writes a shape the form cannot show.
+Start from the editables; the rest follows from them.
 
 ### 1. Does the user pick the service? The selection card
 
@@ -230,10 +320,10 @@ definition with `hidden=True`** (`providers.py:116`). So:
 - `hidden=True`: no card anywhere. The service can only be switched on by editing the project
   file, by an API call, or by a cluster-wide default the service owns itself.
 
-`hidden=True` is a legitimate choice (`platform` is implicit, `namespace-redis` is a variant
-picked by policy, sleep-mode is driven by a cluster default plus a `match` pattern), but it
-is a *decision*, not a default you inherit. If a user is supposed to enable your service,
-`hidden` must stay `False` and you owe the user a configuration screen as well.
+`hidden=True` is a legitimate choice (`namespace-postgresql-database` and `namespace-redis`
+are variants picked by policy), but it is a *decision*, not a default you inherit. If a user
+is supposed to enable your service, `hidden` must stay `False` and you owe the user a
+configuration screen as well.
 
 The card itself is rendered by the `service_block` macro in
 `opi/templates_lotc/widgets/_macros.html.j2` - icon, name, description and help button - and the
@@ -266,7 +356,7 @@ for you. Pick the layer from where the value belongs, then implement that row:
 |---|---|---|---|
 | `PROJECT` | Its own wizard step / modal, shown when the service is selected | `config_editables(PROJECT)`, `config_form_section(PROJECT)`, `config_section_id`, optionally `modal_flow_id` | Register the section and add it to the flows, see below |
 | `COMPONENT` | A fieldset inside the per-component form | `config_editables(COMPONENT)`, `config_component_visualizers()`, `config_component_layout()`, `config_component_order` | **None.** The registry collects it automatically |
-| `DEPLOYMENT` | No service-owned form hook exists today | Nothing to hook into | Fields are hand-authored in `forms/editables/fields/deployments.py`. Deployment-level config is normally OPI-managed state, not user input |
+| `DEPLOYMENT` | A per-deployment modal behind a button on the deployment card | `config_editables(DEPLOYMENT)`, `config_form_section(DEPLOYMENT)`, a `deployment_form_section(index)` and an `actions_provider` button built with `deployment_modal_action` | An `IndexedFlow` in `flows.py` (cross-domain-access and postgresql-database are the examples). Deployment-level config is often OPI-managed state; exempt such a layer with `form_exempt_layers` |
 | `DEPLOYMENT_COMPONENT` | A fieldset inside the per-deployment component form | `config_editables(DEPLOYMENT_COMPONENT)`, `config_deployment_component_visualizers()`, `config_deployment_component_layout()` | **None.** The registry collects it, like the component layer (RC-25) |
 
 **Every layer you carry config on needs an answer to "where do I edit this".** That answer
@@ -394,6 +484,46 @@ def config_component_layout(self):            # placement inside the component f
 across all services in `config_component_order`, and
 `wizard_sections._service_component_layouts()` appends the layout nodes to the component
 form. No section, no flow, no snapshot edit.
+
+#### A field that belongs next to one of the form's own fields
+
+Appending is the default and the right one for a fieldset of its own. A field that is ABOUT
+one of the hand-authored fields belongs beside it, and for that the component form names a
+place: `COMPONENT_IMAGE_SLOT` (`opi/forms/layout.py`), directly after `image`. A service
+lands there by putting `slot=COMPONENT_IMAGE_SLOT` on its layout node; without a slot
+nothing changes.
+
+The form names the place, the service fills it, not the other way round. An anchor on the
+node (`after="image"`) would let a service decide the order of a form it does not own, and
+two services choosing the same anchor would fight over one spot. `image-registries` is the
+first inhabitant.
+
+#### A service whose config IS its selection
+
+`component_selection_follows_config` (default False) says a component does not tick this
+service separately: its own field, with an explicit "none" option, is the choice.
+`image-registries` is the first and so far only one. Three consequences follow from that one
+declaration: the service gets no checkbox in the per-component picker; clearing its config
+removes the ENTRY instead of demoting it to a bare string, on the form path
+(`_prune_service_map_entry`) and on the API path (`ServiceAdapter.remove_service_config`); and
+`_strip_removed_services_from_components` (the `post_merge` of the services section) leaves its
+component entries alone. That last one is what lets a `validate_project` guard still SEE the
+reference when the project-level service is deselected: without it the hook, which runs first,
+has already thrown the entry away, and a removal that should be refused happens silently
+instead.
+
+Only declare it where the config has an explicit "none" value, otherwise there is no way
+left to say "not this one". And note it INVERTS the default-seeding trap below: here a
+chosen value materialising the service is exactly what is wanted, but only in that one
+direction, so cover each direction with its own test.
+
+#### A field that is only there when there is something to choose
+
+`Editable.hidden_without_options` drops a field when its own `values_provider` offers
+nothing. Use it where the list IS the field's reason to exist; the point is that there is
+ONE source. A `depends_on` next to the provider states the same condition twice and lets the
+two drift: a field showing while its own list is empty, or hiding while it has something to
+offer.
 
 ### Editable versus visualizer
 
@@ -745,8 +875,10 @@ Every hook a service may implement, so a new service knows what it can own:
 | `allows_implicit_project_selection` / `implicit_project_config()` | whether binding the service to a component/deployment may also select it at project level, and with what project-level config (RC-84, `features/impliciete-dienstselectie.md`) |
 | `available_on_cluster(cluster)` | whether a cluster can deliver this service at all; read by the wizard's card list AND by `validate_service_availability` at save time |
 | `provision(ctx)` / `handle_service_removal(ctx)` | server-side resources |
+| `validate_project(project_data)` | this service's rules on a WHOLE project, as messages, for what `validate_config` cannot judge from one config block. `validate_project_structure` refuses the write when any service returns one. Runs for EVERY project, also one that does not declare the service |
 | `contribute_manifest_context(ctx)` / `build_secret_files(ctx)` | manifest + secret contributions (per component) |
 | `contribute_deployment_manifests(ctx)` | deployment-wide manifests (once per deployment, e.g. a NetworkPolicy) |
+| `contribute_project_manifests(ctx)` | project-wide manifests, written once per project into `<cluster>/<project>/_project/` in the deployments repo (e.g. a registry pull-secret, a ServiceAccount). The filename MUST start with the service name, so the symmetric prune removes it again when the service goes away. See `features/image-registries.md` |
 
 ### Events: the one way to hook into a moment
 
@@ -885,12 +1017,12 @@ harder for its owner to see what the pod was told.
 
 **Who switches the contribution on.** By default the COMPONENT's own `services` list: each
 component decides whether it sits behind login, gets database credentials, is scraped. A
-service that is deployment-bound and has no per-component choice to make sets
-`manifest_activated_by_project = True` and is switched on by the PROJECT's selection --
-without it such a service never contributes at all, because no component ever ticks it.
-The two halves of that rule live in `collect_manifest_contributions` /
-`apply_manifest_contributions` (`opi/manager/project_manager.py`), module-level so they
-can be measured without building a whole deployment.
+service that declares `selectable_per_component = False` has no per-component choice to
+make and is switched on by the PROJECT's selection instead -- without that such a service
+never contributes at all, because no component ever ticks it. The two halves of that rule
+live in `collect_manifest_contributions` / `apply_manifest_contributions`
+(`opi/manager/project_manager.py`), module-level so they can be measured without building
+a whole deployment.
 
 What you get in `ManifestContext`: `deployment_name`, `project_data`, `unique_name`,
 `cluster`, `component_def` (the resolved component, for component-level config) and
@@ -905,8 +1037,10 @@ Two shortcuts for the common cases:
   switch you on, so exactly one provider contributes per manager.
 
 `SecretFileSpec` declares *what* secret is needed; `ProjectManager._write_secret_file`
-(`project_manager.py:1159`) does the writing, alias resolution and prune bookkeeping. Keep
-that writer service-agnostic.
+(`project_manager.py:1584`) does the writing, alias resolution and prune bookkeeping. A
+random value that must survive a deploy sets `keep_existing_values=True`: the writer then
+takes it from the previous ciphertext (auth-wall's cookie secret, see
+`features/sops-skip-unchanged-reencryption.md`). Keep that writer service-agnostic.
 
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
@@ -942,7 +1076,7 @@ approver UI needs no change to pick up a new one.
 | `notices_for` | What does an ungranted approval mean for this deployment? | `collect_deployment_approval_notices` → the project page |
 
 Each item `list_items` returns carries a `subject`: WHAT is being asked for, in words the
-approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it — the
+approver reads (`example.nl`, `foo.example.nl`, "Gebruik van de dienst"). Write it. The
 service is the only thing that knows how to say it. Without one, generic code has to
 assemble the sentence from the fields it happens to know, and that is exactly how a service
 request ended up on the approver page as an empty domain column. `collect_approval_items`
@@ -990,7 +1124,7 @@ APPROVAL = service_use_approval(
 
 It returns three things: `spec` for `config_approvals()`, `is_approved(project_data)` and
 `ensure_requested(project_data)`. Hang **everything** the service switches on off that one
-`is_approved`, so the parts can never disagree — send-email gates its account, its network
+`is_approved`, so the parts can never disagree: send-email gates its account, its network
 policy, its envFrom secret and its secret file on it. And keep the `consequence`: a service
 that is switched on and silently does nothing is the fault this shape exists to prevent.
 
@@ -1004,7 +1138,9 @@ record a revocation on a domain that is already in use. Enforcement happens at p
 2. `catalog/<name>/__init__.py` with a `Service` subclass carrying its own `definition`, and
    one line in `SERVICES`. Variables it exposes go in `variables.py` in the same package.
 3. Config? Add `config_model.py`, set `config_model` + `config_schema_version`, run
-   `uv run python -m opi.services.config_schema`, commit the fragment.
+   `uv run python -m opi.services.config_schema`, commit the fragment. That model plus the
+   editables are what BOTH the form and the API use; you write no endpoint and no second
+   validator. See "One path for the form and the API".
 4. **Decide the UI, explicitly, and write down the decision.** Two questions:
    - *May a user switch this on?* Then `hidden` stays `False` and the service gets a card in
      the services step. If not, set `hidden=True` **and say in the definition why**, so the
@@ -1057,13 +1193,19 @@ its four wiring points are listed under "Forms and wizard screens".
   automatically. A project-level section also needs registering in `wizard_sections.py`, adding
   to the flows in `flows.py`, a modal `FormFlow` when you declared `modal_flow_id`, and a
   regenerated flow snapshot.
+- **The form and the API are one path, and it is easy to fork by accident.** Writing a
+  small endpoint "just for this service", or a check that only the form runs, gives two
+  behaviours that drift silently: a form that writes what the API rejects, or an API that
+  writes what the form cannot show. The declarations (editables + `config_model`) are the
+  single source; a deliberate difference is declared with `api_actions()`.
 - **Identity via `service_entry_name`, always.** See the entry forms above.
 - **A services list is a selection set.** A name may appear at most once, at every level.
   `validate_project_structure` rejects a duplicate; the wizard merge folds entries so one
   cannot arise.
 - **Do not seed a service's config defaults onto something that has not selected it.** The
   `{K}` path filter materialises the service into the list as a side effect, so a default
-  quietly turns into a selection.
+  quietly turns into a selection. The one service that WANTS this says so with
+  `component_selection_follows_config`, and then only in one direction (see above).
 - **Provisioning is replay-safe by contract**, and so is manifest generation.
 - **Keep the catalog import-light.** Import forms, managers and connectors inside the method
   that needs them, not at module scope.
@@ -1090,5 +1232,5 @@ uv run ruff check . --fix && uv run ruff format . && uv run pyright
 
 - `features/service-provider-registry.md` - why the registry exists and what it replaced
 - `features/components-services-deployments.md` - the Project / Service / Component / Deployment model
-- `features/manifest-extension-pipeline.md` - how manifests are assembled
+- `features/image-registries.md` - how an image gets its registry and pull-secret (this replaced the manifest-extension pipeline; the old doc is in `archive/manifest-extension-pipeline.md`)
 - `operations-manager/CLAUDE.md` - module map and code style

@@ -71,6 +71,7 @@ This is interactive - it will prompt for:
 
 Takes ~5-10 minutes. It creates:
 - Kind cluster `rig-sandbox` with K8s v1.32.0
+- Image registry container `kind-registry` next to the cluster (on `127.0.0.1:5001`, see `docs/sandbox-kind-registry.md`)
 - NGINX ingress controller (on ports 8880/8443)
 - CloudNativePG operator + PostgreSQL database
 - Forgejo git server (admin: `rig-admin` / `admin1234`)
@@ -143,7 +144,7 @@ E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
 task sandbox:destroy
 ```
 
-This deletes the Kind cluster and all associated Docker resources.
+This deletes the Kind cluster and all associated Docker resources, except the `kind-registry` container: that one survives on purpose (`docs/sandbox-kind-registry.md`).
 
 ## Troubleshooting
 

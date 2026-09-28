@@ -30,12 +30,9 @@ from pathlib import Path
 # `read_key` zoekt de marker in plaats van regel 3, `public_key_of` leidt de publieke helft af
 # met `age-keygen -y` in plaats van de comment te vertrouwen, en `sops_plaintext` gaat door
 # `opi.utils.sops.decrypt_sops_with_key`.
-from key_rotation import (  # type: ignore[reportMissingImports]
-    MissingKey,
-    public_key_of,
-    read_key,
-    sops_plaintext,
-)
+from age_keyring import KeyEntry, KeyringFailed  # type: ignore[reportMissingImports]
+from age_keyring import private_key_for as keyring_private_key_for  # type: ignore[reportMissingImports]
+from key_rotation import public_key_of, sops_plaintext, sops_recipients  # type: ignore[reportMissingImports]
 from ruamel.yaml import YAML
 
 ANNOTATION = re.compile(r"#\s*@secret-gen:(?P<body>\S+)")
@@ -210,20 +207,21 @@ def bcrypt_hash(plain: str) -> str:
     return process.stdout.strip().lstrip(":").replace("$2b", "$2y")
 
 
-def key_for(recipient: str) -> Path:
-    """Het sleutelbestand in `security/` dat bij deze recipient hoort.
+def key_entry_for(recipient: str, security_dir: Path | None = None) -> KeyEntry:
+    """De keyring-entry bij deze recipient, via de keyring in `age_keyring.py`.
 
     Zoeken op de publieke sleutel in plaats van een vaste `security/key.txt` is wat voorkomt
     dat een sandbox-secret op de productiesleutel wordt teruggeschreven: `task encrypt-secret`
-    leest dat pad hard en zwijgt erover.
+    leest dat pad hard en zwijgt erover. De keyring breidt dat uit van alleen `security/` naar
+    ``SOPS_AGE_KEY[_FILE]`` en ``~/.config/sops/age/keys.txt``, in die volgorde, zodat dit ook
+    werkt vanuit een werkmap of een andere repo. `security_dir` blijft een parameter zodat
+    tests de fallback zelf kunnen neerzetten. De entree draagt zijn bron mee, zodat elke
+    keuze in de uitvoer te zien is.
     """
-    for path in sorted(SECURITY_DIR.glob("*.txt")):
-        try:
-            if public_key_of(read_key(path)) == recipient:
-                return path
-        except MissingKey:
-            continue  # geen AGE-sleutel; security/ houdt ook tokens
-    raise EditFailed(f"geen sleutel in {SECURITY_DIR}/ hoort bij recipient {recipient}")
+    try:
+        return keyring_private_key_for(recipient, security_dir if security_dir is not None else SECURITY_DIR)
+    except KeyringFailed as failure:
+        raise EditFailed(str(failure)) from None
 
 
 def decrypt(path: str | Path, private_key: str) -> str:
@@ -274,12 +272,30 @@ def apply(template_text: str, values: dict[str, str], namespace: str) -> str:
     return stream.getvalue()
 
 
-def encrypt(plaintext: str, destination: str | Path, public_key: str) -> None:
+def encrypt(plaintext: str, destination: str | Path, private_key: str, *, recipients: list[str] | None = None) -> None:
     """Het gevulde secret versleuteld wegschrijven.
 
     Via stdin, zodat de leesbare versie nooit op schijf staat. `task encrypt-secret` schrijft
     hem wel uit en verwijdert hem daarna, en dat laat hem achter als de stap ertussen faalt.
+
+    Twee waarborgen, afgesproken in de keyring-bespreking van 28-09-2026: (a) een bestaand
+    bestand wordt voor PRECIES dezelfde recipients teruggeschreven -- nooit er een bij, nooit
+    er een af, want een verdwenen recipient is iemand die stil zijn toegang verliest -- en
+    (b) na het schrijven volgt meteen een decrypt-proef, zodat een onleesbare weergave hier
+    knalt en niet pas bij de volgende deploy. De private sleutel moet bij de recipients passen,
+    anders is de roundtrip onmogelijk en stopt de schrijfactie vooraf.
     """
+    destination = Path(destination)
+    public = public_key_of(private_key)
+    if recipients is None:
+        recipients = sops_recipients(destination) if destination.is_file() else []
+    if not recipients:
+        recipients = [public]
+    if public not in recipients:
+        raise EditFailed(
+            f"de sleutel (publiek {public[:20]}…) hoort niet bij de recipients van {destination.name}; "
+            "versleutelen zou de bestaande ontvangerslijst breken"
+        )
     process = subprocess.run(  # noqa: S603
         [  # noqa: S607
             "sops",
@@ -290,7 +306,7 @@ def encrypt(plaintext: str, destination: str | Path, public_key: str) -> None:
             "--input-type",
             "yaml",
             "--age",
-            public_key,
+            ",".join(recipients),
             "/dev/stdin",
         ],
         input=plaintext,
@@ -300,7 +316,10 @@ def encrypt(plaintext: str, destination: str | Path, public_key: str) -> None:
     )
     if process.returncode != 0:
         raise EditFailed(f"sops encrypt faalde: {process.stderr.strip()}")
-    Path(destination).write_text(process.stdout, encoding="utf-8")
+    destination.write_text(process.stdout, encoding="utf-8")
+    back = YAML().load(decrypt(destination, private_key))
+    if back != YAML().load(plaintext):
+        raise EditFailed(f"roundtrip-proef faalde: {destination.name} opent niet terug naar wat er geschreven is")
 
 
 def encrypted_name(template: str | Path) -> str:

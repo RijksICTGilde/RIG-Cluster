@@ -120,7 +120,7 @@ def test_provision_delegates_to_the_right_manager():
 
     asyncio.run(run())
     # same calls + args as the old fixed sequence
-    db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
+    db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, clone_interrupted=False)
     minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
     keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
@@ -367,6 +367,9 @@ def test_auth_wall_contributes_sidecar_and_port_override():
         "banner": "Restricted",
     }
     assert resolved == [("mydep", "keycloak")]
+    [cookie_spec] = contribution.secret_files
+    assert cookie_spec.secret_name == "mydep-web-oauth2-cookie"
+    assert cookie_spec.keep_existing_values is True
 
 
 def test_auth_wall_contributes_nothing_without_keycloak_secret():
@@ -741,6 +744,8 @@ def test_component_layout_collection_is_ordered_by_config_component_order():
         # hand-authored "Variabelen" fieldset used to sit.
         "Aliassen",
         "Eigen omgevingsvariabelen",
+        # image-registries staat hier NIET meer tussen: die knoop noemt een slot en landt
+        # daarmee bij het image-veld in plaats van onderaan (RC-187).
         "services{persistent-storage}/config",
         "services{temp-storage}/config",
         "services{attachments}/config",

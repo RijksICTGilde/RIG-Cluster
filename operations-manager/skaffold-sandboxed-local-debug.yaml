@@ -9,8 +9,10 @@ build:
       template: "latest"
   local:
     useBuildkit: true
+    # Zonder push doet skaffold op een kind-context zelf een `kind load`.
+    push: true
   artifacts:
-  - image: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+  - image: localhost:5001/operations-manager
     context: .
     docker:
       dockerfile: operations-manager/Dockerfile
@@ -41,6 +43,9 @@ deploy:
   kubeContext: kind-rig-sandbox
   statusCheckDeadlineSeconds: 0
   kustomize:
+    # Net als kubeContext hierboven: zonder dit neemt skaffold de namespace van de
+    # ACTIEVE kubectl-context, en die staat hier geregeld op een productienamespace.
+    defaultNamespace: rig-system
     flags:
       apply:
       - --force-conflicts

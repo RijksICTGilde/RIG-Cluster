@@ -9,8 +9,10 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
-from opi.handlers.project_file_handler import is_transient_registry_error
+from opi.handlers.project_file_handler import image_is_confirmed_absent
+from opi.services.catalog.image_registries.resolution import display_image
 from opi.utils.naming import generate_unique_name
 
 logger = logging.getLogger(__name__)
@@ -216,37 +218,38 @@ _IMAGE_PULL_RE = re.compile(r"ErrImagePull|ImagePullBackOff|back-off.*pulling im
 _IMAGE_IN_MSG_RE = re.compile(r'image "([^"]+)"')
 
 
-def _source_image(rewritten: str) -> str:
-    """Show the source-registry image, not the rcr.rijksapps.nl proxy rewrite."""
+def _source_image(rewritten: str, project_data: dict[str, Any] | None = None) -> str:
+    """Show the source-registry image, not the rcr.rijksapps.nl proxy rewrite.
+
+    Without ``project_data`` only the shared cluster table is reversed.
+    """
     from opi.core.config import settings
-    from opi.extensions.pipeline import get_registry_rewrite_mappings
-    from opi.extensions.registry_rewrite import original_image
 
-    return original_image(rewritten, get_registry_rewrite_mappings(settings.CLUSTER_MANAGER))
+    return display_image(rewritten, settings.CLUSTER_MANAGER, project_data)
 
 
-def _image_pull_suggestion(message: str) -> str:
+def _image_pull_suggestion(message: str, project_data: dict[str, Any] | None = None) -> str:
     """Short suggestion for an image-pull failure, naming the source-registry image.
 
     Only two outcomes are distinguished, and only on wording the registry is explicit
-    about (see ``is_transient_registry_error``): a 5xx or a rate limit means the
-    registry could not answer, anything else is treated as a problem with the image
-    reference. Deliberately no finer than that -- the exact status is unreliable, an
-    auth problem can surface as more than one code -- so the second branch stays one
-    check of the common causes plus an anonymous ``docker pull`` to test public access.
+    about (see ``image_is_confirmed_absent``): the registry saying the image is absent
+    or refused is a problem with the image reference, anything else means we never got
+    an answer and cannot blame the image. Deliberately no finer than that -- the exact
+    status is unreliable, an auth problem can surface as more than one code -- so the
+    branch stays one check of the common causes plus an anonymous ``docker pull``.
     """
     match = _IMAGE_IN_MSG_RE.search(message)
-    if is_transient_registry_error(message):
-        subject = f"De image {_source_image(match.group(1))}" if match else "De image"
+    if not image_is_confirmed_absent(message):
+        subject = f"De image {_source_image(match.group(1), project_data)}" if match else "De image"
         return (
             f"{subject} kon niet worden opgehaald omdat de registry zelf geen antwoord gaf. Dat zegt niets "
             "over de image: die kan prima bestaan. Hier is niets voor je te doen, het ophalen wordt vanzelf "
-            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het uren aan, meld het dan "
-            "bij het platformteam."
+            "opnieuw geprobeerd en herstelt zodra de registry weer werkt. Houdt het langer dan een paar "
+            "minuten aan en je hebt geen storingsmelding gehad, meld het dan sowieso bij het platformteam."
         )
     if not match:
         return "Controleer of de image publiek toegankelijk is en of de naam en tag kloppen."
-    image = _source_image(match.group(1))
+    image = _source_image(match.group(1), project_data)
     return (
         f"De image {image} kon niet worden opgehaald. Controleer of de image publiek toegankelijk is "
         f"en of de naam en tag kloppen. Test zonder credentials met: DOCKER_CONFIG=$(mktemp -d) docker pull {image} *\n"
@@ -255,20 +258,30 @@ def _image_pull_suggestion(message: str) -> str:
     )
 
 
-def _image_pull_translation(message: str) -> tuple[str, str, EventSeverity]:
+# One pod's image-pull failure is one problem, whichever source reports it. The two
+# titles differ only in whether the registry answered, so they must dedupe together:
+# ArgoCD's resource tree carries the registry's own words while the matching K8s event
+# is often a bare "Back-off pulling image", and showing both would tell the user the
+# registry is fine and broken at once.
+IMAGE_PULL_TITLE_NO_ANSWER = "Registry kon de container image niet leveren"
+IMAGE_PULL_TITLE_ABSENT = "Container image kan niet worden opgehaald"
+_IMAGE_PULL_TITLES = (IMAGE_PULL_TITLE_NO_ANSWER, IMAGE_PULL_TITLE_ABSENT)
+
+
+def _image_pull_translation(message: str, project_data: dict[str, Any] | None = None) -> tuple[str, str, EventSeverity]:
     """Title, suggestion and severity for an image-pull failure.
 
     A registry that could not answer is INFORMATIONAL: the user cannot fix it and the
     pull retries by itself, so presenting it as something to act on sends them looking
-    for a broken image that is fine. A missing or unreachable image stays ACTIONABLE.
+    for a broken image that is fine. A missing or refused image stays ACTIONABLE.
     """
-    if is_transient_registry_error(message):
+    if not image_is_confirmed_absent(message):
         return (
-            "Registry kon de container image niet leveren",
-            _image_pull_suggestion(message),
+            IMAGE_PULL_TITLE_NO_ANSWER,
+            _image_pull_suggestion(message, project_data),
             EventSeverity.INFORMATIONAL,
         )
-    return "Container image kan niet worden opgehaald", _image_pull_suggestion(message), EventSeverity.ACTIONABLE
+    return IMAGE_PULL_TITLE_ABSENT, _image_pull_suggestion(message, project_data), EventSeverity.ACTIONABLE
 
 
 # --- Een container die de kubelet kilt omdat de probe faalt -------------------------
@@ -363,14 +376,16 @@ def condense_render_error(message: str) -> str:
     return message if len(message) <= 800 else message[:800] + " ...(truncated)"
 
 
-def _interpret_by_reason(reason: str, message: str) -> tuple[str, str, EventSeverity] | None:
+def _interpret_by_reason(
+    reason: str, message: str, project_data: dict[str, Any] | None = None
+) -> tuple[str, str, EventSeverity] | None:
     """Look up translation by event reason, then fall back to message patterns."""
     if reason in _NOISE_REASONS:
         return None
 
     # Image-pull failures get a dynamic, solution-oriented suggestion.
     if reason in _IMAGE_PULL_REASONS or _IMAGE_PULL_RE.search(message):
-        return _image_pull_translation(message)
+        return _image_pull_translation(message, project_data)
 
     # Voor de reason-tabel: het Unhealthy-event zou anders als het algemene
     # "Health-check gefaald" landen, en dat is een SYMPTOOM dat verderop wordt
@@ -505,18 +520,24 @@ def _dedupe_cross_source(errors: list[dict[str, str]]) -> list[dict[str, str]]:
     """Deduplicate errors with the same translated message for the same component.
 
     The same issue often appears from both ArgoCD resource tree (Pod/x) and
-    K8s events (x) — keep only the first occurrence.
+    K8s events (x) — keep only the first occurrence. Image-pull failures collapse on
+    the pod alone, because the two sources word the same failure differently.
     """
-    seen: set[str] = set()
+    position_of: dict[str, int] = {}
     result: list[dict[str, str]] = []
     for error in errors:
         base = _resource_base_name(error.get("resource", ""))
         title = error.get("message", "")
-        key = f"{base}:{title}"
-        if key in seen:
+        key = f"{base}:image-pull" if title in _IMAGE_PULL_TITLES else f"{base}:{title}"
+        position = position_of.get(key)
+        if position is None:
+            position_of[key] = len(result)
+            result.append(error)
             continue
-        seen.add(key)
-        result.append(error)
+        # Of two reports of one pull failure, the one quoting the registry's answer
+        # wins: the other only means that source never saw what the registry said.
+        if title == IMAGE_PULL_TITLE_ABSENT and result[position].get("message") == IMAGE_PULL_TITLE_NO_ANSWER:
+            result[position] = error
     return result
 
 
@@ -527,7 +548,9 @@ def _dedupe_key(event: dict[str, str]) -> str:
     return f"{reason}:{_extract_base_name(obj)}"
 
 
-def interpret_events(raw_events: list[dict[str, str]]) -> list[InterpretedEvent]:
+def interpret_events(
+    raw_events: list[dict[str, str]], project_data: dict[str, Any] | None = None
+) -> list[InterpretedEvent]:
     """
     Interpret raw K8s events into user-friendly messages.
 
@@ -540,7 +563,7 @@ def interpret_events(raw_events: list[dict[str, str]]) -> list[InterpretedEvent]
         message = event.get("message", "")
         obj = event.get("object", "unknown")
 
-        translation = _interpret_by_reason(reason, message)
+        translation = _interpret_by_reason(reason, message, project_data)
         if translation is None:
             continue
 
@@ -606,6 +629,7 @@ def interpret_argocd_errors(
     deployment_name: str = "",
     component_names: list[str] | None = None,
     serving_components: set[str] | None = None,
+    project_data: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     """
     Interpret a mixed list of ArgoCD errors and K8s events.
@@ -613,6 +637,9 @@ def interpret_argocd_errors(
     K8s events (resource starts with "Event/") are translated and deduplicated.
     ArgoCD errors are passed through but enriched with pattern matching.
     Resource names are simplified to component names when deployment_name is provided.
+
+    ``project_data`` is only used by the image-pull messages, to name an image in the
+    project's own private registry instead of its RCR address.
 
     ``serving_components`` names the component REFERENCES for which a pod is currently
     serving traffic (see ``summarize_component_pods``). Only the crash message uses it, and
@@ -651,10 +678,10 @@ def interpret_argocd_errors(
                 }
             )
         else:
-            other_errors.append(_enrich_argocd_error(error))
+            other_errors.append(_enrich_argocd_error(error, project_data))
 
     # Interpret and convert K8s events back to error dict format
-    interpreted = interpret_events(k8s_events)
+    interpreted = interpret_events(k8s_events, project_data)
     result: list[dict[str, str]] = []
 
     for event in interpreted:
@@ -764,7 +791,7 @@ def _comparison_error_translation(message: str) -> tuple[str, str, EventSeverity
     return _COMPARISON_ERROR_DEFAULT
 
 
-def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
+def _enrich_argocd_error(error: dict[str, str], project_data: dict[str, Any] | None = None) -> dict[str, str]:
     """Enrich an ArgoCD error with pattern-matched translation if possible."""
     message = error.get("message", "")
     # A ComparisonError is ArgoCD saying it could not generate or compare the manifests -
@@ -785,7 +812,7 @@ def _enrich_argocd_error(error: dict[str, str]) -> dict[str, str]:
         enriched["severity"] = severity.value
         return enriched
     if _IMAGE_PULL_RE.search(message):
-        title, suggestion, severity = _image_pull_translation(message)
+        title, suggestion, severity = _image_pull_translation(message, project_data)
         enriched = dict(error)
         enriched["message"] = title
         enriched["suggestion"] = suggestion

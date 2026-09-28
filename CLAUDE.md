@@ -24,6 +24,7 @@ Gebruik de rechterkolom, nooit de linker:
 | grendel (een controle die weigert) | guard |
 | grendel (een fase die groen of rood geeft) | gate |
 | vergrendeld (een veld dat niet te wijzigen is) | locked, of read-only voor het attribuut |
+| dienst, diensten | service, services |
 
 Pas dit toe op nieuw werk. Bestaande teksten worden niet met terugwerkende kracht omgezet: dat levert een grote diff op die niets aan de code verandert.
 
@@ -186,6 +187,15 @@ When introducing a new feature, create a markdown document in `features/` with: 
 - **Error handling**: Specific exception types, avoid generic `except Exception`
 - **Frontend**: Jinja2 + lord-of-the-components (NLDD-thema). Zie `features/lotc-bouwlijn.md` en `features/roos-eruit.md`
 
+## Uitleg in code en tekst
+
+Geldt voor alle code, commentaar, documentatie en commit-berichten in deze repo.
+
+- **Minimale uitleg.** Een commentaar of docstring zegt kort *wat* iets doet, en alleen als dat niet al uit de code volgt. Herhaalt de uitleg wat de code zelf zegt, dan is het ruis die veroudert.
+- **Comply or explain.** Wijk je af van een afspraak of van de voor de hand liggende oplossing, leg dan uit waarom. Volg je de afspraak, dan hoeft daar niets bij.
+- **Wat wel blijft staan**: waarom een afwijking bestaat, welke valkuil de vorige versie in liep, welke afspraak hier geldt. Dat kan een lezer niet uit de code halen.
+- **Nooit em dashes.** Niet in code, niet in commentaar, niet in documentatie, niet in commit-berichten. Gebruik een komma, een dubbele punt of een punt.
+
 ## Post-Development Validation
 
 ```bash
@@ -226,6 +236,14 @@ Before implementing:
 - If you write 200 lines and it could be 50, rewrite it.
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+**Zoek eerst, schrijf daarna.** Voordat je een helper, een converter, een validator, een naamfunctie of een uitpakroutine schrijft: zoek of hij al bestaat. Deze codebase heeft er veel, en ze staan op voorspelbare plekken (`opi/utils/`, `opi/services/catalog/shared/`, de haken uit `instructions/services.md`). Doe dat per blok terwijl je bouwt, niet aan het eind.
+
+- Vind je iets dat lijkt op wat je nodig hebt, gebruik het, ook als het net niet past. Uitbreiden van het bestaande gaat voor een tweede exemplaar ernaast.
+- Schrijf je toch iets nieuws naast iets bestaands, zeg dan in de PR waarom het bestaande niet volstond. Zonder die zin is het een dubbeling.
+- Lijkt de bestaande oplossing verkeerd te staan, verplaats hem dan niet stilzwijgend: benoem het.
+
+Het patroon dat dit voorkomt is duur en herkenbaar: een tweede uitpakker naast een bestaande decrypt-functie, een eigen normalisatie naast een bestaande, dezelfde hulpfunctie drie keer in een pakket. Dat kost geen tijd bij het schrijven, maar bij elke lezer en elke wijziging daarna.
 
 ## 3. Surgical Changes
 

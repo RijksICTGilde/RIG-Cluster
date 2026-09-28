@@ -32,36 +32,6 @@ Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
 `test_sops_rotation_round.py`, `test_argo_repository_secrets.py`, `test_pat_loose_values.py`,
 `test_set_sops_key_secret.py`.
 
-## De geheimenscan
-
-| bestand | doet |
-|---|---|
-| `scan-secrets.py` | de ingang: een boom, een lijst bestanden, of de hele historie |
-| `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
-
-Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
-in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`.
-
-De hele historie nalopen is een eigen gang, en die duurt lang:
-
-```bash
-python3 scripts/scan-secrets.py --history                       # deze repo
-python3 scripts/scan-secrets.py --history --tree <andere repo>  # een andere clone
-```
-
-**De bevindingen van de scanner gaan nooit naar git.** Niet als document, niet als bijlage,
-ook niet samengevat tot aantallen en paden: dat is een routekaart naar geheimen die nog geldig
-zijn zolang de opruiming loopt, en deze repo gaat naar GitHub. Ze horen op een intern kanaal.
-
-Het script dwingt dat af door niets anders te kunnen: `report()` schrijft naar stdout en er is
-geen vlag die de uitkomst in een bestand zet. Wil je hem bewaren, leid hem dan zelf om naar een
-pad BUITEN de repo. `tests/test_secret_scan.py` pint dat vast, zodat zo'n vlag er niet ongemerkt
-bij komt.
-
-Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt toegepast --
-de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
-hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
-
 ## Een wachtwoord in een secret vervangen
 
 `task edit-secret`, of rechtstreeks:
@@ -74,6 +44,66 @@ Het loopt de templates in `infrastructure/.../secrets/templates/` en
 `bootstrap/rig-system/kustomize/secrets/templates/` af, vraagt welk secret je wilt aanpassen, en
 per veld of de waarde blijft staan, opnieuw gegenereerd wordt volgens zijn `@secret-gen`-annotatie
 of door jou wordt opgegeven. Daarna schrijft het het secret opnieuw en versleutelt het met SOPS.
+
+### Roteren: de categorie bepaalt de stappen
+
+Dezelfde ingang heeft een rotatiemodus (`--component <naam>` of `--all`, of via het menu).
+Roteren is méér dan het bestand bijwerken: een wachtwoord dat in git wijzigt maar niet in de
+applicatie is gewoon drift. Daarom bepaalt de categorie van een component de stapvolgorde, en
+is elke stap meetbaar (geen "Argo heeft vast wel gesynct"):
+
+| categorie | componenten | volgorde |
+|---|---|---|
+| `cnpg-secret` | postgresql, keycloak-db, mail-db, forgejo-db | check → SOPS-bestand → git-poort → Argo-sync (afwachten én bewijzen) → operator-gate (nieuwe login werkt, oude faalt) → consumers herstarten |
+| `live-app` | redis, mail-relay, keycloak-mail, keycloak-admin | check → app-call met huidige waarde (ACL SETUSER / relay-API / kcadm) → verify nieuw → bestand → git-poort → sync → herstart |
+| `env-restart` | minio, prometheus, pgadmin | drift-check → bestand → git-poort → sync → herstart → app-verify |
+| `external` | transip, grafana | check tegen de buiten-API → handmatige stap buiten het cluster (tool toont hem) → verify nieuwe waarde → bestand/env |
+
+Drie gates zijn geen vragen maar metingen: de sync-toestand uit `.status.operationState`,
+het cluster-secret dat de nieuwe waarde draagt (poll, met timeout), en bij cnpg de
+operator-reconcile zelf. Heeft een secret geen Argo-eigenaar (bootstrap), dan stopt de
+sync-stap met die melding in plaats van te wachten op een sync die nooit komt. De enige
+bewuste mensenstap in een ronde is de git commit+push zelf, als reviewpoort op een
+security-diff; TransIP en de Grafana-token bij ODCN zijn de enige twee plekken buiten het
+cluster.
+
+De sleutel kant komt uit de keyring (`age_keyring.py`): het SOPS-bestand noemt zijn
+recipients, en de bijpassende private helft wordt gezocht in `SOPS_AGE_KEY[_FILE]`, dan
+`~/.config/sops/age/keys.txt`, dan `security/*.txt` -- met bronvermelding in de uitvoer.
+Schrijven bewaart de bestaande recipient-set en wordt bewezen met een decrypt-proef.
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py --check --all
+uv run --project operations-manager/python python scripts/edit-secret.py --component postgresql
+uv run --project operations-manager/python python scripts/edit-secret.py --component keycloak-db --apply
+```
+
+Ontbreekt de secrets-overlay van het cluster helemaal in deze repo (zoals bij sandboxed-local,
+waarvan de secrets alleen in de Forgejo-mirror bestonden), dan is `--seed-overlay` de eerste
+stap: die schrijft de overlay kanoniek weg, gevoed met de live cluster-waarden en versleuteld
+met de sleutel van dat cluster, zodat Argo daarna weer uit git rendert.
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py --seed-overlay --dry-run --context kind-rig-sandbox   # plan tonen
+uv run --project operations-manager/python python scripts/edit-secret.py --seed-overlay --apply --context kind-rig-sandbox    # schrijven
+```
+
+De eerste rotatie van een component dat in de overlay nog als plaintext template ligt (het
+geval `keycloak-db-credentials.yaml` op odcn) is tevens de migratie: het script schrijft het
+canonieke versleutelde bestand, verbindt het in `decrypt-sops.yaml` en `kustomization.yaml`
+en verwijdert het plaintext bestand -- in dezelfde wijziging als de waarde-rotatie.
+
+Twee guards: zonder `--apply` verandert er niets, en `--apply` op een productiecluster vraagt de
+clusternaam over te typen. `--all` draait in de vaste volgorde van de tabel: de
+database-superuser voorop, keycloak-admin als allerlaatste (dat is het enige wachtwoord
+waarmee je jezelf buitensluit), en keycloak-mail na mail-relay, want die gebruikt het
+relay-adminaccount.
+
+De logica zit in `secret_rotate.py`; de cluster-commando's lopen via `kubectl exec` in de pods
+van de componenten (psql, redis-cli, kcadm), behalve MinIO: die image heeft geen `mc`, dus die
+verificatie draait in de OPI-pod. Tests: `tests/test_secret_rotate.py` en, voor de sleutelkant,
+`tests/test_age_keyring.py`.
+
 
 **De template is het uitgangspunt, het bestaande secret is de controle.** De template zegt welke
 velden er zijn en hoe ze gemaakt worden; het versleutelde bestand zegt welke waarden er nu staan.
@@ -107,6 +137,36 @@ Twee dingen die het anders doet dan `task decrypt-secret` en `task encrypt-secre
 
 De logica zit in `secret_edit.py`; de sleutels, de recipients en het ontsleutelen komen uit
 `key_rotation.py`, zodat er geen tweede set naast de rotatiemotor ontstaat.
+
+## De geheimenscan
+
+| bestand | doet |
+|---|---|
+| `scan-secrets.py` | de ingang: een boom, een lijst bestanden, of de hele historie |
+| `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
+
+Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
+in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`.
+
+De hele historie nalopen is een eigen gang, en die duurt lang:
+
+```bash
+python3 scripts/scan-secrets.py --history                       # deze repo
+python3 scripts/scan-secrets.py --history --tree <andere repo>  # een andere clone
+```
+
+**De bevindingen van de scanner gaan nooit naar git.** Niet als document, niet als bijlage,
+ook niet samengevat tot aantallen en paden: dat is een routekaart naar geheimen die nog geldig
+zijn zolang de opruiming loopt, en deze repo gaat naar GitHub. Ze horen op een intern kanaal.
+
+Het script dwingt dat af door niets anders te kunnen: `report()` schrijft naar stdout en er is
+geen vlag die de uitkomst in een bestand zet. Wil je hem bewaren, leid hem dan zelf om naar een
+pad BUITEN de repo. `tests/test_secret_scan.py` pint dat vast, zodat zo'n vlag er niet ongemerkt
+bij komt.
+
+Dit gaat alleen over de bevindingen. De inventaris van WAAR cryptografie wordt toegepast --
+de vindplaatsenlijst in `features/sops-sleutel-roteren.md` die de rotatieronde omzet --
+hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 
 ## De rest
 

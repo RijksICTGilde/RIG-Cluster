@@ -17,7 +17,7 @@ from opi.forms.editables.enforcers import (
     UniqueReferencesEnforcer,
     extract_service_names,
 )
-from opi.forms.layout import Fieldset, LayoutElement, Sequence, TemplatePartial
+from opi.forms.layout import COMPONENT_IMAGE_SLOT, Fieldset, LayoutElement, Sequence, TemplatePartial
 from opi.forms.visualizers.fields.components import COMPONENTS_SEQUENCE
 from opi.forms.visualizers.fields.config_display import AGE_PRIVATE_KEY, AGE_PUBLIC_KEY, API_KEY
 from opi.forms.visualizers.fields.deployments import (
@@ -64,18 +64,25 @@ def _extract_services(data: dict[str, Any]) -> list[str]:
     return []
 
 
-def _service_component_layouts() -> list[Any]:
+def _service_component_layouts(slot: str | None = None) -> list[Any]:
     """Collect the per-component layout nodes each service hooks into the component
     form (RC-5 'service owns its fields'), in registry order. A component-level service
     (metrics-scraper, ...) owns its fieldset via ``config_component_layout()`` instead
-    of it living hand-authored in COMPONENTS_SECTION."""
+    of it living hand-authored in COMPONENTS_SECTION.
+
+    *slot* selects which PLACE in the component form is being filled. The form names
+    its slots (``COMPONENT_IMAGE_SLOT``) and a service marks a layout node for one by
+    setting ``slot=`` on it; a node without a slot keeps landing at the bottom, which
+    is what ``slot=None`` (the default) collects. One node belongs to exactly one
+    place, so the two calls together still yield every node exactly once.
+    """
     contributors = sorted(
         (get_service(service_type) for service_type in ServiceType),
         key=lambda s: s.config_component_order,
     )
     nodes: list[Any] = []
     for service in contributors:
-        nodes.extend(service.config_component_layout())
+        nodes.extend(node for node in service.config_component_layout() if getattr(node, "slot", None) == slot)
     return nodes
 
 
@@ -160,6 +167,7 @@ COMPONENTS_SECTION = FormSection(
                     children=[
                         "name",
                         "image",
+                        *_service_component_layouts(COMPONENT_IMAGE_SLOT),
                         # Het startcommando hoort bij het image: het vervangt de entrypoint
                         # daarvan, dus je beoordeelt de twee samen.
                         "command",
@@ -367,6 +375,13 @@ SEND_EMAIL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.SEND_EMAIL).config_form_section(ConfigLayer.PROJECT), ServiceType.SEND_EMAIL
 )
 
+# Owned by ImageRegistriesService.config_form_section; re-exported so the derived
+# SERVICE_CONFIG_SECTIONS picks it up by config_section_id.
+IMAGE_REGISTRIES_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.IMAGE_REGISTRIES).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.IMAGE_REGISTRIES,
+)
+
 # ---------------------------------------------------------------------------
 # Lookup for conditional sections keyed by service name
 # ---------------------------------------------------------------------------
@@ -388,6 +403,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
+        IMAGE_REGISTRIES_CONFIG_SECTION,
     )
 }
 
@@ -439,6 +455,10 @@ def _strip_removed_services_from_components(
     the YAML becomes inconsistent and the service-removal detection in
     ``cleanup_removed_services_from_yaml_change`` won't fire (it checks
     component-level usage).
+
+    Behalve een dienst die ``component_selection_follows_config`` declareert: daar
+    blijft de verwijzing staan, zodat een ``validate_project``-grendel hem nog ziet.
+    Zie features/image-registries.md, "De weg terug is geen stille weg".
     """
     project_services = set(_extract_services(project_data))
     for comp in project_data.get("components", []):
@@ -450,7 +470,21 @@ def _strip_removed_services_from_components(
         # Use the canonical helper: the previous local reader ignored the component
         # ``{reference: X, config: Y}`` two-key record and returned None for it, so a
         # storage/config-carrying entry was stripped out as "not a project service".
-        comp["services"] = [svc for svc in comp_services if service_entry_name(svc) in project_services]
+        comp["services"] = [
+            svc
+            for svc in comp_services
+            if service_entry_name(svc) in project_services or _selection_follows_config(service_entry_name(svc))
+        ]
+
+
+def _selection_follows_config(service_name: str | None) -> bool:
+    """Of deze dienst zijn componentvermelding zelf draagt (de waarde IS de selectie)."""
+    if service_name is None:
+        return False
+    try:
+        return get_service(ServiceType(service_name)).component_selection_follows_config
+    except ValueError:
+        return False
 
 
 # Wire the same component-reconciliation hook onto the create-wizard services
@@ -529,6 +563,12 @@ def _prefix_layout_children(items: list, prefix: str) -> list:
                     child_layout=child_layout,
                 )
             )
+        elif hasattr(item, "children"):
+            # Elke andere knoop die kinderen draagt, zoals de Div van een slot. Op TYPE
+            # afgaan liet die kinderen ongeprefixt achter, waardoor het veld in een modal
+            # in de wortel van het projectbestand ging zoeken in plaats van in dit
+            # component, en dus leeg bleef.
+            result.append(dataclasses.replace(item, children=_prefix_layout_children(list(item.children), prefix)))
         else:
             result.append(item)
     return result

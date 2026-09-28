@@ -21,6 +21,8 @@ from opi.core.cluster_config import (
     get_restricted_subdomain_domains,
     is_domain_subdomain_restricted,
 )
+from opi.forms.editables.generators import IssuerGenerator
+from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 
 # ---------------------------------------------------------------------------
 # Cluster config helpers
@@ -554,6 +556,178 @@ class TestDomainConfigEnforcerReceivesFullData:
             await enforcer.enforce(yaml_without_domains, {"project_name": "test-project"})
 
 
+class TestEnforcerAppliesReservedNamesPerDomain:
+    """De reserveringslijst hangt aan het domein, en dat weet alleen de enforcer."""
+
+    @staticmethod
+    def _yaml(base_domain: str, subdomain: str) -> dict:
+        return {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": base_domain,
+                    "subdomain": subdomain,
+                }
+            ],
+            "domains": {
+                "allowed-domains": [{"domain": base_domain, "status": "approved"}],
+                "allowed-subdomains": [
+                    {"domain": base_domain, "subdomains": [{"name": subdomain, "status": "approved"}]}
+                ],
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_tenant_domain_passes(self, monkeypatch):
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+        monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
+
+        yaml_data = self._yaml("uitbetrouwbarebron.nl", "test")
+        assert await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "ubbw-0i1"}) is yaml_data
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_platform_domain_is_refused_at_the_subdomain_field(self, monkeypatch):
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(self._yaml("rijks.app", "admin"), {"project_name": "test-project"})
+
+        assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 0)
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_blocks_instead_of_asking_for_approval(self, monkeypatch):
+        """De blokkade wint van de aanvraagwaarschuwing: 'admin' op rijks.app komt er niet door."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rijks.app",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_subzone_of_a_platform_domain_is_refused(self, monkeypatch):
+        """Valt om bij een controle op lidmaatschap in plaats van op suffix."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        with pytest.raises(FieldError):
+            await DomainConfigEnforcer().enforce(
+                self._yaml("team.rijks.app", "admin"), {"project_name": "test-project"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_the_cluster_postfix_zone_is_refused(self, monkeypatch):
+        """Valt om als de beheerlijst die zone niet noemt."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        with pytest.raises(FieldError):
+            await DomainConfigEnforcer().enforce(
+                self._yaml("rig.prd1.gn2.quattro.rijksapps.nl", "admin"), {"project_name": "test-project"}
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_the_cluster_default_is_refused(self, monkeypatch):
+        """Een leeg basisdomein IS de postfix-zone: dit levert admin.rig.prd1.gn2.quattro.rijksapps.nl op."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 0)
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_tenant_domain_under_the_postfix_parent_passes(self, monkeypatch):
+        """ug-zxt publiceert op ux-onderzoeken.rijksapps.nl: hun domein, hun namen."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer
+        from opi.services.persistence.subdomain_registry import SubdomainConnector
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+        monkeypatch.setattr(SubdomainConnector, "get_by_subdomain", AsyncMock(return_value=None))
+
+        yaml_data = self._yaml("ux-onderzoeken.rijksapps.nl", "admin")
+        assert await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "ug-zxt"}) is yaml_data
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_a_subzone_is_refused_before_the_approval_warning(self, monkeypatch):
+        """De stand waarin een eigen domein altijd begint: nog geen allowlist-entry."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "team.rijks.app",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert exc_info.value.field_path == domain_setting_path(DomainSetting.SUBDOMAIN, 0)
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+    @pytest.mark.asyncio
+    async def test_a_reserved_name_on_the_postfix_zone_is_refused_before_the_approval_warning(self, monkeypatch):
+        """Dezelfde ongekeurde stand op de clusterzone: ook die staat niet in supported_domains."""
+        from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldError
+
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "odcn-production"})())
+
+        yaml_data = {
+            "deployments": [
+                {
+                    "name": "productie",
+                    "domain-format": "subdomain",
+                    "base-domain": "rig.prd1.gn2.quattro.rijksapps.nl",
+                    "subdomain": "admin",
+                }
+            ],
+        }
+        with pytest.raises(FieldError) as exc_info:
+            await DomainConfigEnforcer().enforce(yaml_data, {"project_name": "test-project"})
+
+        assert str(exc_info.value) == "Subdomein 'admin' is niet beschikbaar"
+
+
 # ---------------------------------------------------------------------------
 # IssuerGenerator with custom domain config
 # ---------------------------------------------------------------------------
@@ -588,3 +762,24 @@ class TestIssuerGeneratorCustomDomain:
         gen = IssuerGenerator(deployment_index=0)
         result = gen.generate(yaml_data)
         assert result == "letsencrypt"
+
+
+class TestIssuerGeneratorWithoutABaseDomain:
+    """Zonder base-domain hoort er geen issuer uit te komen.
+
+    Valt die grendel weg, dan is het domein ook geen van de door het cluster aangeboden
+    domeinen, en schrijft de generator ``letsencrypt`` voor een adres dat er niet is.
+    """
+
+    def test_deployment_without_a_base_domain_gets_no_issuer(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+        assert IssuerGenerator(deployment_index=0).generate({"deployments": [{"name": "productie"}]}) is None
+
+    def test_an_empty_base_domain_gets_no_issuer(self, monkeypatch):
+        monkeypatch.setattr("opi.core.config.settings", type("S", (), {"CLUSTER_MANAGER": "local"})())
+
+        assert IssuerGenerator(deployment_index=0).generate({"deployments": [{"base-domain": ""}]}) is None
+
+    def test_an_index_past_the_deployment_list_gets_no_issuer(self):
+        assert IssuerGenerator(deployment_index=1).generate({"deployments": [{"base-domain": "rijks.app"}]}) is None

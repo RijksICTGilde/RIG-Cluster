@@ -27,7 +27,7 @@ from opi.services.catalog.base import (
 )
 from opi.services.catalog.events import on
 from opi.services.services import ServiceDefinition, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType, UIEvent
+from opi.services.services_enums import ServiceType, UIEvent
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -60,7 +60,6 @@ class AttachmentsService(Service):
         help_template="attachments/help.md",
         icon="paperclip",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
     )
     # Component-level config is a list of couplings; the project-level entry holds the
@@ -241,6 +240,22 @@ class AttachmentsService(Service):
             )
             self._config_section_cache = cached
         return cached
+
+    # --- regels over het hele project --------------------------------------------------
+
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """De twee bijlageregels: verwijst elke koppeling naar een bestaande
+        catalogusregel, en is elke koppeling zelf te leveren.
+
+        Beide leggen de catalogus (projectniveau) naast de koppelingen (componenten), dus
+        ``validate_config`` kan ze niet vellen. Draaien ook zonder dat dit project de
+        dienst aanvinkt: het gaat om waar een project naar WIJST. De functies zelf blijven
+        bij de wandelaars waar ze op leunen, in ``project_file_handler``.
+        """
+        # Lazy: die module leest via de dienstenlijst dit pakket.
+        from opi.handlers.project_file_handler import validate_attachment_couplings, validate_attachment_references
+
+        return [*validate_attachment_references(project_data), *validate_attachment_couplings(project_data)]
 
     @on(UIEvent.PROJECT_SECTIONS)
     def attachments_block(self, ctx: ProjectPageContext) -> list[DetailPageSection]:

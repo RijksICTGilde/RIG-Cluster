@@ -25,7 +25,8 @@ Per dienst: `name`, `description`, `configurable`, `targets`, `value_targets`,
 | veld | waarom je het nodig hebt om te kiezen |
 |---|---|
 | `kind` | `user` mag je zelf kiezen, `system` draait het platform altijd |
-| `binding` | vinkt een component dit aan (`component`) of de hele deployment (`deployment`) |
+| `selectable_per_component` | vinkt een component dit zelf aan, of beslist de projectkeuze dat |
+| `shared_per_deployment` | of één voorziening de hele deployment bedient: elk component dat hem afneemt krijgt dezelfde database, bucket of cache |
 | `hidden` | een variant die het platform zelf kiest; bied hem niet aan |
 | `requires` | wat er eerst moet staan, als yaml-paden |
 
@@ -33,8 +34,9 @@ Per dienst: `name`, `description`, `configurable`, `targets`, `value_targets`,
 
 Alles wat een client nodig heeft om de dienst toe te passen:
 
-1. **Wat het is** - naam, omschrijving, `kind`, `binding`, `hidden`, en `explanation`: de
-   volledige uitleg als markdown (zie `features/service-help-texts.md`).
+1. **Wat het is** - naam, omschrijving, `kind`, de twee selectievelden hierboven,
+   `hidden`, en `explanation`: de volledige uitleg als markdown (zie
+   `features/service-help-texts.md`).
 2. **Waar je het toepast** - `layers`, per laag met `yaml_path` (waar het blok in het
    projectbestand landt), `roles`, `config_endpoint`, `has_form` en `form_exempt_reason`.
    Ook de lagen die bewust geen formulier hebben: "hier kan het wel via de API maar
@@ -148,7 +150,8 @@ maar ook uit een script dat de regels niet kent. Drie dingen zijn daarvoor dicht
   `UniqueSchemaEnforcer` en keek alleen naar de deployments die er op dat moment waren,
   dus een postfix die vandaag past werd stil ongeldig zodra er een langere deploymentnaam
   bijkwam -- en dat bleek dan pas bij het uitrollen. `validate_database_schema_names`
-  draait hem nu in `validate_project_structure`, waar elke opslag langskomt, dus het
+  hangt nu aan de haak `validate_project` van de dienst en draait daarmee in
+  `validate_project_structure`, waar elke opslag langskomt, dus het
   toevoegen van die deployment wordt geweigerd met een melding die zowel de deployment als
   de postfix noemt. Een gemarkeerd schema telt niet mee: dat is op weg naar buiten.
 

@@ -1,18 +1,16 @@
-"""Test Age password decryption on a value in the ``base64+age:`` form the env files use.
+"""Toetsen op de opgeslagen wachtwoordvormen: base64+age, age en plain.
 
-Every decryption here is mocked (``@patch("subprocess.run")``), so what is measured is the
-parsing and the dispatch, not age itself. The encrypted value and the key are therefore test
-DATA, and they are made per run by ``age_keypair`` rather than pasted in.
-
-That is not cosmetic. Until the platform key rotation, this file carried the real production
-private key on one line, with a comment saying where it came from ("from security/key.txt"), and
-the copy of the configmap value it opened right above it. Three other test files carried a fixed
-key too, which is why nobody read past it. A test that needs a key now makes one.
+De sleutel en het versleutelde wachtwoord zijn test-DATA en worden per run gemaakt, niet in
+de boom gezet. Dat is niet cosmetisch: tot de rotatie van de platformsleutel droeg dit bestand
+de echte productie-private-sleutel op een regel, met een comment erbij waar hij vandaan kwam
+("from security/key.txt") en de kopie van de configmap-waarde die hij opent er vlak boven.
+Drie andere toetsbestanden droegen ook een vaste sleutel, en daardoor las niemand er nog langs.
+Een toets die een sleutel nodig heeft, maakt er een.
 """
 
 import base64
 import shutil
-from unittest.mock import patch
+from typing import TYPE_CHECKING
 
 import pytest
 from opi.utils.age import (
@@ -23,39 +21,45 @@ from opi.utils.age import (
     parse_password_with_prefix,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 pytestmark = pytest.mark.skipif(
     shutil.which("age") is None or shutil.which("age-keygen") is None,
-    reason="requires the age and age-keygen binaries to mint the throwaway keypair",
+    reason="het wegwerpsleutelpaar komt van age-keygen en versleutelen loopt nog via het age-binary",
 )
 
+WACHTWOORD = "een-wegwerpwachtwoord"
+
 
 @pytest.fixture
-def age_block(age_keypair: tuple[str, str]) -> str:
-    """An armored AGE block, encrypted for the throwaway key of this run."""
+def prive_sleutel(age_keypair: tuple[str, str]) -> str:
+    private_key, _public_key = age_keypair
+    return private_key
+
+
+@pytest.fixture
+def andere_prive_sleutel(make_age_keypair: Callable[[], tuple[str, str]]) -> str:
+    """Een tweede paar, zodat de sleutel die het wachtwoord NIET opent ook uit age-keygen komt."""
+    private_key, _public_key = make_age_keypair()
+    return private_key
+
+
+@pytest.fixture
+def versleuteld_wachtwoord(age_keypair: tuple[str, str]) -> str:
+    """Het wachtwoord in de vorm waarin de configmap hem draagt: base64 over een age-blok."""
     _private_key, public_key = age_keypair
-    return encrypt_age_content_sync("github_pat_12345", public_key)
-
-
-@pytest.fixture
-def base64_age_password(age_block: str) -> str:
-    """That same block in the single-line form an env file or a configmap holds."""
-    return f"base64+age:{base64.b64encode(age_block.encode()).decode()}"
-
-
-@pytest.fixture
-def private_key(age_keypair: tuple[str, str]) -> str:
-    return age_keypair[0]
+    blok = encrypt_age_content_sync(WACHTWOORD, public_key)
+    return f"base64+age:{base64.b64encode(blok.encode()).decode()}"
 
 
 class TestAgePasswordDecryption:
-    """Test Age encryption/decryption functionality on a real ``base64+age:`` value."""
-
-    def test_parse_password_with_prefix(self, base64_age_password: str) -> None:
+    def test_parse_password_with_prefix(self, versleuteld_wachtwoord: str) -> None:
         """Test password prefix parsing."""
-        # Test base64+age prefix: the content is everything after the prefix, untouched.
-        password_type, content = parse_password_with_prefix(base64_age_password)
+        # Test base64+age prefix
+        password_type, content = parse_password_with_prefix(versleuteld_wachtwoord)
         assert password_type == "base64+age"
-        assert content == base64_age_password[len("base64+age:") :]
+        assert content == versleuteld_wachtwoord.removeprefix("base64+age:")
 
         # Test plain prefix
         plain_type, plain_content = parse_password_with_prefix("plain:test123")
@@ -79,72 +83,43 @@ class TestAgePasswordDecryption:
         password_type, _content = parse_password_with_prefix("age:")
         assert password_type == "plain", "age: with no content is not valid encrypted data, should be treated as plain"
 
-    def test_is_age_encrypted(self, base64_age_password: str) -> None:
+    def test_is_age_encrypted(self, versleuteld_wachtwoord: str) -> None:
         """Test Age encryption detection."""
         # Decode base64 to get actual Age content
-        base64_content = base64_age_password[len("base64+age:") :]
-        age_content = base64.b64decode(base64_content).decode("utf-8")
+        age_content = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
 
         assert is_age_encrypted(age_content) is True
         assert is_age_encrypted("plain text") is False
         assert is_age_encrypted("") is False
 
-    @patch("subprocess.run")
-    def test_decrypt_password_smart_sync_base64_age(
-        self, mock_subprocess: patch, base64_age_password: str, private_key: str
-    ) -> None:
-        """Test decryption of a base64+age password as it appears in a configmap."""
-        # Mock successful age decryption
-        mock_subprocess.return_value.returncode = 0
-        mock_subprocess.return_value.stdout = "decrypted_password_123"
-        mock_subprocess.return_value.stderr = ""
+    def test_decrypt_password_smart_sync_base64_age(self, prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
+        """Test decryption of a base64+age password in the configmap format."""
+        assert decrypt_password_smart_sync(versleuteld_wachtwoord, prive_sleutel) == WACHTWOORD
 
-        # Test decryption
-        result = decrypt_password_smart_sync(base64_age_password, private_key)
-
-        # Verify subprocess was called with age command
-        assert mock_subprocess.called
-        call_args = mock_subprocess.call_args[0][0]
-        assert call_args[0] == "age"
-        assert "-d" in call_args
-        assert "-i" in call_args
-
-        # Verify result
-        assert result == "decrypted_password_123"
-
-    @patch("subprocess.run")
-    def test_decrypt_password_smart_sync_failure(
-        self, mock_subprocess: patch, base64_age_password: str, private_key: str
-    ) -> None:
+    def test_decrypt_password_smart_sync_failure(self, andere_prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
         """Test handling of decryption failure."""
-        # Mock failed age decryption
-        mock_subprocess.return_value.returncode = 1
-        mock_subprocess.return_value.stdout = ""
-        mock_subprocess.return_value.stderr = "age: error: decryption failed"
-
         # API now raises ValueError on decryption failure
         with pytest.raises(ValueError, match="Failed to decrypt"):
-            decrypt_password_smart_sync(base64_age_password, private_key)
+            decrypt_password_smart_sync(versleuteld_wachtwoord, andere_prive_sleutel)
 
-    def test_decrypt_password_smart_sync_no_key(self, base64_age_password: str) -> None:
+    def test_decrypt_password_smart_sync_no_key(self, versleuteld_wachtwoord: str) -> None:
         """Test behavior when no private key is provided."""
         # API now raises ValueError when no key is available
         with pytest.raises(ValueError, match="no private key available"):
-            decrypt_password_smart_sync(base64_age_password, None)
+            decrypt_password_smart_sync(versleuteld_wachtwoord, None)
 
-    def test_decrypt_password_smart_sync_plain_text(self, private_key: str) -> None:
+    def test_decrypt_password_smart_sync_plain_text(self, prive_sleutel: str) -> None:
         """Test handling of plain text passwords."""
         plain_password = "plain:simple_password"
-        result = decrypt_password_smart_sync(plain_password, private_key)
+        result = decrypt_password_smart_sync(plain_password, prive_sleutel)
 
         # Should return the content without prefix
         assert result == "simple_password"
 
-    def test_the_value_really_opens_with_the_key_of_this_run(self, base64_age_password: str, private_key: str) -> None:
-        """One unmocked round, so the mocked tests above are not sitting on broken test data.
+    def test_configmap_password_integration(self, prive_sleutel: str, versleuteld_wachtwoord: str) -> None:
+        """De base64+age-vorm uit de configmap en het armored blok erin openen hetzelfde."""
+        result = decrypt_password_smart_sync(versleuteld_wachtwoord, prive_sleutel)
+        armored = base64.b64decode(versleuteld_wachtwoord.removeprefix("base64+age:")).decode("utf-8")
 
-        Without this, a fixture that produced a value the key cannot open would leave every
-        other test in this file green, because they all mock the decryption away.
-        """
-        block = base64.b64decode(base64_age_password[len("base64+age:") :]).decode()
-        assert decrypt_age_content_sync(block, private_key) == "github_pat_12345"
+        assert is_age_encrypted(armored)
+        assert decrypt_age_content_sync(armored, prive_sleutel) == result

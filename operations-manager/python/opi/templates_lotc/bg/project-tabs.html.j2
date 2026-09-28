@@ -792,13 +792,13 @@
                 <c-auto-grid min="280px" gap="md">
                     {% for service in project.services %}
                         {% set service_def = ServiceAdapter.get_service_definition(service.enum) %}
-                        {# service_binding_label en service_config_hint zijn FUNCTIES op de
+                        {# service_selection_labels en service_config_hint zijn FUNCTIES op de
                            echte route, maar de proefopstelling (/lotc/bg/project-tabs,
                            opi/web/lotc_fixtures.py) geeft er lege dicts voor door. Ze
                            zonder meer aanroepen laat die pagina met een 500 omvallen, en
                            dat is precies de pagina waarop deze secties gescreenshot
                            worden. Vandaar de callable-toets. #}
-                        {% set binding_label = service_binding_label(service.enum) if service_binding_label is callable else '' %}
+                        {% set selection_labels = service_selection_labels(service.enum) if service_selection_labels is callable else [] %}
                         {% set config_hint = service_config_hint(service.enum) if service_config_hint is callable else '' %}
                         <c-card outline padding="md">
                             <c-stack gap="sm">
@@ -812,8 +812,12 @@
                                     <c-icon icon="{{ service_def.icon | nldd_icon }}" color="{{ service_def.color }}" size="lg" />
                                     <c-heading type="h3" size="5" label="{{ service_def.name }}" />
                                 </c-cluster>
-                                {% if binding_label %}
-                                    <c-chip>{{ binding_label }}</c-chip>
+                                {% if selection_labels %}
+                                    <c-cluster gap="xs" align="center">
+                                        {% for label in selection_labels %}
+                                            <c-chip>{{ label }}</c-chip>
+                                        {% endfor %}
+                                    </c-cluster>
                                 {% endif %}
                                 <c-paragraph size="sm">{{ service_def.description }}</c-paragraph>
                                 {% if config_hint %}

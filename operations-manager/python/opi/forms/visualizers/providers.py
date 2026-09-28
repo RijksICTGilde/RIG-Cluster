@@ -12,7 +12,15 @@ from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.forms.editables.service_path import smart_get_value
+from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
+from opi.services.catalog.postgresql_database.connection_limit import (
+    CONNECTION_LIMIT,
+    CONNECTION_LIMIT_STEPS,
+    project_connection_limit,
+)
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
@@ -158,20 +166,14 @@ class ServiceOptionsProvider:
     services that can be enabled for projects.
     """
 
-    def __init__(
-        self,
-        include_empty: bool = False,
-        filter_binding: str | None = None,
-    ) -> None:
+    def __init__(self, include_empty: bool = False) -> None:
         """
         Initialize the service options provider.
 
         Args:
             include_empty: Whether to include an empty "select" option
-            filter_binding: Filter services by binding ("component" or "deployment")
         """
         self.include_empty = include_empty
-        self.filter_binding = filter_binding
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get available service options from ServiceAdapter definitions."""
@@ -202,18 +204,12 @@ class ServiceOptionsProvider:
             if not get_service(service_type).available_on_cluster(settings.CLUSTER_MANAGER):
                 continue
 
-            # Filter by binding if specified (filter_binding is the plain string value)
-            if self.filter_binding and definition.binding.value != self.filter_binding:
-                continue
-
             option: dict[str, Any] = {
                 "value": service_type.value,
                 "label": definition.name,
                 "description": definition.description,
                 "icon": definition.icon,
                 "color": definition.color,
-                # .value so the view/JS gets "component", not "ServiceBinding.COMPONENT".
-                "binding": definition.binding.value,
             }
 
             if definition.requires:
@@ -458,17 +454,58 @@ class StorageSizeOptionsProvider:
         return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
 
 
+class ConnectionLimitOptionsProvider:
+    """The connection-limit steps, plus the stored value when it is not one of them.
+    The empty choice stores nothing."""
+
+    options_source: ClassVar[OptionsSource | None] = None
+
+    def __init__(self, current_value: str | None = None, yaml_data: dict[str, Any] | None = None) -> None:
+        self.current_value = current_value
+        self.yaml_data = yaml_data or {}
+
+    def empty_label(self) -> str:
+        return f"Standaard van het platform ({CONNECTION_LIMIT.default})"
+
+    def get_options(self) -> list[dict[str, Any]]:
+        steps = list(CONNECTION_LIMIT_STEPS)
+        custom = int(self.current_value) if self.current_value and self.current_value.isdigit() else None
+        if custom is not None and custom not in steps:
+            steps = sorted([*steps, custom])
+        options = [{"value": "", "label": self.empty_label()}]
+        for step in steps:
+            label = str(step) if step in CONNECTION_LIMIT_STEPS else f"{step} (eigen waarde)"
+            options.append({"value": str(step), "label": label})
+        return options
+
+
+class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
+    """The same list on a deployment, where the empty choice follows the project."""
+
+    def empty_label(self) -> str:
+        return f"Volg het project ({project_connection_limit(self.yaml_data)})"
+
+
 class KeycloakTemplateOptionsProvider:
     """The two realm blueprints, named after what a user gets rather than after the file.
 
-    The difference is who can log in, and the blueprints say it plainly:
-    ``sso-only`` sets ``registrationAllowed`` and ``loginWithEmailAllowed`` to false, so
-    SSO Rijk is the only way in; ``sso-support`` sets both to true and adds
-    ``resetPasswordAllowed``, so local Keycloak accounts exist alongside it.
+    What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
+    browser flow at "External IDP Redirector", so whoever opens the application travels
+    straight on to SSO Rijk and never sees a screen of Keycloak's own. ``sso-support`` keeps
+    the standard browser flow, so Keycloak asks the question: continue with SSO Rijk, or sign
+    in with a local account of this realm.
 
-    The old labels did not say that. "SSO met ondersteuning voor applicatie-specifieke
-    configuratie" describes something else entirely, and someone picking it had no way
-    to know they were also turning on local accounts.
+    The labels used to promise something else. They said ``sso-support`` turned on local
+    accounts by setting ``registrationAllowed`` / ``loginWithEmailAllowed`` /
+    ``resetPasswordAllowed``, and that has not been true since RC-159: BOTH blueprints keep
+    those three off (``sso-support.yaml`` says so itself, in a comment that also parks the
+    question of whether they should be turned on). Local accounts do exist under
+    ``sso-support`` -- OPI's invite flow creates them -- there is simply no self-registration
+    and no password reset next to it.
+
+    A user of ``sso-only`` never reaches a screen where a local account could be typed in, so
+    that is the one that really excludes them. ``InviteAuthMethodOptionsProvider`` reads the
+    same difference for the invite auth methods.
     """
 
     # De lijst ligt vast: elk project krijgt deze keuzes.
@@ -480,12 +517,19 @@ class KeycloakTemplateOptionsProvider:
             {
                 "value": "sso-only",
                 "label": "Alleen SSO Rijk",
-                "description": "Inloggen kan uitsluitend via SSO Rijk. Geen lokale accounts, geen gebruikersbeheer.",
+                "description": (
+                    "Wie de applicatie opent gaat meteen door naar SSO Rijk. Keycloak toont geen eigen "
+                    "inlogscherm, dus een lokaal account is geen weg naar binnen."
+                ),
             },
             {
                 "value": "sso-support",
-                "label": "SSO Rijk en lokale Keycloak-accounts",
-                "description": "Naast SSO Rijk kunnen er accounts in het Keycloak-realm van dit project bestaan.",
+                "label": "SSO Rijk of een lokaal account",
+                "description": (
+                    "Het inlogscherm van Keycloak laat de keuze: doorgaan met SSO Rijk, of inloggen met een "
+                    "lokaal account uit het realm van dit project. Lokale accounts maak je met uitnodigingen; "
+                    "aanmelden kan niemand zichzelf."
+                ),
             },
         ]
 
@@ -515,18 +559,14 @@ class BaseDomainOptionsProvider:
 
 
 class ClusterBaseDomainOptionsProvider:
-    """Provides base domain options based on the selected cluster.
-
-    Reads supported nice-URL domains from CLUSTER_CONFIG. When no cluster
-    is specified, returns all known domains across all clusters.
-    """
+    """Provides the base domain options the selected cluster offers, from CLUSTER_CONFIG."""
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
-            "De domeinen die het cluster van deze deployment aanbiedt (nice_url in de "
-            "clusterconfiguratie). Leeg betekent het standaarddomein van het cluster. Dit is "
-            "geen gesloten verzameling: een eigen domein zet je door de domeinnaam zelf in dit "
-            "veld te schrijven, en 'custom-domain-certificates' in hetzelfde antwoord zegt of "
+            "De domeinen die het cluster van deze deployment aanbiedt. Leeg betekent het "
+            "standaarddomein van het cluster. Dit is geen gesloten verzameling: een eigen "
+            "domein zet je door de domeinnaam zelf in dit veld te schrijven, en "
+            "'custom-domain-certificates' in hetzelfde antwoord zegt of "
             "dit cluster daar een certificaat voor kan uitgeven. Een adres op een eigen domein "
             "is de combinatie met een subdomein-format plus 'subdomain' (mijn.domein.nl = "
             "base-domain 'domein.nl' + subdomain 'mijn'); alleen het kale domein zelf gaat via "
@@ -556,7 +596,7 @@ class ClusterBaseDomainOptionsProvider:
             default_label = f"Cluster standaard ({postfix.lstrip('.')})" if postfix else "Cluster standaard"
             options: list[dict[str, Any]] = [{"value": "", "label": default_label}]
 
-            raw = CLUSTER_CONFIG[cluster].get("nice_url", {}).get("supported_domains", [])
+            raw = CLUSTER_CONFIG[cluster].get("domains", {}).get("supported_domains", [])
             domains = [_extract_domain(d) for d in raw]
             options.extend({"value": d, "label": d} for d in domains)
             options.append({"value": CUSTOM_DOMAIN_SENTINEL, "label": "Eigen domein..."})
@@ -582,9 +622,15 @@ class FilteredServiceOptionsProvider:
 
     def get_options(self) -> list[dict[str, Any]]:
         """Get service options filtered to project-enabled services."""
+        # Lazy: de registry laadt de dienstencatalogus, en die leest ``opi.forms`` en daarmee
+        # deze module.
+        from opi.services.registry import get_service
+
         options: list[dict[str, Any]] = []
         for service_type in ServiceType:
             if service_type.value not in self.project_services:
+                continue
+            if not offers_component_checkbox(get_service(service_type)):
                 continue
             definition = ServiceAdapter.get_service_definition(service_type)
             options.append(
@@ -1149,6 +1195,102 @@ class WakerComponentOptionsProvider:
             if name:
                 options.append({"value": name, "label": name})
         return options
+
+
+#: De niet-waarde bij een component: niets in het bestand.
+AUTOMATIC_REGISTRY_LABEL = "Automatisch: je eigen registry als de image eronder valt, anders publiek"
+
+#: Dezelfde niet-waarde bij een DEPLOYMENT-component, waar leeg iets anders betekent:
+#: niet "automatisch" maar "wat het component zelf koos".
+INHERIT_REGISTRY_LABEL = "Zoals het component (geen afwijking)"
+
+
+class ImageRegistryOptionsProvider:
+    """De registries die dit project zelf heeft opgegeven, om er bij een component naar te verwijzen.
+
+    Via ``smart_get_value``, want in de wizard staat de config onder de virtuele
+    ``_services-config``-root. Een opgeslagen waarde die niet meer bestaat blijft als
+    gemarkeerde optie staan, anders valt de volgende opslag terug op de eerste optie.
+
+    Een lege lijst laat het veld verdwijnen (``hidden_without_options``).
+    """
+
+    options_source: ClassVar[OptionsSource | None] = OptionsSource(
+        description="De registries uit de projectconfig van de dienst image-registries.",
+        endpoint="GET /api/v2/projects/{project_name}/services/image-registries/config",
+        path="[target=project].config.registries[].name",
+    )
+
+    def __init__(
+        self,
+        yaml_data: dict[str, Any] | None = None,
+        row_data: dict[str, Any] | None = None,
+        yaml_path: str | None = None,
+        current_value: Any = None,
+    ) -> None:
+        self._yaml_data = yaml_data or {}
+        self._row_data = row_data or {}
+        self._yaml_path = yaml_path
+        self._current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        registries = (
+            smart_get_value(
+                self._yaml_data,
+                config_path(ConfigLayer.PROJECT, ServiceType.IMAGE_REGISTRIES, "config", "registries"),
+            )
+            or []
+        )
+        entries = [r for r in registries if isinstance(r, dict) and r.get("name")]
+
+        # Vooruit invullen zodra de image-prefix bij precies EEN registry past; passen er
+        # twee, dan is de keuze juist het punt.
+        image = self._component_image()
+        if image:
+            normalized = normalize_image(image)
+            passend = [
+                entry
+                for entry in entries
+                if (prefix := normalize_prefix(str(entry.get("upstream", ""))))
+                and (normalized == prefix or normalized.startswith(prefix + "/"))
+            ]
+            if len(passend) == 1:
+                entries = [passend[0], *(e for e in entries if e is not passend[0])]
+
+        # Het LABEL op het scherm, de slug als waarde: de afnemer noemde hem "Code
+        # Overheid" en hoort dat terug te zien, ook al verwijst het bestand met de slug.
+        labels = {entry["name"]: str(entry.get("display-name") or entry["name"]) for entry in entries}
+        names = [entry["name"] for entry in entries]
+        if not names and not self._current_value:
+            return []
+
+        options = [{"value": "", "label": self._empty_label()}]
+        options.extend({"value": name, "label": labels[name]} for name in names)
+        if self._current_value and self._current_value not in names:
+            options.append({"value": self._current_value, "label": f"{self._current_value} (bestaat niet meer)"})
+        return options
+
+    def _empty_label(self) -> str:
+        """Wat "niets gekozen" op deze laag betekent, afgeleid uit het gerenderde pad."""
+        return INHERIT_REGISTRY_LABEL if (self._yaml_path or "").startswith("deployments") else AUTOMATIC_REGISTRY_LABEL
+
+    def _component_image(self) -> str:
+        """De image van het component waar dit veld bij staat, of "".
+
+        Uit ``row_data``, anders via de index in ``yaml_path``.
+        """
+        image = self._row_data.get("image")
+        if isinstance(image, str) and image:
+            return image
+        match = re.search(r"components\[(\d+)\]", self._yaml_path or "")
+        if not match:
+            return ""
+        components = self._yaml_data.get("components") or []
+        index = int(match.group(1))
+        if index >= len(components) or not isinstance(components[index], dict):
+            return ""
+        found = components[index].get("image")
+        return found if isinstance(found, str) else ""
 
 
 def _cross_domain_peer_side(yaml_path: str | None) -> str:
@@ -1719,8 +1861,9 @@ class InviteAuthMethodOptionsProvider:
     computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
     template, and the two blueprints differ exactly here:
 
-    * ``sso-only``    -- registrationAllowed / loginWithEmailAllowed false: SSO only
-    * ``sso-support`` -- both true: SSO and local accounts
+    * ``sso-only``    -- the browser flow redirects straight to SSO Rijk, so there is no
+      screen on which a local account could ever be typed in;
+    * ``sso-support`` -- Keycloak's own login screen, which offers both.
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
@@ -1889,8 +2032,16 @@ class InviteApplicationUrlOptionsProvider:
                 label = f"{label} ({entry.get('path') or '/'})"
             options.append({"value": entry["url"], "label": label})
 
-        if self.current_value and self.current_value not in seen:
-            options.append({"value": self.current_value, "label": f"{self.current_value} (niet meer afleidbaar)"})
+        # Alleen een ADRES kan hier nog bij. De opgeslagen waarde is sinds RC-136 de KEUZE
+        # ("frontend:production"), en het formulier geeft de RAUWE opslag als huidige waarde
+        # door: die kwam zo als "frontend:production (niet meer afleidbaar)" in de lijst
+        # terecht -- een regel die niets betekent en die je ook nog kon kiezen. Een keuze die
+        # nog wel oplost staat sowieso al in de lijst hierboven; een die dat niet meer doet
+        # heeft geen adres om te tonen, en dan is "geen knop" het eerlijke antwoord, want dat
+        # is ook precies wat de succespagina doet.
+        huidig = self.current_value if isinstance(self.current_value, str) else None
+        if huidig and huidig.startswith(("http://", "https://")) and huidig not in seen:
+            options.append({"value": huidig, "label": f"{huidig} (niet meer afleidbaar)"})
         return options
 
 
@@ -1905,6 +2056,8 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
+    "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
+    "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
@@ -1934,6 +2087,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "SleepAfterDeployOptionsProvider": SleepAfterDeployOptionsProvider,
     "SleepAfterWakeOptionsProvider": SleepAfterWakeOptionsProvider,
     "WakerComponentOptionsProvider": WakerComponentOptionsProvider,
+    "ImageRegistryOptionsProvider": ImageRegistryOptionsProvider,
     "HealthCheckSchemeOptionsProvider": HealthCheckSchemeOptionsProvider,
     "InviteLanguageOptionsProvider": InviteLanguageOptionsProvider,
     "InviteAuthMethodOptionsProvider": InviteAuthMethodOptionsProvider,

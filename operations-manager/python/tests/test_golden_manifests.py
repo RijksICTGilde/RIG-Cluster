@@ -72,6 +72,9 @@ def _deployment_vars(**overrides: object) -> dict[str, object]:
         "pod_replacement_mode": "RollingUpdate",
         "imageURL": "ghcr.io/org/web:1.2.3",
         "imagePullPolicy": "IfNotPresent",
+        # De eigen serviceaccount van het project (RC-177), zoals de echte variables-dict
+        # hem ook zet.
+        "service_account_name": "myproject-sa",
         "application_port": 8080,
         "service_port": 8080,
         "inbound_ports": [8080],

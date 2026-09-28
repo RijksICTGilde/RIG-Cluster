@@ -32,7 +32,7 @@ from pydantic import ValidationError
 
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
-from opi.services.services import ServiceDefinition
+from opi.services.services import ServiceDefinition, service_entry_name
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from opi.forms.visualizers.visualizer import EditableVisualizer
     from opi.services.catalog.actions import ServiceAction
     from opi.services.catalog.approval import ApprovalSpec
+    from opi.services.catalog.config_settings import ConfigSetting
     from opi.services.services_enums import ActionEvent, ManagerKey, ServiceEvent, ServiceType, UIEvent
     from opi.utils.secrets import BaseSecret
 
@@ -173,6 +174,8 @@ class ProvisionContext:
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
+    # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
+    clone_interrupted: bool = False
 
 
 @dataclass
@@ -305,6 +308,9 @@ class SecretFileSpec:
     #: application a second time right after it came back up -- while nothing the
     #: application reads had changed at all.
     include_in_config_hash: bool = True
+    #: When True, a value already in this secret's previous ciphertext wins over the one
+    #: in ``secret_pairs``, which is then only the value for the first write.
+    keep_existing_values: bool = False
 
 
 @dataclass
@@ -342,6 +348,14 @@ class ManifestContribution:
     sidecars: list[str] = field(default_factory=list)
     #: SOPS secret manifests this service needs written (RC-5 Phase 6c).
     secret_files: list[SecretFileSpec] = field(default_factory=list)
+    #: Read-only file mounts from a Secret this service owns, as
+    #: ``{name, secret_name, mount_path, sub_path}`` (RC-167). **Additive**: the loop
+    #: appends them to the ``attachment_secret_mounts`` template var, which is the one
+    #: existing way from a Secret through a volume to a ``volumeMount`` in
+    #: ``manifests/deployment.yaml.jinja``. Reusing it rather than adding a second
+    #: channel is the point; a ``template_vars`` entry would not do, because that is an
+    #: override and would drop the component's own attachment mounts.
+    secret_mounts: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -636,6 +650,37 @@ class DeploymentManifestSpec:
     values: dict[str, Any]
 
 
+@dataclass
+class ProjectManifestContext:
+    """Inputs a service needs to contribute PROJECT-wide manifests.
+
+    These land in ``<cluster>/<project>/_project/``, which has its own kustomization and
+    ArgoCD application and holds what is scoped to the namespace rather than to one
+    deployment. Unlike ``DeploymentManifestContext`` this runs once per project.
+    """
+
+    project_name: str
+    project_data: dict[str, Any]
+    cluster: str
+    namespace: str
+
+
+@dataclass
+class ProjectManifestSpec:
+    """One project-wide manifest a service asks the generic emitter to write.
+
+    Same shape as ``DeploymentManifestSpec``, one level up.
+    """
+
+    #: Basename without ``.yaml``. Must start with ``f"{service_type.value}-"``.
+    filename: str
+    #: Template path resolvable relative to the ``manifests/`` directory.
+    template_path: str
+    values: dict[str, Any]
+    #: Whether the rendered file must be SOPS-encrypted before it is committed.
+    encrypt: bool = False
+
+
 class Service(ABC):
     """One subclass per ``ServiceType``; the single declarative home for a service.
 
@@ -697,6 +742,11 @@ class Service(ABC):
     #: per-component form; lower shows first. A static ordering for now -- a
     #: user-facing priority is a deferred future refinement.
     config_component_order: ClassVar[int] = 100
+
+    #: Whether the CONFIG of this service at the component layer is at the same time its
+    #: SELECTION, so there is no separate on/off for it on a component. What follows from
+    #: it, and when to declare it: ``instructions/services.md``.
+    component_selection_follows_config: ClassVar[bool] = False
 
     #: Layers where this service carries config but deliberately offers no form, mapped
     #: to the reason. Clone state OPI writes itself is the obvious case; so is a layer
@@ -772,14 +822,6 @@ class Service(ABC):
     #: also fire for their namespace variant (mirroring the provisioning grouping), so
     #: exactly one provider contributes per manager.
     manifest_activated_by: ClassVar[tuple[ServiceType, ...]] = ()
-    #: Where the selection that switches the per-component contribution on is read.
-    #: False (the default): the component's own ``services`` list, so each component
-    #: decides. True: the PROJECT's list, so every component of every deployment gets
-    #: the contribution. That is what ``ServiceBinding.DEPLOYMENT`` means for a service
-    #: that hands each pod the same thing and has no per-component choice to make
-    #: (vlam: one address, one egress rule) -- without it such a service could never
-    #: contribute at all, because no component ever ticks it.
-    manifest_activated_by_project: ClassVar[bool] = False
 
     #: This service's event handlers, event -> ``(method name, order)`` in ``@on(...,
     #: order=)`` order (RC-39). Derived from the decorated methods of the class (mixins
@@ -929,6 +971,42 @@ class Service(ABC):
         """The DATA editables this service contributes at ``layer`` (default none)."""
         return []
 
+    def config_settings(self) -> tuple[ConfigSetting, ...]:
+        """The config fields a project may set, each with the room this service allows.
+
+        A bound on a user-settable field is a platform decision, so it belongs to the
+        service and not to whoever writes the project file. Declaring it here puts it in
+        ONE place: the merge (``resolve_setting``), the project-file validation and the
+        wizard field all read this, instead of a ``le=`` in the model, a number in a
+        connector and a dropdown each carrying their own copy.
+
+        The default is no settings at all, which is exactly the behaviour a service had
+        before this hook existed: nothing declared means nothing extra is checked and
+        nothing extra is settable.
+        See ``opi/services/catalog/config_settings.py`` for the three kinds of bound.
+        """
+        return ()
+
+    def config_setting(self, path: str) -> ConfigSetting:
+        """The declaration for one field, or a refusal.
+
+        What a service does not declare is not settable -- there is no "it happens to be
+        in the model, so you can set it". A caller that asks for the room of an
+        undeclared field gets told it has none, rather than a silent None it can read
+        past.
+
+        Raises:
+            SettingError: if this service does not open ``path`` up at all.
+        """
+        # Imported here and not at module scope: config_settings imports ConfigLayer and
+        # config_path from this module, so the runtime dependency only goes one way.
+        from opi.services.catalog.config_settings import SettingError
+
+        for setting in self.config_settings():
+            if setting.path == path:
+                return setting
+        raise SettingError(f"Dienst '{self.service_type.value}' heeft geen instelbaar veld '{path}'.")
+
     def config_form_section(self, layer: ConfigLayer) -> FormSection | None:
         """The wizard/edit config section this service contributes at ``layer``, or None.
 
@@ -1037,9 +1115,10 @@ class Service(ABC):
         """The layers at which this service carries config, measured from its own hooks.
 
         A layer counts when the service declares editables for it, accepts API fields
-        for it, hooks layout nodes into that layer's form, or carries a DEFINE-side
-        payload there. Derived rather than declared, so it cannot drift from the
-        implementation -- the same trick ``registry.provisioning_services()`` uses.
+        for it, hooks layout nodes into that layer's form, opens a config setting up on
+        it, or carries a DEFINE-side payload there. Derived rather than declared, so it
+        cannot drift from the implementation -- the same trick
+        ``registry.provisioning_services()`` uses.
         """
         layers = []
         for layer in ConfigLayer:
@@ -1053,7 +1132,8 @@ class Service(ABC):
                 if layer is ConfigLayer.DEPLOYMENT_COMPONENT
                 else False
             )
-            if self.config_editables(layer) or self.config_api_fields(layer) or has_layout:
+            has_setting = any(setting.allows(layer) for setting in self.config_settings())
+            if self.config_editables(layer) or self.config_api_fields(layer) or has_layout or has_setting:
                 layers.append(layer)
         return layers
 
@@ -1504,6 +1584,27 @@ class Service(ABC):
         """
         return []
 
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """This service's rules on a WHOLE project, as messages (default none).
+
+        For a rule ``validate_config`` cannot judge from one block (the other deployments,
+        the other projects on the cluster, the cluster config). ``validate_project_structure``
+        refuses the write on any message, so this runs on every save, reprocess and replay.
+
+        Called for EVERY project, not only for projects that declare this service: a rule
+        about what a project may point AT would otherwise be dodged by leaving the service
+        out. Return [] when the service has nothing to say.
+        """
+        return []
+
+    def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
+        """Project-wide manifests this service contributes (default none).
+
+        The sibling of ``contribute_deployment_manifests`` one level up: resources that
+        belong to the whole project in its namespace rather than to one deployment.
+        """
+        return []
+
     def contribute_deployment_manifests(self, ctx: DeploymentManifestContext) -> list[DeploymentManifestSpec]:
         """Deployment-wide manifests this service contributes (RC-15, default none).
 
@@ -1514,3 +1615,34 @@ class Service(ABC):
         service-manifest prune both skip it.
         """
         return []
+
+    def components_using_service(self, ctx: DeploymentManifestContext) -> list[str]:
+        """The names of this deployment's components that ticked this service, sorted.
+
+        Read from the project's component definitions (that is where a component's
+        ``services`` list lives), restricted to the components this deployment actually
+        rolls out.
+        """
+        local: set[str] = {
+            component.get("reference")
+            for component in ctx.deployment.get("components", []) or []
+            if isinstance(component, dict) and component.get("reference")
+        }
+        using: set[str] = set()
+        for component in ctx.project_data.get("components", []) or []:
+            name = component.get("name")
+            if name not in local:
+                continue
+            names = [service_entry_name(entry) for entry in component.get("services", []) or []]
+            if self.service_type.value in names:
+                using.add(name)
+        return sorted(using)
+
+
+def offers_component_checkbox(service: Service) -> bool:
+    """Whether a component ticks this service on and off in the per-component picker.
+
+    The one place where the two declarations that take the checkbox away meet; they stay
+    separate because their consequences elsewhere differ (``instructions/services.md``).
+    """
+    return service.definition.selectable_per_component and not service.component_selection_follows_config

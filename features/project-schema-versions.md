@@ -63,6 +63,16 @@ sleutel, wat nodig is als de nieuwere versie een vorm versmalde in plaats van he
 (zie `v2.1.json`, dat `"type": null` gebruikt om de array-only-eis van 2.2 los te maken voordat
 hij hem verbreedt).
 
+## De stamp volgt de versie, niet de wijziging
+
+`migrate_to_latest` zet `schema-version` op de nieuwste versie zodra het bestand een oudere
+versie draagt, ook als elke stap in de keten niets te doen had. De stamp zegt "dit bestand
+voldoet aan versie X", niet "er is iets veranderd", en na de keten voldoet het bestand aan de
+nieuwste versie. Vroeger werd hij alleen opgehoogd als een stap echt iets wijzigde; een
+project zonder root-`registries` bleef zo op 2.7 staan, terwijl de 2.8- en 2.9-stap er al
+overheen waren gegaan. Een ophoging telt als `was_migrated`, dus het bestand wordt bij die verwerking ook
+teruggeschreven.
+
 ## Een migratie toevoegen
 
 1. Voeg de migratiestap toe aan `MIGRATION_STEPS` in `opi/services/schema_migration.py` en de

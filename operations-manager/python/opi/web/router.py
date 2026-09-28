@@ -15,12 +15,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
+from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
 from opi.services.component_values import decode as decode_component_values
-from opi.services.config_location import binding_label, project_step_config_hint
+from opi.services.config_location import project_step_config_hint, selection_labels
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
@@ -342,8 +343,11 @@ async def project_progress_page(request: Request, task_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error serving progress page: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Error loading progress page: {e!s}")
+        logger.exception("Renderen van de voortgangspagina mislukt")
+        raise HTTPException(
+            status_code=500,
+            detail="De voortgangspagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/projects/progress/{task_id}/fragment", response_class=HTMLResponse)
@@ -777,8 +781,11 @@ async def test_hero(request: Request):
             request, "test-hero.html.j2", {"request": request, "navigation": get_navigation(user, current_path="")}
         )
     except Exception as e:
-        logger.error(f"Error serving test hero: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
+        log_render_failure(logger, "de testpagina van de hero", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De testpagina van de hero kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/forms/formulier", response_class=HTMLResponse)
@@ -798,24 +805,11 @@ async def formulier_demo_form(request: Request):
             request, "formulier-template.html.j2", {"request": request, "title": "Formulier Template"}
         )
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving Formulier demo form: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de demopagina van het formulier", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De demopagina van het formulier kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 def _deployment_dashboard_status(status_data: dict[str, Any] | None) -> str:
@@ -1369,24 +1363,10 @@ async def dashboard(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving dashboard: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "het dashboard", e)
+        raise HTTPException(
+            status_code=500, detail="Het dashboard kon niet worden opgebouwd. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 @web_router.get("/projects/{project_name}/details", response_class=HTMLResponse)
@@ -1606,12 +1586,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so
         # the page and the API can never disagree about what a component's variables are.
         #
-        # NAAST ELKAAR, NIET ERACHTER. Elke ontsleuteling is een eigen `age`-proces (zie
-        # opi/utils/age.py), en die stonden hier in een lus achter elkaar te wachten: een
-        # project met achttien deployments betaalde achttien keer een procesfork op ELKE
-        # tabwissel, netjes een voor een. De aanroepen zijn onderling onafhankelijk - elke
-        # taak schrijft in zijn eigen dict - dus asyncio.gather zet ze naast elkaar zonder
-        # dat er iets aan de uitkomst verandert.
+        # Taken met asyncio.gather, maar naast elkaar zet dat ze niet: sinds RC-218
+        # ontsleutelt opi/utils/age.py in het proces, dus de keten _lees_env_vars ->
+        # read_user_env_vars -> decrypt_age_content yieldt nergens en elke taak loopt in
+        # een keer af. De vorm blijft staan omdat de aanroepen onderling onafhankelijk
+        # zijn (elke taak schrijft in zijn eigen dict); te overlappen valt er niets meer,
+        # want de fork per veld is weg en een ontsleuteling kost 0,17 ms.
         async def _lees_env_vars(houder: dict[str, Any], waar: str) -> None:
             houder["user-env-vars"] = await read_user_env_vars(houder["user-env-vars"], project_private_key, where=waar)
 
@@ -1641,11 +1621,12 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # is_verwijzing.
             if component.get("aliases"):
                 try:
-                    # In een thread, want decode_component_values is synchroon en draait
-                    # `age` met subprocess.run. Dat zette niet alleen deze pagina stil maar
-                    # de hele worker, per component - en bij de oude mapping-vorm zelfs per
-                    # alias. De decoder zelf blijft synchroon: hij wordt ook door de
-                    # leesendpoints gebruikt en daar hoort een tweede vorm niet thuis.
+                    # In een thread, want decode_component_values is synchroon, en dat
+                    # blijft hij: hij wordt ook door de leesendpoints gebruikt en daar
+                    # hoort een tweede vorm niet thuis. De reden die hier stond, `age`
+                    # als subprocess per component, geldt sinds RC-218 niet meer:
+                    # opi/utils/age.py ontsleutelt in het proces, 0,17 ms per veld. De
+                    # thread-hop is blijven staan; hem opruimen is een eigen taak.
                     component["aliases"] = await asyncio.to_thread(
                         decode_component_values, component["aliases"], project_data_decrypted, project_private_key
                     )
@@ -1939,7 +1920,7 @@ async def render_project_page(request: Request, project_name: str, deployment_na
                 "ServiceAdapter": ServiceAdapter,
                 # How a service is chosen, and -- when it has no project-wide settings --
                 # where it IS configured. Both derived from the registry (RC-33).
-                "service_binding_label": binding_label,
+                "service_selection_labels": selection_labels,
                 "service_config_hint": project_step_config_hint,
                 "prometheus_available": prometheus_available,
                 "argocd_available": argocd_available,
@@ -1978,24 +1959,10 @@ async def render_project_page(request: Request, project_name: str, deployment_na
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving project details: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de projectpagina", e)
+        raise HTTPException(
+            status_code=500, detail="De projectpagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 def _argocd_unavailable_result(app_name: str, message: str, source: str = "Application") -> dict[str, Any]:
@@ -2035,6 +2002,7 @@ async def _fetch_argocd_deployment_status(
     argo: Any,
     kubectl: Any,
     deployment_state: DeploymentState | None = None,
+    project_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fetch ArgoCD status for one deployment, with interpreted errors when unhealthy.
 
@@ -2042,6 +2010,9 @@ async def _fetch_argocd_deployment_status(
     ``collect_deployment_state``). It only decides whether the pod summary is worth
     asking for: a deployment whose pods are MEANT to be absent -- asleep, switched off --
     would otherwise be told "nothing is running", which is true and not a problem.
+
+    ``project_data`` lets the card name an image in the project's own private registry
+    instead of its bare RCR URL.
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
@@ -2100,7 +2071,7 @@ async def _fetch_argocd_deployment_status(
                     get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", "")),
                     deployment_name,
                 )
-                pod_summaries = summarize_component_pods(pods, deployment=deployment)
+                pod_summaries = summarize_component_pods(pods, deployment=deployment, project_data=project_data)
         else:
             # Healthy last-known state can still hide a fresh ComparisonError (sync=Unknown):
             # read the cheap app-level conditions unconditionally - no extra API call - so a
@@ -2113,6 +2084,7 @@ async def _fetch_argocd_deployment_status(
             deployment_name=deployment_name,
             component_names=component_names,
             serving_components={s.reference for s in pod_summaries if s.is_serving},
+            project_data=project_data,
         )
         _annotate_argocd_error_ages(errors)
 
@@ -2142,9 +2114,15 @@ async def _fetch_argocd_deployment_status(
             "deviations": deviations,
             "pods": pod_summaries,
         }
-    except Exception as app_error:
-        logger.warning(f"Failed to fetch ArgoCD status for {app_name}: {app_error}")
-        return _argocd_unavailable_result(app_name, str(app_error), source="API")
+    except Exception:
+        # De melding komt in ``errors`` en die tekent de kaart uit; wat ArgoCD hier
+        # opgooit noemt zijn eigen adres. Volledig in de log, met het kenmerk ernaast.
+        logger.exception("Failed to fetch ArgoCD status for %s", app_name)
+        return _argocd_unavailable_result(
+            app_name,
+            met_kenmerk("De status is nu niet op te halen. Probeer het over een minuut opnieuw.", kenmerk_nu()),
+            source="API",
+        )
 
 
 @web_router.get("/dashboard/resource-usage", response_class=HTMLResponse)
@@ -2300,9 +2278,15 @@ async def project_resource_usage_fragment(request: Request, project_name: str) -
                         [d for d in (project.data or {}).get("deployments", []) if d.get("cluster") == current_cluster]
                     ),
                 }
-        except Exception as e:
-            logger.warning(f"Failed to fetch project resource usage for {project_name}: {e}")
-            ctx["usage_error"] = str(e)
+        except Exception:
+            # De melding van de metingslaag ging tot nu toe onbewerkt het sjabloon in en
+            # kwam er op regel 40 letterlijk uit: bij een onbereikbare Prometheus stond
+            # daar de hostnaam, de poort en de errno van die dienst, op het tabblad
+            # Project. De volledige fout staat nu in de log, gekoppeld met het kenmerk.
+            logger.exception("Ophalen van het resourcegebruik voor %s mislukt", project_name)
+            # De kop van de melding zegt al WAT er niet lukt ("Resourcegebruik is niet
+            # op te halen"), dus zegt de zin eronder wat je eraan kunt doen.
+            ctx["usage_error"] = met_kenmerk("Probeer het over een minuut opnieuw.", kenmerk_van(request))
 
     # Ook dit fragment kent de LOTC-weergave. Zonder zou de projectpagina onder ?ui=lotc
     # wel LOTC zijn, maar het blokje dat htmx erin laadt nog roos - een pagina die
@@ -2356,7 +2340,7 @@ async def argocd_status_fragment(
         )
     else:
         status = await _fetch_argocd_deployment_status(
-            project_name, deployment, argo, create_kubectl_connector(), deployment_state
+            project_name, deployment, argo, create_kubectl_connector(), deployment_state, project.data or {}
         )
 
     return render(
@@ -2694,24 +2678,11 @@ async def projects_overview(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving projects overview: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "het projectoverzicht", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Het projectoverzicht kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/cli", response_class=HTMLResponse)
@@ -2819,8 +2790,11 @@ async def about_platform(request: Request):
             },
         )
     except Exception as e:
-        logger.error(f"Error serving about page: {e!s}")
-        raise HTTPException(status_code=500, detail=str(e))
+        log_render_failure(logger, "de pagina Over ZAD", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Deze pagina kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 @web_router.get("/test-template-variables", response_class=HTMLResponse)
@@ -2841,8 +2815,11 @@ async def test_template_variables(request: Request):
             },
         )
     except Exception as e:
-        logger.error(f"Error serving test template variables: {e!s}")
-        raise HTTPException(status_code=500, detail=f"Template error: {e!s}")
+        log_render_failure(logger, "de testpagina van de sjabloonvariabelen", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De testpagina van de sjabloonvariabelen kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/example", response_class=HTMLResponse)
@@ -2863,24 +2840,11 @@ async def example_page(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving example page: {e!s}\n{error_details}")
-
-        # Try to extract line number from Jinja2 error
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        # Include template source snippet if available
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de voorbeeldpagina", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De voorbeeldpagina kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.get("/tools", response_class=HTMLResponse)
@@ -2901,22 +2865,11 @@ async def tools_page(request: Request):
         )
 
     except Exception as e:
-        import traceback
-
-        error_details = traceback.format_exc()
-        logger.error(f"Error serving tools page: {e!s}\n{error_details}")
-
-        error_msg = str(e)
-        if hasattr(e, "lineno"):
-            error_msg = f"Line {e.lineno}: {error_msg}"
-
-        if hasattr(e, "source") and hasattr(e, "lineno"):
-            lines = e.source.splitlines()
-            line_num = e.lineno - 1
-            if 0 <= line_num < len(lines):
-                error_msg += f"\nSource: {lines[line_num].strip()}"
-
-        raise HTTPException(status_code=500, detail=f"Template error: {error_msg}")
+        log_render_failure(logger, "de gereedschapspagina", e)
+        raise HTTPException(
+            status_code=500,
+            detail="De gereedschapspagina kon niet worden opgebouwd; het sjabloon rendert niet. De volledige fout staat in de log.",
+        ) from e
 
 
 @web_router.post("/tools/encrypt")
@@ -2947,9 +2900,13 @@ async def encrypt_text(request: Request):
 
         return JSONResponse(content={"success": True, "result": encrypted_content}, status_code=200)
 
-    except Exception as e:
-        logger.error(f"Error encrypting text: {e!s}")
-        return JSONResponse(content={"error": f"Encryption failed: {e!s}"}, status_code=500)
+    except Exception:
+        logger.exception("Versleutelen mislukt")
+        bericht = "Versleutelen is niet gelukt. Controleer de publieke sleutel en de invoer."
+        return JSONResponse(
+            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            status_code=500,
+        )
 
 
 @web_router.post("/tools/decrypt")
@@ -2980,9 +2937,13 @@ async def decrypt_text(request: Request):
 
         return JSONResponse(content={"success": True, "result": decrypted_content}, status_code=200)
 
-    except Exception as e:
-        logger.error(f"Error decrypting text: {e!s}")
-        return JSONResponse(content={"error": f"Decryption failed: {e!s}"}, status_code=500)
+    except Exception:
+        logger.exception("Ontsleutelen mislukt")
+        bericht = "Ontsleutelen is niet gelukt. Controleer de private sleutel en of de invoer echt AGE-versleuteld is."
+        return JSONResponse(
+            content={"error": met_kenmerk(bericht, kenmerk_van(request))},
+            status_code=500,
+        )
 
 
 def _v2_task_to_template_context(task: dict, project_name: str) -> dict:

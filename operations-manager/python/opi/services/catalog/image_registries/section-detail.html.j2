@@ -1,0 +1,29 @@
+{# Zonder het token. De toestand van de proxy komt apart, zie web.py. #}
+<c-card outline padding="lg">
+    <c-stack gap="md">
+        {# De NLDD-naam letterlijk: een icoon in een sjabloon gaat niet langs de
+           ROOS->NLDD-tabel en zou stil leeg renderen. #}
+        <c-section-head title="Eigen container registries" icon="globe-rack-server" />
+        <c-paragraph size="sm">De private registries waaruit dit project images haalt.</c-paragraph>
+
+        {% for registry in section.context.registries %}
+            <c-stack gap="xs">
+                <c-heading type="h3" size="5" label="{{ registry.name }}" />
+                <c-secret-field value="{{ registry.upstream }}" revealed show-copy />
+                {% if registry.username %}
+                    <c-paragraph size="sm">Ingelogd als {{ registry.username }}; het token is versleuteld opgeslagen.</c-paragraph>
+                {% elif registry.has_token %}
+                    <c-paragraph size="sm">Het token is versleuteld opgeslagen. Je hebt geen gebruikersnaam ingevuld.</c-paragraph>
+                {% elif registry.secretName %}
+                    <c-paragraph size="sm">Gebruikt het bestaande secret {{ registry.secretName }}.</c-paragraph>
+                {% endif %}
+            </c-stack>
+        {% endfor %}
+
+        <div hx-get="/projects/details/{{ section.context.project_name }}/image-registries/status"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            <c-paragraph size="sm">Toestand van de proxy wordt opgehaald...</c-paragraph>
+        </div>
+    </c-stack>
+</c-card>

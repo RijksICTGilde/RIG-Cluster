@@ -20,7 +20,7 @@ from opi.services.catalog.base import (
     config_path,
 )
 from opi.services.services import ServiceDefinition, service_entry_config, service_entry_name
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 from opi.utils.secrets import KeycloakSecret
 
 
@@ -37,7 +37,6 @@ class AuthorizationWallService(Service):
         description="OAuth2-proxy sidecar die Keycloak OIDC authenticatie afdwingt voor webapplicaties.",
         icon="schild-met-vinkje-erop",
         color="groen",
-        binding=ServiceBinding.COMPONENT,
         help_template="authorization_wall/help.md",
         variables=[],
         requires=[
@@ -177,10 +176,12 @@ class AuthorizationWallService(Service):
             sidecars=["authorization-wall"],
             # The oauth2-proxy needs a random cookie-signing secret; the shared writer
             # SOPS-encrypts it. Its <deployment>-<component>- prefix survives the prune.
+            # A new value on every run logged every user out after each deploy.
             secret_files=[
                 SecretFileSpec(
                     secret_name=cookie_secret_name,
                     secret_pairs={"cookie-secret": secrets.token_urlsafe(32)},
+                    keep_existing_values=True,
                 )
             ],
         )

@@ -4,7 +4,11 @@ Tests for web subdomain check rate limiting.
 Tests the rate limiting applied to the SSO-protected subdomain check endpoint.
 """
 
-from opi.web.router_self_service import web_subdomain_check_rate_limiter
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from opi.web.router_self_service import check_subdomain_availability_web, web_subdomain_check_rate_limiter
+from starlette.requests import Request
 
 
 class TestWebSubdomainCheckRateLimiter:
@@ -58,3 +62,40 @@ class TestWebSubdomainCheckRateLimiter:
         # API limiter should still allow (independent state)
         result = subdomain_check_rate_limiter.is_allowed(client_id)
         assert result is True, "API rate limiter should be independent from web rate limiter"
+
+
+class TestWebSubdomainCheckAppliesReservedNamesPerDomain:
+    """Dezelfde regel als in de wizard, op de check die het portaal live bevraagt."""
+
+    @staticmethod
+    async def _check(subdomain: str, base_domain: str) -> dict:
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/check-subdomain",
+                "headers": [],
+                "query_string": f"subdomain={subdomain}&base_domain={base_domain}".encode(),
+                "client": ("10.0.0.1", 1234),
+                "session": {"user": {"email": "dev@example.com"}},
+            }
+        )
+        connector = MagicMock()
+        connector.check_availability = AsyncMock(return_value=True)
+        with (
+            patch("opi.web.router_self_service.create_subdomain_connector", return_value=connector),
+            patch.object(web_subdomain_check_rate_limiter, "is_allowed", return_value=True),
+            patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"),
+        ):
+            response = await check_subdomain_availability_web(request)
+        return json.loads(response.body)
+
+    async def test_a_reserved_name_on_a_platform_domain_is_refused(self):
+        body = await self._check("admin", "rijks.app")
+        assert body["available"] is False
+        assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
+
+    async def test_the_same_name_on_a_tenant_domain_is_free(self):
+        body = await self._check("admin", "uitbetrouwbarebron.nl")
+        assert body["available"] is True
+        assert body["validation_error"] is None

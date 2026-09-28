@@ -8,11 +8,14 @@ from unittest.mock import patch
 
 import pytest
 from opi.core.cluster_config import (
+    CLUSTER_CONFIG,
     _compute_ca_hash,
     get_argo_namespace,
     get_ca_certificate_config,
     get_cluster_config,
+    get_cluster_domains_config,
     get_database_server,
+    get_external_dns_target_for_hostname,
     get_ingress_cluster_issuer,
     get_ingress_config,
     get_ingress_ip_whitelist,
@@ -22,20 +25,21 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_keycloak_support_http,
     get_letsencrypt_contact_email,
+    get_managed_zones,
     get_minio_host,
     get_minio_port,
     get_minio_server,
     get_namespace,
     get_namespace_prefix,
-    get_nice_url_config,
-    get_nice_url_supported_domains,
     get_prefixed_namespace,
     get_redis_server,
     get_storage_access_modes,
     get_storage_class_name,
     get_storage_config,
+    get_supported_domain_names,
     get_volume_snapshot_class,
-    is_nice_url_domain_supported,
+    is_domain_supported,
+    is_platform_domain,
     uses_capsule,
 )
 
@@ -239,28 +243,157 @@ class TestCaCertificateConfig:
         assert config is None
 
 
-class TestNiceUrlFunctions:
-    """Tests for nice URL config functions."""
+class TestClusterDomainFunctions:
+    """Tests for the cluster domain configuration functions."""
 
-    def test_get_nice_url_config_local(self):
-        config = get_nice_url_config("local")
+    def test_get_cluster_domains_config_local(self):
+        config = get_cluster_domains_config("local")
         assert config is not None
         assert "supported_domains" in config
 
-    def test_get_nice_url_supported_domains_local(self):
-        domains = get_nice_url_supported_domains("local")
+    def test_get_supported_domain_names_local(self):
+        domains = get_supported_domain_names("local")
         assert "kind" in domains
         assert "local" in domains
 
-    def test_is_nice_url_domain_supported_kind(self):
-        assert is_nice_url_domain_supported("local", "kind") is True
+    def test_is_domain_supported_kind(self):
+        assert is_domain_supported("local", "kind") is True
 
-    def test_is_nice_url_domain_not_supported(self):
-        assert is_nice_url_domain_supported("local", "example.com") is False
+    def test_is_domain_not_supported(self):
+        assert is_domain_supported("local", "example.com") is False
 
-    def test_production_nice_url_domains(self):
-        domains = get_nice_url_supported_domains("odcn-production")
+    def test_production_supported_domains(self):
+        domains = get_supported_domain_names("odcn-production")
         assert "rijks.app" in domains
+
+
+class TestExternalDnsTargetForHostname:
+    """De external-dns-annotatie komt uit hetzelfde ``domains``-blok als de rest.
+
+    Bij een verkeerde sleutel krijgt elke hostnaam None en verdwijnt de annotatie zonder
+    foutmelding uit de ingress. Daarom pinnen deze toetsen een echt doel uit de configuratie.
+    """
+
+    def test_subdomain_gets_the_target_of_its_base_domain(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "mijnapp.rijks.app") == "router.rijks.app"
+
+    def test_bare_base_domain_gets_the_same_target(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "rijks.app") == "router.rijks.app"
+
+    def test_each_configured_domain_has_its_own_target(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rijksapp.nl") == "router.rijksapp.nl"
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rijksapp.dev") == "router.rijksapp.dev"
+
+    def test_hostname_in_the_cluster_postfix_zone_has_no_target(self):
+        """De standaardzone van het cluster krijgt zijn DNS van de router zelf."""
+        assert get_external_dns_target_for_hostname("odcn-production", "a.rig.prd1.gn2.quattro.rijksapps.nl") is None
+
+    def test_a_name_that_only_ends_in_the_same_letters_is_not_a_subdomain(self):
+        assert get_external_dns_target_for_hostname("odcn-production", "nietrijks.app") is None
+
+    def test_cluster_without_configured_targets_returns_none(self):
+        """De Kind-clusters publiceren geen DNS, dus geen enkel domein heeft een doel."""
+        assert get_external_dns_target_for_hostname("local", "mijnapp.kind") is None
+        assert get_external_dns_target_for_hostname("sandboxed-local", "mijnapp.sandbox.rijksapp.dev") is None
+
+    def test_the_most_specific_domain_wins(self):
+        """Valt een naam onder twee geconfigureerde domeinen, dan telt de langste."""
+        config = {
+            "supported_domains": [
+                {"domain": "example.nl", "external_dns_target": "router.example.nl"},
+                {"domain": "test.example.nl", "external_dns_target": "router.test.example.nl"},
+            ]
+        }
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=config):
+            target = get_external_dns_target_for_hostname("odcn-production", "app.test.example.nl")
+
+        assert target == "router.test.example.nl"
+
+    def test_cluster_without_domains_block_returns_none(self):
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=None):
+            assert get_external_dns_target_for_hostname("odcn-production", "mijnapp.rijks.app") is None
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            get_external_dns_target_for_hostname("nonexistent-cluster", "mijnapp.rijks.app")
+
+
+class TestManagedZones:
+    """De reserveringslijst hangt aan dit antwoord: welke zones ZAD zelf bedient."""
+
+    def test_local_serves_its_two_domains(self):
+        assert get_managed_zones("local") == ["kind", "local"]
+
+    def test_sandbox_serves_its_two_domains(self):
+        assert get_managed_zones("sandboxed-local") == ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"]
+
+    def test_production_also_names_its_postfix_zone(self):
+        assert get_managed_zones("odcn-production") == [
+            "rijks.app",
+            "rijksapp.nl",
+            "rijksapp.dev",
+            "rig.prd1.gn2.quattro.rijksapps.nl",
+        ]
+
+    def test_cluster_without_domains_block_has_no_zones(self):
+        with patch("opi.core.cluster_config.get_cluster_domains_config", return_value=None):
+            assert get_managed_zones("odcn-production") == []
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            get_managed_zones("nonexistent-cluster")
+
+
+class TestIsPlatformDomain:
+    """De beheervraag: valt deze naam binnen een zone die wij bedienen."""
+
+    def test_an_offered_domain_is_ours(self):
+        assert is_platform_domain("odcn-production", "rijks.app") is True
+        assert is_platform_domain("odcn-production", "rijksapp.nl") is True
+        assert is_platform_domain("odcn-production", "rijksapp.dev") is True
+
+    def test_a_name_under_an_offered_domain_is_ours(self):
+        """Suffix, geen lidmaatschap: team.rijks.app staat in geen enkele lijst en is toch
+        een label op onze registreerbare zone."""
+        assert is_platform_domain("odcn-production", "team.rijks.app") is True
+
+    def test_the_postfix_zone_is_ours(self):
+        assert is_platform_domain("odcn-production", "rig.prd1.gn2.quattro.rijksapps.nl") is True
+
+    def test_the_parent_of_the_postfix_zone_is_not_ours(self):
+        """rijksapps.nl is van ODC-Noord en in gebruik als eigen basisdomein van projecten."""
+        assert is_platform_domain("odcn-production", "ux-onderzoeken.rijksapps.nl") is False
+        assert is_platform_domain("odcn-production", "rijksapps.nl") is False
+
+    def test_a_tenant_domain_is_not_ours(self):
+        assert is_platform_domain("odcn-production", "uitbetrouwbarebron.nl") is False
+
+    def test_a_name_that_only_ends_in_the_same_letters_is_not_ours(self):
+        assert is_platform_domain("odcn-production", "nietrijks.app") is False
+
+    def test_sandbox_serves_the_domain_it_offers(self):
+        assert is_platform_domain("sandboxed-local", "robbertuittenbroek.nl") is True
+        assert is_platform_domain("sandboxed-local", "rijks.app") is False
+
+    def test_unknown_cluster_raises(self):
+        with pytest.raises(ValueError, match="not found in configuration"):
+            is_platform_domain("nonexistent-cluster", "rijks.app")
+
+
+class TestManagedZonesCoverTheRest:
+    """De beheerlijst staat los, dus hij kan wegdrijven. Deze toets is de grendel: vergeet
+    iemand een nieuwe zone, dan valt hij om in plaats van dat er stil een gat ontstaat.
+    """
+
+    @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
+    def test_the_postfix_zone_is_managed(self, cluster_name):
+        zone = get_ingress_postfix(cluster_name).lstrip(".")
+        assert is_platform_domain(cluster_name, zone), f"{cluster_name}: {zone} staat in geen managed_zones"
+
+    @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
+    def test_every_offered_domain_is_managed(self, cluster_name):
+        for domain in get_supported_domain_names(cluster_name):
+            assert is_platform_domain(cluster_name, domain), f"{cluster_name}: {domain} staat in geen managed_zones"
 
 
 class TestSelectableClusters:

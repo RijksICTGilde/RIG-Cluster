@@ -87,6 +87,24 @@ class DomainSetting(StrEnum):
 #: The on-disk keys, in declaration order. Handy for migrations and guards.
 DOMAIN_SETTING_KEYS: tuple[str, ...] = tuple(setting.value for setting in DomainSetting)
 
+#: The settings that describe the SHAPE a hostname is built in, not the hostname itself.
+#:
+#: ``domain-format`` names no host, so two deployments can carry the same value without
+#: colliding. The other five are the NAME half below: ``base-domain`` and ``subdomain`` ARE
+#: the hostname, ``issuer`` is chosen for that domain (its editable declares ``depends_on``
+#: base-domain), ``root-component`` only acts on a dotted layout, which needs one, and
+#: ``expose-component-on-bare-domain`` is read as ``if expose_on_bare_domain and
+#: base_domain``. None of the five means anything for a clone with no domain of its own.
+DOMAIN_SHAPE_SETTINGS: tuple[DomainSetting, ...] = (DomainSetting.DOMAIN_FORMAT,)
+
+#: Everything that names a web address, or only means something together with one.
+#:
+#: Derived rather than listed, so a new ``DomainSetting`` lands here by default: cleared
+#: from a clone until someone decides it belongs to the shape, rather than travelling along.
+DOMAIN_NAME_SETTINGS: tuple[DomainSetting, ...] = tuple(
+    setting for setting in DomainSetting if setting not in DOMAIN_SHAPE_SETTINGS
+)
+
 _SERVICE = ServiceType.PUBLISH_ON_WEB.value
 
 #: The roots a deployment's service config can sit under, real first. A saved project file
@@ -226,24 +244,51 @@ def pop_domain_setting(deployment: dict[str, Any], setting: DomainSetting) -> No
 def clear_domain_settings(deployment: dict[str, Any]) -> None:
     """Remove the whole web address from ``deployment``, wherever it is stored.
 
-    For a deployment that must not carry one at all -- a clone, which uses its own
-    (target) domain setup and never the source's hostnames. Excluding the six root keys
-    from a copy is not enough since they moved: they now travel inside the source's
-    ``services`` block, which is copied as a whole.
+    For a deployment that must not carry one at all. Excluding the six root keys from a
+    copy is not enough since they moved: they now travel inside the source's ``services``
+    block, which is copied as a whole. A caller that wants to drop the source's hostnames
+    but keep the shape they were built in wants :func:`clear_domain_name_settings`.
 
     The service entry itself is dropped when the web address was all it held, so a clone
     does not end up with an empty ``publish-on-web`` record it never asked for.
     """
     for setting in DomainSetting:
         pop_domain_setting(deployment, setting)
+    _pop_legacy_domain_mode(deployment)
+    _drop_empty_service_entry(deployment)
 
-    # The retired legacy key (v2.8): a clone source can be an unmigrated dict, and the
-    # copy must not resurrect what the migration removes.
+
+def clear_domain_name_settings(deployment: dict[str, Any]) -> None:
+    """Remove only what NAMES a web address, leaving the shape half in place.
+
+    The clone's half of :func:`clear_domain_settings`. Dropping the shape as well did not
+    give a clone "no format", it gave it the platform default of the day it was processed
+    (RC-217, ``features/kloon-erft-de-vorm-van-het-webadres.md``).
+
+    Which formats survive the loss of the name is a question about the formats, not about
+    the settings, so it is answered where the templates live
+    (``naming.SELF_CONTAINED_FORMAT_IDS``).
+    """
+    for setting in DOMAIN_NAME_SETTINGS:
+        pop_domain_setting(deployment, setting)
+    _pop_legacy_domain_mode(deployment)
+    _drop_empty_service_entry(deployment)
+
+
+def _pop_legacy_domain_mode(deployment: dict[str, Any]) -> None:
+    """Drop the retired ``domain-mode`` key (v2.8), wherever it sits.
+
+    A clone source can be an unmigrated dict, and the copy must not resurrect what the
+    migration removes.
+    """
     config = get_domain_config(deployment)
     if config is not None:
         config.pop("domain-mode", None)
     deployment.pop("domain-mode", None)
 
+
+def _drop_empty_service_entry(deployment: dict[str, Any]) -> None:
+    """Remove the publish-on-web record when the web address was all it held."""
     root, entry = _find_entry(deployment)
     if root is None or entry is None:
         return

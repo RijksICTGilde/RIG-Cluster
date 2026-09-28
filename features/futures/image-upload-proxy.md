@@ -44,9 +44,8 @@ Skopeo is in Debian repos (python:3.14-slim base). Simpler than downloading a st
 Following `minio_mc.py` singleton pattern:
 - Sync `skopeo --version` check at init
 - Async subprocess for `skopeo copy docker-archive:/path docker://destination`
-- Credential masking in logs
 - Password decrypted once at init via `decrypt_password_smart_auto_sync()` (same as git connector)
-- `--dest-creds` for auth, `--dest-tls-verify=false` when configured
+- `--dest-authfile` for auth (never on the command line, so nothing to mask in the log), `--dest-tls-verify=false` when configured
 - Custom exceptions: `SkopeoConnectionError`, `SkopeoExecutionError`, `SkopeoValidationError`
 
 ### 4. Image upload API router

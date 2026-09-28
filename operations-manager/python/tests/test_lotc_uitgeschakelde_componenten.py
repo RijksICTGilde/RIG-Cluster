@@ -47,13 +47,13 @@ def test_zes_componenten_leveren_een_blok() -> None:
 
 def test_de_gedeelde_oorzaak_staat_in_de_kop() -> None:
     html = _render([_component("a", IMAGE_REDEN, "i:1"), _component("b", IMAGE_REDEN, "i:2")])
-    assert "2 componenten zijn uitgeschakeld: image ontbreekt" in html
+    assert "2 componenten zijn uitgeschakeld: image kan niet opgehaald worden" in html
 
 
 def test_enkelvoud_bij_een_component() -> None:
     """'1 componenten' bestaat niet."""
     html = _render([_component("a", IMAGE_REDEN, "i:1")])
-    assert "1 component is uitgeschakeld: image ontbreekt" in html
+    assert "1 component is uitgeschakeld: image kan niet opgehaald worden" in html
     assert "componenten zijn" not in html
 
 
@@ -91,4 +91,4 @@ def test_een_lange_reden_wordt_afgekapt() -> None:
 @pytest.mark.parametrize("reden", ["ImagePullBackOff: ...", "InvalidImageName", "manifest unknown"])
 def test_de_image_oorzaken_landen_in_het_image_blok(reden: str) -> None:
     html = _render([_component("a", reden, "i:1")])
-    assert "image ontbreekt" in html
+    assert "image kan niet opgehaald worden" in html

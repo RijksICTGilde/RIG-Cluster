@@ -6,7 +6,9 @@ metadata:
   labels:
     project: {{ labels.project }}
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
+    {# Het projectniveau op wave 0, de deployments op wave 1, zodat wat namespace-breed
+       is er staat voor de pods die het nodig hebben. #}
+    argocd.argoproj.io/sync-wave: "{{ sync_wave | default(1) }}"
     # https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation
     argocd.argoproj.io/manifest-generate-paths: .
   finalizers:
@@ -34,9 +36,7 @@ spec:
       - CreateNamespace=false
       - PrunePropagationPolicy=foreground
       - PruneLast=true
-      - Delete=true
       - SkipDryRunOnMissingResource=true
-      - Timeout=300
     retry:
       limit: 2
       backoff:

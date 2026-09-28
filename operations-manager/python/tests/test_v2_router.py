@@ -26,6 +26,26 @@ SAMPLE_TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
 API_KEY = "test-api-key-12345"
 
 
+def _test_project_data() -> dict[str, Any]:
+    """The project file behind ``test-project``: the components and deployments the
+    config-write routes here address, so their existence check passes."""
+    return {
+        "name": "test-project",
+        "components": [
+            {"name": "backend", "type": "single"},
+            {"name": "api", "type": "single"},
+            {"name": "web", "type": "single"},
+        ],
+        "deployments": [
+            {
+                "name": "main",
+                "cluster": "local",
+                "components": [{"reference": "backend"}, {"reference": "api"}, {"reference": "web"}],
+            }
+        ],
+    }
+
+
 def _make_task(
     *,
     task_id: str = SAMPLE_TASK_ID,
@@ -53,8 +73,11 @@ def mock_task_service() -> AsyncMock:
 def mock_auth_project_service() -> Any:
     """Mock project service for API key authentication.
 
-    Patches both endpoint_util (for V2 endpoint auth) and task_router
-    (for task polling auth) since they import get_project_service separately.
+    Patches endpoint_util (for V2 endpoint auth), task_router (for task polling auth)
+    and the V2 router itself, since they import get_project_store separately. The
+    project carries ``data``: the config-write routes read it to answer "is this
+    deployment/component there at all" before they enqueue, so a store without it
+    turns every write here into a 404.
     """
     mock_service = MagicMock(spec=GitProjectStore)
     test_project = ProjectSummary(
@@ -62,6 +85,7 @@ def mock_auth_project_service() -> Any:
         api_key=API_KEY,
         filename="test-project.yaml",
         users=[ProjectUser(email="user@example.com", role="Developer")],
+        data=_test_project_data(),
     )
 
     def get_project(name: str) -> ProjectSummary | None:
@@ -74,6 +98,7 @@ def mock_auth_project_service() -> Any:
     with (
         patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
         patch("opi.api.task_router.get_project_store", return_value=mock_service),
+        patch("opi.api.v2.router.get_project_store", return_value=mock_service),
     ):
         yield mock_service
 

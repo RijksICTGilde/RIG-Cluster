@@ -5,6 +5,7 @@ file categorization logic, namespace prefix resolution, and kustomization
 file assembly with correct resources/generators/namespace.
 """
 
+import glob
 import os
 from unittest.mock import patch
 
@@ -1102,6 +1103,17 @@ class TestCollectManifestFiles:
         assert len(sops) == 2
         assert len(regular) == 2
 
+    def test_order_does_not_follow_the_directory(self, generator, tmp_path, monkeypatch):
+        for name in ("a.yaml", "b.yaml", "c.yaml", "a.sops.yaml", "b.sops.yaml"):
+            (tmp_path / name).write_text("kind: ConfigMap")
+        real_glob = glob.glob
+        monkeypatch.setattr(glob, "glob", lambda pattern, **kw: sorted(real_glob(pattern, **kw), reverse=True))
+
+        sops, regular = generator.collect_manifest_files(str(tmp_path))
+
+        assert sops == ["a.sops.yaml", "b.sops.yaml"]
+        assert regular == ["a.yaml", "b.yaml", "c.yaml"]
+
     def test_subfolder_recursion(self, generator, tmp_path):
         sub = tmp_path / "subdir"
         sub.mkdir()
@@ -1233,6 +1245,24 @@ class TestCreateKustomizationFiles:
         files = set(decrypt["files"])
         assert "secret.sops.yaml" in files  # converted from .to-sops.yaml
         assert "creds.sops.yaml" in files  # kept as-is
+
+    def test_sops_both_halves_of_one_pair_are_listed_once(self, generator, yaml_loader, tmp_path):
+        output_dir = str(tmp_path / "output")
+        os.makedirs(output_dir)
+
+        with patch("opi.generation.manifests.settings") as mock:
+            mock.MANIFESTS_PATH = MANIFESTS_DIR
+            generator.create_kustomization_files(
+                output_dir=output_dir,
+                sops_files=["a.to-sops.yaml", "a.sops.yaml", "b.to-sops.yaml"],
+                regular_files=[],
+            )
+
+        decrypt_path = os.path.join(output_dir, "decrypt-sops.yaml")
+        with open(decrypt_path) as f:
+            decrypt = yaml_loader.load(f)
+
+        assert decrypt["files"] == ["a.sops.yaml", "b.sops.yaml"]
 
     def test_excludes_meta_files_from_resources(self, generator, yaml_loader, tmp_path):
         output_dir = str(tmp_path / "output")

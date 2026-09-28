@@ -42,6 +42,20 @@ DEFAULT_IGNORE_FILE = Path(__file__).resolve().parent / "log_watch_ignore_patter
 # The deduped set is almost always far smaller, so this rarely bites.
 MAX_BODY_LINES = 10
 
+# Character budget for the body, split over the problems shown. ntfy takes ~4096 bytes;
+# the rest is margin for the severity dots and the blank line between problems. A fixed
+# per-line cap spent a tenth of the budget on a lone problem and cut off the one thing
+# the alert is for: the reason. Bounded on both ends so a full body still fits and a
+# single problem does not become a wall of text.
+_BODY_CHARS = 3500
+_MIN_LINE_CHARS = 150
+_MAX_LINE_CHARS = 700
+
+# The flow id OPI stamps on every record ("[task-<id>]" / "[req-<id>]", "[-]" when there
+# is no flow). One failure is logged by every layer it passes, so this is what ties those
+# records back together into one problem.
+_FLOW_ID_RE = re.compile(r"\[((?:req|task)-[^\]]+)\]")
+
 # The watcher scans the OPI container's own logs, which include the watcher's own
 # output. Exclude those logger names at query time or it alerts on itself - a loop
 # that grows every cycle (its "RESULT: N NEW issue(s)" WARNING lines get re-picked).
@@ -239,9 +253,16 @@ def severity(msg: str, level: str = "") -> int:
     return 0
 
 
+#: OPI joins the per-component status with " . ": dropping that character as non-ASCII
+#: glues the parts together ("pods worden aangemaakt democonsole: draait"), so fold it
+#: to a separator that survives instead.
+_ASCII_FOLD = str.maketrans({"·": ";"})
+
+
 def ascii_short(s: str, n: int = 150) -> str:
     """ASCII-only, single-line, trimmed - safe and compact for an ntfy line."""
-    return " ".join(s.encode("ascii", "ignore").decode().split())[:n]
+    folded = " ".join(s.translate(_ASCII_FOLD).encode("ascii", "ignore").decode().split())
+    return re.sub(r"\s+;", ";", folded)[:n]  # tidy the space the folded separator left
 
 
 _UUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
@@ -322,6 +343,39 @@ def signature(msg: str) -> str:
     s = re.sub(r"[a-z0-9]{2,}[-_][a-z0-9_-]+", "X", s)  # hyphenated ids (pods, uuids)
     s = re.sub(r"\d+", "N", s)  # any remaining number (counts, ports, sizes, durations)
     return re.sub(r"\s+", " ", s).strip()[:120]
+
+
+def flow_id(msg: str) -> str:
+    """The flow this record belongs to, or "" for a record without one."""
+    m = _FLOW_ID_RE.search(msg)
+    return m.group(1) if m else ""
+
+
+def group_by_flow(entries: list[dict]) -> list[dict]:
+    """Collapse the signatures of one flow into one problem, each with an ``others`` count.
+
+    A single OPI failure is logged by every layer it passes: the code that raises it, the
+    caller that summarizes it, and the task bookkeeping that records the failed step. That
+    is one problem, but it is four signatures, so it was four alert lines. The ignore-list
+    could only suppress it by naming each wording (three patterns for
+    "waiting for application to be created"), which meant the next wording came through in
+    full - as "waiting for sync" did. Grouping on the flow id handles every wording at once.
+
+    The representative is the earliest record, which is the innermost failure; the wrappers
+    unwind after it. A tie (the layers often land in the same millisecond) goes to the
+    longest message, a wrapper being a restatement plus framing.
+    """
+    grouped: dict[str, list[dict]] = {}
+    problems: list[dict] = []
+    for entry in entries:
+        if entry["flow"]:
+            grouped.setdefault(entry["flow"], []).append(entry)
+        else:
+            problems.append({**entry, "others": 0})
+    for members in grouped.values():
+        root = min(members, key=lambda e: (e["ts"], -len(e["sample"]), e["sample"]))
+        problems.append({**root, "others": len(members) - 1})
+    return problems
 
 
 def send_ntfy(client: httpx.Client, cfg: LogWatchConfig, title: str, body: str, priority: str, tags: str) -> bool:
@@ -409,8 +463,12 @@ def run_cycle(
             if any(p.search(msg) for p in ignore):
                 dropped += 1
                 continue
-            ent = remainder.setdefault(signature(msg), {"count": 0, "sample": msg, "level": level})
+            ent = remainder.setdefault(
+                signature(msg),
+                {"count": 0, "sample": msg, "level": level, "flow": flow_id(msg), "ts": row[0]},
+            )
             ent["count"] += 1
+            ent["ts"] = min(ent["ts"], row[0])
         logger.info(
             "ignore-list (%d patterns) dropped %d line(s); %d remain across %d signature(s)",
             len(ignore),
@@ -446,11 +504,15 @@ def run_cycle(
             return 0
 
         # Order by severity then frequency for a readable summary.
-        ordered = sorted(fresh.values(), key=lambda e: (-severity(e["sample"], e["level"]), -e["count"]))
-        samples = [f"[{e['count']}x] {e['sample'][:300]}" for e in ordered]
+        by_severity = sorted(fresh.values(), key=lambda e: (-severity(e["sample"], e["level"]), -e["count"]))
+        samples = [f"[{e['count']}x] {e['sample'][:300]}" for e in by_severity]
 
-        logger.warning("RESULT: %d NEW issue(s) found:", len(fresh))
-        for e in ordered:
+        # What the alert counts and shows is problems, not log records: one failure that
+        # every layer logged is one thing that is broken.
+        problems = sorted(group_by_flow(by_severity), key=lambda e: (-severity(e["sample"], e["level"]), -e["count"]))
+
+        logger.warning("RESULT: %d NEW issue(s) in %d problem(s):", len(fresh), len(problems))
+        for e in by_severity:
             sev = {2: "CRIT", 1: "ERR ", 0: "WARN"}[severity(e["sample"], e["level"])]
             logger.warning("  [%s x%d] %s", sev, e["count"], e["sample"][:200])
 
@@ -461,13 +523,19 @@ def run_cycle(
         if summary:
             body_lines = [ln for ln in summary.splitlines() if ln.strip()]
         else:
-            # No triage: show every fresh signature with its real severity, ordered
-            # most-severe first. Cap only as an ntfy-size safety net; if the cap is
-            # hit, say so truthfully (no invented severity on the overflow line).
+            # No triage: show every problem with its real severity, ordered most-severe
+            # first. Cap only as an ntfy-size safety net; if the cap is hit, say so
+            # truthfully (no invented severity on the overflow line).
             tag = {2: "CRIT", 1: "ERR", 0: "WARN"}
-            shown = ordered[:MAX_BODY_LINES]
-            body_lines = [f"{tag[severity(e['sample'], e['level'])]} {ascii_short(human(e['sample']))}" for e in shown]
-            if (extra := len(ordered) - len(shown)) > 0:
+            shown = problems[:MAX_BODY_LINES]
+            budget = max(_MIN_LINE_CHARS, min(_MAX_LINE_CHARS, _BODY_CHARS // len(shown)))
+            body_lines = []
+            for e in shown:
+                text = ascii_short(human(e["sample"]), budget)
+                if e["others"]:
+                    text += f" (+{e['others']} more record(s) in the same flow)"
+                body_lines.append(f"{tag[severity(e['sample'], e['level'])]} {text}")
+            if (extra := len(problems) - len(shown)) > 0:
                 body_lines.append(f"(+{extra} more, see OPI logs)")
 
         # Sort shown problems most-severe first (stable - keeps triage order within a tier).
@@ -476,10 +544,10 @@ def run_cycle(
 
         priority = (
             "urgent"
-            if re.search(r"\bCRITICAL\b", summary) or any(severity(e["sample"], e["level"]) == 2 for e in ordered)
+            if re.search(r"\bCRITICAL\b", summary) or any(severity(e["sample"], e["level"]) == 2 for e in by_severity)
             else "high"
         )
-        title = f"OPI log-watch: {len(fresh)} issue(s)"
+        title = f"OPI log-watch: {len(problems)} issue(s)"
 
         if send_notification:
             send_ntfy(client, cfg, title, body, priority, "mag")

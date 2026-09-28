@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from opi.core.buttons import check_button_variant
 from opi.services.config_lists import find_patchable_list
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 
 if TYPE_CHECKING:
     from opi.services.catalog.base import ConfigLayer
@@ -68,6 +68,40 @@ class DeploymentAction:
 #: deployment-level buttons that service wants shown. Kept as a plain callable so
 #: services.py stays free of forms/web imports.
 ActionsProvider = Callable[[dict[str, Any], str], list[DeploymentAction]]
+
+
+def deployment_index(project_data: dict[str, Any], deployment_name: str) -> int | None:
+    deployments = project_data.get("deployments") or []
+    return next(
+        (i for i, d in enumerate(deployments) if isinstance(d, dict) and d.get("name") == deployment_name),
+        None,
+    )
+
+
+def deployment_modal_action(
+    project_data: dict[str, Any],
+    deployment_name: str,
+    *,
+    service: ServiceType,
+    modal_prefix: str,
+    label: str,
+    icon: str,
+) -> DeploymentAction | None:
+    """De knop die ``modal-wizard/<modal_prefix><index>`` in de gedeelde modal laadt, of
+    None als het project ``service`` niet gebruikt of de deployment niet kent."""
+    names = [service_entry_name(entry) for entry in project_data.get("services") or []]
+    if service.value not in names:
+        return None
+    index = deployment_index(project_data, deployment_name)
+    if index is None:
+        return None
+    return DeploymentAction(
+        label=label,
+        icon=icon,
+        kind="secondary",
+        modal_endpoint=f"/projects/{project_data.get('name', '')}/modal-wizard/{modal_prefix}{index}",
+        modal_title=f"{label} - {deployment_name}",
+    )
 
 
 def service_entry_name(entry: Any) -> str | None:
@@ -326,6 +360,19 @@ class VariableDefinition:
     source: str = "direct"  # "secret" or "direct" - how the value is provided
     aliases: list[str] = field(default_factory=list)  # Alternative names (e.g., APP_ prefixed versions)
     secret_key: str | None = None  # If source="secret", which secret class field maps to this variable
+    conditional: bool = False
+    """Whether the service may inject this variable on one cluster and not on another.
+
+    Default False: a bound service injects every variable it declares, and the
+    e2e-allservices probe asserts exactly that -- a missing variable is a provisioning
+    bug. A variable that depends on something the CLUSTER offers rather than on the
+    service being bound breaks that assertion while nothing is wrong, so it says so here
+    and the probe spec leaves it out of its presence check (RC-167, the vlam doorlus:
+    a cluster without a CA bundle offers no direct path and injects neither of its two
+    variables). Whether such a variable exists at all is still visible everywhere else --
+    the services page, the API description -- because that is a question about the
+    service, not about one cluster.
+    """
 
     def get_all_names(self) -> list[str]:
         """Get all possible names (primary name + aliases) for this variable."""
@@ -338,15 +385,26 @@ class ServiceDefinition:
     Definition of a service with all its properties and configuration.
 
     This class encapsulates all information about a service including
-    its metadata, binding, variables, and optional configurations.
+    its metadata, variables, and optional configurations.
     """
 
     name: str
     description: str
     icon: str
     color: str
-    binding: ServiceBinding
     variables: list[VariableDefinition] = field(default_factory=list)
+    selectable_per_component: bool = True
+    """Whether each component switches this service on and off for itself.
+
+    False means the project-level selection is the whole answer and the service decides
+    for itself where it works.
+    """
+    shared_per_deployment: bool = False
+    """Whether one provision of this service serves a whole deployment.
+
+    Every component of the deployment that ticks it gets the same credentials to the same
+    database, bucket or cache. Says nothing about who ticks it: postgres is both.
+    """
     secret_class: str | None = None
     # TODO: specific definitions should not be here
     storage_config: dict[str, Any] | None = None
@@ -499,18 +557,6 @@ class ServiceAdapter:
         return ServiceType(value)
 
     @classmethod
-    def is_component_service(cls, service: ServiceType) -> bool:
-        """Check if a service is component-specific."""
-        definition = cls.get_service_definition(service)
-        return definition is not None and definition.binding is ServiceBinding.COMPONENT
-
-    @classmethod
-    def is_deployment_service(cls, service: ServiceType) -> bool:
-        """Check if a service is deployment-shared."""
-        definition = cls.get_service_definition(service)
-        return definition is not None and definition.binding is ServiceBinding.DEPLOYMENT
-
-    @classmethod
     def get_component_flag(cls, service: ServiceType) -> str | None:
         """Get the component flag name for a service if it has one."""
         definition = cls.get_service_definition(service)
@@ -521,16 +567,6 @@ class ServiceAdapter:
         """Get storage configuration for a storage service."""
         definition = cls.get_service_definition(service)
         return definition.storage_config if definition is not None else None
-
-    @classmethod
-    def filter_component_services(cls, services: list[ServiceType]) -> list[ServiceType]:
-        """Filter services to only include component-specific ones."""
-        return [service for service in services if cls.is_component_service(service)]
-
-    @classmethod
-    def filter_deployment_services(cls, services: list[ServiceType]) -> list[ServiceType]:
-        """Filter services to only include deployment-shared ones."""
-        return [service for service in services if cls.is_deployment_service(service)]
 
     @classmethod
     def get_backupable_labels(cls) -> list[dict[str, str]]:
@@ -934,37 +970,86 @@ class ServiceAdapter:
     ) -> dict[str, Any]:
         """Return the dict that owns the ``services`` list for ``layer``."""
         lv = layer.value
+        project_name = project_data.get("name")
         if lv == "project":
             return project_data
         if lv == "component":
             return cls._require_named(
-                project_data.get("components", []), component_name, kind="component", param="component_name"
+                project_data.get("components", []),
+                component_name,
+                kind="component",
+                param="component_name",
+                project_name=project_name,
             )
         if lv == "deployment":
             return cls._require_named(
-                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+                project_data.get("deployments", []),
+                deployment_name,
+                kind="deployment",
+                param="deployment_name",
+                project_name=project_name,
             )
         if lv == "deployment-component":
             deployment = cls._require_named(
-                project_data.get("deployments", []), deployment_name, kind="deployment", param="deployment_name"
+                project_data.get("deployments", []),
+                deployment_name,
+                kind="deployment",
+                param="deployment_name",
+                project_name=project_name,
             )
             return cls._require_named(
                 deployment.get("components", []),
                 component_name,
                 kind="deployment component",
                 param="component_name",
+                project_name=project_name,
             )
         raise ServiceValidationError(f"Unknown config target layer: {layer!r}")
 
     @classmethod
-    def _require_named(cls, items: list[dict[str, Any]], name: str | None, *, kind: str, param: str) -> dict[str, Any]:
-        """Find an item by name/reference or raise a clear ServiceValidationError."""
+    def _require_named(
+        cls,
+        items: list[dict[str, Any]],
+        name: str | None,
+        *,
+        kind: str,
+        param: str,
+        project_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Find an item by name/reference or raise a clear ServiceValidationError.
+
+        The project is named in the miss: this walk is pure data manipulation, so the
+        message is all the reader gets. Without it a failed task read "Deployment
+        'pr-268' not found in project", which is the same sentence for every project a
+        CI pipeline touches (three of them at once, measured 3 September 2026).
+        """
         if not name:
             raise ServiceValidationError(f"A '{param}' is required to target the {kind} layer")
         for item in items:
             if service_entry_name(item) == name:
                 return item
-        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project")
+        where = f" '{project_name}'" if project_name else ""
+        raise ServiceValidationError(f"{kind.capitalize()} '{name}' not found in project{where}")
+
+    @classmethod
+    def require_config_target(
+        cls,
+        project_data: dict[str, Any],
+        layer: ConfigLayer,
+        *,
+        component_name: str | None = None,
+        deployment_name: str | None = None,
+    ) -> None:
+        """Raise ``ServiceValidationError`` when ``layer``'s target is not in the project.
+
+        For a caller that wants the answer BEFORE it starts a write: the config
+        endpoints ask this so a deployment that is not there is a 404 on the request
+        instead of a task that fails a second later. It is the same walk the write
+        itself does, so the two cannot disagree about what exists.
+        """
+        cls._resolve_target_container(
+            project_data, layer, component_name=component_name, deployment_name=deployment_name
+        )
 
     @classmethod
     def set_service_config(
@@ -1188,15 +1273,26 @@ class ServiceAdapter:
         Fields the platform writes are not the caller's to clear either, so a block that
         holds them keeps exactly those and loses the rest -- "reset my settings" must not
         mean "throw away the realm-admin password". See ``_keep_platform_fields``.
+
+        The exception is a service that declares ``component_selection_follows_config``:
+        there the config IS the selection, so a demoted entry would say nothing at all.
+        Clearing removes the entry, and the service is deselected by the same act.
         """
         target_list = cls._resolve_target_services_list(
             project_data, layer, component_name=component_name, deployment_name=deployment_name, create=False
         )
+        entry_is_its_config = cls._entry_is_its_config(service_name, layer)
         for index, entry in enumerate(target_list):
             if service_entry_name(entry) == service_name:
                 if isinstance(entry, str):
+                    if entry_is_its_config:
+                        target_list.pop(index)
+                        return True
                     return False  # already bare -- no config to remove
                 kept = cls._platform_fields_of(service_name, layer, service_entry_config(entry))
+                if not kept and entry_is_its_config:
+                    target_list.pop(index)
+                    return True
                 if kept:
                     cls.set_service_config(
                         project_data,
@@ -1210,6 +1306,26 @@ class ServiceAdapter:
                 target_list[index] = service_name
                 return True
         return False
+
+    @classmethod
+    def _entry_is_its_config(cls, service_name: str, layer: ConfigLayer) -> bool:
+        """Whether an entry of this service at *layer* is NOTHING without its config.
+
+        Only at the two component layers: at project level the selection is the user's own
+        separate decision.
+        """
+        # Lazy, both of them: the registry imports this module, and ``catalog.base`` is
+        # part of that same cycle.
+        from opi.services.catalog.base import ConfigLayer as _ConfigLayer
+        from opi.services.registry import get_service
+
+        if layer not in (_ConfigLayer.COMPONENT, _ConfigLayer.DEPLOYMENT_COMPONENT):
+            return False
+        try:
+            service = get_service(ServiceType(service_name))
+        except ValueError:
+            return False
+        return service.component_selection_follows_config
 
     @classmethod
     def _platform_fields_of(cls, service_name: str, layer: ConfigLayer, config: Any) -> dict[str, Any]:

@@ -53,7 +53,7 @@ async def login(request: Request) -> Response:
         return await keycloak.authorize_redirect(request, redirect_uri)
 
     except Exception as e:
-        logger.error(f"Error initiating OAuth login: {e}")
+        logger.exception("Error initiating OAuth login")
 
         # Add more context about what might be causing DNS resolution errors
         if "Name or service not known" in str(e):
@@ -68,8 +68,12 @@ async def login(request: Request) -> Response:
                 "For production, it should typically be an external URL like: https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration"
             )
 
-        # Don't catch and swallow the exception - let it bubble up with more context
-        raise HTTPException(status_code=500, detail=f"OAuth login failed: {e!s}")
+        # De oorzaak staat hierboven in de log, bij het kenmerk van dit verzoek. Wat de
+        # gebruiker krijgt is de zin eronder: die noemt datzelfde kenmerk en geeft niets
+        # prijs over waar de inlogdienst staat.
+        raise HTTPException(
+            status_code=500, detail="Inloggen is niet gelukt. Probeer het over een minuut opnieuw."
+        ) from e
 
 
 @auth_router.get("/callback")

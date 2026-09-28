@@ -14,6 +14,7 @@ from opi.connectors.kubectl import create_kubectl_connector
 from opi.core.backup_constants import VALID_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace, get_storage_access_modes, get_storage_class_name
 from opi.core.config import settings
+from opi.core.errors import kenmerk_van, met_kenmerk
 from opi.handlers.project_file_handler import (
     create_project_file_handler,
     extract_storage_from_component_services,
@@ -33,6 +34,7 @@ from opi.manager.backup import (
 )
 from opi.manager.project_manager import ProjectManager
 from opi.services import ServiceType
+from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.project_store import get_project_store
 from opi.utils.naming import (
     generate_bucket_name,
@@ -46,6 +48,12 @@ from opi.utils.secrets import DatabaseSecret, MinIOSecret
 from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
+
+#: Zes terugzet-eindpunten hebben twee takken die op hetzelfde uitkomen -- een RuntimeError
+#: die geen vergrendeling was, en alles wat verder kan breken -- dus zeggen ze de lezer
+#: hetzelfde. Wat er precies misging staat in de log, bij het kenmerk van dit verzoek.
+TERUGZETTEN_MISLUKT = "Het terugzetten is niet gelukt. Probeer het over een minuut opnieuw."
+SNAPSHOTS_NIET_OPGEHAALD = "De lijst met snapshots kon niet worden opgehaald. Probeer het over een minuut opnieuw."
 
 # ``project_name`` gates tenant isolation on every restore endpoint: it is what
 # ``validate_api_token`` matches the API key against, and it determines the only
@@ -641,7 +649,7 @@ async def list_snapshots(
 
     except Exception as e:
         logger.exception("Error listing snapshots for %s/%s", cluster, namespace)
-        raise HTTPException(status_code=500, detail=f"Error listing snapshots: {e}") from e
+        raise HTTPException(status_code=500, detail=SNAPSHOTS_NIET_OPGEHAALD) from e
 
 
 @restore_router.get("/snapshots/{cluster}/{namespace}/{pvc_name}", response_model=ListSnapshotsResponse)
@@ -682,7 +690,7 @@ async def list_pvc_snapshots(
 
     except Exception as e:
         logger.exception("Error listing snapshots for %s/%s/%s", cluster, namespace, pvc_name)
-        raise HTTPException(status_code=500, detail=f"Error listing snapshots: {e}") from e
+        raise HTTPException(status_code=500, detail=SNAPSHOTS_NIET_OPGEHAALD) from e
 
 
 @restore_router.post("/pvc/{cluster}/{namespace}/{pvc_name}", response_model=RestoreResponse)
@@ -765,6 +773,7 @@ async def restore_pvc(
             storage_size=body.storage_size,
             storage_class=body.storage_class,
             overwrite=body.overwrite,
+            project_name=project_name,
         )
 
         status = "success" if result.success else "failed"
@@ -786,11 +795,12 @@ async def restore_pvc(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring PVC %s/%s/%s", cluster, namespace, pvc_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring PVC %s/%s/%s", cluster, namespace, pvc_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring PVC: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 @restore_router.post("/project/{project_name}", response_model=ProjectRestoreResponse)
@@ -1025,11 +1035,11 @@ async def restore_project_pvc(
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in project restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring project PVC: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # --- Backup Run Restore Helpers ---
@@ -1472,11 +1482,11 @@ async def restore_backup_run(
         if "lock" in str(e).lower():
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in backup run restore for %s", project_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring backup run: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Resolving the project's own service as restore target
@@ -1879,11 +1889,12 @@ async def restore_database(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring database %s/%s/%s", cluster, namespace, reference_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring database %s/%s/%s", cluster, namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring database: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Bucket Restore Endpoints
@@ -2019,11 +2030,12 @@ async def restore_bucket(
         if "lock" in str(e).lower():
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.exception("Error restoring bucket %s/%s/%s", cluster, namespace, reference_name)
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error restoring bucket %s/%s/%s", cluster, namespace, reference_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring bucket: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 # Deployment Restore Endpoint (versioned restore for PVC, database, and bucket)
@@ -2175,10 +2187,21 @@ async def restore_deployment_resource(
             )
 
         if not result["success"]:
+            # ``result["error"]`` is hier een zin voor de lezer -- "de doeldatabase is
+            # niet leeg, verhoog de generatie" -- en die blijft staan. Wat de laag
+            # eronder erover zei staat in de log; zie de hulpfuncties hieronder.
+            logger.error(
+                "Terugzetten van %s %s voor %s/%s mislukt: %s",
+                body.resource_type,
+                body.reference_name,
+                project_name,
+                deployment_name,
+                result["error"],
+            )
             return JSONResponse(
                 content={
                     "status": "failed",
-                    "message": result["error"],
+                    "message": met_kenmerk(result["error"], kenmerk_van(request)),
                     "resource_type": body.resource_type,
                     "reference_name": body.reference_name,
                     "old_generation": result.get("old_generation"),
@@ -2261,11 +2284,11 @@ async def restore_deployment_resource(
             logger.warning(f"Restore lock conflict: {e}")
             raise HTTPException(status_code=409, detail=str(e)) from e
         logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
     except Exception as e:
         logger.exception("Error in deployment restore for %s/%s", project_name, deployment_name)
-        raise HTTPException(status_code=500, detail=f"Error restoring deployment resource: {e}") from e
+        raise HTTPException(status_code=500, detail=TERUGZETTEN_MISLUKT) from e
 
 
 async def _restore_pvc_with_versioning(
@@ -2340,9 +2363,12 @@ async def _restore_pvc_with_versioning(
     )
 
     if not result.success:
+        # De melding van de terugzetlaag noemt de pod en de laatste 500 tekens van zijn
+        # log; dat hoort in de log en niet in een antwoord.
+        logger.error("Terugzetten van PVC %s mislukt: %s", target_pvc_name, result.error)
         return {
             "success": False,
-            "error": f"PVC restore failed: {result.error}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": source_pvc_name,
@@ -2436,7 +2462,11 @@ async def _restore_database_with_versioning(
             else generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
         )
 
-        user_result = await postgres_connector.create_user(username=db_username, password=db_password)
+        user_result = await postgres_connector.create_user(
+            username=db_username,
+            password=db_password,
+            connection_limit=deployment_connection_limit(project_data, deployment_name),
+        )
         if user_result["status"] == "exists" and not reuse_password:
             await postgres_connector.update_user_password(username=db_username, new_password=db_password)
 
@@ -2508,9 +2538,10 @@ async def _restore_database_with_versioning(
         )
 
         if not restore_result.success:
+            logger.error("Terugzetten van database %s mislukt: %s", new_database_name, restore_result.error)
             return {
                 "success": False,
-                "error": f"Database restore failed: {restore_result.error}",
+                "error": TERUGZETTEN_MISLUKT,
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_database_name,
@@ -2526,11 +2557,11 @@ async def _restore_database_with_versioning(
             "new_resource_name": new_database_name,
         }
 
-    except Exception as e:
-        logger.exception(f"Error in database versioned restore: {e}")
+    except Exception:
+        logger.exception("Error in database versioned restore")
         return {
             "success": False,
-            "error": f"Database restore error: {e}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": old_database_name,
@@ -2668,9 +2699,10 @@ async def _restore_bucket_with_versioning(
         )
 
         if not restore_result.success:
+            logger.error("Terugzetten van bucket %s mislukt: %s", new_bucket_name, restore_result.error)
             return {
                 "success": False,
-                "error": f"Bucket restore failed: {restore_result.error}",
+                "error": TERUGZETTEN_MISLUKT,
                 "old_generation": current_generation,
                 "new_generation": next_generation,
                 "old_resource_name": old_bucket_name,
@@ -2686,11 +2718,11 @@ async def _restore_bucket_with_versioning(
             "new_resource_name": new_bucket_name,
         }
 
-    except Exception as e:
-        logger.exception(f"Error in bucket versioned restore: {e}")
+    except Exception:
+        logger.exception("Error in bucket versioned restore")
         return {
             "success": False,
-            "error": f"Bucket restore error: {e}",
+            "error": TERUGZETTEN_MISLUKT,
             "old_generation": current_generation,
             "new_generation": next_generation,
             "old_resource_name": old_bucket_name,

@@ -27,6 +27,7 @@ from opi.forms.visualizers.wizard_sections import (
     DEPLOYMENTS_SECTION,
     IDENTITY_EDIT_SECTION,
     IDENTITY_SECTION,
+    IMAGE_REGISTRIES_CONFIG_SECTION,
     INVITE_CONFIG_SECTION,
     KEYCLOAK_CONFIG_SECTION,
     MINIO_CONFIG_SECTION,
@@ -108,6 +109,8 @@ CREATE_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
+        # Voor COMPONENTS_SECTION, want de registry-select op een component leest deze lijst.
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         # After KEYCLOAK_CONFIG_SECTION: the realm-role picker reads the keycloak config
         # (realm-roles + authorization-wall role) from the draft entered in the step before.
@@ -141,6 +144,7 @@ EDIT_FLOW = FormFlow(
     sections=[
         IDENTITY_SECTION,
         SERVICES_SECTION,
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
@@ -197,6 +201,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
     show_review=True,
     sections=[
         SERVICES_EDIT_SECTION,
+        IMAGE_REGISTRIES_CONFIG_SECTION,
         KEYCLOAK_CONFIG_SECTION,
         INVITE_CONFIG_SECTION,
         POSTGRESQL_CONFIG_SECTION,
@@ -299,6 +304,14 @@ MODAL_EDIT_SEND_EMAIL_FLOW = FormFlow(
     sections=[SEND_EMAIL_CONFIG_SECTION],
 )
 
+MODAL_EDIT_IMAGE_REGISTRIES_FLOW = FormFlow(
+    flow_id="modal-edit-image-registries-config",
+    title="Eigen container registries",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[IMAGE_REGISTRIES_CONFIG_SECTION],
+)
+
 # ---------------------------------------------------------------------------
 # Backup & Restore modal flows
 # ---------------------------------------------------------------------------
@@ -345,6 +358,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_REDIS_FLOW.flow_id: MODAL_EDIT_REDIS_FLOW,
     MODAL_EDIT_MINIO_FLOW.flow_id: MODAL_EDIT_MINIO_FLOW,
     MODAL_EDIT_SEND_EMAIL_FLOW.flow_id: MODAL_EDIT_SEND_EMAIL_FLOW,
+    MODAL_EDIT_IMAGE_REGISTRIES_FLOW.flow_id: MODAL_EDIT_IMAGE_REGISTRIES_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,
 }
 
@@ -461,6 +475,22 @@ def build_cross_domain_deployment_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
+    """The per-deployment database settings (RC-201): the connection limit."""
+    from opi.services.registry import get_service
+    from opi.services.services_enums import ServiceType
+
+    section = get_service(ServiceType.POSTGRESQL_DATABASE).deployment_form_section(deployment_index)
+    return FormFlow(
+        flow_id=f"modal-edit-postgresql-deployment-{deployment_index}",
+        title="Connectielimiet per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[section],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config.
 
@@ -555,6 +585,11 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-cross-domain-deployment-",
         list_key="deployments",
         build=lambda index, _ctx: build_cross_domain_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-postgresql-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_postgresql_deployment_flow(index),
     ),
 )
 

@@ -146,6 +146,28 @@ def aanvinkvakjes(page: Page, pad: str) -> Locator:
     return page.locator(f"[name='{pad}[]'][id]")
 
 
+def kies_verplichte_keuzelijsten(page: Page) -> None:
+    """Maak in elke verplichte keuzelijst die nog leeg staat de eerste echte keuze.
+
+    De keycloak-template heeft geen default meer: een scherm mag geen blauwdruk tonen die
+    niet in het projectbestand staat, dus het veld begint leeg met een lege optie erboven en
+    is verplicht. De browser weigert "Volgende" zolang er niets gekozen is, en de foutbel is
+    onzichtbaar omdat het veld in een ``nldd-form-field`` zit: de knop lijkt dan dood.
+
+    Een test die alleen LANGS zo'n stap loopt maakt hier de keuze die de gebruiker zelf zou
+    maken. Bewust een losse aanroep en niet iets dat ``click_next`` stilletjes doet: dan zou
+    de harnas de regel wegnemen die hij hoort te kunnen toetsen.
+    """
+    kandidaten = page.locator("select[required]")
+    for i in range(kandidaten.count()):
+        veld = kandidaten.nth(i)
+        if veld.input_value():
+            continue
+        opties = veld.locator("option")
+        if opties.count() > 1:
+            veld.select_option(index=1)
+
+
 def unique_project_name(prefix: str = "e2e") -> str:
     """Generate a unique project name: e2e-{timestamp}-{random}."""
     ts = int(time.time()) % 100000
