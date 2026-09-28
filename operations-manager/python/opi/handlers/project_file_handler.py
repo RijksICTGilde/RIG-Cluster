@@ -462,6 +462,19 @@ def _migrate_flat_key_before_apply(res: dict[str, Any], key: str) -> None:
     del res[key]
 
 
+def _localize(text: Any, language: str) -> str | None:
+    """Pick one language out of an invite text: a plain string, or ``{nl: ..., en: ...}``.
+
+    A dict without the requested language falls back to nl, then en. Returns None when the
+    text is absent, so a caller can tell "not set" apart from "set to an empty string".
+    """
+    if isinstance(text, dict):
+        return text.get(language, text.get("nl", text.get("en", "")))
+    if isinstance(text, str):
+        return text
+    return None
+
+
 class ProjectFileHandler:
     """Handler for project file operations including reading, parsing, and change detection."""
 
@@ -3612,16 +3625,7 @@ class ProjectFileHandler:
         Returns:
             The invite message string
         """
-        message = invite.get("message", "")
-
-        if isinstance(message, dict):
-            # Multi-language message
-            return message.get(language, message.get("nl", message.get("en", "")))
-        elif isinstance(message, str):
-            # Simple string message
-            return message
-
-        return ""
+        return _localize(invite.get("message"), language) or ""
 
     def get_invite_success_title(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
@@ -3634,11 +3638,8 @@ class ProjectFileHandler:
         Returns:
             The success title string or default
         """
-        title = invite.get("success_title")
-
-        if isinstance(title, dict):
-            return title.get(language, title.get("nl", title.get("en", "")))
-        elif isinstance(title, str):
+        title = _localize(invite.get("success_title"), language)
+        if title is not None:
             return title
 
         # Default titles
@@ -3659,11 +3660,8 @@ class ProjectFileHandler:
         Returns:
             The button text string or default
         """
-        button = invite.get("success_button")
-
-        if isinstance(button, dict):
-            return button.get(language, button.get("nl", button.get("en", "")))
-        elif isinstance(button, str):
+        button = _localize(invite.get("success_button"), language)
+        if button is not None:
             return button
 
         # Default button texts
