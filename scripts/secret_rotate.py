@@ -43,6 +43,7 @@ import json
 import re
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -309,6 +310,18 @@ COMPONENTS: list[Component] = [
         note="Token komt van ODCN; geen vraag of ZAD herstart moet, hij is onderdeel van de ronde.",
     ),
     Component(
+        key="platform-repo-pat",
+        title="Platform repo-PAT (GitHub; OPI schrijft projectmanifests mee)",
+        template="",  # leeft in het ZAD-envbestand; de image-default is weg (2026-09-28)
+        category="external",
+        rotate_fields=("PROJECT_REPO_PASSWORD",),
+        workloads=(OPI_DEPLOYMENT,),
+        zad_env=("PROJECT_REPO_PASSWORD",),
+        note="Aanmaken doe je in de GitHub-console (Settings → Developer settings). De tool "
+        "toetst huidige én nieuwe token via de GitHub-API vóór het bestand wordt bijgewerkt. "
+        "Daarna zelf: het env-secret regenereren en ZAD herstarten (staat als tekst in de stappen).",
+    ),
+    Component(
         key="keycloak-admin",
         title="Keycloak admin (break-glass)",
         template="keycloak-admin-secret.yaml",
@@ -342,6 +355,7 @@ NON_ROTATABLE: dict[str, str] = {
 TEMPLATELESS: dict[str, str] = {
     "transip": "de sleutel komt van buiten het cluster; het doelbestand in de overlay staat er wel",
     "grafana": "leeft uitsluitend in het ZAD-envbestand",
+    "platform-repo-pat": "leeft uitsluitend in het ZAD-envbestand (image-default is weg sinds 28-09-2026)",
 }
 
 
@@ -355,9 +369,10 @@ def coverage_gaps() -> list[str]:
     templates_dir = EDIT_TREES["infrastructure"][0]
     on_disk = {path.name for path in templates(templates_dir)}
     in_table = {component.template for component in COMPONENTS if component.template}
-    gaps: list[str] = []
-    for name in sorted(on_disk - in_table - set(NON_ROTATABLE)):
-        gaps.append(f"template {name} heeft geen rij in de tabel en staat niet in NON_ROTATABLE")
+    gaps: list[str] = [
+        f"template {name} heeft geen rij in de tabel en staat niet in NON_ROTATABLE"
+        for name in sorted(on_disk - in_table - set(NON_ROTATABLE))
+    ]
     for name in sorted(in_table - on_disk):
         owner = next(c.key for c in COMPONENTS if c.template == name)
         if owner not in TEMPLATELESS:
@@ -541,22 +556,6 @@ def wait_for_secret_value(kube: Kube, secret_name: str, key: str, expected: str,
                 f"(live: {'afwezig' if live is None else 'een andere waarde'})"
             )
         time.sleep(2)
-
-
-def wait_for_secret_value(kube: Kube, secret_name: str, key: str, expected: str, *, timeout: int = 180) -> str:
-    """Wacht tot het cluster-secret de verwachte waarde draagt. Dit is DE gate waar
-    restarts op mogen wachten: nooit 'Argo heeft vast wel gesynct'."""
-    deadline = time.monotonic() + timeout
-    while True:
-        live = kube.secret_value(secret_name, key)
-        if live == expected:
-            return f"cluster-secret {secret_name}.{key} draagt de nieuwe waarde"
-        if time.monotonic() > deadline:
-            raise EditFailed(
-                f"cluster-secret {secret_name} draagt de nieuwe waarde na {timeout}s nog niet "
-                f"(live: {'afwezig' if live is None else 'een andere waarde'})"
-            )
-        time.sleep(3)
 
 
 def psql_check(kube: Kube, user: str, password: str, database: str = "postgres") -> str:
@@ -1044,6 +1043,55 @@ def cluster_secret_check(component: Component) -> Step:
     )
 
 
+def github_pat_steps(kube: Kube, values: Ctx) -> list[Step]:
+    """De gedeelde platform-PAT. GitHub kan zijn eigen tokens niet via zijn API aanmaken,
+    dus de console blijft de enige handmatige stap; al het andere bewijst de tool via
+    de GitHub-API (GET /user). Lokaal uitgevoerd, niet vanuit een pod: deze waarde hoort
+    niet in een clusterproces te hoeven bestaan."""
+
+    def _probe(token: str) -> str:
+        snippet = (
+            "import os,urllib.request\n"
+            "req=urllib.request.Request('https://api.github.com/user')\n"
+            "req.add_header('Authorization','Bearer '+os.environ['T'])\n"
+            "print(urllib.request.urlopen(req, timeout=15).status)\n"
+        )
+        process = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", snippet],
+            env={**os.environ, "T": token},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if process.returncode != 0 or "200" not in process.stdout:
+            _ok(f"GitHub-API met deze token: rc={process.returncode} {process.stdout.strip()} {process.stderr.strip()[:120]}")
+        return "HTTP 200"
+
+    return [
+        Step(
+            "Huidige token testen tegen de GitHub-API",
+            "check",
+            ["GET https://api.github.com/user met de huidige token, lokaal"],
+            lambda ctx: "huidige token: " + _probe(ctx.current["PROJECT_REPO_PASSWORD"]),
+        ),
+        Step(
+            "EXTERN: maak een nieuwe token aan in de GitHub-console",
+            "manual",
+            [
+                "Settings → Developer settings → Fine-grained tokens, scope zoals de huidige.",
+                "De oude blijft werken tot je hem zelf revoket; doe dat pas als ZAD op de nieuwe draait.",
+            ],
+            None,
+        ),
+        Step(
+            "Verifiëren via de GitHub-API",
+            "verify",
+            ["GET https://api.github.com/user met de nieuwe token, lokaal"],
+            lambda ctx: "nieuwe token: " + _probe(ctx.new["PROJECT_REPO_PASSWORD"]),
+        ),
+    ]
+
+
 def transip_steps(kube: Kube, values: Ctx) -> list[Step]:
     def _verify_key(account: str, private_key: str) -> str:
         import asyncio
@@ -1289,7 +1337,7 @@ def file_step(component: Component, cluster: Cluster) -> Step:
             # Geen template (transip): werk op de ontsleutelde inhoud en vervang alleen
             # de geroteerde velden. Alles anders dan die velden blijft byte-voor-byte.
             destination = resolution.existing
-            if resolution.state != "canonical" and resolution.state != "legacy-encrypted" or destination is None:
+            if (resolution.state != "canonical" and resolution.state != "legacy-encrypted") or destination is None:
                 raise EditFailed(f"{component.key}: onverwachte bestandstoestand ({resolution.state})")
             entry = key_entry_for(sops_recipients(destination)[0])
             yaml = YAML()
@@ -1314,13 +1362,10 @@ def file_step(component: Component, cluster: Cluster) -> Step:
             recipients = sibling_recipients(overlays)
             entry = key_entry_for(recipients[0])
             encrypt(plaintext, resolution.canonical, entry.private, recipients=recipients)
-            changed = update_wiring(
-                overlays, old_plain=resolution.existing.name, new_encrypted=resolution.canonical.name  # type: ignore[union-attr]
-            )
+            changed = update_wiring(overlays, old_plain=resolution.existing.name, new_encrypted=resolution.canonical.name)  # type: ignore[union-attr]
             resolution.existing.unlink()  # type: ignore[union-attr]
-            changed.append(f"{resolution.existing.name} verwijderd (plaintext)"  # type: ignore[union-attr]
-            )
-            return "MIGRATIE+rotatie: " + "; ".join([f"{resolution.canonical.name} versleuteld aangemaakt"] + changed)
+            changed.append(f"{resolution.existing.name} verwijderd (plaintext)")  # type: ignore[union-attr]
+            return "MIGRATIE+rotatie: " + "; ".join([f"{resolution.canonical.name} versleuteld aangemaakt", *changed])
 
         if resolution.existing is None:
             raise EditFailed(f"{resolution.canonical} bestaat niet - maak het eerst aan (edit-modus)")
@@ -1386,7 +1431,11 @@ def steps_for(
     minio_endpoint = "http://minio:9000"
 
     if component.category == "external":
-        steps = transip_steps(kube, ctx) if component.key == "transip" else grafana_steps(kube, ctx)
+        builders = {"transip": transip_steps, "grafana": grafana_steps, "platform-repo-pat": github_pat_steps}
+        builder = builders.get(component.key)
+        if builder is None:
+            raise EditFailed(f"external-component zonder bouwer: {component.key}")
+        steps = builder(kube, ctx)
         if component.template:
             steps = [*steps, file_step(component, cluster)]
         if component.zad_env:
@@ -1806,7 +1855,7 @@ def check_component(component: Component, cluster: Cluster, kube: Kube) -> list[
             report.append(f"  ✅ {component.key}: {outcome}")
         except EditFailed as failure:
             report.append(f"  ❌ {component.key}: DRIFT - {failure}")
-        except Exception as failure:  # noqa: BLE001 -- --check --all mag nooit halverwege breken
+        except Exception as failure:
             report.append(f"  🚧 {component.key}: de check zelf strandde ({type(failure).__name__}: {str(failure)[:150]})")
     if not steps:
         report.append(f"  ⏭  {component.key}: geen check-stap (categorie {component.category})")
