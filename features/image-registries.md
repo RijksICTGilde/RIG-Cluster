@@ -374,7 +374,7 @@ wave 0 voor wave 1 aan), maar hij poortwacht op HEALTH, en een net aangemaakte
 kind-Application beheert nul resources en meldt zich daarmee binnen een seconde Healthy. De
 grendel gaat dus open voordat het projectniveau zijn serviceaccount heeft uitgerold. Gemeten
 op 2026-09-25, met de afgewezen alternatieven, in
-`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+`docs/de-serviceaccount-komt-na-de-deployment.md`.
 
 Wat het wel oplost is de AANMAAKVOLGORDE, in `ArgoManager.create_argocd_resources`. Die
 pusht in twee commits: eerst het projectniveau (met zijn AppProject en repository-secret),
@@ -386,7 +386,7 @@ zelfstandig synchroniseren; dat is wat de ordening draagt, en niet het wachten z
 Loopt die wacht vast, dan gaat de commit met de deployment-applicaties er niet meer heen en
 breekt de verwerking van het project af. Eerder was dat een waarschuwing in het log en liep
 de verwerking degraded door; waarom de afbrekende kant hier de veilige is, staat in
-`docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`.
+`docs/de-serviceaccount-komt-na-de-deployment.md`.
 
 De toets erop staat in `tests/test_project_level_ordering.py`.
 
