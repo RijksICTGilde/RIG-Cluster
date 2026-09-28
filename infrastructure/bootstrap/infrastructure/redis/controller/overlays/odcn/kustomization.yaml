@@ -24,3 +24,8 @@ patches:
         path: /spec/template/spec/securityContext/runAsGroup
       - op: remove
         path: /spec/template/spec/securityContext/fsGroup
+
+# Zie de prometheus-overlay voor de reden: zonder het rcr-pad in git blijft ArgoCD OutOfSync.
+images:
+  - name: redis
+    newName: rcr.rijksapps.nl/dockerhub-rig/library/redis
