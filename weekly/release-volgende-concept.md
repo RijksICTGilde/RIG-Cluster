@@ -50,7 +50,7 @@ Een verwijdering kon achter een lopende uitrol vast komen te zitten en een deadl
 
 ##### VLAM
 
-- De proxy wijst nu naar vlam.overheid-i.nl, met het certificaat dat daarbij hoort. De service biedt die CA-bundel aan om te downloaden bij het serviceblok.
+- De proxy wijst nu naar vlam-api.overheid-i.nl, met het certificaat dat daarbij hoort. De service biedt die CA-bundel aan om te downloaden bij het serviceblok.
 
 ##### Sneller
 
