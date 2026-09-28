@@ -443,6 +443,12 @@ tasks:
           echo "   Remember to delete it manually for security!"
         fi
 
+  edit-secret:
+    desc: "Eén veld in een secret vervangen (genereren of zelf opgeven), zonder de rest te roteren"
+    interactive: true
+    cmds:
+      - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
+
   generate-local-ca:
     desc: "Generate root CA for local development HTTPS (one-time)"
     cmds:
