@@ -350,7 +350,7 @@ tasks:
         fi
 
         # Determine output filename (remove .sops from the name)
-        OUTPUT_FILE=$(echo "{{.FILE}}" | sed 's/\.sops\.yaml$/.yaml/')
+        OUTPUT_FILE=$(echo "{{.FILE}}" | sed -E 's/(\.yaml)?\.sops\.yaml$/.yaml/')
 
         if [[ "$OUTPUT_FILE" == "{{.FILE}}" ]]; then
           echo "❌ File doesn't have .sops.yaml extension: {{.FILE}}"

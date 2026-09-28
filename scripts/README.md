@@ -32,6 +32,112 @@ Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
 `test_sops_rotation_round.py`, `test_argo_repository_secrets.py`, `test_pat_loose_values.py`,
 `test_set_sops_key_secret.py`.
 
+## Een wachtwoord in een secret vervangen
+
+`task edit-secret`, of rechtstreeks:
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py
+```
+
+Het loopt de templates in `infrastructure/.../secrets/templates/` en
+`bootstrap/rig-system/kustomize/secrets/templates/` af, vraagt welk secret je wilt aanpassen, en
+per veld of de waarde blijft staan, opnieuw gegenereerd wordt volgens zijn `@secret-gen`-annotatie
+of door jou wordt opgegeven. Daarna schrijft het het secret opnieuw en versleutelt het met SOPS.
+
+### Roteren: de categorie bepaalt de stappen
+
+Dezelfde ingang heeft een rotatiemodus (`--component <naam>` of `--all`, of via het menu).
+Roteren is méér dan het bestand bijwerken: een wachtwoord dat in git wijzigt maar niet in de
+applicatie is gewoon drift. Daarom bepaalt de categorie van een component de stapvolgorde, en
+is elke stap meetbaar (geen "Argo heeft vast wel gesynct"):
+
+| categorie | componenten | volgorde |
+|---|---|---|
+| `cnpg-secret` | postgresql, keycloak-db, mail-db, forgejo-db | check → SOPS-bestand → git-poort → Argo-sync (afwachten én bewijzen) → operator-gate (nieuwe login werkt, oude faalt) → consumers herstarten |
+| `live-app` | redis, mail-relay, keycloak-mail, keycloak-admin | check → app-call met huidige waarde (ACL SETUSER / relay-API / kcadm) → verify nieuw → bestand → git-poort → sync → herstart |
+| `env-restart` | minio, prometheus, pgadmin | drift-check → bestand → git-poort → sync → herstart → app-verify |
+| `external` | transip, grafana | check tegen de buiten-API → handmatige stap buiten het cluster (tool toont hem) → verify nieuwe waarde → bestand/env |
+
+Drie gates zijn geen vragen maar metingen: de sync-toestand uit `.status.operationState`,
+het cluster-secret dat de nieuwe waarde draagt (poll, met timeout), en bij cnpg de
+operator-reconcile zelf. Heeft een secret geen Argo-eigenaar (bootstrap), dan stopt de
+sync-stap met die melding in plaats van te wachten op een sync die nooit komt. De enige
+bewuste mensenstap in een ronde is de git commit+push zelf, als reviewpoort op een
+security-diff; TransIP en de Grafana-token bij ODCN zijn de enige twee plekken buiten het
+cluster.
+
+De sleutel kant komt uit de keyring (`age_keyring.py`): het SOPS-bestand noemt zijn
+recipients, en de bijpassende private helft wordt gezocht in `SOPS_AGE_KEY[_FILE]`, dan
+`~/.config/sops/age/keys.txt`, dan `security/*.txt` -- met bronvermelding in de uitvoer.
+Schrijven bewaart de bestaande recipient-set en wordt bewezen met een decrypt-proef.
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py --check --all
+uv run --project operations-manager/python python scripts/edit-secret.py --component postgresql
+uv run --project operations-manager/python python scripts/edit-secret.py --component keycloak-db --apply
+```
+
+Ontbreekt de secrets-overlay van het cluster helemaal in deze repo (zoals bij sandboxed-local,
+waarvan de secrets alleen in de Forgejo-mirror bestonden), dan is `--seed-overlay` de eerste
+stap: die schrijft de overlay kanoniek weg, gevoed met de live cluster-waarden en versleuteld
+met de sleutel van dat cluster, zodat Argo daarna weer uit git rendert.
+
+```bash
+uv run --project operations-manager/python python scripts/edit-secret.py --seed-overlay --dry-run --context kind-rig-sandbox   # plan tonen
+uv run --project operations-manager/python python scripts/edit-secret.py --seed-overlay --apply --context kind-rig-sandbox    # schrijven
+```
+
+De eerste rotatie van een component dat in de overlay nog als plaintext template ligt (het
+geval `keycloak-db-credentials.yaml` op odcn) is tevens de migratie: het script schrijft het
+canonieke versleutelde bestand, verbindt het in `decrypt-sops.yaml` en `kustomization.yaml`
+en verwijdert het plaintext bestand -- in dezelfde wijziging als de waarde-rotatie.
+
+Twee guards: zonder `--apply` verandert er niets, en `--apply` op een productiecluster vraagt de
+clusternaam over te typen. `--all` draait in de vaste volgorde van de tabel: de
+database-superuser voorop, keycloak-admin als allerlaatste (dat is het enige wachtwoord
+waarmee je jezelf buitensluit), en keycloak-mail na mail-relay, want die gebruikt het
+relay-adminaccount.
+
+De logica zit in `secret_rotate.py`; de cluster-commando's lopen via `kubectl exec` in de pods
+van de componenten (psql, redis-cli, kcadm), behalve MinIO: die image heeft geen `mc`, dus die
+verificatie draait in de OPI-pod. Tests: `tests/test_secret_rotate.py` en, voor de sleutelkant,
+`tests/test_age_keyring.py`.
+
+
+**De template is het uitgangspunt, het bestaande secret is de controle.** De template zegt welke
+velden er zijn en hoe ze gemaakt worden; het versleutelde bestand zegt welke waarden er nu staan.
+Die twee lopen uiteen, en dat is de normale toestand: het odcn-keycloak-secret kent twee van de zes
+velden van zijn template, want `KEYCLOAK_ADMIN_CLIENT_SECRET` en de drie OTP-velden zijn later aan
+de template toegevoegd (4c1d09228, 09edef8c2) terwijl `_generate-secrets-shared` een bestaand
+secret overslaat. Daarom is de standaardkeuze per veld altijd de keuze die niets verandert:
+"laat staan" voor een veld dat er is, "laat weg" voor een veld dat alleen de template kent. Wie
+één wachtwoord roteert zet er zo geen vier velden bij, en wie de achterstand wel wil inlopen kan
+dat per veld alsnog kiezen.
+
+Een veld dat je weglaat gaat ook echt uit het secret. Het alternatief, de template-waarde laten
+staan, zou `changeMe123!` in een uitgerold secret zetten; `test_secret_edit.py` pint dat vast.
+
+De controle gaat tegen het secret in **git**, niet tegen het cluster: dat is de laag waar ArgoCD
+van uitrolt. Loopt het cluster daarvan af, dan is dat drift die je apart moet vaststellen.
+
+Dit is wat `task generate-infrastructure-secrets-for-cluster` niet kan. Die slaat een secret dat er
+al staat over, en dat is opzet: overschrijven zou élk veld erin roteren. Het enige alternatief was
+het `.sops.yaml`-bestand weggooien en alles opnieuw laten genereren, en dat roteert Keycloak, MinIO
+en PostgreSQL tegelijk. Daarom kent dit script per veld ook "laat staan".
+
+Twee dingen die het anders doet dan `task decrypt-secret` en `task encrypt-secret`:
+
+- **De sleutel komt uit het bestand.** Staat er al een versleutelde versie, dan wordt de recipient
+  uit zijn SOPS-metadata gelezen en het bijbehorende sleutelbestand in `security/` gezocht.
+  `task encrypt-secret` las `security/key.txt` hard, en versleutelde een sandbox-secret dus op de
+  productiesleutel zonder dat iemand het zag.
+- **De leesbare versie raakt de schijf niet.** Het gevulde secret gaat via stdin naar `sops`.
+  `task decrypt-secret` schrijft hem uit, en laat hem staan als de stap erna faalt.
+
+De logica zit in `secret_edit.py`; de sleutels, de recipients en het ontsleutelen komen uit
+`key_rotation.py`, zodat er geen tweede set naast de rotatiemotor ontstaat.
+
 ## De geheimenscan
 
 | bestand | doet |

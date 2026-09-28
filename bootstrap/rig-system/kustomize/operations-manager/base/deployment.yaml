@@ -119,6 +119,38 @@ spec:
             secretKeyRef:
               name: sops-age-key
               key: key
+        # ENKELE BRON per wachtwoord: deze vijf lazen vroeger uit operations-manager-env-secrets
+        # (envFrom hieronder), een handmatige kopie die stil kon afwijken van het infra-secret
+        # van de component zelf. Nu wijzen ze er rechtstreeks heen. De CMP van de
+        # cluster-build injecteert de destination-namespace over de hele build, dus
+        # component en OPI delen altijd een namespace en een secretKeyRef volstaat.
+        # Expliciete env wint bij naamcollisie áltijd van envFrom, dus dit werkt ook al
+        # voordat de kopie uit het env-bestand is opgeruimd.
+        - name: DATABASE_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-admin-credentials
+              key: password
+        - name: MINIO_ADMIN_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin-credentials
+              key: MINIO_ROOT_USER
+        - name: MINIO_ADMIN_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin-credentials
+              key: MINIO_ROOT_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin-credentials
+              key: REDIS_PASSWORD
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_ADMIN_PASSWORD
         envFrom:
         - secretRef:
             name: operations-manager-env-secrets
