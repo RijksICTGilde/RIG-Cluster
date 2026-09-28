@@ -28,6 +28,6 @@ patches:
 # Dit is de plek voor die reden; wie ernaar verwijst hoort hier te landen. De mc-client is
 # een andere vraag met een eigen plek, zie images/mc/Dockerfile.
 images:
-  - name: quay.io/minio/minio
+  - name: ghcr.io/minbzk/base-images/minio
     newName: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/minio
     newTag: RELEASE.2025-07-23T15-54-02Z
