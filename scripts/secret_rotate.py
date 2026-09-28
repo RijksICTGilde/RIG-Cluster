@@ -85,7 +85,9 @@ class Kube:
         self.dry_run = dry_run
         self.context = context
 
-    def run(self, args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, args: list[str], *, check: bool = True, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         argv = ["kubectl", *(["--context", self.context] if self.context else []), *args]
         shown = " ".join(shlex.quote(self._redact(a)) for a in argv)
         if self.dry_run:
@@ -93,6 +95,7 @@ class Kube:
             return subprocess.CompletedProcess(argv, 0, "", "")
         process = subprocess.run(  # noqa: S603
             argv,
+            input=input_text,
             capture_output=True,
             text=True,
             check=False,
@@ -144,6 +147,24 @@ RELAY_API = {
     "local": "http://rig-mail-relay.rig-ron.svc.cluster.local:8080",
 }
 
+# De backup-MinIO: zijn secret is bootstrap (geen Argo-eigenaar, gemeten), en zijn
+# namespace wisselt per cluster.
+BACKUP_NS = {
+    "odcn-production": "rig-prd-backup",
+    "sandboxed-local": "rig-backup-destination",
+    "local": "rig-backup-destination",
+}
+
+
+def backup_ns_for(cluster_name: str) -> str:
+    """De namespace van de backup-MinIO op dit cluster, met een leesbare fout boven een KeyError."""
+    try:
+        return BACKUP_NS[cluster_name]
+    except KeyError:
+        raise EditFailed(
+            f"geen backup-namespace bekend voor cluster '{cluster_name}' (bekend: {', '.join(sorted(BACKUP_NS))})"
+        ) from None
+
 OPI_DEPLOYMENT = "deploy/operations-manager"
 
 
@@ -171,6 +192,7 @@ class Component:
     db_user_fallback: str = ""  # cnpg-secret: als het bestand geen username-veld heeft
     workloads: tuple[str, ...] = ()  # workloads die na de sync-gate herstart worden
     zad_env: tuple[str, ...] = ()  # env-variabelen in .env-<cluster>.secrets die dezelfde waarde dragen
+    gen_without_template: tuple[str, int] = ()  # (kind, lengte) generatie-hint voor rijen zonder template
     note: str = ""
 
 
@@ -238,9 +260,9 @@ COMPONENTS: list[Component] = [
         template="redis-admin-secret.yaml",
         category="live-app",
         rotate_fields=("REDIS_PASSWORD",),
-        workloads=(OPI_DEPLOYMENT,),  # ZAD leest REDIS_PASSWORD via secretKeyRef
-        note="De redis-pod zelf hoeft niet te herstarten: ACL SETUSER geldt direct, en bij elke "
-        "toekomstige start schrijft het bootscript het ACL-bestand opnieuw uit het (dan gesyncte) secret.",
+        workloads=("deploy/rig-redis", OPI_DEPLOYMENT),  # redis schrijft de ACL uit het secret bij start
+        note="De redis-pod schrijft de ACL uit het secret heruit bij elke start (init-aclfile); "
+        "daarom hoort zijn herstart erbij: dan is de bootpad gelijk aan wat je net roteerde.",
     ),
     Component(
         key="mail-relay",
@@ -320,6 +342,19 @@ COMPONENTS: list[Component] = [
         note="Aanmaken doe je in de GitHub-console (Settings → Developer settings). De tool "
         "toetst huidige én nieuwe token via de GitHub-API vóór het bestand wordt bijgewerkt. "
         "Daarna zelf: het env-secret regenereren en ZAD herstarten (staat als tekst in de stappen).",
+    ),
+    Component(
+        key="minio-backup",
+        title="Backup-MinIO root (backup-destination)",
+        template="",  # heeft geen generatie-template; eigen overlay bij backup-destination
+        category="bootstrap",
+        rotate_fields=("root-password",),
+        workloads=(),  # de restart is een eigen stap IN de bootstrap-flow (geen Argo om op te wachten)
+        zad_env=("BACKUP_S3_SECRET_KEY",),
+        gen_without_template=("random", 20),
+        note="Deze namespace staat buiten GitOps, dus zonder Argo-pad: de tool schrijft het "
+        "bestand, applicet direct (via stdin, nooit argv), herstart de pod en verifieert met mc. "
+        "Wordt op termijn vervangen door een ander backup-systeem.",
     ),
     Component(
         key="keycloak-admin",
@@ -771,21 +806,19 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
     def _apply(ctx: Ctx) -> str:
         new_pw = ctx.new[ctx.rotating]
         require_safe_sql_literal(new_pw)
-        result = ctx.kube.exec(
-            "deploy/rig-redis",
-            [
-                "env",
-                f"REDISCLI_AUTH={ctx.current[ctx.rotating]}",
-                "redis-cli",
-                "--no-auth-warning",
-                "ACL",
-                "SETUSER",
-                "default",
-                "on",
-                f">{new_pw}",
-            ],
-        )
-        return f"ACL aangepast: {_expect(result.stdout.strip(), 'OK', ctx)}"
+        # ACL SETUSER leeft in geheugen; ACL SAVE is wat de herstart-persistentie schrijft
+        # naar /data/users.acl. Zonder die tweede draait een restart van de pod terug naar de
+        # oude waarde (gemeten in de sandbox, 28-09).
+        for command in (
+            ["ACL", "SETUSER", "default", "on", f">{new_pw}"],
+            ["ACL", "SAVE"],
+        ):
+            result = ctx.kube.exec(
+                "deploy/rig-redis",
+                ["env", f"REDISCLI_AUTH={ctx.current[ctx.rotating]}", "redis-cli", "--no-auth-warning", *command],
+            )
+            _expect(result.stdout.strip(), "OK", ctx)
+        return "ACL aangepast en opgeslagen (OK,SAVE)"
 
     def _verify(ctx: Ctx) -> str:
         result = ctx.kube.exec(
@@ -930,6 +963,97 @@ def _mc_check(ctx: Ctx, endpoint: str, user: str, password: str) -> str:
     if result.returncode != 0 and not ctx.kube.dry_run:
         _ok(f"mc alias met deze waarde faalde: {result.stderr.strip()[:150]}")
     return "OK" if not ctx.kube.dry_run else "overgeslagen (dry-run)"
+
+
+def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
+    """De bootstrap-categorie: het secret staat buiten GitOps, dus de tool schrijft het
+    bestand én applicet het direct (via stdin op kubectl apply -- secrets nooit via argv),
+    herstart de pod, en verifiëert met de nieuwe waarde via mc."""
+
+    def _deploy_secret_manifest() -> str:
+        new = ctx.new[ctx.rotating]
+        require_safe_sql_literal(new)
+        user = ctx.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin")
+        namespace = backup_ns_for(cluster.name)
+        manifest = (
+            "apiVersion: v1\nkind: Secret\nmetadata:\n"
+            f"  name: minio-credentials\n  namespace: {namespace}\n"
+            '  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n'
+            "type: Opaque\nstringData:\n"
+            f'  root-user: "{user}"\n  root-password: "{new}"\n'
+        )
+        return manifest
+
+    def overlay_path() -> Path:
+        folder = cluster.folders["infrastructure"]
+        return (
+            REPO
+            / "infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays"
+            / folder
+            / "secret.sops.yaml"
+        )
+
+    def _write(ctx2: Ctx) -> str:
+        destination = overlay_path()
+        fields = {"root-user": ctx2.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin"), "root-password": ctx2.new[ctx2.rotating]}
+        plaintext = (
+            "apiVersion: v1\nkind: Secret\nmetadata:\n"
+            "  name: minio-credentials\n"
+            f"  namespace: {backup_ns_for(cluster.name)}\n"
+            '  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n'
+            "type: Opaque\nstringData:\n"
+            + "".join(f'  {k}: "{v}"\n' for k, v in fields.items())
+        )
+        if destination.exists():
+            found = sops_recipients(destination)
+            entry = key_entry_for(found[0])
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            convention = REPO / SEED_KEYS[cluster.name]
+            if not convention.is_file():
+                raise EditFailed(f"conventie-sleutel voor {cluster.name} ontbreekt: {convention}")
+            private = read_key(convention)
+            entry = None
+            encrypt(plaintext, destination, private)
+            return f"{destination} aangemaakt (sleutel {convention.name})"
+        encrypt(plaintext, destination, entry.private)
+        return f"{destination} bijgewerkt (sleutel uit {entry.source})"
+
+    def _apply_cluster(ctx2: Ctx) -> str:
+        namespace = backup_ns_for(cluster.name)
+        ctx2.kube.run(["apply", "-n", namespace, "-f", "-"], input_text=_deploy_secret_manifest())
+        return f"secret minio-credentials in {namespace} bijgewerkt"
+
+    def _restart(ctx2: Ctx) -> str:
+        namespace = backup_ns_for(cluster.name)
+        ctx2.kube.rollout_restart("deploy/minio", namespace=namespace)
+        return f"minio in {namespace} herstart"
+
+    def _verify(ctx2: Ctx) -> str:
+        endpoint = f"http://minio.{backup_ns_for(cluster.name)}:9000"
+        user = ctx2.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin")
+        return f"mc met nieuwe waarde: {_mc_check(ctx2, endpoint, user, ctx2.new[ctx2.rotating])}"
+
+    return [
+        Step(
+            "Huidige waarde testen (mc tegen de backup-MinIO)",
+            "check",
+            [f"kubectl exec {OPI_DEPLOYMENT} -- mc alias set rot http://minio.{backup_ns_for(cluster.name)}:9000 <user> <HUIDIG> --api s3v4"],
+            lambda ctx3: (
+                "mc met huidige waarde: "
+                + _mc_check(
+                    ctx3,
+                    f"http://minio.{backup_ns_for(cluster.name)}:9000",
+                    ctx3.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin"),
+                    ctx3.current[ctx3.rotating],
+                )
+            ),
+        ),
+        Step("Bestand bijwerken (SOPS-overlay bij backup-destination)", "file", [], _write),
+        Step("Secret direct in het cluster applicen (via stdin, nooit via argv)", "sync", [], _apply_cluster),
+        Step("MinIO herstarten", "restart", [], _restart),
+        Step("Verifiëren met de nieuwe waarde (mc)", "verify", [], _verify),
+    ]
 
 
 def minio_verify_step(endpoint: str) -> Step:
@@ -1182,8 +1306,8 @@ def template_path_of(component: Component) -> Path | None:
     """De template van dit component, of None: niet elk secret in de overlays is ooit
     door de generatie gekomen (transip-secret heeft er geen), en toch moet het roteerbaar
     zijn. Zonder template werken we op de ontsleutelde inhoud zelf."""
-    path = EDIT_TREES["infrastructure"][0] / component.template
-    return path if path.exists() else None
+    path = EDIT_TREES["infrastructure"][0] / component.template if component.template else None
+    return path if (path is not None and path.is_file()) else None
 
 
 @dataclass(frozen=True)
@@ -1333,6 +1457,11 @@ def file_step(component: Component, cluster: Cluster) -> Step:
 
     def _write(ctx: Ctx) -> str:
         template_path = template_path_of(component)
+        # Waarborg: een geroteerd veld mag nooit leeg geschreven worden; een leeg secret
+        # in git is erger dan geen rotatie, en het heeft zich in het wild ook zo voorgedaan.
+        for name in component.rotate_fields:
+            if not ctx.new.get(name):
+                raise EditFailed(f"nieuwe waarde voor {name} is leeg; schrijven geweigerd")
         if template_path is None:
             # Geen template (transip): werk op de ontsleutelde inhoud en vervang alleen
             # de geroteerde velden. Alles anders dan die velden blijft byte-voor-byte.
@@ -1463,6 +1592,14 @@ def steps_for(
         else:
             raise EditFailed(f"live-app zonder bouwer: {component.key}")
         steps.append(file_step(component, cluster))
+    elif component.category == "bootstrap":
+        steps = bootstrap_component_steps(component, cluster, kube, ctx)
+        if component.zad_env:
+            steps.append(env_step(component, cluster))
+        followup = followup_step(component)
+        if followup is not None:
+            steps.append(followup)
+        return steps
     elif component.category == "env-restart":
         if component.key == "minio":
             steps.append(minio_check_step(kube, ctx, minio_endpoint))
@@ -1767,6 +1904,8 @@ def new_value_for(component: Component, field: str, template_fields: dict[str, t
     `external`-componenten vragen áltijd om invoer: de waarde komt van buiten dit cluster.
     """
     kind, length = template_fields.get(field, (None, None))
+    if (kind is None or length is None) and component.gen_without_template:
+        kind, length = component.gen_without_template
     generatable = component.category != "external" and kind in ("random", "bcrypt")
     if generatable:
         answer = input(f"  {field}: opnieuw genereren ({kind}:{length})? [J/n] ").strip().lower()
@@ -1795,12 +1934,21 @@ def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_chan
     if component.template:
         current = read_current(component, cluster)
     else:
-        current = read_env_file(env_file_for(cluster.name))
-        if not current:
+        values = read_env_file(env_file_for(cluster.name))
+        if not values:
             raise EditFailed(f"{env_file_for(cluster.name)} niet gevonden of leeg op deze machine")
-        component_field = component.rotate_fields[0]
-        if component_field not in current:
+        component_field = component.zad_env[0] if component.zad_env else component.rotate_fields[0]
+        if component_field not in values:
             raise EditFailed(f"{component_field} staat niet in {env_file_for(cluster.name)}")
+        # De omgeving noemt dezelfde waarde anders (env-naam ↔ veldnaam). Breng hem naar de
+        # veldnaam, zodat stappen overal hetzelfde adresseren: current['root-password'] is
+        # dan de huidige BACKUP_S3_SECRET_KEY.
+        current = dict(values)
+        for field, env_name in zip(component.rotate_fields, component.zad_env, strict=False):
+            if field in values:
+                continue
+            if env_name in values:
+                current[field] = values[env_name]
 
     new: dict[str, str] = {}
     fields = template_fields_of(component)
