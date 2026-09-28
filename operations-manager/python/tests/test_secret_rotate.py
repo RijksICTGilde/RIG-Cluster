@@ -65,10 +65,10 @@ def test_zad_env_loopt_gelijk_aan_de_geroteerde_velden() -> None:
 
 def test_alleen_grafana_schrijft_nog_het_env_bestand() -> None:
     """Sinds de OPI-deployment de vier platformwachtwoorden via secretKeyRef leest is de
-    kopie in .env-<cluster>.secrets vervallen; de Grafana-token is de enige die er nog
-    uitsluitend leeft."""
+    kopie in .env-<cluster>.secrets vervallen; de Grafana-token, de platform-PAT en de
+    backup-S3-sleutel (backup valt buiten GitOps) leven er nog uitsluitend."""
     met_env = {c.key for c in rotate.COMPONENTS if c.zad_env}
-    assert met_env == {"grafana", "platform-repo-pat"}
+    assert met_env == {"grafana", "platform-repo-pat", "minio-backup"}
 
 
 def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
