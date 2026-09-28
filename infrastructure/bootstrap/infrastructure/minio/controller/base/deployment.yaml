@@ -22,11 +22,10 @@ spec:
           type: RuntimeDefault
       containers:
       - name: minio
-        # Dood adres: MinIO heeft docker.io/minio en quay.io/minio allebei achter een abonnement
-        # gezet, 401 op elke tag. Staat er nog als sleutel waar de odcn-overlay de eigen build op
-        # inhaakt; de reden staat daar. De lokale overlays vervangen hem niet, zie
-        # docs/KNOWN-ISSUES.md, "MinIO distribueert zijn eigen images niet meer".
-        image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+        # Onze eigen build uit de broncode van deze tag. MinIO heeft docker.io/minio en quay.io/minio
+        # allebei achter een abonnement gezet, 401 op elke tag, en het project is gearchiveerd.
+        # Zie images/README.md en docs/KNOWN-ISSUES.md. odcn haalt hem via de rcr-proxy, zie de overlay daar.
+        image: ghcr.io/minbzk/base-images/minio:RELEASE.2025-07-23T15-54-02Z
         command: ["minio", "server", "/data/disk{1...4}", "--console-address", ":9001"]
         ports:
         - containerPort: 9000
