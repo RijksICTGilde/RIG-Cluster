@@ -29,9 +29,7 @@ _CLUSTER = "odcn-production"
 #: zoals het na de goedkeuring van 20 september in ``mzs-3ik.yaml`` staat.
 _APPROVED_DOMAINS = {
     "allowed-domains": [{"domain": "rijks.app", "status": "approved"}],
-    "allowed-subdomains": [
-        {"domain": "rijks.app", "subdomains": [{"name": "moza-site", "status": "approved"}]}
-    ],
+    "allowed-subdomains": [{"domain": "rijks.app", "subdomains": [{"name": "moza-site", "status": "approved"}]}],
 }
 
 
@@ -51,9 +49,7 @@ class TestDeAfgeleideIssuer:
     def test_een_opgeslagen_issuer_wint(self):
         """Het veld blijft een override, ook als de afleiding iets anders zou zeggen."""
         project_data = {"domains": _APPROVED_DOMAINS}
-        deployment = _deployment(
-            **{"base-domain": "rijks.app", "subdomain": "moza-site", "issuer": "eigen-issuer"}
-        )
+        deployment = _deployment(**{"base-domain": "rijks.app", "subdomain": "moza-site", "issuer": "eigen-issuer"})
 
         assert effective_issuer(project_data, deployment, _CLUSTER) == "eigen-issuer"
 
@@ -84,9 +80,7 @@ class TestDeAfgeleideIssuer:
     def test_een_eigen_domein_volgt_het_projectblok(self):
         """Een domein dat het cluster niet aanbiedt mag zijn eigen issuer noemen."""
         project_data = {
-            "domains": {
-                "allowed-domains": [{"domain": "mijn-app.nl", "issuer": "custom-issuer", "status": "approved"}]
-            }
+            "domains": {"allowed-domains": [{"domain": "mijn-app.nl", "issuer": "custom-issuer", "status": "approved"}]}
         }
         deployment = _deployment(**{"base-domain": "mijn-app.nl"})
 
