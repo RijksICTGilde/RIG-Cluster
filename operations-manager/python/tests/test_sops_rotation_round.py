@@ -2035,15 +2035,18 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
     assert "operations-manager/python/.env" in LOOSE_VALUE_FILES
     for path in tool.loose_paths():
         assert loose_values(path), f"{path} carries no base64+age: value any more"
+
+
 def test_the_two_values_a_review_found_outside_the_worklist_are_in_it() -> None:
-    """Named one by one, because each one is a different SHAPE the env pattern walked past."""
+    """De overgeblevene passeerde 'plekken bij elkaar'-controle (config.py leverde de default
+    van gisteren; die is inmiddels weg uit de code)."""
     found = {
         str(field_.path.relative_to(tool.REPO)): (field_.name, field_.line_number)
         for path in tool.loose_paths()
         for field_ in loose_values(path)
     }
 
-    assert found["operations-manager/python/opi/core/config.py"] == ("PROJECT_REPO_PASSWORD", 238)
+    assert "operations-manager/python/opi/core/config.py" not in found
     assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 66)
 
 

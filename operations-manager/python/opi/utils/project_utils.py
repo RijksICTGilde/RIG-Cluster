@@ -358,6 +358,26 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
 
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
+    if not repo_password:
+        raise HTTPException(
+            status_code=500,
+            detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
+        )
+    # Het projectbestand mag nooit een platte PAT dragen: waar de env hem meegeeft in
+    # platte vorm versleutelen we hem hier voor hij op schijf landt; blijft hij als
+    # base64+age staan dan is hij al versleuteld en laten we hem precies zo.
+    from opi.utils.age import (
+        _encrypt_with_age_and_base64encode_as_prefixed_string,
+        decrypt_password_smart,
+        parse_password_with_prefix,
+    )
+
+    form, _ = parse_password_with_prefix(repo_password)
+    if form != "base64+age":
+        plain_password = await decrypt_password_smart(repo_password, settings.SOPS_AGE_PRIVATE_KEY)
+        repo_password = await _encrypt_with_age_and_base64encode_as_prefixed_string(
+            plain_password, settings.SOPS_AGE_PUBLIC_KEY
+        )
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])

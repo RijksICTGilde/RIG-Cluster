@@ -68,7 +68,7 @@ def test_alleen_grafana_schrijft_nog_het_env_bestand() -> None:
     kopie in .env-<cluster>.secrets vervallen; de Grafana-token is de enige die er nog
     uitsluitend leeft."""
     met_env = {c.key for c in rotate.COMPONENTS if c.zad_env}
-    assert met_env == {"grafana"}
+    assert met_env == {"grafana", "platform-repo-pat"}
 
 
 def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
@@ -83,6 +83,7 @@ def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
         "prometheus",
         "grafana",
         "keycloak-admin",
+        "platform-repo-pat",
     }
     minio = rotate.BY_KEY["minio"]
     assert minio.workloads.index("deploy/minio") < minio.workloads.index(rotate.OPI_DEPLOYMENT), (
@@ -435,7 +436,7 @@ def test_bulk_sluit_de_externe_categorie_uit() -> None:
     in zo'n reeks passen. Die ritten draai je apart."""
     bulk = [c for c in rotate.COMPONENTS if c.category != "external"]
     assert not any(c.category == "external" for c in bulk)
-    assert {c.key for c in rotate.COMPONENTS} - {c.key for c in bulk} == {"transip", "grafana"}
+    assert {c.key for c in rotate.COMPONENTS} - {c.key for c in bulk} == {"transip", "grafana", "platform-repo-pat"}
 
 
 def test_de_dekking_poort_is_gesloten_voor_deze_repo() -> None:
@@ -467,7 +468,7 @@ def test_de_dekking_poort_rapporteert_precies_wat_mist(tmp_path: Path, monkeypat
 
 def test_de_bewuste_uitsluitingen_zijn_en_blijven_benoemd() -> None:
     assert set(rotate.NON_ROTATABLE) >= {"vault-init-secret.yaml"}
-    assert set(rotate.TEMPLATELESS) == {"transip", "grafana"}
+    assert set(rotate.TEMPLATELESS) == {"transip", "grafana", "platform-repo-pat"}
 
 
 # --- seeding: de overlay van een cluster kanoniek maken -----------------------------------

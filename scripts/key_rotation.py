@@ -666,7 +666,6 @@ LOOSE_VALUE_FILES = (
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
     "operations-manager/python/.env",
-    "operations-manager/python/opi/core/config.py",
     "operations-manager/python/scripts/migrate_project_to_production.py",
 )
 
