@@ -37,3 +37,10 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 0
+
+# ODCN kan de upstream-registries niet bereiken en haalt alles via de rcr-proxy. Staat dat
+# pad hier niet in git, dan herschrijft admission het image wel, maar wijkt wat er draait af
+# van git en ziet ArgoCD dat als eeuwige drift. De tag komt uit de basis.
+images:
+  - name: registry.k8s.io/kube-state-metrics/kube-state-metrics
+    newName: rcr.rijksapps.nl/k8s-rig/kube-state-metrics/kube-state-metrics

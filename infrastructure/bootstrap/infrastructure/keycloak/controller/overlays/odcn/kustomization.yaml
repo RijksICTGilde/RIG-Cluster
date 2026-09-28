@@ -61,3 +61,10 @@ patches:
     target:
       kind: Deployment
       name: keycloak
+
+# Zie de prometheus-overlay voor de reden: zonder het rcr-pad in git blijft ArgoCD OutOfSync.
+images:
+  - name: quay.io/keycloak/keycloak
+    newName: rcr.rijksapps.nl/quay-rig/keycloak/keycloak
+  - name: busybox
+    newName: rcr.rijksapps.nl/dockerhub-rig/library/busybox
