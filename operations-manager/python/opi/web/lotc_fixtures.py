@@ -193,6 +193,19 @@ def page_data(slug: str) -> dict[str, Any]:
             }
         }
 
+    if slug == "invite-landing":
+        # Beide aanmeldkeuzes aan, zodat de pagina de keuze laat zien die hij uitlegt.
+        return {
+            "display_name": "Docs en Grist",
+            "invite_key": "voorbeeldsleutel-geen-echte-uitnodiging",
+            "message": "Welkom bij Docs en Grist.",
+            "allow_sso": True,
+            "allow_local": True,
+            "identity_providers": [{"alias": "sso-rijk", "displayName": "SSO Rijk"}],
+            "contact_email": "beheerder@voorbeeld.nl",
+            "language": "nl",
+        }
+
     if slug == "introductie":
         # GEEN voorbeelddiensten. De introductiepagina toont de ECHTE catalogus, en dat is
         # precies wat er aan die pagina te beoordelen valt: een verzonnen lijst zou de
