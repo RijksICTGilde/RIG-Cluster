@@ -2035,6 +2035,8 @@ def test_every_configured_loose_value_file_is_really_there_and_holds_an_encrypte
     assert "operations-manager/python/.env" in LOOSE_VALUE_FILES
     for path in tool.loose_paths():
         assert loose_values(path), f"{path} carries no base64+age: value any more"
+
+
 def test_the_two_values_a_review_found_outside_the_worklist_are_in_it() -> None:
     """Named one by one, because each one is a different SHAPE the env pattern walked past."""
     found = {
