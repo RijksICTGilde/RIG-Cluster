@@ -1,7 +1,7 @@
 # Welke grendel de ServiceAccount liet lopen
 
 Meting van 25 september 2026 op het gedeelde sandboxcluster (ArgoCD `v3.5.1-rig1`,
-namespace `rig-system`, umbrella `user-applications`). RC-229 vroeg eerst te meten WELKE van
+namespace `rig-system`, umbrella `user-applications`). De opdracht was eerst te meten WELKE van
 de drie grendels het liet lopen, want een reparatie op de waves is iets anders dan een
 reparatie op de wacht in OPI.
 
@@ -97,7 +97,7 @@ uit, waar het eerst een waarschuwing in het log was.
 
 Dat is met opzet. Mist de ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen
 sync-timeout van 300s toch niet, en dan is degraded doorlopen een mislukking die zich als
-succes voordoet: precies het beeld waarmee RC-229 binnenkwam. De schade blijft bij dit ene
+succes voordoet: precies het beeld waarmee deze melding binnenkwam. De schade blijft bij dit ene
 project, terwijl de hierboven afgewezen health-override hetzelfde clusterbreed deed. Het
 onderscheid is de blast radius, niet de strengheid.
 

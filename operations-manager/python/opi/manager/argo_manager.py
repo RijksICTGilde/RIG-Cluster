@@ -180,7 +180,7 @@ class ArgoManager:
         ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen sync-timeout toch
         niet, en dan is "degraded doorlopen" een mislukking die zich als succes voordoet.
         De schade blijft bij dit ene project. De afgewezen health-override in
-        ``docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md`` deed hetzelfde
+        ``docs/de-serviceaccount-komt-na-de-deployment.md`` deed hetzelfde
         clusterbreed, en juist daarop viel die af.
         """
         project_name = await self.project_manager.get_name()
@@ -202,7 +202,7 @@ class ArgoManager:
         # RC-229: hier ligt de ordening, en niet bij de sync-wave. Zolang de CR van een
         # deployment-applicatie nog niet bestaat kan ArgoCD hem ook niet zelf
         # synchroniseren, dus de commit daarmee gaat er pas na deze grendel heen.
-        # Gemeten in docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
+        # Gemeten in docs/de-serviceaccount-komt-na-de-deployment.md.
         if project_app_name:
             await self.project_manager.wait_for_project_level_application(project_app_name)
 

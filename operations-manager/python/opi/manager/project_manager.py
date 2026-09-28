@@ -3002,7 +3002,7 @@ class ProjectManager:
 
         De sync-wave doet dit niet: een net aangemaakte kind-Application heeft nul
         resources en meldt zich daarmee binnen een seconde Healthy. Zie
-        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md.
+        docs/de-serviceaccount-komt-na-de-deployment.md.
 
         Args:
             app_name: Naam van de applicatie van het projectniveau.

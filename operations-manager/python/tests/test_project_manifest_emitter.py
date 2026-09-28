@@ -201,7 +201,7 @@ class TestDeArgoApplicatie:
         eronder niet: een net aangemaakte kind-Application beheert nul resources en meldt
         zich daarmee binnen een seconde Healthy, dus de wave-0-grendel gaat open voordat het
         projectniveau zijn ServiceAccount heeft uitgerold (RC-229, gemeten in
-        docs/rc229-welke-grendel-de-serviceaccount-liet-lopen.md). Wat de ordening wel draagt
+        docs/de-serviceaccount-komt-na-de-deployment.md). Wat de ordening wel draagt
         staat in tests/test_project_level_ordering.py.
         """
 
