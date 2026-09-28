@@ -359,7 +359,7 @@ async def invite_landing(request: Request, key: str) -> Response:
 
     # Get localized content
     message = invite_manager.project_file_handler.get_invite_message(invite, language)
-    display_name = project_data.get("display-name", project_name)
+    display_name = invite_manager.project_file_handler.get_invite_title(invite, project_name, project_data, language)
     contact_email = invite.get("contact_email", "")
 
     # Get identity provider display names for SSO buttons
@@ -695,7 +695,7 @@ async def invite_register_form(request: Request, key: str) -> Response:
             },
         )
 
-    display_name = project_data.get("display-name", project_name)
+    display_name = invite_manager.project_file_handler.get_invite_title(invite, project_name, project_data, language)
     message = invite_manager.project_file_handler.get_invite_message(invite, language)
     domain_restriction = invite.get("restrict_domain")
 
@@ -815,7 +815,9 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         errors["password_confirm"] = error_messages["password_mismatch"]
 
     if errors:
-        display_name = project_data.get("display-name", project_name)
+        display_name = invite_manager.project_file_handler.get_invite_title(
+            invite, project_name, project_data, language
+        )
         message = invite_manager.project_file_handler.get_invite_message(invite, language)
         return render(
             request,
@@ -881,7 +883,9 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         if e.error_code == "user_exists":
             general_error = error_messages.get(e.error_code, e.message)
 
-        display_name = project_data.get("display-name", project_name)
+        display_name = invite_manager.project_file_handler.get_invite_title(
+            invite, project_name, project_data, language
+        )
         return render(
             request,
             template="bg/invite-register.html.j2",
@@ -899,7 +903,9 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         )
     except Exception:
         logger.exception(f"Error creating local account for invite '{key}'")
-        display_name = project_data.get("display-name", project_name)
+        display_name = invite_manager.project_file_handler.get_invite_title(
+            invite, project_name, project_data, language
+        )
         return render(
             request,
             template="bg/invite-register.html.j2",
@@ -958,7 +964,7 @@ async def invite_success(request: Request, key: str) -> Response:
     success_title = invite_manager.project_file_handler.get_invite_success_title(invite, language)
     success_button = invite_manager.project_file_handler.get_invite_success_button(invite, language)
     application_url = invite.get("application_url", "")
-    display_name = project_data.get("display-name", project_name)
+    display_name = invite_manager.project_file_handler.get_invite_title(invite, project_name, project_data, language)
 
     return render(
         request,

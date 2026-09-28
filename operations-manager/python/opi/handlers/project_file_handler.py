@@ -3627,6 +3627,28 @@ class ProjectFileHandler:
         """
         return _localize(invite.get("message"), language) or ""
 
+    def get_invite_title(
+        self, invite: dict[str, Any], project_name: str, project_data: dict[str, Any], language: str = "nl"
+    ) -> str:
+        """
+        Get what the invitee is given access to, as the heading of the invite pages.
+
+        The invite's own ``title`` wins, because the project's display name is usually the
+        operator's name for the deployment ("MijnBureau Docs Helmfile (ODCN)"), not the
+        product the invitee knows ("Docs en Grist"). Without one it falls back to the
+        display name, then the technical project name.
+
+        Args:
+            invite: The invite configuration
+            project_name: The technical project name
+            project_data: The project file contents
+            language: Language code (default: 'nl')
+
+        Returns:
+            The title string
+        """
+        return _localize(invite.get("title"), language) or project_data.get("display-name", project_name)
+
     def get_invite_success_title(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
         Get the success page title in the specified language.
