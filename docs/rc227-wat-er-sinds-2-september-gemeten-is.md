@@ -276,19 +276,16 @@ Wat buiten deze ronde valt en een eigenaar nodig heeft:
    zetten die hier niet kon.
 2. **De productiepin is niet herbouwbaar.** Dat is geen probleem zolang het gepubliceerde
    image bestaat, en een probleem op de dag dat dat niet meer zo is.
-3. **De container registry van Forgejo op dit cluster geeft anoniem pull.** De aanname "hij
-   weigert anoniem, want `GET /v2/` geeft 401" klopt niet: die 401 is de auth-UITDAGING die elke
-   Docker-registry geeft. Doe je de tokendans die een client ook doet, dan levert
-   `/v2/token?scope=repository:rig-admin/e2e-allservices:pull` ANONIEM een token op en komt de
-   manifest met 200 terug (nagemeten met curl). Gevolg aan de kubelet-kant, twee keer gezien met
-   een vaste EN met een eigen tag en `imagePullPolicy: Always`: het image was er "in 50ms"
-   terwijl kubelet in dezelfde events `FailedToRetrieveImagePullSecret` meldde en het secret nog
-   niet bestond. Een ontbrekend pull-secret is bij kubelet een WAARSCHUWING, geen fout.
+3. **De negatieve proef op het pull-secret staat nog open.** Wat wel gemeten is: de registry-entry
+   landt AGE-versleuteld in het projectbestand, en ZAD zet het `dockerconfigjson`-secret in de
+   namespace met de juiste upstream en gebruiker. Wat niet gemeten is: dat een pull zonder dat
+   secret zou falen. Dat vraagt een registry die de pull aantoonbaar weigert, en de opstelling van
+   deze sandbox levert dat niet.
 
-   Wat daarmee nog wel gemeten is: de entry landt AGE-versleuteld in het projectbestand, en ZAD
-   zet het `dockerconfigjson`-secret in de namespace met de juiste upstream en gebruiker. Wat
-   niet: dat het zonder dat secret niet zou lukken. Wie die stap wil, heeft op deze sandbox een
-   image nodig dat anoniem echt geweigerd wordt.
+   Let bij die proef op de kant van kubelet, want die is misleidend: een ontbrekend pull-secret is
+   daar een WAARSCHUWING en geen fout. Twee keer gezien dat het image er "in 50ms" was terwijl in
+   dezelfde events `FailedToRetrieveImagePullSecret` stond. Een groene pod bewijst dus niet dat het
+   secret gebruikt is.
 
 4. **Het projectniveau komt na de workload, en dat is RC-229.** Alles wat via de
    `_project`-applicatie landt kan na de pod van de deployment-applicatie komen: het zijn twee
