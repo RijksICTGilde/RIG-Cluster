@@ -42,6 +42,29 @@ It **fails safe — re-encrypting — on any doubt**:
 So a missing or mismatched key can never cause a stale secret to be kept — at
 worst it re-encrypts unnecessarily, exactly as before.
 
+## The prune runs first
+
+A deployment writes its secrets, prunes the files this run did not generate, and
+encrypts last. The `.sops.yaml` of a secret written this run as `.to-sops.yaml`
+is its previous ciphertext, so the prune keeps it (`_is_generated` in
+`project_manager.py`, used by the component, service and project prune alike).
+Removing it would leave the skip nothing to compare against. A secret that is no
+longer generated loses both forms.
+
+## Values that must survive a run
+
+The skip only helps when the plaintext is stable. The authorization-wall cookie
+secret is random, so it sets `keep_existing_values=True` on its
+`SecretFileSpec`. The shared writer `_write_secret_file` then decrypts the
+previous `<name>-secret.sops.yaml` with the project key and keeps the value
+of each key the service supplies itself. That happens before aliases are
+resolved, so an alias follows its current template. No file, no key, a failed
+decrypt or a missing entry gives the freshly generated value.
+
+The cookie secret therefore no longer rotates on every deploy (which logged
+every oauth2-proxy user out). To replace it, delete its `.sops.yaml` from
+`zad-deployments` and reprocess the project.
+
 ## Configuration
 
 There is nothing to configure. The behaviour is enabled automatically wherever a
@@ -86,6 +109,10 @@ encrypt_to_sops_files(directory, public_key)
   unchanged input, re-encryption on change, semantics-vs-formatting, no-key and
   wrong-key fall back to re-encrypt, and first-time encryption. Skipped when the
   binaries are absent.
+- `tests/test_component_manifest_prune.py`, `tests/test_project_manifest_emitter.py`:
+  the prune keeps the previous ciphertext of a secret generated this run.
+- `tests/test_secret_file_keep_existing.py`: the writer keeps an existing cookie
+  value, and falls back to the new one on unreadable ciphertext or a wrong key.
 - `tests/test_sops_fail_abort.py` — includes a guard test asserting the managers
   never call the bare `encrypt_to_sops_files` (the fail-closed wrapper must
   always be used).

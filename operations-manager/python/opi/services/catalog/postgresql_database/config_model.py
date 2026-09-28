@@ -10,7 +10,8 @@ This service carries config at two layers, with two different shapes:
   ``shared``, so a bare ``postgresql-database`` entry, or one with no ``scope`` key,
   keeps today's behaviour exactly.
 * **Deployment layer** (``deployments[*].services[{postgresql-database}].config``):
-  clone state, written and read by ``opi/manager/revision_manager.py``, not by a user.
+  clone state, written and read by ``opi/manager/revision_manager.py``, plus the
+  user's ``connection-limit`` override for that deployment.
 
 ``config_model_for(layer)`` in the service picks the right one per layer.
 
@@ -25,9 +26,31 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
+from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
 from opi.services.catalog.shared.revisions import CloneState
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
+
+
+def _connection_limit_field(description: str) -> Any:
+    # The bounds are judged by CONNECTION_LIMIT (check_settings), not by ge/le here.
+    return Field(
+        default=None,
+        alias=CONNECTION_LIMIT.path,
+        description=(
+            f"{description} Between {CONNECTION_LIMIT.minimum} and {CONNECTION_LIMIT.maximum}, "
+            f"platform default {CONNECTION_LIMIT.default}."
+        ),
+    )
+
+
+class ConnectionLimitConfig(BaseModel):
+    """The ``connection-limit`` field, shared by both project-layer scopes."""
+
+    connection_limit: int | None = _connection_limit_field(
+        "Maximum simultaneous connections per database role of each deployment (the _ro role gets the same "
+        "value). Absent means the platform default."
+    )
 
 
 class PostgresqlDatabaseConfig(CloneState):
@@ -38,6 +61,11 @@ class PostgresqlDatabaseConfig(CloneState):
     name*, not the schema name, which is exactly why extra schemas (RC-17) can share a
     database without disturbing generations, clones or backups.
     """
+
+    connection_limit: int | None = _connection_limit_field(
+        "Maximum simultaneous connections per database role of this deployment (the _ro role gets the same "
+        "value). Absent means the project's value."
+    )
 
 
 def schema_postfix_field() -> Any:
@@ -98,7 +126,7 @@ class SchemaEntry(BaseModel):
     )
 
 
-class SharedScopeConfig(BaseModel):
+class SharedScopeConfig(ConnectionLimitConfig):
     """``scope: shared`` -- a database on the shared cluster instance (the default).
 
     Carries no CNPG-cluster fields: ``extra="forbid"`` means putting ``storage`` or
@@ -115,7 +143,7 @@ class SharedScopeConfig(BaseModel):
     )
 
 
-class ProjectScopeConfig(DedicatedPostgresFields):
+class ProjectScopeConfig(ConnectionLimitConfig, DedicatedPostgresFields):
     """``scope: project`` -- one dedicated CNPG cluster per project, shared by all its
     deployments. Carries the same CNPG-cluster fields as
     ``namespace-postgresql-database``."""

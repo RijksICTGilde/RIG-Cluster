@@ -119,6 +119,32 @@ spec:
             secretKeyRef:
               name: sops-age-key
               key: key
+        # Eén bron per wachtwoord: rechtstreeks uit het secret van de component zelf en niet uit een kopie die stil kan afwijken. Expliciete env wint van envFrom.
+        - name: DATABASE_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-admin-credentials
+              key: password
+        - name: MINIO_ADMIN_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin-credentials
+              key: MINIO_ROOT_USER
+        - name: MINIO_ADMIN_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: minio-admin-credentials
+              key: MINIO_ROOT_PASSWORD
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: redis-admin-credentials
+              key: REDIS_PASSWORD
+        - name: KEYCLOAK_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_ADMIN_PASSWORD
         envFrom:
         - secretRef:
             name: operations-manager-env-secrets

@@ -15,6 +15,11 @@
 
    En let op: een Jinja-commentaar hoort BOVEN de tag, niet erin. De voorbewerker leest
    de woorden binnen een componenttag als attribuutnamen. #}
+{# De placeholder is de LEGE optie bovenaan, en die staat er alleen als het veld er zelf om
+   vraagt. Een keuzelijst heeft altijd iets geselecteerd, dus zonder lege optie kiest de
+   browser de eerste - en dan lijkt een veld waar niets over bekend is een antwoord te
+   geven. Bij de keycloak-template ging dat mis: het scherm toonde een blauwdruk die
+   nergens in het projectbestand stond. #}
 {# native="true" geeft een ECHTE <select> met de opmaak van het thema eromheen. Zonder
    dat wordt het een <nldd-combo-box>, en dan bestaat er geen <select> meer: elke test die
    select_option() doet en elke JavaScript die .value leest of de lijst vult, vindt niets.
@@ -28,6 +33,7 @@
     name="{{ field.path|e }}"
     label="{{ field.label|e }}"
     :help="combined_helper(field)|trim or none"
+    :placeholder="field.placeholder or none"
     :required="field.required"
     :disabled="field.readonly"
     :error="(field.errors[0] if field.errors else none)"

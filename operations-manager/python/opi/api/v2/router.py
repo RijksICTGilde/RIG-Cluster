@@ -86,7 +86,11 @@ from opi.api.validation import (
 )
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.connectors.kubectl import KubectlConnector, create_kubectl_connector
-from opi.connectors.subdomain import get_supported_base_domains, validate_base_domain, validate_subdomain
+from opi.connectors.subdomain import (
+    get_supported_base_domains,
+    validate_base_domain,
+    validate_subdomain_for_domain,
+)
 from opi.core.auth_decorators import get_current_user
 from opi.core.cluster_config import (
     get_domain_supports_dots,
@@ -139,8 +143,13 @@ from opi.services.project_authorization import (
 )
 from opi.services.project_store import get_project_store
 from opi.services.registry import SERVICES, get_service
-from opi.services.services import ServiceAdapter, service_entry_config, service_entry_name
-from opi.services.services_enums import CleanupStrategy, ServiceBinding, ServiceKind, ServiceType
+from opi.services.services import (
+    ServiceAdapter,
+    ServiceValidationError,
+    service_entry_config,
+    service_entry_name,
+)
+from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -637,7 +646,7 @@ async def check_subdomain_availability_v2(
     # oplossen is.
     cluster_domain = base_domain.lower() in get_supported_base_domains(settings.CLUSTER_MANAGER)
 
-    is_valid, validation_error = validate_subdomain(subdomain)
+    is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
     if not is_valid:
         return SubdomainCheckResponse(
             subdomain=subdomain.lower(),
@@ -1254,7 +1263,10 @@ async def create_project_v2(
         )
     except ProjectApiKeyError as exc:
         logger.error("Could not build the project file for '%s': %s", project_name, exc)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=500,
+            detail="Het projectbestand kon niet worden opgebouwd. Probeer het over een minuut opnieuw.",
+        ) from exc
 
     task = await create_async_task(
         request=request,
@@ -2026,13 +2038,22 @@ class ServiceCatalogEntry(BaseModel):
             "file. A client can only select a `user` service."
         ),
     )
-    binding: ServiceBinding = Field(
+    selectable_per_component: bool = Field(
         ...,
         description=(
-            "Whether an individual component ticks this service (`component`) or the whole "
-            "deployment gets it at once (`deployment`). This is about selection, not about where "
-            "the config lives: that is `targets`, and the two genuinely differ (keycloak binds "
-            "per component while its config is one realm for the whole project)."
+            "Whether an individual component switches this service on and off for itself. False "
+            "means the project-level selection is the whole answer and the service decides for "
+            "itself where it works. This is about selection, not about where the config lives: "
+            "that is `targets`, and the two genuinely differ (keycloak is ticked per component "
+            "while its config is one realm for the whole project)."
+        ),
+    )
+    shared_per_deployment: bool = Field(
+        ...,
+        description=(
+            "Whether one provision of this service serves a whole deployment, so every component "
+            "of it that takes the service gets the same database, bucket or cache. Independent of "
+            "`selectable_per_component`: postgres is both."
         ),
     )
     hidden: bool = Field(
@@ -2070,7 +2091,8 @@ def _catalog_entry(service_type: ServiceType, service: Any) -> ServiceCatalogEnt
         value_targets=_values_targets(service),
         configurable=bool(targets),
         kind=definition.kind,
-        binding=definition.binding,
+        selectable_per_component=definition.selectable_per_component,
+        shared_per_deployment=definition.shared_per_deployment,
         hidden=definition.hidden,
         requires=list(definition.requires),
     )
@@ -2089,8 +2111,8 @@ async def list_configurable_services_v2() -> ServiceCatalogResponse:
     OpenAPI document, so a generated client learned nothing here while the per-service
     config endpoints did carry their schema.
 
-    Carries `kind`, `binding`, `hidden` and `requires` as well, so this list alone is
-    enough to *choose* a service -- which one a project may pick, which one the platform
+    Carries `kind`, the two selection flags, `hidden` and `requires` as well, so this list
+    alone is enough to *choose* a service -- which one a project may pick, which one the platform
     runs regardless, and what a service needs before it can be used. Applying it then
     only needs `GET /api/v2/services/{service_name}`.
     """
@@ -2180,8 +2202,11 @@ class ServiceDescription(BaseModel):
     name: str = Field(..., description="Service identifier, as used in the endpoint paths")
     description: str = Field("", description="What the service does, in one Dutch sentence")
     kind: ServiceKind = Field(..., description="`user` when a project chooses it, `system` when the platform runs it")
-    binding: ServiceBinding = Field(
-        ..., description="Whether a component ticks this service or the whole deployment gets it"
+    selectable_per_component: bool = Field(
+        ..., description="Whether a component ticks this service or the project's own choice settles it"
+    )
+    shared_per_deployment: bool = Field(
+        ..., description="Whether one provision of this service serves a whole deployment"
     )
     hidden: bool = Field(..., description="Whether the service is kept out of the service picker")
     explanation: str = Field(
@@ -2303,7 +2328,8 @@ async def describe_service_v2(service_name: str) -> ServiceDescription:
         name=service_type.value,
         description=definition.description,
         kind=definition.kind,
-        binding=definition.binding,
+        selectable_per_component=definition.selectable_per_component,
+        shared_per_deployment=definition.shared_per_deployment,
         hidden=definition.hidden,
         explanation=service_help_markdown(service_type),
         guide=service_guide_markdown(service_type) or None,
@@ -2457,12 +2483,25 @@ async def _enqueue_config_write(
     Shared by the per-target upsert (PUT), patch (PATCH) and clear (DELETE) routes so
     the target lives in the path while the guards stay in one place. An unknown service
     is 404 and a target the service does not support is 422, both before enqueue.
+
+    A deployment or component the target names but the project does not have is a 404
+    here too, like ``_enqueue_values_write`` next door: the caller asked about a thing
+    that does not exist, and this request can say so. It stayed a 202 followed by a
+    failed task until a CI teardown patched cross-domain-access on a ``pr-`` deployment
+    that was already gone, three projects at a time (3 September 2026). The same check
+    runs again inside the mutation, against the freshest file.
     """
     logger.info("V2 %s service config '%s' at %s in project: %s", operation, service_name, target, project_name)
     if not validate_project_name(project_name):
         raise HTTPException(status_code=400, detail="Invalid project name format.")
     service = _service_or_404(service_name)
-    _resolve_supported_layer(service, service_name, target)
+    layer = _resolve_supported_layer(service, service_name, target)
+    try:
+        ServiceAdapter.require_config_target(
+            _project_data_or_404(project_name), layer, component_name=component, deployment_name=deployment
+        )
+    except ServiceValidationError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     payload: dict[str, Any] = {
         "project_name": project_name,

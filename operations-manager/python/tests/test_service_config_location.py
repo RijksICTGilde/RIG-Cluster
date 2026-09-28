@@ -1,30 +1,35 @@
 """Where a user configures a service: which of the two look-alike fields answers that (RC-33).
 
-``ServiceDefinition.binding`` and ``ConfigLayer`` read as the same question and are not.
-Binding is about *selection* (does a component tick this service, or does a deployment get
-it wholesale); the config layers are about *where the settings live*. keycloak is the
-counterexample that keeps the two apart: it binds per component while its configuration is
-one realm for the whole project.
+``ServiceDefinition.selectable_per_component`` and ``ConfigLayer`` read as the same
+question and are not. The first is about *selection* (does a component tick this service,
+or does the project's own choice settle it); the config layers are about *where the
+settings live*. keycloak is the counterexample that keeps the two apart: it is ticked per
+component while its configuration is one realm for the whole project.
 
 The user-visible consequence, and why this file exists: on the project-wide services step a
 ticked service whose config lives only on the component layer produces no configuration
 screen at all -- observed on ``dimp-r0v``, health-check ticked, nothing happened, nothing
 said why. ``project_step_config_hint`` is the sentence that says why, and it must read the
-layers. Reading the binding instead would tell a keycloak user to go look per component,
-where there is nothing to find.
+layers. Reading the selection instead would tell a keycloak user to go look per
+component, where there is nothing to find.
 """
 
 from __future__ import annotations
 
+import re
+from types import SimpleNamespace
+
 import pytest
+from opi.core.templates_lotc import templates_lotc
 from opi.services.catalog.base import ConfigLayer
 from opi.services.config_location import (
-    binding_label,
     config_hint_for_value,
     project_step_config_hint,
+    selection_labels,
 )
 from opi.services.registry import SERVICES
-from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ServiceKind, ServiceType
+from opi.web.lotc_fixtures import page_data
 
 #: The services measured (5 August 2026, from the registry) as carrying config only away
 #: from the project layer. The first five are user-selectable and are exactly the cards
@@ -42,23 +47,22 @@ COMPONENT_ONLY_SERVICES = [
 
 
 class TestTheSourceOfTruthForWhereIConfigure:
-    def test_the_layers_answer_it_not_the_binding(self) -> None:
-        # keycloak: bound per component, configured per project. If the hint were derived
-        # from the binding it would claim keycloak is configured per component.
+    def test_the_layers_answer_it_not_the_selection(self) -> None:
+        # keycloak: ticked per component, configured per project. If the hint were derived
+        # from the selection it would claim keycloak is configured per component.
         keycloak = SERVICES[ServiceType.KEYCLOAK]
-        assert keycloak.definition.binding is ServiceBinding.COMPONENT
+        assert keycloak.definition.selectable_per_component is True
         assert keycloak.config_layers() == [ConfigLayer.PROJECT]
         assert project_step_config_hint(ServiceType.KEYCLOAK) is None
 
-    def test_binding_and_layers_disagree_for_at_least_one_service(self) -> None:
+    def test_selection_and_layers_disagree_for_at_least_one_service(self) -> None:
         # Guards the reason the two fields are kept apart at all: if they ever became
         # equivalent across the whole catalog, merging them would be the better fix and
         # this test should be the thing that says so.
         disagreeing = [
             service_type
             for service_type, service in SERVICES.items()
-            if service.definition.binding is ServiceBinding.COMPONENT
-            and service.config_layers() == [ConfigLayer.PROJECT]
+            if service.definition.selectable_per_component and service.config_layers() == [ConfigLayer.PROJECT]
         ]
         assert ServiceType.KEYCLOAK in disagreeing
 
@@ -130,17 +134,77 @@ class TestTheHintForTheServicesStep:
         assert config_hint_for_value("") is None
 
 
-class TestBindingLabel:
-    def test_every_service_has_a_readable_binding(self) -> None:
+class TestSelectionLabels:
+    def test_every_service_says_how_it_is_switched_on(self) -> None:
         for service_type in SERVICES:
-            label = binding_label(service_type)
-            assert label
+            labels = selection_labels(service_type)
+            assert labels
             # No raw enum leaking into the page, which is what "Component scope" was.
-            assert "scope" not in label.lower()
+            assert not any("scope" in label.lower() for label in labels)
 
-    def test_it_reflects_the_binding_not_the_config_layer(self) -> None:
-        assert binding_label(ServiceType.KEYCLOAK) == binding_label(ServiceType.PUBLISH_ON_WEB)
-        assert binding_label(ServiceType.KEYCLOAK) != binding_label(ServiceType.POSTGRESQL_DATABASE)
+    def test_it_reflects_the_selection_not_the_config_layer(self) -> None:
+        assert selection_labels(ServiceType.KEYCLOAK) == ["Per component aan te zetten"]
+        assert selection_labels(ServiceType.SLEEP_MODE) == ["Geldt voor het hele project"]
+
+    def test_sharing_is_a_second_chip_next_to_the_first(self) -> None:
+        assert selection_labels(ServiceType.POSTGRESQL_DATABASE) == [
+            "Per component aan te zetten",
+            "Gedeeld per deployment",
+        ]
+
+
+class TestDeChipsOpDeProjectpagina:
+    """De kaart zoals een gebruiker hem krijgt, niet de functie die de tekst levert.
+
+    ``selection_labels`` geeft sinds RC-213 een LIJST, en het sjabloon loopt er doorheen.
+    Dat de functie de goede zinnen teruggeeft zegt dus niets meer over wat er op het
+    scherm staat: een tikfout in de lus laat de kaart zonder chips achter en geen van de
+    toetsen hierboven merkt er iets van.
+    """
+
+    def _kaarten(self) -> dict[str, str]:
+        """Per dienstnaam het stuk HTML van zijn kaart, uit het diensttabblad.
+
+        Dezelfde route-context als ``opi/web/router.py`` die meegeeft: de ECHTE
+        ``selection_labels``, want de proefopstelling (/lotc/bg/project-tabs) geeft er
+        een lege dict voor door en dan rendert de lus per definitie niets.
+        """
+        request = SimpleNamespace(
+            scope={"type": "http"},
+            headers={},
+            cookies={},
+            state=SimpleNamespace(),
+            url=SimpleNamespace(path="/"),
+            session={},
+            query_params={},
+        )
+        data = page_data("project-tabs")
+        data["active_tab"] = "services"
+        data["tabs"] = {sleutel: {**tab, "url": "#"} for sleutel, tab in data["tabs"].items()}
+        data["service_selection_labels"] = selection_labels
+        html = templates_lotc.env.get_template("bg/project-tabs.html.j2").render(request=request, navigation=[], **data)
+        koppen = [(m.start(), m.group(1)) for m in re.finditer(r"<h3>([^<]+)</h3>", html)]
+        assert koppen, "het diensttabblad rendert geen enkele dienstkaart"
+        grenzen = [positie for positie, _ in koppen] + [len(html)]
+        return {naam: html[grenzen[i] : grenzen[i + 1]] for i, (_, naam) in enumerate(koppen)}
+
+    def test_een_dienst_die_je_per_component_aanzet_zegt_dat(self) -> None:
+        kaarten = self._kaarten()
+        assert "Per component aan te zetten" in kaarten["Keycloak Authentication"]
+        assert "Geldt voor het hele project" not in kaarten["Keycloak Authentication"]
+
+    def test_een_dienst_zonder_componentkeuze_zegt_dat_hij_voor_het_project_geldt(self) -> None:
+        kaart = self._kaarten()["Uitnodiging"]
+        assert "Geldt voor het hele project" in kaart
+        assert "Per component aan te zetten" not in kaart
+
+    def test_gedeeld_per_deployment_komt_als_tweede_chip_naast_de_eerste(self) -> None:
+        kaart = self._kaarten()["Namespace PostgreSQL Database"]
+        assert "Per component aan te zetten" in kaart
+        assert "Gedeeld per deployment" in kaart
+
+    def test_een_dienst_die_niets_deelt_krijgt_die_chip_niet(self) -> None:
+        assert "Gedeeld per deployment" not in self._kaarten()["Publiceren op het web"]
 
 
 class TestTheCardsShowIt:

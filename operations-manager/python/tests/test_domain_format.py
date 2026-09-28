@@ -14,12 +14,13 @@ Tests the configurable hostname template system:
 """
 
 import pytest
-from opi.core.cluster_config import get_domain_supports_dots, get_nice_url_supported_domains
+from opi.core.cluster_config import get_domain_supports_dots, get_supported_domain_names
 from opi.forms.editables.validators import DomainFormatValidator
 from opi.forms.visualizers.providers import DomainFormatOptionsProvider
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, domain_setting_path
 from opi.utils.naming import (
     DOMAIN_FORMAT_TEMPLATES,
+    SELF_CONTAINED_FORMAT_IDS,
     generate_hostname_from_format,
     get_component_ingress_map,
     get_deployment_hostnames,
@@ -397,8 +398,8 @@ class TestPerDomainDotSupport:
     def test_get_domain_supports_dots_unknown_domain(self):
         assert get_domain_supports_dots("local", "nonexistent.domain") is False
 
-    def test_get_nice_url_supported_domains_extracts_strings(self):
-        domains = get_nice_url_supported_domains("local")
+    def test_get_supported_domain_names_extracts_strings(self):
+        domains = get_supported_domain_names("local")
         assert "kind" in domains
         assert "local" in domains
         assert all(isinstance(d, str) for d in domains)
@@ -453,3 +454,35 @@ class TestDomainEditablesShowWhen:
 
         assert DOMAIN_FORMAT_EDITABLE.required is True
         assert DOMAIN_FORMAT_EDITABLE.default == "component-deployment-project"
+
+
+# ---------------------------------------------------------------------------
+# SELF_CONTAINED_FORMAT_IDS
+# ---------------------------------------------------------------------------
+
+
+class TestSelfContainedFormats:
+    """The formats a deployment can carry without naming a domain of its own (RC-217).
+
+    Measured on the rendered hostname rather than on the list, because it is the hostname
+    that breaks.
+    """
+
+    @pytest.mark.parametrize("domain_format", sorted(DOMAIN_FORMAT_TEMPLATES))
+    def test_a_format_is_self_contained_exactly_when_it_survives_without_a_name(self, domain_format: str):
+        hostname = generate_hostname_from_format(
+            domain_format=domain_format,
+            component_name="spa",
+            deployment_name="pr-857",
+            project_name="demo",
+            subdomain=None,
+            domain="cluster.local",
+        )
+        host, _, _tail = hostname.partition(".cluster.local")
+        # One label, filled in, and no separator left dangling by an absent subdomain.
+        survives = bool(host) and "." not in host and not host.endswith("-")
+        assert survives is (domain_format in SELF_CONTAINED_FORMAT_IDS), hostname
+
+    def test_the_set_is_not_empty(self):
+        # Without this the check above is vacuously true for every format.
+        assert SELF_CONTAINED_FORMAT_IDS

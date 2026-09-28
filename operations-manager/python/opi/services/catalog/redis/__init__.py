@@ -9,7 +9,7 @@ from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionCon
 from opi.services.catalog.redis.config_model import RedisConfig
 from opi.services.catalog.redis.variables import RedisVariables
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceBinding, ServiceType
+from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import RedisSecret
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class RedisService(Service):
         help_template="redis/help.md",
         icon="zandloper",
         color="rood",
-        binding=ServiceBinding.DEPLOYMENT,
+        shared_per_deployment=True,
         secret_class="RedisSecret",
         variables=[var.value for var in RedisVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,

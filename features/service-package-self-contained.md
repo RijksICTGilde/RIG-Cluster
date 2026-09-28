@@ -35,7 +35,6 @@ class KeycloakService(Service):
         help_template="keycloak/help.md",
         icon="sleutel",
         color="groen",
-        binding=ServiceBinding.COMPONENT,
         variables=[var.value for var in KeycloakVariables],
         ...
     )
@@ -66,10 +65,10 @@ dienst) en zonder (de paar uitlegteksten die van geen enkele dienst zijn, zoals
 
 ## Wat centraal blijft, en waarom
 
-`ServiceType`, de haakpunten, `ServiceBinding`, `ConfigLayer`, `CleanupStrategy` en het
-`Service`-basiscontract. Dat zijn de begrippen waarin diensten worden uitgedrukt, geen
-eigenschappen van één dienst. `ServiceType` kan ook niet anders: het is wat alles aan
-elkaar knoopt, en een dienst die zijn eigen lid zou declareren geeft een importcirkel.
+`ServiceType`, de haakpunten, `ConfigLayer`, `CleanupStrategy` en het `Service`-basiscontract.
+Dat zijn de begrippen waarin diensten worden uitgedrukt, geen eigenschappen van één dienst.
+`ServiceType` kan ook niet anders: het is wat alles aan elkaar knoopt, en een dienst die
+zijn eigen lid zou declareren geeft een importcirkel.
 
 De registratieregel in `opi/services/registry.py` blijft ook: de map moet ergens
 aangesloten worden. Dat is één regel, en de dekkingsbewaking faalt als je hem vergeet.

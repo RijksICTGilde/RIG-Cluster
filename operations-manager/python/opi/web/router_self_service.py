@@ -10,10 +10,11 @@ from fastapi.responses import JSONResponse
 from opi.api.router import IPRateLimiter
 from opi.connectors.subdomain import (
     validate_base_domain,
-    validate_subdomain,
+    validate_subdomain_for_domain,
 )
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.config import settings
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,8 @@ def get_cluster_base_domains_for_template() -> dict[str, list[dict]]:
     """
     result = {}
     for cluster_name, config in CLUSTER_CONFIG.items():
-        nice_url_config = config.get("nice_url", {})
-        raw_domains = nice_url_config.get("supported_domains", [])
+        domains_config = config.get("domains", {})
+        raw_domains = domains_config.get("supported_domains", [])
 
         domain_options = []
         for entry in raw_domains:
@@ -86,7 +87,7 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
 
     try:
         # Validate subdomain format first
-        is_valid, validation_error = validate_subdomain(subdomain)
+        is_valid, validation_error = validate_subdomain_for_domain(subdomain, base_domain, settings.CLUSTER_MANAGER)
         if not is_valid:
             # Map validation error to error code for frontend translation
             error_code = _get_validation_error_code(validation_error)
@@ -126,8 +127,11 @@ async def check_subdomain_availability_web(request: Request) -> JSONResponse:
             }
         )
     except Exception as e:
-        logger.error(f"Error checking subdomain availability: {e}")
-        raise HTTPException(status_code=500, detail=f"Error checking subdomain availability: {e}")
+        logger.exception("Controleren van subdomein '%s' mislukt", subdomain)
+        raise HTTPException(
+            status_code=500,
+            detail="Er kon niet worden gecontroleerd of dit subdomein vrij is. Probeer het over een minuut opnieuw.",
+        ) from e
 
 
 def _get_validation_error_code(error_message: str | None) -> str:

@@ -27,7 +27,7 @@ from typing import Any
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.user_env_vars.config_model import UserEnvVarsConfig
 from opi.services.services import ServiceDefinition
-from opi.services.services_enums import ServiceBinding, ServiceKind, ServiceType
+from opi.services.services_enums import ServiceKind, ServiceType
 
 
 class UserEnvVarsService(Service):
@@ -42,7 +42,6 @@ class UserEnvVarsService(Service):
         help_template="user_env_vars/help.md",
         icon="instellingen",
         color="grijs-600",
-        binding=ServiceBinding.COMPONENT,
         variables=[],
         # Always present, never in the project file's services list -> a system
         # service (kind=SYSTEM also keeps it out of the picker).

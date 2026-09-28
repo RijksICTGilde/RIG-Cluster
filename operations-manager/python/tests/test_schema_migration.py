@@ -4,7 +4,7 @@ import copy
 
 from opi.connectors.subdomain import get_domains_config
 from opi.core.project_schema import validate_declared_project_schema, validate_project_schema
-from opi.manager.project_validation import STORED_PROJECT_CONTEXT
+from opi.manager.project_validation import STORED_PROJECT_CONTEXT, validate_service_configs
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.schema_migration import (
     LATEST_SCHEMA_VERSION,
@@ -13,6 +13,7 @@ from opi.services.schema_migration import (
     normalize_domains_location,
     normalize_service_entries,
     relocate_domain_settings_to_service,
+    relocate_registries_to_service,
     remove_domain_mode,
 )
 
@@ -253,12 +254,24 @@ class TestDetectSchemaVersion:
 
 
 class TestMigrateToLatestNoOp:
-    def test_already_v2(self):
-        data = _v2_project()
+    def test_already_latest(self):
+        data = {**_v2_project(), "schema-version": LATEST_SCHEMA_VERSION}
         original = copy.deepcopy(data)
         result, was_migrated = migrate_to_latest(data)
         assert was_migrated is False
         assert result == original
+
+    def test_an_older_file_where_every_step_is_a_no_op_is_stamped_latest(self):
+        """De zpa-cj8-vorm: 2.7 zonder root-``registries``, dus de 2.8- en 2.9-stap hebben
+        niets te doen. Toch voldoet het bestand daarna aan de nieuwste versie, en de stamp
+        moet dat zeggen."""
+        data = {**_v2_project(), "schema-version": 2.7}
+        result, was_migrated = migrate_to_latest(data)
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert was_migrated is True
+        assert {k: v for k, v in result.items() if k != "schema-version"} == {
+            k: v for k, v in _v2_project().items() if k != "schema-version"
+        }
 
     def test_higher_version_no_op(self):
         data = {"schema-version": 99, "name": "future"}
@@ -590,8 +603,10 @@ class TestMigrateV2ToV2_1:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        # No root flags to clean up — nothing to migrate
-        assert was_migrated is False
+        # No root flags to clean up; only the stamp moves to the latest version.
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["deployments"][0]["components"] == [{"reference": "frontend", "image": "app:latest"}]
         dep = result["deployments"][0]
         assert get_domain_setting(dep, DomainSetting.ROOT_COMPONENT) is None
 
@@ -818,7 +833,7 @@ class TestMigrateV2_1ToV2_2:
         assert dep_comp["path"] == [{"match": "/api", "rewrite": "/"}]
 
     def test_no_path_no_migration(self):
-        """Component without path field is not migrated."""
+        """Component without path field is not migrated; only the stamp moves."""
         data = {
             "schema-version": 2.1,
             "name": "test-project",
@@ -827,11 +842,12 @@ class TestMigrateV2_1ToV2_2:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is False
-        assert "path" not in result["components"][0]
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"] == [{"name": "worker"}]
 
     def test_v2_2_not_migrated_again(self):
-        """Files already at v2.2 are not migrated."""
+        """A v2.2 path list is left alone by the 2.1 -> 2.2 step; only the stamp moves."""
         data = {
             "schema-version": 2.2,
             "name": "test-project",
@@ -842,8 +858,9 @@ class TestMigrateV2_1ToV2_2:
         }
         result, was_migrated = migrate_to_latest(data)
 
-        assert was_migrated is False
-        assert result["schema-version"] == 2.2
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert result["components"] == [{"name": "api", "path": [{"match": "/api"}]}]
 
 
 # ---------------------------------------------------------------------------
@@ -1370,7 +1387,7 @@ class TestRemoveDomainMode:
             ],
         }
 
-    def test_nice_url_without_format_becomes_component_subdomain(self) -> None:
+    def test_mode_without_format_becomes_component_subdomain(self) -> None:
         data = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
         result, was_migrated = migrate_to_latest(data)
 
@@ -1380,7 +1397,7 @@ class TestRemoveDomainMode:
         assert config["domain-format"] == "component.subdomain"
         validate_project_schema(result)
 
-    def test_nice_url_with_explicit_format_only_loses_the_mode(self) -> None:
+    def test_mode_with_explicit_format_only_loses_the_mode(self) -> None:
         data = self._project({"subdomain": "desa", "domain-mode": "nice-url", "domain-format": "component.subdomain"})
         result, _ = migrate_to_latest(data)
 
@@ -1422,3 +1439,205 @@ class TestRemoveDomainMode:
         once = self._project({"subdomain": "desa", "domain-mode": "nice-url"})
         assert remove_domain_mode(once) is True
         assert remove_domain_mode(once) is False
+
+
+#: Een AGE-blok in de vorm die het schema eist; de inhoud doet er voor de migratie niet toe.
+_AGE_BLOK = "-----BEGIN AGE ENCRYPTED FILE-----\ntest\n-----END AGE ENCRYPTED FILE-----"
+
+
+class TestRelocateRegistriesToService:
+    """v2.8 -> v2.9: de registries verhuizen naar de dienst image-registries (RC-177).
+
+    Gemodelleerd op de twee bestanden die dit in de vloot echt hebben (``algor-odc``
+    (ghcr.io met inloggegevens, verwezen vanaf twee deployment-componenten en vanuit
+    ``namespace-postgresql-database``) en ``dp-bn7`` (``secretName``, het noodverband uit
+    de storing van mei), en niet op een minimaal project, want juist die twee vormen
+    moeten er heelhuids doorheen komen.
+
+    Migreren en dan valideren, in die volgorde: dat is de volgorde die de loader gebruikt.
+    """
+
+    def _algor_odc_shaped(self) -> dict:
+        return {
+            "schema-version": 2.8,
+            "name": "algor-odc",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "services": [
+                "publish-on-web",
+                {
+                    "name": "namespace-postgresql-database",
+                    "config": {
+                        "image": "ghcr.io/rijksictgilde/algoritmeregister/postgresql:2024.11.19",
+                        "registry": "github-registry",
+                    },
+                },
+            ],
+            "registries": [
+                {
+                    "name": "github-registry",
+                    "url": "ghcr.io",
+                    "username": "someuser",
+                    "password": _AGE_BLOK,
+                }
+            ],
+            "components": [
+                {
+                    "name": "component-1",
+                    "type": "deployment",
+                    "ports": {"inbound": [8000], "outbound": [443]},
+                },
+                {
+                    "name": "component-2",
+                    "type": "deployment",
+                    "ports": {"inbound": [3000], "outbound": [443]},
+                },
+            ],
+            "deployments": [
+                {
+                    "name": "deployment-1",
+                    "cluster": "odcn-production",
+                    "namespace": "algor-odc",
+                    "components": [
+                        {
+                            "reference": "component-1",
+                            "image": "ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24",
+                            "registry": "github-registry",
+                        },
+                        {
+                            "reference": "component-2",
+                            "image": "ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21",
+                            "registry": "github-registry",
+                        },
+                    ],
+                }
+            ],
+        }
+
+    def _dp_bn7_shaped(self) -> dict:
+        return {
+            "schema-version": 2.8,
+            "name": "dp-bn7",
+            "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
+            "clusters": ["odcn-production"],
+            "services": ["publish-on-web"],
+            "registries": [{"name": "platform", "url": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}],
+            "components": [
+                {"name": "component1", "type": "deployment", "ports": {"inbound": [8080], "outbound": [443]}}
+            ],
+            "deployments": [
+                {
+                    "name": "productie",
+                    "cluster": "odcn-production",
+                    "namespace": "dp-bn7",
+                    "components": [{"reference": "component1", "image": "rcr.rijksapps.nl/rig/zad:desa-portfolio-11"}],
+                }
+            ],
+        }
+
+    @staticmethod
+    def _service_config(data: dict, name: str) -> dict:
+        for entry in data.get("services", []):
+            if isinstance(entry, dict) and entry.get("name") == name:
+                return entry.get("config") or {}
+        raise AssertionError(f"dienst '{name}' staat niet in het bestand")
+
+    def test_de_lijst_verhuist_en_url_wordt_upstream(self) -> None:
+        result, was_migrated = migrate_to_latest(self._algor_odc_shaped())
+
+        assert was_migrated is True
+        assert result["schema-version"] == LATEST_SCHEMA_VERSION
+        assert "registries" not in result
+        assert self._service_config(result, "image-registries")["registries"] == [
+            {
+                "name": "github-registry",
+                "upstream": "ghcr.io",
+                "username": "someuser",
+                "password": _AGE_BLOK,
+            }
+        ]
+
+    def test_de_sleutel_op_het_deployment_component_wordt_een_dienstvermelding(self) -> None:
+        result, _ = migrate_to_latest(self._algor_odc_shaped())
+
+        for component in result["deployments"][0]["components"]:
+            assert "registry" not in component
+            assert component["services"] == {"image-registries": {"config": {"registry": "github-registry"}}}
+
+    def test_de_verwijzing_van_binnen_een_andere_dienst_blijft_staan(self) -> None:
+        """``namespace-postgresql-database`` verwijst bij NAAM naar een entry, en die
+        verwijzing blijft werken: hij wijst nu naar de config van image-registries."""
+        result, _ = migrate_to_latest(self._algor_odc_shaped())
+        assert self._service_config(result, "namespace-postgresql-database")["registry"] == "github-registry"
+
+    def test_een_secretname_entry_verhuist_ongewijzigd(self) -> None:
+        """dp-bn7: geen inloggegevens, alleen een verwijzing naar een secret dat het
+        platform zelf neerzet. Er valt niets te hernoemen, en de componenten hebben geen
+        ``registry``-sleutel om te verhuizen."""
+        result, was_migrated = migrate_to_latest(self._dp_bn7_shaped())
+
+        assert was_migrated is True
+        assert "registries" not in result
+        assert self._service_config(result, "image-registries")["registries"] == [
+            {"name": "platform", "upstream": "rcr.rijksapps.nl/rig", "secretName": "rig-robot-pull-secret"}
+        ]
+        assert "services" not in result["deployments"][0]["components"][0]
+
+    def test_beide_bestanden_valideren_na_de_migratie(self) -> None:
+        # Migreren en dan valideren, in die volgorde: de volgorde die de loader gebruikt.
+        for data in (self._algor_odc_shaped(), self._dp_bn7_shaped()):
+            result, _ = migrate_to_latest(data)
+            validate_project_schema(result)
+
+    def test_een_lege_lijst_levert_geen_dienst_op(self) -> None:
+        """Een sleutel zonder inhoud is geen dienst waard, alleen een sleutel die weg kan."""
+        data = self._dp_bn7_shaped()
+        data["registries"] = []
+        result, was_migrated = migrate_to_latest(data)
+
+        assert was_migrated is True
+        assert "registries" not in result
+        assert all(
+            not (isinstance(entry, dict) and entry.get("name") == "image-registries") for entry in result["services"]
+        )
+        validate_project_schema(result)
+
+    def test_de_oude_vorm_valideert_nog_onder_zijn_eigen_versie(self) -> None:
+        """Een bestand dat nog niet opnieuw verwerkt is moet leesbaar blijven, anders is
+        het verschil tussen 'nog niet gemigreerd' en 'kapot' niet te zien."""
+        validate_declared_project_schema(self._algor_odc_shaped())
+        validate_declared_project_schema(self._dp_bn7_shaped())
+
+    def test_een_protocol_en_hoofdletters_worden_omgezet(self) -> None:
+        """Twee vormen die op 2.8 GELDIG waren en op 2.9 geweigerd worden.
+
+        Het oude ``$defs/registry.url`` liet een protocol expliciet toe
+        (``^(?:(?:https?|ssh|git)://)?...``) en had geen hoofdletterregel. Letterlijk
+        overzetten levert dan een bestand op dat leest maar niet meer op te slaan is, met
+        een fout over een veld dat de gebruiker nooit heeft aangeraakt.
+        """
+        for url, verwacht in (
+            ("https://ghcr.io", "ghcr.io"),
+            ("http://registry.local:5000/team", "registry.local:5000/team"),
+            ("GHCR.IO", "ghcr.io"),
+            ("git://code.overheid.nl/Robbert", "code.overheid.nl/robbert"),
+            ("https://ghcr.io/", "ghcr.io"),  # de afsluitende schuine streep hoort er ook niet
+            # Een hoofdletterprotocol: het oude patroon was hoofdletterongevoelig, dus dit
+            # was een geldige 2.8-waarde. Strippen VOOR het lowercasen laat hem staan.
+            ("HTTPS://GHCR.IO", "ghcr.io"),
+        ):
+            data = self._algor_odc_shaped()
+            data["registries"][0]["url"] = url
+            result, _ = migrate_to_latest(data)
+
+            assert self._service_config(result, "image-registries")["registries"][0]["upstream"] == verwacht
+            # De poorten die een save draait: hier sneuvelde de letterlijke kopie.
+            validate_project_schema(result)
+            validate_service_configs(result)
+
+    def test_het_is_idempotent(self) -> None:
+        once, _ = migrate_to_latest(self._algor_odc_shaped())
+        assert relocate_registries_to_service(copy.deepcopy(once)) is False
+        twice, was_migrated = migrate_to_latest(copy.deepcopy(once))
+        assert was_migrated is False
+        assert twice == once

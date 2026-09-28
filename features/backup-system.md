@@ -75,6 +75,9 @@ The backup system provides:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+Elke backup- en restorepod draait op de serviceaccount van het project (`{project}-sa`),
+niet op `default`. Waarom staat in `image-registries.md`, "De eigen serviceaccount per project".
+
 ## Quick Start
 
 ### 1. Configure Backup in project.yaml

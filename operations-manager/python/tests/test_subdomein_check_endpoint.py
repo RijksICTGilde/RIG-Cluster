@@ -139,7 +139,7 @@ class TestWatDeControleBelooft:
     """
 
     def test_een_domein_van_dit_cluster_is_er_een_van_ons(self, client: TestClient) -> None:
-        """``local`` staat in de nice_url-domeinen van dit testcluster, en dat is dezelfde
+        """``local`` staat in de ``domains``-lijst van dit testcluster, en dat is dezelfde
         lijst die bepaalt welk domein een certificaat van het platform krijgt."""
         response = client.get(PATH, params={"base_domain": "local"}, headers=HEADERS)
 
@@ -164,6 +164,55 @@ class TestWatDeControleBelooft:
         )
 
         assert response.json()["cluster_domain"] is True
+
+
+class TestDeGereserveerdeNamenGeldenPerDomein:
+    """De live-check moet hetzelfde zeggen als de wizard, anders hoort de gebruiker twee
+    verhalen over dezelfde naam."""
+
+    def test_een_gereserveerde_naam_op_een_zone_van_ons_is_niet_beschikbaar(
+        self, client: TestClient, connector: Any
+    ) -> None:
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "local"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available"] is False
+        assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
+        connector.check_availability.assert_not_awaited()
+
+    def test_onder_onze_zone_blijft_de_lijst_gelden_terwijl_cluster_domain_nee_zegt(self, client: TestClient) -> None:
+        """De twee vragen lopen hier uiteen en dat hoort zo: ``team.local`` wordt niet
+        AANGEBODEN (cluster_domain false) en is wel onze zone, dus de lijst bijt. Valt om
+        zodra iemand er een antwoord van maakt.
+        """
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "team.local"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["cluster_domain"] is False
+        assert body["available"] is False
+        assert body["validation_error"] == "Subdomein 'admin' is niet beschikbaar"
+
+    def test_dezelfde_naam_op_een_eigen_domein_is_gewoon_vrij(self, client: TestClient) -> None:
+        response = client.get(
+            f"/api/v2/projects/{PROJECT}/subdomains/check/admin",
+            params={"base_domain": "uitbetrouwbarebron.nl"},
+            headers=HEADERS,
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["available"] is True
+        assert body["validation_error"] is None
 
 
 class TestDeControleBlijftEenControle:

@@ -73,7 +73,7 @@ from opi.utils.age import (  # noqa: E402
     is_age_encrypted,
     parse_password_with_prefix,
 )
-from opi.utils.sops import _decrypt_sops_with_key  # noqa: E402
+from opi.utils.sops import decrypt_sops_with_key  # noqa: E402
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path  # noqa: E402
 from ruamel.yaml.scalarstring import LiteralScalarString  # noqa: E402
 
@@ -506,11 +506,11 @@ def sops_files_for(tree: str | Path, public_key: str) -> list[Path]:
 def sops_plaintext(path: str | Path, private_key: str) -> str | None:
     """The decrypted content of a SOPS file, or None when the key does not fit.
 
-    Uses ``opi.utils.sops._decrypt_sops_with_key``: exactly this function, with an explicit
+    Uses ``opi.utils.sops.decrypt_sops_with_key``: exactly this function, with an explicit
     key instead of the one from the environment, already lives there. A second copy
     alongside it quietly grows different behaviour.
     """
-    return _decrypt_sops_with_key(str(path), private_key)
+    return decrypt_sops_with_key(str(path), private_key)
 
 
 def sops_rotate(path: str | Path, old_public_key: str, new_public_key: str, old_private_key: str) -> None:
@@ -666,7 +666,6 @@ LOOSE_VALUE_FILES = (
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
     "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
     "operations-manager/python/.env",
-    "operations-manager/python/opi/core/config.py",
     "operations-manager/python/scripts/migrate_project_to_production.py",
 )
 

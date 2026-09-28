@@ -324,30 +324,44 @@ leest ziet er anders een fout in.
 
 ## `verifyEmail`: wie wordt geraakt
 
-Sinds deze taak staat `verifyEmail: true` op de blauwdrukken `sso-support` en
-`algoritmeregister`. Een nieuwe gebruiker moet dan zijn adres bevestigen voordat hij binnen
-is.
+`verifyEmail: true` staat op de blauwdrukken `sso-support` en `algoritmeregister`. Het veld
+regelt of iemand die zijn adres WIJZIGT dat nieuwe adres moet bevestigen.
 
-**De blast radius is klein maar niet nul:**
+**Het regelt sinds RC-191 niet meer wie er bij AANMAAK moet bevestigen.** Dat besluit ligt in
+`create_user()` en is voor elke realm gelijk: wie een e-mailadres meekrijgt komt binnen met
+`emailVerified: false` en de required action `VERIFY_EMAIL`, ongeacht wat de blauwdruk zegt.
+
+De reden dat het daar weg moest, is dat de blauwdruk er niet over gaat. Een `sso-only`-project
+kreeg `verifyEmail: false` maar kan via `get_invite_auth_methods()` wel lokale invite-accounts
+aanmaken, en op een cluster zonder mailrelay haalde de grendel hieronder het veld stil weg. In
+beide gevallen kwam een uitgenodigde vooraf geverifieerd binnen zonder dat er ooit iets
+bevestigd was.
+
+**De blast radius:**
 
 - **SSO-gebruikers niet.** Die komen via `trustEmail: True` op de identity providers al
   geverifieerd binnen.
 - **Bestaande lokale gebruikers niet.** Die zijn bij aanmaak op geverifieerd gezet.
-- **Wel geraakt:** nieuwe lokale gebruikers, en iedereen die zijn adres wijzigt.
+- **Wel geraakt:** elke nieuw aangemaakte gebruiker met een adres, en, via `verifyEmail`,
+  iedereen die zijn adres wijzigt op een realm die verifieert.
 
-Dat laatste is nieuw en het is de bedoeling. `create_user()` zette `emailVerified`
-onvoorwaardelijk op `True` zodra er een adres was, dus elke via de uitnodigingsweg aangemaakte
-gebruiker was vooraf geverifieerd zonder dat er ooit iets bevestigd was. De waarde volgt nu de
-realm.
+**Eén uitzondering, en die staat zichtbaar bij de aanroeper**: de realm-admins in de
+master-realm (`keycloak_manager.py`, `keycloak_setup.py`) geven `skip_email_verification=True`
+mee. Hun adres is `{admin}@local.invalid` of `{username}@localhost` en bestaat niet, dus
+verificatie afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
 
-**Voor de uitnodigingsweg betekent dat: wie een account krijgt, bevestigt voortaan eerst zijn
-adres.** Hij kiest zijn wachtwoord in het uitnodigingsformulier van OPI zoals altijd, en
-loopt bij zijn eerste login tegen het bevestigingsscherm aan. Zie `features/invites.md`.
+Wat dat voor de uitnodigingsweg betekent staat in `features/invites.md`.
+
+**Op een cluster zonder mailrelay betekent het ook: dat account komt er niet in.** Dat is de
+prijs van de verhuizing en hij is bewust betaald. Clustertype
+`local` is de vaste toestand zonder relay; `sandboxed-local` (Mailpit-sink) en productie
+hebben er een. Wie een lokale invite-gebruiker moet binnenlaten op een cluster zonder post,
+zet `emailVerified` met de hand in de beheerconsole.
 
 ### De grendel: `verifyEmail` mag nooit voor de post uit lopen
 
-Een realm die verifieert en niet kan mailen **sluit nieuwe gebruikers buiten**: die komen
-binnen met `emailVerified: false` en wachten op een bericht dat niemand kan versturen.
+Een realm die verifieert en niet kan mailen **sluit gebruikers die hun adres wijzigen buiten**:
+die komen op `emailVerified: false` en wachten op een bericht dat niemand kan versturen.
 
 OPI zet `verifyEmail` daarom alleen AAN als het **platform een relay heeft**
 (`MAIL_RELAY_API_URL` gevuld). Heeft het die niet, dan blijft het veld uit, met een
@@ -399,10 +413,10 @@ Stap 2 is sterker dan hij lijkt: een provider-id dat Keycloak niet vindt laat de
 op te komen (gemeten als canarie in `docs/rc159-uitrolmeting.md`). Een pod die `Ready` is en
 de vlag in zijn `args` draagt, heeft zijn verzender dus aantoonbaar geladen.
 
-Wie de blast radius wil weten: alleen **nieuwe lokale gebruikers** die in dat venster
-aangemaakt worden komen binnen met `emailVerified: false` en krijgen geen bericht. De terugweg
-is dat veld handmatig omzetten in de admin-console, of de gebruiker opnieuw laten aanmelden
-zodra de pod er is. Bestaande gebruikers en SSO-gebruikers merken er niets van.
+Wie de blast radius wil weten: **nieuwe lokale gebruikers** die in dat venster aangemaakt
+worden krijgen geen bevestigingsmail. Ze staan op `emailVerified: false` met `VERIFY_EMAIL`,
+net als buiten het venster, dus zodra de pod er is stuurt hun eerste login de mail alsnog.
+Bestaande gebruikers en SSO-gebruikers merken er niets van.
 
 Dit is een **uitrol**-volgorde en geen rotatie. De rotatievolgorde van het geheim staat
 hierboven onder "Rotatie: de volgorde, en wat er tussendoor faalt".
@@ -437,5 +451,5 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |
 | De minimale `smtpServer` en `verifyEmail` | `KeycloakYamlHandler._apply_realm_self_service()` |
-| `emailVerified` volgt de realm | `KeycloakConnector.create_user()` |
+| Elke nieuwe gebruiker met een adres bevestigt het (master-admins uitgezonderd) | `KeycloakConnector.create_user()` |
 | De meting waaruit dit alles volgt | `docs/rc158-emailsender-spi-meting.md` |

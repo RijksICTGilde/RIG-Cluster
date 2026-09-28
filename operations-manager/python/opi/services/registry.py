@@ -22,6 +22,7 @@ from opi.services.catalog.base import ConfigLayer, DeploymentPageContext, Projec
 from opi.services.catalog.cross_domain_access import CrossDomainAccessService
 from opi.services.catalog.deployment_health import DeploymentHealthService
 from opi.services.catalog.health_check import HealthCheckService
+from opi.services.catalog.image_registries import ImageRegistriesService
 from opi.services.catalog.invite import InviteService
 from opi.services.catalog.keycloak import KeycloakService
 from opi.services.catalog.metrics_scraper import MetricsScraperService
@@ -53,6 +54,7 @@ SERVICES: dict[ServiceType, Service] = {
     ServiceType.AUTHORIZATION_WALL: AuthorizationWallService(),
     ServiceType.METRICS_SCRAPER: MetricsScraperService(),
     ServiceType.HEALTH_CHECK: HealthCheckService(),
+    ServiceType.IMAGE_REGISTRIES: ImageRegistriesService(),
     ServiceType.PERSISTENT_STORAGE: PersistentStorageService(),
     ServiceType.TEMP_STORAGE: TempStorageService(),
     ServiceType.POSTGRESQL_DATABASE: PostgresqlDatabaseService(),
@@ -175,6 +177,19 @@ def deployment_manifest_services() -> list[Service]:
         if type(s).contribute_deployment_manifests is not Service.contribute_deployment_manifests
     ]
     return sorted(overriding, key=lambda s: s.manifest_order)
+
+
+def project_manifest_services() -> list[Service]:
+    """Services that override ``contribute_project_manifests``, in ``manifest_order``."""
+    overriding = [
+        s for s in SERVICES.values() if type(s).contribute_project_manifests is not Service.contribute_project_manifests
+    ]
+    return sorted(overriding, key=lambda s: s.manifest_order)
+
+
+def project_validating_services() -> list[Service]:
+    """Services that override ``validate_project``, in registry order."""
+    return [s for s in SERVICES.values() if type(s).validate_project is not Service.validate_project]
 
 
 def approval_services() -> list[Service]:

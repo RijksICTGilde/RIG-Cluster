@@ -245,6 +245,9 @@ def validate_project_schema(project_data: dict[str, Any], *, schema_version: flo
         f"Projectbestand '{project_name}' is afgekeurd: het voldoet niet aan het projectschema "
         f"(versie {described}). Veld '{location}': {first.message}"
     )
+    # Een patroon zegt de gebruiker niets; de beschrijving van het veld wel.
+    if first.validator == "pattern" and isinstance(first.schema, dict) and first.schema.get("description"):
+        message = f"{message}. {first.schema['description']}"
     # Do not log at ERROR here: the message is carried on the exception and the
     # caller logs it once with context. Self-logging made one rejection surface as
     # several ERR alerts (validator + orchestrator + task-progress). debug keeps a
@@ -304,6 +307,21 @@ def _walk_errors(errors: Any) -> Any:
         yield from _walk_errors(error.context or [])
 
 
+def age_pattern_violations(validator: Draft202012Validator, data: Any, *, prefix: str = "") -> list[str]:
+    """Paths in ``data`` that a schema wants AGE-encrypted but that hold plain text.
+
+    Derived from the schema (a ``pattern`` carrying the AGE marker) and not from a field
+    list, so it cannot drift. ``prefix`` names where ``data`` sits in a larger document.
+    """
+    violations: list[str] = []
+    for error in _walk_errors(validator.iter_errors(data)):
+        schema = error.schema if isinstance(error.schema, dict) else {}
+        if _AGE_PATTERN_MARKER in str(schema.get("pattern", "")):
+            path = "/".join(str(part) for part in error.absolute_path)
+            violations.append("/".join(part for part in (prefix, path) if part) or "(root)")
+    return sorted(set(violations))
+
+
 def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
     """Field paths that must hold an AGE-encrypted value but do not.
 
@@ -313,12 +331,11 @@ def find_plaintext_secret_violations(project_data: dict[str, Any]) -> list[str]:
     it is not a licence to commit a decrypted secret, which is what writing back a
     ``get_decrypted()`` view would do.
 
+    Covers only what ``project_v2.json`` describes. A secret that lives in a SERVICE
+    config is described by that service's own model, so the same check on that half lives
+    in ``project_validation.find_plaintext_service_config_violations``, and
+    ``ProjectStore._validate`` runs both.
+
     Returns the offending field paths, empty when there are none.
     """
-    validator = _get_validator()
-    violations: list[str] = []
-    for error in _walk_errors(validator.iter_errors(project_data)):
-        schema = error.schema if isinstance(error.schema, dict) else {}
-        if _AGE_PATTERN_MARKER in str(schema.get("pattern", "")):
-            violations.append("/".join(str(part) for part in error.absolute_path) or "(root)")
-    return sorted(set(violations))
+    return age_pattern_violations(_get_validator(), project_data)

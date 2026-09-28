@@ -4,8 +4,8 @@ Briefing for Claude sessions working on this repository.
 
 ## What This Project Is
 
-- **RIG-Cluster** is a Kubernetes platform for the Dutch government (ODC-Noord) built around **ZAD** — a self-service portal where developers declare infrastructure needs in YAML
-- The central application is the **Operations Manager (OPI)** — a FastAPI app that reads project YAML files and provisions everything: databases, storage, auth, K8s manifests, ArgoCD deployments
+- **RIG-Cluster** is a Kubernetes platform for the Dutch government (ODC-Noord) built around **ZAD** - a self-service portal where developers declare infrastructure needs in YAML
+- The central application is the **Operations Manager (OPI)** - a FastAPI app that reads project YAML files and provisions everything: databases, storage, auth, K8s manifests, ArgoCD deployments
 - Each cluster runs its own OPI instance. Instances never manage resources on other clusters
 - Three git repos are managed by OPI: `zad-projects` (definitions), `zad-argo-user-applications` (ArgoCD apps), `zad-deployments` (generated manifests + secrets)
 
@@ -16,26 +16,25 @@ Every project on the platform is defined by a single YAML file stored in the `za
 ### Schema
 
 The schema exists in two places that must stay in sync:
-- **Pydantic models** in `opi/forms/models/project_file.py` — used for form validation and typed access
-- **JSON schema** in `opi/schemas/project_v2.json` — used by `validate_project_schema` at save/process time
+- **Pydantic models** in `opi/forms/models/project_file.py` - used for form validation and typed access
+- **JSON schema** in `opi/schemas/project_v2.json` - describes only the LATEST version, used by `validate_project_schema` at save/process time. Older versions validate via the legacy patches in `opi/schemas/project_legacy/`
 
 The Pydantic models are the canonical typed view:
 
 | Model | Purpose |
 |---|---|
-| `ProjectFileModel` | Root model — basic info, clusters, services, users, repositories, components, deployments |
-| `ComponentModel` | Application component — type, ports, resources, path routing, service bindings, env vars, aliases |
-| `DeploymentModel` | Deployment of components to a cluster — image references, namespace, repository, configuration |
-| `RepositoryModel` | Git repository — URL, credentials, branch, path |
-| `ProjectUserModel` | Team member — email and role (at least one admin required) |
+| `ProjectFileModel` | Root model - basic info, clusters, services, users, repositories, components, deployments |
+| `ComponentModel` | Application component - type, ports, resources, path routing, service bindings, env vars, aliases |
+| `DeploymentModel` | Deployment of components to a cluster - image references, namespace, repository, configuration |
+| `RepositoryModel` | Git repository - URL, credentials, branch, path |
+| `ProjectUserModel` | Team member - email and role (at least one admin required) |
 | `ResourcesModel` | CPU and memory limits |
 | `PortsModel` | Inbound and outbound ports |
-| `DeploymentComponentModel` | Component reference within a deployment — image, pull policy |
+| `DeploymentComponentModel` | Component reference within a deployment - image, pull policy |
 
 In addition to the schema-modeled fields, project files contain OPI-managed sections that are not user-editable through forms:
-- `config` — project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
-- `registries` — container registry credentials
-- `schema-version` — currently `2`
+- `config` - project-specific AGE keypair, API key, Keycloak credentials (all AGE-encrypted)
+- `schema-version` - do not pin a number from this doc; check the latest in the `x-zad-schema-version` annotation in `project_v2.json` (also exposed as `latest_schema_version()` in `opi/core/project_schema.py`). OPI auto-migrates older files up the version chain in `opi/services/schema_migration.py`
 
 ### Key Sections
 
@@ -44,11 +43,10 @@ In addition to the schema-modeled fields, project files contain OPI-managed sect
 | `name` / `display-name` / `description` | Project identity |
 | `users` | Team members and roles (`admin` or `developer`) |
 | `clusters` | Which clusters this project targets (e.g. `odcn-production`) |
-| `services` | Platform services the project uses — can be plain strings (`publish-on-web`) or dicts with config (`keycloak: {config: {template: ...}}`) |
-| `registries` | Container registries with encrypted credentials |
+| `services` | Platform services the project uses - can be plain strings (`publish-on-web`) or dicts with config (`keycloak: {config: {template: ...}}`). Private container registries with encrypted credentials live in the config of `image-registries` |
 | `repositories` | Git repositories containing application source code |
-| `components` | Application components — each defines ports, resource limits, path routing, service bindings, and environment variables |
-| `deployments` | Concrete deployments of components to a cluster — ties components to container images and a namespace |
+| `components` | Application components - each defines ports, resource limits, path routing, service bindings, and environment variables |
+| `deployments` | Concrete deployments of components to a cluster - ties components to container images and a namespace |
 | `config` | OPI-managed cryptographic material and service credentials |
 
 ### Full Example (sanitized)
@@ -56,7 +54,7 @@ In addition to the schema-modeled fields, project files contain OPI-managed sect
 Based on a real production project with three components (backend, frontend, admin frontend) and Keycloak + PostgreSQL services. AGE-encrypted values are replaced with `<AGE-encrypted>`.
 
 ```yaml
-schema-version: 2
+schema-version: 2.9
 name: algor-odc
 display-name: Algoritmeregister (eigen database)
 description: Project created via self-service portal
@@ -84,12 +82,13 @@ services:
         storage: 1Gi
         privileges:
           - SUPERUSER
-
-registries:
-  - name: github-registry
-    url: ghcr.io
-    username: someuser
-    password: <AGE-encrypted>
+  - name: image-registries
+    config:
+      registries:
+        - name: github-registry
+          upstream: ghcr.io
+          username: someuser
+          password: <AGE-encrypted>
 
 repositories:
   - name: main-repo
@@ -181,7 +180,10 @@ deployments:
     components:
       - reference: component-1
         image: ghcr.io/rijksictgilde/algoritmeregister/backend:2024.11.24-fixed
-        registry: github-registry
+        services:
+          image-registries:
+            config:
+              registry: github-registry
         resources:
           requests:
             memory: 649Mi
@@ -189,7 +191,10 @@ deployments:
             memory: 649Mi
       - reference: component-2
         image: ghcr.io/rijksictgilde/algoritmeregister/frontend:2024.11.21
-        registry: github-registry
+        services:
+          image-registries:
+            config:
+              registry: github-registry
         resources:
           requests:
             memory: 158Mi
@@ -218,7 +223,7 @@ config:
 ## Two Distinct Concerns
 
 ### Infrastructure
-Declarative Kustomize manifests that bootstrap the cluster itself — PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{local,sandboxed-local,odcn-production}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
+Declarative Kustomize manifests that bootstrap the cluster itself - PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{local,sandboxed-local,odcn}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
 A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-thema) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
@@ -229,29 +234,29 @@ A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-t
 |---|---|
 | Change OPI application logic | `operations-manager/python/opi/` |
 | Add/modify an API endpoint | `opi/api/` (REST) or `opi/web/` (UI routes) |
-| Change how OPI talks to external systems | `opi/connectors/` — **all** external calls go through connectors, never call subprocess directly |
-| Change business orchestration (multi-step flows) | `opi/manager/` — `project_manager.py` is the primary orchestrator |
+| Change how OPI talks to external systems | `opi/connectors/` - **all** external calls go through connectors, never call subprocess directly |
+| Change business orchestration (multi-step flows) | `opi/manager/` - `project_manager.py` is the primary orchestrator |
 | Change business logic (data, analysis, CRUD) | `opi/services/` |
 | Change form behavior (wizard, editing) | `opi/forms/` (editables, visualizers, wizard state) |
-| Modify generated K8s manifests | `operations-manager/python/manifests/*.yaml.jinja` (33 Jinja2 templates) |
+| Modify generated K8s manifests | `operations-manager/python/manifests/*.yaml.jinja` (35 Jinja2 templates) |
 | Change infrastructure components | `infrastructure/bootstrap/infrastructure/{component}/` |
 | Change OPI's own K8s deployment | `bootstrap/rig-system/kustomize/` |
 | Write or read tests | `operations-manager/python/tests/` |
-| Understand a feature | `features/` (87 docs) or `features/futures/` (41 planned) |
+| Understand a feature | `features/` (~175 docs) or `features/futures/` (~75 planned) |
 | Run any operation | `Taskfile.yaml` at repo root |
 
 ## Architecture Patterns That Matter
 
-- **Connector Pattern**: Every external system (kubectl, git, Keycloak, ArgoCD, PostgreSQL, MinIO, Prometheus, Kopia, Skopeo, Chisel) has a dedicated connector class in `opi/connectors/`. Never bypass this — no raw subprocess or HTTP calls elsewhere
+- **Connector Pattern**: Every external system (kubectl, git, Keycloak, ArgoCD, PostgreSQL, MinIO, Prometheus, Kopia, Skopeo, Chisel) has a dedicated connector class in `opi/connectors/`. Never bypass this - no raw subprocess or HTTP calls elsewhere
 - **Manager Orchestration**: Managers in `opi/manager/` coordinate connectors and services for multi-step operations. `project_manager.py` is the main one
 - **Dual Crypto**: AGE (`utils/age.py`) for runtime encryption, SOPS (`utils/sops.py`) for file-based secrets
 - **GitOps First**: ArgoCD is the primary deployment mechanism. Direct kubectl is the fallback
-- **Async Task System (V2)**: Generic `TaskResponse[TResult]` with 11 task types, polled via API key auth. V1 endpoints still run inline
+- **Async Task System (V2)**: Generic `TaskResponse[TResult]` with 23 task types, polled via API key auth. V1 endpoints still run inline
 
 ## Testing
 
 ### Rules
-- **Only run tests for changed files** — never run the full suite blindly
+- **Only run tests for changed files** - never run the full suite blindly
 - **90% coverage minimum** is enforced (`fail_under = 90` in `pyproject.toml`)
 - Default pytest config excludes `requires_infra` and `e2e` markers automatically (`addopts = "... -m 'not requires_infra and not e2e'"`)
 - Post-dev validation is mandatory: `ruff check . --fix`, `ruff format .`, `pyright`
@@ -262,17 +267,18 @@ uv run pytest tests/test_specific_file.py -x -q --tb=short   # targeted test
 uv run pytest tests/forms/ -q                                  # form tests
 uv run pytest tests/e2e/ -m "e2e and not sandbox" -q           # Playwright E2E (local test server)
 task test-e2e-sandbox                                          # Playwright E2E against a live sandbox cluster
-uv run python functional_tests/run_all.py                      # integration (needs infra)
+uv run pytest tests/integration/ -m requires_infra -q          # integration (needs live infra)
 ```
 
 ### Test Layout
-- `tests/test_*.py` — ~234 unit tests (root level)
-- `tests/forms/test_*.py` — 17 form-specific tests
-- `tests/integration/` — 7 integration tests (API endpoints, auth, kubectl)
-- `tests/e2e/` — 17 Playwright browser tests (16 local + 1 live-sandbox lifecycle)
-- `tests/conftest.py` — 20+ fixtures mocking connectors, services, settings
-- `tests/e2e/conftest.py` — Playwright fixtures: local test server (`app_server`) and live-sandbox (`sandbox_page`) modes, session-cookie signing
-- `tests/e2e/helpers/` — `WizardHelper`, `EditModalHelper`, `ForgejoClient`, sandbox API helpers
+- `tests/test_*.py` - ~520 unit-test files (root level), ~10.300 tests in the default run
+- `tests/forms/test_*.py` - 27 form-specific test files
+- `tests/integration/` - 7 integration test files (API endpoints, auth, kubectl); the infra-dependent ones self-skip or are marked `requires_infra`
+- `tests/e2e/` - 95 Playwright browser-test files, 605 tests (524 local + 81 live-sandbox, incl. the `reallife` and `punt14` subsets)
+- `tests/golden/` - golden manifest snapshots and the flow registry
+- `tests/conftest.py` - 20+ fixtures mocking connectors, services, settings
+- `tests/e2e/conftest.py` - Playwright fixtures: local test server (`app_server`) and live-sandbox (`sandbox_page`) modes, session-cookie signing
+- `tests/e2e/helpers/` - `WizardHelper`, `EditModalHelper`, `ForgejoClient`, sandbox API helpers
 
 ### API endpoint surface
 The REST API is large and evolving, so **do not maintain a hand-written endpoint list**. The authoritative, always-current surface is the OpenAPI spec served by a running instance:
@@ -285,22 +291,22 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 ### Playwright E2E Specifics
 - Uses **Python Playwright** (not Node.js) for browser-based UI testing
 - Starts a real FastAPI server on a free TCP port with mocked startup dependencies
-- Auth is handled by pre-signing session cookies with a known `SECRET_KEY` — no need to touch production auth code
-- Can run against a live sandbox via `E2E_BASE_URL` env var (see `workflow/sandbox.md`) — `test_sandbox_flows.py` drives the create/add-component/delete lifecycle through the UI and API, then verifies the resulting project YAML in the Forgejo `zad-projects` repo via `ForgejoClient`
+- Auth is handled by pre-signing session cookies with a known `SECRET_KEY` - no need to touch production auth code
+- Can run against a live sandbox via `E2E_BASE_URL` env var (see `workflow/sandbox.md`) - `test_sandbox_flows.py` drives the create/add-component/delete lifecycle through the UI and API, then verifies the resulting project YAML in the Forgejo `zad-projects` repo via `ForgejoClient`
 - Reusable helpers in `tests/e2e/helpers/` for wizard interaction, edit modals, cleanup, and Forgejo project-file verification
 - Covers: wizard create/edit/validation, edit modals (identity/team/services/backup), self-service portal, detail pages, navigation, component rendering, user admin
 
 ### Pytest Markers
-`@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`
+`@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`, `@pytest.mark.reallife`, `@pytest.mark.punt14`, `@pytest.mark.serial`, `@pytest.mark.upgrade_safety`
 
 ## Code Style (Non-Obvious Rules)
 
-- Modern type hints only: `dict`, `list`, `str | None` — never `Optional`, `Dict`, `List`
+- Modern type hints only: `dict`, `list`, `str | None` - never `Optional`, `Dict`, `List`
 - Type annotations required on all function parameters and return types
-- Specific exceptions only — no `except Exception`. Let exceptions bubble up in new code
+- Specific exceptions only - no `except Exception`. Let exceptions bubble up in new code
 - No emojis anywhere (code, comments, logs)
 - Components: attributes are kebab-case, samenstellingen krijgen kinderen in plaats van data-props, en Jinja mag niet op attribuutpositie (`:prop="expr"` / `:attrs="<dict>"`). Zie `features/lotc-bouwlijn.md`; de oude ROOS-referentie is met de bibliotheek verdwenen.
-- Principles: KISS, YAGNI, SOLID, DRY — no premature abstractions, no "just in case" features
+- Principles: KISS, YAGNI, SOLID, DRY - no premature abstractions, no "just in case" features
 
 ## Tech Stack Summary
 

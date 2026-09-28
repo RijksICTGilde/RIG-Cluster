@@ -196,8 +196,8 @@ Note: templates live in `opi/templates_lotc/`; `opi/templates/` (jinja-roos) is 
 
 The 80 ORM-backed tests (the `orm_db` fixture) need a real Postgres. They share **one**
 long-lived container named `zad-test-postgres` on port 55432 (`ZAD_TEST_PG_PORT` to change
-it), and each pytest run gets its own database inside it (`zad_test_<pid>`), dropped when
-the run ends. Databases left by a run that died are swept at the start of the next one.
+it), and each pytest run gets its own database inside it, dropped when the run ends.
+Databases left by a run that died are swept by a later run.
 
 The container is supposed to stay up between runs -- that is what stops it from ever
 becoming an orphan you have to hunt for. Remove it whenever you like:

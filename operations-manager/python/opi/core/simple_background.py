@@ -112,9 +112,15 @@ async def _monitor_argocd_and_deployment(
         else:
             # Neither outcome below is a failure of this deploy, so neither is logged
             # as an error: the change was committed, pushed and picked up by ArgoCD
-            # before we ever got here. Failing the step contradicted our own wizard
-            # text ("een time-out betekent niet dat het aanmaken is mislukt") and fed
-            # the log watcher, which turned each one into a push notification.
+            # before we ever got here, and failing the step fed the log watcher, which
+            # turned each one into a push notification.
+            #
+            # Dit is ook de ENIGE wacht waarvoor dat geldt: de wachten die de uitrol
+            # bepalen zitten ervoor (het projectniveau en de sync per
+            # deployment-applicatie) en zijn fail-closed. Daarom staat de geruststelling
+            # in de melding hieronder, op het moment dat ze opgaat, en niet meer vooraf
+            # bij het uitrollen van een nieuw project: daar was ze met RC-229 onwaar
+            # geworden (task_handlers_project.py).
             blocking = [(n, s, h) for n, s, h in last_seen if not (s == "Synced" and h in ("Healthy", "Progressing"))]
             detail = ", ".join(f"{n} (sync={s}, health={h})" for n, s, h in blocking) or "geen app-status ontvangen"
             degraded = [n for n, _, h in blocking if h in ("Degraded", "Missing")]

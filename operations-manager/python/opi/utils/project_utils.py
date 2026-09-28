@@ -288,6 +288,18 @@ def normalize_container_image(image: str) -> tuple[str, bool]:
     return normalized, was_normalized
 
 
+def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """De deployment die het PROJECTNIVEAU van dit project draagt, of None.
+
+    De alfabetisch eerste wijst de repository aan. Een gedeelde regel, zodat de schrijver
+    en de ArgoCD-applicatie nooit een andere repository kiezen.
+    """
+    on_cluster = [d for d in deployments if isinstance(d, dict) and d.get("name")]
+    if not on_cluster:
+        return None
+    return min(on_cluster, key=lambda d: str(d["name"]))
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
@@ -346,6 +358,26 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
 
     # Repository password from settings (supports plain:, age:, base64+age: prefixes)
     repo_password = settings.PROJECT_REPO_PASSWORD
+    if not repo_password:
+        raise HTTPException(
+            status_code=500,
+            detail="PROJECT_REPO_PASSWORD is niet gezet in de omgeving van OPI; zonder die kan het projectbestand niet worden geschreven.",
+        )
+    # Het projectbestand mag nooit een platte PAT dragen: waar de env hem meegeeft in
+    # platte vorm versleutelen we hem hier voor hij op schijf landt; blijft hij als
+    # base64+age staan dan is hij al versleuteld en laten we hem precies zo.
+    from opi.utils.age import (
+        _encrypt_with_age_and_base64encode_as_prefixed_string,
+        decrypt_password_smart,
+        parse_password_with_prefix,
+    )
+
+    form, _ = parse_password_with_prefix(repo_password)
+    if form != "base64+age":
+        plain_password = await decrypt_password_smart(repo_password, settings.SOPS_AGE_PRIVATE_KEY)
+        repo_password = await _encrypt_with_age_and_base64encode_as_prefixed_string(
+            plain_password, settings.SOPS_AGE_PUBLIC_KEY
+        )
 
     # Parse project-level services using the service adapter
     project_services = ServiceAdapter.parse_services_from_strings(project_data.services or [])

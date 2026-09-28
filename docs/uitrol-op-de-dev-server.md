@@ -27,17 +27,21 @@ Er is dus geen ruimte voor een build die pakt wat hij wil. De schijf is niet het
    orch sandbox status          # wie heeft hem, en tot wanneer
    orch sandbox claim <naam> --lease 60 --note "uitrol <commit>"
    ```
-3. **Bouw en laad de image.**
+3. **Bouw en push de image.**
    ```bash
    task sandbox:build-operations-manager-image
    ```
    Dit schrijft eerst `opi/version.json` uit git, controleert het vrije geheugen, zorgt
-   voor een builder met een geheugengrens, bouwt met cache en laadt de image in Kind.
+   voor een builder met een geheugengrens, bouwt met cache en pusht
+   `localhost:5001/operations-manager:<commit>` naar de registry naast het cluster. Het
+   cluster moet die registry kennen, zie `docs/sandbox-kind-registry.md`. Met een
+   ongecommitte wijziging in `operations-manager/` krijgt de tag `-dirty-<hash>` erachter;
+   neem dan in stap 4 de naam die de build meldt.
 4. **Rol uit** (in een sessie zonder `kustomize` en de SOPS-sleutel gaat dit met de hand,
    anders `task sandbox:update-operations-manager`):
    ```bash
    kubectl -n rig-system set image deployment/operations-manager \
-     operations-manager=operations-manager:latest
+     operations-manager=localhost:5001/operations-manager:"$(git rev-parse --short HEAD)"
    kubectl -n rig-system set env deployment/operations-manager ZAD_VERSION="$(git rev-parse --short HEAD)"
    kubectl -n rig-system rollout status deployment/operations-manager --timeout=300s
    ```

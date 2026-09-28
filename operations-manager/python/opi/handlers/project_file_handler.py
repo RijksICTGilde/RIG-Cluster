@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
@@ -69,35 +70,43 @@ def is_oom_disable_reason(reason: str) -> bool:
     return "OOMKilled" in reason
 
 
-# Phrases in a pull error that mean "the registry could not answer", as opposed to
-# "the registry answered, and the image is not there". A 5xx or a rate limit says
-# nothing about whether the tag exists, so the component must NOT be auto-disabled
-# for one: disabling scales it to 0, which removes the pod that would have retried,
-# turning a registry hiccup into a permanent outage. Kubelet retries the pull with
-# backoff on its own and recovers once the registry does.
+# Phrases that mean the registry ANSWERED and the image is not there (or may not be
+# fetched). Everything else -- a 5xx, a timeout, a dead TLS endpoint, a phrase nobody
+# has seen yet -- means we did not get an answer and therefore know nothing about the
+# image, so the component must NOT be auto-disabled: disabling scales it to 0, which
+# removes the pod that would have retried, turning an outage we did not diagnose into
+# a permanent one. Kubelet retries the pull with backoff on its own.
+#
+# An allowlist, deliberately, and not the inverse. Listing the ways a registry can
+# fail is unbounded and always one incident behind: the list used to name 5xx and
+# rate limits (the 2026-08-12 mirror incident) and was blind to the transport-level
+# collapse of 2026-09 ("...: EOF", "context deadline exceeded"), so every component
+# on the mirror was disabled as if its image were gone. Listing the ways a registry
+# says "absent" is bounded, because it is the distribution spec.
 #
 # Matched as literal phrases, never as a bare number: an image tag like
-# ``pr-500-abc1234`` is part of the same message and must not read as a 500.
-_REGISTRY_UNAVAILABLE_MARKERS = (
-    "internal server error",
-    "bad gateway",
-    "service unavailable",
-    "gateway timeout",
-    "too many requests",
-    "http status: 500",
-    "http status: 502",
-    "http status: 503",
-    "http status: 504",
-    "http status: 429",
+# ``pr-500-abc1234`` is part of the same message and must not read as a status code.
+_IMAGE_ABSENT_MARKERS = (
+    "manifest unknown",
+    "name unknown",
+    "not found",
+    "unauthorized",
+    "denied",
+    "invalidimagename",
+    "invalid reference",
 )
 
 
-def is_transient_registry_error(message: str | None) -> bool:
-    """True when a pull error means the registry failed, not that the image is missing."""
+def image_is_confirmed_absent(message: str | None) -> bool:
+    """True only when the registry answered that this image is absent or refused.
+
+    False means "we do not know" -- including for an empty message and for any
+    wording never seen before. Callers must treat that as "change nothing".
+    """
     if not message:
         return False
     lowered = message.lower()
-    return any(marker in lowered for marker in _REGISTRY_UNAVAILABLE_MARKERS)
+    return any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS)
 
 
 # Default resource values for deployment containers
@@ -2039,6 +2048,20 @@ class ProjectFileHandler:
             for comp in components:
                 if comp.get("reference") != component_reference:
                     continue
+                # Kubelet alternates between ErrImagePull and ImagePullBackOff for one
+                # and the same failure, so the message text changes while nothing about
+                # the component does. Rewriting the reason on every sweep turns that
+                # into a commit, a push and an ArgoCD refresh carrying no information --
+                # 88 of them on 2026-09-10 alone. Already disabled over the same image
+                # is already said.
+                if (
+                    disabled
+                    and comp.get("disabled") is True
+                    and is_image_pull_disable_reason(reason)
+                    and comp.get("disabled-image") == comp.get("image")
+                ):
+                    return True
+
                 comp["disabled"] = disabled
                 if disabled:
                     comp["disabled-reason"] = reason
@@ -2794,6 +2817,33 @@ class ProjectFileHandler:
 
         return project_data
 
+    def is_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """True als een eerdere run aan deze kloon begon en hem niet als afgerond vastlegde."""
+        status = self.get_clone_status(project_data, deployment_name)
+        return bool(status and status.get("in-progress"))
+
+    def mark_clone_in_progress(self, project_data: dict[str, Any], deployment_name: str) -> bool:
+        """Zet de pogingsvlag op een once-kloon die nog niet af is.
+
+        set_clone_status vervangt het hele statusblok, dus de vlag verdwijnt vanzelf
+        zodra de kloon als afgerond wordt vastgelegd.
+
+        Returns:
+            True als de vlag nu pas aan ging.
+        """
+        for deployment in project_data.get("deployments", []):
+            if deployment.get("name") != deployment_name:
+                continue
+            clone_from = deployment.get("clone-from")
+            if not isinstance(clone_from, dict) or clone_from.get("mode", "once") != "once":
+                return False
+            status = clone_from.setdefault("status", {})
+            if status.get("completed") or status.get("in-progress"):
+                return False
+            status["in-progress"] = True
+            return True
+        return False
+
     def get_clone_mode(self, project_data: dict[str, Any], deployment_name: str) -> str:
         """
         Get the clone mode from a deployment's clone-from configuration.
@@ -2829,26 +2879,18 @@ class ProjectFileHandler:
         return False
 
     def extract_registries(self, project_data: dict[str, Any]) -> list[dict[str, Any]]:
-        """
-        Extract container registry configurations from project file.
-
-        Args:
-            project_data: The parsed project data
+        """De private registries van dit project, uit de config van de dienst image-registries.
 
         Returns:
-            List of registry configuration dicts with keys: name, url, and either
-            (username, password) for credential-based auth, or secretName for
-            pre-existing Kubernetes secrets. URL may include paths (e.g., rcr.rijksapps.nl/rig).
+            Entries met ``name`` en ``upstream``, plus of (``username``, ``password``) of
+            ``secretName``. ``upstream`` mag een pad bevatten (``code.overheid.nl/naam``).
         """
-        registries_path = "$.registries[*]"
-        registries = self.extract_value_by_path(project_data, registries_path, [])
-
-        if isinstance(registries, list) and registries:
+        registries = project_registries(project_data)
+        if registries:
             logger.info(f"Found {len(registries)} container registr{'y' if len(registries) == 1 else 'ies'}")
-            return registries
-
-        logger.debug("No container registries configured in project file")
-        return []
+        else:
+            logger.debug("No container registries configured in project file")
+        return registries
 
     def extract_component_registry(self, project_data: dict[str, Any], component_name: str) -> dict[str, Any] | None:
         """
@@ -2859,12 +2901,18 @@ class ProjectFileHandler:
             component_name: Name of the component
 
         Returns:
-            Registry config dict with keys: name, url, username, password
-            or None if component has no registry configured
+            Registry config dict with keys: name, upstream, username, password
+            or None if the component points at no registry
         """
-        # Check if component has registry reference
-        path = f"$.components[?(@.name=='{component_name}')].registry"
-        registry_ref = self.extract_value_by_path(project_data, path, None)
+        component = next(
+            (
+                c
+                for c in project_data.get("components", []) or []
+                if isinstance(c, dict) and c.get("name") == component_name
+            ),
+            None,
+        )
+        registry_ref = component_registry_name(component)
 
         if not registry_ref:
             return None

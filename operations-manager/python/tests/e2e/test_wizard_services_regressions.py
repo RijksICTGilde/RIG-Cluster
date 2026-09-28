@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import yaml
 from playwright.sync_api import expect
-from tests.e2e.helpers.wizard import WizardHelper, unique_project_name
+from tests.e2e.helpers.wizard import WizardHelper, kies_verplichte_keuzelijsten, unique_project_name
 
 if TYPE_CHECKING:
     from playwright.sync_api import Page
@@ -71,6 +71,8 @@ def _advance_to_step(wizard: WizardHelper, page: Page, step: str) -> None:
             return
         if _current_step(page) == "team":
             wizard.fill_team(email="test@example.com")
+        # Zie ``_finish_wizard``: een configstap onderweg kan een keuze eisen.
+        kies_verplichte_keuzelijsten(page)
         wizard.click_next()
         page.wait_for_load_state("networkidle")
     raise AssertionError(f"step {step!r} not reached within {_MAX_WIZARD_STEPS} steps; stuck at {page.url}")
@@ -93,6 +95,9 @@ def _finish_wizard(wizard: WizardHelper, page: Page) -> None:
             wizard.fill_team(email="test@example.com")
         elif step == "components":
             wizard.fill_component(name="web", image="nginx:latest")
+        # Een configstap kan een keuze eisen (de keycloak-template heeft geen default meer).
+        # Deze tests lopen er alleen langs, dus de keuze hoort bij het lopen.
+        kies_verplichte_keuzelijsten(page)
         wizard.click_next()
         page.wait_for_load_state("networkidle")
     else:
@@ -136,6 +141,7 @@ def test_preset_stays_applied(app_server: str, auth_page: Page, captured_yaml: l
     # any number picked here. A fixed pause turns a slow render into a failing test.
     expect(auth_page.locator(f"{_PRESET_CARD}.service-card--selected")).to_have_count(1, timeout=10000)
 
+    kies_verplichte_keuzelijsten(auth_page)  # de keycloak-template wil een keuze
     wizard.click_next()
     _finish_wizard(wizard, auth_page)
 
@@ -168,7 +174,8 @@ def test_unlocking_a_dependency_does_not_duplicate_it(
 
     wizard.click_next()
     auth_page.wait_for_load_state("networkidle")
-    wizard.click_next()  # keycloak config defaults
+    kies_verplichte_keuzelijsten(auth_page)  # de keycloak-template wil een keuze
+    wizard.click_next()
     _finish_wizard(wizard, auth_page)
 
     assert captured_yaml, "no project YAML captured"

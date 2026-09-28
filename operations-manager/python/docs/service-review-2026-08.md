@@ -110,6 +110,8 @@ Checklist 8 (verouderde doc/comment):
   reprocess wisselt het cookie-secret → git-churn en sessie-invalidatie voor alle gebruikers.
   Aanbeveling: bestaand secret lezen-en-hergebruiken, alleen genereren als het ontbreekt.
   Gedragswijziging in de manifest/secret-stroom → bevinding.
+  **Opgelost in RC-202**: de schrijver neemt de waarde over uit de vorige ciphertext, zie
+  `features/sops-skip-unchanged-reencryption.md`.
 - **`sleep-mode` disable-while-sleeping** (`project_manager.py:5162`): de replica-berekening
   leest de `sleep`-toestand onvoorwaardelijk, niet gepoort op `sleep_config.load(...)`. Een
   deployment die slaapt terwijl sleep-mode daarna wordt uitgezet blijft op `replicas: 0` en is
@@ -387,6 +389,7 @@ Bevinding:
   overschreven (zie samenvatting). Publieke manifest/secret-stroom → bevinding, niet
   gerepareerd; impact (sessie-invalidatie bij elke reconcile) te bevestigen tegen een echte
   dubbele reconcile.
+  **Opgelost in RC-202** (zie samenvatting).
 
 ### namespace-postgresql-database
 

@@ -11,6 +11,7 @@ from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.keycloak import (
+    PLATFORM_IDP_ALIAS,
     KeycloakConnector,
     create_keycloak_connector,
     legacy_restricted_flow_alias,
@@ -53,6 +54,15 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
 
 logger = logging.getLogger(__name__)
+
+#: De blauwdruk die meteen doorstuurt naar SSO Rijk in plaats van een inlogscherm te tonen,
+#: en tegelijk de blauwdruk die een project krijgt zolang zijn projectbestand er geen noemt.
+#:
+#: Dezelfde waarde als in ``KeycloakConfig.template`` en in het API-schema. Het FORMULIER
+#: kende hier ooit een eigen mening (``sso-support``), en dat is precies wat een scherm liet
+#: tonen wat het platform niet deed; het veld heeft daarom geen default meer en vraagt om een
+#: keuze (``opi/services/catalog/keycloak/editables.py``).
+SSO_ONLY_TEMPLATE = "sso-only"
 
 
 def build_project_realm_context(
@@ -509,7 +519,7 @@ class KeycloakManager:
         # Default configuration
         DEFAULT_CONFIG: dict[str, Any] = {
             "type": None,
-            "template": "sso-only",
+            "template": SSO_ONLY_TEMPLATE,
             "variables": {},
             "additional_redirect_uris": [],
             "additional_clients": [],
@@ -1054,6 +1064,7 @@ class KeycloakManager:
                         realm_name=realm_name,
                         client_id=existing_credentials.client_id,
                         restrict_access=restrict_access,
+                        template=config.get("template", SSO_ONLY_TEMPLATE),
                     )
 
                 # Ensure base_url and discovery_url use the current keycloak URL
@@ -1125,6 +1136,7 @@ class KeycloakManager:
                     realm_name=realm_name,
                     client_id=client_info["client_id"],
                     restrict_access=restrict_access,
+                    template=config.get("template", SSO_ONLY_TEMPLATE),
                 )
 
             # Get cluster-specific discovery URL for the project realm
@@ -1164,6 +1176,7 @@ class KeycloakManager:
         realm_name: str,
         client_id: str,
         restrict_access: dict[str, Any],
+        template: str = SSO_ONLY_TEMPLATE,
     ) -> None:
         """
         Apply access restriction to a client using roles and conditional authentication flow.
@@ -1198,8 +1211,13 @@ class KeycloakManager:
                 - role: str (client role name) - used if realm_role not specified
                 - realm_role: str (realm role name) - takes precedence over role
                 - error_message: str (theme message key)
+            template: The project's realm blueprint. It decides whether the gate redirects to
+                SSO Rijk or shows Keycloak's login screen: the gate REPLACES the realm's
+                browser flow on this client, so without it the redirect of ``sso-only`` was
+                lost and the user got the login form (see ``_build_role_gate_flow``).
         """
         error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
+        redirect_to_idp = PLATFORM_IDP_ALIAS if template == SSO_ONLY_TEMPLATE else None
         browser_flow_alias = role_gate_flow_alias(client_id)
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 
@@ -1238,6 +1256,7 @@ class KeycloakManager:
                     flow_alias=browser_flow_alias,
                     role_name=role_name,
                     error_message=error_message,
+                    redirect_to_idp=redirect_to_idp,
                 )
             else:
                 # Step 1: Create the client role
@@ -1257,6 +1276,7 @@ class KeycloakManager:
                     client_id=client_id,
                     role_name=role_name,
                     error_message=error_message,
+                    redirect_to_idp=redirect_to_idp,
                 )
 
             # Step 3: Set the browser flow as an authentication override on the client
@@ -1490,7 +1510,7 @@ class KeycloakManager:
         # assertion for a realm that drifted, and for a template carrying neither signal.
         # sso-only: External IDP Redirector flow (auto-redirect to IdP)
         # sso-support: standard browser flow (shows login form with SSO button)
-        expected_browser_flow = "External IDP Redirector" if template_name == "sso-only" else "browser"
+        expected_browser_flow = "External IDP Redirector" if template_name == SSO_ONLY_TEMPLATE else "browser"
         await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
 
     async def _ensure_realm_clients(
@@ -1974,6 +1994,8 @@ class KeycloakManager:
             last_name="Administrator",
             enabled=True,
             totp_secret=totp_secret,
+            # Het adres bestaat niet; verificatie afdwingen sluit de projectbeheerder buiten.
+            skip_email_verification=True,
         )
         logger.info(f"Created admin user {admin_username} in master realm")
 
@@ -2088,6 +2110,8 @@ class KeycloakManager:
             last_name="Administrator",
             enabled=True,
             totp_secret=totp_secret,
+            # Zelfde reden als bij het aanmaken: het adres bestaat niet.
+            skip_email_verification=True,
         )
         await keycloak.assign_realm_admin_from_master(target_realm_name=realm_name, user_id=user_info["id"])
 

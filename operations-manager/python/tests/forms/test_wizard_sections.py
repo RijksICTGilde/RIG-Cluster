@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from opi.forms.layout import COMPONENT_IMAGE_SLOT, Div
 from opi.forms.visualizers.flows import CREATE_FLOW, EDIT_FLOW, FLOW_REGISTRY, get_flow
 from opi.forms.visualizers.wizard_sections import (
     ALL_SECTIONS,
@@ -18,8 +19,10 @@ from opi.forms.visualizers.wizard_sections import (
     SERVICES_SECTION,
     TEAM_SECTION,
     _strip_removed_services_from_components,
+    build_component_edit_section,
 )
 from opi.services.services import service_entry_name
+from opi.services.services_enums import ServiceType
 
 
 class TestSectionDefinitions:
@@ -124,8 +127,8 @@ class TestServiceConfigSectionsLookup:
 
     def test_lookup_count(self):
         # +1 for postgresql-database's schema-list section (RC-17), +2 for the redis /
-        # minio-storage project-level sections (RC-25).
-        assert len(SERVICE_CONFIG_SECTIONS) == 10
+        # minio-storage project-level sections (RC-25), +1 for image-registries.
+        assert len(SERVICE_CONFIG_SECTIONS) == 11
 
 
 class TestFlowDefinitions:
@@ -133,8 +136,8 @@ class TestFlowDefinitions:
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25).
-        assert len(CREATE_FLOW.sections) == 17
+        # minio-storage (RC-25), +1 for image-registries.
+        assert len(CREATE_FLOW.sections) == 18
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
         # invite-config sits after the keycloak step so its realm-role picker reads the
         # keycloak config already entered in the draft.
@@ -144,14 +147,17 @@ class TestFlowDefinitions:
         # is populated from the components already in the draft project.
         section_ids = [s.section_id for s in CREATE_FLOW.sections]
         assert section_ids.index("sleep-mode-config") > section_ids.index("components")
+        # image-registries-config staat VOOR de componentenstap: de registry-select op een
+        # component leest die lijst, en een select die zijn opties nog niet kent toont niets.
+        assert section_ids.index("image-registries-config") < section_ids.index("components")
 
     def test_edit_flow(self):
         assert EDIT_FLOW.flow_id == "edit-project"
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25).
-        assert len(EDIT_FLOW.sections) == 16
+        # minio-storage (RC-25), +1 for image-registries.
+        assert len(EDIT_FLOW.sections) == 17
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]
@@ -272,5 +278,46 @@ class TestStripRemovedServicesFromComponents:
         assert data["components"][0]["services"] == ["persistent-storage"]
         assert data["components"][1]["services"] == []
 
+    def test_een_dienst_waarvan_de_waarde_de_selectie_is_blijft_staan(self):
+        """RC-187: bij ``image-registries`` IS de keuze de vermelding, dus wegstrippen
+        verandert stilletjes waar een image vandaan komt. Die verwijzing blijft staan en
+        ``validate_registry_references`` weigert de save. Een gewone dienst ernaast gaat
+        wel weg -- dat is de tegenproef dat de uitzondering niet te breed is."""
+        data = {
+            "services": [],
+            "components": [
+                {
+                    "name": "app",
+                    "services": [
+                        "keycloak",
+                        {"name": ServiceType.IMAGE_REGISTRIES.value, "config": {"registry": "code-overheid"}},
+                    ],
+                },
+            ],
+        }
+        _strip_removed_services_from_components(data, {})
+        assert data["components"][0]["services"] == [
+            {"name": ServiceType.IMAGE_REGISTRIES.value, "config": {"registry": "code-overheid"}}
+        ]
+
     def test_services_edit_section_has_post_merge(self):
         assert SERVICES_EDIT_SECTION.post_merge is _strip_removed_services_from_components
+
+
+def _slot_divs(items: list) -> list[Div]:
+    gevonden: list[Div] = []
+    for item in items:
+        if isinstance(item, Div) and item.slot == COMPONENT_IMAGE_SLOT:
+            gevonden.append(item)
+        if not isinstance(item, str) and getattr(item, "children", None):
+            gevonden.extend(_slot_divs(list(item.children)))
+    return gevonden
+
+
+def test_de_kinderen_van_het_imageslot_wijzen_naar_het_component_in_de_modal() -> None:
+    """Een slot is een Div, geen Fieldset: zonder prefix zocht het veld in de wortel en bleef leeg."""
+    divs = _slot_divs(build_component_edit_section(1).layout)
+    assert divs, "geen Div met het image-slot in de bewerksectie"
+    kinderen = [kind for div in divs for kind in div.children]
+    assert kinderen
+    assert all(isinstance(kind, str) and kind.startswith("components[1]/") for kind in kinderen), kinderen

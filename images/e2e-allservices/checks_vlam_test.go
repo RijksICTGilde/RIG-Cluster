@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,8 @@ func jsonHandler(status int, body string) http.HandlerFunc {
 }
 
 func TestVlamModelsDocumentPasses(t *testing.T) {
-	seen := serve(t, jsonHandler(http.StatusOK, `{"data":[{"id":"vlam-stub","object":"model"}],"object":"list"}`))
+	seen := serve(t, jsonHandler(http.StatusOK,
+		`{"data":[{"id":"vlam-stub","object":"model"},{"id":"vlam-stub-2","object":"model"}],"object":"list"}`))
 
 	result := checkVlam(context.Background())
 
@@ -48,11 +50,12 @@ func TestVlamModelsDocumentPasses(t *testing.T) {
 	if *seen != vlamModelsPath {
 		t.Errorf("probe called %q, expected %q", *seen, vlamModelsPath)
 	}
-	if result.detail["models"] != 1 {
-		t.Errorf("expected models=1 in detail, got %v", result.detail["models"])
+	if result.detail["models"] != 2 {
+		t.Errorf("expected models=2 in detail, got %v", result.detail["models"])
 	}
-	if result.detail["first_model"] != "vlam-stub" {
-		t.Errorf("expected the model id in detail, got %v", result.detail["first_model"])
+	// Every id, because the form offers them as its choices and not just the first one.
+	if ids, ok := result.detail["model_ids"].([]string); !ok || !slices.Equal(ids, []string{"vlam-stub", "vlam-stub-2"}) {
+		t.Errorf("expected both model ids in detail, got %v", result.detail["model_ids"])
 	}
 }
 

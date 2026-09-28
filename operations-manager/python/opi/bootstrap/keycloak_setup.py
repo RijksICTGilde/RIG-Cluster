@@ -154,6 +154,9 @@ class KeycloakSetup:
             last_name="Administrator",
             enabled=True,
             totp_secret=seed,
+            # @localhost bestaat niet als postbus; verificatie afdwingen sluit de
+            # break-glass-beheerder buiten.
+            skip_email_verification=True,
         )
         await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
         logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")

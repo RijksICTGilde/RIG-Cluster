@@ -186,8 +186,28 @@ class TestSequenceRendering:
         first_item = comp_field.children[0]
         # 14 children: storage/attachment sequences hidden (no storage services),
         # path (with nested match/rewrite) always visible, the publish-on-web TLS field
-        # (component enables publish-on-web), and the optional start command.
+        # (component enables publish-on-web), and the optional start command. The registry
+        # picker is not among them: this project has no registries, so there is nothing to
+        # pick and the component form stays exactly as it was (RC-187) -- which is the
+        # state of 47 of the 49 projects.
         assert len(first_item.children) == 14
+
+    def test_components_item_gains_the_registry_picker_with_a_registry(self):
+        """De tegenproef: een project MET een registry krijgt het veld er wel bij."""
+        renderer = _create_renderer()
+        editables = get_all_project_editables()
+        met_registry = {
+            **SAMPLE_YAML,
+            "services": [
+                *SAMPLE_YAML["services"],
+                {
+                    "name": "image-registries",
+                    "config": {"registries": [{"name": "eigen", "upstream": "ghcr.io/team"}]},
+                },
+            ],
+        }
+        fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
+        assert len(fields["components"].children[0].children) == 15
 
     def test_components_item_has_storage_with_storage_services(self):
         renderer = _create_renderer()
@@ -260,7 +280,28 @@ class TestNestedSequenceRendering:
         # reference, image, pullPolicy, user-env-vars, the publish-on-web TLS override
         # (RC-78) and the per-deployment attachments sequence. The certificate picker next
         # to the TLS override is not here: its show_when only admits it for 'provided'.
+        # Neither is the image-registries override: this project has no registries, so its
+        # own list has nothing to offer and the field is not drawn (RC-187).
         assert len(first_comp.children) == 6
+
+    def test_nested_sequence_item_gains_the_registry_override_with_a_registry(self):
+        """De tegenproef bij de telling hierboven: de lijst IS de zichtbaarheid."""
+        renderer = _create_renderer()
+        editables = get_all_project_editables()
+        met_registry = {
+            **SAMPLE_YAML,
+            "services": [
+                *SAMPLE_YAML["services"],
+                {
+                    "name": "image-registries",
+                    "config": {"registries": [{"name": "eigen", "upstream": "ghcr.io/team"}]},
+                },
+            ],
+        }
+        fields = renderer._build_fields_from_editables(editables=editables, yaml_data=met_registry)
+        first_dep = fields["deployments"].children[0]
+        nested_seq = next(c for c in first_dep.children if c.widget_type == "sequence")
+        assert len(nested_seq.children[0].children) == 7
 
 
 class TestDisplayCardRendering:

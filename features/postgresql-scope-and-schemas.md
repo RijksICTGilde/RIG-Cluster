@@ -107,8 +107,10 @@ daarmee een keuze die hij zelf maakt. Het weghalen ervan zou "de rij weggooien" 
 overgebleven weg maken, en dat is precies de weg die RC-17 wilde vermijden.
 
 Dat een rij uit het bestand verdwijnt is overigens iets anders dan dat een schema
-verdwijnt: nergens in de code staat een DROP van een extra schema. Het projectbestand
-weet er dan alleen niets meer van (hetzelfde als wat `DELETE ...?forget=true` doet).
+verdwijnt: het projectbestand weet er dan alleen niets meer van (hetzelfde als wat
+`DELETE ...?forget=true` doet). De enige plek waar de code een extra schema dropt is de
+opruiming na een mislukte kloon, en die raakt alleen de schema's die diezelfde poging zelf
+aanmaakte (`features/kloonpoging.md`).
 
 En één ding dat er echt fout was: het vinkje stond AAN bij een schema dat niet gemarkeerd
 is. De oorzaak zat niet in dit model maar in de formulierbrug, die voor een aanvinkvakje
@@ -145,3 +147,4 @@ vooraan stond (`rapportage` < `v2`). Zie "Welk schema een database-restore herno
 | Secret/variabelen | `opi/utils/secrets.py` (`DatabaseSecret`) |
 | UI | `opi/services/catalog/postgresql_database/{editables,visualizers}.py` + `config_form_section` |
 | Save-validatie | `opi/forms/editables/validators.py` (`SchemaPostfixValidator`), `opi/forms/editables/enforcers.py` (`UniqueSchemaEnforcer`) |
+| Projectbrede naamcontrole | `opi/services/catalog/postgresql_database/schema_names.py`, aan de haak `validate_project` |

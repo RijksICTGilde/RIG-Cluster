@@ -34,6 +34,14 @@
       "section_id": "identity-edit",
       "title": "Projectgegevens bewerken"
     },
+    "image-registries-config": {
+      "editables": [
+        "services/image-registries/config/registries"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "image-registries-config",
+      "title": "Eigen container registries"
+    },
     "invite-config": {
       "editables": [
         "services/invite/config/default-language",
@@ -77,11 +85,12 @@
     },
     "postgresql-schemas-config": {
       "editables": [
+        "services/postgresql-database/config/connection-limit",
         "services/postgresql-database/config/schemas"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
-      "title": "Database-schema's"
+      "title": "Database"
     },
     "redis-config": {
       "editables": [
@@ -140,6 +149,7 @@
       "sections": [
         "identity",
         "services",
+        "image-registries-config",
         "keycloak-config",
         "invite-config",
         "postgresql-config",
@@ -163,6 +173,7 @@
       "sections": [
         "identity",
         "services",
+        "image-registries-config",
         "keycloak-config",
         "invite-config",
         "postgresql-config",
@@ -221,6 +232,13 @@
         "identity-edit"
       ]
     },
+    "modal-edit-image-registries-config": {
+      "flow_id": "modal-edit-image-registries-config",
+      "mode": "wizard",
+      "sections": [
+        "image-registries-config"
+      ]
+    },
     "modal-edit-invite-config": {
       "flow_id": "modal-edit-invite-config",
       "mode": "wizard",
@@ -275,6 +293,7 @@
       "mode": "wizard",
       "sections": [
         "services-edit",
+        "image-registries-config",
         "keycloak-config",
         "invite-config",
         "postgresql-config",
@@ -306,6 +325,7 @@
   "service_config_modal_flows": {
     "authorization-wall": "modal-edit-auth-wall-config",
     "cross-domain-access": "modal-edit-cross-domain-config",
+    "image-registries": "modal-edit-image-registries-config",
     "invite": "modal-edit-invite-config",
     "keycloak": "modal-edit-keycloak-config",
     "minio-storage": "modal-edit-minio-config",
@@ -332,6 +352,14 @@
       "post_save_action": "process_project",
       "section_id": "cross-domain-access-config",
       "title": "Cross-domain toegang"
+    },
+    "image-registries": {
+      "editables": [
+        "services/image-registries/config/registries"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "image-registries-config",
+      "title": "Eigen container registries"
     },
     "invite": {
       "editables": [
@@ -376,11 +404,12 @@
     },
     "postgresql-database": {
       "editables": [
+        "services/postgresql-database/config/connection-limit",
         "services/postgresql-database/config/schemas"
       ],
       "post_save_action": "process_project",
       "section_id": "postgresql-schemas-config",
-      "title": "Database-schema's"
+      "title": "Database"
     },
     "redis": {
       "editables": [

@@ -184,11 +184,10 @@ def test_bcrypt_levert_de_vorm_die_de_taskfile_ook_maakt() -> None:
 @needs_sops
 @needs_age
 def test_de_waarden_komen_terug_zoals_ze_erin_gingen(tmp_path: Path, key: Path) -> None:
-    public = public_key_of(read_key(key))
     values = {"USERNAME": "admin", "PASSWORD": "een", "TOKEN": "twee", "LEAVE_ALONE": "vast"}
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
 
-    tool.encrypt(tool.apply(TEMPLATE, values, "rig-system"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, values, "rig-system"), destination, read_key(key))
 
     assert tool.values_of(tool.decrypt(destination, read_key(key))) == values
 
@@ -197,13 +196,12 @@ def test_de_waarden_komen_terug_zoals_ze_erin_gingen(tmp_path: Path, key: Path) 
 @needs_age
 def test_een_veld_vervangen_laat_de_andere_velden_ongemoeid(tmp_path: Path, key: Path) -> None:
     """Het bestaansrecht van dit script. De generatie-task kan dit niet."""
-    public = public_key_of(read_key(key))
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
     before = {"USERNAME": "admin", "PASSWORD": "oud", "TOKEN": "blijft", "LEAVE_ALONE": "vast"}
-    tool.encrypt(tool.apply(TEMPLATE, before, "rig-system"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, before, "rig-system"), destination, read_key(key))
 
     current = tool.values_of(tool.decrypt(destination, read_key(key)))
-    tool.encrypt(tool.apply(TEMPLATE, {**current, "PASSWORD": "nieuw"}, "rig-system"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, {**current, "PASSWORD": "nieuw"}, "rig-system"), destination, read_key(key))
 
     after = tool.values_of(tool.decrypt(destination, read_key(key)))
     assert [name for name in after if after[name] != before[name]] == ["PASSWORD"]
@@ -221,7 +219,6 @@ def test_sops_verschuift_de_annotaties_en_daarom_is_de_template_de_bron(tmp_path
     Deze toets legt de verschuiving vast: gaat SOPS zich ooit anders gedragen, dan valt dat hier
     op en niet in een secret dat met de verkeerde lengte is gegenereerd.
     """
-    public = public_key_of(read_key(key))
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
     values = {field.name: "x" for field in tool.fields_of(TEMPLATE)}
 
@@ -230,7 +227,7 @@ def test_sops_verschuift_de_annotaties_en_daarom_is_de_template_de_bron(tmp_path
         (f.name, f.kind) for f in tool.fields_of(TEMPLATE)
     ], "apply() zelf mag niets verschuiven"
 
-    tool.encrypt(plaintext, destination, public)
+    tool.encrypt(plaintext, destination, read_key(key))
     after = {field.name: field.kind for field in tool.fields_of(tool.decrypt(destination, read_key(key)))}
 
     assert after["USERNAME"] == "random", "SOPS gedraagt zich anders dan vastgelegd: de annotaties schuiven niet meer"
@@ -285,10 +282,9 @@ def test_alle_velden_kiezen_levert_alle_velden_op() -> None:
 @needs_sops
 @needs_age
 def test_de_namespace_van_het_cluster_komt_in_het_secret(tmp_path: Path, key: Path) -> None:
-    public = public_key_of(read_key(key))
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
 
-    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-prd-operations"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-prd-operations"), destination, read_key(key))
 
     assert "rig-prd-operations" in tool.decrypt(destination, read_key(key))
 
@@ -296,21 +292,19 @@ def test_de_namespace_van_het_cluster_komt_in_het_secret(tmp_path: Path, key: Pa
 @needs_sops
 @needs_age
 def test_het_bestand_staat_op_de_recipient_waarvoor_het_versleuteld_is(tmp_path: Path, key: Path) -> None:
-    public = public_key_of(read_key(key))
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
 
-    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-system"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-system"), destination, read_key(key))
 
-    assert sops_recipients(destination) == [public]
+    assert sops_recipients(destination) == [public_key_of(read_key(key))]
 
 
 @needs_sops
 @needs_age
 def test_een_verkeerde_sleutel_opent_het_bestand_niet(tmp_path: Path, key: Path) -> None:
     """Weigeren en niet stil een leeg secret teruggeven, want dat zou elk veld wissen."""
-    public = public_key_of(read_key(key))
     destination = tmp_path / "demo-secret.yaml.sops.yaml"
-    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-system"), destination, public)
+    tool.encrypt(tool.apply(TEMPLATE, {"USERNAME": "admin"}, "rig-system"), destination, read_key(key))
 
     other = tmp_path / "ander.txt"
     subprocess.run(["age-keygen", "-o", str(other)], capture_output=True, check=True)
@@ -322,43 +316,52 @@ def test_een_verkeerde_sleutel_opent_het_bestand_niet(tmp_path: Path, key: Path)
 # --------------------------------------------------------------------------- de sleutelkeuze
 
 
+@pytest.fixture
+def isolated_keyring(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Snij de tests af van de keyring van deze machine (env en home), zodat alleen de
+    test-gezette bronnen meetellen."""
+    monkeypatch.delenv("SOPS_AGE_KEY", raising=False)
+    monkeypatch.delenv("SOPS_AGE_KEY_FILE", raising=False)
+    empty_home = tmp_path / "leeg-home"
+    empty_home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: empty_home)
+    return tmp_path
+
+
 @needs_age
-def test_de_sleutel_wordt_bij_de_recipient_gezocht(tmp_path: Path, key: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_de_sleutel_wordt_bij_de_recipient_gezocht(tmp_path: Path, key: Path, isolated_keyring: Path) -> None:
     """De guard tegen een sandbox-secret dat op de productiesleutel wordt teruggeschreven."""
     security = tmp_path / "security"
     security.mkdir()
     shutil.copy(key, security / "sandbox-key.txt")
     other = security / "key.txt"
     subprocess.run(["age-keygen", "-o", str(other)], capture_output=True, check=True)
-    monkeypatch.setattr(tool, "SECURITY_DIR", security)
 
-    assert tool.key_for(public_key_of(read_key(key))).name == "sandbox-key.txt"
-    assert tool.key_for(public_key_of(read_key(other))).name == "key.txt"
+    assert tool.key_entry_for(public_key_of(read_key(key)), security_dir=security).source.endswith("sandbox-key.txt")
+    assert tool.key_entry_for(public_key_of(read_key(other)), security_dir=security).source.endswith("key.txt")
 
 
 @needs_age
-def test_een_onbekende_recipient_wordt_geweigerd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_een_onbekende_recipient_wordt_geweigerd(tmp_path: Path, isolated_keyring: Path) -> None:
     security = tmp_path / "security"
     security.mkdir()
     subprocess.run(["age-keygen", "-o", str(security / "key.txt")], capture_output=True, check=True)
-    monkeypatch.setattr(tool, "SECURITY_DIR", security)
 
     with pytest.raises(tool.EditFailed, match="geen sleutel"):
-        tool.key_for("age1onbekend")
+        tool.key_entry_for("age1onbekend", security_dir=security)
 
 
 @needs_age
 def test_een_bestand_zonder_age_sleutel_in_security_laat_de_zoektocht_doorlopen(
-    tmp_path: Path, key: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, key: Path, isolated_keyring: Path
 ) -> None:
     """`security/` houdt ook tokens (pat_current.txt); die mogen de zoektocht niet afbreken."""
     security = tmp_path / "security"
     security.mkdir()
     (security / "pat_current.txt").write_text("ghp_geen_age_sleutel\n")
     shutil.copy(key, security / "key.txt")
-    monkeypatch.setattr(tool, "SECURITY_DIR", security)
 
-    assert tool.key_for(public_key_of(read_key(key))).name == "key.txt"
+    assert tool.key_entry_for(public_key_of(read_key(key)), security_dir=security).source.endswith("key.txt")
 
 
 # --------------------------------------------------------------------------- de vindplaatsen

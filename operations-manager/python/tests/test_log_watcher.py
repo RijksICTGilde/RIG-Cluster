@@ -43,10 +43,11 @@ def captured_ntfy(monkeypatch) -> list[dict]:
     return sent
 
 
-def _inject_rows(monkeypatch, lines: list[str]) -> None:
+def _inject_rows(monkeypatch, lines: list[str], timestamps: list[int] | None = None) -> None:
     """Bypass the network: query returns nothing, parse yields the given lines."""
     monkeypatch.setattr(log_watcher, "query_loki", lambda *a, **k: {})
-    rows = [(0, {}, ln) for ln in lines]
+    stamps = timestamps if timestamps is not None else [0] * len(lines)
+    rows = [(ts, {}, ln) for ts, ln in zip(stamps, lines, strict=True)]
     monkeypatch.setattr(log_watcher, "parse_frames", lambda _result: rows)
 
 
@@ -186,6 +187,98 @@ def test_signature_collapses_dynamic_ids():
     a = signature("[task-abc123] Deployment failed for rig-foo-prod")
     b = signature("[task-def456] Deployment failed for rig-foo-prod")
     assert a == b
+
+
+#: The four records production sent for one failed sync (mpfm-w3h/pr-302, 09-09-2026),
+#: scrambled: the layers land in the same millisecond, so row order must not decide which
+#: one represents the problem. Only the first names the reason.
+_SYNC_TIMEOUT_FLOW = "[task-282ab722-57273eb2]"
+_SYNC_TIMEOUT_ROWS = [
+    (
+        1000,
+        _line(
+            "ERROR",
+            "opi.manager.project_manager",
+            f"{_SYNC_TIMEOUT_FLOW} ArgoCD sync completed with 1 failure(s): "
+            "mpfm-w3h-pr-302 (pr-302): timed out after 300s waiting for sync",
+        ),
+    ),
+    (
+        1000,
+        _line(
+            "ERROR",
+            "opi.core.persistent_task_progress",
+            f"{_SYNC_TIMEOUT_FLOW} Failed task: Wachten tot 1 applicatie(s) gesynchroniseerd zijn: "
+            "Sync failures: mpfm-w3h-pr-302 (pr-302): timed out after 300s waiting for sync",
+        ),
+    ),
+    (
+        1000,
+        _line(
+            "ERROR",
+            "opi.manager.project_manager",
+            f"{_SYNC_TIMEOUT_FLOW} Timed out after 300s waiting for 'mpfm-w3h-pr-302' (pr-302) to sync; "
+            "last observed state: magazijnb, magazijnsimulator: pods worden aangemaakt · "
+            "democonsole: draait, maar is nog niet gereed (readiness-check nog niet geslaagd)",
+        ),
+    ),
+    (
+        1200,
+        _line(
+            "ERROR",
+            "opi.core.persistent_task_progress",
+            f"{_SYNC_TIMEOUT_FLOW} Failed task: Deployment pr-302 opnieuw verwerken: "
+            "mpfm-w3h-pr-302 (pr-302): timed out after 300s waiting for sync",
+        ),
+    ),
+]
+
+
+def test_one_failed_flow_is_one_problem(monkeypatch, captured_ntfy):
+    # Every layer logs the same failure; the ignore-list can only suppress wordings it
+    # names, so this cascade has to collapse on the flow id instead.
+    _inject_rows(
+        monkeypatch,
+        [line for _, line in _SYNC_TIMEOUT_ROWS],
+        [ts for ts, _ in _SYNC_TIMEOUT_ROWS],
+    )
+    run_cycle(_cfg(), token="tok", state={})
+    assert captured_ntfy[0]["title"] == "OPI log-watch: 1 issue(s)"
+    body = captured_ntfy[0]["body"]
+    assert body.count("\n\n") == 0  # one problem, one line
+    assert "Failed task" not in body
+    assert "sync completed with" not in body
+    assert "(+3 more record(s) in the same flow)" in body
+
+
+def test_problem_line_carries_project_deployment_and_reason(monkeypatch, captured_ntfy):
+    # The point of the alert: what is broken, where, and why. The reason sits past the
+    # old fixed 150-char cap, which cut the line off exactly before it.
+    _inject_rows(
+        monkeypatch,
+        [line for _, line in _SYNC_TIMEOUT_ROWS],
+        [ts for ts, _ in _SYNC_TIMEOUT_ROWS],
+    )
+    run_cycle(_cfg(), token="tok", state={})
+    body = captured_ntfy[0]["body"]
+    assert "mpfm-w3h-pr-302" in body
+    assert "(pr-302)" in body
+    assert "readiness-check nog niet geslaagd" in body
+    # The " . " between component states is non-ASCII and must not glue words together.
+    assert "aangemaakt; democonsole" in body
+
+
+def test_separate_flows_stay_separate_problems(monkeypatch, captured_ntfy):
+    _inject_rows(
+        monkeypatch,
+        [
+            _line("ERROR", "opi.manager.project_manager", "[task-aaa-111] Timed out waiting for 'p-one' to sync"),
+            _line("ERROR", "opi.manager.project_manager", "[task-bbb-222] Timed out waiting for 'p-two' to sync"),
+        ],
+        [1000, 1000],
+    )
+    run_cycle(_cfg(), token="tok", state={})
+    assert captured_ntfy[0]["title"] == "OPI log-watch: 2 issue(s)"
 
 
 def test_signature_collapses_numbers_and_ips():

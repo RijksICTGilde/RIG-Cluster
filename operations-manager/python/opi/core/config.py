@@ -235,7 +235,11 @@ class Settings(BaseSettings):
     # This is a single shared repository; projects are separated by subdirectories internally
     PROJECT_REPO_URL: str = "https://github.com/RijksICTGilde/rig-cluster-application-test.git"
     PROJECT_REPO_USERNAME: str = "git"
-    PROJECT_REPO_PASSWORD: str = "base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NCRU1GRTFkazFuTkhCdWJWSnJNMEoyCmMwRlpkMFZ1WjIxb2EyWlZiMm8xYTJVMFMzTnZOaXRQVFhoQkNpOU5hVFJxT0VjeFpGZDJXR2t6Y2s4eVJYTmoKWTBWbFJFaFJkblkzUzJVeGVqTjBVMVJ5Y0hWNWNEZ0tMUzB0SUV4NkszRlBjVWxYTkRsM2QzSTBUWGcxVjI1QwpRbmxyYTFwS2ExWjBWMUZ0T1dSMVIzSkRUa1JKZUZVSzRVUE5RKzA3UjZra1hZWkYxRFhlK2lsTklqWWdoT1hWClhnMFdtdFI1ekRjN3k5bnZYRTJaMUx0Rk9PNk1XeUljK1VnL3NmZ3Q4VXh5T0RFT0pXSlVkZlQ2WHNlK2RTVUUKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0="
+    # The PAT for this repository belongs in the OPI env-secret (per cluster), never as a
+    # default in the image: a password baked into code rotates on image cadence while the
+    # matching secret rotates on the platform cadence, and the two then silently differ.
+    # (Sandbox krijgt hem via de overlay-configmap; odcn via operations-manager-env-secrets.)
+    PROJECT_REPO_PASSWORD: str | None = None
     PROJECT_REPO_BRANCH: str = "main"
 
     # ArgoCD Applications Git repository - simplified to just URL and credentials

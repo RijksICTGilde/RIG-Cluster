@@ -80,12 +80,18 @@ CLUSTER_CONFIG = {
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {"domain": "kind", "supports_dots": True, "restricted_subdomains": True},
                 {"domain": "local", "supports_dots": True, "restricted_subdomains": True},
             ],
+            # De zones die ZAD zelf bedient. Een eigen feit naast supported_domains: dat
+            # is een AANBODlijst, en een zone kan van ons zijn zonder aangeboden te worden.
+            "managed_zones": ["kind", "local"],
         },
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        "image_registries": {"backend": "direct-secret"},
     },
     "sandboxed-local": {
         "ingress_postfix": ".sandbox.rijksapp.dev",
@@ -148,11 +154,19 @@ CLUSTER_CONFIG = {
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
             "port": 8081,
+            # Het doorlus-pad is hier net zo goed een PLAATSHOUDER als de rest van dit blok:
+            # de stub luistert alleen op 8081 en spreekt geen TLS, en het adres hieronder is
+            # niet vastgezet op de Service die de stub aanmaakt. Het staat er zodat het blok
+            # dezelfde vorm heeft als dat van productie.
+            "passthrough_port": 8443,
+            "api_host": "vlam-api.rijksweb.nl",
+            "cluster_ip": "10.96.144.8",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {"domain": "sandbox.rijksapp.dev", "supports_dots": False, "restricted_subdomains": True},
                 {
@@ -162,7 +176,11 @@ CLUSTER_CONFIG = {
                     "restricted_subdomains": True,
                 },
             ],
+            "managed_zones": ["sandbox.rijksapp.dev", "robbertuittenbroek.nl"],
         },
+        # De nodes kunnen zelf bij de registry: een dockerconfigjson-secret in de
+        # namespace, image ongewijzigd. Geen "rules", want er is geen proxytabel.
+        "image_registries": {"backend": "direct-secret"},
     },
     "odcn-production": {
         "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
@@ -235,12 +253,48 @@ CLUSTER_CONFIG = {
             "deployment": "productie",
             "component": "vlam-proxy-intern",
             "namespace": "vlam-wt8",
-            "port": 8081,
+            # Poort 8082 en niet 8081. Beide termineren, maar 8081 gaat naar
+            # `vlam-api.rijksweb.nl` en dat adres is bij SSC-ICT uitgezet: op 2026-09-21
+            # gemeten geeft het geen antwoord meer (verbinding wordt na de TCP-handshake
+            # meteen gesloten), terwijl `vlam-api.overheid-i.nl` 200 geeft. 8082 gaat naar
+            # het nieuwe adres. 8081 blijft in de proxy bestaan zolang er afnemers op
+            # kunnen staan, maar een nieuwe afnemer moet er niet meer op uitkomen.
+            "port": 8082,
+            # HET DOORLUS-PAD (RC-167). Poort 8443 van dezelfde proxy lust de TLS-sessie
+            # door zonder te termineren: de afnemer praat dan zelf met VLAM en verifieert
+            # zelf. Drie waarden maken dat bruikbaar, en ze horen bij elkaar:
+            #
+            #   passthrough_port  waar de doorlus luistert;
+            #   api_host          de naam die in de URL staat, want TLS vergelijkt de
+            #                     hostnaam uit de URL met het certificaat. Dit is sinds
+            #                     2026-09-21 het overheid-i-adres; de SNI-ACL van de
+            #                     doorlus liet beide namen al door;
+            #   cluster_ip        waar die naam heen moet wijzen. hostAliases neemt een
+            #                     ADRES, geen servicenaam, en de Service-template van ZAD
+            #                     zet geen clusterIP, dus dit is het dynamisch toegewezen
+            #                     adres van `productie-vlam-proxy-intern`. Bewust NIET
+            #                     vastgezet: een ClusterIP is onveranderlijk zolang de
+            #                     Service bestaat, en verschuift hij toch, dan faalt het
+            #                     veilig op een certificaatfout in plaats van verkeerd te
+            #                     bezorgen. Dit is de ene plek om hem te wijzigen.
+            #
+            # ca_bundle noemt het bestand in de vlam-dienst zelf waartegen de afnemer het
+            # certificaat van VLAM verifieert. Het is een platformgegeven en geen bijlage:
+            # het is voor elke afnemer identiek, en roteren is zo een wijziging op een plek.
+            # De bundel bevat sinds 2026-09-21 TWEE ketens, want de twee adressen hebben
+            # verschillende uitgevers: rijksweb komt onder de Rijksdienst Root CA van
+            # SSC-ICT, overheid-i onder DigiCert Global Root G2. Tot die datum ontbrak dit
+            # bestand in het pakket, en dan geeft _passthrough() None terug: de doorlus
+            # heeft daardoor nooit aangestaan.
+            "passthrough_port": 8443,
+            "api_host": "vlam-api.overheid-i.nl",
+            "cluster_ip": "172.30.254.144",
+            "ca_bundle": "vlam-ca.pem",
         },
         "letsencrypt": {
             "contact_email": "rig-platform@rijksoverheid.nl",  # Default contact for Let's Encrypt certificates
         },
-        "nice_url": {
+        "domains": {
             "supported_domains": [
                 {
                     "domain": "rijks.app",
@@ -264,8 +318,51 @@ CLUSTER_CONFIG = {
                     "external_dns_target": "router.rijksapp.dev",
                 },
             ],
+            # De vierde is de ingress_postfix-zone hierboven: van ons, maar niet
+            # aangeboden. Noem de zone zelf en nooit zijn ouder rijksapps.nl: die is van
+            # ODC-Noord en in gebruik als eigen basisdomein van projecten.
+            "managed_zones": ["rijks.app", "rijksapp.nl", "rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
         },
-        "extensions": ["odcn-registry-rewrite"],
+        # Achter een Quay-operator: een private registry wordt een proxy-organisatie in
+        # RCR en de image wordt herschreven. De regels hieronder zijn de gedeelde
+        # proxy-caches van het platform; projectregels komen ervoor te staan.
+        "image_registries": {
+            "backend": "quay-proxy-organization",
+            "registry_host": "rcr.rijksapps.nl",
+            "customer_name": "rig",
+            # De Capsule-tenants waarin de operator het pull-secret neerzet. Verplicht veld
+            # op de CR; onze namespaces heten rig-prd-*, dus de tenant is prd.
+            "tenants": ["prd"],
+            # Gemeten op het cluster, niet uit de operator-documentatie; zie
+            # features/image-registries.md, "De provisioning-backend".
+            "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
+            "rotation_days": 90,
+            "rules": [
+                {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
+                {
+                    "match": "docker.io",
+                    "to": "rcr.rijksapps.nl/dockerhub-rig",
+                    "secret": "dockerhub-rig-robot-pull-secret",
+                },
+                {
+                    "match": "registry.gitlab.com",
+                    "to": "rcr.rijksapps.nl/gitlab-rig",
+                    "secret": "gitlab-rig-robot-pull-secret",
+                },
+                {"match": "gcr.io", "to": "rcr.rijksapps.nl/gcr-rig", "secret": "gcr-rig-robot-pull-secret"},
+                {"match": "quay.io", "to": "rcr.rijksapps.nl/quay-rig", "secret": "quay-rig-robot-pull-secret"},
+                {
+                    "match": "registry.k8s.io",
+                    "to": "rcr.rijksapps.nl/k8s-rig",
+                    "secret": "k8s-rig-robot-pull-secret",
+                },
+                {
+                    "match": "code.overheid.nl",
+                    "to": "rcr.rijksapps.nl/code-overheid-rig",
+                    "secret": "code-overheid-rig-robot-pull-secret",
+                },
+            ],
+        },
     },
 }
 
@@ -989,7 +1086,7 @@ def supports_vpa(cluster_name: str) -> bool:
 def supports_custom_domain_certificates(cluster_name: str) -> bool:
     """Whether this cluster can obtain a certificate for a domain of the user's own.
 
-    A domain outside the cluster's ``nice_url.supported_domains`` gets no certificate for
+    A domain outside the cluster's ``domains.supported_domains`` gets no certificate for
     free: the platform certificate covers the supported domains only, so cert-manager has
     to issue one, over an ACME HTTP-01 challenge that the outside world must be able to
     reach. On production that works. On the two Kind clusters it cannot: they are not
@@ -1144,69 +1241,112 @@ def get_ca_certificate_config(cluster_name: str) -> dict | None:
     }
 
 
-def get_nice_url_config(cluster_name: str) -> dict | None:
+def get_cluster_domains_config(cluster_name: str) -> dict | None:
     """
-    Get the nice URL configuration for a specific cluster.
-
-    Nice URLs use dot-separated patterns like component.deployment.base_domain
-    instead of the default dash-separated patterns.
+    Get the domain configuration for a specific cluster.
 
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        Dictionary containing nice URL configuration with keys:
-        - supported_domains: List of domains that support the nice URL pattern
-
-        Returns None if nice URLs are not configured for this cluster.
+        The ``domains`` block, with one ``supported_domains`` entry per domain the
+        cluster offers. None if the cluster offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
     cluster_config = get_cluster_config(cluster_name)
-    return cluster_config.get("nice_url")
+    return cluster_config.get("domains")
 
 
-def get_nice_url_supported_domains(cluster_name: str) -> list[str]:
+def get_supported_domain_names(cluster_name: str) -> list[str]:
     """
-    Get the list of domains that support nice URLs for a specific cluster.
-
-    Extracts domain strings from the structured supported_domains list
-    for backward compatibility.
+    Get the names of the domains a cluster offers.
 
     Args:
         cluster_name: Name of the cluster
 
     Returns:
-        List of domain strings that support nice URL pattern.
-        Returns empty list if nice URLs are not configured.
+        The ``domain`` of every entry in ``supported_domains``, empty if the cluster
+        offers no domains of its own.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
         return []
-    raw = nice_url_config.get("supported_domains", [])
+    raw = domains_config.get("supported_domains", [])
     return [entry["domain"] if isinstance(entry, dict) else entry for entry in raw]
 
 
-def is_nice_url_domain_supported(cluster_name: str, base_domain: str) -> bool:
+def is_domain_supported(cluster_name: str, base_domain: str) -> bool:
     """
-    Check if a specific base domain supports nice URLs on a cluster.
+    Check if a cluster offers a specific base domain.
 
     Args:
         cluster_name: Name of the cluster
         base_domain: The base domain to check (e.g., "rijks.app")
 
     Returns:
-        True if the domain supports nice URLs on this cluster, False otherwise.
+        True if the cluster offers this domain, False otherwise.
 
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    supported_domains = get_nice_url_supported_domains(cluster_name)
+    supported_domains = get_supported_domain_names(cluster_name)
     return base_domain in supported_domains
+
+
+def get_managed_zones(cluster_name: str) -> list[str]:
+    """
+    Get the DNS zones a cluster serves itself.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        The ``managed_zones`` of the cluster, empty if it declares none.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
+        return []
+    return list(domains_config.get("managed_zones", []))
+
+
+def _longest_matching_zone(hostname: str, zones: list[str]) -> str | None:
+    """Return the most specific zone the hostname falls under, or None.
+
+    One walk for both callers: two of them side by side is how one grows a suffix rule the
+    other lacks.
+    """
+    for zone in sorted(zones, key=len, reverse=True):
+        if hostname == zone or hostname.endswith("." + zone):
+            return zone
+    return None
+
+
+def is_platform_domain(cluster_name: str, domain: str) -> bool:
+    """
+    Check if a domain falls within a zone this cluster serves.
+
+    This is the management question, not the offer question ``is_domain_supported``
+    answers: ``team.rijks.app`` is not offered and is still ours.
+
+    Args:
+        cluster_name: Name of the cluster
+        domain: The base domain to check (e.g., "team.rijks.app")
+
+    Returns:
+        True if the domain is one of our zones or sits under one.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    return _longest_matching_zone(domain, get_managed_zones(cluster_name)) is not None
 
 
 def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
@@ -1227,9 +1367,9 @@ def get_domain_issuer(cluster_name: str, domain: str) -> str | None:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is not None:
-        for entry in nice_url_config.get("supported_domains", []):
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is not None:
+        for entry in domains_config.get("supported_domains", []):
             if isinstance(entry, dict) and entry.get("domain") == domain:
                 return entry.get("issuer")
     return None
@@ -1251,23 +1391,17 @@ def get_external_dns_target_for_hostname(cluster_name: str, hostname: str) -> st
     Returns:
         Target hostname for the external-dns annotation, or None if none configured.
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
         return None
 
-    candidates = [
-        entry
-        for entry in nice_url_config.get("supported_domains", [])
+    candidates = {
+        entry["domain"]: entry["external_dns_target"]
+        for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("external_dns_target")
-    ]
-    # Sort longest domain first so more specific bases match before less specific ones.
-    candidates.sort(key=lambda e: -len(e["domain"]))
-
-    for entry in candidates:
-        domain = entry["domain"]
-        if hostname == domain or hostname.endswith("." + domain):
-            return entry["external_dns_target"]
-    return None
+    }
+    zone = _longest_matching_zone(hostname, list(candidates))
+    return candidates[zone] if zone is not None else None
 
 
 def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
@@ -1287,10 +1421,10 @@ def is_domain_subdomain_restricted(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
         return False
-    for entry in nice_url_config.get("supported_domains", []):
+    for entry in domains_config.get("supported_domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("restricted_subdomains", False)
     return False
@@ -1309,12 +1443,12 @@ def get_restricted_subdomain_domains(cluster_name: str) -> list[str]:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
         return []
     return [
         entry["domain"]
-        for entry in nice_url_config.get("supported_domains", [])
+        for entry in domains_config.get("supported_domains", [])
         if isinstance(entry, dict) and entry.get("restricted_subdomains", False)
     ]
 
@@ -1333,22 +1467,29 @@ def get_domain_supports_dots(cluster_name: str, domain: str) -> bool:
     Raises:
         ValueError: If cluster is not found in configuration
     """
-    nice_url_config = get_nice_url_config(cluster_name)
-    if nice_url_config is None:
+    domains_config = get_cluster_domains_config(cluster_name)
+    if domains_config is None:
         return False
-    for entry in nice_url_config.get("supported_domains", []):
+    for entry in domains_config.get("supported_domains", []):
         if isinstance(entry, dict) and entry.get("domain") == domain:
             return entry.get("supports_dots", False)
     return False
 
 
-def get_extensions(cluster_name: str) -> list[str]:
-    """Get the list of manifest extension names configured for a cluster.
+def get_image_registries_config(cluster_name: str) -> dict[str, Any]:
+    """De platformfeiten die de dienst ``image-registries`` op dit cluster nodig heeft.
 
-    Returns an empty list if no extensions are configured.
+    Een cluster zonder de sleutel krijgt ``direct-secret`` zonder tabel.
     """
-    config = get_cluster_config(cluster_name)
-    return config.get("extensions", [])
+    try:
+        config = get_cluster_config(cluster_name).get("image_registries")
+    except ValueError:
+        # De clustercontrole zit in validate_service_availability en in het schema; hier
+        # opblazen zou een ontbrekend clusterveld als een registryfout laten aankomen.
+        return {"backend": "direct-secret"}
+    if not isinstance(config, dict):
+        return {"backend": "direct-secret"}
+    return config
 
 
 def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
@@ -1362,5 +1503,11 @@ def get_vlam_config(cluster_name: str) -> dict[str, Any] | None:
     Keys: ``project`` / ``deployment`` / ``component`` / ``namespace`` (unprefixed) of the
     proxy, plus its ``port``. The address a consumer gets and the NetworkPolicy peer it is
     allowed to reach are BOTH derived from these, so they cannot drift apart.
+
+    Since RC-167 the same entry also carries the doorlus half -- ``passthrough_port``,
+    ``api_host``, ``cluster_ip`` and ``ca_bundle``. Those four are one unit: an address
+    without the name it must be reached under, or the name without the issuer to verify
+    against, is not a usable path but three quarters of one. ``vlam_endpoint()`` derives
+    them together for that reason.
     """
     return get_cluster_config(cluster_name).get("vlam")

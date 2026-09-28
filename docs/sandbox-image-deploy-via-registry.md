@@ -1,5 +1,9 @@
 # Sandbox: deploy een image via de in-cluster registry i.p.v. `kind load`
 
+> Dit document gaat over de **in-cluster** `rig-registry`, voor images van projecten. Voor
+> platform-images staat er inmiddels een registry **naast** het cluster, die een
+> clusterherbouw overleeft: zie `docs/sandbox-kind-registry.md`.
+
 Een build op de dev-sandbox neerzetten met `kind load docker-image` is traag: `kind load`
 exporteert **elke keer de hele image als tar** uit de docker-daemon en importeert die in de
 containerd van de kind-node. Er is geen laag-hergebruik, dus zelfs een derived image dat
@@ -60,9 +64,9 @@ kleine `COPY opi/manifests`-laag.
 Dit patroon hoort op meer plekken thuis dan een handmatige sessie-deploy; vanaf dit document
 kunnen die worden bijgewerkt:
 
-- **`sandbox-deploy`** (de baked dclaude-command) en `task sandbox:update-operations-manager`:
-  laat die pushen naar `rig-registry` en de deployment naar de registry-tag zetten in plaats
-  van `kind load`.
+- **`sandbox-deploy`** (de baked dclaude-command): laat die pushen en de deployment naar
+  de registry-tag zetten in plaats van `kind load`. `task sandbox:update-operations-manager`
+  doet dat al, via de registry naast het cluster (`docs/sandbox-kind-registry.md`).
 - **De operations-manager overlay** (`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local`):
   de `imagePullSecrets: [rig-registry-pull]` daar vastleggen, zodat de kubelet standaard uit
   `rig-registry` kan pullen en de patch bij stap 3 niet meer per sessie nodig is.

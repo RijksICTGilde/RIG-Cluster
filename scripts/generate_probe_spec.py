@@ -111,6 +111,9 @@ SKIP: set[ServiceType] = {
     # variables of their own -- they ARE the user's own variables (RC-25).
     ServiceType.USER_ENV_VARS,
     ServiceType.ALIASES,
+    # Injecteert geen verbindingsgegevens in de pod; dat de pull slaagt bewijst de probe
+    # al door te draaien.
+    ServiceType.IMAGE_REGISTRIES,
 }
 
 
@@ -135,10 +138,18 @@ def _dummy_secret_keys(secret_class_name: str) -> set[str]:
 
 
 def _service_env_vars(service: ServiceType) -> set[str]:
-    """Every env-var name (canonical + aliases + computed) the service injects."""
+    """Every env-var name (canonical + aliases + computed) the service ALWAYS injects.
+
+    Variables marked ``conditional`` are left out: the probe asserts that every var it
+    lists is present in a bound pod, and a variable whose presence depends on what the
+    CLUSTER offers (not on the service being bound) would fail that check while nothing
+    is wrong. See ``VariableDefinition.conditional``.
+    """
     definition = ServiceAdapter.get_service_definition(service)
     names: set[str] = set()
     for var in definition.variables:
+        if var.conditional:
+            continue
         names.update(var.get_all_names())
     if definition.secret_class:
         names.update(_dummy_secret_keys(definition.secret_class))

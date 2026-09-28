@@ -1,8 +1,9 @@
 """Tests for ServiceAdapter and ServiceType."""
 
 import pytest
+from opi.services.registry import SERVICES
 from opi.services.services import ServiceAdapter, ServiceDefinition, VariableDefinition
-from opi.services.services_enums import ServiceBinding, ServiceType
+from opi.services.services_enums import ServiceType
 
 
 class TestServiceType:
@@ -33,16 +34,18 @@ class TestServiceType:
             "aliases",
             "send-email",
             "vlam",
+            "image-registries",
         }
         actual = {st.value for st in ServiceType}
         assert actual == expected
 
     def test_enum_count(self):
-        # 23 sinds vlam erbij kwam (RC-142); 22 sinds send-email (RC-114); 21 sinds de gezondheidscheck een
+        # 24 sinds image-registries erbij kwam (RC-177); 23 sinds vlam (RC-142); 22 sinds
+        # send-email (RC-114); 21 sinds de gezondheidscheck een
         # systeemdienst werd (RC-28); 20 sinds user-env-vars en aliases systeemdiensten
         # werden (RC-25); daarvoor 18, sinds cross-domain-access en resource-tuning er
         # allebei bij kwamen.
-        assert len(ServiceType) == 23
+        assert len(ServiceType) == 24
 
 
 class TestGetAllServices:
@@ -66,7 +69,7 @@ class TestGetServiceDefinition:
 
     def test_publish_on_web_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.PUBLISH_ON_WEB)
-        assert defn.binding is ServiceBinding.COMPONENT
+        assert defn.selectable_per_component is True
         assert defn.name == "Publiceren op het web"
 
     def test_publish_on_web_exposes_public_host_and_hostname(self):
@@ -81,7 +84,7 @@ class TestGetServiceDefinition:
 
     def test_postgresql_definition(self):
         defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
-        assert defn.binding is ServiceBinding.DEPLOYMENT
+        assert defn.shared_per_deployment is True
         assert defn.secret_class == "DatabaseSecret"
 
     def test_every_service_has_definition(self):
@@ -90,14 +93,6 @@ class TestGetServiceDefinition:
             assert defn is not None
             assert defn.name
             assert defn.description
-            # Drie mogelijkheden sinds RC: een dienst die aan niets bindt hoort bij het
-            # project als geheel. Invite was de aanleiding; die stond op COMPONENT omdat er
-            # geen andere waarde was, waarna hij in de componentkeuze verscheen.
-            assert defn.binding in (
-                ServiceBinding.COMPONENT,
-                ServiceBinding.DEPLOYMENT,
-                ServiceBinding.PROJECT,
-            )
 
 
 class TestGetServiceByValue:
@@ -159,8 +154,8 @@ class TestGetStorageServices:
         assert ServiceAdapter.get_storage_services([]) == []
 
 
-class TestIsComponentAndDeploymentService:
-    """Tests for is_component_service and is_deployment_service."""
+class TestSelectionAndSharing:
+    """De twee feiten die samen in ``binding`` zaten, nu los van elkaar."""
 
     @pytest.mark.parametrize(
         "service",
@@ -172,9 +167,21 @@ class TestIsComponentAndDeploymentService:
             ServiceType.AUTHORIZATION_WALL,
         ],
     )
-    def test_component_services(self, service: ServiceType):
-        assert ServiceAdapter.is_component_service(service) is True
-        assert ServiceAdapter.is_deployment_service(service) is False
+    def test_selected_per_component(self, service: ServiceType):
+        assert ServiceAdapter.get_service_definition(service).selectable_per_component is True
+
+    @pytest.mark.parametrize(
+        "service",
+        [
+            ServiceType.SLEEP_MODE,
+            ServiceType.INVITE,
+            ServiceType.CROSS_DOMAIN_ACCESS,
+            ServiceType.DEPLOYMENT_HEALTH,
+            ServiceType.RESOURCE_TUNING,
+        ],
+    )
+    def test_not_selected_per_component(self, service: ServiceType):
+        assert ServiceAdapter.get_service_definition(service).selectable_per_component is False
 
     @pytest.mark.parametrize(
         "service",
@@ -186,9 +193,30 @@ class TestIsComponentAndDeploymentService:
             ServiceType.NAMESPACE_REDIS,
         ],
     )
-    def test_deployment_services(self, service: ServiceType):
-        assert ServiceAdapter.is_deployment_service(service) is True
-        assert ServiceAdapter.is_component_service(service) is False
+    def test_shared_per_deployment(self, service: ServiceType):
+        assert ServiceAdapter.get_service_definition(service).shared_per_deployment is True
+
+    def test_de_rest_van_de_catalogus_deelt_niets_per_deployment(self):
+        """De omkering, want zonder haar bewaakt de lijst hierboven alleen zichzelf.
+
+        Een zesde dienst die ``shared_per_deployment`` krijgt zet er een chip bij op de
+        dienstkaart ("Gedeeld per deployment"), en dat is een belofte over wie dezelfde
+        inloggegevens krijgt. Dat hoort een bewuste regel in dit bestand te zijn.
+        """
+        gedeeld = {
+            service_type for service_type, service in SERVICES.items() if service.definition.shared_per_deployment
+        }
+        assert gedeeld == {
+            ServiceType.POSTGRESQL_DATABASE,
+            ServiceType.NAMESPACE_POSTGRESQL_DATABASE,
+            ServiceType.MINIO_STORAGE,
+            ServiceType.REDIS,
+            ServiceType.NAMESPACE_REDIS,
+        }
+
+    def test_postgres_is_both(self):
+        defn = ServiceAdapter.get_service_definition(ServiceType.POSTGRESQL_DATABASE)
+        assert (defn.selectable_per_component, defn.shared_per_deployment) == (True, True)
 
 
 class TestGetVariables:
@@ -331,57 +359,6 @@ class TestExtractServiceNamesFromProjectServices:
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError, match="Invalid service item type"):
             ServiceAdapter.extract_service_names_from_project_services([123])  # type: ignore[list-item]
-
-
-class TestFilterComponentAndDeploymentServices:
-    """Tests for filter_component_services and filter_deployment_services."""
-
-    def test_filter_component_services(self):
-        services = [
-            ServiceType.PUBLISH_ON_WEB,
-            ServiceType.POSTGRESQL_DATABASE,
-            ServiceType.KEYCLOAK,
-            ServiceType.REDIS,
-        ]
-        result = ServiceAdapter.filter_component_services(services)
-        assert result == [ServiceType.PUBLISH_ON_WEB, ServiceType.KEYCLOAK]
-
-    def test_filter_deployment_services(self):
-        services = [
-            ServiceType.PUBLISH_ON_WEB,
-            ServiceType.POSTGRESQL_DATABASE,
-            ServiceType.KEYCLOAK,
-            ServiceType.REDIS,
-        ]
-        result = ServiceAdapter.filter_deployment_services(services)
-        assert result == [ServiceType.POSTGRESQL_DATABASE, ServiceType.REDIS]
-
-    def test_filter_empty_list(self):
-        assert ServiceAdapter.filter_component_services([]) == []
-        assert ServiceAdapter.filter_deployment_services([]) == []
-
-    def test_every_service_is_bound_in_exactly_one_way(self):
-        """Component, deployment of geen van beide, en nooit twee tegelijk.
-
-        Het was eerder een tweedeling die alle diensten moest dekken. Dat klopte niet: een
-        uitnodiging bindt aan niets en werd daardoor als componentdienst opgevoerd, met als
-        zichtbaar gevolg dat hij in de componentkeuze stond en dat de UI meldde dat je hem
-        per component kiest.
-        """
-        from opi.services.registry import SERVICES
-        from opi.services.services_enums import ServiceBinding
-
-        all_services = ServiceAdapter.get_all_services()
-        component = set(ServiceAdapter.filter_component_services(all_services))
-        deployment = set(ServiceAdapter.filter_deployment_services(all_services))
-        project = {
-            service for service in all_services if SERVICES[service].definition.binding is ServiceBinding.PROJECT
-        }
-
-        assert component & deployment == set(), "een dienst bindt niet aan twee dingen tegelijk"
-        assert component & project == set()
-        assert deployment & project == set()
-        assert component | deployment | project == set(all_services), "elke dienst hoort in precies een bak"
 
 
 class TestResolveServiceDependencies:

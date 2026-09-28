@@ -403,8 +403,14 @@ def test_modal_edit_attachments_flow_keeps_services_in_base_data() -> None:
     reden: de naam-unie in merge_service_lists verwijdert nooit, dus die kopie bracht elke
     uitgevinkte dienst terug. De test bleef achter en stond sindsdien rood op de basistak.
 
-    Bewaakt wordt nu de andere helft van diezelfde reparatie, en de twee horen bij elkaar:
-    valt er een weg, dan is de modal leeg of komt een verwijderde dienst terug.
+    De verdeling die eruit volgt, en die deze test in twee helften vastlegt:
+
+    - ``_split_data_across_sections`` slaat de carrier over, dus step_data krijgt geen
+      dienstenlijst;
+    - ``_fully_owned_list_keys`` rekent de carrier niet als eigenaar, dus ``services``
+      blijft in base_data staan en de uploadstap houdt zijn context.
+
+    Valt er een weg, dan is de modal leeg of komt een verwijderde dienst terug.
     """
     from opi.forms.visualizers.flows import get_flow
     from opi.web.router_detail_edit import _fully_owned_list_keys
@@ -430,6 +436,13 @@ def test_modal_edit_attachments_flow_keeps_services_in_base_data() -> None:
         "services geldt hier als bezit van de flow, en dan haalt base_data de lijst weg; "
         "de uploadstap heeft dan geen enkele bron voor de bestaande bijlagen"
     )
+
+    # Wat base_data overhoudt is wat de uploadpartial leest: de lijst zelf, met de catalogus erin.
+    base_data = {k: v for k, v in project.items() if k not in _fully_owned_list_keys(flow)}
+    catalog = [
+        d for s in base_data["services"] if isinstance(s, dict) and "attachments" in s for d in s["attachments"]["data"]
+    ]
+    assert [(d["id"], d["filename"]) for d in catalog] == [("sso", "cert.pem")]
 
 
 def test_wizard_session_catalog_removal_and_ids() -> None:

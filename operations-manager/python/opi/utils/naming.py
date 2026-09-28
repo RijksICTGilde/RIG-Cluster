@@ -6,10 +6,12 @@ including deployments, services, PVCs, and other manifest resources.
 """
 
 import logging
+import posixpath
 import re
 from typing import Any, get_args
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId, DomainSetting, get_domain_setting
+from opi.utils.sops import SOPS_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Each format ID maps to a pair of templates: (dash_template, dot_template).
 # The dash variant joins prefix parts with hyphens; the dot variant uses dots.
-# Which variant is used depends on cluster nice_url support.
+# Which variant is used depends on the domain's supports_dots in the cluster config.
 #
 # Available variables: {component}, {deployment}, {project}, {subdomain}, {domain}
 #   {domain} = base_domain from YAML if set, else ingress_postfix from cluster config
@@ -57,6 +59,17 @@ assert set(get_args(DomainFormatId)) == set(DOMAIN_FORMAT_TEMPLATES.keys()), (  
 SUBDOMAIN_FORMAT_IDS: list[str] = [f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "{subdomain}" in t]
 ROOT_COMPONENT_FORMAT_IDS: list[str] = [
     f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." in f and "{component}" in t
+]
+
+#: The formats that build a hostname out of the deployment alone: no subdomain to fill in,
+#: and no dot-separated labels to certify.
+#:
+#: Every other format leans on a name: ``{subdomain}`` renders as the empty string when
+#: there is none (``pr-123-.cluster.tld``), and a dotted format on the cluster wildcard
+#: produces a multi-label host the single-label wildcard certificate cannot cover (the
+#: regel-k4c regression).
+SELF_CONTAINED_FORMAT_IDS: list[str] = [
+    f for f, t in DOMAIN_FORMAT_TEMPLATES.items() if "." not in f and "{subdomain}" not in t
 ]
 
 
@@ -877,6 +890,32 @@ def generate_keycloak_client_id(project_name: str, deployment_name: str, compone
     return _truncate_if_needed(client_id, 255)  # Keycloak client ID limit
 
 
+#: De map met de PROJECTbrede manifesten, naast die van de deployments. De underscore is
+#: bewust: een deploymentnaam is een DNS-label, dus deze map kan nooit botsen.
+PROJECT_LEVEL_DIR = "_project"
+
+#: Deploymentnamen die het platform zelf gebruikt. ``project`` botst met de
+#: ArgoCD-applicatie van het projectniveau (``{project}-project``).
+RESERVED_DEPLOYMENT_NAMES: frozenset[str] = frozenset({"project"})
+
+
+def generate_project_service_account_name(project_name: str) -> str:
+    """De eigen serviceaccount van een project, waar zijn pods op draaien.
+
+    Niet de ``default``: die draagt elk gerepliceerd pull-secret in de namespace, ook dat
+    van een ander project.
+    """
+    return sanitize_kubernetes_name(f"{project_name}-sa")
+
+
+def generate_argocd_project_application_name(project_name: str) -> str:
+    """``{project}-project``, dezelfde vorm als een deployment-applicatie.
+
+    Vandaar ``project`` in ``RESERVED_DEPLOYMENT_NAMES``.
+    """
+    return _truncate_if_needed(f"{_sanitize_for_lowercase(project_name)}-project", 253)
+
+
 def generate_argocd_application_name(project_name: str, deployment_name: str) -> str:
     """
     Generate a consistent ArgoCD application name.
@@ -958,6 +997,27 @@ def generate_gitops_argocd_application_path(cluster: str, project_name: str, dep
     return f"{cluster_clean}/{project_clean}/{filename}"
 
 
+class RepositoryPathError(ValueError):
+    """Een ``repositories[].path`` dat het manifestpad buiten de repo laat vallen."""
+
+
+def _under_repo_path(repo_path: str, relative: str) -> str:
+    """``relative`` onder ``repo_path``, of een weigering als de uitkomst de repo verlaat.
+
+    Geeft het samengestelde pad ongenormaliseerd terug: ``./cluster/...`` staat zo in
+    bestaande ArgoCD-applicaties, en normaliseren zou die allemaal laten verschuiven.
+    """
+    if not repo_path:
+        return relative
+    path = f"{repo_path}/{relative}"
+    normalized = posixpath.normpath(path)
+    if normalized == ".." or normalized.startswith(("/", "../")):
+        raise RepositoryPathError(
+            f"Repositorypad '{repo_path}' valt buiten de repository; gebruik een relatief pad zonder '..'."
+        )
+    return path
+
+
 def generate_deployment_manifest_path(
     cluster: str, project_name: str, deployment_name: str, repo_path: str = ""
 ) -> str:
@@ -979,10 +1039,7 @@ def generate_deployment_manifest_path(
     project_clean = _sanitize_for_lowercase(project_name)
     deployment_clean = _sanitize_for_lowercase(deployment_name)
 
-    if repo_path:
-        return f"{repo_path}/{cluster_clean}/{project_clean}/{deployment_clean}"
-    else:
-        return f"{cluster_clean}/{project_clean}/{deployment_clean}"
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{deployment_clean}")
 
 
 def generate_project_deployment_prefix(project_name: str, deployment_name: str) -> str:
@@ -1367,6 +1424,31 @@ def generate_infrastructure_application_name(project_name: str) -> str:
     return f"{project_clean}-infrastructure"
 
 
+def generate_project_level_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
+    """Het PROJECTniveau van de deployments-repo: ``{cluster}/{project}/_project``.
+
+    Zelfde vorm als ``generate_infrastructure_manifest_path``, een map ernaast. De
+    schrijver van de map en de ArgoCD-applicatie die ernaar wijst leiden hem allebei
+    hiervandaan af, zodat de twee niet uit elkaar kunnen lopen.
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+        repo_path: Optional repository base path
+
+    Returns:
+        Project-level manifest path
+
+    Example:
+        generate_project_level_manifest_path("production", "myproject")
+        -> "production/myproject/_project"
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/{PROJECT_LEVEL_DIR}")
+
+
 def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_path: str = "") -> str:
     """
     Generate the path to infrastructure manifests in the deployment git repository.
@@ -1392,9 +1474,7 @@ def generate_infrastructure_manifest_path(cluster: str, project_name: str, repo_
     project_clean = _sanitize_for_lowercase(project_name)
     cluster_clean = _sanitize_for_lowercase(cluster)
 
-    if repo_path:
-        return f"{repo_path}/{cluster_clean}/{project_clean}/infrastructure"
-    return f"{cluster_clean}/{project_clean}/infrastructure"
+    return _under_repo_path(repo_path, f"{cluster_clean}/{project_clean}/infrastructure")
 
 
 def generate_infrastructure_argocd_application_filename(project_name: str) -> str:
@@ -1435,6 +1515,27 @@ def generate_infrastructure_argocd_appproject_filename(project_name: str) -> str
     """
     project_clean = _sanitize_for_lowercase(project_name)
     return f"{project_clean}-infrastructure-argocd-appproject.yaml"
+
+
+def generate_argocd_project_folder_path(cluster: str, project_name: str) -> str:
+    """De map in de argo-applications repo waar de ArgoCD-manifesten van een project staan.
+
+    Format: {cluster}/{project}
+
+    Args:
+        cluster: Name of the cluster
+        project_name: Name of the project
+
+    Returns:
+        ArgoCD project folder path
+
+    Example:
+        generate_argocd_project_folder_path("production", "myproject")
+        -> "production/myproject"
+    """
+    cluster_clean = _sanitize_for_lowercase(cluster)
+    project_clean = _sanitize_for_lowercase(project_name)
+    return f"{cluster_clean}/{project_clean}"
 
 
 def generate_infrastructure_argocd_folder_path(cluster: str, project_name: str) -> str:
@@ -1742,9 +1843,9 @@ def generate_external_hostname(subdomain: str, base_domain: str) -> str:
     return f"{subdomain}.{base_domain}"
 
 
-def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
+def generate_root_hostname(subdomain: str, base_domain: str) -> str:
     """
-    Generate the root hostname for nice URL mode.
+    Generate the root hostname of a deployment.
 
     The root hostname is just subdomain.base_domain and resolves to the
     component marked with root: true in the deployment configuration.
@@ -1757,10 +1858,10 @@ def generate_nice_url_root_hostname(subdomain: str, base_domain: str) -> str:
         Root hostname in pattern subdomain.base_domain
 
     Examples:
-        >>> generate_nice_url_root_hostname("myapp", "rijks.app")
+        >>> generate_root_hostname("myapp", "rijks.app")
         'myapp.rijks.app'
 
-        >>> generate_nice_url_root_hostname("mydomain", "rijksapps.nl")
+        >>> generate_root_hostname("mydomain", "rijksapps.nl")
         'mydomain.rijksapps.nl'
     """
     subdomain_clean = _sanitize_for_lowercase(subdomain)
@@ -1848,14 +1949,17 @@ def apply_domain_approval_fallback(
     if is_deployment_domain_approved(project_data, base_domain, subdomain, cluster):
         return domain_format, base_domain
 
-    # Not approved — fall back to safe format on cluster domain
+    # Not approved: fall back to safe format on cluster domain. The log names the address
+    # that lapses, because that is what someone wondering where their address went will
+    # search for.
+    cluster_domain = ingress_postfix.lstrip(".")
     logger.warning(
-        "Domain '%s' with subdomain '%s' not approved, falling back to %s on cluster domain",
+        "Address '%s' is not in use: domain '%s' is not approved for this project, publishing on '%s' (%s) instead",
+        f"{subdomain}.{base_domain}" if subdomain else base_domain,
         base_domain,
-        subdomain,
+        cluster_domain,
         SAFE_FALLBACK_FORMAT,
     )
-    cluster_domain = ingress_postfix.lstrip(".")
     return SAFE_FALLBACK_FORMAT, cluster_domain
 
 
@@ -2022,12 +2126,13 @@ def get_deployment_hostnames(
     # root INGRESS in project_manager, so the Keycloak redirect list and the ingress set
     # cannot disagree.
     if domain_approved and domain_format in ROOT_COMPONENT_FORMAT_IDS and root_component and subdomain and base_domain:
-        root_hostname = generate_nice_url_root_hostname(subdomain, base_domain)
+        root_hostname = generate_root_hostname(subdomain, base_domain)
         if root_hostname not in hostnames:
             hostnames.append(root_hostname)
 
-    # Add bare domain hostname when expose-on-bare-domain is enabled
-    if expose_on_bare_domain and base_domain:
+    # The apex hangs on the same approval as the root address above. Ungated, it stayed in
+    # the list while every other address of that domain fell back to the cluster one.
+    if domain_approved and expose_on_bare_domain and base_domain:
         bare_hostname = generate_bare_domain_hostname(base_domain)
         if bare_hostname not in hostnames:
             hostnames.append(bare_hostname)
@@ -2057,7 +2162,7 @@ def generate_helm_values_filename(deployment_name: str, chart_name: str, encrypt
         >>> generate_helm_values_filename("local-deployment", "docs", encrypted=False)
         'local-deployment-docs-helm-values.yaml'
     """
-    extension = ".sops.yaml" if encrypted else ".yaml"
+    extension = SOPS_SUFFIX if encrypted else ".yaml"
     deployment_clean = _sanitize_for_lowercase(deployment_name)
     chart_clean = _sanitize_for_lowercase(chart_name)
     return f"{deployment_clean}-{chart_clean}-helm-values{extension}"
@@ -2335,3 +2440,43 @@ def registry_tag_owner(registry_tag: str) -> str | None:
     if not separator or not REGISTRY_TAG_OWNER_RE.match(owner):
         return None
     return owner
+
+
+def upstream_host(upstream: str) -> str:
+    """``code.overheid.nl/robbert`` -> ``code.overheid.nl``.
+
+    Staat hier en niet bij de dienst image-registries, want de skopeo-connector heeft hem
+    ook nodig en een connector hoort niet van een dienstpakket af te hangen.
+    """
+    return upstream.split("/", 1)[0]
+
+
+def normalize_registry_repo(repo: str) -> str:
+    """The comparable form of a registry repository, so one repo has one spelling.
+
+    A hostname is case-insensitive and the https port may be written out, so
+    ``RCR.rijksapps.nl/rig`` and ``rcr.rijksapps.nl:443/rig`` are the same repository
+    as ``rcr.rijksapps.nl/rig``. The path after the host is left alone: registries
+    treat it case-sensitively.
+    """
+    host, separator, path = repo.partition("/")
+    if not separator or not ("." in host or ":" in host or host == "localhost"):
+        # No registry host in front (e.g. 'nginx' or 'library/nginx'): nothing to normalize.
+        return repo
+    host = host.lower()
+    host = host.removesuffix(":443")
+    return f"{host}/{path}"
+
+
+def split_image_reference(image: str) -> tuple[str, str | None, bool]:
+    """Split an image reference into (repository, tag, carries-a-digest).
+
+    Handles the shapes the project schema allows: ``repo``, ``repo:tag``,
+    ``repo@sha256:...`` and ``repo:tag@sha256:...``, with an optional port in the
+    host. A colon that is followed by a ``/`` is a port, not a tag separator.
+    """
+    reference, digest_separator, _digest = image.partition("@")
+    repo, tag_separator, tag = reference.rpartition(":")
+    if not tag_separator or "/" in tag:
+        return reference, None, bool(digest_separator)
+    return repo, tag, bool(digest_separator)

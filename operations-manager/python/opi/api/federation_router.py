@@ -66,6 +66,10 @@ async def federation_health(request: Request) -> JSONResponse:
                 entry["status"] = resp.get("status", "ok")
                 entry["healthy"] = True
         except Exception as exc:
+            # foutmelding-gewogen: dit zet de fout van een peer naast de url van diezelfde
+            # peer, die een beheerder zelf heeft ingevoerd, achter de master-sleutel. Er
+            # komt hier dus niets naar buiten dat de lezer niet al had; en zonder de reden
+            # is "peer meldt zich niet" een health-check waar je niets aan hebt.
             entry["status"] = str(exc)
             entry["healthy"] = False
 

@@ -223,7 +223,18 @@ class TestCreateProject:
         api_key = created["response"]["api_key"]
         assert api_key not in created["response"]["poll_url"]
 
-    def test_the_project_knows_its_repository(self, created: Any) -> None:
+    def test_the_repository_password_is_never_stored_plain(self, created: Any) -> None:
+        """De settings dragen hem plat (plain:); het geschreven projectbestand mag dat nooit."""
+        import asyncio
+        import base64
+
+        from opi.utils.age import decrypt_age_content
+
+        password = created["project"]["repositories"][0]["password"]
+        assert password.startswith("base64+age:"), "een projectbestand hoort geen platte token te dragen"
+        armored = base64.b64decode(password[len("base64+age:") :]).decode()
+        plain = asyncio.run(decrypt_age_content(armored, created["keys"]["private_key"]))
+        assert plain == "repo-secret"
         """Without this block ArgoCD has no source; it comes from the shared builder."""
         repositories = created["project"]["repositories"]
         assert [r["name"] for r in repositories] == ["main-repo"]
