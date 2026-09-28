@@ -35,6 +35,12 @@ invites:
       expires_at: "2026-02-01"   # Optional: expiration date
       restrict_domain: "@example.org"  # Optional: restrict email domain
 
+      # Optional: what the invite gives access to, shown as the page heading.
+      # Empty falls back to display-name.
+      title:
+        nl: "Docs en Grist"
+        en: "Docs and Grist"
+
       # Multi-language messages
       message:
         nl: "Welkom bij het project!"
@@ -70,6 +76,7 @@ invites:
 | `expires_at` | date | No | Expiration date (YYYY-MM-DD format) |
 | `restrict_domain` | string | No | Required email domain (e.g., `@example.org`) |
 | `auth_methods` | list | No | Override allowed methods (`["sso"]` or `["local"]` or both) |
+| `title` | string/dict | No | What the invite gives access to, shown as the heading of the invite pages. Falls back to `display-name` |
 | `message` | string/dict | No | Welcome message (string or `{nl: ..., en: ...}`) |
 | `success_title` | string/dict | No | Success page title |
 | `success_button` | string/dict | No | Success button text |

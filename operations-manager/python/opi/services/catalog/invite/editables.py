@@ -150,6 +150,21 @@ INVITE_AUTH_METHODS_EDITABLE = Editable(
 # filled in rather than blank. Required without a default would just be an obstacle; a
 # default without required would let someone empty the field and end up with a page that
 # shows nothing.
+# The title is the exception: optional and without a default, because its fallback is the
+# project's display name at render time. A computed default would freeze today's display
+# name into the file.
+INVITE_TITLE_NL_EDITABLE = Editable(
+    yaml_path=_cp("active[*]", "title", "nl"),
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
+    virtualize=SERVICE_VIRTUALIZE,
+)
+INVITE_TITLE_EN_EDITABLE = Editable(
+    yaml_path=_cp("active[*]", "title", "en"),
+    converter=EmptyToNoneConverter(),
+    remove_when_none=True,
+    virtualize=SERVICE_VIRTUALIZE,
+)
 INVITE_MESSAGE_NL_EDITABLE = Editable(
     yaml_path=_cp("active[*]", "message", "nl"),
     converter=EmptyToNoneConverter(),
@@ -207,6 +222,8 @@ INVITE_ITEM_CHILD_EDITABLES = [
     INVITE_CONTACT_EMAIL_EDITABLE,
     INVITE_APPLICATION_URL_EDITABLE,
     INVITE_AUTH_METHODS_EDITABLE,
+    INVITE_TITLE_NL_EDITABLE,
+    INVITE_TITLE_EN_EDITABLE,
     INVITE_MESSAGE_NL_EDITABLE,
     INVITE_MESSAGE_EN_EDITABLE,
     INVITE_SUCCESS_TITLE_NL_EDITABLE,

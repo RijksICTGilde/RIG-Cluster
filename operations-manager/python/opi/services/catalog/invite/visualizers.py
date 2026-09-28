@@ -31,6 +31,8 @@ from opi.services.catalog.invite.editables import (
     INVITE_SUCCESS_BUTTON_NL_EDITABLE,
     INVITE_SUCCESS_TITLE_EN_EDITABLE,
     INVITE_SUCCESS_TITLE_NL_EDITABLE,
+    INVITE_TITLE_EN_EDITABLE,
+    INVITE_TITLE_NL_EDITABLE,
 )
 
 INVITE_DEFAULT_LANGUAGE = EditableVisualizer(
@@ -109,6 +111,20 @@ INVITE_AUTH_METHODS = EditableVisualizer(
     ),
 )
 
+INVITE_TITLE_NL = EditableVisualizer(
+    editable=INVITE_TITLE_NL_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Titel (Nederlands)",
+    help_text=(
+        "Waar de uitnodiging toegang toe geeft, zoals de gebruiker het kent, bijvoorbeeld "
+        "'Docs en Grist'. Leeg laten toont de projectnaam."
+    ),
+)
+INVITE_TITLE_EN = EditableVisualizer(
+    editable=INVITE_TITLE_EN_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Titel (Engels)",
+)
 INVITE_MESSAGE_NL = EditableVisualizer(
     editable=INVITE_MESSAGE_NL_EDITABLE,
     widget=WidgetType.TEXTAREA,
@@ -153,6 +169,8 @@ INVITE_ACTIVE = EditableVisualizer(
         INVITE_CONTACT_EMAIL,
         INVITE_APPLICATION_URL,
         INVITE_AUTH_METHODS,
+        INVITE_TITLE_NL,
+        INVITE_TITLE_EN,
         INVITE_MESSAGE_NL,
         INVITE_MESSAGE_EN,
         INVITE_SUCCESS_TITLE_NL,
