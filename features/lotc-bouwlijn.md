@@ -233,7 +233,7 @@ toetst hij dat het origineel de gebreken nog heeft - zijn die weg, dan kan de ko
 | test | bewaakt |
 |---|---|
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
-| `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
+| `tests/test_lotc_klikattributen.py` | dat Jinja in de waarde van een `@`-afhandelaar WEL gerenderd wordt, en dat een waarde met `tojson` erin langs `forceescape` gaat |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
 | `tests/e2e/test_lotc_aanvragenbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat er geen leeg foutvak in staat, dat een mislukte aanroep een leesbare melding geeft, dat het icoon in de kop hetzelfde verticale midden heeft als de titel, en dat de GEDEELDE schil (de bewerkdialogen van een project) nog opent, opslaat en met Escape sluit |
 | `tests/test_goedkeuringsdialoog_htmx.py` | dat de dialoog op `/admin/approvals` zijn formulier met `hx-get` ophaalt en niet met een eigen `fetch`, dat er geen lege foutbak in staat en dat `#approval-loading` aan beide kanten bestaat (sjabloon EN `modal.css`). Zonder browser, dus deze loopt wel mee in de gewone ronde - de e2e-tests hierboven niet |
@@ -305,20 +305,39 @@ soort fout is erger dan geen meting - je leert hem negeren.
 attribuut niet op het component, en liet het vallen. Wat overbleef was een kale `@` in de
 tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
 
-**En let op wat er WEL doorkomt.** De waarde van een `@`-afhandelaar wordt letterlijk uit
-de bron overgenomen en in het `onclick`-attribuut gezet; hij komt nooit langs Jinja. Staat
-er `@click="f('{{ naam }}')"`, dan krijgt de browser die accolades ook echt - en dat ziet
-er in het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) worden
-wel gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
+**De waarde van een `@`-afhandelaar kwam ooit letterlijk door.** Hij werd uit de bron
+overgenomen en in het `onclick`-attribuut gezet zonder ooit langs Jinja te gaan. Stond er
+`@click="f('{{ naam }}')"`, dan kreeg de browser die accolades ook echt - en dat zag er in
+het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) werden wel
+gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
 "Domeingoedkeuring - {{ project.project_name }}" en het formulier werd opgehaald bij een
-pad met `%7B%7B` erin. De weg die niet omvalt is een gewoon attribuut plus een
-afhandelaar zonder Jinja erin:
+pad met `%7B%7B` erin.
+
+**Sinds NLDD 0.8.92 wordt die waarde wel gerenderd**, zowel `{{ ... }}` als `{% if %}`. De
+omweg via een data-attribuut is dus niet meer nodig, al is hij nergens fout:
 
 ```html
 <c-button data-project="{{ project.project_name }}" @click="doeIets(this.dataset.project)" />
+<c-button @click="doeIets('{{ project.project_name }}')" />
 ```
 
-`tests/test_lotc_klikattributen.py` bewaakt dat er nergens meer Jinja in zo'n waarde staat.
+**Wat er voor in de plaats komt is de escaping.** De waarde staat in een attribuut tussen
+dubbele aanhalingstekens, dus een dubbel aanhalingsteken IN die waarde sluit het attribuut
+voortijdig. Dat gebeurt precies bij een waarde die je met `tojson` bouwt, en `| e` helpt
+niet: `tojson` levert `Markup` op en dat filter laat markup met rust. Zet er
+`| forceescape` achter.
+
+```html
+{% set js = ("openLogViewer(" ~ (project.name | tojson) ~ ")") | forceescape %}
+<c-button @click="{{ js }}" />
+```
+
+**En een handler hoort niet in een `:attrs`-spread.** Die weigert een `on*`-sleutel sinds
+0.8.92 met een `ValueError`: een spread draagt gegevens, en een gegeven mag geen
+uitvoerbaar script worden. De `:@click="expr"`-spelling die de bibliotheek ooit kende
+wordt nu als onbekend attribuut geweigerd; `@click="{{ expr }}"` is de vorm.
+
+`tests/test_lotc_klikattributen.py` meet dit alle drie.
 
 **En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
 van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
