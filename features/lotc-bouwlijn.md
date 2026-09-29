@@ -33,6 +33,32 @@ wordt is licht/donker, via `/weergave` en het koekje `zad_scheme`.
 Lord of the Components is een gewone runtime-dependency: de applicatie rendert er
 pagina's mee, dus hij hoort in de image.
 
+### De pin
+
+Alle vijf de packages (`lord-of-the-components`, `lotc-rvo`, `lotc-nldd`, `lotc-layout`,
+`lotc-forms`) staan in `pyproject.toml` op **één commit** van
+`github.com/RijksICTGilde/lord-of-the-components`, nu `172300a` (NLDD 0.8.92). Die pin is
+de reden dat dit veilig is: de NLDD-afgeleide componentlaag schuift met een bump mee, en
+meer dan duizend aanroepen mogen niet stil van vorm veranderen.
+
+Een bump is daarom geen losse handeling maar een taak. Wat er bij 0.8.80 → 0.8.92 uit
+bleek te komen: markup waar deze applicatie zelf op selecteert (`secret-field` werd een
+custom element, `list-item-action` heet `list-item-segment`,
+`nldd-form-field-error-text` is een `nldd-validation-list` geworden), een `:attrs`-spread
+die een `on*`-sleutel nu weigert, en veldcomponenten die hun `required` aan het formulier
+melden waardoor de browser het versturen tegenhield. Loop bij een bump dus minimaal na:
+
+- **de pin verzetten en `uv lock`**, en meten dat `lotc_nldd`'s `registry.json` de
+  verwachte `nldd_version` noemt;
+- **`LOTC_STRICT=1`** (staat in CI en in `tests/conftest.py`): een onbekende
+  attribuutWAARDE is dan rood in plaats van stil;
+- **de sweep**: `uv run python -m lord_of_the_components.sweep --design-systems
+  nldd,lotc-forms opi/templates_lotc opi/services/catalog` somt elke computed waarde en
+  elke spread op die de compiler niet kan controleren;
+- **kijken naar het scherm**, want de rest is markup. De poort die dat doet is
+  `tests/e2e/test_lotc_veldfout_zichtbaar.py`: die meet de HOOGTE van een foutregel per
+  veldsoort, en dat is precies wat een assertie op de markup niet haalt.
+
 ## Gebruik
 
 ```bash
@@ -71,8 +97,8 @@ Draaiende applicatie:
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
 | `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
-| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs`, plus de foutbedrading van een veld |
-| `opi/templates_lotc/components/_forms.j2` | onze kopie van de veldmacro's van `lotc-forms`; zie "Een sjabloon van een design system overschrijven" |
+| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs` |
+| `opi/templates_lotc/components/` | onze drie kopieën van sjablonen van `lotc-forms`; zie "Een sjabloon van een design system overschrijven" |
 
 ### Waarom er ooit twee omgevingen waren
 
@@ -167,29 +193,40 @@ templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen
 `templates_lotc/`. Een bestand op dezelfde naam wint dus van dat van het pakket. Dat is de
 manier om een bug in het thema te overbruggen zonder hem op tien plekken na te bouwen.
 
-Er staat er nu één: `opi/templates_lotc/components/_forms.j2`, onze kopie van de gedeelde
-macro's van `lotc-forms`. Elk veldsjabloon importeert die, dus het is één plek voor alle
-veldsoorten. Twee wijzigingen zitten erin, allebei met een verzoek in
-`request_for_components.md`:
+Er staan er nu drie in `opi/templates_lotc/components/`, alle drie van `lotc-forms`.
 
-1. **De foutmelding wordt bedraad.** `nldd-form-field` toont alleen foutregels waarvan het
-   id in `error-message` OP HET INVOERVELD staat; `lotc-forms` schrijft daar
-   `error-message-ids`, en dat is de andere richting (die eigenschap zet `nldd-form-field`
-   zelf om `aria-describedby` te bedraden). Zonder de bedrading staat de melding er wel en
-   is hij `display: none` met hoogte 0. `bedraad_foutmelding` in `opi/forms/lotc_attrs.py`
-   zet `invalid`, `aria-invalid` en `error-message` op de besturing; dat laatste is bij de
-   groepsvelden (radio, aankruisvakjes) het enige dat een schermlezer over de fout krijgt.
-2. **`data-no-optional-badge` laat "Optioneel" weg.** `lotc-forms` zet dat label op elk
-   veld dat niet `required` is (rijksconventie: markeer optioneel, niet verplicht). Voor
-   een kiezer met een vaste selectie of het enige veld van een herhaalbaar item betekent
-   het niets. Zet dan dit merk-attribuut op de besturing en géén `required`: dat haalt het
-   label ook weg, maar laat de HTML beweren dat er iets ingevuld moet worden, en
-   formuliervalidatie leest dat ook echt.
+`_forms.j2` is de kopie van de gedeelde macro's. Elk veldsjabloon importeert die, dus het
+is één plek voor alle veldsoorten. Er zit één wijziging in, met een verzoek in
+`request_for_components.md`: **`data-no-optional-badge` laat "Optioneel" weg.**
+`lotc-forms` zet dat label op elk veld dat niet `required` is (rijksconventie: markeer
+optioneel, niet verplicht). Voor een kiezer met een vaste selectie of het enige veld van
+een herhaalbaar item betekent het niets. Zet dan dit merk-attribuut op de besturing en
+géén `required`: dat haalt het label ook weg, maar laat de HTML beweren dat er iets
+ingevuld moet worden, en formuliervalidatie leest dat ook echt. Een keuzelijst krijgt de
+badge nooit, ongeacht dat attribuut: daar staat altijd al iets geselecteerd.
+
+`select-field.html.j2` en `checkbox-field.html.j2` bedraden hun foutmelding. Een
+serverfout staat sinds NLDD 0.8.84 in een `nldd-validation-list`, en die vraagt de
+BESTURING welke eisen onvervuld zijn: een item is zichtbaar als de besturing `invalid`
+draagt én het id van het item in haar `unmet` staat. Vier veldsoorten schrijven dat zelf,
+deze twee niet:
+
+- de keuzelijst mist `unmet`, en een native `<select>` mist ook `invalid` (die heeft
+  alleen `aria-invalid`, en dat leest de lijst niet);
+- het losse aankruisvakje staat als enige veldsoort niet in een `<nldd-form-field>`, en
+  juist die knoopt de lijst aan de besturing. Onze kopie geeft de lijst daarom `for`.
+
+Gemeten in een browser: zonder deze twee regels is de foutregel 0 px hoog, met 20 px en in
+de kritieke kleur. De groepstak van het aankruisvakje en `radio-button-field` hebben
+hetzelfde gebrek en zijn **niet** gerepareerd: daar hangt de lijst wel aan een
+`nldd-form-field`, maar die knoopt haar aan het eerste invoerelement bínnen de omhulling
+en niet aan de omhulling zelf. Geen veld van dit portaal met die twee widgets is
+`required` of heeft een validator, dus er is geen weg naar een serverfout op zo'n veld.
 
 Een kopie is een schuld: hij mist een verbetering van bovenstrooms in stilte. Daarom legt
-`tests/test_lotc_foutmelding_veld.py` hem naast de geïnstalleerde versie (modulo de
-bewuste regels), toetst hij dat onze kopie ook echt wint op de searchpath, en toetst hij
-dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
+`tests/test_lotc_foutmelding_veld.py` ze alle drie naast de geïnstalleerde versie (modulo
+de bewuste regels), toetst hij dat onze kopieën ook echt winnen op de searchpath, en
+toetst hij dat het origineel de gebreken nog heeft - zijn die weg, dan kan de kopie weg.
 
 ## Testen
 
