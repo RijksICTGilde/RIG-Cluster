@@ -153,10 +153,14 @@ def test_het_afhankelijke_veld_op_de_componentstap_is_geen_select(app_server: st
     info = _veldinfo(page)
     assert info["gevonden"], "geen enkel [data-rerender]-veld op de componentstap"
     assert info["tag"] == "NLDD-CHECKBOX-FIELD", f"onverwachte vorm van het afhankelijke veld: {info}"
-    # LEGE STRING, niet afwezig. Dat is het hele punt: `_hertekenNaDeSwap` doet
-    # `naam ? _besturingMetNaam(naam) : null`, en een lege string is falsy -- dus het
-    # herstelpad kan dit veld niet terugvinden en haakt af met een console-waarschuwing.
-    assert info["naam"] == "", (
+    # GEEN BRUIKBARE NAAM. Dat is het hele punt: `_hertekenNaDeSwap` doet
+    # `naam ? _besturingMetNaam(naam) : null`, dus het herstelpad kan dit veld niet
+    # terugvinden en haakt af met een console-waarschuwing.
+    #
+    # Of dat een lege string is of helemaal geen attribuut maakt voor dat pad niets uit, en
+    # het wisselt per themaversie: tot NLDD 0.8.80 stond er `name=""`, sindsdien haalt het
+    # component het lege attribuut weg. Daarom staat hier de VOORWAARDE en niet de ene vorm.
+    assert not info["naam"], (
         "de host draagt nu een echte naam. Dat is goed nieuws voor het herstelpad van RC-127 "
         f"(dat zoekt op naam), dus werk die verwachting hier bij: {info}"
     )
