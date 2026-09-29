@@ -562,14 +562,14 @@
                                                     supporting-text="{{ definition.description if definition else '' }}" />
                                                 {# Het vraagteken opent de uitleg van die dienst: dezelfde functie
                                                    uit static/js/wizard.js en dezelfde dialoog, die onderaan deze
-                                                   pagina in bg/_modals.html.j2 staat. Als <c-list-item-action>,
+                                                   pagina in bg/_modals.html.j2 staat. Als <c-list-item-segment>,
                                                    want dat is de bediening die BIJ een rij hoort - een losse knop
                                                    ernaast was precies wat de rij rommelig maakte. #}
                                                 {% if definition and definition.help_template %}
                                                     {% set uitleg_js %}event.stopPropagation(); openServiceHelp('{{ definition.help_template | e }}'){% endset %}
-                                                    <c-list-item-action button accessible-label="Uitleg over {{ definition.name }}" @click="{{ uitleg_js }}">
+                                                    <c-list-item-segment button accessible-label="Uitleg over {{ definition.name }}" @click="{{ uitleg_js }}">
                                                         <c-icon-cell icon="question-mark-circle" size="20" />
-                                                    </c-list-item-action>
+                                                    </c-list-item-segment>
                                                 {% endif %}
                                             </c-list-item>
                                         {% endfor %}

@@ -240,3 +240,42 @@ def test_no_element_carries_two_class_attributes() -> None:
     ]
 
     assert not offenders, "Voeg de klassen samen tot een class-attribuut:\n" + "\n".join(offenders)
+
+
+#: De formulieren waarvan de velden op de SERVER gevalideerd worden. Zij moeten
+#: ``novalidate`` dragen, anders valideert de browser ze ook en wint hij.
+#:
+#: Sinds NLDD 0.8.92 melden de veldcomponenten hun ``required`` via ElementInternals aan
+#: het formulier. ``requestSubmit()`` weigert dan te versturen en de browser toont zijn
+#: eigen tekstballon, in de taal van de BROWSER ("Please fill out this field."), zonder
+#: onze veldspecifieke regels en zonder dat het verzoek ooit de server haalt. Met 0.8.80
+#: gaf ``checkValidity()`` op een leeg verplicht veld nog ``true``, dus dit is geen
+#: bestaand gat maar een omslag.
+#:
+#: Als opsomming en niet als "elk formulier": een zoekformulier of een GET-filter heeft
+#: geen server-gevalideerde velden en gaat dit niet aan.
+FORMULIEREN_MET_SERVERVALIDATIE = {
+    "bg/_wizard-step.html.j2": "wizard-step-form",
+    "wizard/wizard_step.html.j2": "wizard-step-form",
+    "bg/_modal-wizard-step.html.j2": "modal-wizard-form",
+    "wizard/modal_wizard_step.html.j2": "modal-wizard-form",
+    "widgets/form_start.html.j2": "{{ form_id|e }}",
+}
+
+
+def test_server_gevalideerde_formulieren_staan_op_novalidate() -> None:
+    """Een browser die zelf valideert houdt onze Nederlandse meldingen tegen."""
+    zonder = []
+    for pad, form_id in FORMULIEREN_MET_SERVERVALIDATIE.items():
+        tekst = (TEMPLATES_DIR / pad).read_text()
+        opening = re.search(r"<form\b[^>]*>", tekst, re.DOTALL)
+        assert opening, f"{pad} heeft geen <form> meer"
+        assert form_id in opening.group(0), f"{pad}: de <form> heet niet meer {form_id}"
+        if "novalidate" not in opening.group(0):
+            zonder.append(pad)
+
+    assert zonder == [], (
+        "Deze formulieren laten de browser meevalideren. Die weigert dan te versturen bij "
+        "een leeg verplicht veld en toont een tekstballon in zijn eigen taal, zodat onze "
+        "eigen melding nooit verschijnt:\n  " + "\n  ".join(zonder)
+    )
