@@ -253,25 +253,32 @@ def test_no_element_carries_two_class_attributes() -> None:
 #: bestaand gat maar een omslag.
 #:
 #: Als opsomming en niet als "elk formulier": een zoekformulier of een GET-filter heeft
-#: geen server-gevalideerde velden en gaat dit niet aan.
+#: geen server-gevalideerde velden en gaat dit niet aan. De waarde is een stuk tekst dat in
+#: de openingstag hoort te staan, zodat deze test merkt dat hij de verkeerde <form> leest.
 FORMULIEREN_MET_SERVERVALIDATIE = {
     "bg/_wizard-step.html.j2": "wizard-step-form",
     "wizard/wizard_step.html.j2": "wizard-step-form",
     "bg/_modal-wizard-step.html.j2": "modal-wizard-form",
     "wizard/modal_wizard_step.html.j2": "modal-wizard-form",
     "widgets/form_start.html.j2": "{{ form_id|e }}",
+    "admin/user-form.html.j2": "{{ form_action }}",
+    "bg/admin-user-form.html.j2": "{{ form_action }}",
+    "invite-register.html.j2": "/invite/{{ invite_key }}/register",
+    "bg/invite-register.html.j2": "/invite/{{ invite_key }}/register",
+    "project-form-demo/_formulier.html.j2": "/projects/form-demo",
 }
 
 
 def test_server_gevalideerde_formulieren_staan_op_novalidate() -> None:
     """Een browser die zelf valideert houdt onze Nederlandse meldingen tegen."""
     zonder = []
-    for pad, form_id in FORMULIEREN_MET_SERVERVALIDATIE.items():
+    for pad, kenmerk in FORMULIEREN_MET_SERVERVALIDATIE.items():
         tekst = (TEMPLATES_DIR / pad).read_text()
-        opening = re.search(r"<form\b[^>]*>", tekst, re.DOTALL)
-        assert opening, f"{pad} heeft geen <form> meer"
-        assert form_id in opening.group(0), f"{pad}: de <form> heet niet meer {form_id}"
-        if "novalidate" not in opening.group(0):
+        # De openingstag MET dit kenmerk erin, en niet de eerste de beste: een paar van deze
+        # bestanden noemen <form> ook in hun toelichting bovenaan.
+        tags = [tag for tag in re.findall(r"<form\b[^>]*>", tekst, re.DOTALL) if kenmerk in tag]
+        assert len(tags) == 1, f"{pad}: verwacht een <form> met {kenmerk} erin, gevonden: {len(tags)}"
+        if "novalidate" not in tags[0]:
             zonder.append(pad)
 
     assert zonder == [], (

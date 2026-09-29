@@ -134,17 +134,23 @@
      * dus de focus valt op <body>. Je zag dan wel dat er een veld rood was en moest er
      * alsnog met de muis heen.
      *
-     * Het veld is een <nldd-text-field> met aria-invalid="true", en die componenten draaien
-     * op delegatesFocus (gemeten in de themabundel), dus focus() op de huls komt vanzelf in
-     * het echte invoerveld terecht. preventScroll omdat de regel eronder het beeld rustig
-     * verplaatst; focus() alleen springt naar de rand.
+     * Het veld is een <nldd-text-field> en die componenten draaien op delegatesFocus
+     * (gemeten in de themabundel), dus focus() op de huls komt vanzelf in het echte
+     * invoerveld terecht. preventScroll omdat de regel eronder het beeld rustig verplaatst;
+     * focus() alleen springt naar de rand.
+     *
+     * TWEE MERKTEKENS, want er zijn twee soorten besturing. Sinds NLDD 0.8.84 draagt een
+     * themaveld `invalid` in de light DOM en zet het component zijn `aria-invalid` op het
+     * invoerelement BINNEN zijn schaduwboom, waar een querySelector niet komt. Een kale
+     * <select> of <input> draagt alleen `aria-invalid`. Met alleen de tweede selector bleef
+     * de cursor op <body> staan bij elke stap zonder keuzelijst.
      *
      * Alleen een VELD krijgt de cursor. Staat er geen fout veld maar wel een foutregel of
      * een melding, dan wordt daar alleen naartoe gescrold: in tekst kun je niet typen. */
     function naarDeEersteFout(gebied) {
-        var veld = gebied.querySelector('[aria-invalid="true"]');
+        var veld = gebied.querySelector('[invalid], [aria-invalid="true"]');
         var doel = veld
-            || gebied.querySelector(".rvo-form-field__error-text, .lotc-form-field__error-text")
+            || gebied.querySelector("nldd-validation-item, .rvo-form-field__error-text, .lotc-form-field__error-text")
             || gebied.querySelector('[data-roos-component="alert"]');
         if (!doel) return false;
         if (veld && typeof veld.focus === "function") veld.focus({ preventScroll: true });
