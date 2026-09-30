@@ -94,8 +94,10 @@ renderden als niets**, waaronder de bewerkknop en de verwijderknop.
 Er waren twee oorzaken, allebei stil:
 
 1. **De poort las de verkeerde bron.** `tests/test_lotc_icon_mapping.py` toetste tegen
-   `icons.json` van `lord_of_the_components` (327 namen). De bundel die de browser laadt
-   bevat er 271. De 56 namen ertussen bestaan op papier. De test was jarenlang groen.
+   `icons.json` van `lord_of_the_components` (toen 327 namen). De bundel die de browser
+   laadde bevatte er 271. De 56 namen ertussen bestonden op papier. De test was jarenlang
+   groen. De getallen zijn die van NLDD 0.8.80; ze verschillen per versie, zie
+   `opi/web/nldd_iconen.py`.
 2. **De vertaaltabel wordt op sjablonen niet toegepast.** `ROOS_TO_NLDD_ICONS` loopt via
    het `nldd_icon`-FILTER. Een letterlijke `icon="verwijderen"` in een sjabloon komt daar
    nooit langs: de naam staat in de tabel, hij wordt niet vertaald, en hij rendert als

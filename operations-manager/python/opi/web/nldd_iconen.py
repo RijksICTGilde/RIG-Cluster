@@ -1,9 +1,20 @@
 """Welke iconen het NLDD-thema echt LEVERT.
 
 Waarom dit bestand bestaat, en waarom het niet gewoon ``icons.json`` leest: die lijst is
-de bedoelde woordenschat en telt 327 namen, terwijl de bundel die de browser laadt er 271
-bevat. Die 56 namen ertussen bestaan dus op papier en renderen als niets - ``media-pause``
-en ``square-arrow-down`` zijn er twee van, en die stonden allebei in het logpaneel.
+de bedoelde woordenschat, en de bundel die de browser laadt is wat er werkelijk getekend
+wordt. Die twee lopen uiteen, en een naam die alleen op papier bestaat rendert als niets,
+zonder foutmelding.
+
+Hoe groot dat gat is verschilt per versie, dus het getal hieronder is een meting en geen
+eigenschap. Op NLDD 0.8.92 (pin 172300a) telt ``icons.json`` onder de set ``nldd`` 677
+namen en levert dit bestand er 686; het gat is 2 namen die wel in de lijst staan en niets
+tekenen: ``stack-code`` en ``rectangle-stack-chevron-left-forward-slash-chevron-right``.
+
+En het loopt per versie de andere kant op. Op 0.8.80 waren ``media-pause`` en
+``square-arrow-down`` juist de namen die leeg renderden en zat ``square-and-arrow-down``
+wel in de bundel; op 0.8.92 is dat omgedraaid en tekenen die eerste twee gewoon. Een naam
+kiezen omdat hij ooit gemeten is, is dus niet genoeg: meet hem opnieuw bij een bump, want
+het blijft een leeg ``<svg>`` zonder een enkele tekening erin.
 
 Dat verschil is niet theoretisch. De iconentoets las jarenlang ``icons.json``, was groen,
 en ondertussen stonden er lege plekken in de interface. Een poort die de verkeerde bron
@@ -15,14 +26,16 @@ veroudert stilzwijgend bij een versiebump, en juist daartegen is dit bedoeld.
 
 Twee soorten namen tellen mee:
 
-- de iconen zelf, die in de bundel als ``["naam", "<svg ...>"]`` staan;
+- de iconen zelf, die in de bundel als ``["naam", "<svg ...>"]`` staan: 358 op 0.8.92;
 - de vriendelijke namen die NLDD zelf doorverwijst (``search`` -> ``magnifier``,
-  ``delete`` -> ``trash``, ``info`` -> ``info-circle``). Die renderen gewoon, dus ze
-  horen bij de woordenschat.
+  ``delete`` -> ``trash``, ``info`` -> ``info-circle``): 328 op 0.8.92. Die renderen
+  gewoon, dus ze horen bij de woordenschat.
 
-Gemeten tegen een browser: 79 namen uit de sjablonen door een echte ``<nldd-icon>`` en
-``<nldd-button>`` gehaald en gekeken of er een pad in het SVG zat. De set die daar
-uitkwam is precies de set die dit bestand oplevert.
+De alias-regex is daarbij ruim: uit de geminificeerde bundel pikt hij ook elf sleutels op
+die geen iconnaam zijn (``type``, ``linux``, ``radiogroup`` en acht andere). Dat maakt de
+set iets te groot en nooit te klein, en te groot is hier de veilige kant: deze set
+WAARSCHUWT, en de echte poort is ``tests/test_lotc_icon_mapping.py``, die op de
+gerenderde markup meet.
 """
 
 from __future__ import annotations
