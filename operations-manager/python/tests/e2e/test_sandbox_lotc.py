@@ -21,12 +21,18 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 # bestanden in plaats van in een <style> en een <script> per exemplaar op de pagina.
 # lotc-nldd.css en lotc-nldd.js staan BUITEN dist/, dus ze komen langs een andere wortel
 # van de /static/lotc/-route dan de rest van het thema.
+# De lijst is volledig, en tests/test_lotc_assets_bereikbaar.py houdt dat zo: die legt hem
+# naast wat een gerenderde pagina werkelijk ophaalt, in beide richtingen. Zonder die tweede
+# richting stonden forms/forms.css en nldd/dist/css/global.css er niet in, terwijl elke
+# pagina ze laadt.
 STATIC_ASSETS = [
     "/static/lotc/nldd/dist/nldd.js",
+    "/static/lotc/nldd/dist/css/global.css",
     "/static/lotc/layout/layout.css",
     "/static/lotc/app-components.css",
     "/static/lotc/nldd/lotc-nldd.css",
     "/static/lotc/nldd/lotc-nldd.js",
+    "/static/lotc/forms/forms.css",
     "/static/lotc/forms/forms.js",
 ]
 

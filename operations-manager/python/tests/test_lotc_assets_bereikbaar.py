@@ -76,6 +76,16 @@ def test_de_sandboxlijst_noemt_de_bestanden_die_deze_versie_levert() -> None:
         f"test_sandbox_lotc.STATIC_ASSETS noemt bestanden die geen enkele pagina meer ophaalt: {verdwenen}"
     )
 
+    # EN DE ANDERE KANT OP, want dat is de kant waarop de lijst achterop raakt. Alleen op
+    # verdwenen regels toetsen laat een nieuw bestand ongemerkt buiten de lijst vallen:
+    # precies wat er met de vijf bestanden van 0.8.83 gebeurde, en met forms/forms.css en
+    # nldd/dist/css/global.css, die er al langer buiten stonden.
+    ontbreekt = sorted(uit_de_head - genoemd)
+    assert ontbreekt == [], (
+        "Elke pagina haalt deze bestanden op, maar test_sandbox_lotc.STATIC_ASSETS noemt ze "
+        f"niet, dus niemand toetst of ze in de image zitten: {ontbreekt}"
+    )
+
     # nldd/dist/nldd.js is de kernbundel: zonder dat bestand is elk <nldd-*> een leeg
     # element. Hij heeft de bundelherstructurering van 0.8.83 overleefd, en dat hoort
     # gepind te zijn en niet aangenomen.
