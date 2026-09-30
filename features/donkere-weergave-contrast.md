@@ -92,10 +92,14 @@ de bedoeling van dat spiegelen.
 **`tests/test_donkere_weergave_vaste_kleuren.py`** (bron, snel). Zoekt in onze stylesheets,
 onze sjablonen en de componentenlaag naar `var(--naam, <kleur>)` waarvan `--naam` nergens
 gezet wordt. Dat is precies de fout hierboven, en de test noemt bestand en regel. Namen uit
-de componentenlaag die wij bewust niet invullen staan in `BEWUST_NIET_INGEVULD`, met de
-reden: die componenten zetten hun voorgrond én achtergrond zelf vast, dus zijn ze in beide
-standen even leesbaar. Een tweede test houdt die lijst schoon: een uitzondering die geen
-enkel component meer opvraagt, hoort weg.
+de componentenlaag die wij bewust niet invullen staan in `BEWUST_NIET_INGEVULD`, elk met
+de meting die zegt waarom hij zo mag blijven. Die lijst is sinds NLDD 0.8.92 leeg: elke
+naam die de gescande pakketten opvragen, vullen wij in. Een tweede test houdt hem schoon:
+een uitzondering die geen enkel component meer opvraagt, hoort weg.
+
+Wat er NIET gescand wordt is `lotc_rvo`: dat pakket is wel geinstalleerd, maar staat niet
+in `DESIGN_SYSTEMS`, dus geen pagina haalt zijn stijlbladen op. Een terugval daarin kan
+niets onleesbaar maken.
 
 **`tests/e2e/test_donkere_weergave_contrast.py`** (browser, echt). Rekent per stuk tekst op
 de getroffen schermen de werkelijke verhouding uit, in beide standen. Twee dingen daarin

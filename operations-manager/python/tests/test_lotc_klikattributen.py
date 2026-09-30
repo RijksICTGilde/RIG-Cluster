@@ -33,6 +33,7 @@ from __future__ import annotations
 import pathlib
 import re
 
+from lord_of_the_components.extension import ComponentError
 from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
 from opi.core.templates_lotc import templates_lotc
 
@@ -129,3 +130,46 @@ def test_een_json_waarde_zonder_forceescape_breekt_het_attribuut() -> None:
     verouderd = "de componentlaag escapet Markup nu zelf; dan kan forceescape uit de sjablonen en deze regel weg"
     assert 'onclick="f("project")"' in kapot, verouderd
     assert 'onclick="f(&#34;project&#34;)"' in heel
+
+
+def _fout(bron: str, **context: object) -> str:
+    """Het rendertype en de melding van een aanroep die geweigerd hoort te worden."""
+    try:
+        templates_lotc.env.from_string(bron).render(**context)
+    except (ValueError, ComponentError) as fout:
+        return f"{type(fout).__name__}: {fout}"
+    raise AssertionError(f"deze aanroep werd niet geweigerd: {bron}")
+
+
+def test_een_handler_in_een_attrs_spread_wordt_geweigerd() -> None:
+    """De derde regel uit features/lotc-bouwlijn.md, die tot nu toe geen toets had.
+
+    Een spread draagt gegevens, en een gegeven mag geen uitvoerbaar script worden. Slaat
+    deze weigering om in stil doorlaten, dan is elke dict die ooit een sleutel ``onclick``
+    kan krijgen een weg naar script in de pagina; dat valt nergens anders op, want de
+    uitvoer ziet er dan gewoon uit.
+    """
+    for handler in ("onclick", "onchange"):
+        bron = '{% set a = {"HANDLER": "f()"} %}<c-button label="x" :attrs="a" />'.replace("HANDLER", handler)
+
+        melding = _fout(bron)
+
+        assert melding.startswith("ValueError: "), melding
+        assert f"'{handler}' is not allowed in an :attrs spread" in melding, melding
+
+    # De keerzijde: een gewone sleutel gaat er wel doorheen, dus de weigering hierboven
+    # gaat over de handler en niet over de spread zelf.
+    heel = templates_lotc.env.from_string('{% set a = {"data-x": "1"} %}<c-button label="x" :attrs="a" />').render()
+    assert 'data-x="1"' in heel
+
+
+def test_de_oude_spelling_dubbelepunt_at_click_bestaat_niet_meer() -> None:
+    """``:@click="expr"`` kende de bibliotheek ooit; nu is het een onbekend attribuut.
+
+    Zonder deze kant leest de weigering hierboven als "gebruik dan maar de spread-vorm van
+    een handler", en die is er niet: ``@click="{{ expr }}"`` is de enige vorm.
+    """
+    melding = _fout('<c-button label="x" :@click="expr" />', expr="f()")
+
+    assert melding.startswith("ComponentError: "), melding
+    assert "Unknown attribute ':@click'" in melding, melding
