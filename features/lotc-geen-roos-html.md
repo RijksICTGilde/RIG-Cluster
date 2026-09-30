@@ -113,12 +113,12 @@ De LOTC-tegenhanger van het voortgangsfragment was zelf kapot en is meegereparee
 - de foutmelding sloot een automatisch omgezette partial in, zonder de suggestie en met een
   lege, dode logboeklink.
 
-De juiste vorm voor een knop met een aanroep is `:attrs`; `<c-button>` laat geen losse
-`onclick` toe:
+De juiste vorm voor een knop met een aanroep is `@click` op de componenttag; een losse
+`onclick` weigert `<c-button>` als onbekend attribuut:
 
 ```jinja
 {% set sluiten_js %}{{ on_complete }}{% endset %}
-<c-button type="primary" label="Sluiten" :attrs="{'onclick': sluiten_js}" />
+<c-button type="primary" label="Sluiten" @click="{{ sluiten_js }}" />
 ```
 
 ## De poorten

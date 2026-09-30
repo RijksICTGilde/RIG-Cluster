@@ -15,10 +15,6 @@
   rendert het de acties van de deployment die de pagina toont. De wikkel houdt zijn
   ``id="deployment-actions-<naam>"``: die zegt bij welke deployment deze knoppen horen.
 
-  De aanroep wordt met {% set %} BOVEN de tag opgebouwd: <c-button> laat geen onclick toe,
-  :attrs zet het attribuut wel door, en een genest aanhalingsteken binnen :attrs leest de
-  voorbewerker als het einde van het attribuut.
-
   De twee takken van een dienstknop (een eigen modal-URL of de gedeelde
   bevestigingsroute) staan hier als een expressie in de {% set %} in plaats van als twee
   hele knoppen: een {% if %} BINNEN een componenttag kan niet, maar in een {% set %} wel.
