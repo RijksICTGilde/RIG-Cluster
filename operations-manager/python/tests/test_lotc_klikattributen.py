@@ -44,6 +44,13 @@ KLIK_UIT_VARIABELE = re.compile(r'@([a-z]+)\s*=\s*"\{\{\s*([^}]+?)\s*\}\}"')
 SET_BLOK = "{{%\\s*set\\s+{naam}\\s*%}}(.*?){{%\\s*endset\\s*%}}"
 SET_INLINE = "{{%\\s*set\\s+{naam}\\s*=\\s*(.+?)%}}"
 
+#: De hele waarde van een ``:attrs``-spread. Een van die spreads loopt over meerdere
+#: regels, dus dit gaat over de tekst van het bestand en niet per regel.
+ATTRS_SPREAD = re.compile(r':attrs\s*=\s*"([^"]*)"')
+
+#: Een sleutel in zo'n spread die een gebeurtenis-afhandelaar is: ``"onclick":``.
+HANDLER_SLEUTEL = re.compile(r"""['"](on[a-z]+)['"]\s*:""")
+
 
 def _templatebestanden() -> list[pathlib.Path]:
     """Alle Jinja-templates van het portaal: de eigen map plus die van de diensten."""
@@ -83,6 +90,29 @@ def test_een_json_waarde_in_een_klikafhandelaar_gaat_langs_forceescape() -> None
         "Markup op, en het escapen dat de componentlaag doet laat markup met rust, dus de "
         "aanhalingstekens uit de JSON belanden rauw in het onclick-attribuut en sluiten "
         "dat voortijdig. Zet er | forceescape achter:\n  " + "\n  ".join(kaal)
+    )
+
+
+def test_geen_enkele_attrs_spread_draagt_een_handler_sleutel() -> None:
+    """Een spread met een ``on*``-sleutel is sinds NLDD 0.8.92 een 500, niet een no-op.
+
+    Zo stonden ze er wel: de handlers zaten in ``:attrs="{'onclick': ...}"`` omdat de
+    ``@``-vorm zijn waarde toen niet renderde. Die reden is weg, en de spread WEIGERT de
+    sleutel nu met een ValueError (de meting staat onderaan dit bestand). Komt er een
+    terug, dan valt dat niet op bij het compileren maar pas als iemand die pagina opvraagt,
+    en dan met een foutpagina in plaats van een knop die niets doet.
+    """
+    gevonden = [
+        f"{pad}: {sleutel}"
+        for pad in _templatebestanden()
+        for spread in ATTRS_SPREAD.findall(pad.read_text())
+        for sleutel in HANDLER_SLEUTEL.findall(spread)
+    ]
+
+    assert gevonden == [], (
+        "Deze :attrs-spreads dragen een gebeurtenis-afhandelaar. De componentlaag weigert "
+        'die met een ValueError, dus de pagina geeft een 500. Schrijf hem als @click="{{ ... }}" '
+        "op de tag zelf:\n  " + "\n  ".join(gevonden)
     )
 
 
