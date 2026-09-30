@@ -29,9 +29,8 @@
     knop is hier een <nldd-button>, geen <button>. Hij dient het formulier wel in, maar
     een selector op de tagnaam vindt hem niet en dan blijft hij tijdens het verzoek
     klikbaar. Zelfde bedoeling, andere tagnaam; net als in bg/_wizard-step.html.j2.
-  - "Annuleren" krijgt zijn onclick via :attrs. <c-button> laat geen onclick-attribuut
-    toe, en closeEditModal() is precies wat die knop moet doen; er is geen href die
-    hetzelfde doet.
+  - "Annuleren" krijgt een klikafhandeling en geen href: closeEditModal() is precies wat
+    die knop moet doen, en er is geen href die hetzelfde doet.
 
   "Vorige" krijgt geen icoon: de NLDD-woordenschat heeft geen pijl naar links, en een
   pijl die de verkeerde kant op wijst is erger dan geen pijl. Zie de KNOWN_GAPS in

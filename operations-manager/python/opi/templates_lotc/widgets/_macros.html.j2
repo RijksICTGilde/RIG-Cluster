@@ -162,10 +162,8 @@ Voorbeelden: {% for ex in field.examples %}<code>{{ ex|e }}</code>{% if not loop
         <c-heading type="h3" size="6" label="{{ name|e }}" class="service-card__title" />
     </c-cluster>
     {% if help_template %}
-    {# De vraagtekenknop opent de hulpdialoog van deze dienst. De aanroep gaat via een
-       {% raw %}{% set %}{% endraw %}-blok en :attrs: <c-icon-button> laat geen onclick toe, en een genest
-       aanhalingsteken binnen :attrs leest de voorbewerker als het einde van het attribuut.
-       stopPropagation staat er omdat de kaart eronder zelf ook een klik afhandelt. #}
+    {# De vraagtekenknop opent de hulpdialoog van deze dienst. stopPropagation staat er
+       omdat de kaart eronder zelf ook een klik afhandelt. #}
     {% set hulp_js %}event.stopPropagation(); openServiceHelp('{{ help_template|e }}'){% endset %}
     {# question-MARK-circle: zo heet hij in de NLDD-woordenschat. Hier stond
        "question-circle", en die naam bestaat daar niet - dan rendert de knop wel maar

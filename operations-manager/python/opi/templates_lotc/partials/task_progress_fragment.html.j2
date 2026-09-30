@@ -56,8 +56,7 @@
 
     {{ progress_task_list(tasks) }}
 
-    {# De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. De
-       vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
+    {# De vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
        zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina
        herlaadde niet. Zelfde vorm als bg/_modal-wizard-progress-fragment.html.j2. #}
     {% if status == "completed" and on_complete is defined and on_complete %}
