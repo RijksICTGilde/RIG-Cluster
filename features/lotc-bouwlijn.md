@@ -37,16 +37,14 @@ pagina's mee, dus hij hoort in de image.
 
 Alle vijf de packages (`lord-of-the-components`, `lotc-rvo`, `lotc-nldd`, `lotc-layout`,
 `lotc-forms`) staan in `pyproject.toml` op **één commit** van
-`github.com/RijksICTGilde/lord-of-the-components`, nu `172300a` (NLDD 0.8.92). Die pin is
-de reden dat dit veilig is: de NLDD-afgeleide componentlaag schuift met een bump mee, en
-meer dan duizend aanroepen mogen niet stil van vorm veranderen.
+`github.com/RijksICTGilde/lord-of-the-components`, nu `172300a` (NLDD 0.8.92).
 
-Een bump is daarom geen losse handeling maar een taak. Wat er bij 0.8.80 → 0.8.92 uit
-bleek te komen: markup waar deze applicatie zelf op selecteert (`secret-field` werd een
-custom element, `list-item-action` heet `list-item-segment`,
-`nldd-form-field-error-text` is een `nldd-validation-list` geworden), een `:attrs`-spread
-die een `on*`-sleutel nu weigert, en veldcomponenten die hun `required` aan het formulier
-melden waardoor de browser het versturen tegenhield. Loop bij een bump dus minimaal na:
+Een bump is geen losse handeling maar een taak. Wat 0.8.80 → 0.8.92 opleverde:
+markup waar deze applicatie zelf op selecteert (`secret-field` werd een custom element,
+`list-item-action` heet `list-item-segment`, `nldd-form-field-error-text` is een
+`nldd-validation-list` geworden). Een `:attrs`-spread die een `on*`-sleutel weigert. En
+veldcomponenten die hun `required` aan het formulier melden, waardoor de browser het
+versturen tegenhield. Loop bij een bump dus minimaal na:
 
 - **de pin verzetten en `uv lock`**, en meten dat `lotc_nldd`'s `registry.json` de
   verwachte `nldd_version` noemt;
@@ -206,22 +204,16 @@ ingevuld moet worden, en formuliervalidatie leest dat ook echt. Een keuzelijst k
 badge nooit, ongeacht dat attribuut: daar staat altijd al iets geselecteerd.
 
 `select-field.html.j2` en `checkbox-field.html.j2` bedraden hun foutmelding. Een
-serverfout staat sinds NLDD 0.8.84 in een `nldd-validation-list`, en die vraagt de
-BESTURING welke eisen onvervuld zijn: een item is zichtbaar als de besturing `invalid`
-draagt én het id van het item in haar `unmet` staat. Vier veldsoorten schrijven dat zelf,
-deze twee niet:
+serverfout staat sinds NLDD 0.8.84 in een `nldd-validation-list`, en die leest de
+besturing: `invalid`, plus het id van het item in `unmet`. Vier veldsoorten schrijven dat
+zelf, de keuzelijst en het losse aankruisvakje niet. Zonder die bedrading is de foutregel
+in een browser 0 px hoog. De metingen per veldsoort staan in `request_for_components.md`,
+samen met het verzoek om het bovenstrooms te repareren.
 
-- de keuzelijst mist `unmet`, en een native `<select>` mist ook `invalid` (die heeft
-  alleen `aria-invalid`, en dat leest de lijst niet);
-- het losse aankruisvakje staat als enige veldsoort niet in een `<nldd-form-field>`, en
-  juist die knoopt de lijst aan de besturing. Onze kopie geeft de lijst daarom `for`.
-
-Gemeten in een browser: zonder deze twee regels is de foutregel 0 px hoog, met 20 px en in
-de kritieke kleur. De groepstak van het aankruisvakje en `radio-button-field` hebben
-hetzelfde gebrek en zijn **niet** gerepareerd: daar hangt de lijst wel aan een
-`nldd-form-field`, maar die knoopt haar aan het eerste invoerelement bínnen de omhulling
-en niet aan de omhulling zelf. Geen veld van dit portaal met die twee widgets is
-`required` of heeft een validator, dus er is geen weg naar een serverfout op zo'n veld.
+De groepstak van het aankruisvakje en `radio-button-field` hebben hetzelfde gebrek en zijn
+**niet** gerepareerd: daar zit de reparatie in `lotc-forms` zelf. Geen veld van dit portaal
+met die twee widgets is `required` of heeft een validator, dus er is geen weg naar een
+serverfout op zo'n veld.
 
 Een kopie is een schuld: hij mist een verbetering van bovenstrooms in stilte. Daarom legt
 `tests/test_lotc_foutmelding_veld.py` ze alle drie naast de geïnstalleerde versie (modulo
@@ -337,7 +329,9 @@ niet: `tojson` levert `Markup` op en dat filter laat markup met rust. Zet er
 uitvoerbaar script worden. De `:@click="expr"`-spelling die de bibliotheek ooit kende
 wordt nu als onbekend attribuut geweigerd; `@click="{{ expr }}"` is de vorm.
 
-`tests/test_lotc_klikattributen.py` meet dit alle drie.
+`tests/test_lotc_klikattributen.py` meet de eerste twee: dat de waarde gerenderd wordt,
+en dat een `tojson`-waarde langs `forceescape` gaat. De weigering in de spread staat
+niet in een toets.
 
 **En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
 van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd

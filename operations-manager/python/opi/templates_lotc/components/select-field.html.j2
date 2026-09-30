@@ -1,26 +1,15 @@
 {# ONZE KOPIE van components/select-field.html.j2 uit lotc-forms, met EEN wijziging:
    de besturing draagt bij een serverfout ``invalid unmet="<id>-error"``.
 
-   Zonder dat staat de foutmelding er wel en is hij niet te zien. Gemeten in een browser
-   op de markup die lotc-forms zelf oplevert, met NLDD 0.8.92:
-
-   | besturing                                  | hoogte foutregel |
-   |--------------------------------------------|------------------|
-   | ``<select ... aria-invalid="true">``        | 0                |
-   | ``<nldd-combo-box ... invalid>``            | 0                |
-   | met ``invalid unmet="<id>-error"`` erbij    | 20               |
-
-   ``nldd-validation-list`` vraagt de BESTURING welke items onvervuld zijn: het item is
-   zichtbaar als de besturing ``invalid`` draagt EN het id van het item in haar ``unmet``
-   staat. De veldsjablonen van tekst, tekstvlak, datum en bestand schrijven dat sinds
-   0.8.84 zelf; deze twee takken zijn vergeten, en een native ``<select>`` mist ook de
-   ``invalid`` (het heeft alleen ``aria-invalid``, en dat leest de lijst niet).
+   Zonder dat is de foutregel 0 px hoog: de melding staat er en is niet te zien. De
+   veldsjablonen van tekst, tekstvlak, datum en bestand schrijven het sinds NLDD 0.8.84
+   zelf, de NLDD- en de native-tak hieronder niet, en een native ``<select>`` mist ook de
+   ``invalid``. De metingen per tak staan in request_for_components.md.
 
    De rest is letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt onze kopie
    naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
 
-   Weghalen zodra lotc-forms deze twee takken zelf bedraadt. Het verzoek staat in
-   request_for_components.md.
+   Weghalen zodra lotc-forms deze twee takken zelf bedraadt.
 
    ---- vanaf hier de kopie ---- #}
 {% import 'components/_forms.j2' as f %}

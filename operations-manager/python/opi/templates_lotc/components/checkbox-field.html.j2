@@ -2,22 +2,15 @@
    de foutlijst van de LOSSE aankruisvakje-tak krijgt ``for="<id>"``.
 
    Die tak zet ``invalid unmet="<id>-error"`` netjes op de besturing, maar staat als enige
-   veldsoort NIET in een ``<nldd-form-field>``: het is een eigen ``<div>``. En juist
-   ``nldd-form-field`` is wat de foutlijst aan de besturing knoopt (``_adoptValidationLists``
-   zet ``list.control``). Zonder ouder blijft ``_resolved`` leeg, leest de lijst nergens
-   ``invalid`` of ``unmet``, en tekent ze een leeg vak.
+   veldsoort NIET in een ``<nldd-form-field>``, en juist die knoopt een lijst zonder
+   ``for`` aan de besturing (``_adoptValidationLists``). Zonder die ouder leest de lijst
+   nergens ``invalid`` of ``unmet`` en tekent ze een leeg vak: gemeten 0 px, met ``for``
+   erbij 20 px.
 
-   Gemeten in een browser met NLDD 0.8.92: zoals lotc-forms het nu doet is de foutregel 0
-   px hoog, met ``for="<id>"`` erbij 20 px en in de kritieke kleur. ``for`` zoekt het
-   element met dat id op in de light DOM, en dat is hier het host-element dat de bedrading
-   al draagt.
-
-   De GROEPS-tak (met ``content``) en ``radio-button-field`` hebben hetzelfde gebrek en
-   zijn hier NIET gerepareerd: daar hangt de lijst wel aan een ``nldd-form-field``, maar
-   die knoopt haar aan het eerste invoerelement BINNEN de omhulling en niet aan de
-   omhulling zelf, dus de reparatie hoort in lotc-forms. Geen veld van dit portaal met die
-   twee widgets is ``required`` of heeft een validator, dus er is vandaag geen weg naar een
-   serverfout op zo'n veld. Het verzoek staat in request_for_components.md.
+   De GROEPS-tak en ``radio-button-field`` hebben hetzelfde gebrek en zijn hier NIET
+   gerepareerd: daar zit de reparatie in lotc-forms zelf. Geen veld van dit portaal met
+   die twee widgets is ``required`` of heeft een validator, dus er is vandaag geen weg
+   naar een serverfout op zo'n veld. Het verzoek staat in request_for_components.md.
 
    De rest is letterlijk overgenomen; tests/test_lotc_foutmelding_veld.py legt onze kopie
    naast de geinstalleerde en faalt zodra er nog iets anders verschilt.
