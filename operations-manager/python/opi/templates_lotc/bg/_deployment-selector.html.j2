@@ -41,10 +41,8 @@
   Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
   een tag betekent dat de browser de tweede negeert.
 
-  DE HANDLER GAAT VIA @change EN NIET VIA :attrs. Sinds NLDD 0.8.92 weigert de spread een
-  ``on*``-sleutel met een ValueError: een spread draagt gegevens, en een gegeven mag geen
-  uitvoerbaar script worden. De ``@event``-vorm is de weg die daarvoor bestaat en levert
-  hetzelfde ``onchange`` op de <select> op.
+  DE HANDLER GAAT VIA @change EN NIET VIA :attrs: die spread weigert een ``on*``-sleutel
+  sinds NLDD 0.8.92 met een ValueError.
 
   data-no-optional-badge, omdat lotc-forms elk niet-
   verplicht veld van het label "Optioneel" voorziet (rijksconventie: markeer optioneel,

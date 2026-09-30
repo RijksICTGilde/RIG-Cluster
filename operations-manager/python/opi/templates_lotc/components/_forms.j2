@@ -15,16 +15,6 @@
       omhulling en niet op de besturing, dus de toets op ``besturing`` ziet hem daar nooit.
       Vandaar de voorwaarde op ``kind``, de naam die het veldsjabloon zelf meegeeft.
 
-   Beide wijzigingen lezen de gerenderde besturing, dus die wordt EEN keer in een
-   variabele gezet in plaats van twee keer aangeroepen.
-
-   Hier stond een derde wijziging: de foutmelding werd bedraad zodat je hem ook ZAG. Die
-   is met NLDD 0.8.84 opgelost aan de kant van lotc-forms. ``nldd-form-field-error-text``
-   en ``error-message-ids`` zijn verdwenen; het veldsjabloon zet nu ``invalid
-   unmet="<id>"`` op de besturing en de frame emitteert een ``nldd-validation-list``. Het
-   filter ``foutbedrading`` en ``bedraad_foutmelding`` in opi/forms/lotc_attrs.py zijn
-   daarmee weg.
-
    Dit bestand ligt op de searchpath VOOR de sjablonen van de design systems (die zet
    setup_components erachteraan), dus elk veldsjabloon van lotc-forms dat
    ``components/_forms.j2`` importeert krijgt deze. Daarom is dit EEN plek en niet zeven.

@@ -85,10 +85,8 @@
                                   onclick="copyLogs()"></nldd-icon-button>
             </nldd-toolbar-item>
             <nldd-toolbar-item slot="end">
-                {# square-arrow-down, niet square-and-arrow-down. Met NLDD 0.8.80 was dat
-                   omgekeerd en rendeerde deze knop een leeg vierkantje; met 0.8.92 is de
-                   naam met "and" juist de lege. Zie tests/test_lotc_icon_mapping.py, dat de
-                   geleverde set meet. #}
+                {# square-arrow-down, niet square-and-arrow-down: welke van de twee in de
+                   bundel zit wisselt per versie. tests/test_lotc_icon_mapping.py meet dat. #}
                 <nldd-icon-button size="sm" variant="neutral-transparent"
                                   icon="square-arrow-down" accessible-label="Downloaden"
                                   onclick="downloadLogs()"></nldd-icon-button>

@@ -118,13 +118,8 @@
 
         {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
         {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
-        {# novalidate: de velden worden op de SERVER gevalideerd en die meldingen staan in het
-                     Nederlands onder het veld. Sinds NLDD 0.8.92 melden de veldcomponenten hun
-                     ``required`` via ElementInternals aan het formulier, en dan weigert
-                     requestSubmit() te versturen en toont de browser zijn eigen tekstballon -
-                     in de taal van de BROWSER ("Please fill out this field."), zonder onze
-                     veldspecifieke regels en zonder dat het verzoek ooit de server haalt.
-                     Gemeten: met 0.8.80 gaf checkValidity() op een leeg verplicht veld nog true. #}
+        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py voor het waarom. #}
         <form id="modal-wizard-form"
               novalidate
               autocomplete="off"

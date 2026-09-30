@@ -10,13 +10,8 @@
   <c-stack> zou geven. Zou het opdelen in start en eind ooit verdwijnen, dan kan hier
   gewoon weer een component staan.
 #}
-{# novalidate: de velden worden op de SERVER gevalideerd en die meldingen staan in het
-             Nederlands onder het veld. Sinds NLDD 0.8.92 melden de veldcomponenten hun
-             ``required`` via ElementInternals aan het formulier, en dan weigert
-             requestSubmit() te versturen en toont de browser zijn eigen tekstballon -
-             in de taal van de BROWSER ("Please fill out this field."), zonder onze
-             veldspecifieke regels en zonder dat het verzoek ooit de server haalt.
-             Gemeten: met 0.8.80 gaf checkValidity() op een leeg verplicht veld nog true. #}
+{# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+   in tests/test_template_structure.py voor het waarom. #}
 <form id="{{ form_id|e }}" method="{{ method|e }}" action="{{ action|e }}"
       {% if enctype %}enctype="{{ enctype|e }}"{% endif %}
       {% for key, value in (htmx_attrs or {}).items() %}{{ key|e }}="{{ value|e }}" {% endfor %}

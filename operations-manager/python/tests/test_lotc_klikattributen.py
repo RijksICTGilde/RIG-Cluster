@@ -20,15 +20,11 @@ DAT IS OPGELOST, EN ER IS IETS ANDERS VOOR IN DE PLAATS GEKOMEN
 
 Sinds NLDD 0.8.92 rendert de componentlaag de waarde van een ``@``-afhandelaar net als
 elke andere attribuutwaarde. De omweg via een data-attribuut is dus niet meer nodig; de
-metingen onderaan dit bestand leggen dat vast, zodat de dag dat het weer omslaat hier
-opvalt en niet op een scherm.
+metingen onderaan dit bestand leggen dat vast.
 
-Wat er voor in de plaats komt is de ESCAPING. De waarde komt in een attribuut tussen
-dubbele aanhalingstekens te staan, dus een dubbel aanhalingsteken IN die waarde sluit het
-attribuut voortijdig. Dat gebeurt precies bij de waarden die je met ``tojson`` bouwt, en
-``| e`` helpt niet: ``tojson`` levert ``Markup`` op en dat filter laat markup met rust.
-``| forceescape`` is de afsluiting die wel werkt. Zie
-``tests/test_lotc_attribuutwaarden.py`` voor die meting; hier staat de regel die hem over
+Wat er voor in de plaats komt is de ESCAPING: een waarde die met ``tojson`` is gebouwd
+sluit het attribuut voortijdig, en ``| e`` houdt dat niet tegen. Het waarom staat in
+``tests/test_lotc_attribuutwaarden.py``; hier staat de regel die ``| forceescape`` over
 alle sjablonen afdwingt.
 """
 
@@ -122,10 +118,7 @@ def test_een_jinja_statement_in_een_afhandelaar_wordt_ook_gerenderd() -> None:
 
 
 def test_een_json_waarde_zonder_forceescape_breekt_het_attribuut() -> None:
-    """De keerzijde van de regel bovenaan: zonder het filter sluit het attribuut te vroeg.
-
-    Zonder deze helft zou die regel een afspraak zijn zonder aantoonbare reden.
-    """
+    """De keerzijde van de regel bovenaan: zonder het filter sluit het attribuut te vroeg."""
     kapot = templates_lotc.env.from_string(
         '{% set js = "f(" ~ (naam | tojson) ~ ")" %}<c-button label="x" @click="{{ js }}" />'
     ).render(naam="project")

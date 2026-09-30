@@ -145,10 +145,9 @@ def test_onze_eigen_opmaak_valt_niet_terug_op_een_onbekende_kleurvariabele() -> 
 #: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de tweede test hieronder wees ze
 #: aan).
 #:
-#: Wat er nu staat komt uit de bundelherstructurering van 0.8.83: onder
-#: ``lord_of_the_components/static/lotc/`` staat sindsdien een ``dist/`` met ``lotc.css`` en
-#: de ``@nl-rvo``-stijlbladen erin, en die vragen de focus-tokens van Utrecht op. Twee
-#: redenen om ze niet in te vullen, allebei gemeten:
+#: Wat er nu staat komt uit ``lotc_rvo/static/lotc/dist/``: ``lotc.css`` en de
+#: ``@nl-rvo``-stijlbladen daarin vragen de focus-tokens van Utrecht op. Twee redenen om ze
+#: niet in te vullen, allebei gemeten:
 #:
 #:   1. De terugval is ``transparent`` en niet een vaste LICHTE kleur. Waar deze test voor
 #:      bestaat is een vlak dat in de donkere stand licht blijft; transparant is in beide

@@ -54,8 +54,7 @@ jobs:
       # LOTC_STRICT=1 laat de componentlaag een onbekende ATTRIBUUTWAARDE weigeren (een
       # iconnaam die nergens op uitkomt, een literal buiten een enum) in plaats van hem
       # stil te renderen. Hier en niet in de productie-image: in CI hoort zo'n aanroep
-      # rood te zijn, in productie mag hij geen 500 opleveren. tests/conftest.py zet hem
-      # ook, zodat een lokale run hetzelfde meet; dit is de poort die bindt.
+      # rood te zijn, in productie mag hij geen 500 opleveren.
       - name: Run tests with coverage
         env:
           LOTC_STRICT: "1"
