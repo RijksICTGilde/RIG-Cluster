@@ -19,9 +19,6 @@
   de VOORTGANGSPAGINA staat dat paneel niet, en daar zet de aanroeper `show_log_links` op
   false: een link die niets doet is erger dan geen link. Hier zou weglaten functionaliteit
   weghalen.
-
-  <c-link> laat geen onclick toe; de aanroep gaat via :attrs, opgebouwd met {% raw %}{% set %}{% endraw %}
-  boven de tag. Jinja binnen een componenttag leest de voorbewerker als een attribuut.
 #}
 {% set _severity_type = {"actionable": "error", "informational": "info", "noise": "info"} %}
 {# De groepering gebeurt HIER en niet bij de insluiter: dit bestand wordt vanuit vier
