@@ -47,10 +47,9 @@ ROOS_TO_NLDD_ICONS = {
     "delta-naar-links": "caret-left",
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
-    # square-arrow-down, niet square-and-arrow-down. Dat was met NLDD 0.8.80 nog
-    # omgekeerd: toen zat de naam met "and" in de bundel en de andere alleen in de lijst.
-    # Met 0.8.92 levert square-and-arrow-down een LEEG svg-element (0 tekeningen) en
-    # square-arrow-down er twee. Gemeten in een browser, niet uit de lijst gelezen.
+    # square-arrow-down, niet square-and-arrow-down. Met NLDD 0.8.80 was dat omgekeerd:
+    # welke van de twee namen in de BUNDEL zit wisselt per versie, en de andere rendeert
+    # een leeg svg-element. Gemeten in de bundel, niet uit de iconenlijst gelezen.
     "downloaden": "square-arrow-down",
     # Uitloggen. Stond hier niet, dus het menu-item droeg een lege plek; zichtbaar werd
     # dat pas toen de icoontoets ook het MENU ging meten (RC-67).
