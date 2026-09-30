@@ -97,6 +97,18 @@ _IMAGE_ABSENT_MARKERS = (
 )
 
 
+# Phrases where the registry answered about ITSELF and not about this image, in
+# wording that a marker above would otherwise match. Checked first, so the answer is
+# "we do not know" and nothing is disabled.
+#
+# Quay reuses the distribution-spec code DENIED for a full storage quota on the
+# organisation, so ``denied: Quota has been exceeded on namespace`` read as "absent"
+# and auto-disabled ~40 components across six projects on 2026-09-30, while every
+# image involved was present upstream. A quota is a capacity condition that clears on
+# its own, and the marker ``denied`` has to keep meaning a real authorization refusal.
+_REGISTRY_CAPACITY_MARKERS = ("quota has been exceeded",)
+
+
 def image_is_confirmed_absent(message: str | None) -> bool:
     """True only when the registry answered that this image is absent or refused.
 
@@ -106,6 +118,8 @@ def image_is_confirmed_absent(message: str | None) -> bool:
     if not message:
         return False
     lowered = message.lower()
+    if any(marker in lowered for marker in _REGISTRY_CAPACITY_MARKERS):
+        return False
     return any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS)
 
 
