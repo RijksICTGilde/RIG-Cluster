@@ -45,6 +45,28 @@ def test_mirror_500_is_not_an_answer_about_the_image() -> None:
     )
 
 
+def test_a_full_registry_quota_is_not_an_answer_about_the_image() -> None:
+    # The exact kubelet messages from 2026-09-30, when the storage quota on the shared
+    # proxy-cache organisation ghcr-rig filled up. Quay answers a cache miss with the
+    # distribution-spec code DENIED, so the marker "denied" matched and ~40 components
+    # across six projects were auto-disabled while every image was present upstream.
+    assert not image_is_confirmed_absent(
+        "ErrImagePull: unable to pull image or OCI artifact: pull image err: initializing source "
+        "docker://rcr.rijksapps.nl/ghcr-rig/rijksictgilde/wies:pr-692-20260930-112622-873777b: reading "
+        "manifest pr-692-20260930-112622-873777b in rcr.rijksapps.nl/ghcr-rig/rijksictgilde/wies: "
+        "denied: Quota has been exceeded on namespace; artifact err: get manifest: build image source: "
+        "reading manifest pr-692-20260930-112622-873777b in rcr.rijksapps.nl/ghcr-rig/rijksictgilde/wies: "
+        "denied: Quota has been exceeded on namespace"
+    )
+    assert not image_is_confirmed_absent(
+        'ImagePullBackOff: Back-off pulling image "rcr.rijksapps.nl/ghcr-rig/minbzk/'
+        "moza-notificatiemanagementcomponent@sha256:6a7bc2a52e838f5ca549a6201d71560b830cb30fcc8de98f5dea9c5c"
+        '84b222bd": ErrImagePull: reading manifest sha256:6a7bc2a52e838f5ca549a6201d71560b830cb30fcc8de98f5'
+        "dea9c5c84b222bd in rcr.rijksapps.nl/ghcr-rig/minbzk/moza-notificatiemanagementcomponent: "
+        "denied: Quota has been exceeded on namespace"
+    )
+
+
 def test_other_registry_side_failures() -> None:
     assert not image_is_confirmed_absent("unexpected status from HEAD request: 502 Bad Gateway")
     assert not image_is_confirmed_absent("received unexpected HTTP status: 503 Service Unavailable")
