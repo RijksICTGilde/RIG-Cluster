@@ -138,3 +138,58 @@ kubectl patch argocd argocd -n rig-system --type=json -p='[{"op": "remove", "pat
 ```
 
 The setup will then continue automatically.
+
+## Een SSO-gebruiker blijft onbevestigd en krijgt een 500 bij de wall (deels gerepareerd)
+
+Genoteerd 30-09-2026, gemeten op odcn-production in realm `no-ks4-odcn-production` met
+Keycloak 25.0.6.
+
+Een gebruiker die via SSO inlogt op een applicatie achter de authorization wall kan een
+kale HTTP 500 krijgen op `/oauth2/callback`. In de sidecar staat dan:
+
+```
+[oauthproxy.go:895] Error redeeming code during OAuth2 callback:
+    email in id_token (<adres>) isn't verified
+```
+
+De 500 komt niet van de applicatie. De oauth2-proxy sidecar draait met
+`--insecure-oidc-allow-unverified-email=false` (bewust, zie
+`manifests/sidecar-authorization-wall.yaml.jinja`) en weigert een id_token waarvan
+`email_verified` niet true is. Dat de statuscode 500 is en niet 403 is oauth2-proxy's eigen
+gedrag: elke fout in `redeemCode` wordt een 500.
+
+De vlag komt uit het gebruikersrecord in het projectrealm, en die wordt precies een keer
+gezet. Bij de eerste broker-login maakt `IdpCreateUserIfUniqueAuthenticator` de gebruiker
+en kopieert `serializedCtx.getAttributes()`; het attribuut `email` routeert in de JPA
+`UserAdapter.setAttribute` naar `setEmail`. Daarna zet `IdentityBrokerService` regel 738
+`emailVerified` op true, maar alleen als `trustEmail` aanstaat **en het adres op dat moment
+niet leeg is** en de review-profile-stap het adres niet heeft gewijzigd. Is het adres daar
+leeg, of is het via de profielstap ingevuld, dan blijft de vlag false.
+
+Daarna herstelt niets het meer. Onze IdP staat op `syncMode: IMPORT` (`sso-only.yaml`),
+en `setBasicUserAttributes` (de enige andere plek die de helper aanroept die `emailVerified`
+beheert) loopt alleen bij `FORCE`. De `email-mapper` staat wel op `FORCE` en vult het adres
+bij elke login aan via `user.setEmail()`, maar die raakt de vlag niet aan. Resultaat: adres
+aanwezig, `email_verified` false, en de gebruiker komt er nooit meer in.
+
+Repareren, per getroffen account: zet in Keycloak `Email verified` op On in het projectrealm,
+of verwijder de realm-gebruiker zodat de volgende login hem opnieuw importeert. Verwijderen
+is veilig in een SSO-only realm: daar staan geen lokale wachtwoorden, en de gebruikersdata
+zit in de applicatie.
+
+Wat wel gerepareerd is: de wall levert nu een eigen `error.html` mee, zodat de gebruiker een
+Nederlandse pagina krijgt met een knop om opnieuw in te loggen en een `RequestID` om aan de
+beheerder te geven. Die id staat ook op de access-logregel, dus daarmee is de foutregel in de
+log terug te vinden.
+
+Wat niet gerepareerd is, en waarom: er is geen reconcile die federated gebruikers zonder
+bevestigd adres opspoort en bijwerkt. `syncMode` op `FORCE` zetten lost het niet op, want
+`setDiffAttrToConsumer` roept de helper alleen aan als het adres *verandert*, en bij een al
+gevuld adres gebeurt dat niet. Een `hardcoded-attribute-idp-mapper` werkt ook niet:
+`setSingleAttribute` kent alleen `firstName`, `lastName`, `email` en `username` als speciale
+gevallen, dus dat levert een gewoon attribuut met de naam `emailVerified` op. Blijft over:
+een sweep over alle gebruikers in alle projectrealms, met nieuwe connector-methodes om
+gebruikers te lijsten en bij te werken. Dat is niet gebouwd omdat de trigger nooit is
+waargenomen: Keycloak-auditevents staan in productie uit, dus waarom het adres bij die ene
+eerste login leeg was is niet vastgesteld. Komt dit een tweede keer voor, dan is die sweep
+de volgende stap, en zet dan eerst de auditevents aan om de trigger te zien.
