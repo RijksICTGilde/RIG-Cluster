@@ -69,7 +69,9 @@ def test_de_iconen_van_de_takenlijst_bestaan_in_de_nldd_woordenschat() -> None:
     """Een ROOS-iconnaam rendert in NLDD leeg, zonder fout. Zie test_lotc_icon_mapping.
 
     Gemeten tegen de BUNDEL die de browser laadt en niet tegen ``icons.json``: die twee
-    lopen uiteen (327 namen tegen 271), en deze poort stond hier eerder tegen de lijst.
+    lopen uiteen, en deze poort stond hier eerder tegen de lijst. Hoeveel het scheelt en
+    welke kant het op loopt verschilt per versie; de meting staat in
+    ``opi/web/nldd_iconen.py``.
 
     De namen staan sinds de takenlijst op lijstcomponenten staat als ``icon=`` op een
     ``nldd-icon-cell``; het pictogram zelf zit in de schaduwboom van dat component.
