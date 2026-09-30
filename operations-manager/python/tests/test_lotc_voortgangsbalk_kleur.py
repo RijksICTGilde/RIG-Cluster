@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from lord_of_the_components.extension import ComponentError
 from opi.core.templates_lotc import templates_lotc
+from tests.berekende_attribuutwaarden import sjablonen_met_berekende_waarde
 
 #: De twee sjablonen die hun balkkleur uit de status berekenen.
 SJABLONEN = [
@@ -127,3 +128,18 @@ def test_het_percentage_staat_in_de_balk(sjabloon: str) -> None:
     balk = _balk(sjabloon, "running")
 
     assert 'value-display="inline"' in balk, f"het percentage staat niet in de balk: {balk}"
+
+
+def test_sjablonen_kent_elke_balk_die_zijn_kleur_berekent() -> None:
+    """De lijst hierboven tegen de sjablonen op schijf.
+
+    De overige balken in de applicatie zetten hun kleur letterlijk, en daar staat de
+    compiler al op. Wat hier hoort is de balk die hem uitrekent, en dat is een lijst die
+    veroudert zonder onwaar te worden: een nieuwe balk valt er stil buiten.
+    """
+    gemeten = sjablonen_met_berekende_waarde("c-progress-bar", "color")
+
+    assert gemeten == set(SJABLONEN), (
+        f"SJABLONEN en de sjablonen lopen uiteen. Niet gedekt: {sorted(gemeten - set(SJABLONEN))}; "
+        f"in SJABLONEN maar met een letterlijke kleur: {sorted(set(SJABLONEN) - gemeten)}"
+    )

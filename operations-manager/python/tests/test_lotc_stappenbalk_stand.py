@@ -19,8 +19,16 @@ enige stand waarin hij zijn eigen lijst nakijkt. Die lijst wordt dus niet in dit
 overgeschreven, hij blijft van het component.
 
 Alle drie de balken staan erin: de proefopstelling van /lotc/wizard, en de twee die de
-echte wizard tekent. Die laatste twee rekenen hun stand via ``{{ ... }}`` uit, dus ze zijn
-even onzichtbaar voor de compiler als de eerste.
+echte wizard tekent. Bij die laatste twee leest de compiler wel mee op de afgeronde stap,
+want daar staat ``status="past"`` letterlijk in het sjabloon; de andere tak rekent hij uit
+met ``{{ ... }}`` en die gaat er even ongezien langs als de eerste. Gemeten: ``past`` naar
+``complete`` is een ComponentError bij het compileren, de tak eronder komt alleen hier
+boven water.
+
+Welke sjablonen in BALKEN horen is geen lijst die hier met de hand bijgehouden wordt; die
+vraag stelt ``test_balken_kent_elk_sjabloon_dat_een_stand_berekent`` aan de sjablonen op
+schijf. Anders veroudert juist deze toets op de manier die hij meet: een nieuw sjabloon
+valt er stil buiten.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ import pytest
 from lord_of_the_components.extension import ComponentError
 from opi.core.templates_lotc import templates_lotc
 from opi.web.lotc_fixtures import page_data
+from tests.berekende_attribuutwaarden import sjablonen_met_berekende_waarde
 
 STAP = re.compile(r"<nldd-step-indicator-item\b[^>]*>")
 STAND = re.compile(r'\sstatus="([^"]*)"')
@@ -134,3 +143,19 @@ def test_de_proefopstelling_toont_een_afgeronde_stap() -> None:
     standen = _standen("bg/wizard.html.j2")
 
     assert "past" in standen, f"geen enkele stap staat op 'past', dus de balk toont geen voortgang: {standen}"
+
+
+def test_balken_kent_elk_sjabloon_dat_een_stand_berekent() -> None:
+    """De lijst hierboven tegen de sjablonen op schijf.
+
+    Een stand die de compiler niet leest komt nergens als fout voorbij, dus een sjabloon
+    dat buiten BALKEN valt is precies het geval dat dit bestand hoort te vangen. Een naam
+    die eraf moet is even goed een melding waard: dan rendert de toets een sjabloon dat
+    zijn stand inmiddels letterlijk zet, en staat de meting op de verkeerde plek.
+    """
+    gemeten = sjablonen_met_berekende_waarde("c-step-indicator-item", "status")
+
+    assert gemeten == set(BALKEN), (
+        f"BALKEN en de sjablonen lopen uiteen. Niet gedekt: {sorted(gemeten - set(BALKEN))}; "
+        f"in BALKEN maar zonder berekende stand: {sorted(set(BALKEN) - gemeten)}"
+    )
