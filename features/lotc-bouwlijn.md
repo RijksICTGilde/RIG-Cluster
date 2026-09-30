@@ -329,9 +329,9 @@ niet: `tojson` levert `Markup` op en dat filter laat markup met rust. Zet er
 uitvoerbaar script worden. De `:@click="expr"`-spelling die de bibliotheek ooit kende
 wordt nu als onbekend attribuut geweigerd; `@click="{{ expr }}"` is de vorm.
 
-`tests/test_lotc_klikattributen.py` meet de eerste twee: dat de waarde gerenderd wordt,
-en dat een `tojson`-waarde langs `forceescape` gaat. De weigering in de spread staat
-niet in een toets.
+`tests/test_lotc_klikattributen.py` meet alle drie: dat de waarde gerenderd wordt, dat een
+`tojson`-waarde langs `forceescape` gaat, en dat een `on*`-sleutel in een spread en de
+spelling `:@click` allebei geweigerd worden.
 
 **En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
 van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
@@ -351,12 +351,16 @@ doet - anders gaat het open en blijft het leeg. En de laadtoestand van htmx werk
 `opacity`, wat ruimte blijft innemen; wil je hem echt weg hebben, gebruik dan `display`
 (zie `#approval-loading` in `static/css/modal.css`).
 
-De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
-in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een
-kale `<button>` want die heeft een onclick": nee, dat kan gewoon op een `<c-button>`.
-Welke maat en welk `type` een knop draagt staat in `features/knopmaten.md`. Dat blok is er om twee redenen: een genest
-aanhalingsteken binnen `:attrs` leest de voorbewerker als het einde van het attribuut, en
-de blokvorm rendert de Jinja die in zo'n aanroep zit gewoon mee.
+Dat is meteen het antwoord op "hier hoort een kale `<button>` want die heeft een onclick":
+nee, `@click="..."` kan gewoon op een `<c-button>`. Welke maat en welk `type` een knop
+draagt staat in `features/knopmaten.md`.
+
+**Kopieer niet uit een omgezet sjabloon.** Hier stond dat de omzetter er een echte
+`onclick` van maakt via een `:attrs`-spread met de aanroep in een `{% set %}`-blok ervoor.
+Dat is tweemaal onwaar: zo'n `{% set lotc_onclick_1 %}`-blok wordt aan niets gehangen (de
+knop rendert zonder klikafhandeling, nagemeten) en een `on*`-sleutel in een spread wordt
+sinds 0.8.92 geweigerd. Die 54 dode knoppen in 32 automatisch omgezette sjablonen staan als
+open taak in `features/lotc-geen-roos-html.md`.
 
 ## Blokken die diensten zelf leveren
 

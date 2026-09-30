@@ -83,7 +83,20 @@ def _onze_bestanden() -> list[Path]:
 
 
 def _componentbestanden() -> list[Path]:
-    """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css."""
+    """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css.
+
+    WAAROM ``lotc_rvo`` HIER NIET BIJ STAAT, terwijl het wel geinstalleerd is. De lijst
+    hieronder is de kern plus de design systems die dit portaal aanzet
+    (``DESIGN_SYSTEMS`` in opi/core/templates_lotc.py: lotc-layout, nldd, lotc-forms).
+    lotc-rvo staat daar niet bij, dus geen enkele pagina haalt zijn stijlbladen op en een
+    terugval daarin kan hier niets onleesbaar maken. Neem het niet alsnog mee: dan komen
+    er namen binnen (gemeten: ``--utrecht-focus-outline-color`` en
+    ``--_utrecht-radio-button-color``) die alleen maar uitgezonderd kunnen worden, elke
+    release opnieuw, met steeds dezelfde reden.
+
+    Let op dat ``get_static_roots()`` hier GEEN bruikbare bron is: die geeft de wortels van
+    alle geinstalleerde pakketten, lotc_rvo inbegrepen, niet die van de aangezette.
+    """
     paden: list[Path] = []
     for pakket in ("lord_of_the_components", "lotc_nldd", "lotc_forms", "lotc_layout"):
         wortel = SITE_PACKAGES / pakket
@@ -139,27 +152,20 @@ def test_onze_eigen_opmaak_valt_niet_terug_op_een_onbekende_kleurvariabele() -> 
 
 
 #: De namen die de componentenlaag opvraagt zonder dat iemand ze zet, en die wij BEWUST
-#: niet invullen - met de reden erbij.
+#: niet invullen - met de reden erbij. Nu leeg: elke naam die de gescande pakketten
+#: opvragen, vullen wij in.
 #:
 #: Hier stonden drie ``--semantics-*``-namen uit app-components.css. Die vraagt geen enkel
-#: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de tweede test hieronder wees ze
-#: aan).
+#: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de laatste test in dit bestand
+#: wees ze aan). Daarna stonden hier twee ``--utrecht-focus-*``-namen; die staan
+#: uitsluitend in ``lotc_rvo``, en dat pakket wordt hier niet gescand en door geen enkele
+#: pagina geladen (zie ``_componentbestanden``). Een uitzondering voor iets buiten de scan
+#: dekt niets af, dus zijn ook die weg.
 #:
-#: Wat er nu staat komt uit ``lotc_rvo/static/lotc/dist/``: ``lotc.css`` en de
-#: ``@nl-rvo``-stijlbladen daarin vragen de focus-tokens van Utrecht op. Twee redenen om ze
-#: niet in te vullen, allebei gemeten:
-#:
-#:   1. De terugval is ``transparent`` en niet een vaste LICHTE kleur. Waar deze test voor
-#:      bestaat is een vlak dat in de donkere stand licht blijft; transparant is in beide
-#:      standen hetzelfde en kan het contrast niet omklappen.
-#:   2. Geen van die bestanden wordt door dit portaal geladen. Een pagina haalt
-#:      app-components.css, forms/forms.css, layout/layout.css, nldd/dist/css/global.css en
-#:      nldd/lotc-nldd.css op (gemeten in de <head> van een gerenderde pagina); lotc.css en
-#:      de @nl-rvo-bladen zitten daar niet bij.
-BEWUST_NIET_INGEVULD = {
-    "--utrecht-focus-inverse-outline-color",
-    "--utrecht-focus-box-shadow-color",
-}
+#: Komt er een naam bij, zet hem hier neer met de METING die zegt waarom hij zo mag
+#: blijven - bijvoorbeeld dat het component zelf ook de andere kant van het contrast
+#: vastzet, of dat de terugval geen vaste lichte kleur is.
+BEWUST_NIET_INGEVULD: set[str] = set()
 
 
 def test_de_componentenlaag_vraagt_geen_kleurnaam_die_wij_niet_invullen() -> None:
