@@ -111,6 +111,7 @@ from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_d
 from opi.services.catalog.image_registries.resolution import (
     build_rules,
     resolve_deployment_component_image,
+    resolve_project_image,
     set_deployment_component_registry,
 )
 from opi.services.catalog.publish_on_web.domain_config import (
@@ -2541,6 +2542,21 @@ class ProjectManager:
 
                 # Map the database image to its registry secret
                 image_pull_secrets_map[database_image] = registry_secret_name
+
+            # De clusterrewrite geldt ook voor de database-image. Zonder dit staat het kale
+            # ghcr-pad in git terwijl de admission van ODCN de pod naar rcr.rijksapps.nl
+            # herschrijft, en dan is de infrastructure-applicatie permanent OutOfSync. Dat is
+            # niet alleen ruis: de verwerking wacht op een Synced infrastructuur voordat ze
+            # verdergaat, dus een refresh van zo'n project loopt vast. Dezelfde regels als elke
+            # andere image, dus een projectregistry wint nog steeds van de gedeelde proxy.
+            resolved_db = resolve_project_image(
+                database_config.get("image", ""), project_data, cluster_name, registry_name
+            )
+            if resolved_db.image != database_config.get("image"):
+                logger.info(f"PostgreSQL-image '{database_config.get('image')}' opgelost naar '{resolved_db.image}'")
+                database_config = {**database_config, "image": resolved_db.image}
+            if resolved_db.secret and resolved_db.image not in image_pull_secrets_map:
+                image_pull_secrets_map[resolved_db.image] = resolved_db.secret
 
             cluster_manifest = render_template(
                 "postgresql-cluster.yaml.jinja",
