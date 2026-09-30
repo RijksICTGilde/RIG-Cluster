@@ -85,17 +85,16 @@ def _onze_bestanden() -> list[Path]:
 def _componentbestanden() -> list[Path]:
     """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css.
 
-    WAAROM ``lotc_rvo`` HIER NIET BIJ STAAT, terwijl het wel geinstalleerd is. De lijst
-    hieronder is de kern plus de design systems die dit portaal aanzet
-    (``DESIGN_SYSTEMS`` in opi/core/templates_lotc.py: lotc-layout, nldd, lotc-forms).
-    lotc-rvo staat daar niet bij, dus geen enkele pagina haalt zijn stijlbladen op en een
-    terugval daarin kan hier niets onleesbaar maken. Neem het niet alsnog mee: dan komen
-    er namen binnen (gemeten: ``--utrecht-focus-outline-color`` en
-    ``--_utrecht-radio-button-color``) die alleen maar uitgezonderd kunnen worden, elke
-    release opnieuw, met steeds dezelfde reden.
+    De lijst hieronder is de kern plus de design systems die dit portaal aanzet
+    (``DESIGN_SYSTEMS`` in opi/core/templates_lotc.py). ``lotc_rvo`` is wel geinstalleerd
+    maar staat daar niet bij, dus geen pagina haalt zijn stijlbladen op en een terugval
+    daarin kan hier niets onleesbaar maken. Neem het niet alsnog mee: gemeten levert dat
+    alleen ``--utrecht-focus-inverse-outline-color`` en
+    ``--utrecht-focus-box-shadow-color`` op, namen die je elke release opnieuw om dezelfde
+    reden moet uitzonderen.
 
-    Let op dat ``get_static_roots()`` hier GEEN bruikbare bron is: die geeft de wortels van
-    alle geinstalleerde pakketten, lotc_rvo inbegrepen, niet die van de aangezette.
+    ``get_static_roots()`` is hier geen bruikbare bron: die geeft de wortels van alle
+    geinstalleerde pakketten, lotc_rvo inbegrepen, niet die van de aangezette.
     """
     paden: list[Path] = []
     for pakket in ("lord_of_the_components", "lotc_nldd", "lotc_forms", "lotc_layout"):
@@ -157,14 +156,13 @@ def test_onze_eigen_opmaak_valt_niet_terug_op_een_onbekende_kleurvariabele() -> 
 #:
 #: Hier stonden drie ``--semantics-*``-namen uit app-components.css. Die vraagt geen enkel
 #: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de laatste test in dit bestand
-#: wees ze aan). Daarna stonden hier twee ``--utrecht-focus-*``-namen; die staan
-#: uitsluitend in ``lotc_rvo``, en dat pakket wordt hier niet gescand en door geen enkele
-#: pagina geladen (zie ``_componentbestanden``). Een uitzondering voor iets buiten de scan
-#: dekt niets af, dus zijn ook die weg.
+#: wees ze aan). Daarna stonden hier twee ``--utrecht-focus-*``-namen uit ``lotc_rvo``, dat
+#: hier niet gescand wordt (zie ``_componentbestanden``): een uitzondering voor iets buiten
+#: de scan dekt niets af.
 #:
-#: Komt er een naam bij, zet hem hier neer met de METING die zegt waarom hij zo mag
-#: blijven - bijvoorbeeld dat het component zelf ook de andere kant van het contrast
-#: vastzet, of dat de terugval geen vaste lichte kleur is.
+#: Komt er een naam bij, zet hem hier neer met de meting die zegt waarom hij zo mag
+#: blijven: dat het component ook de andere kant van het contrast vastzet, of dat de
+#: terugval geen vaste lichte kleur is.
 BEWUST_NIET_INGEVULD: set[str] = set()
 
 

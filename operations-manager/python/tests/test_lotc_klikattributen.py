@@ -142,12 +142,9 @@ def _fout(bron: str, **context: object) -> str:
 
 
 def test_een_handler_in_een_attrs_spread_wordt_geweigerd() -> None:
-    """De derde regel uit features/lotc-bouwlijn.md, die tot nu toe geen toets had.
-
-    Een spread draagt gegevens, en een gegeven mag geen uitvoerbaar script worden. Slaat
-    deze weigering om in stil doorlaten, dan is elke dict die ooit een sleutel ``onclick``
-    kan krijgen een weg naar script in de pagina; dat valt nergens anders op, want de
-    uitvoer ziet er dan gewoon uit.
+    """Slaat deze weigering om in stil doorlaten, dan is elke dict die ooit een sleutel
+    ``onclick`` kan krijgen een weg naar script in de pagina, en dat valt nergens anders
+    op: de uitvoer ziet er dan gewoon uit.
     """
     for handler in ("onclick", "onchange"):
         bron = '{% set a = {"HANDLER": "f()"} %}<c-button label="x" :attrs="a" />'.replace("HANDLER", handler)
@@ -164,9 +161,7 @@ def test_een_handler_in_een_attrs_spread_wordt_geweigerd() -> None:
 
 
 def test_de_oude_spelling_dubbelepunt_at_click_bestaat_niet_meer() -> None:
-    """``:@click="expr"`` kende de bibliotheek ooit; nu is het een onbekend attribuut.
-
-    Zonder deze kant leest de weigering hierboven als "gebruik dan maar de spread-vorm van
+    """Zonder deze kant leest de weigering hierboven als "gebruik dan de spread-vorm van
     een handler", en die is er niet: ``@click="{{ expr }}"`` is de enige vorm.
     """
     melding = _fout('<c-button label="x" :@click="expr" />', expr="f()")

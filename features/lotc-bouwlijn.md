@@ -329,9 +329,7 @@ niet: `tojson` levert `Markup` op en dat filter laat markup met rust. Zet er
 uitvoerbaar script worden. De `:@click="expr"`-spelling die de bibliotheek ooit kende
 wordt nu als onbekend attribuut geweigerd; `@click="{{ expr }}"` is de vorm.
 
-`tests/test_lotc_klikattributen.py` meet alle drie: dat de waarde gerenderd wordt, dat een
-`tojson`-waarde langs `forceescape` gaat, en dat een `on*`-sleutel in een spread en de
-spelling `:@click` allebei geweigerd worden.
+`tests/test_lotc_klikattributen.py` meet alle drie, de `:@click`-spelling inbegrepen.
 
 **En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
 van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
@@ -355,12 +353,9 @@ Dat is meteen het antwoord op "hier hoort een kale `<button>` want die heeft een
 nee, `@click="..."` kan gewoon op een `<c-button>`. Welke maat en welk `type` een knop
 draagt staat in `features/knopmaten.md`.
 
-**Kopieer niet uit een omgezet sjabloon.** Hier stond dat de omzetter er een echte
-`onclick` van maakt via een `:attrs`-spread met de aanroep in een `{% set %}`-blok ervoor.
-Dat is tweemaal onwaar: zo'n `{% set lotc_onclick_1 %}`-blok wordt aan niets gehangen (de
-knop rendert zonder klikafhandeling, nagemeten) en een `on*`-sleutel in een spread wordt
-sinds 0.8.92 geweigerd. Die 54 dode knoppen in 32 automatisch omgezette sjablonen staan als
-open taak in `features/lotc-geen-roos-html.md`.
+**Kopieer niet uit een omgezet sjabloon.** De eerste generatie automatisch omgezette
+sjablonen zet de aanroep in een `{% set lotc_onclick_N %}`-blok dat aan geen knop hangt;
+die dode knoppen staan als open taak in `features/lotc-geen-roos-html.md`.
 
 ## Blokken die diensten zelf leveren
 
