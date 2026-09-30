@@ -401,10 +401,15 @@ geklikt).
 
 ## Iconen: meet de BUNDEL, niet de lijst
 
-`icons.json` van `lord_of_the_components` noemt 327 namen; de `nldd.js` die de browser
-laadt bevat er 271. De 56 namen ertussen bestaan op papier en renderen als niets. Dat is
-geen randgeval: het kostte 37 lege plekken in de interface, waaronder de bewerkknop en de
-verwijderknop, terwijl de test die erop bewaakte groen stond - want die las de lijst.
+`icons.json` van `lord_of_the_components` en de bundel die de browser laadt lopen
+uiteen, en een naam die alleen in de lijst staat rendert als niets. Hoe groot dat gat is
+verschilt per versie: op 0.8.80 waren het 56 namen, op 0.8.92 nog 2. De actuele meting
+staat in de docstring van `opi/web/nldd_iconen.py`; hier geen tweede kopie, want die
+veroudert bij elke bump.
+
+Dat is geen randgeval: op 0.8.80 kostte het 37 lege plekken in de interface, waaronder de
+bewerkknop en de verwijderknop, terwijl de test die erop bewaakte groen stond - want die
+las de lijst.
 
 De bron is nu `opi/web/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
 En let op het tweede gat dat daarbij hoorde: `ROOS_TO_NLDD_ICONS` wordt toegepast door het
@@ -451,7 +456,7 @@ en de logviewer.
 |---|---|
 | `architecture` - 1509 regels in een blok; verdient een eigen besluit, en staat op verzoek als laatste | ons |
 | Het percentage in de dashboardmeter vraagt een RVO-kleurvariabele die NLDD niet heeft; erft nu de tekstkleur | ons |
-| Iconen: de NLDD-bundel levert er 271, de RVO-set die roos meeleverde 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
+| Iconen: de NLDD-bundel levert er 686 (0.8.92; op 0.8.80 nog 271), de RVO-set die roos meeleverde 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
 | De open verzoeken aan het thema staan sinds RC-70 gebundeld in `request_for_components.md` | LOTC |
 
 ### Een aandachtspunt voor de bouw

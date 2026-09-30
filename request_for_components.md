@@ -176,20 +176,26 @@ het staat hier zodat de volgende niet opnieuw gaat zoeken.
 
 ## 7. Iconen: de lijst en de bundel lopen uiteen
 
-**Wat er gebeurt.** `icons.json` van `lord_of_the_components` noemt 327 namen; de
-`nldd.js` die de browser laadt bevat er 271. De 56 namen ertussen bestaan op papier en
-renderen als niets, zonder foutmelding. `media-pause` was er een van, en die stond in
-onze interface.
+**Wat er gebeurt.** `icons.json` van `lord_of_the_components` noemt onder de set `nldd`
+677 namen; de `dist/*.js` die de browser laadt tekent er 358 en verwijst er 328 door, dus
+686 namen renderen werkelijk. De namen die alleen in de lijst staan renderen als niets,
+zonder foutmelding.
 
-**En het loopt per versie de andere kant op.** Met NLDD 0.8.80 zat
+Gemeten op NLDD 0.8.92 (pin 172300a) zijn dat er nog 2: `stack-code` en
+`rectangle-stack-chevron-left-forward-slash-chevron-right`. Op 0.8.80 waren het er 56, en
+`media-pause` was er een van terwijl hij in onze interface stond. Het gat is dus vrijwel
+dicht, maar de mechaniek is niet veranderd.
+
+**En welke naam de goede is, wisselt per versie.** Met NLDD 0.8.80 zat
 `square-and-arrow-down` in de bundel en `square-arrow-down` alleen in de lijst; met
-0.8.92 is het omgekeerd. Wie de ene naam kiest omdat hij gemeten is, heeft na een bump
-de verkeerde - en ziet dat niet, want het blijft een leeg `<svg>` zonder een enkele
-tekening erin.
+0.8.92 tekent `square-arrow-down` en bestaat `square-and-arrow-down` helemaal niet meer,
+in de lijst noch in de bundel. Wie de ene naam kiest omdat hij ooit gemeten is, heeft na
+een bump de verkeerde - en ziet dat niet, want het blijft een leeg `<svg>` zonder een
+enkele tekening erin.
 
 **Waarom dat pijn doet.** Een naam die niet bestaat is stil. Wij hadden een test die
 precies hierop moest bewaken, en die las de LIJST in plaats van de BUNDEL: hij was
-jarenlang groen terwijl er 37 lege plekken in de interface stonden.
+jarenlang groen terwijl er op 0.8.80 37 lege plekken in de interface stonden.
 
 **Wat wij intussen doen.** `opi/web/nldd_iconen.py` leest de namen uit de geleverde
 bestanden, en `tests/test_lotc_icon_mapping.py` gebruikt die als poort. `LOTC_STRICT=1`
