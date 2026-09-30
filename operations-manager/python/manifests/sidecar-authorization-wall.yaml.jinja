@@ -183,4 +183,107 @@ data:
         </div>
     </body>
     </html>
+  error.html: |
+    <!DOCTYPE html>
+    <html lang="nl">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Inloggen niet gelukt</title>
+        <style>
+            *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+            body {
+                font-family: 'RijksoverheidSansWebText', Verdana, Arial, sans-serif;
+                background-color: #F1F5F9;
+                color: #1E293B;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 100vh;
+                padding: 1rem;
+            }
+            .card {
+                background: #FFFFFF;
+                border-radius: 4px;
+                border: 1px solid #CBD5E1;
+                padding: 2.5rem 2rem;
+                max-width: 440px;
+                width: 100%;
+                text-align: center;
+            }
+            .card h1 {
+                font-size: 1.25rem;
+                font-weight: 700;
+                color: #1E293B;
+                margin-bottom: 0.75rem;
+            }
+            .card p {
+                font-size: 0.95rem;
+                color: #475569;
+                line-height: 1.5;
+                margin-bottom: 1rem;
+            }
+            .btn {
+                display: inline-block;
+                background-color: #007BC7;
+                color: #FFFFFF;
+                font-family: inherit;
+                font-size: 1.125rem;
+                font-weight: 700;
+                border: 1px solid #007BC7;
+                border-radius: 4px;
+                padding: 0.625rem 1.5rem;
+                margin-top: 0.5rem;
+                cursor: pointer;
+                text-decoration: none;
+                transition: background-color 0.15s, border-color 0.15s;
+            }
+            .btn:hover, .btn:focus {
+                background-color: #01689B;
+                border-color: #01689B;
+                outline: 2px solid #007BC7;
+                outline-offset: 2px;
+            }
+            .subtitle {
+                font-size: 0.875rem;
+                color: #64748B;
+                margin-top: 1.5rem;
+                margin-bottom: 0;
+            }
+            .code {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                font-size: 0.8125rem;
+                color: #475569;
+                word-break: break-all;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            {{"{{"}} if eq .StatusCode 403 {{"}}"}}
+            <h1>Je hebt geen toegang tot deze website</h1>
+            <p>Het inloggen zelf is gelukt, maar dit account mag deze omgeving niet openen. Vraag de beheerder van deze omgeving om je toegang te geven.</p>
+            {{"{{"}} else if eq .StatusCode 500 {{"}}"}}
+            <h1>Inloggen is niet gelukt</h1>
+            <p>Het inloggen is halverwege afgebroken, dus je bent niet aangemeld. Dit gebeurt onder andere als je e-mailadres in deze omgeving nog niet is bevestigd, of als de inlogpagina te lang open heeft gestaan.</p>
+            <p>Probeer het opnieuw. Lukt het daarna nog niet, geef dan de code onderaan deze pagina door aan de beheerder.</p>
+            {{"{{"}} else if eq .StatusCode 502 {{"}}"}}
+            <h1>De applicatie is niet bereikbaar</h1>
+            <p>Je bent ingelogd, maar de applicatie achter deze pagina geeft geen antwoord. Probeer het over een paar minuten opnieuw.</p>
+            {{"{{"}} else {{"}}"}}
+            <h1>Er is iets misgegaan</h1>
+            <p>Deze pagina kon niet worden geladen. Probeer het opnieuw, en geef bij herhaling de code onderaan deze pagina door aan de beheerder.</p>
+            {{"{{"}} end {{"}}"}}
+            {{"{{"}} if .Redirect {{"}}"}}
+            <form method="GET" action="{{"{{"}} .ProxyPrefix {{"}}"}}/sign_in">
+                <input type="hidden" name="rd" value="{{"{{"}} .Redirect {{"}}"}}">
+                <button type="submit" class="btn">Opnieuw inloggen</button>
+            </form>
+            {{"{{"}} end {{"}}"}}
+            {{"{{"}} if .RequestID {{"}}"}}
+            <p class="subtitle">Code voor de beheerder: <span class="code">{{"{{"}} .RequestID {{"}}"}}</span></p>
+            {{"{{"}} end {{"}}"}}
+        </div>
+    </body>
+    </html>
 {% endif %}
