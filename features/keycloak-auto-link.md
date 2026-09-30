@@ -28,6 +28,17 @@ pre-existing account) and already-linked users are unaffected.
 
 No invite link, email verification, or password step is required.
 
+**Set "Email verified" to On when you pre-create the account, and remove any `VERIFY_EMAIL`
+required action.** Auto-link does not set that flag, and behind an authorization wall an
+account without it cannot log in at all. `IdpAutoLinkAuthenticator` only does
+`context.setUser(existingUser); context.success();`, so it never sets
+`BROKER_REGISTERED_NEW_USER`, and the branch in `IdentityBrokerService` that raises
+`emailVerified` on the strength of `trustEmail` sits inside exactly that `if`. A linked
+account falls into the `else`, which only calls `updateFederatedIdentity`, and that touches
+the flag solely at `syncMode: FORCE` while the project IdP runs on `IMPORT`. The wall
+(`--insecure-oidc-allow-unverified-email=false`) then rejects every login with an HTTP 500.
+Measured on Keycloak 25.0.6; see `docs/KNOWN-ISSUES.md`.
+
 ## Configuration
 
 Auto-link is **opt-in per project realm** (each ZAD project is one realm). It is a project-only
