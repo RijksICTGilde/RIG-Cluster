@@ -52,7 +52,11 @@ versturen tegenhield. Loop bij een bump dus minimaal na:
   attribuutWAARDE is dan rood in plaats van stil;
 - **de sweep**: `uv run python -m lord_of_the_components.sweep --design-systems
   nldd,lotc-forms opi/templates_lotc opi/services/catalog` somt elke computed waarde en
-  elke spread op die de compiler niet kan controleren;
+  elke spread op die de compiler niet kan controleren. Een fout die daar uitkomt hoort een
+  toets te krijgen die de waarde uit de GERENDERDE markup haalt en hem als LITERAAL langs
+  de compiler stuurt; dat is de enige stand waarin hij zijn eigen lijst nakijkt. Zie
+  `tests/test_lotc_voortgangsbalk_kleur.py` (kleur) en
+  `tests/test_lotc_stappenbalk_stand.py` (stand per stap);
 - **kijken naar het scherm**, want de rest is markup. De poort die dat doet is
   `tests/e2e/test_lotc_veldfout_zichtbaar.py`: die meet de HOOGTE van een foutregel per
   veldsoort, en dat is precies wat een assertie op de markup niet haalt.
