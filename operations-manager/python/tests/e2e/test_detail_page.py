@@ -108,7 +108,6 @@ def test_service_contributed_blocks_render(app_server: str, auth_page: Page) -> 
     toon_tekst(auth_page.locator("#tab-services"), "Keycloak")
 
     open_tab(auth_page, "deployments")
-    auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
     tabblad = auth_page.locator("#tab-deployments")
     toon_tekst(tabblad, "Databaseconsole")
     toon_tekst(tabblad, "Job uitvoeren")

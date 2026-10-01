@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import yaml
+from opi.utils.age import encrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
 
 logger = logging.getLogger(__name__)
@@ -334,6 +335,23 @@ async def _fake_store_save(
     return MutationResult(before=None, after=data, ref="e2e-testserver")
 
 
+def _munt_projectsleutelpaar(data: dict) -> None:
+    """Geef dit fixtureproject een AGE-sleutelpaar dat bij DEZE run past.
+
+    Sinds ``1c7b7a19`` munt :func:`test_age_keypair` de platformsleutel per run, dus een
+    vooraf versleuteld blok in de fixture opent niet meer: ``/projects/<naam>/details``
+    strandde op "No matching keys found" en gaf een 500. Het paar wordt daarom hier gemunt
+    en de private helft met de sleutel van deze run versleuteld, zoals OPI het bij het
+    aanmaken van een project doet.
+    """
+    config = data.get("config")
+    if not isinstance(config, dict) or not config.get("age-private-key"):
+        return
+    project_private, project_public = generate_sops_key_pair()
+    config["age-public-key"] = project_public
+    config["age-private-key"] = encrypt_age_content_sync(project_private, test_age_keypair()[1])
+
+
 def _load_fixture_projects() -> list[dict]:
     """Load all YAML project files from the fixtures directory."""
     projects = []
@@ -345,6 +363,7 @@ def _load_fixture_projects() -> list[dict]:
         with open(yaml_file) as f:
             data = yaml.safe_load(f)
         if data and isinstance(data, dict) and "name" in data:
+            _munt_projectsleutelpaar(data)
             projects.append(data)
             logger.info("Loaded fixture project: %s from %s", data["name"], yaml_file.name)
     return projects

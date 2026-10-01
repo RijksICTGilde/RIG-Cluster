@@ -39,7 +39,6 @@ def _switch_to_backups_tab(page: Page) -> None:
     verhuizing en niet op een storing; het blok zelf is ongewijzigd.
     """
     open_tab(page, "backups")
-    page.locator("#tab-backups").wait_for(state="visible", timeout=5000)
 
 
 def _wait_for_schedule_text(page: Page, expected: str, timeout: int = 10000) -> None:

@@ -62,6 +62,16 @@ YAML files in this directory are loaded into ProjectService at startup:
 - `test-project.yaml` - minimal project with one component
 - `test-project-with-services.yaml` - project with Keycloak + PostgreSQL services
 
+Het echte AGE-sleutelpaar van zo'n fixture staat niet in het bestand: de testserver munt per
+run een platformsleutel, dus een blok dat met een eerdere sleutel is versleuteld gaat nooit
+meer open. In de fixture staan `age-public-key` en `age-private-key` als placeholder, en
+`_munt_projectsleutelpaar()` vervangt die bij het laden door een paar van deze run. Een
+fixture die geen `age-private-key` draagt, krijgt niets gemunt.
+
+Een testwaarde voor een veld dat OPI versleuteld verwacht (`config.api-key`) mag als
+klaartekst in de fixture: `decrypt_password_smart` laat een waarde zonder AGE-markering
+ongemoeid door. Een echt geheim hoort er niet in.
+
 ### Conftest (`tests/e2e/conftest.py`)
 
 Provides pytest fixtures:
@@ -100,8 +110,27 @@ Page object for wizard interaction:
 3. Use `WizardHelper` for wizard interaction
 4. Use `auth_page` fixture for authenticated access
 
+## Wachten in een browsertest
+
+Wacht op de voorwaarde die de test nodig heeft (het paneel staat er, het veld draagt de
+waarde), niet op `networkidle`. Dat laatste is geen bovengrens: elk verzoek dat nog
+binnenkomt schuift de stilte vooruit. Op een bezette host loopt de wacht daardoor tegen de
+30 s-grens van Playwright aan terwijl het element er allang staat, en valt de test om op de
+host en niet op de code.
+
+Voor een tabwissel op de projectdetailpagina doet `open_tab()` (`tests/e2e/helpers/tabs.py`)
+dat al: het wacht op het paneel `#tab-<tabblad>`, dus zet er geen eigen wacht achter.
+
 ## Adding Fixture Data
 
 1. Add YAML files to `tests/e2e/fixtures/projects/`
 2. Files are auto-loaded at server startup
 3. Include `name`, `config.api-key`, and `users` fields
+4. Geen vooraf versleuteld AGE-blok in de fixture, want de sleutels die het openen zijn
+   per run nieuw:
+   - `config.api-key` als klaartekst. De projectsleutel opent hem, en een AGE-blok daar
+     laat `/projects/<naam>/details` op een `ValueError` lopen
+   - `config.age-public-key` en `age-private-key` als placeholder, zoals de bestaande
+     fixtures doen: `_munt_projectsleutelpaar()` vervangt ze per run (zie Fixture Projects
+     hierboven). Zonder `age-private-key` valt er niets te munten en loopt dezelfde pagina
+     op een `KeyError`
