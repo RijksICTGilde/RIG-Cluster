@@ -269,6 +269,27 @@ def deployment_pod_selector(deployment_name: str) -> str:
     return f"deployment={deployment_name},component=application,!{SERVICE_ROLE_LABEL_KEY}"
 
 
+def all_application_pods_selector() -> str:
+    """Label selector for every application pod on the cluster, across projects.
+
+    Next to the other two so the service-owned pods keep being excluded in one spelling
+    instead of drifting apart.
+    """
+    return f"component=application,!{SERVICE_ROLE_LABEL_KEY}"
+
+
+def is_application_pod(labels: dict[str, str]) -> bool:
+    """Whether a pod carrying these labels is the application's own workload.
+
+    The in-Python mirror of the selectors above, for the paths that reach a pod without
+    a label selector doing the filtering (the OOM metric sweep reads a pod by name).
+    Both halves matter: sleep-mode's waker carries the component's ``app``, ``deployment``
+    and ``project`` labels AND ``component=application``, so only the absence of
+    ``zad-role`` tells it apart -- and a pod that is not ours at all carries neither.
+    """
+    return labels.get("component") == "application" and SERVICE_ROLE_LABEL_KEY not in labels
+
+
 @dataclass
 class SecretFileSpec:
     """A SOPS secret manifest a service needs written for a deployment (RC-5 Phase 6c).

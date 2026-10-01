@@ -24,7 +24,12 @@ from __future__ import annotations
 
 import inspect
 
-from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY, application_pod_selector
+from opi.services.catalog.base import (
+    SERVICE_ROLE_LABEL_KEY,
+    all_application_pods_selector,
+    application_pod_selector,
+    is_application_pod,
+)
 from opi.services.catalog.sleep_mode.manifests import WAKER_ROLE_LABEL
 
 
@@ -50,3 +55,45 @@ def test_the_health_check_uses_the_selector_instead_of_a_bare_app_label() -> Non
 
     assert "application_pod_selector(unique_name)" in source
     assert 'f"app={unique_name}"' not in source, "a bare app selector is back in the health check"
+
+
+def test_the_cluster_wide_selector_excludes_service_pods_too() -> None:
+    """De pod-watch stroomt alles wat van ons is, en dat is dezelfde uitsluiting.
+
+    Zonder ``!zad-role`` zou een waker die OOMt de component achter zijn ``app``-label
+    laten tunen, terwijl die component niet eens draaide.
+    """
+    assert all_application_pods_selector() == "component=application,!zad-role"
+
+
+def test_the_pod_watch_uses_the_shared_selector() -> None:
+    """Driftgrendel op de aanroep: een eigen spelling in de watch zou de uitsluiting
+    van de andere twee selectors niet meekrijgen."""
+    from opi.services import oom_watcher
+
+    assert "all_application_pods_selector()" in inspect.getsource(oom_watcher)
+
+
+def test_the_in_python_mirror_answers_what_the_selector_asks() -> None:
+    """Het vangnet op de metric leest een pod op NAAM, dus daar filtert geen selector.
+
+    ``is_application_pod`` is de spiegel voor die weg, en hij is afgeleid van de selector
+    hierboven in plaats van ernaast opgeschreven: verschuift het begrip in de selector en
+    niet in de spiegel, dan streamt de watch pods die het vangnet daarna allemaal afwijst.
+    Dat faalt stil, want beide wegen blijven dan gewoon nul kills melden.
+    """
+    required: dict[str, str] = {}
+    excluded: list[str] = []
+    for term in all_application_pods_selector().split(","):
+        if term.startswith("!"):
+            excluded.append(term[1:])
+        else:
+            key, value = term.split("=", 1)
+            required[key] = value
+
+    assert required, "de selector eist geen enkel label meer"
+    assert excluded, "de selector sluit niets meer uit"
+
+    assert is_application_pod(required) is True
+    for key in excluded:
+        assert is_application_pod({**required, key: "waker"}) is False

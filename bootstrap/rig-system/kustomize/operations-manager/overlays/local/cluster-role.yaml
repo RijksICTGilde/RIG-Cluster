@@ -36,6 +36,7 @@ rules:
     resources: [persistentvolumeclaims]
     verbs: [create, get, list, delete]
   # Backup/restore pods: launchen, wachten, opruimen.
+  # watch hangt ook de cluster-brede OOM-pod-watch eraan (features/oom-pod-watch.md).
   - apiGroups: [""]
     resources: [pods]
     verbs: [create, get, list, delete, watch]

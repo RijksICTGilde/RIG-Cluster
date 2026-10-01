@@ -166,7 +166,9 @@ green with no trace anywhere. Kubernetes events expire after roughly an hour, an
 the pod's own `lastState` disappears with the pod. Worse, the watcher only runs
 post-deploy (`schedule_oom_check` is called from the task handlers, never from a
 timer), so an application that falls over at night, outside any deployment, is seen
-by nobody.
+by nobody. The cluster-wide pod watch ([oom-pod-watch.md](oom-pod-watch.md)) closes
+that last gap, but its per-cluster flag is off on every cluster today, so a nightly
+OOM still reaches nobody until it is switched on.
 
 The **OOM status fragment** (`bg/_oom-status.html.j2`, route
 `GET /projects/details/{project}/oom-status/{deployment}`) reports it, and reports
@@ -476,4 +478,4 @@ for the health watcher.
 - `features/oom-kill-watcher.md` - the health watcher that detects OOM/image-pull/crash-loop
 - `features/futures/sidecar-resource-tuning.md` - extends tuning to sidecar containers
 - `features/futures/configurable-deployment-resources.md` - prerequisite for resource values in YAML
-- `features/futures/system-wide-oom-watcher.md` - OOMs that arise after a successful deploy (different scope)
+- `features/oom-pod-watch.md` - OOMs that arise after a successful deploy (different scope)

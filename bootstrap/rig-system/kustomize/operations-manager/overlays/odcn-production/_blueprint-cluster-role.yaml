@@ -46,6 +46,10 @@ rules:
     resources: [persistentvolumeclaims]
     verbs: [create, get, list, delete]
   # Backup/restore pods: launchen, wachten, opruimen.
+  # watch hangt op local en sandboxed-local ook de cluster-brede OOM-pod-watch eraan
+  # (features/oom-pod-watch.md). Op dit cluster niet: deze blueprint wordt hier niet
+  # uitgerold, en OPI's kubectl bereikt de pods via Capsule Proxy onder de RoleBinding
+  # die Capsule per tenant-namespace maakt.
   - apiGroups: [""]
     resources: [pods]
     verbs: [create, get, list, delete, watch]

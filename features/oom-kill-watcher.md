@@ -4,6 +4,11 @@
 
 The OOM Kill Watcher is a fire-and-forget background mechanism that automatically detects and recovers from Out-of-Memory (OOM) kills after deployments. When a deploy or refresh completes, a delayed check runs in the background. If OOM kills are detected, the watcher automatically increases memory limits and triggers reprocessing - no manual intervention needed.
 
+This one only looks in a short window AFTER a rollout. An OOM on a pod that has been
+running for days is caught by the cluster-wide watch instead: see
+[oom-pod-watch.md](oom-pod-watch.md). Both remediate through the same
+`apply_oom_tune`, so the brakes below bound them together.
+
 ## How it works
 
 ```
@@ -112,7 +117,7 @@ The OOM watcher is scheduled at the end of:
 
 | File | Purpose |
 |------|---------|
-| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic (the OBSERVING) |
+| `opi/services/oom_watcher.py` | Fire-and-forget OOM check logic (the OBSERVING), plus the cluster-wide pod watch |
 | `opi/services/catalog/deployment_health/` | The `deployment-health` system service: the JUDGEMENT over what is observed |
 | `opi/services/deployment_state.py` | What the other services report about the deployment, weighed before judging |
 | `opi/services/resource_tuning_service.py` | Extracted tune logic (shared by HTTP endpoint and watcher) |
@@ -160,5 +165,7 @@ cannot: every automated refresh starts a new chain at `attempt=1`.
   lives in the `deployment-health` system service, which weighs what other services
   report (a sleeping deployment is meant to have no pods)
 - [Auto Resource Tuning](auto-resource-tuning.md) - the underlying tune logic
+- [De pod-watch](oom-pod-watch.md) - the same remediation, for OOM kills outside the
+  deploy window
 - kubectl connectivity to the target cluster
 - Prometheus/metrics backend for computing memory recommendations

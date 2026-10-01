@@ -7,7 +7,7 @@ an observation means -- belongs to the ``deployment-health`` system service
 report about the deployment is weighed in. Same split as resource-tuning: the service is
 the declarative home of the decision, this module does the work.
 
-Provides two mechanisms:
+Provides three mechanisms:
 1. **Inline detection** (``create_health_check_callback``):
    Used during the ArgoCD polling loop to detect pod health issues while
    the application is still ``Progressing``.  When detected, raises
@@ -18,6 +18,12 @@ Provides two mechanisms:
    kubectl for OOM kills and image pull errors.  If detected, queues a
    task for remediation via the task queue (no direct reprocessing).
 
+3. **Cluster-wide pod watch** (``OomPodWatcher``, ``OomMetricSweeper``):
+   Streams every application pod on this cluster, so an OOM on a pod that has been
+   running for days is caught too; the metric sweep is the net under it. Both
+   remediate through ``apply_oom_tune``, and stay off unless the cluster config
+   says so (``watches_pods_for_oom``).
+
 Failure type handling:
 - **OOM**: Auto-tune memory limits and queue a refresh task.
 - **ImagePullBackOff**: Queue a task to disable the component (``replicas: 0``).
@@ -27,24 +33,31 @@ Failure type handling:
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
-from opi.core.cluster_config import get_prefixed_namespace
+from opi.connectors.prometheus import get_metrics_connector
+from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
 from opi.handlers.project_file_handler import image_is_confirmed_absent
-from opi.services.catalog.base import SERVICE_ROLE_LABEL_KEY, application_pod_selector
+from opi.services.catalog.base import (
+    SERVICE_ROLE_LABEL_KEY,
+    all_application_pods_selector,
+    application_pod_selector,
+    is_application_pod,
+)
 from opi.services.catalog.deployment_health import deployment_health_service
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.resource_tuning_service import get_project_data
 from opi.utils.naming import generate_unique_name
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import AsyncIterator, Awaitable, Callable
 
     from opi.core.async_task_service import AsyncTaskService
 
@@ -653,6 +666,72 @@ async def disable_components_for_image_pull(
     )
 
 
+async def apply_oom_tune(
+    project_name: str,
+    deployment_name: str,
+    component_refs: list[str],
+    pod_hashes: dict[str, str | None],
+    source: str,
+) -> bool:
+    """Tune the memory limits for observed OOM kills and queue the refresh.
+
+    The single remediation path: the fire-and-forget check after a deploy and the
+    cluster-wide pod watch both end here, so the budget, the pod-generation lock and
+    the tune itself cannot drift apart between them.
+
+    ``pod_hashes`` maps each component unique name to the pod generation the OOM was seen
+    on; ``source`` only reaches the log lines. Returns True when the tune committed a
+    change, and a refresh was queued for it.
+    """
+    if oom_tune_budget_spent(project_name, deployment_name):
+        logger.warning(
+            "Health watcher: OOM tune budget (%d cycles) spent for %s/%s, no further auto-tune "
+            "via %s, manual intervention required",
+            OOM_MAX_TUNE_ATTEMPTS,
+            project_name,
+            deployment_name,
+            source,
+        )
+        return False
+
+    logger.info(
+        "Health watcher: OOM detected for %s/%s via %s, triggering auto-tune",
+        project_name,
+        deployment_name,
+        source,
+    )
+
+    # Route through the same after-sync hook scan the inline deploy path uses, so the
+    # OOM remediation is not hardcoded here either. The runner commits once.
+    from opi.services.catalog.base import ComponentHealth
+    from opi.services.deployment_observation import run_after_sync_observation
+
+    component_health = {ref: ComponentHealth(oom_detected=True) for ref in component_refs}
+    try:
+        observation = await run_after_sync_observation(project_name, deployment_name, component_health)
+        committed = observation.requeue_refresh
+        if committed:
+            used = _record_oom_tune_attempt(project_name, deployment_name)
+            for unique_name, pod_hash in pod_hashes.items():
+                _record_oom_tune_hash(project_name, deployment_name, unique_name, pod_hash)
+            logger.info(
+                "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
+                project_name,
+                deployment_name,
+                used,
+                OOM_MAX_TUNE_ATTEMPTS,
+            )
+            await _queue_refresh_task(project_name, deployment_name)
+        else:
+            logger.info("Health watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
+        for msg in observation.failures:
+            logger.warning("Health watcher: %s", msg)
+        return committed
+    except Exception as e:
+        logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
+        return False
+
+
 async def _run_oom_check(
     project_name: str,
     deployment_name: str,
@@ -786,58 +865,20 @@ async def _run_oom_check(
     # counts within one chain of scheduled checks, and every committed tune queues a
     # refresh whose handler starts a brand new chain at attempt=1 -- so it reset the
     # brake it was supposed to be. ``attempt`` stays in the log lines only.
-    if oom_tune_budget_spent(project_name, deployment_name):
-        logger.warning(
-            "Health watcher: OOM tune budget (%d cycles) spent for %s/%s, no further auto-tune "
-            "(attempt %d/%d) — manual intervention required",
-            OOM_MAX_TUNE_ATTEMPTS,
-            project_name,
-            deployment_name,
-            attempt,
-            max_attempts,
-        )
-        return
-
-    logger.info(
-        "Health watcher: OOM detected for %s/%s, triggering auto-tune (attempt %d/%d)",
+    committed = await apply_oom_tune(
         project_name,
         deployment_name,
-        attempt,
-        max_attempts,
+        oom_component_refs,
+        oom_pod_hashes,
+        source=f"fire-and-forget check (attempt {attempt}/{max_attempts})",
     )
-
-    # Route through the same after-sync hook scan the inline deploy path uses, so the
-    # OOM remediation is not hardcoded here either. The runner commits once.
-    from opi.services.catalog.base import ComponentHealth
-    from opi.services.deployment_observation import run_after_sync_observation
-
-    component_health = {ref: ComponentHealth(oom_detected=True) for ref in oom_component_refs}
-    try:
-        observation = await run_after_sync_observation(project_name, deployment_name, component_health)
-        if observation.requeue_refresh:
-            used = _record_oom_tune_attempt(project_name, deployment_name)
-            for unique_name, pod_hash in oom_pod_hashes.items():
-                _record_oom_tune_hash(project_name, deployment_name, unique_name, pod_hash)
-            logger.info(
-                "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
-                project_name,
-                deployment_name,
-                used,
-                OOM_MAX_TUNE_ATTEMPTS,
-            )
-            await _queue_refresh_task(project_name, deployment_name)
-            schedule_oom_check(
-                project_name,
-                deployment_name,
-                attempt=attempt + 1,
-                max_attempts=max_attempts,
-            )
-        else:
-            logger.info("Health watcher: tune found no actionable changes for %s/%s", project_name, deployment_name)
-        for msg in observation.failures:
-            logger.warning("Health watcher: %s", msg)
-    except Exception as e:
-        logger.error("Health watcher: auto-tune failed for %s/%s: %s", project_name, deployment_name, e)
+    if committed:
+        schedule_oom_check(
+            project_name,
+            deployment_name,
+            attempt=attempt + 1,
+            max_attempts=max_attempts,
+        )
 
 
 async def _queue_refresh_task(project_name: str, deployment_name: str) -> None:
@@ -1151,3 +1192,528 @@ def reset_oom_tune_attempts(project_name: str, deployment_name: str) -> None:
     prefix = f"{project_name}/{deployment_name}/"
     for key in [k for k in _last_tuned_pod_template_hash if k.startswith(prefix)]:
         del _last_tuned_pod_template_hash[key]
+
+
+# ---------------------------------------------------------------------------
+# Cluster-wide pod watch: OOM kills outside the deploy window
+# ---------------------------------------------------------------------------
+#
+# Kubernetes has no Event for an OOM kill; the information sits in the pod status, in
+# ``containerStatuses[].lastState.terminated``. That is why this watch reads pods and not
+# events. Why it exists, and the measurements behind it: features/oom-pod-watch.md
+
+# How long to wait before relisting after the stream ends, and the ceiling the backoff
+# climbs to when the stream keeps failing immediately (RBAC gone, API server down).
+POD_WATCH_RECONNECT_SECONDS = 5
+POD_WATCH_MAX_RECONNECT_SECONDS = 120
+
+# A stream that delivered nothing is a stream that failed; only one that actually ran
+# resets the backoff.
+_POD_WATCH_HEALTHY_EVENTS = 1
+
+# Kills already handled, keyed by pod+container+``finishedAt``. The kill is unique in
+# time, so this survives a relist (kubectl replays every pod as ADDED) and an OPI restart
+# in the middle of a crash loop.
+#
+# Recorded once the kill is READ, not once it is tuned: a kill we decided not to act on
+# must not be re-evaluated, and a failed tune is not retried on the same evidence.
+_MAX_HANDLED_OOM_KILLS = 2000
+_handled_oom_kills: dict[str, None] = {}
+
+# ``kube_pod_container_status_last_terminated_reason`` is the only metric that exposes an
+# OOM kill, and it is EXPERIMENTAL in kube-state-metrics, so it can disappear under us.
+# That is why it is the net and never the detection: see ``read_pod_oom_kill``.
+#
+# A bare selector, not the ``max_over_time`` of the sister query in
+# ``resource_tuning_service``: the reason for that range is that the metric only exists
+# while the stopped pod does (``tests/test_oom_query_venster.py``), and here a range would
+# only add rows that ``read_pod_oom_kill`` throws away again, because it verifies every hit
+# against a live pod. The boundary that comes with that is in features/oom-pod-watch.md:
+# this net only sees kills whose pod still exists.
+_OOM_METRIC_QUERY = 'kube_pod_container_status_last_terminated_reason{{reason="OOMKilled", namespace=~"{prefix}.*"}}'
+
+
+@dataclass
+class ObservedOomKill:
+    """One OOM kill read off a pod, before it is resolved to a component."""
+
+    namespace: str
+    pod_name: str
+    container_name: str
+    finished_at: str
+    project_name: str
+    deployment_name: str
+    app_name: str
+    pod_template_hash: str | None
+
+
+def _restart_key(namespace: str, pod_name: str, container_name: str) -> str:
+    return f"{namespace}/{pod_name}/{container_name}"
+
+
+def _oom_kill_key(kill: ObservedOomKill) -> str:
+    return f"{kill.namespace}/{kill.pod_name}/{kill.container_name}/{kill.finished_at}"
+
+
+def _claim_oom_kill(kill: ObservedOomKill) -> bool:
+    """True the first time this exact kill is seen, False on every repeat."""
+    key = _oom_kill_key(kill)
+    if key in _handled_oom_kills:
+        return False
+    _handled_oom_kills[key] = None
+    while len(_handled_oom_kills) > _MAX_HANDLED_OOM_KILLS:
+        _handled_oom_kills.pop(next(iter(_handled_oom_kills)))
+    return True
+
+
+def _terminated_state(container_status: dict) -> dict:
+    """The last terminated state of this container, or an empty dict."""
+    return (container_status.get("lastState", {}) or {}).get("terminated", {}) or {}
+
+
+def build_oom_kill(pod: dict, container_status: dict) -> ObservedOomKill | None:
+    """The OOM kill this container status describes, or None when it is not one.
+
+    Both detection paths build their kill here. That keeps ``finishedAt`` -- the key that
+    makes a watch event and a metric hit for the same kill one kill -- provably from the
+    same field, and it puts the application-pod guard in one place: the watch gets that
+    guard from its label selector, the metric sweep reads a pod by name and has nothing
+    but this. Without it a sleep-mode waker (same ``app``/``deployment``/``project``
+    labels, hardcoded 64Mi limit) would raise the limit of the component it fronts.
+    """
+    metadata = pod.get("metadata", {}) or {}
+    labels = metadata.get("labels", {}) or {}
+    if not is_application_pod(labels):
+        return None
+
+    terminated = _terminated_state(container_status)
+    if terminated.get("reason") != "OOMKilled":
+        return None
+
+    return ObservedOomKill(
+        namespace=metadata.get("namespace", ""),
+        pod_name=metadata.get("name", ""),
+        container_name=container_status.get("name", ""),
+        finished_at=terminated.get("finishedAt", ""),
+        project_name=labels.get("project", ""),
+        deployment_name=labels.get("deployment", ""),
+        app_name=labels.get("app", ""),
+        pod_template_hash=labels.get(POD_TEMPLATE_HASH_LABEL) or None,
+    )
+
+
+def observe_pod_restarts(pod: dict, restart_counts: dict[str, int]) -> list[ObservedOomKill]:
+    """Return the OOM kills this pod object reports since it was last seen.
+
+    The trigger is a RISEN ``restartCount``, never the presence of a terminated state.
+    ``lastState`` keeps describing the same old kill for as long as the pod lives, so
+    reading it directly would re-report that one kill on every update.
+
+    A container seen for the first time is only recorded, never reported, so the initial
+    list at startup (and the relist after a reconnect) seeds the cache instead of firing
+    on every pod that ever restarted.
+
+    Only ``OOMKilled`` is reported: Error and Completed have their own paths, and picking
+    them up here would remediate the same thing twice.
+
+    Mutates ``restart_counts`` in place.
+    """
+    metadata = pod.get("metadata", {}) or {}
+    namespace = metadata.get("namespace", "")
+    pod_name = metadata.get("name", "")
+    kills: list[ObservedOomKill] = []
+
+    for container_status in (pod.get("status", {}) or {}).get("containerStatuses", []) or []:
+        container_name = container_status.get("name", "")
+        if not container_name:
+            continue
+        restart_count = int(container_status.get("restartCount") or 0)
+        key = _restart_key(namespace, pod_name, container_name)
+        previous = restart_counts.get(key)
+        restart_counts[key] = restart_count
+        if previous is None or restart_count <= previous:
+            continue
+
+        kill = build_oom_kill(pod, container_status)
+        if kill is None:
+            logger.debug(
+                "Pod watch: %s/%s container %s restarted (%d -> %d), reason %s, nothing to tune",
+                namespace,
+                pod_name,
+                container_name,
+                previous,
+                restart_count,
+                _terminated_state(container_status).get("reason") or "unknown",
+            )
+            continue
+
+        kills.append(kill)
+
+    return kills
+
+
+def forget_pod_restarts(pod: dict, restart_counts: dict[str, int]) -> None:
+    """Drop a pod the stream reports as DELETED, so a rollout does not pile up in the cache.
+
+    Only that: a pod that disappears while the stream is down keeps its entry, because the
+    cache deliberately survives a reconnect (see ``OomPodWatcher._run``). An int per
+    container of a pod that once existed is the cheaper of the two.
+    """
+    metadata = pod.get("metadata", {}) or {}
+    namespace = metadata.get("namespace", "")
+    pod_name = metadata.get("name", "")
+    prefix = f"{namespace}/{pod_name}/"
+    for key in [k for k in restart_counts if k.startswith(prefix)]:
+        del restart_counts[key]
+
+
+def resolve_oom_component(kill: ObservedOomKill, project_data: dict) -> str | None:
+    """The component reference this kill belongs to, or None when nothing claims it.
+
+    Matches on the ``app`` label against ``generate_unique_name`` rather than by stripping
+    the deployment name off it: that is the same direction the rest of this module resolves
+    names in, so a component whose name happens to contain a separator cannot be matched
+    to the wrong one.
+    """
+    deployment = next(
+        (d for d in project_data.get("deployments", []) if d.get("name") == kill.deployment_name),
+        None,
+    )
+    if deployment is None:
+        return None
+
+    cluster = deployment.get("cluster")
+    base_namespace = deployment.get("namespace")
+    if not cluster or not base_namespace:
+        return None
+    if cluster != settings.CLUSTER_MANAGER:
+        return None
+    if get_prefixed_namespace(cluster, base_namespace) != kill.namespace:
+        return None
+
+    for component in deployment.get("components", []) or []:
+        reference = component.get("reference", "")
+        if not reference or component.get("disabled"):
+            continue
+        if generate_unique_name(kill.deployment_name, reference) == kill.app_name:
+            return reference
+    return None
+
+
+async def handle_observed_oom_kill(kill: ObservedOomKill, source: str) -> bool:
+    """Resolve one observed kill to a component and tune it. True when a tune committed."""
+    if not _claim_oom_kill(kill):
+        logger.debug(
+            "Pod watch: OOM on %s/%s container %s at %s was already handled",
+            kill.namespace,
+            kill.pod_name,
+            kill.container_name,
+            kill.finished_at,
+        )
+        return False
+
+    logger.info(
+        "Pod watch: OOM kill on %s/%s container %s at %s (project=%s deployment=%s app=%s)",
+        kill.namespace,
+        kill.pod_name,
+        kill.container_name,
+        kill.finished_at or "unknown",
+        kill.project_name or "unknown",
+        kill.deployment_name or "unknown",
+        kill.app_name or "unknown",
+    )
+
+    if not kill.project_name or not kill.deployment_name or not kill.app_name:
+        logger.info("Pod watch: pod %s/%s carries no project labels, nothing to tune", kill.namespace, kill.pod_name)
+        return False
+
+    try:
+        project_data, _ = get_project_data(kill.project_name)
+    except ValueError as e:
+        logger.info("Pod watch: no project file for %s, nothing to tune: %s", kill.project_name, e)
+        return False
+
+    component_ref = resolve_oom_component(kill, project_data)
+    if component_ref is None:
+        # Deployments whose manifests do not come from OPI (helmfile) land here: there is
+        # nothing in the project file to raise, so reporting is all this can do.
+        logger.info(
+            "Pod watch: no component of %s/%s claims pod %s in %s, only reporting",
+            kill.project_name,
+            kill.deployment_name,
+            kill.pod_name,
+            kill.namespace,
+        )
+        return False
+
+    if not oom_is_fresh_evidence(kill.project_name, kill.deployment_name, kill.app_name, kill.pod_template_hash):
+        logger.info(
+            "Pod watch: OOM for %s/%s component %s is on pod generation %s, the same one the previous "
+            "tune answered, waiting for that increase to roll out",
+            kill.project_name,
+            kill.deployment_name,
+            component_ref,
+            kill.pod_template_hash,
+        )
+        return False
+
+    return await apply_oom_tune(
+        kill.project_name,
+        kill.deployment_name,
+        [component_ref],
+        {kill.app_name: kill.pod_template_hash},
+        source=f"{source} ({kill.pod_name} container {kill.container_name})",
+    )
+
+
+# The stream is a sequence of concatenated JSON documents. Measured against kubectl 1.32
+# on 29 September, ``--watch --output-watch-events`` writes each one compact on its own
+# line, but a chunk boundary still falls wherever the socket happens to break, so reading
+# by line is not enough. ``raw_decode`` pulls whole documents off the front of the buffer
+# and leaves the unfinished tail alone, which also covers the pretty-printed shape.
+#
+# The cap is there for the one case raw_decode cannot tell apart from an unfinished
+# document: genuinely malformed output (a half-written object when kubectl is killed).
+# Without it the buffer would grow until the process is restarted.
+_MAX_WATCH_BUFFER_BYTES = 8 * 1024 * 1024
+
+
+async def read_watch_events(stream: asyncio.StreamReader) -> AsyncIterator[dict]:
+    """Yield the ``{"type": ..., "object": ...}`` documents of a kubectl watch stream."""
+    decoder = json.JSONDecoder()
+    buffer = ""
+    while True:
+        chunk = await stream.read(65536)
+        if not chunk:
+            break
+        buffer += chunk.decode("utf-8", errors="replace")
+        while True:
+            buffer = buffer.lstrip()
+            if not buffer:
+                break
+            try:
+                event, end = decoder.raw_decode(buffer)
+            except json.JSONDecodeError:
+                break
+            buffer = buffer[end:]
+            if isinstance(event, dict):
+                yield event
+        if len(buffer) > _MAX_WATCH_BUFFER_BYTES:
+            logger.warning("Pod watch: dropping %d bytes of unparsable watch output", len(buffer))
+            buffer = ""
+
+
+async def _drain_watch_errors(stream: asyncio.StreamReader | None) -> None:
+    """Log whatever kubectl writes to stderr.
+
+    Not optional: an unread stderr pipe fills up and then blocks the process that is
+    supposed to be streaming pods.
+    """
+    if stream is None:
+        return
+    while True:
+        line = await stream.readline()
+        if not line:
+            return
+        logger.warning("Pod watch: kubectl said: %s", line.decode("utf-8", errors="replace").rstrip())
+
+
+async def _stop_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        process.terminate()
+    with contextlib.suppress(ProcessLookupError):
+        await process.wait()
+
+
+class OomPodWatcher:
+    """Streams every application pod on this cluster and tunes what OOMs.
+
+    One long-lived ``kubectl get pods -A --watch``: nothing while the cluster is quiet,
+    one pod object per change otherwise. Linear in changes, not in pods.
+    """
+
+    def __init__(self, cluster: str) -> None:
+        self._cluster = cluster
+        self._running = False
+        self._task: asyncio.Task | None = None
+        self._restart_counts: dict[str, int] = {}
+
+    async def start(self) -> None:
+        self._running = True
+        self._task = asyncio.create_task(self._run(), name="oom-pod-watch")
+        logger.info("OOM pod watch started (cluster=%s)", self._cluster)
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        logger.info("OOM pod watch stopped")
+
+    async def _run(self) -> None:
+        delay = POD_WATCH_RECONNECT_SECONDS
+        while self._running:
+            handled = await self._watch_once()
+            if not self._running:
+                break
+            # The cache deliberately SURVIVES the reconnect. The relist replays every pod,
+            # so a container whose restartCount grew while the stream was down shows up as
+            # a rise against the remembered value and is caught after all.
+            if handled >= _POD_WATCH_HEALTHY_EVENTS:
+                delay = POD_WATCH_RECONNECT_SECONDS
+            logger.info("OOM pod watch: stream ended after %d event(s), relisting in %ds", handled, delay)
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                break
+            delay = min(delay * 2, POD_WATCH_MAX_RECONNECT_SECONDS)
+
+    async def _watch_once(self) -> int:
+        """Run one watch stream to its end. Returns how many events it delivered."""
+        kubectl = KubectlConnector()
+        process = await kubectl.watch_pods(all_application_pods_selector())
+        if process is None or process.stdout is None:
+            return 0
+
+        stderr_task = asyncio.create_task(_drain_watch_errors(process.stderr))
+        seen = 0
+        try:
+            async for event in read_watch_events(process.stdout):
+                if not await self._handle_event(event):
+                    break
+                seen += 1
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("OOM pod watch: error while reading the stream")
+        finally:
+            stderr_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stderr_task
+            await _stop_process(process)
+        return seen
+
+    async def _handle_event(self, event: dict) -> bool:
+        """Handle one watch event. False means the stream is over and must be relisted.
+
+        The ERROR event is the one that is not a pod: on an expired watch the API server
+        sends a ``Status`` (``reason: Expired``, ``code: 410``) and kubectl passes it on.
+        It has to end the round, and it must NOT count as an event, or a watch that keeps
+        being refused reads as a stream that ran and comes back every five seconds.
+        """
+        event_type = event.get("type", "")
+        pod = event.get("object", {})
+        if event_type == "ERROR":
+            status = pod if isinstance(pod, dict) else {}
+            logger.warning(
+                "OOM pod watch: the API server ended the stream (%s, code %s): %s",
+                status.get("reason", ""),
+                status.get("code", ""),
+                status.get("message", ""),
+            )
+            return False
+        if not isinstance(pod, dict):
+            return True
+        if event_type == "DELETED":
+            forget_pod_restarts(pod, self._restart_counts)
+            return True
+        for kill in observe_pod_restarts(pod, self._restart_counts):
+            await handle_observed_oom_kill(kill, source="pod watch")
+        return True
+
+
+class OomMetricSweeper:
+    """Hourly safety net: the OOM kills the watch did not see.
+
+    The seconds around an OPI deploy, and a kill on a pod that was not in the cache yet.
+    """
+
+    def __init__(self, cluster: str, interval_seconds: int) -> None:
+        self._cluster = cluster
+        self._interval = interval_seconds
+        self._running = False
+        self._task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        self._running = True
+        self._task = asyncio.create_task(self._run(), name="oom-metric-sweep")
+        logger.info("OOM metric sweep started (cluster=%s, every %ds)", self._cluster, self._interval)
+
+    async def stop(self) -> None:
+        self._running = False
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+        logger.info("OOM metric sweep stopped")
+
+    async def _run(self) -> None:
+        while self._running:
+            try:
+                await asyncio.sleep(self._interval)
+            except asyncio.CancelledError:
+                break
+            try:
+                await run_oom_metric_sweep(self._cluster)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("OOM metric sweep failed")
+
+
+async def read_pod_oom_kill(namespace: str, pod_name: str, container_name: str) -> ObservedOomKill | None:
+    """Read one pod and return its OOM kill for this container, or None.
+
+    This is what keeps the metric from deciding anything: a hit only becomes a kill once
+    ``build_oom_kill`` accepts the pod status, which is also where this path gets the
+    application-pod guard the watch gets from its selector.
+    """
+    kubectl = KubectlConnector()
+    if not KubectlConnector.isConnected:
+        return None
+    try:
+        stdout, stderr, code = await kubectl.run_command(["get", "pod", "-n", namespace, pod_name, "-o", "json"])
+        if code != 0:
+            logger.debug("OOM metric sweep: could not read pod %s/%s: %s", namespace, pod_name, stderr)
+            return None
+        pod = json.loads(stdout)
+    except (KubectlConnectionError, KubectlExecutionError, json.JSONDecodeError) as e:
+        logger.debug("OOM metric sweep: could not read pod %s/%s: %s", namespace, pod_name, e)
+        return None
+
+    for container_status in (pod.get("status", {}) or {}).get("containerStatuses", []) or []:
+        if container_status.get("name") != container_name:
+            continue
+        return build_oom_kill(pod, container_status)
+    return None
+
+
+async def run_oom_metric_sweep(cluster: str) -> int:
+    """One pass of the safety net. Returns how many kills it tuned."""
+    query = _OOM_METRIC_QUERY.format(prefix=get_namespace_prefix(cluster))
+    try:
+        connector = await get_metrics_connector()
+        rows = await connector.custom_query(query)
+    except Exception as e:
+        logger.info("OOM metric sweep: disabled, no metrics backend answered the query: %s", e)
+        return 0
+
+    tuned = 0
+    for row in rows or []:
+        metric = row.get("metric", {}) or {}
+        namespace = metric.get("namespace", "")
+        pod_name = metric.get("pod", "")
+        container_name = metric.get("container", "")
+        if not namespace or not pod_name or not container_name:
+            continue
+        kill = await read_pod_oom_kill(namespace, pod_name, container_name)
+        if kill is None:
+            continue
+        if await handle_observed_oom_kill(kill, source="metric sweep"):
+            tuned += 1
+
+    logger.info("OOM metric sweep: %d metric hit(s), %d tune(s) started", len(rows or []), tuned)
+    return tuned
