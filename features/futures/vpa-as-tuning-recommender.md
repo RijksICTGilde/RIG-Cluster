@@ -47,7 +47,7 @@ VPA's recommender handles exactly this: histogram-based percentile targets over 
 ## Dependencies
 
 - VPA installed on the cluster (available on ODCN production as of June 2026).
-- Related: `system-wide-oom-watcher.md` (periodic detection), `sidecar-resource-tuning.md`, `configurable-deployment-resources.md`.
+- Related: `../oom-pod-watch.md` (the built pod-watch plus its metric net), `sidecar-resource-tuning.md`, `configurable-deployment-resources.md`.
 
 ## Recommender floor (production learning, June 2026)
 

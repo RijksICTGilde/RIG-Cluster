@@ -1086,6 +1086,73 @@ class TestRunOomCheck:
         mock_check.assert_not_called()
 
 
+class TestFireAndForgetChain:
+    """A committed tune queues its own refresh AND the next check in the chain.
+
+    Both moved into ``apply_oom_tune`` / its caller when the pod watch started sharing
+    the remediation. The chain is what carries the fire-and-forget path over rounds, so
+    it needs its own hold: nothing else in this file fails when it disappears.
+    """
+
+    @staticmethod
+    def _project_data():
+        return (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_a_committed_tune_queues_a_refresh_and_the_next_check(
+        self, mock_schedule, mock_prefix, mock_get_data, mock_check, mock_queue, mock_observe
+    ):
+        mock_get_data.side_effect = lambda _name: self._project_data()
+        mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
+        mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_queue.assert_awaited_once_with("myproject", "production")
+        mock_schedule.assert_called_once()
+        assert mock_schedule.call_args.kwargs["attempt"] == 2
+        assert mock_schedule.call_args.kwargs["max_attempts"] == 3
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_a_tune_that_commits_nothing_ends_the_chain(
+        self, mock_schedule, mock_prefix, mock_get_data, mock_check, mock_queue, mock_observe
+    ):
+        """No commit means no refresh and no follow-up: the chain ends by itself, which
+        is exactly why the fire-and-forget path may charge the budget late."""
+        mock_get_data.side_effect = lambda _name: self._project_data()
+        mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
+        mock_observe.return_value = MagicMock(requeue_refresh=False, failures=[])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_queue.assert_not_awaited()
+        mock_schedule.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # The shared OOM tune budget across rounds
 # ---------------------------------------------------------------------------
