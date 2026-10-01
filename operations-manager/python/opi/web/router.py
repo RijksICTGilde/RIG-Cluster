@@ -1289,7 +1289,11 @@ async def dashboard(request: Request):
             from opi.connectors.argo import create_argo_connector
             from opi.utils.naming import generate_argocd_application_name
 
-            argo_connector = create_argo_connector()
+            # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
+            # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
+            # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
+            # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
+            argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = argo_connector.auth_token is not None
 
             if argocd_available:
@@ -2333,7 +2337,10 @@ async def argocd_status_fragment(
     # -- it decides whether asking the cluster which pod is serving makes sense at all.
     deployment_state = collect_deployment_state(project.data or {}, deployment_name)
 
-    argo = create_argo_connector()
+    # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
+    # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
+    # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    argo = create_argo_connector(connect_retry_seconds=0)
     if argo.auth_token is None:
         status = _argocd_unavailable_result(
             generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"
