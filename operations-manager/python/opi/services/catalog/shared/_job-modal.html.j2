@@ -63,7 +63,7 @@
             <c-paragraph>Gestart door: {{ job.opened_by }} &middot; verloopt om {{ job.expires_at.strftime("%H:%M") }} UTC</c-paragraph>
             <c-cluster gap="md">
                 <c-button type="primary" size="sm" label="Logs bekijken"
-                          :attrs="{'onclick': logs_bekijken}" />
+                          @click="{{ logs_bekijken }}" />
                 <c-button type="warning" size="sm"
                           label="{{ 'Opruimen' if state in ['succeeded', 'failed'] else 'Nu stoppen' }}"
                           :attrs="stoppen_attrs" />

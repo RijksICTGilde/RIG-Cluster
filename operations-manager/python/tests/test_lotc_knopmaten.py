@@ -32,9 +32,12 @@ import pathlib
 import re
 
 import pytest
+from jinja2 import Environment
+from lord_of_the_components import setup_components
+from lord_of_the_components.extension import ComponentError
 from opi.core.buttons import BUTTON_SIZES, BUTTON_VARIANTS, check_button_variant
 from opi.core.template_helpers import CATALOG_DIR, TEMPLATES_DIR
-from opi.core.templates_lotc import templates_lotc
+from opi.core.templates_lotc import DESIGN_SYSTEMS, templates_lotc
 from opi.services.services import DeploymentAction
 from opi.web.project_actions import ProjectAction
 
@@ -300,22 +303,38 @@ def test_geen_kale_button_waar_een_c_button_hoort() -> None:
 # --- waarom de bewaker nodig is: het component klaagt niet ------------------------
 
 
-def test_een_onbekende_variant_gaat_stil_door_naar_het_element() -> None:
-    """De keerzijde. Zonder deze helft is niet te zien wat er misgaat.
+def test_een_onbekende_variant_is_rood_onder_lotc_strict() -> None:
+    """De poort die deze fout tegenhoudt voordat hij op een scherm komt.
 
-    Onder NLDD wordt onze ``type`` de ``variant`` van het element, via een tabel die een
-    woord dat er niet in staat ONGEWIJZIGD doorgeeft. ``type="submit"`` levert dus
-    ``variant="submit"``: een variant die geen enkel stijlblad kent. En omdat het echte
-    HTML-type ``html-type`` heet, blijft dat ``button`` staan - de knop dient zijn
-    formulier niet eens in. Twee fouten, geen melding.
+    ``LOTC_STRICT=1`` staat in tests/conftest.py en in de pytest-stap van CI, dus een
+    woord buiten de lijst is hier een ``ComponentError``. Dat is de reden dat de
+    grep-bewakers hierboven niet de enige verdediging zijn.
     """
-    kapot = templates_lotc.env.from_string('<c-button type="submit" label="Opslaan" />').render()
+    with pytest.raises(ComponentError, match="Invalid value 'submit' for attribute 'type'"):
+        templates_lotc.env.from_string('<c-button type="submit" label="Opslaan" />').render()
+
     heel = templates_lotc.env.from_string('<c-button html-type="submit" type="primary" label="Opslaan" />').render()
+    assert 'variant="primary"' in heel
+    assert 'type="submit"' in heel
+
+
+def test_een_onbekende_variant_gaat_zonder_strict_stil_door_naar_het_element() -> None:
+    """De keerzijde, en de reden dat de grep-bewakers hierboven blijven bestaan.
+
+    De productie-image zet ``LOTC_STRICT`` NIET: een onbekende waarde mag daar geen 500
+    opleveren. Zonder strict wordt onze ``type`` de ``variant`` van het element via een
+    tabel die een woord dat er niet in staat ONGEWIJZIGD doorgeeft. ``type="submit"``
+    levert dan ``variant="submit"``: een variant die geen enkel stijlblad kent. En omdat
+    het echte HTML-type ``html-type`` heet, blijft dat ``button`` staan - de knop dient
+    zijn formulier niet eens in. Twee fouten, geen melding.
+    """
+    env = Environment(loader=templates_lotc.env.loader, autoescape=True)
+    setup_components(env, design_systems=DESIGN_SYSTEMS, htmx=True, on_unknown_value="ignore")
+
+    kapot = env.from_string('<c-button type="submit" label="Opslaan" />').render()
 
     assert 'variant="submit"' in kapot
     assert 'type="button"' in kapot
-    assert 'variant="primary"' in heel
-    assert 'type="submit"' in heel
 
 
 def test_de_standaardmaat_is_md_en_die_schrijf_je_dus_niet_op() -> None:

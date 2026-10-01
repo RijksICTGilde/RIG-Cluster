@@ -127,7 +127,7 @@
                     html-type="button"
                     type="tertiary"
                     label="Annuleren"
-                    :attrs="{'onclick': annuleren_js}" />
+                    @click="{{ annuleren_js }}" />
 
                 <c-cluster gap="sm" align="center">
                     {% set vorige_attrs = {

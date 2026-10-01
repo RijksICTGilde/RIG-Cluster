@@ -41,6 +41,9 @@
   Geen class in :attrs: het component zet er zelf al een op, en twee class-attributen op
   een tag betekent dat de browser de tweede negeert.
 
+  DE HANDLER GAAT VIA @change EN NIET VIA :attrs: die spread weigert een ``on*``-sleutel
+  sinds NLDD 0.8.92 met een ValueError.
+
   data-no-optional-badge, omdat lotc-forms elk niet-
   verplicht veld van het label "Optioneel" voorziet (rijksconventie: markeer optioneel,
   niet verplicht). Dat klopt voor een invoerveld en niet voor deze KIEZER: hij dient om
@@ -52,14 +55,13 @@
   het stond, om niet in dezelfde bestanden langs elkaar heen te werken.
 #}
 {% if project.deployments | length > 1 %}
-    {% set kiezer_gedrag = {'onchange': 'location.assign(this.value)'} %}
     <c-select-field
         native="true"
         id="global-deployment-selector"
         name="global-deployment-selector"
         label="Geselecteerde deployment"
         data-no-optional-badge="true"
-        :attrs="kiezer_gedrag">
+        @change="location.assign(this.value)">
         {% for deployment in project.deployments | sort(attribute='name') %}
             <option value="/projects/{{ project.name }}/{{ tabs[active_tab].path }}/{{ deployment.name | urlencode }}"{% if deployment.name == deployment_open %} selected{% endif %}>{{ deployment.name }} ({{ deployment.cluster }})</option>
         {% endfor %}

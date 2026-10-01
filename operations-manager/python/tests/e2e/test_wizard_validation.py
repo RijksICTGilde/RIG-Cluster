@@ -69,17 +69,23 @@ def test_wizard_start_page_links_to_create(app_server: str, auth_page: Page) -> 
 
 
 def test_keycloak_template_moet_gekozen_worden(app_server: str, auth_page: Page) -> None:
-    """Zonder keuze gaat er niets over de lijn en blijft de wizard staan.
+    """Zonder keuze blijft de wizard staan, met onze eigen melding onder het veld.
 
     Het template-veld heeft geen default meer: een scherm mag geen blauwdruk tonen die niet
     in het projectbestand staat. Dat is alleen waar zolang de stap ook echt niet te passeren
     is met een lege keuze -- anders schuift de wizard door en schrijft hij bij het opslaan
     alsnog niets, of erger, iets.
 
-    Gemeten wordt de POST, niet de foutmelding: de browser meldt een leeg verplicht veld in
-    een eigen bel die niet in de DOM staat. Wat wel te zien is, is dat er geen verzoek
-    vertrekt, dat de stap dezelfde blijft, en dat de browser de aandacht naar het veld
-    brengt in plaats van de knop dood te laten lijken (die zorg staat in static/js/wizard.js).
+    WIE DE WEIGERING UITSPREEKT IS VERANDERD. Hier stond dat er geen POST vertrok: de
+    browser hield een leeg ``<select required>`` zelf tegen, met een tekstballon die niet in
+    de DOM staat. Sinds de wizardformulieren ``novalidate`` dragen (zie
+    tests/test_template_structure.py voor het waarom) gaat het verzoek wel uit en weigert de
+    SERVER hem. Dat is de bedoeling: dan staat er een Nederlandse melding onder het veld in
+    plaats van een onvertaalbare bel in de taal van de browser.
+
+    Wat onveranderd moet blijven is wat de gebruiker eraan heeft: de stap blijft dezelfde,
+    de melding is te lezen, en de aandacht gaat naar het veld in plaats van dat de knop dood
+    lijkt.
     """
     pad = "_services-config/keycloak/config/template"
     wizard = WizardHelper(auth_page, app_server)
@@ -93,19 +99,23 @@ def test_keycloak_template_moet_gekozen_worden(app_server: str, auth_page: Page)
     assert keuzelijst.count() == 1, "de keycloak-configstap is niet bereikt"
     assert keuzelijst.first.input_value() == "", "het veld hoort leeg te beginnen, zonder verzonnen blauwdruk"
 
-    posts: list[str] = []
-    auth_page.on("request", lambda r: posts.append(r.url) if r.method == "POST" else None)
-
     auth_page.locator("button:has-text('Volgende')").first.click()
-    auth_page.wait_for_timeout(1000)
+    auth_page.wait_for_timeout(1500)
 
-    assert posts == [], f"een lege keuze hoort niet verstuurd te worden, maar er ging een POST uit: {posts}"
     assert wizard.get_current_step_title() == "Keycloak configuratie", "de wizard schoof door op een lege keuze"
-    assert keuzelijst.first.evaluate("el => document.activeElement === el"), (
-        "de browser hoort de aandacht naar het veld te brengen; anders lijkt de knop dood"
+
+    melding = auth_page.locator("nldd-validation-item, .rvo-form-field__error-text")
+    assert melding.count() > 0, "de stap blijft staan maar zegt niet waarom"
+    assert (melding.first.text_content() or "").strip(), "de foutregel staat er leeg bij"
+
+    # De aandacht gaat naar het veld. Na de swap doet static/js/htmx-formgedrag.js dat; de
+    # knop waarop je klikte is dan namelijk meegeswapt en de focus zou op <body> vallen.
+    keuzelijst_na = auth_page.locator(f'select[name="{pad}"]')
+    assert keuzelijst_na.first.evaluate("el => document.activeElement === el || el.contains(document.activeElement)"), (
+        "de aandacht hoort naar het veld te gaan; anders lijkt de knop dood"
     )
 
     # En met een keuze gaat het wel verder.
-    keuzelijst.first.select_option("sso-only")
+    keuzelijst_na.first.select_option("sso-only")
     wizard.click_next()
     assert wizard.get_current_step_title() != "Keycloak configuratie"
