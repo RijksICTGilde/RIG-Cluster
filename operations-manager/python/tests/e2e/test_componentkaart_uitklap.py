@@ -101,7 +101,7 @@ def test_een_klik_in_de_inhoud_klapt_niet_dicht(app_server: str, auth_page: Page
 
     # Het oogje van het geheime veld: precies de knop waarop iemand drukt en waarna het
     # blok onder zijn vingers niet mag dichtklappen.
-    inhoud.locator(".lotc-secret__btn").first.click()
+    inhoud.locator("lotc-secret-field button").first.click()
     auth_page.wait_for_timeout(200)
     assert inhoud.is_visible() is True
 

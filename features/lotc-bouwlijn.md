@@ -33,6 +33,34 @@ wordt is licht/donker, via `/weergave` en het koekje `zad_scheme`.
 Lord of the Components is een gewone runtime-dependency: de applicatie rendert er
 pagina's mee, dus hij hoort in de image.
 
+### De pin
+
+Alle vijf de packages (`lord-of-the-components`, `lotc-rvo`, `lotc-nldd`, `lotc-layout`,
+`lotc-forms`) staan in `pyproject.toml` op **één commit** van
+`github.com/RijksICTGilde/lord-of-the-components`, nu `172300a` (NLDD 0.8.92).
+
+Een bump is geen losse handeling maar een taak. Wat 0.8.80 → 0.8.92 opleverde:
+markup waar deze applicatie zelf op selecteert (`secret-field` werd een custom element,
+`list-item-action` heet `list-item-segment`, `nldd-form-field-error-text` is een
+`nldd-validation-list` geworden). Een `:attrs`-spread die een `on*`-sleutel weigert. En
+veldcomponenten die hun `required` aan het formulier melden, waardoor de browser het
+versturen tegenhield. Loop bij een bump dus minimaal na:
+
+- **de pin verzetten en `uv lock`**, en meten dat `lotc_nldd`'s `registry.json` de
+  verwachte `nldd_version` noemt;
+- **`LOTC_STRICT=1`** (staat in CI en in `tests/conftest.py`): een onbekende
+  attribuutWAARDE is dan rood in plaats van stil;
+- **de sweep**: `uv run python -m lord_of_the_components.sweep --design-systems
+  nldd,lotc-forms opi/templates_lotc opi/services/catalog` somt elke computed waarde en
+  elke spread op die de compiler niet kan controleren. Een fout die daar uitkomt hoort een
+  toets te krijgen die de waarde uit de GERENDERDE markup haalt en hem als LITERAAL langs
+  de compiler stuurt; dat is de enige stand waarin hij zijn eigen lijst nakijkt. Zie
+  `tests/test_lotc_voortgangsbalk_kleur.py` (kleur) en
+  `tests/test_lotc_stappenbalk_stand.py` (stand per stap);
+- **kijken naar het scherm**, want de rest is markup. De poort die dat doet is
+  `tests/e2e/test_lotc_veldfout_zichtbaar.py`: die meet de HOOGTE van een foutregel per
+  veldsoort, en dat is precies wat een assertie op de markup niet haalt.
+
 ## Gebruik
 
 ```bash
@@ -71,8 +99,8 @@ Draaiende applicatie:
 | `opi/web/lotc_router.py` | de routes onder `/lotc/` |
 | `opi/forms/widgets/lotc.py` | de widget-adapter die de LOTC-templates rendert |
 | `opi/forms/widgets/fields.py` | de gedeelde veldvoorbereiding waar die adapter van erft |
-| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs`, plus de foutbedrading van een veld |
-| `opi/templates_lotc/components/_forms.j2` | onze kopie van de veldmacro's van `lotc-forms`; zie "Een sjabloon van een design system overschrijven" |
+| `opi/forms/lotc_attrs.py` | de attribuutbundel van een veld, voor LOTC's `:attrs` |
+| `opi/templates_lotc/components/` | onze drie kopieën van sjablonen van `lotc-forms`; zie "Een sjabloon van een design system overschrijven" |
 
 ### Waarom er ooit twee omgevingen waren
 
@@ -167,36 +195,41 @@ templatemap op de `searchpath`. Twee regels, en twee regels om weer weg te halen
 `templates_lotc/`. Een bestand op dezelfde naam wint dus van dat van het pakket. Dat is de
 manier om een bug in het thema te overbruggen zonder hem op tien plekken na te bouwen.
 
-Er staat er nu één: `opi/templates_lotc/components/_forms.j2`, onze kopie van de gedeelde
-macro's van `lotc-forms`. Elk veldsjabloon importeert die, dus het is één plek voor alle
-veldsoorten. Twee wijzigingen zitten erin, allebei met een verzoek in
-`request_for_components.md`:
+Er staan er nu drie in `opi/templates_lotc/components/`, alle drie van `lotc-forms`.
 
-1. **De foutmelding wordt bedraad.** `nldd-form-field` toont alleen foutregels waarvan het
-   id in `error-message` OP HET INVOERVELD staat; `lotc-forms` schrijft daar
-   `error-message-ids`, en dat is de andere richting (die eigenschap zet `nldd-form-field`
-   zelf om `aria-describedby` te bedraden). Zonder de bedrading staat de melding er wel en
-   is hij `display: none` met hoogte 0. `bedraad_foutmelding` in `opi/forms/lotc_attrs.py`
-   zet `invalid`, `aria-invalid` en `error-message` op de besturing; dat laatste is bij de
-   groepsvelden (radio, aankruisvakjes) het enige dat een schermlezer over de fout krijgt.
-2. **`data-no-optional-badge` laat "Optioneel" weg.** `lotc-forms` zet dat label op elk
-   veld dat niet `required` is (rijksconventie: markeer optioneel, niet verplicht). Voor
-   een kiezer met een vaste selectie of het enige veld van een herhaalbaar item betekent
-   het niets. Zet dan dit merk-attribuut op de besturing en géén `required`: dat haalt het
-   label ook weg, maar laat de HTML beweren dat er iets ingevuld moet worden, en
-   formuliervalidatie leest dat ook echt.
+`_forms.j2` is de kopie van de gedeelde macro's. Elk veldsjabloon importeert die, dus het
+is één plek voor alle veldsoorten. Er zit één wijziging in, met een verzoek in
+`request_for_components.md`: **`data-no-optional-badge` laat "Optioneel" weg.**
+`lotc-forms` zet dat label op elk veld dat niet `required` is (rijksconventie: markeer
+optioneel, niet verplicht). Voor een kiezer met een vaste selectie of het enige veld van
+een herhaalbaar item betekent het niets. Zet dan dit merk-attribuut op de besturing en
+géén `required`: dat haalt het label ook weg, maar laat de HTML beweren dat er iets
+ingevuld moet worden, en formuliervalidatie leest dat ook echt. Een keuzelijst krijgt de
+badge nooit, ongeacht dat attribuut: daar staat altijd al iets geselecteerd.
+
+`select-field.html.j2` en `checkbox-field.html.j2` bedraden hun foutmelding. Een
+serverfout staat sinds NLDD 0.8.84 in een `nldd-validation-list`, en die leest de
+besturing: `invalid`, plus het id van het item in `unmet`. Vier veldsoorten schrijven dat
+zelf, de keuzelijst en het losse aankruisvakje niet. Zonder die bedrading is de foutregel
+in een browser 0 px hoog. De metingen per veldsoort staan in `request_for_components.md`,
+samen met het verzoek om het bovenstrooms te repareren.
+
+De groepstak van het aankruisvakje en `radio-button-field` hebben hetzelfde gebrek en zijn
+**niet** gerepareerd: daar zit de reparatie in `lotc-forms` zelf. Geen veld van dit portaal
+met die twee widgets is `required` of heeft een validator, dus er is geen weg naar een
+serverfout op zo'n veld.
 
 Een kopie is een schuld: hij mist een verbetering van bovenstrooms in stilte. Daarom legt
-`tests/test_lotc_foutmelding_veld.py` hem naast de geïnstalleerde versie (modulo de
-bewuste regels), toetst hij dat onze kopie ook echt wint op de searchpath, en toetst hij
-dat het origineel de bug nog heeft - is die weg, dan kan de kopie weg.
+`tests/test_lotc_foutmelding_veld.py` ze alle drie naast de geïnstalleerde versie (modulo
+de bewuste regels), toetst hij dat onze kopieën ook echt winnen op de searchpath, en
+toetst hij dat het origineel de gebreken nog heeft - zijn die weg, dan kan de kopie weg.
 
 ## Testen
 
 | test | bewaakt |
 |---|---|
 | `tests/test_lotc_component_names.py` | dat er nergens nog een `<c-p>` staat; die naam bestaat niet |
-| `tests/test_lotc_klikattributen.py` | dat er geen Jinja in de waarde van een `@`-afhandelaar staat - die waarde wordt niet gerenderd |
+| `tests/test_lotc_klikattributen.py` | dat Jinja in de waarde van een `@`-afhandelaar WEL gerenderd wordt, en dat een waarde met `tojson` erin langs `forceescape` gaat |
 | `tests/test_lotc_stapel_in_tabelcel.py` | dat er geen `<c-stack>` rechtstreeks in een `<c-td>` staat; die krimpt in Firefox tot 0 breed |
 | `tests/e2e/test_lotc_aanvragenbeheer.py` | dat de knop op `/admin/approvals` de echte projectnaam meestuurt, dat de datumkolom in FIREFOX zijn breedte houdt, dat de dialoog EEN kop heeft, dat er geen leeg foutvak in staat, dat een mislukte aanroep een leesbare melding geeft, dat het icoon in de kop hetzelfde verticale midden heeft als de titel, en dat de GEDEELDE schil (de bewerkdialogen van een project) nog opent, opslaat en met Escape sluit |
 | `tests/test_goedkeuringsdialoog_htmx.py` | dat de dialoog op `/admin/approvals` zijn formulier met `hx-get` ophaalt en niet met een eigen `fetch`, dat er geen lege foutbak in staat en dat `#approval-loading` aan beide kanten bestaat (sjabloon EN `modal.css`). Zonder browser, dus deze loopt wel mee in de gewone ronde - de e2e-tests hierboven niet |
@@ -268,20 +301,39 @@ soort fout is erger dan geen meting - je leert hem negeren.
 attribuut niet op het component, en liet het vallen. Wat overbleef was een kale `@` in de
 tag. **58 keer, in 35 bestanden** - knoppen die keurig renderen en zwijgen.
 
-**En let op wat er WEL doorkomt.** De waarde van een `@`-afhandelaar wordt letterlijk uit
-de bron overgenomen en in het `onclick`-attribuut gezet; hij komt nooit langs Jinja. Staat
-er `@click="f('{{ naam }}')"`, dan krijgt de browser die accolades ook echt - en dat ziet
-er in het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) worden
-wel gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
+**De waarde van een `@`-afhandelaar kwam ooit letterlijk door.** Hij werd uit de bron
+overgenomen en in het `onclick`-attribuut gezet zonder ooit langs Jinja te gaan. Stond er
+`@click="f('{{ naam }}')"`, dan kreeg de browser die accolades ook echt - en dat zag er in
+het sjabloon volkomen normaal uit, want gewone attributen (`label`, `data-*`) werden wel
+gerenderd. Dat kostte op `/admin/approvals` de hele beoordelingsdialoog: de kop las
 "Domeingoedkeuring - {{ project.project_name }}" en het formulier werd opgehaald bij een
-pad met `%7B%7B` erin. De weg die niet omvalt is een gewoon attribuut plus een
-afhandelaar zonder Jinja erin:
+pad met `%7B%7B` erin.
+
+**Sinds NLDD 0.8.92 wordt die waarde wel gerenderd**, zowel `{{ ... }}` als `{% if %}`. De
+omweg via een data-attribuut is dus niet meer nodig, al is hij nergens fout:
 
 ```html
 <c-button data-project="{{ project.project_name }}" @click="doeIets(this.dataset.project)" />
+<c-button @click="doeIets('{{ project.project_name }}')" />
 ```
 
-`tests/test_lotc_klikattributen.py` bewaakt dat er nergens meer Jinja in zo'n waarde staat.
+**Wat er voor in de plaats komt is de escaping.** De waarde staat in een attribuut tussen
+dubbele aanhalingstekens, dus een dubbel aanhalingsteken IN die waarde sluit het attribuut
+voortijdig. Dat gebeurt precies bij een waarde die je met `tojson` bouwt, en `| e` helpt
+niet: `tojson` levert `Markup` op en dat filter laat markup met rust. Zet er
+`| forceescape` achter.
+
+```html
+{% set js = ("openLogViewer(" ~ (project.name | tojson) ~ ")") | forceescape %}
+<c-button @click="{{ js }}" />
+```
+
+**En een handler hoort niet in een `:attrs`-spread.** Die weigert een `on*`-sleutel sinds
+0.8.92 met een `ValueError`: een spread draagt gegevens, en een gegeven mag geen
+uitvoerbaar script worden. De `:@click="expr"`-spelling die de bibliotheek ooit kende
+wordt nu als onbekend attribuut geweigerd; `@click="{{ expr }}"` is de vorm.
+
+`tests/test_lotc_klikattributen.py` meet alle drie, de `:@click`-spelling inbegrepen.
 
 **En als het om een URL gaat: laat htmx het ophalen.** Het bovenstaande is de reparatie
 van een symptoom; de oorzaak was dat een fragment-URL met de hand in JavaScript werd
@@ -301,12 +353,13 @@ doet - anders gaat het open en blijft het leeg. En de laadtoestand van htmx werk
 `opacity`, wat ruimte blijft innemen; wil je hem echt weg hebben, gebruik dan `display`
 (zie `#approval-loading` in `static/css/modal.css`).
 
-De omzetter maakt er nu een echte `onclick` van via LOTC's `:attrs`-spread, met de aanroep
-in een `{% set %}`-blok vlak voor de tag. Dat is meteen het antwoord op "hier hoort een
-kale `<button>` want die heeft een onclick": nee, dat kan gewoon op een `<c-button>`.
-Welke maat en welk `type` een knop draagt staat in `features/knopmaten.md`. Dat blok is er om twee redenen: een genest
-aanhalingsteken binnen `:attrs` leest de voorbewerker als het einde van het attribuut, en
-de blokvorm rendert de Jinja die in zo'n aanroep zit gewoon mee.
+Dat is meteen het antwoord op "hier hoort een kale `<button>` want die heeft een onclick":
+nee, `@click="..."` kan gewoon op een `<c-button>`. Welke maat en welk `type` een knop
+draagt staat in `features/knopmaten.md`.
+
+**Kopieer niet uit een omgezet sjabloon.** De eerste generatie automatisch omgezette
+sjablonen zet de aanroep in een `{% set lotc_onclick_N %}`-blok dat aan geen knop hangt;
+die dode knoppen staan als open taak in `features/lotc-geen-roos-html.md`.
 
 ## Blokken die diensten zelf leveren
 
@@ -352,10 +405,15 @@ geklikt).
 
 ## Iconen: meet de BUNDEL, niet de lijst
 
-`icons.json` van `lord_of_the_components` noemt 327 namen; de `nldd.js` die de browser
-laadt bevat er 271. De 56 namen ertussen bestaan op papier en renderen als niets. Dat is
-geen randgeval: het kostte 37 lege plekken in de interface, waaronder de bewerkknop en de
-verwijderknop, terwijl de test die erop bewaakte groen stond - want die las de lijst.
+`icons.json` van `lord_of_the_components` en de bundel die de browser laadt lopen
+uiteen, en een naam die alleen in de lijst staat rendert als niets. Hoe groot dat gat is
+verschilt per versie: op 0.8.80 waren het 56 namen, op 0.8.92 nog 2. De actuele meting
+staat in de docstring van `opi/web/nldd_iconen.py`; hier geen tweede kopie, want die
+veroudert bij elke bump.
+
+Dat is geen randgeval: op 0.8.80 kostte het 37 lege plekken in de interface, waaronder de
+bewerkknop en de verwijderknop, terwijl de test die erop bewaakte groen stond - want die
+las de lijst.
 
 De bron is nu `opi/web/nldd_iconen.py`, dat de namen uit de geleverde bestanden haalt.
 En let op het tweede gat dat daarbij hoorde: `ROOS_TO_NLDD_ICONS` wordt toegepast door het
@@ -402,7 +460,7 @@ en de logviewer.
 |---|---|
 | `architecture` - 1509 regels in een blok; verdient een eigen besluit, en staat op verzoek als laatste | ons |
 | Het percentage in de dashboardmeter vraagt een RVO-kleurvariabele die NLDD niet heeft; erft nu de tekstkleur | ons |
-| Iconen: de NLDD-bundel levert er 271, de RVO-set die roos meeleverde 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
+| Iconen: de NLDD-bundel levert er 686 (0.8.92; op 0.8.80 nog 271), de RVO-set die roos meeleverde 1163. Voorstel om die als losse implementatiemodule mee te nemen ligt bij LOTC | LOTC |
 | De open verzoeken aan het thema staan sinds RC-70 gebundeld in `request_for_components.md` | LOTC |
 
 ### Een aandachtspunt voor de bouw

@@ -85,12 +85,10 @@
                                   onclick="copyLogs()"></nldd-icon-button>
             </nldd-toolbar-item>
             <nldd-toolbar-item slot="end">
-                {# square-and-arrow-down, niet square-arrow-down. Die tweede naam staat wel
-                   in de iconenlijst van LOTC maar zit NIET in de nldd-bundel die de browser
-                   laadt, en rendeerde hier als een leeg vierkantje. Zie
-                   tests/test_lotc_icon_mapping.py, dat sindsdien de geleverde set meet. #}
+                {# square-arrow-down, niet square-and-arrow-down: welke van de twee in de
+                   bundel zit wisselt per versie. tests/test_lotc_icon_mapping.py meet dat. #}
                 <nldd-icon-button size="sm" variant="neutral-transparent"
-                                  icon="square-and-arrow-down" accessible-label="Downloaden"
+                                  icon="square-arrow-down" accessible-label="Downloaden"
                                   onclick="downloadLogs()"></nldd-icon-button>
             </nldd-toolbar-item>
         </nldd-toolbar>
@@ -140,7 +138,7 @@
            logboek is en geen lopende stroom, anders leest een stilstaand paneel als een
            kapotte verbinding. #}
         <c-switch-field id="log-previous-attempt" label="Vorige poging"
-                        :attrs="{'onchange': 'toggleLogPrevious()'}" />
+                        @change="toggleLogPrevious()" />
 
         {# Het zoekveld van het thema, inclusief zijn eigen vergrootglas en wisknop. Dat
            laatste verving .log-search-clear met zijn .is-visible; het wissen loopt nu via
@@ -150,7 +148,8 @@
                         accessible-label="Zoek in logs"
                         size="sm"
                         width="20rem"
-                        :attrs="{'oninput': 'filterLogs()', 'onsearch': 'filterLogs()'}" />
+                        @input="filterLogs()"
+                        @search="filterLogs()" />
         <span id="log-search-count" class="log-search-count"></span>
 
         {# De vier niveaufilters. Een toggle-button-group met type=checkbox is precies wat
@@ -168,7 +167,7 @@
 
         {# De regelterugloop is een aan/uit-instelling, en daar is een switch voor. #}
         <c-switch-field id="log-word-wrap" label="Terugloop"
-                        :attrs="{'onchange': 'toggleWordWrap()'}" />
+                        @change="toggleWordWrap()" />
     </div>
 
     <div class="log-viewer-status" id="log-viewer-status">

@@ -33,10 +33,6 @@
   dienstenkiezer in de wizard - mag het vraagteken de kaart niet meeselecteren).
   static/js/wizard.js haalt de tekst op bij /forms/wizard/help/<template> en zet hem in
   #service-help-content.
-
-  De aanroep wordt met {% raw %}{% set %}{% endraw %} BOVEN de tag opgebouwd en via :attrs meegegeven: een
-  componenttag verdraagt geen Jinja binnenin, en class/onclick zijn geen eigen attributen
-  van c-icon-button.
 #}
 {% macro service_card(service) %}
 <c-card outline padding="lg">
@@ -54,7 +50,7 @@
                         accessible-label="Uitleg over {{ service.label }}"
                         variant="neutral-transparent"
                         size="sm"
-                        :attrs="{'onclick': help_js, 'class': 'service-card__help-btn'}" />
+                        @click="{{ help_js }}" :attrs="{'class': 'service-card__help-btn'}" />
                 {% endif %}
             </c-cluster>
 

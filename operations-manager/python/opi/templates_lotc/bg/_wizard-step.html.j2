@@ -64,7 +64,10 @@
             </c-stack>
         {% endif %}
 
+        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py voor het waarom. #}
         <form id="wizard-step-form"
+              novalidate
               autocomplete="off"
               hx-ext="json-enc"
               hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'

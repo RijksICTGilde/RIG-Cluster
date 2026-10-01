@@ -34,7 +34,7 @@
             <c-paragraph size="sm">Dit is de UITGEVER waartegen je het certificaat van VLAM verifieert, niet het certificaat van VLAM zelf. Geef hem mee aan je HTTP-client; zet hem NIET in SSL_CERT_FILE of REQUESTS_CA_BUNDLE, want die vervangen de hele vertrouwensketen van je applicatie.</c-paragraph>
             <c-action-group align="start">
                 <c-button type="secondary" size="sm" label="Download {{ ctx.ca_filename }}" show-icon="after"
-                          icon="square-and-arrow-down" href="{{ ctx.ca_download_url }}" />
+                          icon="square-arrow-down" href="{{ ctx.ca_download_url }}" />
             </c-action-group>
         </c-stack>
     </c-stack>

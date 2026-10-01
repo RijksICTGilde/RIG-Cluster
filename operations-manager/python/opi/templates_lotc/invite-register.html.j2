@@ -17,7 +17,9 @@
             <c-layout-flow gap="xl">
                     {# Registration Form Card #}
                     <c-card outline="true" padding="lg">
-                        <form method="post" action="/invite/{{ invite_key }}/register" autocomplete="off">
+                        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+                           in tests/test_template_structure.py voor het waarom. #}
+                        <form method="post" action="/invite/{{ invite_key }}/register" autocomplete="off" novalidate>
                             <input type="hidden" name="csrf_token" value="{{ request.state.csrf_token }}">
                             <c-layout-flow gap="lg">
                                 <c-heading type="h1" label="{{ display_name }}"/>

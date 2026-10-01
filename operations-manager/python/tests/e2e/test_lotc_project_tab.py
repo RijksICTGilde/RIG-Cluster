@@ -222,7 +222,7 @@ def test_component_verwijderen_bevestigt_voor_het_juiste_component(app_server: s
 #: waarde, met een inline ``copyToClipboard(...)`` erop; sinds de omzetting naar
 #: ``<c-secret-field ... show-copy />`` zit het klembord in het veld zelf. Wat er getoetst
 #: wordt verandert daarmee niet: klikken hoort de WAARDE op het klembord te zetten.
-KOPIEERKNOP = ".lotc-secret__btn[data-act='copy']"
+KOPIEERKNOP = "lotc-secret-field button[data-action='copy']"
 
 
 def test_de_kopieerknop_kopieert_echt(app_server: str, klembord_page: Page) -> None:

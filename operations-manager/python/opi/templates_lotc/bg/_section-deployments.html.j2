@@ -16,12 +16,10 @@
   WAT ER ANDERS IS DAN DE BESTAANDE PAGINA, en waarom
 
   - De knoppen "Bewerken", "Webadres" en "Verwijderen" openen de gedeelde dialoog, net als
-    op de bestaande pagina, met dezelfde flow-id en dezelfde bevestigings-URL. <c-button>
-    laat geen onclick toe, maar :attrs zet het attribuut wel door; de aanroep wordt boven
-    de tag opgebouwd omdat een genest aanhalingsteken binnen :attrs als het einde van het
-    attribuut gelezen wordt. De volgorde is alfabetisch en de index in het projectbestand
-    telt door, want die index IS de flow-id - sorteren zonder dat zou de knop "Bewerken"
-    stilletjes op een andere deployment richten.
+    op de bestaande pagina, met dezelfde flow-id en dezelfde bevestigings-URL. De volgorde
+    is alfabetisch en de index in het projectbestand telt door, want die index IS de
+    flow-id - sorteren zonder dat zou de knop "Bewerken" stilletjes op een andere
+    deployment richten.
   - De publieke links waren knoppen met @click="window.open(this.dataset.url)". Nu gewoon
     <c-button href=... target="_blank">: zelfde bestemming, zelfde nieuw venster, zonder
     tekst als JavaScript uit te voeren.
@@ -104,7 +102,7 @@
                         icon="puzzle-piece"
                         title="{{ component.reference }}"
                         sub="{{ component.image or 'Geen container image geconfigureerd - dit component wordt niet gedeployd' }}"
-                        :attrs="{'onclick': comp_bewerken, 'style': 'cursor: pointer'}" />
+                        @click="{{ comp_bewerken }}" :attrs="{'style': 'cursor: pointer'}" />
                 {% else %}
                     <c-layer
                         icon="puzzle-piece"

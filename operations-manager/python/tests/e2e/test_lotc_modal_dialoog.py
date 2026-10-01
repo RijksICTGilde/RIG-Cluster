@@ -160,7 +160,7 @@ def test_een_validatiefout_komt_in_de_dialoog_terecht(app_server: str, auth_page
 
     # htmx wisselt het antwoord in de dialoog; wachten tot de melding er staat.
     melding = auth_page.locator(
-        "#edit-section-inner .rvo-form-field__error-text, #edit-section-inner nldd-form-field-error-text"
+        "#edit-section-inner .rvo-form-field__error-text, #edit-section-inner nldd-validation-item"
     )
     melding.first.wait_for(state="attached", timeout=10000)
 
