@@ -345,7 +345,9 @@ async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
     deployment's fetch failing, which is handled per-call.
     """
     try:
-        argo = create_argo_connector()
+        # Fail fast: a status poll that waits out an ArgoCD restart would hang the page
+        # for 30 seconds and let polls pile up, while the next poll shows the answer.
+        argo = create_argo_connector(connect_retry_seconds=0)
     except Exception as exc:
         logger.warning("ArgoCD connector init failed: %s", exc)
         raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc

@@ -34,6 +34,12 @@ allemaal de lock. Zonder hercontrole ná het verkrijgen ervan doen ze alle tien 
 netjes achter elkaar - langzamer dan de oude situatie. Daarom kijkt elke aanroeper binnen de lock
 opnieuw of iemand anders het token al heeft opgehaald, en neemt dat dan over.
 
+Op één uitzondering: een connector die met `connect_retry_seconds=0` gebouwd is (de interactieve
+paden) gaat niet in die rij staan en geeft `False` terug zodra de lock bezet is. De login erachter
+kan een herstart van argocd-server uitzitten, en die wacht hoort niet in een pagina of een
+HTMX-poll. Is de lock vrij, dan logt hij gewoon in. Zie
+`docs/argocd-server-herstart-elke-40-minuten.md`.
+
 **Compare-and-clear bij een 401.** Een request dat een 401 krijgt mag alleen het token wissen dát
 het zelf gebruikte. Anders: request A gebruikt T1 en krijgt een 401, B heeft ondertussen al ververst
 naar T2, en A gooit T2 weg - waarna iedereen opnieuw inlogt, met kans op een lus.
@@ -53,7 +59,8 @@ De spreiding stort in omdat de variabele bcrypt-kosten verdwijnen.
 
 `tests/test_argo_token_cache.py` legt de drie gedragingen vast: een tweede connector hergebruikt het
 token, gelijktijdige aanroepers produceren één login, en een verlopen 401 gooit een nieuwer token
-niet weg.
+niet weg. Het afhaken van een fail-fast aanroeper op de bezette lock staat in
+`tests/test_argo_connect_retry.py`.
 
 ## Wat dit niet oplost
 
