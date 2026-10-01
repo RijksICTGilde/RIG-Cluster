@@ -1383,6 +1383,58 @@ class KubectlConnector:
         logger.debug("Found %d application pod(s) for %s/%s", len(pods), namespace, deployment_name)
         return pods
 
+    async def watch_pods(self, label_selector: str) -> asyncio.subprocess.Process | None:
+        """Start a cluster-wide pod watch and return the streaming subprocess.
+
+        ``kubectl get pods -A --watch --output-watch-events`` first prints the current
+        state (each object as an ``ADDED`` event) and then streams every change. That
+        initial burst seeds the caller's cache and comes back after every reconnect, so
+        nothing here has to track a ``resourceVersion``.
+
+        Subprocess rather than a direct call to the API server, like every other
+        Kubernetes read here: kubectl resolves both the in-cluster service account and a
+        local kubeconfig, and ``stream_deployment_logs`` established the shape.
+
+        The caller owns the process: read ``stdout``, terminate it when done, and
+        restart it when it exits (which it does on any API-server hiccup).
+
+        Args:
+            label_selector: Label selector limiting the stream, e.g. ``component=application``
+
+        Returns:
+            The subprocess with a stdout stream, or None when it could not be started.
+        """
+        if not KubectlConnector.isConnected:
+            logger.error("kubectl connection is not available for the pod watch")
+            return None
+
+        cmd = [
+            "kubectl",
+            "get",
+            "pods",
+            "--all-namespaces",
+            "-l",
+            label_selector,
+            "--watch",
+            "--output-watch-events",
+            "-o",
+            "json",
+        ]
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+            )
+        except Exception as e:
+            logger.error(f"Error starting the pod watch ({label_selector}): {e}")
+            return None
+
+        logger.info(f"Started pod watch for '{label_selector}' (PID: {process.pid})")
+        return process
+
     async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
         """Get the image a running container was started from.
 
