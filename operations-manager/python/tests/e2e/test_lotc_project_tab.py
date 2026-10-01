@@ -25,6 +25,7 @@ import time
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.services.project_service import get_project_service
 from opi.web.lotc_switch import project_tab_url
 
 if TYPE_CHECKING:
@@ -258,6 +259,16 @@ def test_de_kopieerknop_meldt_dat_hij_gekopieerd_heeft(app_server: str, klembord
     )
 
 
+def _age_public_key() -> str:
+    """De AGE-ontvanger die dit project in DEZE run draagt."""
+    project = get_project_service().get_project(PROJECT)
+    assert project is not None, f"{PROJECT} staat niet in de draaiende testserver"
+    assert project.data, f"{PROJECT} staat er zonder projectbestand"
+    sleutel = project.data["config"]["age-public-key"]
+    assert sleutel.startswith("age1"), f"geen AGE-ontvanger in het projectbestand maar {sleutel!r}"
+    return sleutel
+
+
 def test_de_teruggebrachte_secties_staan_er_met_echte_gegevens(app_server: str, auth_page: Page) -> None:
     """Elke sectie die ontbrak staat er, en met de gegevens uit het projectbestand.
 
@@ -283,7 +294,11 @@ def test_de_teruggebrachte_secties_staan_er_met_echte_gegevens(app_server: str, 
         "Project Naam",
         PROJECT,
         "Age Public Key",
-        "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy",
+        # De sleutel zelf en niet alleen het label: een leeg veld onder een kop is precies
+        # de halve overzetting waar dit bestand over gaat. Hij wordt per run gemunt
+        # (``_munt_projectsleutelpaar`` in tests/e2e/testserver.py), dus hij komt uit de
+        # draaiende server en staat niet als literaal in deze toets.
+        _age_public_key(),
         # Helm Charts
         "Helm Charts",
         "redis-cache",

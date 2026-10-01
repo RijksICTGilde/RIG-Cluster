@@ -10,16 +10,20 @@ sandbox claimt. Deze toetsen draaien wel in een gewone ronde.
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import subprocess
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import yaml
 from _pytest.outcomes import Skipped
+from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync
 from tests.e2e import test_sandbox_migratie_006 as migratie_006
 from tests.e2e import test_sandbox_registry_pull as registry_pull
 from tests.e2e import test_sandbox_speelruimte as speelruimte
+from tests.e2e import testserver
 from tests.e2e.conftest import _houd_sandboxmodules_bij_elkaar
 from tests.e2e.conftest import pytest_collection_modifyitems as ordeningshook
 from tests.e2e.helpers import cluster, zad_cli
@@ -772,3 +776,134 @@ class TestLimietUitYaml:
     )
     def test_zonder_de_dienst_is_het_none_en_geen_uitzondering(self, yaml: dict) -> None:
         assert speelruimte._limiet_uit_yaml(yaml) is None
+
+
+class TestFixtureSleutelpaar:
+    """Het AGE-sleutelpaar dat de testserver per run in een fixtureproject munt.
+
+    De projectpagina ontsleutelt ``config/age-private-key`` met de PLATFORMsleutel voordat
+    ze iets rendert, en die sleutel wordt per run gemunt (``testserver.test_age_keypair``).
+    Een vooraf versleuteld blok in een fixture gaat daarna nooit meer open: dat gaf een 500
+    op de projectpagina van elke fixture. ``_munt_projectsleutelpaar`` munt het paar daarom
+    bij het laden.
+    """
+
+    @staticmethod
+    def _fixtureproject(**config: object) -> dict:
+        """Een fixture zoals hij op schijf staat: een paar dat nog gemunt moet worden."""
+        return {
+            "name": "sleutelpaar-proj",
+            "config": {
+                "age-public-key": "wordt-per-run-gemunt",
+                "age-private-key": "wordt-per-run-gemunt",
+                **config,
+            },
+        }
+
+    @staticmethod
+    def _platform_prive() -> str:
+        return testserver.test_age_keypair()[0]
+
+    def test_de_private_helft_gaat_open_met_de_platformsleutel_van_deze_run(self) -> None:
+        """Dit is de lezing die de projectpagina doet voordat ze iets rendert."""
+        data = self._fixtureproject()
+
+        testserver._munt_projectsleutelpaar(data)
+
+        geopend = decrypt_age_content_sync(data["config"]["age-private-key"], self._platform_prive())
+        assert geopend is not None, "de private helft gaat niet open met de platformsleutel van deze run"
+        assert geopend.startswith("AGE-SECRET-KEY-"), f"geen AGE-privesleutel maar {geopend[:24]!r}"
+
+    def test_de_publieke_helft_is_een_ontvanger_en_niet_meer_de_placeholder(self) -> None:
+        """De pagina toont deze waarde, en de wizard versleutelt ermee."""
+        data = self._fixtureproject()
+
+        testserver._munt_projectsleutelpaar(data)
+
+        publiek = data["config"]["age-public-key"]
+        assert publiek.startswith("age1"), f"geen AGE-ontvanger maar {publiek!r}"
+
+    def test_de_twee_helften_zijn_een_paar(self) -> None:
+        """Twee losse sleutels zien er allebei goed uit en werken samen niet.
+
+        Wat het project met zijn eigen sleutel versleutelt (``api-key``, ``user-env-vars``)
+        wordt met de andere helft teruggelezen, dus alleen als PAAR is dit bruikbaar.
+        """
+        data = self._fixtureproject()
+
+        testserver._munt_projectsleutelpaar(data)
+
+        prive = decrypt_age_content_sync(data["config"]["age-private-key"], self._platform_prive())
+        assert prive is not None
+        cijfertekst = encrypt_age_content_sync("een projectgeheim", data["config"]["age-public-key"])
+        assert decrypt_age_content_sync(cijfertekst, prive) == "een projectgeheim"
+
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {"name": "p"},
+            {"name": "p", "config": None},
+            {"name": "p", "config": "config-als-tekst"},
+            {"name": "p", "config": {}},
+            {"name": "p", "config": {"api-key": "klaartekst"}},
+            {"name": "p", "config": {"age-private-key": ""}},
+        ],
+        ids=[
+            "geen-config",
+            "config-none",
+            "config-geen-map",
+            "lege-config",
+            "config-zonder-sleutel",
+            "lege-sleutel",
+        ],
+    )
+    def test_een_fixture_zonder_private_helft_blijft_zoals_hij_stond(self, data: dict) -> None:
+        """Alleen een fixture die al een private helft DRAAGT krijgt een nieuw paar.
+
+        Twee kanten. Een project zonder die sleutel hoort er ook geen te krijgen: het
+        sleutelblok op de projectpagina hangt aan ``config.age-private-key``, dus er een
+        bijzetten laat een paneel renderen dat de fixture niet vraagt. En een ``config`` die
+        geen map is mag geen AttributeError geven: de lader loopt over elk yaml-bestand in
+        de map, en wat daar staat bepaalt hij niet.
+        """
+        voor = copy.deepcopy(data)
+
+        testserver._munt_projectsleutelpaar(data)
+
+        assert data == voor
+
+    def test_elke_fixture_op_schijf_komt_met_een_leesbaar_paar_uit_de_lader(self) -> None:
+        """De lader zelf, over de echte fixtures: dit is de stand die de server krijgt.
+
+        De toetsen hierboven meten de functie; deze meet dat de lader hem AANROEPT, voor
+        elke fixture die een sleutelpaar draagt.
+        """
+        projecten = testserver._load_fixture_projects()
+        met_sleutel = {p["name"]: p["config"] for p in projecten if (p.get("config") or {}).get("age-private-key")}
+        assert met_sleutel, f"geen fixtureproject met een age-private-key onder {testserver.FIXTURE_DIR}"
+
+        for naam, config in met_sleutel.items():
+            prive = decrypt_age_content_sync(config["age-private-key"], self._platform_prive())
+            assert prive, f"{naam}: de private helft gaat niet open met de platformsleutel van deze run"
+            cijfertekst = encrypt_age_content_sync(naam, config["age-public-key"])
+            assert decrypt_age_content_sync(cijfertekst, prive) == naam, f"{naam}: de helften zijn geen paar"
+
+    def test_geen_fixture_draagt_een_api_key_die_niemand_meer_kan_openen(self) -> None:
+        """``config/api-key`` wordt met de PROJECTsleutel geopend, en die is per run nieuw.
+
+        De projectpagina doet dat zonder vangnet (``router.py``, ``decrypt_password_smart``
+        op ``config/api-key``), dus een AGE-blok daar geeft een 500 op elke projectpagina.
+        Hermunten helpt niet zoals bij het sleutelpaar: de klaartekst eronder is dan weg.
+        De regel staat in features/e2e-ui-testing.md, onder Adding Fixture Data.
+        """
+        bestanden = sorted(testserver.FIXTURE_DIR.glob("*.yaml"))
+        assert bestanden, f"geen fixtures gevonden onder {testserver.FIXTURE_DIR}"
+
+        versleuteld = []
+        for pad in bestanden:
+            data = yaml.safe_load(pad.read_text()) or {}
+            api_key = str((data.get("config") or {}).get("api-key") or "")
+            if "BEGIN AGE ENCRYPTED FILE" in api_key:
+                versleuteld.append(pad.name)
+
+        assert not versleuteld, f"config/api-key staat als AGE-blok in: {versleuteld}"
