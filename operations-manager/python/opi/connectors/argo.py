@@ -10,12 +10,15 @@ import json
 import logging
 import ssl
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import requests
 
 from opi.utils.logging_redact import redact_sensitive_headers
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,49 @@ _token_cache: dict[tuple[str, str], str] = {}
 _token_cache_lock = threading.Lock()
 _token_refresh_lock = asyncio.Lock()
 
+# While argocd-server restarts its API server in-process, the service can be without an
+# endpoint for as long as its 20 second graceful-shutdown deadline. 30 seconds covers
+# that with margin. Why it restarts: docs/argocd-server-herstart-elke-40-minuten.md.
+CONNECT_RETRY_SECONDS = 30.0
+
+_CONNECT_RETRY_FIRST_DELAY = 1.0
+
+
+async def _retry_on_connect_error[T](
+    operation: Callable[[], Awaitable[T]],
+    budget_seconds: float,
+    description: str,
+) -> T:
+    """Repeat an operation while it cannot connect, spending at most budget_seconds asleep.
+
+    Only ClientConnectorError is caught: the TCP connection was never established, so the
+    request never reached the server. Repeating it is therefore safe for any method, POST
+    included. Read timeouts and ServerDisconnectedError are not retried, because there the
+    request may already have been processed.
+
+    A budget of 0 gives exactly one attempt without sleeping. Once the budget is spent the
+    last ClientConnectorError is raised untouched, so a caller sees the same failure as
+    before this retry existed.
+    """
+    slept = 0.0
+    delay = _CONNECT_RETRY_FIRST_DELAY
+    while True:
+        try:
+            return await operation()
+        except aiohttp.ClientConnectorError as e:
+            remaining = budget_seconds - slept
+            if remaining <= 0:
+                logger.error(f"ArgoCD unreachable after {slept:.0f}s of retries, giving up on {description}: {e}")
+                raise
+            # Capped at what is left, so budget_seconds really is the upper bound the
+            # docstring above promises. The backoff on a budget of 30 is therefore
+            # 1, 2, 4, 8, 15.
+            pause = min(delay, remaining)
+            logger.warning(f"ArgoCD connect failed for {description}, retrying in {pause:.0f}s: {e}")
+            await asyncio.sleep(pause)
+            slept += pause
+            delay *= 2
+
 
 class ArgoConnector:
     """Connector for interacting with ArgoCD server."""
@@ -44,6 +90,7 @@ class ArgoConnector:
         password: str = "admin",  # noqa: S107
         use_tls: bool = False,
         verify_ssl: bool = False,
+        connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
     ):
         """
         Initialize the ArgoCD connector and perform login.
@@ -55,6 +102,7 @@ class ArgoConnector:
             password: Password for authentication
             use_tls: Whether to use TLS/HTTPS
             verify_ssl: Whether to verify SSL certificates
+            connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
         """
         self.server_host = server_host
         self.server_port = server_port
@@ -62,6 +110,7 @@ class ArgoConnector:
         self.password = password
         self.use_tls = use_tls
         self.verify_ssl = verify_ssl
+        self.connect_retry_seconds = connect_retry_seconds
 
         # Build base URL
         protocol = "https" if use_tls else "http"
@@ -172,53 +221,56 @@ class ArgoConnector:
         Returns:
             True if login successful, False otherwise
         """
+        try:
+            return await _retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
+        except Exception as e:
+            logger.error(f"Error during ArgoCD login: {e}")
+            return False
+
+    async def _login_once(self) -> bool:
+        """One login attempt. A connect failure propagates so login() can retry it."""
         logger.info(f"Logging in to ArgoCD server: {self.base_url}")
 
         login_url = f"{self.base_url}/api/v1/session"
         login_data = {"username": self.username, "password": self.password}
 
-        try:
-            # Create SSL context
-            ssl_context = ssl.create_default_context()
-            if not self.verify_ssl:
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+        # Create SSL context
+        ssl_context = ssl.create_default_context()
+        if not self.verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
-            request_timeout = aiohttp.ClientTimeout(total=30)
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        request_timeout = aiohttp.ClientTimeout(total=30)
 
-            async with (
-                aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
-                session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
-            ):
-                # Check if we got redirected to HTTPS
-                if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
-                    logger.info(f"Detected redirect to HTTPS: {response.url}")
-                    # Update base URL to use HTTPS
-                    old_base = self.base_url
-                    self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                    self._actual_base_url = self.base_url
-                    logger.info(f"Updated base URL from {old_base} to {self.base_url}")
+        async with (
+            aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
+            session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
+        ):
+            # Check if we got redirected to HTTPS
+            if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
+                logger.info(f"Detected redirect to HTTPS: {response.url}")
+                # Update base URL to use HTTPS
+                old_base = self.base_url
+                self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
+                self._actual_base_url = self.base_url
+                logger.info(f"Updated base URL from {old_base} to {self.base_url}")
 
-                if response.status == 200:
-                    response_data = await response.json()
-                    logger.debug(f"Login response data: {response_data}")
-                    self.auth_token = response_data.get("token")
-                    if self.auth_token:
-                        self._store_token(self.auth_token)
-                        logger.info("Successfully logged in to ArgoCD - token received")
-                        return True
-                    else:
-                        logger.error("Login response missing token")
-                        return False
+            if response.status == 200:
+                response_data = await response.json()
+                logger.debug(f"Login response data: {response_data}")
+                self.auth_token = response_data.get("token")
+                if self.auth_token:
+                    self._store_token(self.auth_token)
+                    logger.info("Successfully logged in to ArgoCD - token received")
+                    return True
                 else:
-                    error_text = await response.text()
-                    logger.error(f"Login failed with status {response.status}: {error_text}")
+                    logger.error("Login response missing token")
                     return False
-
-        except Exception as e:
-            logger.error(f"Error during ArgoCD login: {e}")
-            return False
+            else:
+                error_text = await response.text()
+                logger.error(f"Login failed with status {response.status}: {error_text}")
+                return False
 
     async def _create_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context based on configuration."""
@@ -243,13 +295,34 @@ class ArgoConnector:
             self.auth_token = cached
             return True
 
-        async with _token_refresh_lock:
+        # The login behind this lock retries connect failures, so holding it can cost the
+        # holder's whole budget. Only a caller that asked to fail fast refuses to queue up
+        # behind that; it degrades exactly as it does on a login that failed. A free lock
+        # is still taken straight away, so this refuses to wait, never to log in.
+        #
+        # A caller that did ask to ride out a restart waits for the holder. Bounding that
+        # wait on its OWN budget cut it off just before the holder succeeded: on budget 30
+        # with argocd 20 seconds away the holder's attempts land on t=0, 1, 3, 7, 15 and 30,
+        # and the login that lands costs another ~700ms of bcrypt, so the waiter gave up at
+        # t=30 and killed the very deployment task this retry exists for. The wait is
+        # bounded in practice, because the holder is off the lock within its own budget
+        # plus one login.
+        wait_seconds = None if self.connect_retry_seconds > 0 else 0
+        try:
+            async with asyncio.timeout(wait_seconds):
+                await _token_refresh_lock.acquire()
+        except TimeoutError:
+            logger.warning("Not waiting for an ArgoCD login in flight elsewhere: this caller asked to fail fast")
+            return False
+        try:
             cached = self._cached_token()
             if cached:
                 self.auth_token = cached
                 return True
             logger.info("No authentication token available. Performing async login.")
             return await self.login()
+        finally:
+            _token_refresh_lock.release()
 
     async def _make_authenticated_request(
         self,
@@ -284,33 +357,36 @@ class ArgoConnector:
             logger.debug(f"Request headers: {redact_sensitive_headers(headers)}")
             logger.debug(f"Making {method} request to: {url}")
 
-            async with session.request(method, url, json=json_data or {}, headers=headers) as response:
-                response_text = await response.text()
-                logger.debug(f"Response status: {response.status}")
-                logger.debug(
-                    f"Response text: {response_text[:200]}..."
-                    if len(response_text) > 200
-                    else f"Response text: {response_text}"
-                )
+            async def _send() -> tuple[int, str]:
+                async with session.request(method, url, json=json_data or {}, headers=headers) as response:
+                    return response.status, await response.text()
 
-                if response.status == 401 and retry_count == 0:
-                    logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
-                    # Invalidate only the token this request actually used, then
-                    # re-authenticate through the shared path so concurrent 401s
-                    # collapse into a single login.
-                    self._invalidate_token(self.auth_token)
-                    self.auth_token = None
-                    if await self._ensure_authenticated():
-                        logger.info("Re-authentication successful, retrying request")
-                        return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
-                    else:
-                        logger.error("Re-authentication failed")
-                        return 401, "Re-authentication failed"
-                elif response.status == 401:
-                    logger.error("Still receiving 401 after re-authentication attempt")
-                    return 401, "Authentication failed after retry"
+            status, response_text = await _retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
+            logger.debug(f"Response status: {status}")
+            logger.debug(
+                f"Response text: {response_text[:200]}..."
+                if len(response_text) > 200
+                else f"Response text: {response_text}"
+            )
 
-                return response.status, response_text
+            if status == 401 and retry_count == 0:
+                logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
+                # Invalidate only the token this request actually used, then
+                # re-authenticate through the shared path so concurrent 401s
+                # collapse into a single login.
+                self._invalidate_token(self.auth_token)
+                self.auth_token = None
+                if await self._ensure_authenticated():
+                    logger.info("Re-authentication successful, retrying request")
+                    return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
+                else:
+                    logger.error("Re-authentication failed")
+                    return 401, "Re-authentication failed"
+            elif status == 401:
+                logger.error("Still receiving 401 after re-authentication attempt")
+                return 401, "Authentication failed after retry"
+
+            return status, response_text
 
     async def sync_application(self, app_name: str | None = None) -> bool:
         """
@@ -699,6 +775,7 @@ def create_argo_connector(
     password: str | None = None,
     use_tls: bool | None = None,
     verify_ssl: bool | None = None,
+    connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
 ) -> ArgoConnector:
     """
     Create and return an ArgoConnector instance.
@@ -712,6 +789,7 @@ def create_argo_connector(
         password: Password for authentication (defaults to config)
         use_tls: Whether to use TLS/HTTPS (defaults to config)
         verify_ssl: Whether to verify SSL certificates (defaults to config)
+        connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
 
     Returns:
         ArgoConnector instance
@@ -734,4 +812,5 @@ def create_argo_connector(
         password=final_password,
         use_tls=final_use_tls,
         verify_ssl=final_verify_ssl,
+        connect_retry_seconds=connect_retry_seconds,
     )
