@@ -839,10 +839,26 @@ class TestRenderRealTemplates:
         assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
         assert "--client-id=my-client" in args
         assert "--upstream=http://localhost:8080" in args
-        # Custom sign-in page is always shown
-        assert "--skip-provider-button=false" in args
+        # Zonder banner stuurt de muur een sessieloze navigatie door naar Keycloak in
+        # plaats van een inlogkaart te tonen, zodat een levende SSO-sessie onzichtbaar
+        # herstelt en applicaties dat niet zelf hoeven te detecteren.
+        assert "--skip-provider-button=true" in args
         assert "--custom-templates-dir=/etc/oauth2-proxy/templates" in args
         assert not any(arg.startswith("--banner=") for arg in args)
+        # Cookie-instellingen expliciet: zie de template voor het waarom per vlag.
+        assert "--cookie-samesite=lax" in args
+        assert "--cookie-expire=10h" in args
+        assert "--cookie-refresh=3m" in args
+        # Parallelle aanvragen mogen elkaars inlogpoging niet overschrijven.
+        assert "--cookie-csrf-per-request=true" in args
+        # Hoort bij skip-provider-button: een fetch() krijgt een 401, geen redirect.
+        # Enkelvoud: de CLI-vlag heet --api-route, alleen de config-key is api_routes.
+        # Een onbekende vlag laat oauth2-proxy afbreken, dus dit legt de naam vast.
+        assert "--api-route=^/api/" in args
+        # Statische bestanden krijgen een 401 in plaats van een eigen OAuth-flow. De
+        # backslash moet enkel blijven: YAML mag hem niet verdubbelen of opeten.
+        asset_route = next(a for a in args if a.startswith("--api-route=\\."))
+        assert asset_route == "--api-route=\\.(css|js|mjs|map|json|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$"
         # Sidecar should have volumeMount for custom templates
         assert sidecar["volumeMounts"][0]["name"] == "oauth2-signin-templates"
         assert sidecar["volumeMounts"][0]["mountPath"] == "/etc/oauth2-proxy/templates"
@@ -881,7 +897,10 @@ class TestRenderRealTemplates:
         containers = doc["spec"]["template"]["spec"]["containers"]
         sidecar = containers[1]
         args = sidecar["args"]
-        assert "--skip-provider-button=false" in args
+        # Een banner mag geen tussenpagina forceren: een sessie die stil te herstellen is
+        # hoort geen inlogscherm op te leveren. De vlag gaat nog mee, maar rendert alleen
+        # op sign_in.html en die pagina wordt niet meer getoond.
+        assert "--skip-provider-button=true" in args
         assert "--banner=Welcome to our application. Please log in." in args
 
     def test_authorization_wall_configmap_section(self):
