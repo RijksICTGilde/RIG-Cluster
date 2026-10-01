@@ -234,3 +234,5 @@ The step indicator updates via HTMX OOB swap (`hx-swap-oob="outerHTML"` on `#wiz
 ### Validation errors not showing
 
 Step validation errors are returned in the same step HTML fragment with an alert banner. Check that the `errors` variable is passed to the template context.
+
+If nothing is submitted at all, check the `<form>` tag for `novalidate`. Since NLDD 0.8.92 the field components report their `required` to the form, so the browser blocks the submit on an empty required field and shows its own tooltip in its own language - the request never reaches the server, so the server-side message never appears. Every form whose fields are validated server-side carries `novalidate`; the list is `FORMULIEREN_MET_SERVERVALIDATIE` in `tests/test_template_structure.py`.

@@ -11,9 +11,7 @@
 
    De klassen config-item / config-code / copy-btn zijn GEEN vormgeving: copyToClipboard()
    zoekt vanaf de aangeklikte knop de dichtstbijzijnde .config-item en pakt daarbinnen de
-   .config-code. Ze staan hier dus letterlijk, net als op de rest van deze pagina.
-
-   De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. #}
+   .config-code. Ze staan hier dus letterlijk, net als op de rest van deze pagina. #}
 {% set kopieer = "copyToClipboard('.config-code', event, '.config-item')" %}
 <c-card outline padding="lg">
     <c-stack gap="md">
@@ -31,7 +29,7 @@
                             <c-cluster gap="sm" align="center">
                                 <c-code class="config-code">{{ url_for('invite_landing', key=invite.key) }}</c-code>
                                 <c-button type="tertiary" size="sm" label="Kopieer" show-icon="before" icon="file-text"
-                                          class="copy-btn" :attrs="{'onclick': kopieer}" />
+                                          class="copy-btn" @click="{{ kopieer }}" />
                             </c-cluster>
                         </c-stack>
                     </div>

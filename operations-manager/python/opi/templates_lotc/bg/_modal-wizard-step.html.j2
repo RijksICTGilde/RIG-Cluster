@@ -29,9 +29,8 @@
     knop is hier een <nldd-button>, geen <button>. Hij dient het formulier wel in, maar
     een selector op de tagnaam vindt hem niet en dan blijft hij tijdens het verzoek
     klikbaar. Zelfde bedoeling, andere tagnaam; net als in bg/_wizard-step.html.j2.
-  - "Annuleren" krijgt zijn onclick via :attrs. <c-button> laat geen onclick-attribuut
-    toe, en closeEditModal() is precies wat die knop moet doen; er is geen href die
-    hetzelfde doet.
+  - "Annuleren" krijgt een klikafhandeling en geen href: closeEditModal() is precies wat
+    die knop moet doen, en er is geen href die hetzelfde doet.
 
   "Vorige" krijgt geen icoon: de NLDD-woordenschat heeft geen pijl naar links, en een
   pijl die de verkeerde kant op wijst is erger dan geen pijl. Zie de KNOWN_GAPS in
@@ -87,7 +86,7 @@
                         accessible-label="Uitleg over {{ section.title }}"
                         variant="neutral-transparent"
                         size="sm"
-                        :attrs="{'onclick': hulp_js, 'class': 'service-card__help-btn'}" />
+                        @click="{{ hulp_js }}" :attrs="{'class': 'service-card__help-btn'}" />
                 {% endif %}
             </c-cluster>
             {% if section.description %}
@@ -118,7 +117,10 @@
 
         {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
         {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py voor het waarom. #}
         <form id="modal-wizard-form"
+              novalidate
               autocomplete="off"
               hx-ext="json-enc"
               hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
@@ -150,7 +152,7 @@
                             html-type="button"
                             type="tertiary"
                             label="Annuleren"
-                            :attrs="{'onclick': annuleren_js}" />
+                            @click="{{ annuleren_js }}" />
                     {% endif %}
 
                     <c-cluster gap="sm" align="center">

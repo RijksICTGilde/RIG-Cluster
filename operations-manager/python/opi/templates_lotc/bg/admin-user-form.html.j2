@@ -28,7 +28,9 @@
     {{ page_head(page_heading) }}
 
     {% call panel("") %}
-        <form autocomplete="off" method="post" action="{{ form_action }}">
+        {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+           in tests/test_template_structure.py voor het waarom. #}
+        <form autocomplete="off" method="post" action="{{ form_action }}" novalidate>
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
 
             <c-stack gap="lg">
