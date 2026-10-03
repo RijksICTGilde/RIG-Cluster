@@ -18,6 +18,11 @@ Op 30 september zette dat ongeveer 40 componenten in zes projecten uit terwijl e
 
 Wat uitschakelen oplevert is netheid. Dat staat niet in verhouding tot een storing die zijn eigen oorzaak overleeft, en het commentaar van de guard zegt het zelf al: kubelet probeert het met backoff gewoon opnieuw, en een pod in ImagePullBackOff is onschadelijk.
 
+## Waar dit plan tegen gemeten is
+
+Alle regelnummers hieronder verwijzen naar `forgejo/main` op `032c09cdb`, de merge van RC-237 van 2 oktober. Die taak bouwde een pod-watch voor OOM-detectie tijdens runtime en liet `oom_watcher.py` met 672 regels groeien, maar raakte het image-pull-pad niet aan: de diff bevat geen enkele regel met `image_pull`, `ImagePull` of `confirmed_absent`. Het is dus geen overlap, maar het verschuift wel elk regelnummer in dat bestand, en de watch-structuur is de context waarin deze wijziging landt. Lees `features/oom-pod-watch.md` voordat je aan taak 1 begint.
+
+
 ## Het uitgangspunt
 
 De classificatie wordt niet verwijderd, hij wordt gedegradeerd. `image_is_confirmed_absent()` mag blijven bepalen hoe een melding geformuleerd wordt, en mag niet meer bepalen of er iets naar nul gaat. Een heuristiek in een zin is prima; een heuristiek die een pod weghaalt niet.
@@ -33,7 +38,7 @@ Wat NIET verandert, expliciet:
 
 ### 1. De drie beslispunten die uitschakelen
 
-`opi/services/oom_watcher.py:745-772`. De detectie en de logregel blijven, de tak die `disable_components_for_image_pull` aanroept vervalt, en daarmee ook de `_queue_refresh_task` die erachteraan komt.
+`opi/services/oom_watcher.py:830-846`. De detectie en de logregel blijven, de tak die `disable_components_for_image_pull` aanroept vervalt, en daarmee ook de `_queue_refresh_task` die erachteraan komt.
 
 `opi/manager/project_manager.py:3700-3770`. De splitsing in `image_pull_failures` en `registry_down_failures` vervalt: alle image-pull-fouten gaan dezelfde kant op, de rapportagekant. De `disable_components_for_image_pull`-aanroep op 3762 en de import op 3370 gaan weg.
 
@@ -47,21 +52,27 @@ Wat NIET verandert, expliciet:
 
 De WARNING uit `project_manager` (`Runtime pod-health issue(s) after sync (app crashing, not a deploy failure)`) blijft en blijft de volledige kubelet-melding dragen. Dat is de regel waarmee de storing van 30 september te reconstrueren was.
 
-Open punt om in de review te beslissen: moet een niet-pullende component ook op de deploymentkaart te zien zijn nu hij niet meer in `disabled_components` belandt? De kaart leest vandaag `deployment.components | selectattr('disabled')`. Valt dat weg, dan verdwijnt het signaal uit de UI terwijl de pod wel blijft hangen. Voorstel: de kaart laten aansluiten op de bestaande pod-health in plaats van op de `disabled`-vlag. Dit is een voorstel en geen besluit; het raakt `_argocd-deployment-card.html.j2` en de diagnostics eronder, en kan een eigen taak worden als het te groot blijkt.
+Besloten: een component die niet kan pullen moet **expliciet en zichtbaar** op de deploymentkaart staan. Dit is geen open punt en geen bijzaak, het is de tegenprestatie voor het weghalen van de ingreep. Zonder dit ruilen we een storing die zichzelf verbergt in voor een pod die stilletjes blijft hangen, en dat is geen verbetering.
 
-→ verify: een testgeval dat een image-pull-fout door de interpreter haalt en de verwachte tekst oplevert, plus visuele controle op de sandbox met een component dat naar een niet-bestaande tag wijst.
+De kaart leest vandaag `deployment.components | selectattr('disabled')` (`opi/templates_lotc/bg/_argocd-deployment-card.html.j2:41`). Die bron valt weg voor image-pull, dus de kaart moet aansluiten op de pod-health die er al is in plaats van op de `disabled`-vlag. Wat er te zien moet zijn: welk component het is, welke image hij niet kan ophalen, wat het register antwoordde, en sinds wanneer. Die laatste twee komen uit dezelfde `PodHealthResult` die de watcher al vult (`image_pull_image`, `image_pull_error`).
 
-### 3. Poort: de bestaande disables opruimen
+De `disabled`-tak op die kaart blijft bestaan, want OOM en crash-loop blijven wel uitschakelen. Er komen dus twee toestanden naast elkaar te staan en die moeten van elkaar te onderscheiden zijn: uitgeschakeld door OPI, tegenover draait niet maar blijft het proberen.
 
-Dit is een schrijfweg over projectbestanden van andere teams en hij hoort niet stil te gaan. In de vloot staan nu componenten uitgeschakeld met een image-pull-reden, waaronder de negen van 30 september (`docs/redeploy-na-quota-storing-20260930.md` noemt ze). Die lossen zichzelf niet op.
+→ verify: een testgeval dat een image-pull-fout door de interpreter haalt en de verwachte tekst oplevert; een golden-manifest of templatetest die aantoont dat de kaart het component noemt zonder dat `disabled` gezet is; en visuele controle op de sandbox met een component dat naar een niet-bestaande tag wijst.
 
-`is_image_pull_disable_reason()` bestaat al en herkent precies deze disables aan hun reden-prefix, dus de selectie is geen nieuw werk.
+### 3. Poort: controleren of er nog disables staan
 
-De poort: eerst een dry-run die per project en deployment opsomt welke componenten het zou aanzetten en met welke reden ze uitstaan, uitvoer naar stdout, niets geschreven. Die lijst gaat langs een mens. Pas daarna de schrijfactie, en die loopt via de bestaande save-poort van het projectbestand, niet via een eigen YAML-pad.
+Hier is een aanname gecorrigeerd. In de code ruimt **niets** een image-pull-disable automatisch op. De resource-tuner doet het wel voor OOM maar poort expliciet op de reden (`resource_tuning_service.py:1090`, `if is_disabled and is_oom_disable_reason(disabled_reason)`), dus een image-pull-disable raakt hij niet aan. Het enige dat zo'n disable opheft is de REDEPLOY-haak, en die gaat alleen af bij een rollout.
 
-Open beslissing: hoort dit in `_fixup_v2_data` van de schema-migratie (dan gebeurt het bij de eerstvolgende load van elk projectbestand, vanzelf en zonder scheduler) of in een los script onder `operations-manager/python/scripts/`? De migratie is de plek waar reparaties van bestandsinhoud horen, maar hij draait per project op het moment dat iemand dat project aanraakt, dus de negen blijven staan tot er iets met ze gebeurt. Een script doet de vloot in één keer maar heeft een mens nodig die het start. Mijn voorkeur is de migratie, met het script als duwtje voor de achterblijvers.
+Wat dat betekent: de negen van 30 september (`docs/redeploy-na-quota-storing-20260930.md`) zijn weg als er sindsdien iets op ze is uitgerold, en staan er anders nog. Eén rollout per deployment is genoeg, van hun eigen CI of met het runbook.
 
-→ verify: dry-run op een kopie van de vloot laat exact de componenten zien die `is_image_pull_disable_reason` matcht en geen enkele OOM- of crash-loop-disable; daarna op de sandbox een echte run en de componenten staan weer op één replica.
+Zodra dit plan uitgevoerd is ontstaan er geen nieuwe image-pull-disables meer, dus dit is geen migratie maar een eenmalige controle. De sweep die ze vindt is al bewezen: deployments op nul replicas zonder waker, afgezet tegen `is_image_pull_disable_reason` op de reden in het projectbestand.
+
+De poort blijft staan voor het geval de controle iets vindt: eerst een dry-run die per project en deployment opsomt welke componenten het zou aanzetten en met welke reden, uitvoer naar stdout, niets geschreven. Die lijst gaat langs een mens. Pas daarna schrijven, en dan via de bestaande save-poort van het projectbestand en niet via een eigen YAML-pad.
+
+Vindt de controle er nul, dan vervalt deze taak en hoeft er geen schrijfweg te komen. Dat is de uitkomst om op te hopen, en hij is pas vast te stellen met toegang tot het cluster.
+
+→ verify: de sweep over alle `rig-prd-*` namespaces levert een lijst op die exact de componenten bevat die `is_image_pull_disable_reason` matcht en geen enkele OOM- of crash-loop-disable; is die lijst leeg, dan is deze taak klaar zonder code.
 
 ### 4. Zien dat het gebeurt, in plaats van het opruimen
 
@@ -75,7 +86,7 @@ Let op de cardinaliteit: namespace maal reden-klasse is klein, maar neem nooit d
 
 ### 5. Wat echt dood gaat
 
-`disable_components_for_image_pull` in `oom_watcher.py:609` verliest al zijn aanroepers en gaat weg, met zijn twee patches in `tests/test_oom_watcher.py:986,1017`.
+`disable_components_for_image_pull` in `oom_watcher.py:622` verliest al zijn aanroepers en gaat weg, met zijn twee patches in `tests/test_oom_watcher.py:986,1017`.
 
 `image_is_confirmed_absent` en `_IMAGE_ABSENT_MARKERS` en `_REGISTRY_CAPACITY_MARKERS` blijven staan, want `event_interpreter` gebruikt ze. `tests/test_registry_outage_no_disable.py` blijft ook staan maar verandert van betekenis: het dekt niet meer af dat er niet uitgeschakeld wordt, maar dat de melding goed geclassificeerd wordt. De module-docstring daar moet dus herschreven worden, anders beschrijft hij gedrag dat niet meer bestaat.
 
