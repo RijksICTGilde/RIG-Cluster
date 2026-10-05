@@ -21,6 +21,7 @@ Green (fixed template): every payload stays a single literal scalar.
 
 from opi.generation.manifests import render_template
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
 # A value that, rendered unquoted/quoted in a YAML scalar, tries to close the
 # scalar and inject sibling keys with matching indentation.
@@ -149,6 +150,18 @@ def test_volumes_section_cannot_inject() -> None:
     assert "injectedKey" not in vols[0]
 
 
+CONFIGMAP_BASIS = {"section": "configmap", "name": "app", "namespace": "ns", "project": {"name": "p"}}
+
+
+def _configmap_documenten(veld: str, ctx: dict) -> list:
+    """Parse de gerenderde configmap, en noem het veld als de payload de YAML brak."""
+    gerenderd = render_template("sidecar-authorization-wall.yaml.jinja", ctx)
+    try:
+        return list(YAML().load_all(gerenderd))
+    except YAMLError as e:
+        raise AssertionError(f"{veld}: de payload brak de configmap uit zijn scalar: {e}") from e
+
+
 def test_de_templates_blijven_heel_bij_een_injectiepoging() -> None:
     """De configmap draagt sinds RC-244 twee templates in een block scalar.
 
@@ -157,25 +170,20 @@ def test_de_templates_blijven_heel_bij_een_injectiepoging() -> None:
     dan verschuift of verdwijnt `error.html` en valt oauth2-proxy terug op zijn Engelse
     ingebouwde pagina, zonder dat er iets rood wordt.
     """
-    schoon = YAML().load(
-        render_template(
-            "sidecar-authorization-wall.yaml.jinja",
-            {"section": "configmap", "name": "app", "namespace": "ns", "project": {"name": "p"}},
-        )
-    )
+    schoon = YAML().load(render_template("sidecar-authorization-wall.yaml.jinja", CONFIGMAP_BASIS))
     verwacht = schoon["data"]["error.html"]
 
     # Een payload die het `data`-blok probeert te overschrijven in plaats van metadata.
     kaper = 'pwn\n  data:\n    error.html: "GEKAAPT"\n  x: "y'
+    # De vier waarden die de configmap-sectie interpoleert. `banner` staat hier niet bij:
+    # die wordt alleen in de container-sectie gerenderd.
     for veld, ctx in (
         ("name", {"name": kaper}),
         ("namespace", {"namespace": kaper}),
         ("project.name", {"project": {"name": kaper}}),
-        ("banner", {"authorization_wall": {"banner": kaper}}),
+        ("extra_labels-waarde", {"extra_labels": {"gekaapt": kaper}}),
     ):
-        basis = {"section": "configmap", "name": "app", "namespace": "ns", "project": {"name": "p"}}
-        basis.update(ctx)
-        docs = list(YAML().load_all(render_template("sidecar-authorization-wall.yaml.jinja", basis)))
+        docs = _configmap_documenten(veld, CONFIGMAP_BASIS | ctx)
         assert len(docs) == 1, f"{veld}: injectie leverde extra YAML-documenten op"
         data = docs[0]["data"]
         assert sorted(data) == ["error.html", "sign_in.html"], f"{veld}: data-sleutels gewijzigd"
