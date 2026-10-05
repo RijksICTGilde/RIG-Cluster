@@ -349,6 +349,31 @@ class TestOfErGekekenIs:
         (sample,) = familie.samples
         assert sample.value == 1760000000.0
 
+    def test_de_drie_reeksen_staan_er_ook_als_de_telling_niet_te_lezen_is(self) -> None:
+        """Valt het lezen om, dan is de tijdstempel 0 en vuurt het alarm; verdwijnen mag hij niet.
+
+        Een alarm op ``time() - gauge > 600`` kan niet vuren op een serie die er niet is, dus
+        de drie reeksen horen buiten de ``try`` van de collector te staan. Binnen die try
+        zouden ze precies verdwijnen op het moment dat er iets mis is, en dan meldt niets
+        meer dat er niet gekeken wordt: dezelfde stille nul die deze taak opruimt.
+        """
+        from opi.core.metrics import OPICollector
+
+        image_pull_report._observed_at = 1760000000.0
+        with patch.object(image_pull_report, "image_pull_failure_count", side_effect=RuntimeError("kubectl is weg")):
+            families = {familie.name: familie for familie in OPICollector().collect()}
+
+        for naam in (
+            "opi_image_pull_failing_pods",
+            "opi_image_pull_failing_pods_by_reason",
+            "opi_image_pull_observed_timestamp",
+        ):
+            assert naam in families, f"{naam} verdwijnt zodra de telling niet te lezen is"
+        (telling,) = families["opi_image_pull_failing_pods"].samples
+        assert telling.value == 0
+        (gekeken,) = families["opi_image_pull_observed_timestamp"].samples
+        assert gekeken.value == 0.0, "een onleesbare telling moet als 'niet gekeken' naar buiten komen"
+
 
 class TestObserveVervolg:
     @patch("opi.services.image_pull_report.KubectlConnector")

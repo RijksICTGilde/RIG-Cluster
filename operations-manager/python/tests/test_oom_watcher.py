@@ -6,6 +6,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.oom_watcher import (
     ComponentFailure,
     DeploymentHealthError,
@@ -349,6 +350,54 @@ class TestCheckPodHealth:
         result = await check_pod_health("rig-prd-ns", "prod-api")
 
         assert result.image_pull_container == "app"
+        assert result.image_pull_image == "registry.example/prod-api:1.0"
+
+    @staticmethod
+    def _pod_failing_on(pod_name: str, container: str, image: str) -> dict:
+        """One pod whose only failing container is the given one."""
+        return {
+            "metadata": {"name": pod_name},
+            "status": {
+                "containerStatuses": [
+                    {
+                        "name": container,
+                        "image": image,
+                        "lastState": {},
+                        "state": {"waiting": {"reason": "ImagePullBackOff", "message": "Back-off pulling image"}},
+                    }
+                ]
+            },
+        }
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.parametrize("app_pod_first", [True, False])
+    @pytest.mark.asyncio
+    async def test_across_replicas_the_components_own_image_still_wins(self, mock_kubectl_cls, app_pod_first):
+        """Replica A fails on its sidecar, replica B on the component's own image: report B.
+
+        The shared reader settles the precedence WITHIN a pod; this is the other half, the
+        one check_pod_health keeps for itself, and it decides which image the deploy reports
+        and which one the deployment card names. Both orders are here because the guard has
+        a branch each way: hold on to a main-container finding, and let one overwrite a
+        sidecar that was found first.
+
+        The name is taken from APPLICATION_CONTAINER_NAME and not spelled out again, because
+        MAIN_CONTAINER_NAME is an alias of it: a second literal that drifts would stop this
+        comparison from ever matching, and then a sidecar decides what the user is told.
+        """
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        sidecar_pod = self._pod_failing_on(
+            "prod-api-aaa", "authorization-wall", "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+        )
+        app_pod = self._pod_failing_on("prod-api-bbb", APPLICATION_CONTAINER_NAME, "registry.example/prod-api:1.0")
+        pods = [app_pod, sidecar_pod] if app_pod_first else [sidecar_pod, app_pod]
+        mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": pods}), "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.image_pull_container == APPLICATION_CONTAINER_NAME
         assert result.image_pull_image == "registry.example/prod-api:1.0"
 
     @patch("opi.services.oom_watcher.KubectlConnector")
