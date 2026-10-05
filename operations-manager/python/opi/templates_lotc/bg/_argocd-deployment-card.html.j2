@@ -306,6 +306,62 @@
                 </c-stack>
             {% endif %}
 
+            {# WAT ZIJN IMAGE NIET KAN OPHALEN, EN WAAROM DAT NIET BIJ "UITGESCHAKELD" STAAT
+
+               Tot RC-243 zette OPI een component dat zijn image niet kon ophalen op nul
+               replicas, en dan stond hij in de lijst hierboven: uitgeschakeld, met zijn
+               reden. Dat uitzetten is weg, want het haalde juist de pod weg die de pull
+               opnieuw zou doen, dus een verkeerd gelezen foutmelding overleefde zijn eigen
+               oorzaak. Wat er nu is, is een component die AAN staat en het blijft proberen.
+               Dat is een andere toestand dan uitgeschakeld, met een ander antwoord op "en
+               wat doe ik eraan", dus een eigen melding en geen regel in die lijst.
+
+               Gegroepeerd op WIE kan handelen, want dat is het enige wat per component
+               verschilt. De reden-klasse komt uit OPI zelf (classify_image_pull_failure),
+               dezelfde die de metriek telt waar het alarm op hangt, dus de kaart en het
+               alarm kunnen niet uiteenlopen.
+
+               De verbatim tekst van de registry zit in de uitklapper, niet in de melding:
+               een image-pull-message van CRI-O is op productie 762 tekens, omdat dezelfde
+               fout er twee keer in staat. De kop zegt al wat die tekst zegt. #}
+            {% set pull_failures = status.get('image_pull_failures', []) %}
+            {% if pull_failures %}
+                {% set pull_groups = [
+                    ('absent', 'error', 'de registry zegt dat de image er niet is',
+                     'Push een geldige image of deploy opnieuw met een bestaande tag. Staat de image in een private registry, controleer dan je inloggegevens. Het component blijft aan staan, dus zodra de image er is wordt hij vanzelf opgehaald: daar is geen nieuwe deploy voor nodig.'),
+                    ('capacity', 'warning', 'de gedeelde image-cache van het platform zit vol',
+                     'Hier hoef je zelf niets voor te doen. Het component blijft aan staan en het ophalen wordt vanzelf opnieuw geprobeerd, en het herstelt zodra het platformteam ruimte heeft vrijgemaakt.'),
+                    ('undiagnosed', 'warning', 'de registry gaf geen antwoord',
+                     'Dat zegt niets over je image: die kan prima bestaan. Het component blijft aan staan en het ophalen wordt vanzelf opnieuw geprobeerd. Houdt het langer dan een paar minuten aan en je hebt geen storingsmelding gehad, meld het dan bij het platformteam.')
+                ] %}
+                {% for klasse, soort, antwoord, advies in pull_groups %}
+                    {% set in_klasse = pull_failures | selectattr('reason_class', 'equalto', klasse) | list %}
+                    {% if in_klasse %}
+                        {% set kop = (in_klasse | length | string)
+                                     ~ (' component kan zijn image niet ophalen: ' if in_klasse | length == 1
+                                        else ' componenten kunnen hun image niet ophalen: ')
+                                     ~ antwoord %}
+                        <c-alert type="{{ soort }}" heading="{{ kop }}">
+                            <c-stack gap="xs">
+                                {% for fout in in_klasse %}
+                                    <c-paragraph size="sm">{{ fout.reference }}{% if fout.image %} - {{ fout.image }}{% endif %}{% if fout.since %} - lukt niet sinds {{ fout.since | dutch_date }}{% endif %}</c-paragraph>
+                                {% endfor %}
+                                <c-paragraph size="sm">{{ advies }}</c-paragraph>
+                                <c-accordion>
+                                    <c-accordion-item title="Wat de registry antwoordde">
+                                        <c-stack gap="xs">
+                                            {% for fout in in_klasse %}
+                                                <c-paragraph size="sm">{{ fout.reference }}: {{ fout.registry_message }}</c-paragraph>
+                                            {% endfor %}
+                                        </c-stack>
+                                    </c-accordion-item>
+                                </c-accordion>
+                            </c-stack>
+                        </c-alert>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
             {# De knop "View Logs", en alleen zolang er iets draait: een slapende of
                uitgeschakelde deployment heeft geen pods en dus geen logs, en dan suggereert
                de knop iets dat er niet is. Die vlag heet expects_no_pods en komt uit dezelfde

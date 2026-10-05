@@ -316,6 +316,9 @@ class TestSanitizeUnhealthyPods:
         # ready" gathered above is a SYMPTOM of the failed pull, and disabling on it would
         # remove the pod that is retrying, which is exactly the intervention that is gone.
         assert "api" not in result["healthy"]
+        # Op het projectbestand zelf ook niets, niet alleen in het antwoord: een schrijver
+        # die wel zet maar niet commit ziet er in de uitvoer uit als "niets gedaan".
+        assert "disabled" not in project_data["deployments"][0]["components"][0]
 
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router.ProjectManager")
@@ -387,6 +390,7 @@ class TestSanitizeUnhealthyPods:
         assert result["disabled"] == []
         mock_pm.save_and_commit_project.assert_not_called()
         assert "api" not in result["healthy"]
+        assert "disabled" not in project_data["deployments"][0]["components"][0]
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")
