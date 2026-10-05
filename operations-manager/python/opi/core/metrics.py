@@ -264,6 +264,40 @@ class OPICollector(Collector):
             connector_calls.add_metric([name], count)
         yield connector_calls
 
+        # --- Application pods that cannot pull their image ---
+        #
+        # The fleet total is emitted ALWAYS, zero included. It is what the alert reads,
+        # and a metric that only appears once something is broken cannot be told apart
+        # from a metric that is not being produced at all -- which is the state this
+        # replaced: a component that could not pull went to zero replicas and the
+        # application went green.
+        pull_failures = GaugeMetricFamily(
+            "opi_image_pull_failing_pods",
+            "Application pods on this cluster whose container cannot pull its image",
+        )
+        pull_by_reason = GaugeMetricFamily(
+            "opi_image_pull_failing_pods_by_reason",
+            "The same pods, by namespace and by what the registry answered",
+            # ``project_namespace``, not ``namespace``: the scrape adds a ``namespace``
+            # of its own (the one OPI runs in) and a collision is renamed to
+            # ``exported_namespace`` behind your back.
+            labels=["project_namespace", "reason"],
+        )
+        total = 0
+        by_reason: dict[tuple[str, str], int] = {}
+        try:
+            from opi.services.image_pull_report import image_pull_failure_count, image_pull_failure_counts
+
+            total = image_pull_failure_count()
+            by_reason = image_pull_failure_counts()
+        except Exception:
+            logger.debug("Failed to collect image-pull metrics", exc_info=True)
+        pull_failures.add_metric([], total)
+        for (namespace, reason), count in by_reason.items():
+            pull_by_reason.add_metric([namespace, reason], count)
+        yield pull_failures
+        yield pull_by_reason
+
     def describe(self):
         """Return empty description; metrics are generated dynamically."""
         return []

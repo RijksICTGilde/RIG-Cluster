@@ -1,0 +1,40 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: operations-manager-image-pull
+  labels:
+    app: operations-manager
+spec:
+  groups:
+    # Een component dat zijn image niet kan ophalen blijft staan en blijft het proberen
+    # (RC-243). Dat is met opzet: tot 30 september zette OPI zo'n component op nul
+    # replicas, en dat haalde juist de pod weg die de pull opnieuw zou doen, dus een
+    # verkeerd gelezen foutmelding overleefde zijn eigen oorzaak. Wat die ingreep
+    # oploste was netheid; wat er nu voor in de plaats komt is dat iemand het ziet.
+    #
+    # De telling komt uit OPI zelf (opi/services/image_pull_report.py), niet uit
+    # kube-state-metrics: de reden-klasse hieronder bestaat alleen omdat OPI de
+    # kubelet-melding leest, en juist die klasse scheidt een lege proxy-cache van een
+    # tag die niet bestaat. De kale telling staat er altijd, ook op nul, zodat "niets
+    # aan de hand" te onderscheiden is van "deze metriek wordt niet geleverd".
+    - name: rig-image-pull.rules
+      rules:
+        - alert: ZadComponentKanImageNietOphalen
+          # Een kwartier, want een PR-image die net gebouwd wordt en een node die een
+          # pull aan het doen is zitten binnen die tijd. Wat erna nog staat is iets dat
+          # niet vanzelf overgaat.
+          expr: opi_image_pull_failing_pods > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} pod(s) kunnen hun container image niet ophalen"
+            description: >-
+              Deze pods staan in ImagePullBackOff en komen niet omhoog. Welke namespaces
+              en wat de registry antwoordde staat in
+              opi_image_pull_failing_pods_by_reason: reason=absent is een image of tag
+              die er niet is (het team zelf), reason=capacity is de gedeelde
+              proxy-cache die vol zit (platform), reason=undiagnosed is een registry
+              die geen antwoord gaf (platform, tenzij het blijft staan).
+              De betrokken deployments staan op Degraded en noemen het component op hun
+              deploymentkaart in ZAD.

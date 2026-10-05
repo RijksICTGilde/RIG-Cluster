@@ -311,6 +311,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start the OOM pod watch: %s", e)
 
+    # Count the pods that cannot pull their image, on every cluster. Not behind a switch
+    # like the watch above: this only reads, and since RC-243 it is the only thing that
+    # notices a component stuck in ImagePullBackOff (nothing scales it to zero any more).
+    try:
+        from opi.services.image_pull_report import ImagePullObserver
+
+        _image_pull_observer = ImagePullObserver(interval_seconds=settings.IMAGE_PULL_OBSERVE_INTERVAL_SECONDS)
+        await _image_pull_observer.start()
+        app.state.image_pull_observer = _image_pull_observer
+    except Exception as e:
+        logger.error("Failed to start the image-pull observer: %s", e)
+
     # Start the sleep-mode sweeper if enabled
     if settings.SLEEP_MODE_SCHEDULER_ENABLED:
         try:
@@ -360,6 +372,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     oom_pod_watcher = getattr(app.state, "oom_pod_watcher", None)
     if oom_pod_watcher is not None:
         await oom_pod_watcher.stop()
+
+    # Stop the image-pull observer
+    image_pull_observer = getattr(app.state, "image_pull_observer", None)
+    if image_pull_observer is not None:
+        await image_pull_observer.stop()
 
     # Stop sleep-mode sweeper
     sleep_mode_scheduler = getattr(app.state, "sleep_mode_scheduler", None)
