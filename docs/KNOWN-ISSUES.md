@@ -209,6 +209,20 @@ repareren: de connector zet `emailVerified` alleen bij het aanmaken
 (`opi/connectors/keycloak.py:3650`) en heeft geen weg om de vlag op een bestaand account om te
 zetten.
 
+Buiten de uitnodigingen om bestaat nog een portaalweg, en die stuurt niet eens een
+bevestigingsmail. Een keycloak-template mag een `users:`-sectie hebben, en `_process_users` maakt
+die gebruikers met `create_user` zonder `skip_email_verification` in het projectrealm aan, met
+het adres en de realm-rollen uit de template (`opi/handlers/keycloak_yaml_handler.py:1352`, zie
+`opi/configs/keycloak/algoritmeregister.yaml:240`). Het account staat daarmee op onbevestigd en
+draagt `VERIFY_EMAIL`, en `send_verify_email` staat in heel `opi/` alleen op de uitnodigingsweg
+(`opi/manager/invite_manager.py:443`), dus hier zet niets de vlag ooit om. Welke template draait
+komt uit het projectbestand (`services/keycloak/config/template`, alleen op path-traversal
+gekeurd, `opi/manager/keycloak_manager.py:704`) en wordt voor het projectrealm uitgevoerd
+(`:1968`); ook de gebruikerslijst zelf kan daaruit komen, want een `variables:`-blok in het
+projectbestand vult elke naam die het platform niet zelf berekent (`merge_user_variables`) en de
+lijst is zo'n naam. Dit is dus de API-weg: krijgt zo'n gebruiker de rol van de wall, dan is dat
+account vanaf het aanmaken buitengesloten.
+
 Repareren, per getroffen account: zet in Keycloak `Email verified` op On in het projectrealm en
 haal de `VERIFY_EMAIL` required action weg. Verwijderen en opnieuw laten inloggen werkt ook,
 maar dan verliest de gebruiker zijn rollen, dus dat is hier de slechtere weg.
@@ -220,12 +234,15 @@ realm alleen om de federated identity te matchen, en die IdP is met `trustEmail:
 vertrouwd. Dat is niet gebouwd: het verandert een beveiligingsrelevante default voor alle
 projectrealms en hoort een eigen besluit te zijn.
 
-Dat besluit raakt twee plekken, want de lokale uitnodigingsweg hierboven loopt tegen hetzelfde
-aan. Daar is de afweging een andere en een zwaardere: de bevestigingsmail is op die tak de
-enige controle dat de uitgenodigde het adres dat hij invult ook echt heeft, terwijl een vooraf
-aangemaakt SSO-account zijn adres van de vertrouwde IdP krijgt. Welke aanroepers de verificatie
-overslaan is gegrendeld in `tests/test_keycloak_master_admins_slaan_verificatie_over.py`, dus
-die toets gaat rood zodra iemand dit besluit neemt.
+Dat besluit staat niet op zichzelf, want de lokale uitnodigingsweg en de template-weg hierboven
+lopen tegen hetzelfde aan. Op de uitnodigingstak is de afweging een andere en een zwaardere: de
+bevestigingsmail is daar de enige controle dat de uitgenodigde het adres dat hij invult ook echt
+heeft, terwijl een vooraf aangemaakt SSO-account zijn adres van de vertrouwde IdP krijgt. Op de
+template-weg is er geen bevestigingsmail om af te wegen: daar is de keuze tussen de vlag zetten
+en er een sturen, en beide zijn een voorstel en geen stille aanpassing. Welke aanroepers de
+verificatie overslaan is gegrendeld in
+`tests/test_keycloak_master_admins_slaan_verificatie_over.py`, dus die toets gaat rood zodra
+iemand dit besluit neemt.
 
 Wat wel gerepareerd is: de wall levert nu een eigen `error.html` mee, zodat de gebruiker geen
 kale Engelse 500 ziet maar een Nederlandse pagina met een `RequestID` om aan de beheerder te
