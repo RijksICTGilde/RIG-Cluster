@@ -58,7 +58,9 @@ De kaart leest vandaag `deployment.components | selectattr('disabled')` (`opi/te
 
 De `disabled`-tak op die kaart blijft bestaan, want OOM en crash-loop blijven wel uitschakelen. Er komen dus twee toestanden naast elkaar te staan en die moeten van elkaar te onderscheiden zijn: uitgeschakeld door OPI, tegenover draait niet maar blijft het proberen.
 
-→ verify: een testgeval dat een image-pull-fout door de interpreter haalt en de verwachte tekst oplevert; een golden-manifest of templatetest die aantoont dat de kaart het component noemt zonder dat `disabled` gezet is; en visuele controle op de sandbox met een component dat naar een niet-bestaande tag wijst.
+Drie bestaande gevallen uit taak 3 zijn hiervan de maatstaf, want precies die worden straks hangende pods in plaats van een schone nul: `ai-3rt/api-frontend` (image zonder tag), `toets-hn7/pr-22-frontend` (tag bestaat niet meer) en `tva-d62/productie-frontend` (image `github.io/test/niet`). Dat laatste is een onzin-verwijzing in een deployment die `productie` heet. Zijn die drie na deze wijziging niet expliciet terug te vinden in de UI, dan is taak 2 niet klaar.
+
+→ verify: een testgeval dat een image-pull-fout door de interpreter haalt en de verwachte tekst oplevert; een golden-manifest of templatetest die aantoont dat de kaart het component noemt zonder dat `disabled` gezet is; en die drie gevallen op de detailpagina van hun project terugvinden.
 
 ### 3. Poort: controleren of er nog disables staan
 
@@ -70,9 +72,21 @@ Zodra dit plan uitgevoerd is ontstaan er geen nieuwe image-pull-disables meer, d
 
 De poort blijft staan voor het geval de controle iets vindt: eerst een dry-run die per project en deployment opsomt welke componenten het zou aanzetten en met welke reden, uitvoer naar stdout, niets geschreven. Die lijst gaat langs een mens. Pas daarna schrijven, en dan via de bestaande save-poort van het projectbestand en niet via een eigen YAML-pad.
 
-Vindt de controle er nul, dan vervalt deze taak en hoeft er geen schrijfweg te komen. Dat is de uitkomst om op te hopen, en hij is pas vast te stellen met toegang tot het cluster.
+**Gedraaid op 5 oktober over alle 60 `rig-prd-*` namespaces: deze taak heeft geen werk.** Geen van de negen van 30 september staat nog uit. Zeven deployments staan op nul replicas zonder waker, en geen daarvan is een slachtoffer van die storing:
 
-→ verify: de sweep over alle `rig-prd-*` namespaces levert een lijst op die exact de componenten bevat die `is_image_pull_disable_reason` matcht en geen enkele OOM- of crash-loop-disable; is die lijst leeg, dan is deze taak klaar zonder code.
+| namespace | deployment | image | beoordeling |
+|---|---|---|---|
+| rig-prd-ai-3rt | api-frontend | `par-dpia-form/experiment/backend`, zonder tag | register weigert, plausibel een image-pull-disable |
+| rig-prd-toets-hn7 | pr-22-frontend | `toetsingskader-archiefwet:pr-22` | tag bestaat niet meer, plausibel een image-pull-disable |
+| rig-prd-tva-d62 | productie-frontend | `github.io/test/niet` | onzin-verwijzing, plausibel `InvalidImageName` |
+| rig-prd-amt-odc | amt-odc-component-1 | `minbzk/amt:main` | image is in orde, dus een andere reden |
+| rig-prd-waggl-9et | staging-backend | pullt goed | idem |
+| rig-prd-waggl-9et | staging-frontend | pullt goed | idem |
+| rig-prd-operations | kube-state-metrics | n.v.t. | geen ZAD-component |
+
+De reden uit het projectbestand is hier niet gelezen, dus "plausibel" is geen vaststelling: OPI logt de reden alleen bij het verwerken van een deployment en deze drie zijn in 24 uur niet aangeraakt.
+
+→ verify: gedaan. Mocht de sweep later alsnog iets vinden, dan geldt de poort hierboven.
 
 ### 4. Zien dat het gebeurt, in plaats van het opruimen
 
