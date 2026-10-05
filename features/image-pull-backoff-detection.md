@@ -92,8 +92,9 @@ botsing wordt stil omgedoopt naar `exported_namespace`.
 
 Nooit de kubelet-melding of de image-tag als label. Die zijn onbegrensd.
 
-`ZadComponentKanImageNietOphalen` alarmeert als de kale telling een kwartier boven nul
-staat. Een kwartier, want een PR-image die net gebouwd wordt zit daarbinnen.
+De regel `ZadComponentKanImageNietOphalen` vuurt als de kale telling een kwartier boven nul
+staat. Een kwartier, want een PR-image die net gebouwd wordt zit daarbinnen. Of die regel
+ergens geevalueerd wordt is een open punt, hieronder.
 
 ### En of er wel gekeken is
 
@@ -143,7 +144,48 @@ andere weg. Op de sandbox is het antwoord `yes`, maar daar is de ClusterRole de 
 en zit Capsule Proxy niet in het pad, dus die meting zegt hier niets.
 
 Komt het niet door, dan is dat sinds deze taak te zien in plaats van stil: de tijdstempel
-blijft op `0` en het alarm hierboven vuurt.
+blijft op `0`, en dat is de reeks waar `ZadImagePullObservatieOntbreekt` op staat. Dat die
+regel ergens geevalueerd wordt is het open punt hierna.
+
+### Het tweede open punt: draaien die alarmen ergens
+
+Dezelfde keten, een schakel verder. De twee regels worden geleverd als een
+`PrometheusRule`, en zo'n CR wordt alleen gelezen door een Prometheus die de
+Prometheus-Operator beheert. De `opi_*`-reeksen waar ze op staan bestaan alleen in RIG's
+eigen Prometheus: een kale `prom/prometheus` op `prometheus.rig-prd-operations:9090` met
+alleen `--config.file`, zonder `rule_files`, `federate` of `remote_read`. Die scrapet OPI
+wel (job `kubernetes-pods` op de `prometheus.io/scrape`-annotatie van de OPI-pod) maar
+evalueert geen regels, en voor de stack die de regels wel evalueert staat er in deze repo
+geen `ServiceMonitor` of `PodMonitor` voor operations-manager.
+
+Dat `prometheusrule-billing.yaml` werkt bewijst het niet: dat is een recording rule over
+ODCN-platformreeksen waarvan de uitkomst via Grafana/Mimir terugkomt. Daarmee staat vast dat
+ODCN's stack zulke CR's evalueert, niet dat hij OPI's endpoint ziet.
+
+**Nog niet nagemeten:** of een van beide alarmen ooit kan vuren. Meet het van binnenuit,
+voordat dit uitgaat:
+
+```bash
+kubectl -n rig-prd-operations exec deployment/operations-manager -- \
+  wget -qO- http://prometheus.rig-prd-operations:9090/api/v1/rules
+```
+
+Staan `ZadComponentKanImageNietOphalen` en `ZadImagePullObservatieOntbreekt` daar niet in,
+dan evalueert deze Prometheus ze niet, en is de vervolgvraag of de stack die dat wel doet
+`opi_image_pull_failing_pods` heeft.
+
+Twee wegen om het te sluiten, en welke het wordt hangt aan dat antwoord. Laat de evaluerende
+stack OPI scrapen: aan onze kant staat daar niets in de weg, want `/metrics` zit niet achter
+auth en de NetworkPolicy laat poort 8000 van overal binnen. Of leg de regels in RIG's eigen
+Prometheus (`rule_files` plus een rules-ConfigMap in
+`infrastructure/bootstrap/infrastructure/prometheus/controller/`); dan evalueren ze zeker,
+maar een Alertmanager staat niet in deze repo, dus dan is de volgende vraag waar een vurend
+alarm heen gaat.
+
+`test_image_pull_alarm_leest_de_metriek_die_er_is.py` dekt dit niet af en kan dat niet: die
+pint de koppeling tussen de regel en de collector, niet of de regel ergens draait. Tot dit
+rond is leunt de zichtbaarheid op de deploymentkaart, de gauges zelf en de WARNING's in de
+log.
 
 ### In de log en in de uitrol
 

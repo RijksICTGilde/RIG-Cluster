@@ -6,9 +6,24 @@ metadata:
     app: operations-manager
 spec:
   groups:
+    # NOG NIET VASTGESTELD: dat deze twee alarmen ergens geevalueerd worden, en daarmee of
+    # ze ooit kunnen vuren. Ze staan op opi_*-reeksen, en die bestaan alleen in RIG's eigen
+    # Prometheus (prometheus.rig-prd-operations:9090), die geen regels evalueert; een
+    # PrometheusRule wordt alleen gelezen door een operator-beheerde Prometheus, en niets in
+    # deze repo geeft die de opi_*-reeksen. Dat is een blokkerend punt voor de release, met
+    # de onderbouwing en de twee wegen om het te sluiten in
+    # features/image-pull-backoff-detection.md. Meet het van binnenuit:
+    #
+    #   kubectl -n rig-prd-operations exec deployment/operations-manager -- \
+    #     wget -qO- http://prometheus.rig-prd-operations:9090/api/v1/rules
+    #
+    # Staan de twee alarmnamen hieronder daar niet in, dan evalueert deze Prometheus ze niet.
+    #
     # Een component dat zijn image niet kan ophalen blijft staan en blijft het proberen
-    # (RC-243, zie features/image-pull-backoff-detection.md). Dit alarm is wat er in de
-    # plaats komt van het uitschakelen dat die taak weghaalde.
+    # (RC-243, zie features/image-pull-backoff-detection.md). Deze twee alarmen horen bij de
+    # zichtbaarheid die in de plaats komt van het uitschakelen dat die taak weghaalde; de
+    # deploymentkaart, de gauges zelf en de WARNING's in de log zijn de delen daarvan die
+    # vandaag al werken.
     #
     # De telling komt uit OPI zelf (opi/services/image_pull_report.py), niet uit
     # kube-state-metrics: de reden-klasse hieronder bestaat alleen omdat OPI de
@@ -49,8 +64,9 @@ spec:
           # het label __name__ en de aftrekking hierboven niet, dus `or` ziet twee
           # verschillende reeksen en geeft ze allebei terug.
           #
-          # Tien minuten is tien rondes op rij mislukt. Vuurt niet als OPI helemaal niet
-          # gescrapet wordt, dat is wat `up` meldt.
+          # Tien minuten is tien rondes op rij mislukt. Is de reeks er helemaal niet omdat
+          # OPI niet gescrapet wordt, dan geeft deze expressie niets en blijft dit alarm
+          # stil; dat geval meldt `up`. Of die scrape er is, staat in de kop hierboven.
           expr: time() - opi_image_pull_observed_timestamp > 600
           # Een herstart van OPI hoort hem niet te laten vuren: de eerste ronde gaat
           # meteen, dus binnen vijf minuten staat de tijd er.

@@ -1,8 +1,8 @@
 """Het alarm leest de metriek die OPI werkelijk uitgeeft, en de klassen die er zijn.
 
-Sinds RC-243 schakelt OPI een component dat zijn image niet kan ophalen niet meer uit. Dit
-alarm is de tegenprestatie: zonder dit blijft zo'n pod stil in ImagePullBackOff hangen.
-Daarmee hangt het aan drie koppelingen die stil kunnen verschuiven, want niets anders legt
+Sinds RC-243 schakelt OPI een component dat zijn image niet kan ophalen niet meer uit, en
+hoort zo'n pod niet stil in ImagePullBackOff te blijven hangen. Dit alarm is daar een deel
+van, en het hangt aan drie koppelingen die stil kunnen verschuiven, want niets anders legt
 ze langs elkaar:
 
 - de naam in ``expr`` tegen de naam die de collector uitgeeft. Hernoemt iemand de gauge,
@@ -18,6 +18,10 @@ En er is een tweede alarm, omdat de telling waar het eerste op afgaat ook nul is
 niemand gekeken heeft: de momentopname begint leeg, dus een cluster waar de cluster-brede
 pod-lezing geweigerd wordt meldt een schone nul. Dat alarm hangt aan dezelfde koppeling,
 op een gauge die de collector pas sinds deze taak uitgeeft.
+
+Wat hier NIET in staat, en wat hier ook niet te meten is: of de regels ergens geevalueerd
+worden. Dat hangt aan een productiefeit en staat als open punt in
+features/image-pull-backoff-detection.md en in de kop van de PrometheusRule zelf.
 """
 
 from __future__ import annotations
