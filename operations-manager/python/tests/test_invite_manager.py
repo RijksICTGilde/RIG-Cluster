@@ -223,6 +223,34 @@ class TestCompleteLocalInviteVerificatiemail:
         assert result["verification_mail_sent"] is verstuurd
         assert "/realms/rig-demo/users/u1/send-verify-email" in put.call_args.args[0]
 
+    @pytest.mark.asyncio
+    async def test_het_aangemaakte_account_moet_zijn_adres_nog_bevestigen(self):
+        """Door de echte ``create_user`` heen, want hier hangt de keten van de known issue aan.
+
+        Een uitnodiging zet het account in het projectrealm voordat de uitgenodigde ooit
+        inlogt. Komt het onbevestigd binnen, dan weigert de authorization wall hem later met
+        een 500: zie ``docs/KNOWN-ISSUES.md``. Dat de aanroep hier de vlag niet meekrijgt is
+        gegrendeld in ``test_keycloak_master_admins_slaan_verificatie_over.py``; deze toets
+        meet wat dat voor het account betekent.
+        """
+        admin = MagicMock()
+        admin.get_required_action_by_alias.return_value = {"alias": "VERIFY_EMAIL", "enabled": True}
+        connector = KeycloakConnector.__new__(KeycloakConnector)
+        connector.admin = admin
+
+        with (
+            patch.object(connector, "get_user_by_email", AsyncMock(return_value=None)),
+            # Twee lezers op rij: de duplicaatcontrole van de manager (nog niets), en de
+            # terugleesactie in ``create_user`` zelf.
+            patch.object(connector, "get_user_by_username", AsyncMock(side_effect=[None, {"id": "u1"}])),
+            patch.object(connector, "send_verify_email", AsyncMock()),
+        ):
+            await self._complete(connector)
+
+        payload = admin.create_user.call_args.kwargs["payload"]
+        assert payload["emailVerified"] is False
+        assert payload["requiredActions"] == ["VERIFY_EMAIL"]
+
 
 class TestCompleteSsoInviteBevestiging:
     """De SSO-weg maakt het account aan, en niets bevestigt het adres daarna.
