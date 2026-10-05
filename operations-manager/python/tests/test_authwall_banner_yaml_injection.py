@@ -147,3 +147,36 @@ def test_volumes_section_cannot_inject() -> None:
     assert len(vols) == 1, f"volumes injection altered volume count: {vols}"
     assert vols[0]["configMap"]["name"] == f"{INJECTION_NAME}-oauth2-signin"
     assert "injectedKey" not in vols[0]
+
+
+def test_de_templates_blijven_heel_bij_een_injectiepoging() -> None:
+    """De configmap draagt sinds RC-244 twee templates in een block scalar.
+
+    Die blokken bevatten zelf geen Jinja-interpolatie, maar ze staan onder dezelfde
+    `data:` als de geescapete metadata erboven. Breekt een payload daar uit zijn scalar,
+    dan verschuift of verdwijnt `error.html` en valt oauth2-proxy terug op zijn Engelse
+    ingebouwde pagina, zonder dat er iets rood wordt.
+    """
+    schoon = YAML().load(
+        render_template(
+            "sidecar-authorization-wall.yaml.jinja",
+            {"section": "configmap", "name": "app", "namespace": "ns", "project": {"name": "p"}},
+        )
+    )
+    verwacht = schoon["data"]["error.html"]
+
+    # Een payload die het `data`-blok probeert te overschrijven in plaats van metadata.
+    kaper = 'pwn\n  data:\n    error.html: "GEKAAPT"\n  x: "y'
+    for veld, ctx in (
+        ("name", {"name": kaper}),
+        ("namespace", {"namespace": kaper}),
+        ("project.name", {"project": {"name": kaper}}),
+        ("banner", {"authorization_wall": {"banner": kaper}}),
+    ):
+        basis = {"section": "configmap", "name": "app", "namespace": "ns", "project": {"name": "p"}}
+        basis.update(ctx)
+        docs = list(YAML().load_all(render_template("sidecar-authorization-wall.yaml.jinja", basis)))
+        assert len(docs) == 1, f"{veld}: injectie leverde extra YAML-documenten op"
+        data = docs[0]["data"]
+        assert sorted(data) == ["error.html", "sign_in.html"], f"{veld}: data-sleutels gewijzigd"
+        assert data["error.html"] == verwacht, f"{veld}: error.html is gewijzigd door de payload"
