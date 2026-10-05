@@ -850,9 +850,12 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         if _realm_roles_unassigned(result_data["assigned"]):
             return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
 
-        # Store success info in session. ``verify_email`` staat alleen op deze tak: de
-        # SSO-weg levert via ``trustEmail`` een al geverifieerde gebruiker en mag de tekst
-        # over bevestigen niet tonen.
+        # Store success info in session. ``verify_email`` staat alleen op deze tak, want
+        # alleen hier gaat er een bevestigingsmail uit. De SSO-tak maakt het account ook
+        # onbevestigd aan, maar stuurt niets en kan dus niet om bevestigen vragen. Dat is
+        # geen bewijs dat het adres daar wel bevestigd is: ``trustEmail`` op de IdP raakt
+        # alleen de broker-tak waar ``BROKER_REGISTERED_NEW_USER`` staat, en een vooraf
+        # aangemaakt account valt daar juist buiten. Zie docs/KNOWN-ISSUES.md.
         request.session["invite_success"] = {
             "email": result_data["email"],
             "created": result_data["created"],

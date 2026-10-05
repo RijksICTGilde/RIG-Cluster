@@ -27,6 +27,12 @@ enforces when you save.
 4. Pick the realm role(s) to grant. The picker lists the roles from the Keycloak config
    (custom `realm-roles` plus the authorization-wall role, default `allowed-user`). Choose
    *Geen rol toekennen* to create an account with no extra rights.
+
+   **Granting the authorization-wall role is not enough to get the invitee in.** An invite
+   creates the realm account with an unconfirmed email address, and the wall rejects exactly
+   that. On the SSO branch nothing ever confirms it, so the invitee hits an HTTP 500 at
+   `/oauth2/callback` until someone sets `Email verified` to On in the Keycloak console. See
+   `docs/KNOWN-ISSUES.md`.
 5. Save. Editing invites does **not** trigger a deploy (nothing in the manifests changes).
 6. On the project-details page, admins and owners see an **Uitnodigingen** block with the full
    link and a copy button for each invite.
