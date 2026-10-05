@@ -337,6 +337,7 @@ CLUSTER_CONFIG = {
             # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
+            "quota_limit_gib": 10,
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
                 {
