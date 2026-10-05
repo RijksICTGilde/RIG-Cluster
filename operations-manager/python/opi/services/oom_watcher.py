@@ -15,8 +15,8 @@ Provides three mechanisms:
 
 2. **Fire-and-forget** (``schedule_oom_check``):
    After a deploy or refresh completes, a delayed background check queries
-   kubectl for OOM kills and image pull errors.  If detected, queues a
-   task for remediation via the task queue (no direct reprocessing).
+   kubectl for OOM kills and image pull errors.  An OOM queues a task for
+   remediation via the task queue (no direct reprocessing).
 
 3. **Cluster-wide pod watch** (``OomPodWatcher``, ``OomMetricSweeper``):
    Streams every application pod on this cluster, so an OOM on a pod that has been
@@ -26,8 +26,9 @@ Provides three mechanisms:
 
 Failure type handling:
 - **OOM**: Auto-tune memory limits and queue a refresh task.
-- **ImagePullBackOff**: Queue a task to disable the component (``replicas: 0``).
-  Re-enabled when a new image is pushed via ``update_image_and_regenerate()``.
+- **ImagePullBackOff**: Report only, no remediation (RC-243). Kubelet retries the pull
+  with its own backoff, so the pod that recovers has to stay; the component is named on
+  the deployment card for as long as it fails.
 - **CrashLoopBackOff**: Report only, no remediation.  Pods stay running
   so users can access logs.
 """
@@ -617,53 +618,6 @@ async def describe_components_waiting(
         if reason:
             results.append((ref, reason))
     return results
-
-
-async def disable_components_for_image_pull(
-    project_name: str,
-    deployment_name: str,
-    disabled_components: list[tuple[str, str]],
-) -> None:
-    """
-    Disable components with image pull errors: update YAML and commit.
-
-    Does NOT trigger reprocessing — the caller is responsible for that
-    (typically by queuing a refresh task through the task queue).
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-        disabled_components: List of (component_reference, error_message) tuples
-    """
-    from opi.handlers.project_file_handler import ProjectFileHandler
-    from opi.manager.project_manager import ProjectManager
-    from opi.services.resource_tuning_service import get_project_data_from_git
-
-    project_data, filename = await get_project_data_from_git(project_name)
-    # No connector is threaded in: ProjectManager takes the warm one from the store
-    # itself, so no caller can hold -- or close -- it.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
-    try:
-        file_handler = ProjectFileHandler()
-        names = []
-        for component_ref, error_message in disabled_components:
-            file_handler.set_deployment_component_disabled(
-                project_data, deployment_name, component_ref, True, error_message
-            )
-            names.append(component_ref)
-
-        commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
-        await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
-    finally:
-        await project_manager.close()
-
-    logger.info(
-        "Disabled %d component(s) with image pull errors in %s/%s: %s",
-        len(disabled_components),
-        project_name,
-        deployment_name,
-        ", ".join(n for n, _ in disabled_components),
-    )
 
 
 async def apply_oom_tune(
