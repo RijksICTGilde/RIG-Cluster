@@ -222,3 +222,46 @@ class TestCompleteLocalInviteVerificatiemail:
 
         assert result["verification_mail_sent"] is verstuurd
         assert "/realms/rig-demo/users/u1/send-verify-email" in put.call_args.args[0]
+
+
+class TestCompleteSsoInviteBevestiging:
+    """De SSO-weg maakt het account aan, en niets bevestigt het adres daarna.
+
+    ``create_user`` zet ``emailVerified`` op false en hangt er ``VERIFY_EMAIL`` aan
+    (RC-191, zie ``test_keycloak_master_admins_slaan_verificatie_over``), en deze tak
+    vraagt geen bevestigingsmail. In een SSO-only realm logt de gebruiker nooit
+    rechtstreeks bij Keycloak in, dus die required action krijgt ook geen trigger. Het
+    account blijft onbevestigd, en achter de authorization wall weigert oauth2-proxy het
+    met een 500. De keten staat in ``docs/KNOWN-ISSUES.md``.
+
+    Gaat deze toets rood, dan is die weg veranderd en hoort de known issue mee.
+    """
+
+    USER_INFO: ClassVar[dict[str, str]] = {
+        "email": "iemand@example.org",
+        "given_name": "Ie",
+        "family_name": "Mand",
+    }
+
+    async def _complete(self, keycloak: AsyncMock) -> dict:
+        manager = InviteManager(project_file_handler=MagicMock())
+        manager.assign_invite_permissions = AsyncMock(return_value={"roles": [], "errors": []})
+        with patch("opi.manager.invite_manager.create_keycloak_connector", AsyncMock(return_value=keycloak)):
+            return await manager.complete_sso_invite(
+                project_data={},
+                project_name="demo",
+                invite={},
+                user_info=dict(self.USER_INFO),
+                realm_name="rig-demo",
+            )
+
+    @pytest.mark.asyncio
+    async def test_er_gaat_geen_bevestigingsmail_naar_de_nieuwe_gebruiker(self):
+        keycloak = AsyncMock()
+        keycloak.get_user_by_email.return_value = None
+        keycloak.create_user.return_value = {"id": "u1"}
+
+        result = await self._complete(keycloak)
+
+        assert result["created"] is True
+        keycloak.send_verify_email.assert_not_awaited()
