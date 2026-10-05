@@ -6,13 +6,14 @@ klasse opgeruimd in plaats van de foutmelding verbeterd (RC-243), nadat dezelfde
 zeven weken drie keer verkeerd was gelezen.
 
 Deze toets bewaakt de VORM waarin dat vastligt, want het beslispunt zelf zit midden in
-``_process_from_git`` en in de sanitize-lus en is niet als functie aan te roepen. Wat hier
+``process_project_from_git`` en in de sanitize-lus en is niet als functie aan te roepen. Wat hier
 vastligt: hoeveel schrijvers er zijn, en dat de naam van de verwijderde helper niet
 terugkomt.
 """
 
+import ast
 import pathlib
-import re
+from inspect import signature
 
 import opi
 from opi.handlers.project_file_handler import ProjectFileHandler
@@ -50,6 +51,55 @@ def test_de_verwijderde_helper_komt_niet_terug() -> None:
     assert _modules_met(VERDWENEN_HELPER) == set()
 
 
+def _aanroepers() -> tuple[set[str], set[str]]:
+    """Per module: zet hij uit, of alleen aan.
+
+    Over de AST en niet over een grep op ``, True,``. Die zag een aanroep met
+    ``disabled=True`` helemaal niet staan: met een tweede uitschakelaar in die vorm erbij
+    bleef de grendel groen, en dat is precies wat hij hoort te vangen. De AST leest het
+    argument op zijn plek in de signatuur, dus beide vormen tellen, en een waarde die hier
+    niet te lezen is valt op in plaats van weg. Dezelfde keuze als in
+    ``tests/test_schrijvers_inventaris.py``, om een verwante reden: een grep telt ook een
+    naam in een docstring mee.
+    """
+    aanzetters: set[str] = set()
+    uitzetters: set[str] = set()
+    for pad in sorted(OPI.rglob("*.py")):
+        naam = str(pad.relative_to(OPI))
+        if naam == "handlers/project_file_handler.py":
+            continue  # de definitie zelf
+        for knoop in ast.walk(ast.parse(pad.read_text(encoding="utf-8"))):
+            if not isinstance(knoop, ast.Call) or not isinstance(knoop.func, ast.Attribute):
+                continue
+            if knoop.func.attr != SCHRIJVER:
+                continue
+            stand = _stand(knoop)
+            if stand is True:
+                uitzetters.add(naam)
+            elif stand is False:
+                aanzetters.add(naam)
+            else:
+                raise AssertionError(
+                    f"{naam} zet 'disabled' op iets dat hier niet te lezen is "
+                    f"({ast.unparse(knoop)}); zet die aanroep in deze grendel"
+                )
+    return aanzetters, uitzetters
+
+
+def _stand(aanroep: ast.Call) -> bool | None:
+    """De waarde van het ``disabled``-argument, positioneel of met trefwoord."""
+    plek = list(signature(ProjectFileHandler.set_deployment_component_disabled).parameters).index("disabled") - 1
+    knoop: ast.expr | None = None
+    if len(aanroep.args) > plek:
+        knoop = aanroep.args[plek]
+    for trefwoord in aanroep.keywords:
+        if trefwoord.arg == "disabled":
+            knoop = trefwoord.value
+    if isinstance(knoop, ast.Constant) and isinstance(knoop.value, bool):
+        return knoop.value
+    return None
+
+
 def test_er_is_precies_een_plek_die_een_component_uitzet() -> None:
     """Drie modules roepen de schrijver aan; twee daarvan alleen om te HERACTIVEREN.
 
@@ -57,18 +107,7 @@ def test_er_is_precies_een_plek_die_een_component_uitzet() -> None:
     image-pull-event helemaal over (zie test_sanitize.py). Komt er een tweede
     uitschakelaar bij, dan hoort daar een reden bij en wordt deze lijst bijgewerkt.
     """
-    aanzetters = set()
-    uitzetters = set()
-    for pad in sorted(OPI.rglob("*.py")):
-        inhoud = pad.read_text(encoding="utf-8")
-        naam = str(pad.relative_to(OPI))
-        for aanroep in re.findall(rf"{SCHRIJVER}\((.*?)\)", inhoud, flags=re.DOTALL):
-            if naam == "handlers/project_file_handler.py":
-                continue  # de definitie en haar eigen docstring
-            if re.search(r",\s*True\s*,", aanroep):
-                uitzetters.add(naam)
-            elif re.search(r",\s*False\s*,", aanroep):
-                aanzetters.add(naam)
+    aanzetters, uitzetters = _aanroepers()
 
     assert uitzetters == {"api/resource_router.py"}
     assert aanzetters == {

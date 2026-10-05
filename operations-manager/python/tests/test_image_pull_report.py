@@ -5,11 +5,15 @@ that could not pull was scaled to zero, which made ArgoCD call the application H
 now the pod stays in ImagePullBackOff and this is what notices.
 """
 
+import ast
 import asyncio
 import json
+import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import opi
 import pytest
+from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from opi.services import image_pull_report
 from opi.services.image_pull_report import (
@@ -95,6 +99,38 @@ class TestReadImagePullFailure:
         assert read_image_pull_failure(_pod(message=QUOTA)).reason_class == IMAGE_PULL_CAPACITY
         assert read_image_pull_failure(_pod(message=EOF_OUTAGE)).reason_class == IMAGE_PULL_UNDIAGNOSED
         assert read_image_pull_failure(_pod(message=ABSENT)).reason_class == IMAGE_PULL_ABSENT
+
+    def test_a_waiting_state_without_a_message_is_still_a_finding(self) -> None:
+        """Kubelet sets the reason before it has anything to say about it.
+
+        The class then has to be ``undiagnosed`` -- an absent message is not an answer
+        about the image -- and the message must still carry the reason, because the card
+        and the WARNING both print it and an empty line reads as "nothing happened".
+        """
+        pod = _pod(message=None)
+        pod["status"]["containerStatuses"] = [
+            {"name": "app", "image": "ghcr.io/org/app:bad-tag", "state": {"waiting": {"reason": "ErrImagePull"}}}
+        ]
+
+        failure = read_image_pull_failure(pod)
+
+        assert failure is not None
+        assert failure.reason_class == IMAGE_PULL_UNDIAGNOSED
+        assert failure.message.startswith("ErrImagePull: ")
+        assert failure.message != "ErrImagePull: "
+
+    def test_a_pod_without_a_creation_timestamp_still_reports(self) -> None:
+        # One missing field may never cost the whole finding: the broken case is exactly
+        # the one that must not fall out. The card already renders an empty ``since``
+        # (``test_een_component_zonder_image_in_de_verwijzing_valt_niet_om``), so the
+        # fallback here is what makes that path reachable rather than a KeyError.
+        pod = _pod()
+        del pod["metadata"]["creationTimestamp"]
+
+        failure = read_image_pull_failure(pod)
+
+        assert failure is not None
+        assert failure.since == ""
 
     def test_a_healthy_pod_reports_nothing(self) -> None:
         running = {"name": "app", "image": "ghcr.io/org/app:v1", "state": {"running": {"startedAt": "x"}}}
@@ -303,6 +339,23 @@ class TestWatDeKaartKrijgt:
         assert gevonden[0].reason_class == IMAGE_PULL_ABSENT
         assert gevonden[0].since == "2026-10-05T08:00:00Z"
 
+    def test_de_kaart_noemt_de_bronregistry_en_niet_de_proxyvorm(self) -> None:
+        """De pod draagt de rcr-proxyvorm; de afnemer kent zijn eigen registry.
+
+        Zelfde regel als bij ``summarize_component_pods`` ernaast, en hier weegt hij
+        zwaarder: deze melding vraagt de lezer juist om NAAR DIE IMAGE te kijken, dus een
+        verwijzing die hij nergens heeft staan stuurt hem het verkeerde pad op.
+        """
+        from opi.services.deployment_diagnostics import describe_image_pull_failures
+
+        proxy = "rcr.rijksapps.nl/ghcr-rig/org/app:bad-tag"
+        image_pull_report._snapshot = (read_image_pull_failure(_pod(image=proxy)),)
+
+        (gevonden,) = describe_image_pull_failures(self._deployment())
+
+        assert gevonden.image == "ghcr.io/org/app:bad-tag"
+        assert "rcr.rijksapps.nl" not in (gevonden.image or "")
+
     def test_een_uitgeschakeld_component_blijft_erbuiten(self) -> None:
         """Nul replicas is daar de bedoelde eindstand, en de kaart noemt hem al apart.
         Twee meldingen over hetzelfde component die elkaar tegenspreken is erger dan een."""
@@ -353,3 +406,91 @@ class TestDeObserver:
         assert task is not None
         assert task.done()
         assert observer._task is None
+
+
+class TestDeObserverWordtGestart:
+    """De waarnemer draait in het echt, en op elk cluster.
+
+    Dit is de wiring waar alles aan hangt: start hij niet, dan blijft de momentopname leeg,
+    leest de gauge voor altijd nul, en toont de kaart niets. Dan is de auto-disable weg en
+    staat er niets in de plaats, precies de stand die RC-243 juist opruimt. Niets in de
+    suite draait de lifespan van ``opi/server.py``, dus deze grendel leest hem.
+
+    Zelfde vorm als ``tests/test_worker_handler_registration.py``, dat om dezelfde reden
+    bestaat: een haak die alleen in het andere startpunt gewired was.
+    """
+
+    def _lifespan(self) -> ast.AsyncFunctionDef:
+        boom = ast.parse((pathlib.Path(opi.__file__).parent / "server.py").read_text(encoding="utf-8"))
+        for knoop in ast.walk(boom):
+            if isinstance(knoop, ast.AsyncFunctionDef) and knoop.name == "lifespan":
+                return knoop
+        raise AssertionError("opi/server.py heeft geen lifespan, dus deze grendel meet niets")
+
+    def _aanmaak(self, klassenaam: str) -> tuple[ast.Call, list[ast.AST]]:
+        """De aanroep die ``klassenaam`` instantieert, plus de knopen eromheen."""
+        ouders: dict[ast.AST, ast.AST] = {}
+        lifespan = self._lifespan()
+        for knoop in ast.walk(lifespan):
+            for kind in ast.iter_child_nodes(knoop):
+                ouders[kind] = knoop
+        for knoop in ast.walk(lifespan):
+            if isinstance(knoop, ast.Call) and ast.unparse(knoop.func) == klassenaam:
+                keten = []
+                huidig: ast.AST | None = ouders.get(knoop)
+                while huidig is not None:
+                    keten.append(huidig)
+                    huidig = ouders.get(huidig)
+                return knoop, keten
+        raise AssertionError(f"de lifespan maakt geen {klassenaam} aan")
+
+    def test_hij_start_zonder_schakelaar_eroverheen(self) -> None:
+        """De OOM-watch staat per cluster uit tot hij zich bewezen heeft; deze niet.
+
+        De OOM-watch is hier ook de kanarie: zou deze zoektocht niets vinden, dan slaagt
+        de bewering over de waarnemer gratis. Hij moet dus WEL onder een ``if`` zitten.
+        """
+        _, keten = self._aanmaak("OomPodWatcher")
+        assert any(isinstance(k, ast.If) for k in keten), (
+            "de kanarie: de OOM-watch zat juist wel achter een schakelaar. Staat hij er "
+            "niet meer achter, kies dan een andere aanmaak die dat wel doet"
+        )
+
+        _, keten = self._aanmaak(ImagePullObserver.__name__)
+        achter_een_if = [k for k in keten if isinstance(k, ast.If)]
+        assert not achter_een_if, (
+            "de waarnemer staat achter een schakelaar: "
+            f"{[ast.unparse(k.test) for k in achter_een_if]}. Hij moet op elk cluster tellen, "
+            "want hij is het enige dat een component ziet dat zijn image niet kan ophalen."
+        )
+
+    def test_de_interval_komt_uit_de_instelling_en_niet_uit_een_getal(self) -> None:
+        # De naam uit de instellingen zelf, zodat een hernoeming hier omvalt in plaats van
+        # een zoektocht op een tekst die niemand meer zet.
+        instelling = "IMAGE_PULL_OBSERVE_INTERVAL_SECONDS"
+        assert isinstance(getattr(settings, instelling), int)
+
+        aanmaak, _ = self._aanmaak(ImagePullObserver.__name__)
+        argumenten = [ast.unparse(a.value) for a in aanmaak.keywords] + [ast.unparse(a) for a in aanmaak.args]
+
+        assert f"settings.{instelling}" in argumenten, (
+            f"de waarnemer krijgt zijn interval niet uit settings.{instelling} maar uit {argumenten}"
+        )
+
+    def test_de_lifespan_start_hem_werkelijk(self) -> None:
+        # Aanmaken zonder starten is een object dat niets doet, en dat is van buiten niet
+        # te onderscheiden van een vloot zonder problemen.
+        lifespan = self._lifespan()
+        gestart = {
+            ast.unparse(knoop.value.func)
+            for knoop in ast.walk(lifespan)
+            if isinstance(knoop, ast.Await)
+            and isinstance(knoop.value, ast.Call)
+            and isinstance(knoop.value.func, ast.Attribute)
+            and knoop.value.func.attr == "start"
+        }
+        aanmaak, keten = self._aanmaak(ImagePullObserver.__name__)
+        toewijzing = next(k for k in keten if isinstance(k, ast.Assign))
+        naam = ast.unparse(toewijzing.targets[0])
+
+        assert f"{naam}.start" in gestart, f"{naam} wordt aangemaakt maar niet gestart (gestart: {sorted(gestart)})"

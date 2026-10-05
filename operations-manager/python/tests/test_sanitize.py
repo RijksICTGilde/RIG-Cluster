@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.handlers.project_file_handler import IMAGE_PULL_REASONS
 
 
 class TestSanitizeUnhealthyPods:
@@ -319,6 +320,83 @@ class TestSanitizeUnhealthyPods:
         # Op het projectbestand zelf ook niets, niet alleen in het antwoord: een schrijver
         # die wel zet maar niet commit ziet er in de uitvoer uit als "niets gedaan".
         assert "disabled" not in project_data["deployments"][0]["components"][0]
+
+    @pytest.mark.parametrize(
+        "reason", sorted(IMAGE_PULL_REASONS - {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"})
+    )
+    @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.ProjectManager")
+    @patch("opi.api.resource_router.KubectlConnector")
+    @patch("opi.api.resource_router.get_project_store")
+    @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
+    @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
+    @pytest.mark.asyncio
+    async def test_every_image_pull_reason_skips_the_component_not_just_the_three(
+        self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess, reason
+    ):
+        """De lijst is ``IMAGE_PULL_REASONS``, niet een eigen drietal naast die lijst.
+
+        Dit pad had zijn eigen ``{ErrImagePull, ImagePullBackOff, InvalidImageName}``.
+        Een reden daarbuiten viel dus door naar de symptomen (0/1 pods ready) en zette het
+        component uit om iets dat de mislukte pull zelf veroorzaakte. De parametrisatie
+        loopt over de redenen die in dat eigen drietal ontbraken, uit de canonieke lijst
+        zelf, dus een naam die daar bijkomt wordt hier meteen meegetoetst.
+        """
+        project_data = {
+            "name": "my-project",
+            "components": [{"name": "api"}],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "local",
+                    "components": [{"reference": "api", "image": "ghcr.io/org/app:bad-tag"}],
+                }
+            ],
+        }
+        mock_project = MagicMock()
+        mock_project.data = project_data
+        mock_project.filename = "my-project.yaml"
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+        mock_get_service.return_value = mock_service
+
+        mock_pm = MagicMock()
+        mock_pm.get_contents = AsyncMock(return_value=project_data)
+        mock_pm.save_and_commit_project = AsyncMock()
+        mock_pm.close = AsyncMock()
+        mock_pm_cls.return_value = mock_pm
+
+        mock_kubectl = AsyncMock()
+        mock_kubectl.get_deployment_status.return_value = [{"ready": "0/1", "replicas": "1"}]
+        mock_kubectl.get_namespace_events.return_value = [
+            {
+                "type": "Warning",
+                "reason": reason,
+                "object": "production-api-abc123",
+                "message": 'Container image "ghcr.io/org/app:bad-tag" could not be made available',
+                "time": "2026-03-31T10:00:00Z",
+            }
+        ]
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        mock_connector = AsyncMock()
+        mock_connector.get_pod_restarts.return_value = []
+        mock_connector.custom_query.return_value = []
+        mock_get_connector.return_value = mock_connector
+
+        from opi.api.resource_router import sanitize_deployment
+
+        mock_request = MagicMock()
+        response = await sanitize_deployment.__wrapped__(mock_request, "my-project", deployment=None)
+
+        import json
+
+        result = json.loads(response.body)
+        assert result["disabled"] == [], reason
+        mock_pm.save_and_commit_project.assert_not_called()
+        assert "api" not in result["healthy"], reason
+        assert "disabled" not in project_data["deployments"][0]["components"][0], reason
 
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router.ProjectManager")

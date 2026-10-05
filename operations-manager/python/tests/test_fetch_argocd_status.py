@@ -8,6 +8,7 @@ must surface that render error instead of filtering it out behind the old health
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.web.router import _fetch_argocd_deployment_status
 
 
@@ -200,3 +201,57 @@ async def test_a_deployment_that_is_meant_to_have_no_pods_is_not_asked():
 
     kubectl.get_application_pods.assert_not_called()
     assert result["pods"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_component_that_cannot_pull_reaches_the_card():
+    """The card's block is fed from here, and nothing else fills that key.
+
+    Without this the card renders correctly in its own tests and shows nothing in the
+    product: the key is absent, ``status.get('image_pull_failures', [])`` is empty, and
+    the component that cannot pull is invisible. That is the state RC-243 replaced the
+    auto-disable with, so the wiring is the deliverable, not a detail.
+
+    Read on the HEALTHY branch deliberately: a pod in ImagePullBackOff keeps the
+    application Degraded, but if ArgoCD ever says otherwise the card still has to say
+    what is wrong.
+    """
+    from opi.services import image_pull_report
+    from opi.services.image_pull_report import read_image_pull_failure
+
+    status_data = {"status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+
+    deployment = {
+        "name": "deploy-1",
+        "namespace": "ns",
+        "cluster": "local",
+        "components": [{"reference": "web", "image": "ghcr.io/org/app:bad-tag"}],
+    }
+    pod = {
+        "metadata": {
+            "name": "deploy-1-web-abc-1",
+            "namespace": get_prefixed_namespace("local", "ns"),
+            "labels": {"app": "deploy-1-web", "component": "application"},
+            "creationTimestamp": "2026-10-03T08:00:00Z",
+        },
+        "status": {
+            "containerStatuses": [
+                {
+                    "name": "app",
+                    "image": "ghcr.io/org/app:bad-tag",
+                    "state": {"waiting": {"reason": "ImagePullBackOff", "message": "manifest unknown"}},
+                }
+            ]
+        },
+    }
+    image_pull_report._snapshot = (read_image_pull_failure(pod),)
+    try:
+        result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+    finally:
+        image_pull_report._snapshot = ()
+
+    assert [f.reference for f in result["image_pull_failures"]] == ["web"]
