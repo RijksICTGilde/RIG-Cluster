@@ -1,5 +1,14 @@
 # Negen componenten weer aanzetten na de quota-storing van 30 september
 
+> **AFGEHANDELD, dit hoeft niet meer gedraaid te worden.** Bij de sweep over alle 60
+> `rig-prd-*` namespaces van 5 oktober 2026 (RC-243) stond geen van de negen nog
+> uitgeschakeld. Er is sindsdien dus op ze uitgerold, want de rollout-hook hieronder is
+> het enige dat zo'n disable opheft. En het kan niet opnieuw gebeuren, want RC-243 haalt
+> het uitschakelen bij een image-pull helemaal weg; zie
+> `features/image-pull-backoff-detection.md`. Wat hieronder staat over die hook en over
+> waarom `:refresh` een no-op is op een uitgeschakeld component geldt nog wel, en blijft
+> daarvoor leesbaar.
+
 Vijf deployments, negen componenten. Een redeploy per deployment zonder de componenten te
 noemen bestaat niet: allebei de aanroepers van de redeploy-hook ruimen alleen op voor de
 componenten die de aanroep zelf noemt. Dus negen calls, gegroepeerd per deployment.

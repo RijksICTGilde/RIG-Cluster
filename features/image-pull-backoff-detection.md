@@ -109,8 +109,10 @@ scheidt de twee betekenissen van nul.
 De tijdstempel staat op `0` tot de eerste ronde het cluster werkelijk gelezen heeft, en
 blijft daarna op het moment van de laatste gelukte ronde staan.
 `ZadImagePullObservatieOntbreekt` vuurt als hij ouder is dan tien minuten, dus na tien
-mislukte rondes op rij. Die ene drempel dekt ook "nog nooit gelukt", want `0` is de epoch
-en die is ruim langer dan tien minuten geleden. Dat is niet vanzelfsprekend en het is juist
+mislukte rondes op rij, en daar zit een `for` van vijf minuten op zodat een herstart van
+OPI hem niet laat vuren: hij gaat dus af na een kwartier zonder gelukte ronde. Die ene
+drempel dekt ook "nog nooit gelukt", want `0` is de epoch en die is ruim langer dan tien
+minuten geleden. Dat is niet vanzelfsprekend en het is juist
 het geval waar het op `odcn-production` om gaat, dus het staat als toets vast
 (`test_image_pull_alarm_leest_de_metriek_die_er_is.py`): een herschrijving naar een vorm
 die alleen op verandering kijkt zou precies dat geval laten lopen.
