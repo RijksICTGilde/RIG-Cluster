@@ -3693,11 +3693,8 @@ class ProjectManager:
 
                     # One list, one destination: reporting (RC-243). There used to be a
                     # split here on what the registry said, and the "absent" half was
-                    # scaled to 0 replicas. That removed the very pod that would have
-                    # retried the pull, so a misread message became an outage that
-                    # outlived its cause -- three times in seven weeks. Kubelet retries
-                    # with its own backoff; the wording below still distinguishes the two,
-                    # because a sentence that is slightly wrong costs a sentence.
+                    # scaled to 0 replicas. The wording below still distinguishes the two;
+                    # nothing else does.
                     image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
 
                     task_service = (
@@ -3744,17 +3741,15 @@ class ProjectManager:
                                 f"{app_name}: OOM detected for {oom_names}, auto-tune failed: {tune_err}"
                             )
 
-                    # Handle ImagePullBackOff: report it, and only report it. A pod never
-                    # becomes ready while any of its containers (main OR sidecar) is stuck
-                    # pulling, so a sidecar failure is the component's problem too, and the
-                    # message names the exact container and image: a bad platform sidecar
-                    # once sent us down the wrong path for hours because it did not.
+                    # A pod never becomes ready while any of its containers (main OR
+                    # sidecar) is stuck pulling, so a sidecar failure is the component's
+                    # problem too, and the message names the exact container and image: a
+                    # bad platform sidecar once sent us down the wrong path for hours
+                    # because it did not.
                     #
-                    # What the registry said still chooses the SENTENCE. An answer about
-                    # this image is the tenant's to act on; anything else is the platform's
-                    # and must not send them looking for an image that is fine. It no
-                    # longer chooses whether anything is written, which is the whole of
-                    # RC-243.
+                    # Which sentence the reader gets: an answer about this image is the
+                    # tenant's to act on, anything else is the platform's and must not
+                    # send them looking for an image that is fine.
                     for f in image_pull_failures:
                         image = f" [image {f.image}]" if f.image else ""
                         reason = " ".join(f.message.split()) if f.message else ""

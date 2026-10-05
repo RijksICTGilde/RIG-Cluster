@@ -121,9 +121,8 @@ async def sanitize_deployment(
     tuner has, turning a memory that is set too low into a permanent outage. A
     component that keeps dying for it still trips the restart threshold below.
 
-    An image that cannot be pulled is not a reason either, and since RC-243 it is a
-    reason to leave the component entirely alone: the pull is what every other symptom
-    on the list comes from, and zero replicas remove the pod that would have retried it.
+    An image that cannot be pulled is not a reason either. Since RC-243 it is a reason to
+    skip the component entirely, symptoms included: see ``_run_sanitize``.
 
     Args:
         project_name: Name of the project
@@ -232,17 +231,16 @@ async def _run_sanitize(
             # the resource tuner, which raises the memory; disabling the component takes
             # away the pods that produce the very metric the tuner reads.
 
-            # Check for image pull errors. Seeing one means this component is skipped
-            # entirely -- no disable for the pull itself (RC-243), and none for the
-            # symptoms gathered above either.
+            # Check for image pull errors. Seeing one skips this component entirely: no
+            # disable for the pull itself (RC-243), and none for the symptoms gathered
+            # above either.
             #
             # That second half is the subtlety. A pull that does not succeed EXPLAINS
             # every other reason on the list: zero pods are ready, and the container
             # "restarts", precisely because the image never arrived. Disabling on those
-            # symptoms removes the pod that would have retried the pull, which is the
-            # intervention this task exists to take away. It used to depend on what the
-            # registry said; it no longer does, because an image-pull event is an
-            # image-pull event whatever the wording.
+            # symptoms removes the pod that would have retried the pull. The skip no
+            # longer asks what the registry said: an image-pull event is an image-pull
+            # event whatever the wording.
             image_pull_seen = False
             try:
                 events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)

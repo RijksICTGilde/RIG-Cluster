@@ -455,9 +455,8 @@ class ComponentImagePullFailure:
     """One component of a deployment that cannot pull its image, ready to render.
 
     Sibling of ``ComponentPodSummary``: that one says what IS serving, this one says what
-    cannot start. They are separate because the answers are opposite -- a deployment can
-    have both at once, which is exactly what a bad image push looks like while the
-    previous version keeps running.
+    cannot start. A deployment can have both at once, which is exactly what a bad image
+    push looks like while the previous version keeps running.
     """
 
     #: The component reference as it stands in the project file.
@@ -481,12 +480,10 @@ def describe_image_pull_failures(
 
     Read from the in-process snapshot (``image_pull_report``) and not from the project
     file, because since RC-243 the project file no longer records this: a component that
-    cannot pull is not switched off any more, it simply keeps failing. Without this the
-    card would be silent about it, and silence is what the removed intervention bought.
+    cannot pull is not switched off any more, it simply keeps failing.
 
     Components the project file marks ``disabled`` are left out: their zero replicas are
-    the intended end state and the card names them and their reason separately. Telling
-    someone an image cannot be pulled for a component that is switched off is noise.
+    the intended end state and the card names them and their reason separately.
     """
     cluster = deployment.get("cluster") or ""
     namespace = get_prefixed_namespace(cluster, deployment.get("namespace") or "")

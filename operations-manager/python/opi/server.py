@@ -312,8 +312,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             logger.error("Failed to start the OOM pod watch: %s", e)
 
     # Count the pods that cannot pull their image, on every cluster. Not behind a switch
-    # like the watch above: this only reads, and since RC-243 it is the only thing that
-    # notices a component stuck in ImagePullBackOff (nothing scales it to zero any more).
+    # like the watch above; the reason is on ``ImagePullObserver``.
     try:
         from opi.services.image_pull_report import ImagePullObserver
 

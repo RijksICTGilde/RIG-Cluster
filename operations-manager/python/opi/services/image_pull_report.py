@@ -1,18 +1,8 @@
 """Which application pods cannot pull their image, as a live picture of the cluster.
 
-This exists because the intervention it replaces is gone. Until RC-243 a component that
-could not pull was scaled to zero replicas, which made the problem tidy: the pod was no
-longer there, and ArgoCD called the application Healthy. That tidiness is what three
-outages were paid for, so it was taken away. What is left is a pod in ImagePullBackOff
-that stays there until someone fixes the image, and nothing about that is visible by
-itself.
-
-So it is made visible twice, from one observation:
-
-- a gauge per cluster, read by the collector in ``opi/core/metrics.py`` and alerted on by
-  ``prometheusrule-image-pull.yaml``, so nobody has to notice;
-- the deployment card, which names the component, its image, what the registry answered
-  and since when, next to (and distinct from) the components OPI really did switch off.
+One observation feeds both the gauges in ``opi/core/metrics.py`` and the deployment card.
+Since RC-243 nothing switches such a component off any more, so this is the only thing
+that notices one: see ``features/image-pull-backoff-detection.md``.
 
 A periodic LIST, not the pod watch of ``oom_watcher``. Two reasons, and the second is the
 one that decides it: the watch is off on every cluster until it has proven itself
@@ -20,8 +10,7 @@ one that decides it: the watch is off on every cluster until it has proven itsel
 is recounted from scratch cannot carry a stale entry, while a stream that misses a DELETED
 would keep alerting on a pod that is long gone.
 
-The snapshot is process-local and lives exactly as long as the process. Nothing reads it
-to decide anything: it is a report.
+The snapshot is process-local. Nothing reads it to decide anything: it is a report.
 """
 
 import asyncio

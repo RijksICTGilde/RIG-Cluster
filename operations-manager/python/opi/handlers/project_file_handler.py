@@ -109,10 +109,9 @@ _IMAGE_ABSENT_MARKERS = (
 _REGISTRY_CAPACITY_MARKERS = ("quota has been exceeded",)
 
 
-# The three things an image-pull message can tell us, as the label value of the metric
-# that reports them (see opi/services/image_pull_report.py). Three and not more: these are
-# the only distinctions the wording supports, and a label value is a promise to whatever
-# alerts on it.
+# The three things an image-pull message can tell us, also the label value of the metric
+# that reports them (see opi/services/image_pull_report.py). A fourth is not free: a label
+# value is a promise to whatever alerts on it.
 IMAGE_PULL_ABSENT = "absent"
 IMAGE_PULL_CAPACITY = "capacity"
 IMAGE_PULL_UNDIAGNOSED = "undiagnosed"
@@ -142,11 +141,8 @@ def image_is_confirmed_absent(message: str | None) -> bool:
     wording never seen before.
 
     Since RC-243 no caller disables a component on this: it decides WORDING only (which
-    sentence the user reads, which class the metric counts). Three times in seven weeks a
-    registry failure read as "absent" here, and each time a component went to zero
-    replicas, which removes the pod that would have retried. Getting the sentence slightly
-    wrong is a sentence; getting the intervention wrong was an outage that outlived its
-    cause.
+    sentence the user reads, which class the metric counts). A heuristic that reads a
+    registry failure as "absent" may cost a sentence, never a pod.
     """
     return classify_image_pull_failure(message) == IMAGE_PULL_ABSENT
 

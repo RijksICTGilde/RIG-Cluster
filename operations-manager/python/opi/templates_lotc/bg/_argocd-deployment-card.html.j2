@@ -308,13 +308,10 @@
 
             {# WAT ZIJN IMAGE NIET KAN OPHALEN, EN WAAROM DAT NIET BIJ "UITGESCHAKELD" STAAT
 
-               Tot RC-243 zette OPI een component dat zijn image niet kon ophalen op nul
-               replicas, en dan stond hij in de lijst hierboven: uitgeschakeld, met zijn
-               reden. Dat uitzetten is weg, want het haalde juist de pod weg die de pull
-               opnieuw zou doen, dus een verkeerd gelezen foutmelding overleefde zijn eigen
-               oorzaak. Wat er nu is, is een component die AAN staat en het blijft proberen.
-               Dat is een andere toestand dan uitgeschakeld, met een ander antwoord op "en
-               wat doe ik eraan", dus een eigen melding en geen regel in die lijst.
+               Sinds RC-243 zet OPI zo'n component niet meer op nul replicas, dus hij staat
+               niet in de lijst hierboven. Hij staat AAN en blijft het proberen: een andere
+               toestand dan uitgeschakeld, met een ander antwoord op "en wat doe ik eraan",
+               dus een eigen melding en geen regel in die lijst.
 
                Gegroepeerd op WIE kan handelen, want dat is het enige wat per component
                verschilt. De reden-klasse komt uit OPI zelf (classify_image_pull_failure),
@@ -328,11 +325,11 @@
             {% if pull_failures %}
                 {% set pull_groups = [
                     ('absent', 'error', 'de registry zegt dat de image er niet is',
-                     'Push een geldige image of deploy opnieuw met een bestaande tag. Staat de image in een private registry, controleer dan je inloggegevens. Het component blijft aan staan, dus zodra de image er is wordt hij vanzelf opgehaald: daar is geen nieuwe deploy voor nodig.'),
+                     'Push een geldige image of deploy opnieuw met een bestaande tag. Staat de image in een private registry, controleer dan je inloggegevens. Het component blijft aan staan: zodra de image er is wordt hij vanzelf opgehaald, zonder nieuwe deploy.'),
                     ('capacity', 'warning', 'de gedeelde image-cache van het platform zit vol',
-                     'Hier hoef je zelf niets voor te doen. Het component blijft aan staan en het ophalen wordt vanzelf opnieuw geprobeerd, en het herstelt zodra het platformteam ruimte heeft vrijgemaakt.'),
+                     'Hier hoef je zelf niets voor te doen. Het component blijft aan staan en herstelt zodra het platformteam ruimte heeft vrijgemaakt.'),
                     ('undiagnosed', 'warning', 'de registry gaf geen antwoord',
-                     'Dat zegt niets over je image: die kan prima bestaan. Het component blijft aan staan en het ophalen wordt vanzelf opnieuw geprobeerd. Houdt het langer dan een paar minuten aan en je hebt geen storingsmelding gehad, meld het dan bij het platformteam.')
+                     'Dat zegt niets over je image: die kan prima bestaan. Het component blijft aan staan en probeert het opnieuw. Houdt het langer dan een paar minuten aan en je hebt geen storingsmelding gehad, meld het dan bij het platformteam.')
                 ] %}
                 {% for klasse, soort, antwoord, advies in pull_groups %}
                     {% set in_klasse = pull_failures | selectattr('reason_class', 'equalto', klasse) | list %}

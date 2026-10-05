@@ -221,7 +221,7 @@ afwijkingen). Documentatie: `features/image-pull-backoff-detection.md`,
 |---|---|---|---|---|---|
 | Een container is door de OOM-killer geraakt | `oom_watcher.py:199` (`check_pod_health`), detectie op `lastState.terminated.reason == "OOMKilled"` (`:293`) | component | projectbeheerder, projectlid | actie nodig | postvak + mail |
 | Een image kan niet worden opgehaald | `oom_watcher.py:199`, reden uit `IMAGE_PULL_REASONS` | component | projectbeheerder, actor van de laatste image-wijziging | storing | postvak + mail |
-| Een component is daarop op `replicas: 0` gezet | **gebeurt niet meer** bij een image-pull (RC-243). Blijft bij OOM en crash loop: `opi/api/resource_router.py` (sanitize) | component | projectbeheerder | storing | postvak + mail |
+| Een component is daarop op `replicas: 0` gezet | **gebeurt niet meer** bij een image-pull (RC-243). De sanitize (`opi/api/resource_router.py`) zet nog wel uit op een herstartstorm en op geen enkele ready pod | component | projectbeheerder | storing | postvak + mail |
 | Een component crasht herhaaldelijk | `oom_watcher.py:199`, `CrashLoopBackOff`; duiding in `event_interpreter.py` (`_CRASH_TITLE`) | component | projectbeheerder, projectlid | actie nodig | postvak |
 | Een container is gedood door een falende probe | `event_interpreter.py:311` (`_probe_kill_translation`) | component | projectbeheerder | actie nodig | postvak |
 | ArgoCD kan de manifesten niet renderen | `event_interpreter.py:562` (`interpret_argocd_errors`), `:324` (`condense_render_error`) | deployment | projectbeheerder | storing | postvak + mail |

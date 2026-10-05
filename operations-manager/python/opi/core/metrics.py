@@ -268,9 +268,7 @@ class OPICollector(Collector):
         #
         # The fleet total is emitted ALWAYS, zero included. It is what the alert reads,
         # and a metric that only appears once something is broken cannot be told apart
-        # from a metric that is not being produced at all -- which is the state this
-        # replaced: a component that could not pull went to zero replicas and the
-        # application went green.
+        # from a metric that is not being produced at all.
         pull_failures = GaugeMetricFamily(
             "opi_image_pull_failing_pods",
             "Application pods on this cluster whose container cannot pull its image",

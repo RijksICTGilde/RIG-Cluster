@@ -5,9 +5,9 @@
 Detectie van componenten waarvan de container image niet op te halen is, en wat OPI
 daarmee doet: melden, tellen en alarmeren. Niet meer: uitschakelen.
 
-Tot 2 oktober 2026 zette OPI zo'n component op nul replicas. Dat is weg (RC-243). Wat
-blijft is een pod in ImagePullBackOff, die kubelet met zijn eigen backoff gewoon blijft
-proberen en die vanzelf omhoog komt zodra de image er is.
+OPI zette zo'n component op nul replicas. Dat is weg (RC-243). Wat blijft is een pod in
+ImagePullBackOff, die kubelet met zijn eigen backoff blijft proberen en die vanzelf omhoog
+komt zodra de image er is.
 
 ## Waarom het uitschakelen weg is
 

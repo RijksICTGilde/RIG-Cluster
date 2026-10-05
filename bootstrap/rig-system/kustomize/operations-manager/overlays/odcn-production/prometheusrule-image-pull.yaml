@@ -7,10 +7,8 @@ metadata:
 spec:
   groups:
     # Een component dat zijn image niet kan ophalen blijft staan en blijft het proberen
-    # (RC-243). Dat is met opzet: tot 30 september zette OPI zo'n component op nul
-    # replicas, en dat haalde juist de pod weg die de pull opnieuw zou doen, dus een
-    # verkeerd gelezen foutmelding overleefde zijn eigen oorzaak. Wat die ingreep
-    # oploste was netheid; wat er nu voor in de plaats komt is dat iemand het ziet.
+    # (RC-243, zie features/image-pull-backoff-detection.md). Dit alarm is wat er in de
+    # plaats komt van het uitschakelen dat die taak weghaalde.
     #
     # De telling komt uit OPI zelf (opi/services/image_pull_report.py), niet uit
     # kube-state-metrics: de reden-klasse hieronder bestaat alleen omdat OPI de

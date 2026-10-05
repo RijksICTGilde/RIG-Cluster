@@ -27,8 +27,7 @@ Provides three mechanisms:
 Failure type handling:
 - **OOM**: Auto-tune memory limits and queue a refresh task.
 - **ImagePullBackOff**: Report only, no remediation (RC-243). Kubelet retries the pull
-  with its own backoff, so the pod that recovers has to stay; the component is named on
-  the deployment card for as long as it fails.
+  with its own backoff, so the pod that recovers has to stay.
 - **CrashLoopBackOff**: Report only, no remediation.  Pods stay running
   so users can access logs.
 """
@@ -783,9 +782,7 @@ async def _run_oom_check(
         if health.image_pull_error:
             # Reported, never remediated (RC-243). The classification still picks the
             # wording; what it no longer does is decide that a component goes to zero
-            # replicas, which took away the pod that was retrying the pull. Kubelet keeps
-            # retrying with its own backoff, and the component is named on the deployment
-            # card for as long as it fails (see features/image-pull-backoff-detection.md).
+            # replicas. See features/image-pull-backoff-detection.md.
             image_pull_refs.append(component_ref)
             logger.warning(
                 "Health watcher: %s/%s component %s cannot pull its image (%s), leaving it "
