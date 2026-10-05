@@ -181,21 +181,15 @@ Die wordt door `idp-create-user-if-unique` echt aangemaakt, dus `BROKER_REGISTER
 staat, en `trustEmail` zet de vlag. Vandaar dat het probleem per gebruiker lijkt te wisselen.
 
 Het is niet alleen de handmatige weg. De uitnodigingsdienst doet hetzelfde vanuit het portaal,
-zonder dat er iemand in de Keycloak-console komt. `features/invites.md` zet de rol van de
-authorization wall (standaard `allowed-user`) in de rolkiezer, en `complete_sso_invite`
-(`opi/manager/invite_manager.py:335`) maakt het account in het projectrealm aan met een
-`create_user` zonder `skip_email_verification`. Het adres staat daarmee op onbevestigd en
-draagt `VERIFY_EMAIL`. Die tak vraagt geen bevestigingsmail, dat doet alleen de lokale tak
-(`:427`, met `send_verify_email`), en in een SSO-only realm logt de gebruiker nooit
-rechtstreeks bij Keycloak in, dus de required action krijgt ook nooit een trigger. Daarna is
-het dezelfde keten als hierboven. Een uitnodiging heeft geen veld om dit te omzeilen:
+zonder dat er iemand in de Keycloak-console komt. De rolkiezer van een uitnodiging biedt de rol
+van de authorization wall aan (standaard `allowed-user`, zie `features/invites.md`), en
+`complete_sso_invite` (`opi/manager/invite_manager.py:335`) maakt het account in het
+projectrealm aan met een `create_user` zonder `skip_email_verification`. Het adres staat daarmee
+op onbevestigd en draagt `VERIFY_EMAIL`. Die tak vraagt geen bevestigingsmail; alleen de lokale
+tak doet dat (`:443`, `send_verify_email`). En in een SSO-only realm logt de gebruiker nooit
+rechtstreeks bij Keycloak in, dus de required action krijgt nooit een trigger. Daarna is het
+dezelfde keten als hierboven. Een uitnodiging heeft geen veld om dit te omzeilen:
 `Email verified` op On bestaat alleen in de console.
-
-Daar hoort een onjuiste aanname in de code bij. `opi/api/invite_routes.py` legt bij de lokale
-tak uit dat de SSO-weg via `trustEmail` een al geverifieerde gebruiker levert. Dat geldt voor
-de identiteit die via SSO binnenkomt, niet voor het account dat hier in het projectrealm wordt
-gezet: `trustEmail` werkt alleen op de broker-tak waar `BROKER_REGISTERED_NEW_USER` staat, en
-dat is precies de tak die bij een bestaand account wordt overgeslagen.
 
 Repareren, per getroffen account: zet in Keycloak `Email verified` op On in het projectrealm en
 haal de `VERIFY_EMAIL` required action weg. Verwijderen en opnieuw laten inloggen werkt ook,
