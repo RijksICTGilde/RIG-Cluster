@@ -217,8 +217,8 @@ het adres en de realm-rollen uit de template (`opi/handlers/keycloak_yaml_handle
 draagt `VERIFY_EMAIL`, en `send_verify_email` staat in heel `opi/` alleen op de uitnodigingsweg
 (`opi/manager/invite_manager.py:443`), dus hier zet niets de vlag ooit om. Welke template draait
 komt uit het projectbestand (`services/keycloak/config/template`, alleen op path-traversal
-gekeurd, `opi/manager/keycloak_manager.py:704`) en wordt voor het projectrealm uitgevoerd
-(`:1968`); ook de gebruikerslijst zelf kan daaruit komen, want een `variables:`-blok in het
+gekeurd, `opi/manager/keycloak_manager.py:583-588`) en wordt voor het projectrealm uitgevoerd
+(`:1969`); ook de gebruikerslijst zelf kan daaruit komen, want een `variables:`-blok in het
 projectbestand vult elke naam die het platform niet zelf berekent (`merge_user_variables`) en de
 lijst is zo'n naam. Dit is dus de API-weg: krijgt zo'n gebruiker de rol van de wall, dan is dat
 account vanaf het aanmaken buitengesloten.
