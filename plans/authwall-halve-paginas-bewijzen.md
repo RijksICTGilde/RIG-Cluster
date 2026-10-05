@@ -1,8 +1,13 @@
 # De halve pagina's achter de authorization wall: bewijzen in plaats van beweren
 
-**Status**: plan, bedoeld als PR-contract.
+**Status**: uitgevoerd in RC-240 (PR #213). De opstelling staat in `features/authorization-wall-meetopstelling.md`, de uitkomst in `features/authorization-wall.md`.
 **Code bestaat al**: `claude/authwall-error-page`, commits `e51b5ad25` en `a10bdadfc`. Dit plan vraagt geen herbouw.
-**Wat ontbreekt**: tests die toetsen wat er werkelijk fout gaat en dat de fix dat wegneemt.
+**Wat ontbrak**: tests die toetsen wat er werkelijk fout gaat en dat de fix dat wegneemt.
+
+Twee punten hieronder zijn door die metingen weerlegd en blijven alleen staan als het contract dat ze opdroeg:
+
+- **F2 heeft een andere oorzaak dan paragraaf 3 beschrijft.** Zonder `--cookie-refresh` vernieuwt oauth2-proxy helemaal niet (`refresh:disabled` in zijn eigen log) en de klif zit op `--cookie-expire`, niet op de vijf minuten van het access token. Keycloak roteert het refresh token niet (`revokeRefreshToken` op de default `false`, OPI zet er niets), dus de stormloop kan niet ontstaan en de parallelliteit is niet dragend. De vlag blijft overeind met een andere reden: hij laat de sessie meeschuiven.
+- **De poort van F3 staat op WEERLEGD.** Splitsen gebeurt, al bij 80 realmrollen, maar een gesplitste sessie werkt. Conform punt 3 betekent dat: geen fix erbij, en het geval blijft open.
 
 ---
 

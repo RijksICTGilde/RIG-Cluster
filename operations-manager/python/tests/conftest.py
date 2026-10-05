@@ -7,6 +7,7 @@ This module provides common fixtures used across unit and integration tests.
 import os
 import time
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from opi.utils.sops import generate_sops_key_pair
+from tests.docker_runtime import DockerError, container_state, docker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
@@ -320,33 +322,16 @@ ZAD_TEST_DB_PREFIX = "zadtest_"
 ZAD_TEST_DB_MAX_LEEFTIJD_S = 12 * 3600
 
 
-class TestPostgresError(RuntimeError):
+class TestPostgresError(DockerError):
     """De test-Postgres is er niet en kan er niet komen. Luid falen, nooit stil."""
 
 
-def _docker(*args: str, check: bool = True, timeout: int = 60):
-    import subprocess
-
-    try:
-        klaar = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=timeout, check=False)
-    except FileNotFoundError as exc:
-        raise TestPostgresError(
-            "docker niet gevonden; de ORM-tests hebben een echte Postgres nodig. Start Docker en draai opnieuw."
-        ) from exc
-    except (OSError, subprocess.SubprocessError) as exc:
-        raise TestPostgresError(f"docker {' '.join(args)} mislukte: {exc}") from exc
-    if check and klaar.returncode != 0:
-        raise TestPostgresError(f"docker {' '.join(args)} gaf {klaar.returncode}: {klaar.stderr.strip()}")
-    return klaar
+_docker = partial(docker, fout=TestPostgresError)
 
 
 def _container_staat() -> tuple[bool, str]:
     """(draait hij, op welk image). Bestaat hij niet, dan (False, "")."""
-    klaar = _docker("inspect", "--format", "{{.State.Running}} {{.Config.Image}}", ZAD_TEST_PG_CONTAINER, check=False)
-    if klaar.returncode != 0:
-        return False, ""
-    draait, _, image = klaar.stdout.strip().partition(" ")
-    return draait == "true", image
+    return container_state(ZAD_TEST_PG_CONTAINER, fout=TestPostgresError)
 
 
 def _wacht_tot_hij_luistert(seconden: int = 60) -> None:
