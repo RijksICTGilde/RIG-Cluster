@@ -35,8 +35,8 @@ patches:
                           fieldPath: metadata.namespace
         sidecarContainers:
           - name: cmp-server
-            image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
-            imagePullPolicy: Always
+            image: rig-cmp-argo-kustomize-sops:latest
+            imagePullPolicy: Never
             command: ["/var/run/argocd/argocd-cmp-server"]
             env:
               - name: KUSTOMIZE_PLUGIN_HOME

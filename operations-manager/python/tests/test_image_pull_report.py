@@ -5,6 +5,7 @@ that could not pull was scaled to zero, which made ArgoCD call the application H
 now the pod stays in ImagePullBackOff and this is what notices.
 """
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,7 @@ import pytest
 from opi.handlers.project_file_handler import IMAGE_PULL_ABSENT, IMAGE_PULL_CAPACITY, IMAGE_PULL_UNDIAGNOSED
 from opi.services import image_pull_report
 from opi.services.image_pull_report import (
+    ImagePullObserver,
     image_pull_failure_count,
     image_pull_failure_counts,
     image_pull_failures_for,
@@ -309,3 +311,44 @@ class TestWatDeKaartKrijgt:
         image_pull_report._snapshot = (read_image_pull_failure(_pod()),)
 
         assert describe_image_pull_failures(self._deployment(disabled=True)) == []
+
+
+class TestDeObserver:
+    @patch("opi.services.image_pull_report.observe_image_pull_failures", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_hij_telt_meteen_en_niet_pas_na_het_eerste_interval(self, mock_observe) -> None:
+        """Een gauge die na een herstart een interval lang nul leest, zegt "gezond" over
+        een vloot waar hij nog niet naar gekeken heeft."""
+        observer = ImagePullObserver(interval_seconds=3600)
+        await observer.start()
+        try:
+            await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            assert mock_observe.await_count == 1
+        finally:
+            await observer.stop()
+
+    @patch("opi.services.image_pull_report.observe_image_pull_failures", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_een_kapotte_ronde_stopt_de_lus_niet(self, mock_observe) -> None:
+        # Anders is een enkele hik het einde van de telling, stil, tot de volgende
+        # herstart van OPI.
+        mock_observe.side_effect = [RuntimeError("stuk")] + [None] * 50
+        observer = ImagePullObserver(interval_seconds=0)
+        await observer.start()
+        try:
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert mock_observe.await_count > 1
+        finally:
+            await observer.stop()
+
+    @pytest.mark.asyncio
+    async def test_stoppen_laat_geen_taak_achter(self) -> None:
+        observer = ImagePullObserver(interval_seconds=3600)
+        await observer.start()
+        task = observer._task
+        await observer.stop()
+
+        assert task is not None and task.done()
+        assert observer._task is None
