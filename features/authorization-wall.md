@@ -56,7 +56,7 @@ services:
         banner: "Welcome to our application. Please log in with your SSO account."
 ```
 
-**Dit veld doet op dit moment niets.** De banner rendert alleen op de sign-in-pagina van oauth2-proxy, en die pagina wordt niet meer getoond: een sessieloze aanvraag gaat rechtstreeks naar Keycloak. Zie `Sessie en cookies` hieronder voor het waarom. De vlag gaat nog wel mee naar de sidecar, zodat de plumbing intact blijft tot besloten is of het veld verdwijnt of dat de tekst naar het Keycloak-inlogthema verhuist.
+De regel hierboven klopt niet: de wall stuurt een sessieloze navigatie **niet** rechtstreeks naar Keycloak door. `--skip-provider-button` staat op `false`, dus er komt altijd eerst een inlogkaart met een knop. Dat is ook de enige plek waar de banner rendert, en vijf projecten gebruiken dat veld. Of dat tussenscherm weg moet is een open afweging; zie `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`.
 
 ### What gets generated
 
@@ -98,24 +98,19 @@ oauth2-proxy neemt de levensduur van het access token over als expiry van zijn s
 
 ### Wat een sessieloze aanvraag terugkrijgt
 
-De muur houdt alles tegen, en lost waar het kan zelf op. Het inlogscherm hoort alleen te verschijnen wanneer er geen sessie te maken valt: omdat die niet bestaat, of omdat hij verlopen is en ook niet stil te vernieuwen.
-
 | soort aanvraag | antwoord |
 |---|---|
-| navigatie, Keycloak-sessie leeft nog | 302 naar Keycloak en direct terug; de gebruiker ziet geen scherm |
-| navigatie, geen Keycloak-sessie | 302 naar Keycloak, dat zijn eigen inlogscherm toont |
+| navigatie | 403 met de inlogkaart en een knop |
 | pad onder `/api/` | 401 zonder body |
 | statisch bestand (op extensie) | 401 zonder body |
 
-Dat het inlogscherm van Keycloak komt en niet van de muur is de bedoeling: Keycloak draait het `nl-design-system`-thema en kent de identity providers. De muur heeft geen manier om vooraf te weten of een stille herlogin gaat lukken, want alleen Keycloak weet of er nog een SSO-sessie is. Daarom stuurt de muur altijd door en laat hij Keycloak beslissen.
+Die laatste twee regels zijn de kern. Eerder kreeg **elke** sessieloze aanvraag een 403 met de inlogpagina als HTML, ook een `fetch()` en ook een stylesheet. Een browser kan daar niets mee: er is geen navigatie om te volgen, en `text/html` met `nosniff` is geen CSS. Het resultaat was een halve pagina zonder opmaak, met fouten in de console die niets zeggen over de werkelijke oorzaak. De twee `--api-route`-regels maken daar een kale 401 van, zodat een mislukte subresource als mislukte subresource aankomt. De tweede matcht op extensie omdat de paden per applicatie verschillen.
 
-Een applicatie achter de muur hoeft dus zelf niets te detecteren. Dat was eerder wel nodig: de muur antwoordde elke sessieloze aanvraag met een 403 en de inlogpagina als HTML, ook een `fetch()` en ook een stylesheet. Een browser kan daar niets mee, want er is geen navigatie om te volgen en HTML is geen CSS.
+Let op dat de eerste regel alleen paden onder `/api/` dekt. Een applicatie die zijn XHR elders heeft staan krijgt daar nog de HTML-pagina, en kan `/oauth2/auth` gebruiken om te toetsen of de sessie weg is (401 zonder sessie, 202 met).
 
-De twee `--api-route`-regels horen bij `--skip-provider-button`. Zonder de eerste krijgt een `fetch()` een 302 naar Keycloak, die cross-origin afketst op CORS en bij de applicatie aankomt als netwerkfout zonder statuscode. Zonder de tweede start elk sessieloos verzoek om een stylesheet of een icoon een eigen OAuth-flow, wat Keycloak belast en de browser niets oplevert. Die tweede regel matcht op extensie, omdat de paden per applicatie verschillen.
+`--cookie-csrf-per-request=true` dekt een losse valkuil: zonder die vlag deelt oauth2-proxy één CSRF-cookie, dat een tweede gestarte inlogpoging overschrijft, waarna de callback van de eerste afketst op een 500. Twee tabbladen die binnen het kwartier beide op Inloggen drukken is genoeg.
 
-Let op dat de eerste regel alleen paden onder `/api/` dekt. Een applicatie die zijn XHR elders heeft staan krijgt daar een redirect in plaats van een 401, en kan `/oauth2/auth` gebruiken om te toetsen of de sessie weg is (401 zonder sessie, 202 met).
-
-`--cookie-csrf-per-request=true` hoort er ook bij: zodra meerdere aanvragen tegelijk een inlogpoging kunnen starten, bijvoorbeeld uit twee tabbladen, deelt oauth2-proxy anders één CSRF-cookie en overschrijft de tweede flow die van de eerste.
+Wat hiermee **niet** is opgelost: de muur toont nog altijd een tussenscherm bij een sessie die stil te herstellen was, en controleert zelf geen rol. Beide staan in `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`.
 
 ## Dependencies
 

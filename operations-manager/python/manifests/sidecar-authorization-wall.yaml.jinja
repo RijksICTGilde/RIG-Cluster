@@ -40,21 +40,18 @@
                of een icoon een eigen OAuth-flow bij Keycloak, terwijl de browser met het
                antwoord niets kan: HTML is geen CSS. #}
             - --api-route=\.(css|js|mjs|map|json|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$
-            {# Het inlogscherm hoort alleen te verschijnen als er geen sessie te maken valt.
-               Een navigatie zonder sessie gaat daarom rechtstreeks naar Keycloak: bij een
-               levende SSO-sessie komt de gebruiker onzichtbaar terug, en anders toont
-               Keycloak zijn eigen inlogscherm. Onvoorwaardelijk, want een verlopen sessie
-               die stil te herstellen is mag geen tussenpagina opleveren. #}
-            - --skip-provider-button=true
+            {# Blijft op false, dus een navigatie zonder sessie krijgt de inlogkaart. Die
+               kaart is het enige dat --banner rendert, en vijf projecten gebruiken dat veld.
+               Doorsturen naar Keycloak zou de bediener een klik schelen, maar dat is een
+               aparte afweging over het tussenscherm: zie
+               features/futures/authorization-wall-rolcontrole-in-de-proxy.md. #}
+            - --skip-provider-button=false
             {# Parallelle aanvragen mogen elkaars inlogpoging niet slopen. Zonder deze vlag
                deelt oauth2-proxy één CSRF-cookie, dat een tweede gestarte flow overschrijft,
-               waarna de callback van de eerste afketst. #}
+               waarna de callback van de eerste afketst met een 500. Twee tabbladen die
+               binnen het kwartier beide op Inloggen drukken is genoeg. #}
             - --cookie-csrf-per-request=true
 {% if authorization_wall.banner %}
-            {# LET OP: deze vlag doet niets meer. --banner rendert alleen op sign_in.html, en
-               die pagina wordt door --skip-provider-button niet meer getoond. De plumbing
-               blijft staan tot besloten is of het veld verdwijnt of naar het Keycloak-thema
-               verhuist. #}
             - {{ ("--banner=" ~ authorization_wall.banner) | tojson }}
 {% endif %}
             - --custom-templates-dir=/etc/oauth2-proxy/templates

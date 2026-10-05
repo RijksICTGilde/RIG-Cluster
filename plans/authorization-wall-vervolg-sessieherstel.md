@@ -10,7 +10,7 @@ Doelgroep: de sessie die dit bouwt. De namen van nieuwe schemaversies en vlagwaa
 
 ## 1. Waar het staat
 
-Commit `e51b5ad25` zet de muur zo neer dat hij een verlopen sessie zelf herstelt: een navigatie zonder sessie gaat rechtstreeks naar Keycloak, paden onder `/api/` en statische bestanden krijgen een 401, en de cookie-instellingen staan uitgesproken in plaats van op de default. Dat is gebouwd, getest (384 tests groen, ruff en pyright schoon) en vastgelegd in het golden manifest.
+Commit `e51b5ad25`, bijgesteld op 5 oktober, pakt het probleem uit de logs aan: paden onder `/api/` en statische bestanden krijgen een kale 401 in plaats van een 403 met de inlogpagina als HTML, en de cookie-instellingen staan uitgesproken in plaats van op de default. Het tussenscherm van de muur is daarbij ongemoeid gelaten (`--skip-provider-button` blijft `false`), omdat dat een andere afweging is en de banner van vijf projecten eraan hangt. Gebouwd, getest en vastgelegd in het golden manifest.
 
 Niet gedaan: gepusht, gemerged, uitgerold. De branch heeft geen upstream. Ook de foutpagina uit `5747a3133` staat nog niet in productie; de draaiende pod logt bij het starten nog `Could not load file /etc/oauth2-proxy/templates/error.html`.
 
@@ -20,55 +20,25 @@ Het bewijs waarop dit alles rust staat in de productielogs van `democonsole-test
 
 Uitrol. Dat gaat via git naar ArgoCD en is geen taak voor een agent-team. Zie punt 7 voor de volgorde waarin dat hoort te gebeuren.
 
-## 3. Blokkades: twee metingen en een beslissing
+## 3. Wat gemeten is, en wat nog open staat
 
-Deze drie staan vóór alle bouwtaken. Taak A en B zijn zonder hen niet uitvoerbaar, en een team dat ze overslaat bouwt het verkeerde.
+**M1 is gemeten op 5 oktober 2026 en het antwoord was niet wat dit plan aannam.** De projects-repo staat lokaal in `rig-cluster-test-git-repositories/rig-cluster-projects-github/`. Zeven projecten zetten `banner`, vijf met echte tekst: hwmaw-ovh, jongo-lh2, dp-bn7, fp-unj ("Toegang op uitnodiging") en no-ks4 ("Dit is invite only."); dsm1j2-2ws en toets-hn7 hebben hem leeg. Bij fp-unj en no-ks4 vertelt die tekst iemand juist waarom hij geweigerd kan worden.
 
-**M1. Gebruikt een productieproject het veld `banner`?**
-Nodig voor taak A. Geen van de voorbeeldprojecten in `projects/` gebruikt het, en `mpfm-w3h` niet (geen `--banner` in de draaiende args). De projects-repo staat niet lokaal. Te meten langs twee wegen: de `zad-projects` git-repo doorzoeken op `banner:` onder een `authorization-wall`-blok, of clusterbreed de deployments met een `authorization-wall`-container nalopen op een `--banner`-arg. Bij de tweede weg geldt de les uit `reference_gegenereerde_manifests_machine_eigendom`: de git-repo is de waarheid, het cluster het resultaat. Doe dus bij voorkeur beide. Let op: bij het schrijven van dit plan weigerde de cluster-API verbindingen (`connection refused` op `147.181.48.65:443`), dus de clusterweg was niet beschikbaar.
+Daardoor is de oorspronkelijke taak A vervallen: `--skip-provider-button` staat terug op `false`, de inlogkaart blijft, en de banner werkt gewoon. Wat eromheen is uitgezocht, inclusief de schemapoort, is verhuisd naar `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`, want het hoort bij de vraag of dat tussenscherm weg moet en niet bij deze branch.
 
-**M2. Komt het sessiecookie gesplitst aan?**
-Nodig voor taak B. Bij een getroffen gebruiker (`robbert.bos@rijksoverheid.nl` of `kees.keulemans@minbzk.nl`) in devtools, Network, de pagina herladen en op `/bediening.css` kijken: staat er een `Cookie`-header, hoe groot is hij, en staan er `_oauth2_proxy_0`, `_oauth2_proxy_1` en verder in. `robbert.uittenbroek@rijksoverheid.nl` had het probleem niet en is de controlemeting.
+Tegelijk gemeten: 11 projecten hebben een wall, en 5 daarvan draaien zonder rolpoort (`mpfb-8wh` en `mpfm-w3h` op `enabled: false`, `dsm1j2-2ws`, `jongo-lh2` en `tvas-7pb` zonder blok). Een wall zonder rol is dus normaal en niet de uitzondering.
 
-**D1. Wat gebeurt er met het veld `banner`?** Beslissing voor de opdrachtgever, niet voor het bouwende team. Zie taak A voor de opties en hun kosten.
+**M2 staat nog open en blokkeert taak B.** Komt het sessiecookie bij een getroffen gebruiker gesplitst aan? Bij `robbert.bos@rijksoverheid.nl` of `kees.keulemans@minbzk.nl` in devtools, Network, de pagina herladen en op `/bediening.css` kijken: staat er een `Cookie`-header, hoe groot is hij, en staan er `_oauth2_proxy_0`, `_oauth2_proxy_1` en verder in. `robbert.uittenbroek@rijksoverheid.nl` had het probleem niet en is de controlemeting.
 
-## 4. Taak A: het veld `banner` afhandelen
+## 4. Wat deze branch oplost, en wat niet
 
-Het veld is sinds `e51b5ad25` inert: `--banner` rendert uitsluitend op `sign_in.html`, en die pagina wordt niet meer getoond. De vlag gaat nog wel mee naar de sidecar zodat de plumbing intact bleef. Dat is een bewust uitstel, geen eindtoestand.
+De branch is bewust versmald tot het probleem uit de productielogs: half ingeladen pagina's, verkeerde content-types en browsers die er niets van maken. Daarvoor zitten er twee dingen in.
 
-### De gevolgen die de keuze bepalen
+`--cookie-refresh=3m` haalt de kudde bij de vijfminutenklif weg, zodat de aanvragen van één paginalading niet allemaal tegelijk op een dode sessie aankomen. `--api-route` voor `/api/` en voor statische bestanden maakt van het antwoord een kale 401 in plaats van een 403 met de inlogpagina als HTML, zodat een mislukte stylesheet als mislukte stylesheet aankomt en niet als tekst die de browser probeert te parsen. Daarbij `--cookie-expire=10h` om het cookie niet langer geldig te laten beweren dan de Keycloak-sessie, `--cookie-samesite=lax` expliciet, en `--cookie-csrf-per-request=true` tegen twee tabbladen die elkaars inlogpoging overschrijven.
 
-Dit is geen veld dat je even weghaalt. Het is het **enige** configveld van deze dienst, en twee methodes leiden zich eruit af:
+Niet in deze branch, en bewust: het tussenscherm van de muur en de rolcontrole in de proxy. Beide staan in de futures-doc.
 
-- `config_api_fields(PROJECT)` geeft `config_model_field_names()` terug, dus met een leeg model een lege lijst.
-- `config_editables(PROJECT)` geeft `AUTH_WALL_BANNER_EDITABLE` terug, dus met een leeg model niets.
-- `config_section_id = "auth-wall-config"` en `modal_flow_id` leveren dan een lege kaart op.
-- `AUTH_WALL_COMPONENT_INFO_EDITABLE` is een wegwijzer die de gebruiker vanaf het componentformulier naar "tabblad Services, kaart Authorization Wall" stuurt om de banner te zetten. Die wijst na verwijdering naar een lege kaart.
-- De comment bij `allows_implicit_project_selection = True` beredeneert die stand expliciet uit het feit dat het projectniveau alleen een optionele bannertekst draagt. Zonder veld klopt de conclusie nog, maar de onderbouwing moet mee.
-
-### De poort die dit tot een slot maakt
-
-`AuthorizationWallConfig` heeft `extra="forbid"` en het schemafragment `additionalProperties: false`. `project_validation.py` faalt dicht: een onbekende sleutel geeft `ProjectIntegrityError` met `extra_forbidden`. **Een projectbestand dat `banner:` nog bevat wordt dus onleesbaar zodra het veld uit het model verdwijnt**, en dat raakt niet alleen nieuwe verwerkingen maar elke reconcile van zo'n project.
-
-Verwijderen kan daarom niet zonder migratie. De plek bestaat al: `migrate_config(config, from_version)` in `catalog/base.py` past geordende stappen toe van `from_version` naar de huidige. Dus:
-
-1. `config_schema_version` omhoog (**voorstel**: `"1.1"`).
-2. Een migratiestap `1.0 -> 1.1` die de sleutel `banner` uit het config-blok verwijdert.
-3. Een nieuw schemafragment `authorization-wall.v1.1.json`. `tests/test_service_config_schema.py` is een drift lock en faalt in CI als het model wijzigt zonder regeneratie, dus die regeneratie is verplicht en niet optioneel.
-
-Verifieer met een test die een projectblok op `from_version: "1.0"` met een gezette `banner` door de validatie haalt en groen krijgt. Zonder die test is de migratie niet aantoonbaar.
-
-### De opties
-
-**A1. Veld laten vervallen.** Raakt `config_model.py`, `authorization-wall.v1.0.json` (nieuw fragment), `editables.py`, `__init__.py` (de comment en mogelijk de wegwijzer), `help.md`, `features/authorization-wall.md`, en de tests `test_authwall_banner_yaml_injection.py` (het onderwerp van die test verdwijnt), de bannertest in `test_manifests.py` en de drift lock. Plus de migratie hierboven. Grootste diff, schoonste eindtoestand.
-
-**A2. Tekst naar het Keycloak-inlogthema.** Het inlogscherm komt nu toch van Keycloak, dat draait het `nl-design-system`-thema. De banner hoort dan bij het realm, niet bij de muur. Vraagt uitzoeken of dat per realm instelbaar is zonder themawijziging per project, wat niet vanzelf spreekt. Zelfde verwijdering aan de ZAD-kant als A1, plus werk aan de Keycloak-kant.
-
-**A3. Veld herbestemmen naar de foutpagina.** `error.html` bestaat sinds `5747a3133` en gebruikt `.SignInMessage` niet. De banner zou daar context kunnen geven bij een 403 ("dit account mag deze omgeving niet openen"). Kleinste diff, maar de betekenis van het veld verschuift van "tekst vóór het inloggen" naar "tekst bij een fout", en dat is iets anders dan wat de gebruiker heeft ingevuld. Alleen zinnig als M1 uitwijst dat niemand het veld gebruikt, want dan verandert er voor niemand iets.
-
-**A4. Niets doen.** De vlag blijft inert meegaan. Goedkoopst vandaag, maar het laat een veld in het formulier staan dat niets doet, en dat is precies het soort stille leugen dat later een incident wordt.
-
-Aanbeveling: wacht op M1. Wijst die uit dat niemand het veld gebruikt, dan is A1 de juiste en is de migratie een formaliteit in plaats van een risico.
+Let op bij het verifiëren: `--cookie-refresh` dekt de klif, maar niet het geval waarvan bewijs is dat het negen seconden na een verse login optreedt. Zolang M2 niet gedaan is, is niet aantoonbaar dat deze branch het hele probleem wegneemt. Dat eerlijk houden in de PR-tekst hoort erbij.
 
 ## 5. Taak B: subresources die zonder cookie aankomen
 
@@ -100,13 +70,9 @@ De vier die er wel bij horen: `5747a3133` (foutpagina), `aedff3d5d`, `bd80ffb83`
 
 ## 8. Volgorde
 
-1. **M1** en **M2** meten. Geen bouwtaak hangt zonder deze twee aan iets vast.
-2. **D1** beslissen op grond van M1.
-3. **Taak C**: basis op `forgejo/main` zetten.
-4. **Taak D**: branch splitsen, zodat er een PR over alleen de muur overblijft.
-5. **Taak A** bouwen volgens de keuze uit D1, met de schemamigratie als harde poort.
-6. **Taak B** bouwen, maar alleen als M2 de hypothese bevestigt.
-7. Uitrollen via git naar ArgoCD, in deze volgorde: eerst `5747a3133` (de foutpagina, die nu nog ontbreekt in de container), dan `e51b5ad25`. Verifieer na uitrol in de logs van `rig-prd-mpfm-w3h` dat de startregel `Could not load file error.html` weg is en dat er geen 403 meer op `/bediening.css` staat.
+1. **Taak C**: basis op `forgejo/main` zetten.
+2. **Taak D**: branch splitsen, zodat er een PR over alleen de muur overblijft.
+3. Uitrollen via git naar ArgoCD, in deze volgorde: eerst `5747a3133` (de foutpagina, die nu nog ontbreekt in de container), dan `e51b5ad25`. Verifieer na uitrol in de logs van `rig-prd-mpfm-w3h` dat de startregel `Could not load file error.html` weg is en dat er geen 403 meer op `/bediening.css` staat.
 
 ## 9. Verificatie van het geheel
 
@@ -114,5 +80,8 @@ Het eindproduct is pas af als dit alle vier waar is:
 
 - Geen 403 meer op een stylesheet, script of favicon in de logs van `rig-prd-mpfm-w3h` over een venster van minstens een uur met echte gebruikers.
 - Geen volledige herlogins meer rond de vijfminutengrens: de `AuthSuccess`-regels horen zeldzaam te worden, want een stille refresh logt niets.
-- `inlogmuur.js` kan uit `fbs-demo-console` verdwijnen zonder dat de pagina stukgaat. Dat is de echte toets: dat script bestond als workaround voor ons gedrag, en zolang het nodig blijft is dit niet opgelost. Afstemmen met de eigenaar van die applicatie.
-- `features/authorization-wall.md` beschrijft de eindtoestand, inclusief wat er met `banner` is gebeurd.
+- `features/authorization-wall.md` beschrijft de eindtoestand.
+
+Wat hier NIET bij hoort als maatstaf: dat `inlogmuur.js` uit `fbs-demo-console` kan verdwijnen. Dat script vangt het tussenscherm op, en dat tussenscherm blijft in deze branch bestaan. Zolang de muur een 403 met een inlogkaart antwoordt op een navigatie, houdt dat script zin. Het hoort bij de futures-doc, niet bij deze verificatie.
+
+**M2** blijft open en is losgekoppeld van deze branch: zodra die meting er is, volgt taak B hieronder.
