@@ -44,7 +44,7 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.handlers.project_file_handler import image_is_confirmed_absent
+from opi.handlers.project_file_handler import classify_image_pull_failure
 from opi.services.catalog.base import (
     SERVICE_ROLE_LABEL_KEY,
     all_application_pods_selector,
@@ -783,8 +783,8 @@ async def _run_oom_check(
 
     # What the services report about this deployment. It is weighed by the judgement
     # below, which never lets it excuse an observed problem -- the point of collecting it
-    # here is that the remediation (disabling a component on an image-pull failure) is the
-    # most destructive thing this module does, so it must run on a complete picture.
+    # here is that the remediation (raising a memory limit on an OOM kill) writes to the
+    # project file, so it must run on a complete picture.
     state = collect_deployment_state(project_data, deployment_name)
     if state.facts:
         logger.info(
@@ -799,7 +799,7 @@ async def _run_oom_check(
     health_service = deployment_health_service()
     oom_component_refs: list[str] = []
     oom_pod_hashes: dict[str, str | None] = {}  # unique_name -> the generation that OOM'd
-    image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
+    image_pull_refs: list[str] = []  # components that cannot pull, reported only
     components = target_dep.get("components", [])
     for comp in components:
         component_ref = comp.get("reference", "")
@@ -827,31 +827,26 @@ async def _run_oom_check(
                     health.oom_pod_template_hash,
                 )
         if health.image_pull_error:
-            if image_is_confirmed_absent(health.image_pull_error):
-                image_pull_errors.append((component_ref, health.image_pull_error))
-            else:
-                logger.warning(
-                    "Health watcher: the registry did not tell us the image is absent for %s/%s "
-                    "component %s, leaving it enabled so kubelet retries the pull: %s",
-                    project_name,
-                    deployment_name,
-                    component_ref,
-                    health.image_pull_error,
-                )
+            # Reported, never remediated (RC-243). The classification still picks the
+            # wording; what it no longer does is decide that a component goes to zero
+            # replicas, which took away the pod that was retrying the pull. Kubelet keeps
+            # retrying with its own backoff, and the component is named on the deployment
+            # card for as long as it fails (see features/image-pull-backoff-detection.md).
+            image_pull_refs.append(component_ref)
+            logger.warning(
+                "Health watcher: %s/%s component %s cannot pull its image (%s), leaving it "
+                "enabled so kubelet retries the pull: %s",
+                project_name,
+                deployment_name,
+                component_ref,
+                classify_image_pull_failure(health.image_pull_error),
+                health.image_pull_error,
+            )
         # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
-
-    # Handle image pull errors: disable in YAML, then queue refresh task
-    if image_pull_errors:
-        try:
-            await disable_components_for_image_pull(project_name, deployment_name, image_pull_errors)
-            # Queue a refresh task instead of direct reprocessing
-            await _queue_refresh_task(project_name, deployment_name)
-        except Exception as e:
-            logger.error("Failed to handle image pull errors in %s/%s: %s", project_name, deployment_name, e)
 
     # Handle OOM kills: tune resources (git-only), then queue refresh
     if not oom_component_refs:
-        if not image_pull_errors:
+        if not image_pull_refs:
             logger.info(
                 "Health watcher: no issues detected for %s/%s (attempt %d/%d)",
                 project_name,

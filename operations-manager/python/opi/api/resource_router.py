@@ -16,7 +16,7 @@ from opi.connectors.kubectl import KubectlConnector
 from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
-from opi.handlers.project_file_handler import ProjectFileHandler, image_is_confirmed_absent
+from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, ProjectFileHandler
 from opi.manager.project_manager import ProjectManager
 from opi.services.project_store import get_project_store
 from opi.services.resource_tuning_service import (
@@ -111,7 +111,7 @@ async def sanitize_deployment(
     deployment: str | None = Query(None, description="Specific deployment to sanitize (optional)"),
 ) -> JSONResponse:
     """
-    Detect broken deployments (crash loops, missing images) and disable them.
+    Detect broken deployments (crash loops, restart storms) and disable them.
 
     Sets disabled=true on broken components in the project YAML, which renders replicas: 0
     in the deployment template.
@@ -120,6 +120,10 @@ async def sanitize_deployment(
     repairs, and disabling removes the pods whose OOM metric is the only signal the
     tuner has, turning a memory that is set too low into a permanent outage. A
     component that keeps dying for it still trips the restart threshold below.
+
+    An image that cannot be pulled is not a reason either, and since RC-243 it is a
+    reason to leave the component entirely alone: the pull is what every other symptom
+    on the list comes from, and zero replicas remove the pod that would have retried it.
 
     Args:
         project_name: Name of the project
@@ -228,34 +232,32 @@ async def _run_sanitize(
             # the resource tuner, which raises the memory; disabling the component takes
             # away the pods that produce the very metric the tuner reads.
 
-            # Check for image pull errors. Only an explicit "the image is absent" from
-            # the registry may disable: anything else means we never got an answer, and
-            # disabling on that scales the component to 0, removing the pod that would
-            # have retried the pull. See ``image_is_confirmed_absent``.
-            registry_never_answered = False
+            # Check for image pull errors. Seeing one means this component is skipped
+            # entirely -- no disable for the pull itself (RC-243), and none for the
+            # symptoms gathered above either.
+            #
+            # That second half is the subtlety. A pull that does not succeed EXPLAINS
+            # every other reason on the list: zero pods are ready, and the container
+            # "restarts", precisely because the image never arrived. Disabling on those
+            # symptoms removes the pod that would have retried the pull, which is the
+            # intervention this task exists to take away. It used to depend on what the
+            # registry said; it no longer does, because an image-pull event is an
+            # image-pull event whatever the wording.
+            image_pull_seen = False
             try:
                 events = await kubectl.get_namespace_events(namespace, limit=50, max_age_hours=1)
-                image_pull_reasons = {"ErrImagePull", "ImagePullBackOff", "InvalidImageName"}
                 for event in events:
-                    if event.get("reason") in image_pull_reasons and event.get("object", "").startswith(unique_name):
-                        message = event.get("message", "image pull failed")
-                        if image_is_confirmed_absent(message):
-                            reasons.append(f"ImagePullBackOff: {message}")
-                        else:
-                            registry_never_answered = True
-                            logger.info(
-                                f"Registry did not confirm the image is absent for {unique_name}; "
-                                f"leaving it enabled so kubelet retries the pull: {message}"
-                            )
+                    if event.get("reason") in IMAGE_PULL_REASONS and event.get("object", "").startswith(unique_name):
+                        image_pull_seen = True
+                        logger.info(
+                            f"{unique_name} cannot pull its image; leaving it enabled so kubelet retries "
+                            f"the pull, and skipping the sanitize for it: {event.get('message', '')}"
+                        )
                         break
             except Exception as e:
                 logger.warning(f"Failed to check image pull events for {unique_name}: {e}")
 
-            # A pull we could not diagnose also explains every other reason gathered
-            # above: no pod is ready and the container restarts precisely because the
-            # image never arrived. Disabling on those symptoms removes the pod that
-            # would have retried, so leave the component alone entirely.
-            if registry_never_answered:
+            if image_pull_seen:
                 continue
 
             if reasons:

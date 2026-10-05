@@ -252,7 +252,7 @@ class TestSanitizeUnhealthyPods:
     @patch("opi.api.resource_router.get_metrics_connector", new_callable=AsyncMock)
     @patch("opi.api.resource_router.get_prefixed_namespace", return_value="rig-my-project")
     @pytest.mark.asyncio
-    async def test_image_pull_backoff_disables_component(
+    async def test_image_pull_backoff_does_not_disable_and_skips_the_component(
         self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess
     ):
         project_data = {
@@ -308,9 +308,14 @@ class TestSanitizeUnhealthyPods:
         import json
 
         result = json.loads(response.body)
-        assert len(result["disabled"]) == 1
-        assert result["disabled"][0]["component"] == "api"
-        assert "ImagePullBackOff" in result["disabled"][0]["reason"]
+        # The registry answered "manifest unknown", which is as explicit as it gets, and
+        # it still does not disable (RC-243).
+        assert result["disabled"] == []
+        mock_pm.save_and_commit_project.assert_not_called()
+        # And not reported healthy either: the component is skipped whole. The "0/1 pods
+        # ready" gathered above is a SYMPTOM of the failed pull, and disabling on it would
+        # remove the pod that is retrying, which is exactly the intervention that is gone.
+        assert "api" not in result["healthy"]
 
     @patch("opi.api.resource_router.trigger_reprocessing", new_callable=AsyncMock)
     @patch("opi.api.resource_router.ProjectManager")
@@ -322,8 +327,9 @@ class TestSanitizeUnhealthyPods:
     async def test_unreachable_registry_does_not_disable_component(
         self, mock_ns, mock_get_connector, mock_get_service, mock_kubectl_cls, mock_pm_cls, mock_reprocess
     ):
-        """This path had no guard at all, so a mirror that stopped answering disabled
-        every component on it. Only the registry saying "absent" may disable."""
+        """The 2026-09-10 mirror outage: a registry that stopped answering at transport
+        level. It disabled every component on it before the guard, and before RC-243 it
+        depended on the guard reading this wording right. Now neither half can disable."""
         project_data = {
             "name": "my-project",
             "components": [{"name": "api"}],
@@ -380,6 +386,7 @@ class TestSanitizeUnhealthyPods:
         result = json.loads(response.body)
         assert result["disabled"] == []
         mock_pm.save_and_commit_project.assert_not_called()
+        assert "api" not in result["healthy"]
 
     @patch("opi.api.resource_router.ProjectManager")
     @patch("opi.api.resource_router.KubectlConnector")

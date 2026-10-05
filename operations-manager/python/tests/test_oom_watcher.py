@@ -983,14 +983,15 @@ class TestRunOomCheck:
         mock_queue.assert_called_once_with("myproject", "production")
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.disable_components_for_image_pull", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
     @pytest.mark.asyncio
-    async def test_image_pull_triggers_disable_and_queue(
-        self, mock_prefix, mock_get_data, mock_check, mock_disable, mock_queue
+    async def test_image_pull_is_reported_and_nothing_is_written(
+        self, mock_prefix, mock_get_data, mock_check, mock_queue, caplog
     ):
+        """Even "manifest unknown", the most explicit answer a registry gives, writes
+        nothing: the pod that is retrying the pull has to stay (RC-243)."""
         mock_get_data.return_value = (
             {
                 "deployments": [
@@ -1004,23 +1005,29 @@ class TestRunOomCheck:
             },
             "myproject.yaml",
         )
-        # The registry answered that the image is not there, so disabling is correct.
         pull_error = "ImagePullBackOff: Back-off pulling image: ErrImagePull: manifest unknown"
         mock_check.return_value = PodHealthResult("production-api", image_pull_error=pull_error)
 
-        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_disable.assert_called_once_with("myproject", "production", [("api", pull_error)])
-        mock_queue.assert_called_once_with("myproject", "production")
+        # No refresh either: a refresh exists to roll out a write, and there is none.
+        mock_queue.assert_not_called()
+        # The full kubelet message stays in the log -- that is the line the 2026-09-30
+        # outage was reconstructed from -- with the class that chose the wording.
+        logged = "\n".join(caplog.messages)
+        assert pull_error in logged
+        assert "absent" in logged
+        # And it is NOT the "no issues detected" line: something was wrong.
+        assert "no issues detected" not in logged
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.disable_components_for_image_pull", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
     @pytest.mark.asyncio
     async def test_unreachable_registry_leaves_the_component_alone(
-        self, mock_prefix, mock_get_data, mock_check, mock_disable, mock_queue
+        self, mock_prefix, mock_get_data, mock_check, mock_queue, caplog
     ):
         """The 2026-09-10 mirror outage: the pull never reached a registry that could
         answer, so nothing is known about the image and nothing may be written."""
@@ -1045,10 +1052,11 @@ class TestRunOomCheck:
             ),
         )
 
-        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_disable.assert_not_called()
         mock_queue.assert_not_called()
+        assert "undiagnosed" in "\n".join(caplog.messages)
 
     @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)

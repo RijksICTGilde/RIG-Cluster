@@ -3367,7 +3367,6 @@ class ProjectManager:
                     DeploymentHealthError,
                     create_health_check_callback,
                     describe_components_waiting,
-                    disable_components_for_image_pull,
                 )
                 from opi.utils.naming import generate_unique_name
 
@@ -3692,17 +3691,14 @@ class ProjectManager:
                     oom_failures = [f for f in e.failures if f.failure_type == "oom"]
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
-                    # Split the image-pull failures on what the registry actually told
-                    # us. Only an explicit "absent" disables; anything we could not
-                    # diagnose leaves the component alone, because disabling scales it
-                    # to 0, which removes the very pod that would have retried, so an
-                    # outage becomes permanent and no refresh undoes it. Kubelet retries
-                    # the pull with its own backoff and recovers once the registry does.
-                    all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
-                    image_pull_failures = [f for f in all_image_pull_failures if image_is_confirmed_absent(f.message)]
-                    registry_down_failures = [
-                        f for f in all_image_pull_failures if not image_is_confirmed_absent(f.message)
-                    ]
+                    # One list, one destination: reporting (RC-243). There used to be a
+                    # split here on what the registry said, and the "absent" half was
+                    # scaled to 0 replicas. That removed the very pod that would have
+                    # retried the pull, so a misread message became an outage that
+                    # outlived its cause -- three times in seven weeks. Kubelet retries
+                    # with its own backoff; the wording below still distinguishes the two,
+                    # because a sentence that is slightly wrong costs a sentence.
+                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
 
                     task_service = (
                         progress_manager._task_service
@@ -3748,64 +3744,50 @@ class ProjectManager:
                                 f"{app_name}: OOM detected for {oom_names}, auto-tune failed: {tune_err}"
                             )
 
-                    # Handle ImagePullBackOff: disable component, queue refresh. A pod
-                    # never becomes ready while any of its containers (main OR sidecar)
-                    # is stuck pulling, so a sidecar failure disables the component too.
+                    # Handle ImagePullBackOff: report it, and only report it. A pod never
+                    # becomes ready while any of its containers (main OR sidecar) is stuck
+                    # pulling, so a sidecar failure is the component's problem too, and the
+                    # message names the exact container and image: a bad platform sidecar
+                    # once sent us down the wrong path for hours because it did not.
                     #
-                    # Use component_reference (the user-facing YAML reference), not
-                    # component_name (the unique deployment-scoped name): disabling looks
-                    # the component up by `reference`, so passing the unique name silently
-                    # fails to match and the component is never scaled to 0.
-                    if image_pull_failures:
-                        disabled_components = [(f.component_reference, f.message) for f in image_pull_failures]
-                        try:
-                            await disable_components_for_image_pull(project_name, dep_name, disabled_components)
-                            await self._queue_refresh_task(task_service, project_name, dep_name)
-                        except Exception as img_err:
-                            logger.error(
-                                "ImagePull remediation failed for %s/%s: %s",
-                                project_name,
-                                dep_name,
-                                img_err,
-                            )
-                        # Name the exact container and image, so a sidecar's pull error is
-                        # never mistaken for the component's own image (the reason a bad
-                        # platform sidecar sent us down the wrong path for hours).
-                        for f in image_pull_failures:
-                            if f.container_name and f.container_name != MAIN_CONTAINER_NAME:
-                                target = f"sidecar '{f.container_name}' in component '{f.component_name}'"
-                            else:
-                                target = f"component '{f.component_name}'"
-                            image = f" [image {f.image}]" if f.image else ""
-                            reason = " ".join(f.message.split()) if f.message else ""
-                            detail = f"{target}{image}"
-                            if reason:
-                                detail = f"{detail}: {reason}"
-                            msg = f"{app_name}: ImagePullBackOff for {detail}"
-                            # Only a registry auth/permission failure is a real error
-                            # worth failing the task + alerting. A not-found / not-yet-
-                            # built image is expected churn (CI/CD, PR builds) -> warn.
-                            if _is_image_pull_auth_error(f.message):
-                                sync_failures.append(msg)
-                            else:
-                                health_warnings.append(msg)
-                                if dep_name not in unhealthy_deployments:
-                                    unhealthy_deployments.append(dep_name)
-
-                    # Registry outage: nothing to remediate and nothing the tenant did
-                    # wrong, so only report it -- named as a registry problem, so the
-                    # user does not go looking for a broken image that is fine.
-                    for f in registry_down_failures:
-                        registry_outage_seen = True
+                    # What the registry said still chooses the SENTENCE. An answer about
+                    # this image is the tenant's to act on; anything else is the platform's
+                    # and must not send them looking for an image that is fine. It no
+                    # longer chooses whether anything is written, which is the whole of
+                    # RC-243.
+                    for f in image_pull_failures:
                         image = f" [image {f.image}]" if f.image else ""
                         reason = " ".join(f.message.split()) if f.message else ""
-                        health_warnings.append(
-                            f"{app_name}: de registry kon het image voor component "
-                            f"'{f.component_name}'{image} niet leveren: {reason}. "
-                            "Het component blijft aan staan en probeert het opnieuw."
-                        )
-                        if dep_name not in unhealthy_deployments:
-                            unhealthy_deployments.append(dep_name)
+                        if not image_is_confirmed_absent(f.message):
+                            registry_outage_seen = True
+                            health_warnings.append(
+                                f"{app_name}: de registry kon het image voor component "
+                                f"'{f.component_name}'{image} niet leveren: {reason}. "
+                                "Het component blijft aan staan en probeert het opnieuw."
+                            )
+                            if dep_name not in unhealthy_deployments:
+                                unhealthy_deployments.append(dep_name)
+                            continue
+                        if f.container_name and f.container_name != MAIN_CONTAINER_NAME:
+                            target = f"sidecar '{f.container_name}' in component '{f.component_name}'"
+                        else:
+                            target = f"component '{f.component_name}'"
+                        detail = f"{target}{image}"
+                        if reason:
+                            detail = f"{detail}: {reason}"
+                        msg = f"{app_name}: ImagePullBackOff for {detail}"
+                        # Only a registry auth/permission failure is a real error worth
+                        # failing the task + alerting. A not-found / not-yet-built image is
+                        # expected churn (CI/CD, PR builds) -> warn. Deliberately asked
+                        # only of a message the registry answered: the auth markers include
+                        # bare "401"/"403", which an image tag can carry, and a transport
+                        # outage must never fail a deploy on the spelling of a tag.
+                        if _is_image_pull_auth_error(f.message):
+                            sync_failures.append(msg)
+                        else:
+                            health_warnings.append(msg)
+                            if dep_name not in unhealthy_deployments:
+                                unhealthy_deployments.append(dep_name)
 
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.

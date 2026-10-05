@@ -109,18 +109,46 @@ _IMAGE_ABSENT_MARKERS = (
 _REGISTRY_CAPACITY_MARKERS = ("quota has been exceeded",)
 
 
+# The three things an image-pull message can tell us, as the label value of the metric
+# that reports them (see opi/services/image_pull_report.py). Three and not more: these are
+# the only distinctions the wording supports, and a label value is a promise to whatever
+# alerts on it.
+IMAGE_PULL_ABSENT = "absent"
+IMAGE_PULL_CAPACITY = "capacity"
+IMAGE_PULL_UNDIAGNOSED = "undiagnosed"
+
+
+def classify_image_pull_failure(message: str | None) -> str:
+    """Which of the three an image-pull message is: absent, capacity, or undiagnosed.
+
+    The single reader of the two marker lists. ``image_is_confirmed_absent`` is this
+    function narrowed to one answer, so a phrase can never mean one thing to the metric
+    and another to the sentence a user reads.
+    """
+    if not message:
+        return IMAGE_PULL_UNDIAGNOSED
+    lowered = message.lower()
+    if any(marker in lowered for marker in _REGISTRY_CAPACITY_MARKERS):
+        return IMAGE_PULL_CAPACITY
+    if any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS):
+        return IMAGE_PULL_ABSENT
+    return IMAGE_PULL_UNDIAGNOSED
+
+
 def image_is_confirmed_absent(message: str | None) -> bool:
     """True only when the registry answered that this image is absent or refused.
 
     False means "we do not know" -- including for an empty message and for any
-    wording never seen before. Callers must treat that as "change nothing".
+    wording never seen before.
+
+    Since RC-243 no caller disables a component on this: it decides WORDING only (which
+    sentence the user reads, which class the metric counts). Three times in seven weeks a
+    registry failure read as "absent" here, and each time a component went to zero
+    replicas, which removes the pod that would have retried. Getting the sentence slightly
+    wrong is a sentence; getting the intervention wrong was an outage that outlived its
+    cause.
     """
-    if not message:
-        return False
-    lowered = message.lower()
-    if any(marker in lowered for marker in _REGISTRY_CAPACITY_MARKERS):
-        return False
-    return any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS)
+    return classify_image_pull_failure(message) == IMAGE_PULL_ABSENT
 
 
 # Default resource values for deployment containers
