@@ -90,3 +90,19 @@ def test_de_toets_vangt_een_veld_op_de_verkeerde_plek(organization_manifest) -> 
     fouten = _afwijkingen(kapot, _SCHEMA["properties"]["spec"])
     assert any("friendlyName bestaat niet" in f for f in fouten)
     assert any("customerName ontbreekt" in f for f in fouten)
+
+
+def test_spec_quota_staat_er_expliciet_in(organization_manifest) -> None:
+    """De webhook rekent met .spec.quota.limitGiB, en het schema dwingt dat veld niet af.
+
+    `limitGiB` heeft in de CRD een default van 10, maar een structural-schema-default wordt
+    alleen gezet als het bovenliggende object aanwezig is. Zolang het sjabloon `quota` wegliet,
+    bleef `.spec.quota.limitGiB` dus leeg, kon `calculation.custom-quotas.validating.projectcapsule.dev`
+    de som over de GlobalCustomQuota niet berekenen en weigerde de API-server de organisatie
+    met "quantity path did not resolve to any value". Het schema zag daar niets van: `quota`
+    is optioneel, dus de contracttest hierboven bleef groen.
+    """
+    quota = organization_manifest["spec"].get("quota")
+    assert quota is not None, "spec.quota ontbreekt; de custom-quota webhook weigert de CR"
+    assert isinstance(quota.get("limitGiB"), int), f"limitGiB moet een int zijn, kreeg {quota!r}"
+    assert quota["limitGiB"] >= 1, "het schema eist minimum 1"
