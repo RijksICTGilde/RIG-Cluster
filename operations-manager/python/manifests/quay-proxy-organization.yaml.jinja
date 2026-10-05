@@ -18,6 +18,8 @@ spec:
     - "{{ tenant }}"
 {% endfor %}
   suffix: "{{ suffix }}"
+  quota:
+    limitGiB: {{ quota_limit_gib }}
   # Expliciet uit: bij true is de organisatie niet te verwijderen, en dan laat het
   # uitzetten van de dienst een organisatie achter die niemand meer opruimt.
   preventDeletion: false
