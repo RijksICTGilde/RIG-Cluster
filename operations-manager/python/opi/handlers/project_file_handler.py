@@ -10,7 +10,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -48,6 +49,53 @@ IMAGE_PULL_REASONS = {
     "ImageInspectError",
     "RegistryUnavailable",
 }
+
+
+class ImagePullWaiting(NamedTuple):
+    """The image-pull failure the containers of ONE pod report."""
+
+    container: str
+    image: str
+    #: ``"<waiting reason>: <kubelet message>"``, the registry's own words, unabridged.
+    message: str
+
+
+def read_image_pull_from_statuses(container_statuses: list[dict] | None) -> ImagePullWaiting | None:
+    """The image-pull failure these ``status.containerStatuses`` report, or None.
+
+    The one reader of the waiting state, for both producers of an image-pull message: the
+    pod-health check on the deploy path (``oom_watcher.check_pod_health``) and the
+    cluster-wide count (``opi/services/image_pull_report.py``). The prefix it builds is
+    load-bearing in two directions -- ``is_image_pull_disable_reason`` below matches on it,
+    and ``classify_image_pull_failure`` reads ``invalidimagename`` out of the reason word --
+    so the two must not be able to word it differently.
+
+    The main container wins over a sidecar wherever it sits in the list: a pod can carry
+    one that an auth-wall put in front of it, and that sidecar's pull failure must never
+    masquerade as the component's own image. Among several sidecars the FIRST one answers,
+    so the sentence on the card does not flip between rounds when kubelet reorders them.
+
+    The pod-level guards stay with each caller, because they ask a different question of a
+    pod: "did this rollout fail" skips a superseded generation, "is a pull failing right
+    now" does not.
+    """
+    sidecar: ImagePullWaiting | None = None
+    for container_status in container_statuses or []:
+        waiting = (container_status.get("state", {}) or {}).get("waiting", {}) or {}
+        reason = waiting.get("reason", "")
+        if reason not in IMAGE_PULL_REASONS:
+            continue
+        container = container_status.get("name", "unknown")
+        failure = ImagePullWaiting(
+            container=container,
+            image=container_status.get("image", "") or "",
+            message=f"{reason}: {waiting.get('message', 'image pull failed')}",
+        )
+        if container == APPLICATION_CONTAINER_NAME:
+            return failure
+        if sidecar is None:
+            sidecar = failure
+    return sidecar
 
 
 def is_image_pull_disable_reason(reason: str) -> bool:

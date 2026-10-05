@@ -6,9 +6,17 @@ that notices one: see ``features/image-pull-backoff-detection.md``.
 
 A periodic LIST, not the pod watch of ``oom_watcher``. Two reasons, and the second is the
 one that decides it: the watch is off on every cluster until it has proven itself
-(``watches_pods_for_oom``) and this has to work on production today; and a snapshot that
+(``watches_pods_for_oom``), so it is not something to build on today; and a snapshot that
 is recounted from scratch cannot carry a stale entry, while a stream that misses a DELETED
 would keep alerting on a pod that is long gone.
+
+What the LIST does not buy is the right to read the cluster. It is cluster-wide
+(``--all-namespaces``), and on ``odcn-production`` OPI reaches pods through Capsule Proxy
+under the per-namespace RoleBinding Capsule makes; whether a cluster-wide pod read gets
+through there is NOT measured. That is the same open point as for the watch and for the
+same reason -- a watch uses the same rights as a list, see ``features/oom-pod-watch.md``.
+So this cannot claim to work everywhere. It can only make it visible where it does not,
+which is what ``_observed_at`` below is for.
 
 The snapshot is process-local. Nothing reads it to decide anything: it is a report.
 """
@@ -17,15 +25,12 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from dataclasses import dataclass
 
 from opi.connectors.kubectl import KubectlConnector
-from opi.handlers.project_file_handler import IMAGE_PULL_REASONS, classify_image_pull_failure
-from opi.services.catalog.base import (
-    APPLICATION_CONTAINER_NAME,
-    all_application_pods_selector,
-    is_application_pod,
-)
+from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
+from opi.services.catalog.base import all_application_pods_selector, is_application_pod
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +45,7 @@ class ImagePullFailure:
     app: str
     project: str
     deployment: str
-    #: Which container failed. The main one takes precedence over a sidecar, so a
-    #: platform sidecar's pull failure never masquerades as the component's own image.
+    #: Which container failed (see ``read_image_pull_from_statuses`` for the precedence).
     container: str
     image: str
     #: ``"<waiting reason>: <kubelet message>"``, the registry's own words, unabridged.
@@ -72,35 +76,37 @@ def read_image_pull_failure(pod: dict) -> ImagePullFailure | None:
     if metadata.get("deletionTimestamp"):
         return None
 
-    found: ImagePullFailure | None = None
-    for container_status in (pod.get("status", {}) or {}).get("containerStatuses", []) or []:
-        waiting = (container_status.get("state", {}) or {}).get("waiting", {}) or {}
-        reason = waiting.get("reason", "")
-        if reason not in IMAGE_PULL_REASONS:
-            continue
-        container = container_status.get("name", "unknown")
-        if found is not None and container != APPLICATION_CONTAINER_NAME:
-            continue
-        message = f"{reason}: {waiting.get('message', 'image pull failed')}"
-        found = ImagePullFailure(
-            namespace=metadata.get("namespace", ""),
-            pod_name=metadata.get("name", ""),
-            app=labels.get("app", ""),
-            project=labels.get("project", ""),
-            deployment=labels.get("deployment", ""),
-            container=container,
-            image=container_status.get("image", "") or "",
-            message=message,
-            reason_class=classify_image_pull_failure(message),
-            since=metadata.get("creationTimestamp", ""),
-        )
-        if container == APPLICATION_CONTAINER_NAME:
-            break
-    return found
+    pull = read_image_pull_from_statuses((pod.get("status", {}) or {}).get("containerStatuses", []) or [])
+    if pull is None:
+        return None
+    return ImagePullFailure(
+        namespace=metadata.get("namespace", ""),
+        pod_name=metadata.get("name", ""),
+        app=labels.get("app", ""),
+        project=labels.get("project", ""),
+        deployment=labels.get("deployment", ""),
+        container=pull.container,
+        image=pull.image,
+        message=pull.message,
+        reason_class=classify_image_pull_failure(pull.message),
+        since=metadata.get("creationTimestamp", ""),
+    )
 
 
 # The whole snapshot is replaced at once, so a reader never sees half of a pass.
 _snapshot: tuple[ImagePullFailure, ...] = ()
+
+# When the last pass that actually read the cluster finished, as a unix timestamp. 0 means
+# no pass has ever succeeded, which is NOT the same as a healthy fleet: the snapshot starts
+# empty, so without this a cluster where the read is refused reports a count of zero and
+# every reader of that count calls it healthy. Exposed as a gauge and alerted on, because
+# "we could not look" is the one failure this module cannot report as a failing pod.
+_observed_at: float = 0.0
+
+
+def image_pull_observed_timestamp() -> float:
+    """Unix timestamp of the last observation that reached the cluster (0.0: never)."""
+    return _observed_at
 
 
 def image_pull_failures() -> tuple[ImagePullFailure, ...]:
@@ -147,8 +153,11 @@ async def observe_image_pull_failures() -> int:
 
     A failed pass leaves the previous snapshot in place rather than reporting zero: "we
     could not look" is not "nothing is wrong", and zero is what an alert reads as healthy.
+    It also leaves ``_observed_at`` alone, which is what makes such a pass visible at all:
+    before the first success there is no previous snapshot to keep, so the count a failing
+    pass reports is an honest zero and an indistinguishable one.
     """
-    global _snapshot
+    global _observed_at, _snapshot
 
     kubectl = KubectlConnector()
     if not KubectlConnector.isConnected:
@@ -175,6 +184,7 @@ async def observe_image_pull_failures() -> int:
     failures = tuple(f for pod in pods if (f := read_image_pull_failure(pod)) is not None)
     previous = len(_snapshot)
     _snapshot = failures
+    _observed_at = time.time()
     if failures or previous:
         logger.info(
             "Image-pull observation: %d of %d application pod(s) cannot pull (was %d): %s",

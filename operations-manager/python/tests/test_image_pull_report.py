@@ -9,6 +9,7 @@ import ast
 import asyncio
 import json
 import pathlib
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import opi
@@ -21,6 +22,7 @@ from opi.services.image_pull_report import (
     image_pull_failure_count,
     image_pull_failure_counts,
     image_pull_failures_for,
+    image_pull_observed_timestamp,
     observe_image_pull_failures,
     read_image_pull_failure,
 )
@@ -74,8 +76,10 @@ def _pod(
 def _empty_snapshot():
     """The snapshot is process state; no test may inherit another's."""
     image_pull_report._snapshot = ()
+    image_pull_report._observed_at = 0.0
     yield
     image_pull_report._snapshot = ()
+    image_pull_report._observed_at = 0.0
 
 
 class TestReadImagePullFailure:
@@ -174,6 +178,32 @@ class TestReadImagePullFailure:
         assert failure.container == "app"
         assert failure.image == "ghcr.io/org/app:bad-tag"
 
+    def test_de_eerste_sidecar_antwoordt_als_er_twee_omvallen(self) -> None:
+        """Anders hangt de zin op de kaart aan de ordening die kubelet toevallig koos.
+
+        Twee sidecars kunnen aan dezelfde registry hangen en samen omvallen. Welke van de
+        twee genoemd wordt mag dan niet per ronde wisselen, want dan leest dezelfde pod
+        elke minuut als een ander probleem.
+        """
+        pod = _pod(message=None)
+        pod["status"]["containerStatuses"] = [
+            {
+                "name": "authorization-wall",
+                "image": "quay.io/oauth2-proxy:v7",
+                "state": {"waiting": {"reason": "ErrImagePull", "message": "manifest unknown"}},
+            },
+            {
+                "name": "db-console",
+                "image": "quay.io/pgadmin:v8",
+                "state": {"waiting": {"reason": "ErrImagePull", "message": "manifest unknown"}},
+            },
+        ]
+
+        failure = read_image_pull_failure(pod)
+
+        assert failure is not None
+        assert failure.container == "authorization-wall"
+
     def test_a_sidecar_only_failure_is_named_as_the_sidecar(self) -> None:
         sidecar = {
             "name": "oauth2-proxy",
@@ -232,6 +262,95 @@ class TestObserve:
         assert await observe_image_pull_failures() == 1
         assert image_pull_failure_count() == 1
 
+
+class TestOfErGekekenIs:
+    """Een telling van nul betekent twee dingen, en alleen de tijdstempel scheidt ze.
+
+    De momentopname begint leeg, dus een cluster waar de cluster-brede pod-lezing geweigerd
+    wordt meldt nul failing pods: gauge nul, alarm vuurt nooit, kaartblok leeg. Precies de
+    val die deze module zelf benoemt ("we konden niet kijken" leest als "er is niets aan de
+    hand"), en op odcn-production is niet nagemeten of die lezing daar mag.
+    """
+
+    @pytest.mark.asyncio
+    async def test_voor_de_eerste_ronde_staat_er_geen_tijdstempel(self) -> None:
+        assert image_pull_observed_timestamp() == 0.0
+
+    @patch("opi.services.image_pull_report.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_een_gelukte_ronde_zet_de_tijdstempel(self, mock_kubectl_cls) -> None:
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        # Een LEGE uitkomst, want dat is de stand die niet van "niemand keek" te
+        # onderscheiden is zonder deze tijdstempel.
+        mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": []}), "", 0))
+
+        before = time.time()
+        assert await observe_image_pull_failures() == 0
+
+        assert image_pull_failure_count() == 0
+        assert image_pull_observed_timestamp() >= before
+
+    @patch("opi.services.image_pull_report.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_een_mislukte_ronde_laat_de_tijdstempel_op_nul(self, mock_kubectl_cls) -> None:
+        """Dit is het geval dat op productie het risico is: nog nooit een ronde gelukt.
+
+        Er is dan ook geen vorige momentopname om te bewaren, dus de telling is een
+        eerlijke nul en een ononderscheidbare. Alleen de tijdstempel zegt welke.
+        """
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+
+        for outcome in (("", "pods is forbidden", 1), ("niet json", "", 0)):
+            mock_kubectl.run_command = AsyncMock(return_value=outcome)
+            assert await observe_image_pull_failures() == 0
+            assert image_pull_observed_timestamp() == 0.0
+
+        mock_kubectl.run_command = AsyncMock(side_effect=RuntimeError("kubectl is weg"))
+        assert await observe_image_pull_failures() == 0
+        assert image_pull_observed_timestamp() == 0.0
+
+    @patch("opi.services.image_pull_report.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_een_mislukte_ronde_na_een_gelukte_laat_de_oude_tijdstempel_staan(self, mock_kubectl_cls) -> None:
+        """Verouderen, niet terugzetten: het alarm gaat op de leeftijd af."""
+        mock_kubectl_cls.isConnected = True
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": [_pod()]}), "", 0))
+        await observe_image_pull_failures()
+        gelukt_op = image_pull_observed_timestamp()
+        assert gelukt_op > 0.0
+
+        mock_kubectl.run_command = AsyncMock(return_value=("", "pods is forbidden", 1))
+        await observe_image_pull_failures()
+
+        assert image_pull_observed_timestamp() == gelukt_op
+
+    @patch("opi.services.image_pull_report.KubectlConnector")
+    @pytest.mark.asyncio
+    async def test_zonder_kubectl_is_er_niet_gekeken(self, mock_kubectl_cls) -> None:
+        mock_kubectl_cls.isConnected = False
+
+        assert await observe_image_pull_failures() == 0
+        assert image_pull_observed_timestamp() == 0.0
+
+    def test_de_collector_geeft_de_tijdstempel_uit(self) -> None:
+        """De gauge, in de vorm van opi_peak_memory_timestamp."""
+        from opi.core.metrics import OPICollector
+
+        image_pull_report._observed_at = 1760000000.0
+        families = {familie.name: familie for familie in OPICollector().collect()}
+
+        familie = families["opi_image_pull_observed_timestamp"]
+        (sample,) = familie.samples
+        assert sample.value == 1760000000.0
+
+
+class TestObserveVervolg:
     @patch("opi.services.image_pull_report.KubectlConnector")
     @pytest.mark.asyncio
     async def test_the_selector_excludes_the_service_owned_pods(self, mock_kubectl_cls) -> None:

@@ -44,8 +44,9 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.handlers.project_file_handler import classify_image_pull_failure
+from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.catalog.base import (
+    APPLICATION_CONTAINER_NAME,
     SERVICE_ROLE_LABEL_KEY,
     all_application_pods_selector,
     application_pod_selector,
@@ -258,11 +259,14 @@ class DeploymentHealthError(Exception):
 # ImagePullBackOff, and terminal (it never self-heals), so it counts as image-pull.
 _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 
-# The component's own container is named "app" in deployment.yaml.jinja; every other
-# container in the pod (authorization-wall, db-console, ...) is an injected sidecar.
 # Used to distinguish "the user's image failed" from "a platform sidecar image failed",
 # which must be reported (and remediated) differently.
-MAIN_CONTAINER_NAME = "app"
+#
+# An alias and not a second literal: the shared image-pull reader settles the precedence
+# WITHIN a pod against ``APPLICATION_CONTAINER_NAME`` and ``check_pod_health`` settles it
+# ACROSS pods against this name, so two spellings of "app" could drift apart and quietly
+# break the half that reads the other one's output.
+MAIN_CONTAINER_NAME = APPLICATION_CONTAINER_NAME
 
 # Label Kubernetes puts on every ReplicaSet and its pods to identify the pod
 # template generation they belong to. Used to evaluate only the current generation.
@@ -432,29 +436,10 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                         result.oom_detected = True
                         result.oom_pod_template_hash = pod_template_hash or current_pod_template_hash
 
-                # Check waiting state for ImagePull and CrashLoop
+                # Check waiting state for CrashLoop. The image-pull half of the waiting
+                # state is read per POD below, by the shared reader.
                 waiting = container_status.get("state", {}).get("waiting", {})
                 waiting_reason = waiting.get("reason", "")
-
-                if waiting_reason in _IMAGE_PULL_REASONS:
-                    message = waiting.get("message", "image pull failed")
-                    image = container_status.get("image", "")
-                    logger.info(
-                        "Image pull error for pod %s container %s (image %s) in %s: %s - %s",
-                        pod_name,
-                        container_name,
-                        image,
-                        namespace,
-                        waiting_reason,
-                        message,
-                    )
-                    # A pod can have several containers; the main "app" container is the
-                    # user's own image and takes precedence. Never let a sidecar's failure
-                    # overwrite (or masquerade as) the main container's.
-                    if result.image_pull_error is None or container_name == MAIN_CONTAINER_NAME:
-                        result.image_pull_error = f"{waiting_reason}: {message}"
-                        result.image_pull_container = container_name
-                        result.image_pull_image = image
 
                 if waiting_reason in _CRASH_LOOP_REASONS:
                     message = waiting.get("message", "container keeps crashing")
@@ -467,6 +452,23 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                     )
                     result.crash_loop_detected = True
                     result.crash_loop_message = f"CrashLoopBackOff: {message}"
+
+            pull = read_image_pull_from_statuses(pod.get("status", {}).get("containerStatuses", []))
+            if pull is not None:
+                logger.info(
+                    "Image pull error for pod %s container %s (image %s) in %s: %s",
+                    pod_name,
+                    pull.container,
+                    pull.image,
+                    namespace,
+                    pull.message,
+                )
+                # Across pods the main "app" container is the user's own image and takes
+                # precedence; within one pod the shared reader already settled that.
+                if result.image_pull_error is None or pull.container == MAIN_CONTAINER_NAME:
+                    result.image_pull_error = pull.message
+                    result.image_pull_container = pull.container
+                    result.image_pull_image = pull.image
 
     except Exception as e:
         logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
