@@ -268,3 +268,44 @@ class TestWhatTheAlertReads:
         assert by_reason[0].value == 1.0
         # Never the kubelet message or the image tag: those are unbounded.
         assert set(by_reason[0].labels) == {"project_namespace", "reason"}
+
+
+class TestWatDeKaartKrijgt:
+    """``describe_image_pull_failures`` zet de waarneming om in wat de kaart toont."""
+
+    def _deployment(self, *, disabled: bool = False) -> dict:
+        return {
+            "name": "production",
+            "cluster": "odcn-production",
+            "namespace": "myproject",
+            "components": [
+                {
+                    "reference": "api",
+                    "image": "ghcr.io/org/app:bad-tag",
+                    **({"disabled": True, "disabled-reason": "OOMKilled"} if disabled else {}),
+                }
+            ],
+        }
+
+    def test_de_waarneming_wordt_een_componentverwijzing(self) -> None:
+        from opi.services.deployment_diagnostics import describe_image_pull_failures
+
+        image_pull_report._snapshot = (read_image_pull_failure(_pod()),)
+
+        gevonden = describe_image_pull_failures(self._deployment())
+
+        assert len(gevonden) == 1
+        # De pod draagt de UNIEKE naam (production-api); de kaart toont de verwijzing
+        # zoals die in het projectbestand staat.
+        assert gevonden[0].reference == "api"
+        assert gevonden[0].reason_class == IMAGE_PULL_ABSENT
+        assert gevonden[0].since == "2026-10-05T08:00:00Z"
+
+    def test_een_uitgeschakeld_component_blijft_erbuiten(self) -> None:
+        """Nul replicas is daar de bedoelde eindstand, en de kaart noemt hem al apart.
+        Twee meldingen over hetzelfde component die elkaar tegenspreken is erger dan een."""
+        from opi.services.deployment_diagnostics import describe_image_pull_failures
+
+        image_pull_report._snapshot = (read_image_pull_failure(_pod()),)
+
+        assert describe_image_pull_failures(self._deployment(disabled=True)) == []
