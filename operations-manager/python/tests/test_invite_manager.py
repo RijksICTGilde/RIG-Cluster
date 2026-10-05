@@ -227,12 +227,11 @@ class TestCompleteLocalInviteVerificatiemail:
 class TestCompleteSsoInviteBevestiging:
     """De SSO-weg maakt het account aan, en niets bevestigt het adres daarna.
 
-    ``create_user`` zet ``emailVerified`` op false en hangt er ``VERIFY_EMAIL`` aan
-    (RC-191, zie ``test_keycloak_master_admins_slaan_verificatie_over``), en deze tak
-    vraagt geen bevestigingsmail. In een SSO-only realm logt de gebruiker nooit
-    rechtstreeks bij Keycloak in, dus die required action krijgt ook geen trigger. Het
-    account blijft onbevestigd, en achter de authorization wall weigert oauth2-proxy het
-    met een 500. De keten staat in ``docs/KNOWN-ISSUES.md``.
+    ``create_user`` hangt er ``VERIFY_EMAIL`` aan en deze tak vraagt geen
+    bevestigingsmail. In een SSO-only realm logt de gebruiker nooit rechtstreeks bij
+    Keycloak in, dus die required action krijgt ook geen trigger. Achter de authorization
+    wall weigert oauth2-proxy het onbevestigde account met een 500. De keten staat in
+    ``docs/KNOWN-ISSUES.md``.
 
     Gaat deze toets rood, dan is die weg veranderd en hoort de known issue mee.
     """
