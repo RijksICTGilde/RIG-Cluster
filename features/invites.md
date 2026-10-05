@@ -28,10 +28,12 @@ enforces when you save.
    (custom `realm-roles` plus the authorization-wall role, default `allowed-user`). Choose
    *Geen rol toekennen* to create an account with no extra rights.
 
-   **Granting the authorization-wall role is not enough to get the invitee in.** An invite
-   creates the realm account with an unconfirmed email address, and the wall rejects exactly
-   that. On the SSO branch nothing ever confirms it, so the invitee hits an HTTP 500 at
-   `/oauth2/callback` until someone sets `Email verified` to On in the Keycloak console. See
+   **Granting the authorization-wall role is not enough to get the invitee in.** A *local*
+   registration creates the realm account with an unconfirmed email address, and the wall
+   rejects exactly that. The confirmation email is the only thing that clears it, so if it
+   never arrives, or the invitee only ever signs in through SSO, they hit an HTTP 500 at
+   `/oauth2/callback` until someone sets `Email verified` to On in the Keycloak console. An
+   SSO invitee who lands on such an account is shown the success page regardless. See
    `docs/KNOWN-ISSUES.md`.
 5. Save. Editing invites does **not** trigger a deploy (nothing in the manifests changes).
 6. On the project-details page, admins and owners see an **Uitnodigingen** block with the full

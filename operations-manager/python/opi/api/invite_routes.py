@@ -850,10 +850,10 @@ async def invite_register_submit(request: Request, key: str) -> Response:
         if _realm_roles_unassigned(result_data["assigned"]):
             return RedirectResponse(url=f"/invite/{key}/error?code=role_not_assigned", status_code=302)
 
-        # Store success info in session. ``verify_email`` staat alleen op deze tak, want
-        # alleen hier gaat er een bevestigingsmail uit. De SSO-tak maakt het account net zo
-        # onbevestigd aan, maar stuurt niets en kan er dus niet om vragen. Dat het adres
-        # daar wel bevestigd is, is onwaar: zie docs/KNOWN-ISSUES.md.
+        # Store success info in session. ``verify_email`` staat alleen op deze tak: de
+        # SSO-weg levert via ``trustEmail`` een al geverifieerde gebruiker en mag de tekst
+        # over bevestigen niet tonen. Landt die weg op een account dat hier onbevestigd is
+        # achtergebleven, dan zwijgt de pagina erover: zie docs/KNOWN-ISSUES.md.
         request.session["invite_success"] = {
             "email": result_data["email"],
             "created": result_data["created"],

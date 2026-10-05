@@ -180,16 +180,34 @@ Wie wel binnenkomt: iedereen die inlogt **zonder** dat er een account voor hem k
 Die wordt door `idp-create-user-if-unique` echt aangemaakt, dus `BROKER_REGISTERED_NEW_USER`
 staat, en `trustEmail` zet de vlag. Vandaar dat het probleem per gebruiker lijkt te wisselen.
 
-Het is niet alleen de handmatige weg. De uitnodigingsdienst doet hetzelfde vanuit het portaal,
-zonder dat er iemand in de Keycloak-console komt. De rolkiezer van een uitnodiging biedt de rol
-van de authorization wall aan (standaard `allowed-user`, zie `features/invites.md`), en
-`complete_sso_invite` (`opi/manager/invite_manager.py:335`) maakt het account in het
-projectrealm aan met een `create_user` zonder `skip_email_verification`. Het adres staat daarmee
-op onbevestigd en draagt `VERIFY_EMAIL`. Die tak vraagt geen bevestigingsmail; alleen de lokale
-tak doet dat (`:443`, `send_verify_email`). En in een SSO-only realm logt de gebruiker nooit
-rechtstreeks bij Keycloak in, dus de required action krijgt nooit een trigger. Daarna is het
-dezelfde keten als hierboven. Een uitnodiging heeft geen veld om dit te omzeilen:
-`Email verified` op On bestaat alleen in de console.
+Het is niet alleen de handmatige weg. De **lokale** tak van de uitnodigingsdienst zet zo'n
+account vanuit het portaal, zonder dat er iemand in de Keycloak-console komt. De rolkiezer van
+een uitnodiging biedt de rol van de authorization wall aan (standaard `allowed-user`, zie
+`features/invites.md`), en `complete_local_invite` (`opi/manager/invite_manager.py:427`) maakt
+het account in het projectrealm aan met een `create_user` zonder `skip_email_verification`. Het
+adres staat daarmee op onbevestigd en draagt `VERIFY_EMAIL`. Die tak stuurt wel een
+bevestigingsmail (`:443`, `send_verify_email`), en in deze weg is die mail het enige dat de vlag
+omzet. Blijft de bevestiging uit, door een dode mailrelay of omdat de uitgenodigde in een
+SSO-only realm nooit rechtstreeks bij Keycloak inlogt, dan staat daar precies het vooraf
+aangemaakte account waar de keten hierboven op begint. Een uitnodiging heeft geen veld om dat
+te omzeilen: `Email verified` op On bestaat alleen in de console.
+
+De **SSO**-tak van een uitnodiging maakt dat account niet. `invite_sso_start` stuurt de
+uitgenodigde naar het projectrealm zelf (`_build_realm_auth_url`), dus Keycloak heeft zijn
+first-broker-login al gedaan voordat `complete_sso_invite` draait: stond er nog geen account,
+dan maakt `idp-create-user-if-unique` het aan en zet `trustEmail` (hard gezet in
+`add_identity_provider`, `opi/connectors/keycloak.py:1202`) de vlag; stond het er al, dan
+koppelt `idp-auto-link`. Het token komt uit datzelfde realm, dus `get_user_by_email` vindt die
+gebruiker en de `create_user`-tak wordt overgeslagen.
+
+Daar hangt wel een eigen gat aan. Die SSO-uitgenodigde kan landen op een al bestaand onbevestigd
+account, bijvoorbeeld uit een eerdere lokale uitnodiging waarvan de bevestiging nooit kwam.
+`complete_sso_invite` kent dat account dan al, laat de vlag staan, kent alleen de rollen toe en
+meldt `created: False`. De succespagina zegt daarop "Je hebt nu toegang", terwijl de wall hem
+even hard weigert: de uitnodiging ziet er geslaagd uit en is het niet. De code kan het ook niet
+repareren: de connector zet `emailVerified` alleen bij het aanmaken
+(`opi/connectors/keycloak.py:3650`) en heeft geen weg om de vlag op een bestaand account om te
+zetten.
 
 Repareren, per getroffen account: zet in Keycloak `Email verified` op On in het projectrealm en
 haal de `VERIFY_EMAIL` required action weg. Verwijderen en opnieuw laten inloggen werkt ook,
@@ -202,13 +220,12 @@ realm alleen om de federated identity te matchen, en die IdP is met `trustEmail:
 vertrouwd. Dat is niet gebouwd: het verandert een beveiligingsrelevante default voor alle
 projectrealms en hoort een eigen besluit te zijn.
 
-Dat besluit raakt twee plekken, want de uitnodigingsweg hierboven loopt tegen hetzelfde aan.
-Daar komt een eigen vraag bij: `complete_sso_invite` controleert bewust niet of het
-binnenkomende SSO-adres zelf bevestigd is (de NOTE boven de aanroep legt uit waarom), dus
-`skip_email_verification` geeft daar meer weg dan bij een master-beheerder met een adres dat
-niet bestaat. Welke aanroepers de verificatie overslaan is gegrendeld in
-`tests/test_keycloak_master_admins_slaan_verificatie_over.py`, dus die toets gaat rood zodra
-iemand dit besluit neemt.
+Dat besluit raakt twee plekken, want de lokale uitnodigingsweg hierboven loopt tegen hetzelfde
+aan. Daar is de afweging een andere en een zwaardere: de bevestigingsmail is op die tak de
+enige controle dat de uitgenodigde het adres dat hij invult ook echt heeft, terwijl een vooraf
+aangemaakt SSO-account zijn adres van de vertrouwde IdP krijgt. Welke aanroepers de verificatie
+overslaan is gegrendeld in `tests/test_keycloak_master_admins_slaan_verificatie_over.py`, dus
+die toets gaat rood zodra iemand dit besluit neemt.
 
 Wat wel gerepareerd is: de wall levert nu een eigen `error.html` mee, zodat de gebruiker geen
 kale Engelse 500 ziet maar een Nederlandse pagina met een `RequestID` om aan de beheerder te

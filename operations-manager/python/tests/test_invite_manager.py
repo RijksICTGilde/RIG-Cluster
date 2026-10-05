@@ -253,15 +253,13 @@ class TestCompleteLocalInviteVerificatiemail:
 
 
 class TestCompleteSsoInviteBevestiging:
-    """De SSO-weg maakt het account aan, en niets bevestigt het adres daarna.
+    """Wat de SSO-weg met het adres van de uitgenodigde doet, en vooral wat niet.
 
-    ``create_user`` hangt er ``VERIFY_EMAIL`` aan en deze tak vraagt geen
-    bevestigingsmail. In een SSO-only realm logt de gebruiker nooit rechtstreeks bij
-    Keycloak in, dus die required action krijgt ook geen trigger. Achter de authorization
-    wall weigert oauth2-proxy het onbevestigde account met een 500. De keten staat in
+    ``invite_sso_start`` stuurt de uitgenodigde naar het projectrealm zelf, dus Keycloak
+    heeft zijn first-broker-login al gedaan voordat deze code draait: het account bestaat
+    dan en ``get_user_by_email`` vindt het. De aanmaaktak is de restvorm voor het geval die
+    zoekopdracht niets teruggeeft. Het gat zit in de andere tak, zie
     ``docs/KNOWN-ISSUES.md``.
-
-    Gaat deze toets rood, dan is die weg veranderd en hoort de known issue mee.
     """
 
     USER_INFO: ClassVar[dict[str, str]] = {
@@ -292,3 +290,26 @@ class TestCompleteSsoInviteBevestiging:
 
         assert result["created"] is True
         keycloak.send_verify_email.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_een_al_bestaand_onbevestigd_account_wordt_niet_gerepareerd(self):
+        """Het gat waarover de succespagina zwijgt, zie ``docs/KNOWN-ISSUES.md``.
+
+        Een SSO-uitgenodigde kan landen op een account dat een eerdere lokale uitnodiging
+        onbevestigd heeft achtergelaten. Deze weg kent dat account al, kent alleen de rollen
+        toe en meldt ``created: False``, waarna de succespagina "Je hebt nu toegang" zegt
+        terwijl de authorization wall hem met een 500 weigert.
+        """
+        keycloak = AsyncMock()
+        keycloak.get_user_by_email.return_value = {
+            "id": "u1",
+            "email": self.USER_INFO["email"],
+            "emailVerified": False,
+        }
+
+        result = await self._complete(keycloak)
+
+        assert result["user_id"] == "u1"
+        assert result["created"] is False
+        # Opzoeken en verder niets: geen aanmaak, geen mail, geen weg om de vlag om te zetten.
+        assert [naam for naam, _, _ in keycloak.mock_calls] == ["get_user_by_email"]
