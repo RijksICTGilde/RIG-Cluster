@@ -28,17 +28,17 @@ Daardoor is de oorspronkelijke taak A vervallen: `--skip-provider-button` staat 
 
 Tegelijk gemeten: 11 projecten hebben een wall, en 5 daarvan draaien zonder rolpoort (`mpfb-8wh` en `mpfm-w3h` op `enabled: false`, `dsm1j2-2ws`, `jongo-lh2` en `tvas-7pb` zonder blok). Een wall zonder rol is dus normaal en niet de uitzondering.
 
-**M2 staat nog open en blokkeert taak B.** Komt het sessiecookie bij een getroffen gebruiker gesplitst aan? Bij `robbert.bos@rijksoverheid.nl` of `kees.keulemans@minbzk.nl` in devtools, Network, de pagina herladen en op `/bediening.css` kijken: staat er een `Cookie`-header, hoe groot is hij, en staan er `_oauth2_proxy_0`, `_oauth2_proxy_1` en verder in. `robbert.uittenbroek@rijksoverheid.nl` had het probleem niet en is de controlemeting.
+**M2 is gemeten in RC-240 (PR #213), en het antwoord weerlegt de hypothese achter taak B.** De meting hoefde niet in productie met devtools: ze staat herhaalbaar in `tests/integration/test_authorization_wall_proxy.py`, tegen een echte Keycloak en een echte oauth2-proxy (zie `features/authorization-wall-meetopstelling.md`). Splitsen gebeurt, al bij 80 realmrollen. Maar een gesplitste sessie werkt, dus de splitsing verklaart de halve pagina's niet. Wat ze wel doet is elk cookiedeel een enkelvoudig faalpunt maken: raakt er onderweg een deel kwijt, dan is de hele sessie weg, en dat levert exact het beeld uit de productielogs op.
 
 ## 4. Wat deze branch oplost, en wat niet
 
 De branch is bewust versmald tot het probleem uit de productielogs: half ingeladen pagina's, verkeerde content-types en browsers die er niets van maken. Daarvoor zitten er twee dingen in.
 
-`--cookie-refresh=3m` haalt de kudde bij de vijfminutenklif weg, zodat de aanvragen van één paginalading niet allemaal tegelijk op een dode sessie aankomen. `--api-route` voor `/api/` en voor statische bestanden maakt van het antwoord een kale 401 in plaats van een 403 met de inlogpagina als HTML, zodat een mislukte stylesheet als mislukte stylesheet aankomt en niet als tekst die de browser probeert te parsen. Daarbij `--cookie-expire=10h` om het cookie niet langer geldig te laten beweren dan de Keycloak-sessie, `--cookie-samesite=lax` expliciet, en `--cookie-csrf-per-request=true` tegen twee tabbladen die elkaars inlogpoging overschrijven.
+`--cookie-refresh=3m` laat de sessie meeschuiven: zonder die vlag vernieuwt oauth2-proxy helemaal niet (`refresh:disabled` in zijn eigen log) en valt de hele paginalading in een keer om op de grens van `--cookie-expire`. De verklaring die hier eerder stond, een kudde die bij de vijfminutenklif tegelijk op een dode sessie aankomt, is in RC-240 nagemeten en weerlegd; wat er wel gebeurt staat in `features/authorization-wall.md`. `--api-route` voor `/api/` en voor statische bestanden maakt van het antwoord een kale 401 in plaats van een 403 met de inlogpagina als HTML, zodat een mislukte stylesheet als mislukte stylesheet aankomt en niet als tekst die de browser probeert te parsen. Daarbij `--cookie-expire=10h` om het cookie niet langer geldig te laten beweren dan de Keycloak-sessie, `--cookie-samesite=lax` expliciet, en `--cookie-csrf-per-request=true` tegen twee tabbladen die elkaars inlogpoging overschrijven.
 
 Niet in deze branch, en bewust: het tussenscherm van de muur en de rolcontrole in de proxy. Beide staan in de futures-doc.
 
-Let op bij het verifiëren: `--cookie-refresh` dekt de klif, maar niet het geval waarvan bewijs is dat het negen seconden na een verse login optreedt. Zolang M2 niet gedaan is, is niet aantoonbaar dat deze branch het hele probleem wegneemt. Dat eerlijk houden in de PR-tekst hoort erbij.
+Let op bij het verifiëren: `--cookie-refresh` dekt de klif, maar niet het geval waarvan bewijs is dat het negen seconden na een verse login optreedt. M2 is inmiddels gemeten en heeft dat geval niet verklaard, dus het blijft staan: deze branch neemt niet aantoonbaar het hele probleem weg. Dat eerlijk houden in de PR-tekst hoort erbij.
 
 ## 5. Taak B: subresources die zonder cookie aankomen
 
@@ -48,7 +48,7 @@ Vastgesteld: binnen één geauthenticeerde page load haalt het document de sessi
 
 Hypothese: het sessiecookie wordt gesplitst in `_oauth2_proxy_0`, `_1`, `_2` omdat de hele tokenset (id_token, access_token, refresh_token) erin zit, en bij een gebruiker met veel Keycloak-claims past dat niet in één cookie. Dat `robbert.uittenbroek` nooit omvalt en `robbert.bos` en `kees.keulemans` wel, past daarbij.
 
-**Niet bouwen voordat M2 er is.** Als de meting iets anders uitwijst, is elke fix hieronder de verkeerde.
+**Weerlegd door M2.** Splitsen gebeurt, maar een gesplitste sessie werkt, dus de oorzaak van dit restraadsel is nog onbekend en geen van de richtingen hieronder neemt de halve pagina's aantoonbaar weg. Ze houden wel het cookie klein, en dat heeft zelfstandig nut: met een cookie valt er niets gedeeltelijk te verliezen.
 
 Mogelijke richtingen, in oplopende zwaarte, alle drie **voorstellen**:
 
@@ -79,9 +79,9 @@ De vier die er wel bij horen: `5747a3133` (foutpagina), `aedff3d5d`, `bd80ffb83`
 Het eindproduct is pas af als dit alle vier waar is:
 
 - Geen 403 meer op een stylesheet, script of favicon in de logs van `rig-prd-mpfm-w3h` over een venster van minstens een uur met echte gebruikers.
-- Geen volledige herlogins meer rond de vijfminutengrens: de `AuthSuccess`-regels horen zeldzaam te worden, want een stille refresh logt niets.
+- Geen volledige herlogins meer waar een stille refresh had gekund: de `AuthSuccess`-regels horen zeldzaam te worden, want een stille refresh logt niets.
 - `features/authorization-wall.md` beschrijft de eindtoestand.
 
 Wat hier NIET bij hoort als maatstaf: dat `inlogmuur.js` uit `fbs-demo-console` kan verdwijnen. Dat script vangt het tussenscherm op, en dat tussenscherm blijft in deze branch bestaan. Zolang de muur een 403 met een inlogkaart antwoordt op een navigatie, houdt dat script zin. Het hoort bij de futures-doc, niet bij deze verificatie.
 
-**M2** blijft open en is losgekoppeld van deze branch: zodra die meting er is, volgt taak B hieronder.
+**M2** is in RC-240 gemeten en weerlegde de hypothese van taak B, dus taak B volgt daar niet uit. Zie paragraaf 3.

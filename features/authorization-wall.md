@@ -90,7 +90,13 @@ Er lopen drie klokken door elkaar heen, en ze horen op elkaar afgestemd te zijn.
 | Keycloak SSO-sessie | 30 min idle, 10 uur max | Keycloak default; alleen de platform-realm krijgt andere waarden uit `bootstrap.yaml` |
 | oauth2-proxy cookie | 10 uur | `--cookie-expire` in de sidecar-template |
 
-oauth2-proxy neemt de levensduur van het access token over als expiry van zijn sessie. Die sessie leeft dus vijf minuten en wordt daarna met het refresh token verlengd, zonder dat de browser er iets van merkt. Daarom staat `--cookie-refresh=3m` in de template: zonder die vlag vernieuwt de proxy pas *nadat* de sessie verlopen is, en dan komen alle requests van één pagina tegelijk op een dode sessie aan en bieden ze allemaal hetzelfde refresh token aan. Keycloak roteert dat token, dus er wint één en de rest krijgt een 403. In de praktijk haalde het document het dan wel en vielen de stylesheet en de scripts om, met een kale pagina als resultaat.
+oauth2-proxy vernieuwt zijn sessie alleen als `--cookie-refresh` gezet is. Zonder die vlag staat er `refresh:disabled` in zijn eigen log en vernieuwt hij **nooit**: hij merkt niet dat het access token verlopen is en blijft de sessie uit het cookie dienen tot `--cookie-expire`, waarna de hele paginalading in een keer omvalt. Met een refresh korter dan de tokenlevensduur schuift de sessie bij elk verzoek mee en blijft de pagina heel.
+
+Daarmee is de **ordening** wat deze twee vlaggen doen, en niet de getallen zelf: `--cookie-refresh=3m` ligt onder de vijf minuten van het access token, en `--cookie-expire=10h` erboven. Een refresh boven de tokenlevensduur vernieuwt nooit op tijd, en een cookiewindow korter dan een token laat de sessie bij elke tokenronde omvallen. `tests/test_manifests.py` toetst die ordening, en `tests/integration/test_authorization_wall_proxy.py` meet het gedrag tegen een echte proxy; zie `features/authorization-wall-meetopstelling.md`.
+
+Gemeten tegen een echte proxy, met de drie klokken teruggeschaald naar seconden: zonder de vlag diende hij nog 200's op een access token dat al verlopen was, en op de cookie-grens kreeg het document een 403 en elke subresource een 401. Met de vlag bleef de hele paginalading groen.
+
+Eerder stond hier dat de sessie-expiry de vijf minuten van het access token overneemt, en dat parallelle aanvragen op een dode sessie elkaar verdringen op een roterend refresh token. Dat is nagemeten en het klopt niet. De expiry komt van het cookie, zoals hierboven staat, en Keycloak roteert het refresh token niet: `revokeRefreshToken` staat op de default `false` en OPI zet er niets. Vijf parallelle aanvragen op een verlopen token slaagden alle vijf.
 
 `--cookie-expire` staat op 10 uur en niet op de oauth2-proxy-default van 168 uur, omdat een cookie niet langer geldig hoort te beweren te zijn dan de Keycloak-sessie waarop het leunt. Projectrealms krijgen geen `ssoSession*`-waarden uit een blueprint, dus daar geldt Keycloak's eigen 10 uur.
 
@@ -110,7 +116,13 @@ Let op dat de eerste regel alleen paden onder `/api/` dekt. Een applicatie die z
 
 `--cookie-csrf-per-request=true` dekt een losse valkuil: zonder die vlag deelt oauth2-proxy één CSRF-cookie, dat een tweede gestarte inlogpoging overschrijft, waarna de callback van de eerste afketst op een 500. Twee tabbladen die binnen het kwartier beide op Inloggen drukken is genoeg.
 
-Wat hiermee **niet** is opgelost: de muur toont nog altijd een tussenscherm bij een sessie die stil te herstellen was, en controleert zelf geen rol. Beide staan in `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`.
+### Het sessiecookie splitst bij veel claims
+
+De hele tokenset (access, id en refresh token) zit in het sessiecookie. Gemeten: een gebruiker zonder realmrollen heeft daar al 3544 van de 4096 beschikbare bytes voor nodig, en bij 80 realmrollen splitst oauth2-proxy het in `_oauth2_proxy_0` en `_oauth2_proxy_1`.
+
+Dat verklaart de halve pagina's **niet**: een gesplitste sessie werkt, ook met de aanvragen van een paginalading parallel afgevuurd. Wat het wel doet is elk deel een enkelvoudig faalpunt maken. Raakt er onderweg een deel kwijt, dan is de hele sessie weg en levert dat exact het beeld uit de productielogs op: de muur op het document, een 401 op elke subresource. De wegen om het cookie klein te houden (`--session-cookie-minimal`, een Redis session store, of minder claims in het token) staan in `plans/authorization-wall-vervolg-sessieherstel.md`.
+
+Wat hiermee **niet** is opgelost: de muur toont nog altijd een tussenscherm bij een sessie die stil te herstellen was, en controleert zelf geen rol. Beide staan in `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`. En er is nog een geval over waarvan de oorzaak onbekend is: binnen een geauthenticeerde paginalading haalt het document de sessie wel en de subresources niet, soms negen seconden na een verse login. De splitsing hierboven was de hypothese daarvoor en die is weerlegd.
 
 ## Dependencies
 

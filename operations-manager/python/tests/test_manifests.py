@@ -15,6 +15,24 @@ from ruamel.yaml import YAML
 
 MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
 
+#: Keycloak's eigen standaard voor een access token. Projectrealms krijgen geen andere
+#: waarde (``create_realm`` zet er geen), dus dit is de grens waar de cookie-vlaggen van
+#: de authorization wall zich naar moeten verhouden.
+KEYCLOAK_ACCESS_TOKEN_S = 300
+
+
+def _duur_in_seconden(duur: str) -> int:
+    """Een Go-duur zoals oauth2-proxy die leest: ``3m``, ``10h``, ``30s``."""
+    eenheden = {"s": 1, "m": 60, "h": 3600}
+    return int(duur[:-1]) * eenheden[duur[-1]]
+
+
+class TestDuurInSeconden:
+    @pytest.mark.parametrize(("duur", "seconden"), [("30s", 30), ("3m", 180), ("10h", 36000)])
+    def test_elke_eenheid_die_oauth2_proxy_leest(self, duur: str, seconden: int) -> None:
+        """De ordeningsgrendel hieronder vergelijkt deze getallen, dus ze moeten kloppen."""
+        assert _duur_in_seconden(duur) == seconden
+
 
 @pytest.fixture
 def generator():
@@ -848,6 +866,12 @@ class TestRenderRealTemplates:
         assert "--cookie-samesite=lax" in args
         assert "--cookie-expire=10h" in args
         assert "--cookie-refresh=3m" in args
+        # De ORDENING is wat de storing wegneemt, niet de getallen zelf. Wat er omvalt als
+        # ze omgaat staat in features/authorization-wall.md, gemeten in
+        # tests/integration/test_authorization_wall_proxy.py.
+        refresh_s = _duur_in_seconden(next(a for a in args if a.startswith("--cookie-refresh=")).split("=", 1)[1])
+        expire_s = _duur_in_seconden(next(a for a in args if a.startswith("--cookie-expire=")).split("=", 1)[1])
+        assert refresh_s < KEYCLOAK_ACCESS_TOKEN_S < expire_s
         # Parallelle aanvragen mogen elkaars inlogpoging niet overschrijven.
         assert "--cookie-csrf-per-request=true" in args
         # Hoort bij skip-provider-button: een fetch() krijgt een 401, geen redirect.

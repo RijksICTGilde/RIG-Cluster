@@ -2085,6 +2085,35 @@ tasks:
       - docker rm -f zad-test-postgres
       - uv run pytest tests/test_user_admin_service.py -q
 
+  test-authwall:
+    desc: "Meet de authorization wall tegen een echte Keycloak + oauth2-proxy"
+    summary: |
+      Draait tests/integration/test_authorization_wall_proxy.py: twee containers, geen
+      cluster. Per storing een controlemeting zonder de vlag naast de meting met de vlag.
+      Vraagt werkende Docker; de Keycloak blijft daarna staan voor de volgende run.
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/integration/test_authorization_wall_proxy.py -m requires_infra -v
+    silent: false
+
+  test-authwall-stop:
+    desc: "Stop en verwijder de vaste test-Keycloak (zad-test-keycloak)"
+    summary: |
+      De Keycloak blijft tussen runs met opzet staan. Dit haalt hem weg; de volgende run
+      maakt hem opnieuw. Veilig zolang er geen suite draait.
+    cmds:
+      - docker rm -f zad-test-keycloak zad-test-authwall-proxy
+
+  test-authwall-reset:
+    desc: "Bouw de test-Keycloak van de authorization wall opnieuw op"
+    summary: |
+      Verwijdert de containers en laat de fixture ze opnieuw maken, door de tests te
+      draaien.
+    dir: operations-manager/python
+    cmds:
+      - docker rm -f zad-test-keycloak zad-test-authwall-proxy
+      - task: test-authwall
+
   test-upgrade-safety:
     desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
     summary: |
