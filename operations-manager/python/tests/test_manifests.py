@@ -839,10 +839,9 @@ class TestRenderRealTemplates:
         assert "--oidc-issuer-url=https://keycloak.example.com/realms/test" in args
         assert "--client-id=my-client" in args
         assert "--upstream=http://localhost:8080" in args
-        # Zonder banner stuurt de muur een sessieloze navigatie door naar Keycloak in
-        # plaats van een inlogkaart te tonen, zodat een levende SSO-sessie onzichtbaar
-        # herstelt en applicaties dat niet zelf hoeven te detecteren.
-        assert "--skip-provider-button=true" in args
+        # De inlogkaart blijft: hij is het enige dat --banner rendert. Doorsturen naar
+        # Keycloak is een aparte afweging, zie de futures-doc over het tussenscherm.
+        assert "--skip-provider-button=false" in args
         assert "--custom-templates-dir=/etc/oauth2-proxy/templates" in args
         assert not any(arg.startswith("--banner=") for arg in args)
         # Cookie-instellingen expliciet: zie de template voor het waarom per vlag.
@@ -897,10 +896,8 @@ class TestRenderRealTemplates:
         containers = doc["spec"]["template"]["spec"]["containers"]
         sidecar = containers[1]
         args = sidecar["args"]
-        # Een banner mag geen tussenpagina forceren: een sessie die stil te herstellen is
-        # hoort geen inlogscherm op te leveren. De vlag gaat nog mee, maar rendert alleen
-        # op sign_in.html en die pagina wordt niet meer getoond.
-        assert "--skip-provider-button=true" in args
+        # Een gezette banner moet ook zichtbaar zijn, en dat kan alleen op de inlogkaart.
+        assert "--skip-provider-button=false" in args
         assert "--banner=Welcome to our application. Please log in." in args
 
     def test_authorization_wall_configmap_section(self):

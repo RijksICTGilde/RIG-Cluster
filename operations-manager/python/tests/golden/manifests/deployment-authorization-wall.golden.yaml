@@ -110,7 +110,7 @@ spec:
             - --cookie-refresh=3m
             - --api-route=^/api/
             - --api-route=\.(css|js|mjs|map|json|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$
-            - --skip-provider-button=true
+            - --skip-provider-button=false
             - --cookie-csrf-per-request=true
             - --custom-templates-dir=/etc/oauth2-proxy/templates
             # Require a verified email address: reject any token whose email_verified is not true.
