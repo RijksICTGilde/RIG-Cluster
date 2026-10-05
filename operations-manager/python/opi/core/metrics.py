@@ -281,20 +281,36 @@ class OPICollector(Collector):
             # ``exported_namespace`` behind your back.
             labels=["project_namespace", "reason"],
         )
+        # When the count was last taken, in the shape of opi_peak_memory_timestamp above.
+        # The count alone cannot say whether it means "nothing is failing" or "nobody
+        # looked": the snapshot starts empty, so a cluster where the cluster-wide pod read
+        # is refused reports a clean zero forever. 0 here means no pass has ever succeeded.
+        pull_observed = GaugeMetricFamily(
+            "opi_image_pull_observed_timestamp",
+            "Unix timestamp of the last image-pull observation that reached the cluster",
+        )
         total = 0
+        observed_at = 0.0
         by_reason: dict[tuple[str, str], int] = {}
         try:
-            from opi.services.image_pull_report import image_pull_failure_count, image_pull_failure_counts
+            from opi.services.image_pull_report import (
+                image_pull_failure_count,
+                image_pull_failure_counts,
+                image_pull_observed_timestamp,
+            )
 
             total = image_pull_failure_count()
             by_reason = image_pull_failure_counts()
+            observed_at = image_pull_observed_timestamp()
         except Exception:
             logger.debug("Failed to collect image-pull metrics", exc_info=True)
         pull_failures.add_metric([], total)
         for (namespace, reason), count in by_reason.items():
             pull_by_reason.add_metric([namespace, reason], count)
+        pull_observed.add_metric([], observed_at)
         yield pull_failures
         yield pull_by_reason
+        yield pull_observed
 
     def describe(self):
         """Return empty description; metrics are generated dynamically."""

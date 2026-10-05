@@ -49,6 +49,15 @@ een heuristiek die een pod weghaalt niet.
 `capacity`-veto staat voor de allowlist, want Quay antwoordt een vol quotum met de
 distributiespec-code `DENIED` en `denied` moet een echte weigering kunnen blijven betekenen.
 
+De melding die hij classificeert komt uit een enkele lezer,
+`read_image_pull_from_statuses()` in hetzelfde bestand. Beide producenten gebruiken die:
+de pod-health-check op het uitrolpad en de telling hieronder. Dat moet, want het prefix
+`"{reden}: {kubelet-tekst}"` is dragend. `InvalidImageName` zet namelijk geen tekst die
+iets over de image zegt, dus alleen het reden-woord maakt die vorm `absent`; een tweede
+lezer die het net anders formuleert laat dezelfde storing op de kaart als `absent` en in de
+log als `undiagnosed` landen. De pod-grendels (is dit onze pod, wordt hij opgeruimd, is het
+de huidige generatie) blijven per aanroeper, want die stellen een andere vraag.
+
 ## Waar het zichtbaar is
 
 ### Op de deploymentkaart
@@ -74,6 +83,7 @@ ophalen. De collector in `opi/core/metrics.py` geeft dat uit als:
 |---|---|---|
 | `opi_image_pull_failing_pods` | geen | altijd, ook op nul |
 | `opi_image_pull_failing_pods_by_reason` | `project_namespace`, `reason` | alleen bij een waarneming |
+| `opi_image_pull_observed_timestamp` | geen | altijd; `0` als er nog nooit een ronde lukte |
 
 De kale telling staat er altijd omdat een metriek die alleen bestaat als er iets stuk is,
 niet te onderscheiden is van een metriek die niet geleverd wordt. Het label heet
@@ -85,14 +95,55 @@ Nooit de kubelet-melding of de image-tag als label. Die zijn onbegrensd.
 `ZadComponentKanImageNietOphalen` alarmeert als de kale telling een kwartier boven nul
 staat. Een kwartier, want een PR-image die net gebouwd wordt zit daarbinnen.
 
-Een mislukte ronde laat de vorige stand staan in plaats van nul te melden: "we konden niet
-kijken" is niet "er is niets aan de hand", en nul is wat het alarm als gezond leest.
+### En of er wel gekeken is
+
+Een mislukte ronde laat de vorige stand staan in plaats van nul te melden, want nul is wat
+het alarm als gezond leest. Maar voor de eerste gelukte ronde is er geen vorige stand om te
+bewaren: een cluster waar de pod-lezing geweigerd wordt meldt dan een schone nul, het alarm
+hierboven vuurt nooit en het blok op de deploymentkaart blijft leeg. Dat is dezelfde val
+als die deze taak wegneemt, "we konden niet kijken" dat leest als "er is niets aan de hand",
+en hij mag niet aan de nieuwe kant terugkomen. Alleen `opi_image_pull_observed_timestamp`
+scheidt de twee betekenissen van nul.
+
+De tijdstempel staat op `0` tot de eerste ronde het cluster werkelijk gelezen heeft, en
+blijft daarna op het moment van de laatste gelukte ronde staan.
+`ZadImagePullObservatieOntbreekt` vuurt als hij ouder is dan tien minuten, dus na tien
+mislukte rondes op rij. Die ene drempel dekt ook "nog nooit gelukt", want `0` is de epoch
+en die is ruim langer dan tien minuten geleden. Dat is niet vanzelfsprekend en het is juist
+het geval waar het op `odcn-production` om gaat, dus het staat als toets vast
+(`test_image_pull_alarm_leest_de_metriek_die_er_is.py`): een herschrijving naar een vorm
+die alleen op verandering kijkt zou precies dat geval laten lopen.
+
+### Een LIST, met een open punt
 
 Een periodieke LIST en niet de pod-watch van `oom-pod-watch.md`, om twee redenen waarvan de
-tweede beslist: die watch staat op elk cluster uit tot hij zich bewezen heeft, en dit moet
-overal werken; en een momentopname die opnieuw geteld wordt kan geen verouderde regel
-dragen, terwijl een stream die een `DELETED` mist blijft alarmeren op een pod die er niet
-meer is.
+tweede beslist: die watch staat op elk cluster uit tot hij zich bewezen heeft, dus daar is
+vandaag niet op te bouwen; en een momentopname die opnieuw geteld wordt kan geen verouderde
+regel dragen, terwijl een stream die een `DELETED` mist blijft alarmeren op een pod die er
+niet meer is.
+
+Wat die keuze **niet** oplevert is het recht om het cluster te lezen. De LIST is
+cluster-breed (`--all-namespaces`), en op `odcn-production` praat OPI's kubectl via Capsule
+Proxy onder de RoleBinding die Capsule per tenant-namespace maakt.
+
+**Nog niet nagemeten:** of een cluster-brede pod-lezing daar doorkomt. Dat is hetzelfde
+open punt als voor de watch en om dezelfde reden, want een watch gebruikt dezelfde rechten
+als een list; zie [oom-pod-watch.md](oom-pod-watch.md). Wie productietoegang heeft, meet
+het af voor dit uitgaat, en wel VANUIT de pod:
+
+```bash
+kubectl -n rig-prd-operations exec deployment/operations-manager -- \
+  kubectl auth can-i list pods --all-namespaces
+```
+
+Niet met `--as` van buiten. De overlay zet `KUBERNETES_SERVICE_HOST` op het
+Capsule-Proxy-endpoint, dus alleen de kubectl in die pod loopt over de route die OPI
+werkelijk neemt; een `can-i` van buitenaf meet de API-server en antwoordt dus over een
+andere weg. Op de sandbox is het antwoord `yes`, maar daar is de ClusterRole de enige weg
+en zit Capsule Proxy niet in het pad, dus die meting zegt hier niets.
+
+Komt het niet door, dan is dat sinds deze taak te zien in plaats van stil: de tijdstempel
+blijft op `0` en het alarm hierboven vuurt.
 
 ### In de log en in de uitrol
 
@@ -141,10 +192,10 @@ replicas zonder waker, en geen daarvan was een slachtoffer van die storing.
 
 | bestand | waarvoor |
 |---|---|
-| `opi/handlers/project_file_handler.py` | `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
+| `opi/handlers/project_file_handler.py` | `read_image_pull_from_statuses`, `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
 | `opi/services/image_pull_report.py` | de telling, de momentopname en wat de kaart ervan leest |
-| `opi/core/metrics.py` | de twee gauges |
-| `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | het alarm |
+| `opi/core/metrics.py` | de drie gauges |
+| `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | de twee alarmen |
 | `opi/templates_lotc/bg/_argocd-deployment-card.html.j2` | het blok op de deploymentkaart |
 | `opi/services/event_interpreter.py` | de tekst per fout op de detailpagina |
 | `opi/services/oom_watcher.py` | de fire-and-forget check die het meldt |

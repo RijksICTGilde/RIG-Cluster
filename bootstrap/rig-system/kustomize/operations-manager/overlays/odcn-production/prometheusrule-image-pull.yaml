@@ -36,3 +36,36 @@ spec:
               die geen antwoord gaf (platform, tenzij het blijft staan).
               De betrokken deployments staan op Degraded en noemen het component op hun
               deploymentkaart in ZAD.
+        # De telling hierboven kan ook nul zijn omdat er niemand gekeken heeft: de
+        # momentopname begint leeg, dus een cluster waar de cluster-brede pod-lezing
+        # geweigerd wordt meldt een schone nul en dat leest als "niets aan de hand".
+        # Of zo'n lezing op dit cluster doorkomt is niet nagemeten (Capsule Proxy onder
+        # een RoleBinding per namespace, zie features/oom-pod-watch.md), dus juist hier
+        # moet dat te zien zijn.
+        - alert: ZadImagePullObservatieOntbreekt
+          # Een leeftijd dekt beide gevallen, want een tijdstempel die nog nooit gezet is
+          # staat op 0 en de epoch is ruim langer dan tien minuten geleden. Een aparte
+          # `== 0`-tak ernaast zou dus niets toevoegen en wel dubbel vuren: die tak houdt
+          # het label __name__ en de aftrekking hierboven niet, dus `or` ziet twee
+          # verschillende reeksen en geeft ze allebei terug.
+          #
+          # Tien minuten is tien rondes op rij mislukt. Vuurt niet als OPI helemaal niet
+          # gescrapet wordt, dat is wat `up` meldt.
+          expr: time() - opi_image_pull_observed_timestamp > 600
+          # Een herstart van OPI hoort hem niet te laten vuren: de eerste ronde gaat
+          # meteen, dus binnen vijf minuten staat de tijd er.
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ZAD kijkt niet meer of componenten hun image kunnen ophalen"
+            description: >-
+              opi_image_pull_failing_pods staat hierdoor op nul omdat er niemand kijkt,
+              niet omdat er niets aan de hand is, en
+              ZadComponentKanImageNietOphalen kan dus niet meer vuren. Kijk in de log van
+              operations-manager op "Image-pull observation failed"; is de waarde van
+              opi_image_pull_observed_timestamp 0, dan is er nog nooit een ronde gelukt en
+              is de eerste vraag of de cluster-brede pod-lezing hier mag. Meet dat IN de
+              pod, want alleen daar loopt kubectl over Capsule Proxy:
+              kubectl -n rig-prd-operations exec deployment/operations-manager --
+              kubectl auth can-i list pods --all-namespaces

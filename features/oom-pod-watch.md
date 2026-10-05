@@ -204,6 +204,12 @@ zie [capsule-proxy-prometheus-discovery.md](capsule-proxy-prometheus-discovery.m
 per-namespace RoleBinding. De meting in de PR is op de sandbox gedaan, waar de ClusterRole
 de enige weg is. Wie de vlag op odcn-production aanzet, begint hier.
 
+Dat open punt geldt sinds RC-243 ook voor een cluster-brede pod-LIST, want een watch
+gebruikt dezelfde rechten als een list: de image-pull-observer
+([image-pull-backoff-detection.md](image-pull-backoff-detection.md)) doet elke minuut een
+`kubectl get pods --all-namespaces` en staat niet achter deze vlag. Hij meldt het wel
+zodra het niet lukt: `opi_image_pull_observed_timestamp` blijft dan op `0`.
+
 ## Bestanden
 
 | Bestand | Rol |
