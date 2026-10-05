@@ -350,5 +350,6 @@ class TestDeObserver:
         task = observer._task
         await observer.stop()
 
-        assert task is not None and task.done()
+        assert task is not None
+        assert task.done()
         assert observer._task is None
