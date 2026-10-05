@@ -29,7 +29,9 @@ FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 #: Terugval als de clusterconfig geen ``organization_api_version`` noemt: de gemeten
 #: ODCN-waarde, zie features/image-registries.md.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
-DEFAULT_QUOTA_LIMIT_GIB = 10
+#: Terugval als de clusterconfig geen ``quota_limit_gib`` noemt. Hele gibibytes, want
+#: ``limitGiB`` is een integer in de CR.
+DEFAULT_QUOTA_LIMIT_GIB = 3
 
 
 class MissingRegistryCredentialsError(ValueError):

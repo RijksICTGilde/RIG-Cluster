@@ -106,3 +106,12 @@ def test_spec_quota_staat_er_expliciet_in(organization_manifest) -> None:
     assert quota is not None, "spec.quota ontbreekt; de custom-quota webhook weigert de CR"
     assert isinstance(quota.get("limitGiB"), int), f"limitGiB moet een int zijn, kreeg {quota!r}"
     assert quota["limitGiB"] >= 1, "het schema eist minimum 1"
+
+
+def test_de_quota_is_3_gibibyte_en_niet_de_crd_default(organization_manifest) -> None:
+    """De CRD-default is 10, en dat telt in het clustertotaal te snel op.
+
+    Hier staat de waarde vast omdat hij nog niet per project instelbaar is. Wordt hij dat,
+    dan blijft dit de default waar een project niets zegt.
+    """
+    assert organization_manifest["spec"]["quota"]["limitGiB"] == 3
