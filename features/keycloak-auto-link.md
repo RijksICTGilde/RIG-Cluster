@@ -37,6 +37,8 @@ account without it cannot log in at all. `IdpAutoLinkAuthenticator` only does
 account falls into the `else`, which only calls `updateFederatedIdentity`, and that touches
 the flag solely at `syncMode: FORCE` while the project IdP runs on `IMPORT`. The wall
 (`--insecure-oidc-allow-unverified-email=false`) then rejects every login with an HTTP 500.
+Pre-creating is not only a console action: a local invite registration and the `users:` section
+of a keycloak template both create such an account from the portal, and neither sets the flag.
 Measured on Keycloak 25.0.6; see `docs/KNOWN-ISSUES.md`.
 
 ## Configuration
