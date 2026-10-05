@@ -69,7 +69,7 @@ Zonder dat zou elke pod die ooit is omgevallen vuren zodra OPI start.
 
 ### Alleen OOMKilled
 
-Andere redenen (Error, Completed) hebben hun eigen pad: image-pull sanitering en de
+Andere redenen (Error, Completed) hebben hun eigen pad: de image-pull-melding en de
 `deployment-health`-dienst. Ze hier ook oppakken zou dezelfde storing twee keer
 remedieren.
 

@@ -1,111 +1,158 @@
-# ImagePullBackOff Detection and Auto-Disable
+# Een image die niet opgehaald kan worden
 
-## What it is
+## Wat het is
 
-Automatic detection of ImagePullBackOff errors on deployments, with auto-disable of the affected component to prevent continuous registry slamming. When a new image is pushed for the component, the disabled state is automatically reset.
+Detectie van componenten waarvan de container image niet op te halen is, en wat OPI
+daarmee doet: melden, tellen en alarmeren. Niet meer: uitschakelen.
 
-This extends the existing sanitize endpoint (which already handles crash loops) with image pull error detection. Sanitize does not disable for OOM kills: those belong to the resource tuner, see `auto-resource-tuning.md`.
+Tot 2 oktober 2026 zette OPI zo'n component op nul replicas. Dat is weg (RC-243). Wat
+blijft is een pod in ImagePullBackOff, die kubelet met zijn eigen backoff gewoon blijft
+proberen en die vanzelf omhoog komt zodra de image er is.
 
-## How it works
+## Waarom het uitschakelen weg is
 
-```
-Deployment running
-       |
-  Image pull fails (wrong tag, deleted image, auth error)
-       |
-  Pod enters ImagePullBackOff
-       |
-  Sanitize endpoint detects Warning events (ErrImagePull, ImagePullBackOff, InvalidImageName)
-       |
-  Component disabled in project YAML (disabled: true, disabled-reason: "ImagePullBackOff: ...")
-       |
-  Reprocessing generates replicas: 0 --> pod stops retrying
-       |
-  User pushes new image via API
-       |
-  The rollout event (ActionEvent.REDEPLOY) fires; deployment-health clears the disable
-       |
-  Component re-enabled (disabled: false) --> replicas: 1 --> new image pulled
-```
+De beslissing viel op een momentopname van een foutstring. Die string is in zeven weken
+drie keer verkeerd gelezen, elke keer gevonden door een storing:
 
-### Why disable instead of letting Kubernetes retry?
+| datum | wat er gebeurde | wat er toen gerepareerd is |
+|---|---|---|
+| 12-08-2026 | de mirror gaf HTTP 500 | 5xx en rate limits op de lijst |
+| 10-09-2026 | het transport viel om (`EOF`, TLS-timeout, `context deadline exceeded`) | lijst omgedraaid van denylist naar allowlist |
+| 30-09-2026 | Quay hergebruikte `DENIED` voor een vol quotum | veto voor de allowlist |
 
-Kubernetes retries image pulls with exponential backoff (up to 5 minutes between attempts), but it never stops. For images that will never be found (wrong tag, deleted from registry), this causes:
+De eerste twee lieten zien dat je niet kunt opsommen hoe een registry stuk kan gaan. De
+derde liet zien dat de omgekeerde lijst overmatcht. Beide richtingen zijn nu een keer fout
+geweest, dus het probleem was niet welke lijst het is: het was dat een enkele foutmelding
+als bewijs gold voor een ingreep die juist de pod weghaalt die het opnieuw zou proberen.
 
-- Continuous load on the container registry
-- Noise in monitoring and events
-- Wasted node resources on scheduling attempts
+Op 30 september zette dat ongeveer 40 componenten in zes projecten uit terwijl elke image
+gewoon upstream stond. Negen daarvan stonden twee dagen later nog uit, want een disable
+lost zichzelf niet op: hij wacht op een uitrol.
 
-Disabling the component (replicas: 0) stops the retry loop entirely until the user takes action.
+Wat het uitschakelen opleverde was netheid. Dat staat niet in verhouding tot een storing
+die zijn eigen oorzaak overleeft.
 
-### Why a broken registry is the exception
+## De classificatie is gebleven, gedegradeerd
 
-Disabling is only correct when the registry *answered* and the image is not there. A `500`,
-`502`, `503`, `504` or a `429` rate limit says nothing about whether the tag exists, so
-disabling on one is a guess -- and an expensive guess: `replicas: 0` removes the very pod
-that would have retried, so the component can never recover on its own, not even once the
-registry is healthy again. That turns a hiccup of a few seconds into an outage that lasts
-until someone pushes a new tag.
+`classify_image_pull_failure()` in `opi/handlers/project_file_handler.py` leest de
+kubelet-melding en geeft een van drie klassen terug. Hij bepaalt hoe iets geformuleerd en
+geteld wordt, en nooit meer of er iets naar nul gaat. Een heuristiek in een zin is prima;
+een heuristiek die een pod weghaalt niet.
 
-So a pull error whose message names a registry-side failure leaves the component **enabled**
-and is only reported. Kubelet keeps retrying the pull with its own backoff and the component
-comes back by itself. `is_transient_registry_error()` in `opi/handlers/project_file_handler.py`
-draws the line; it matches literal phrases (`internal server error`, `http status: 503`, ...)
-and never a bare number, so an image tag like `pr-500-abc1234` is not read as a status code.
+| klasse | wat de registry zei | wie kan handelen |
+|---|---|---|
+| `absent` | de image of tag is er niet, of mag niet opgehaald worden | het team zelf |
+| `capacity` | de gedeelde proxy-cache zit vol (`quota has been exceeded`) | het platform |
+| `undiagnosed` | geen antwoord: een 5xx, een timeout, een dode TLS-endpoint, een formulering die nog niemand heeft gezien | het platform, tenzij het blijft staan |
 
-This came out of the incident of 2026-08-12, where the ODCN pull-through mirror
-`rcr.rijksapps.nl/ghcr-rig` returned 500 on manifests that ghcr served fine. Two components
-sharing one image tag would pull at the same moment, one would catch the 500, and that half
-of the pair was disabled permanently while its twin ran happily on the identical tag.
+`image_is_confirmed_absent()` is diezelfde functie, versmald tot een antwoord. De
+`capacity`-veto staat voor de allowlist, want Quay antwoordt een vol quotum met de
+distributiespec-code `DENIED` en `denied` moet een echte weigering kunnen blijven betekenen.
 
-## Detection
+## Waar het zichtbaar is
 
-The sanitize endpoint (`POST /api/resources/{project_name}/sanitize`) checks Kubernetes namespace events for Warning events with these reasons:
+### Op de deploymentkaart
 
-- `ErrImagePull` -- initial pull failure
-- `ImagePullBackOff` -- backoff after repeated failures
-- `InvalidImageName` -- malformed image reference
+Een component dat niet kan pullen staat expliciet op de kaart van zijn deployment, met het
+component, de image (in de spelling van de bronregistry), wat de registry antwoordde en
+sinds wanneer. Gegroepeerd op reden-klasse, want dat is het enige wat per component
+verschilt aan het antwoord op "en wat doe ik eraan".
 
-Events are filtered by:
-- **Component name**: only events for the specific component's pods (matched by `unique_name` prefix)
-- **Age**: only events from the last hour (`max_age_hours=1`)
+Dat staat naast, en nadrukkelijk niet in, de lijst met uitgeschakelde componenten: OOM en
+crash loops schakelen nog wel uit, en die componenten zijn weg tot er een uitrol komt.
+Deze staan aan en proberen het zelf opnieuw.
 
-## Auto-reset on a rollout
+De gegevens komen uit de telling hieronder, dus de kaart kost er geen clusteraanroep voor.
 
-A rollout -- an image push or an upsert of an existing deployment -- re-enables the
-component before reprocessing, so the new image gets a chance to pull without manual
-intervention.
+### Als metriek en alarm
 
-Since RC-37 this is no longer a reason check in `update_image_and_regenerate()`, and it is
-no longer limited to image-pull disables. The rollout paths fire `ActionEvent.REDEPLOY` and
-the deployment-health service clears the disable **whatever the reason said** -- OOMKilled
-and crash loops included -- because every automatic disable is a judgement about content
-that was just replaced. See `features/redeploy-clears-recorded-state.md` for the reasoning
-and for the one case that is left alone (a `disabled` flag on the component definition,
-which is a project-wide decision by a person).
+`opi/services/image_pull_report.py` telt elke minuut (`IMAGE_PULL_OBSERVE_INTERVAL_SECONDS`)
+met een `kubectl get pods --all-namespaces` hoeveel applicatiepods hun image niet kunnen
+ophalen. De collector in `opi/core/metrics.py` geeft dat uit als:
 
-## Configuration
+| metriek | labels | wanneer |
+|---|---|---|
+| `opi_image_pull_failing_pods` | geen | altijd, ook op nul |
+| `opi_image_pull_failing_pods_by_reason` | `project_namespace`, `reason` | alleen bij een waarneming |
 
-No additional configuration needed. The detection uses the existing sanitize infrastructure:
+De kale telling staat er altijd omdat een metriek die alleen bestaat als er iets stuk is,
+niet te onderscheiden is van een metriek die niet geleverd wordt. Het label heet
+`project_namespace` en niet `namespace`: de scrape voegt zelf een `namespace` toe en een
+botsing wordt stil omgedoopt naar `exported_namespace`.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `SANITIZE_RESTART_THRESHOLD` | `10` | Restart count threshold (existing, unrelated to image pull) |
+Nooit de kubelet-melding of de image-tag als label. Die zijn onbegrensd.
 
-## Key files
+`ZadComponentKanImageNietOphalen` alarmeert als de kale telling een kwartier boven nul
+staat. Een kwartier, want een PR-image die net gebouwd wordt zit daarbinnen.
 
-| File | Purpose |
-|------|---------|
-| `opi/api/resource_router.py` | Sanitize endpoint with ImagePullBackOff event check |
-| `opi/handlers/project_file_handler.py` | `is_transient_registry_error()`: registry failure vs missing image |
-| `opi/manager/project_manager.py` | Inline deploy path: splits the two and only disables the missing-image half |
-| `opi/services/oom_watcher.py` | Delayed watcher: same split before `disable_components_for_image_pull()` |
-| `opi/services/redeploy.py` | The rollout scan that lets the services clear their state |
-| `opi/services/catalog/deployment_health/` | Clears the disable on a rollout |
-| `opi/connectors/kubectl.py` | `get_namespace_events()` for event retrieval |
+Een mislukte ronde laat de vorige stand staan in plaats van nul te melden: "we konden niet
+kijken" is niet "er is niets aan de hand", en nul is wat het alarm als gezond leest.
 
-## Related features
+Een periodieke LIST en niet de pod-watch van `oom-pod-watch.md`, om twee redenen waarvan de
+tweede beslist: die watch staat op elk cluster uit tot hij zich bewezen heeft, en dit moet
+overal werken; en een momentopname die opnieuw geteld wordt kan geen verouderde regel
+dragen, terwijl een stream die een `DELETED` mist blijft alarmeren op een pod die er niet
+meer is.
 
-- [oom-kill-watcher.md](oom-kill-watcher.md) -- Similar pattern for OOM detection and auto-tuning
-- [auto-resource-tuning.md](auto-resource-tuning.md) -- Resource tuning via the same sanitize endpoint
-- [redeploy-clears-recorded-state.md](redeploy-clears-recorded-state.md) -- The hook that re-enables the component
+### In de log en in de uitrol
+
+De fire-and-forget check (`oom_watcher`) logt per component een WARNING met de volledige
+kubelet-melding en de reden-klasse. Het uitrolpad (`project_manager`) zet elke image-pull-
+fout in `health_warnings`, met de volledige melding, achter de regel
+`Runtime pod-health issue(s) after sync`. Dat is de regel waarmee de storing van
+30 september te reconstrueren was.
+
+Alleen een registry-auth-fout faalt de uitroltaak nog, en alleen als de registry ook echt
+antwoord gaf. De auth-markers bevatten kale `401`/`403`, en die kunnen in een image-tag
+staan: een transportstoring mag een uitrol niet laten falen op de spelling van een tag.
+
+## Het gevolg dat buiten de code valt
+
+Een niet-pullende component ging naar nul replicas en ArgoCD meldde de applicatie
+`Healthy`. Nu blijft de pod staan en meldt ArgoCD `Degraded`. Dat is eerlijker, en het is
+een zichtbare verandering voor afnemers en voor alles wat op applicatie-health kijkt.
+
+## De sanitize
+
+`POST /api/resources/{project}/sanitize` schakelt componenten uit om andere redenen
+(herstarts, geen enkele ready pod, crash loops). Ziet hij een image-pull-event voor een
+component, dan slaat hij dat component **helemaal** over.
+
+Die tweede helft is de subtiliteit. Een pull die niet lukt verklaart elk ander symptoom in
+die lijst: nul pods zijn ready en de container "herstart" juist omdat de image nooit is
+aangekomen. Uitschakelen op die symptomen haalt de pod weg die het opnieuw zou proberen,
+en dat is precies de ingreep die hier verdwenen is.
+
+## Oude disables
+
+Het `disabled` plus `disabled-reason` mechanisme blijft, met dezelfde vorm, voor OOM en
+crash loops. Een disable die nog uit de oude image-pull-tak komt wordt opgeruimd zoals
+altijd: een uitrol vuurt `ActionEvent.REDEPLOY` en de deployment-health-dienst haalt de
+disable weg, wat de reden ook zei. Zie `redeploy-clears-recorded-state.md`.
+
+`is_image_pull_disable_reason()` bestaat daarvoor nog, en voor niets anders: er wordt geen
+nieuwe image-pull-disable meer geschreven.
+
+Op 5 oktober 2026 is over alle 60 `rig-prd-*` namespaces nagegaan of er nog zulke disables
+stonden. De negen van 30 september stonden er niet meer. Zeven deployments stonden op nul
+replicas zonder waker, en geen daarvan was een slachtoffer van die storing.
+
+## Belangrijke bestanden
+
+| bestand | waarvoor |
+|---|---|
+| `opi/handlers/project_file_handler.py` | `classify_image_pull_failure`, `image_is_confirmed_absent`, `IMAGE_PULL_REASONS` |
+| `opi/services/image_pull_report.py` | de telling, de momentopname en wat de kaart ervan leest |
+| `opi/core/metrics.py` | de twee gauges |
+| `bootstrap/rig-system/.../prometheusrule-image-pull.yaml` | het alarm |
+| `opi/templates_lotc/bg/_argocd-deployment-card.html.j2` | het blok op de deploymentkaart |
+| `opi/services/event_interpreter.py` | de tekst per fout op de detailpagina |
+| `opi/services/oom_watcher.py` | de fire-and-forget check die het meldt |
+| `opi/manager/project_manager.py` | het uitrolpad dat het meldt |
+| `opi/api/resource_router.py` | de sanitize, die het component overslaat |
+
+## Verwant
+
+- [oom-pod-watch.md](oom-pod-watch.md) - OOM-kills tijdens runtime, die wel remedieren
+- [auto-resource-tuning.md](auto-resource-tuning.md) - de tuner die een OOM-disable opheft
+- [redeploy-clears-recorded-state.md](redeploy-clears-recorded-state.md) - de haak die elke disable opruimt bij een uitrol
