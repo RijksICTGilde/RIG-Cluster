@@ -337,7 +337,10 @@ CLUSTER_CONFIG = {
             # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
-            "quota_limit_gib": 10,
+            # 3 en niet de CRD-default van 10: tien gibibytes per private registry telt in
+            # het clustertotaal te snel op. De norm is 2,5 GiB, naar boven afgerond omdat
+            # limitGiB een integer is.
+            "quota_limit_gib": 3,
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
                 {
