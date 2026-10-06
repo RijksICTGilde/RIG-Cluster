@@ -122,7 +122,7 @@ Er zijn twee gecentraliseerde helpers, drie identieke kopieën van een derde, en
 | `require_project_edit_access` | `opi/web/project_edit_security.py:28` | 11 | lidmaatschap **en** rol `admin`/`owner` |
 | `_require_project_member_access` | `opi/web/router_detail_edit.py:163` | 15 | alleen lidmaatschap, elke rol |
 | `_require_admin` (drie losse, identieke definities) | `opi/web/router_user_admin.py:41`, `opi/web/router_subdomain_admin.py:48`, `opi/web/router_usage.py:74` | 10 | platformbeheerder |
-| Handgeschreven rolcontrole `user_role not in ["admin", "owner"]` | - | 6 | lidmaatschap en rol, per hand | 
+| Handgeschreven rolcontrole `user_role not in ["admin", "owner"]` | - | 6 | lidmaatschap en rol, per hand |
 | Handgeschreven lidmaatschapscontrole `is_user_authorized_for_project(...)` | - | 15 | alleen lidmaatschap, per hand |
 | Rolcontrole in een Jinja2-template `user_role in ["admin", "owner"]` | - | 13 | bepaalt alleen wat er gerenderd wordt |
 | Handgeschreven projectsleutelcontrole | `opi/api/task_router.py:56`, `:159-165` | 3 | kennis van de projectsleutel |

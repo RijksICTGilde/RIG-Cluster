@@ -106,6 +106,7 @@ def _attachments_list_response(
     staged = _staged(state) if state else {}
     staged_items = [{"id": att_id, "filename": info.get("filename", att_id)} for att_id, info in staged.items()]
     return templates_lotc.TemplateResponse(
+        request,
         "wizard/partials/attachments_list.html.j2",
         {
             "request": request,
@@ -121,6 +122,7 @@ def _attachments_list_response(
 def _id_field_response(request: Request, error: str | None, attachment_id: str):
     """Re-render the identifier field with the standard field-error state (invalid + errorText)."""
     return templates_lotc.TemplateResponse(
+        request,
         "wizard/partials/attachments_id_field.html.j2",
         {"request": request, "error": error, "attachment_id": attachment_id},
     )

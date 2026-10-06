@@ -350,11 +350,23 @@ def _container_staat() -> tuple[bool, str]:
 
 
 def _wacht_tot_hij_luistert(seconden: int = 60) -> None:
+    """Wacht tot de ECHTE server luistert, niet tot de init-server van de entrypoint.
+
+    De toets gaat over TCP (``-h 127.0.0.1``) en niet over de unix-socket. Dat is het hele
+    punt: bij een koude start zet de postgres-entrypoint eerst een tijdelijke server op om
+    initdb en de init-scripts te draaien, en die start hij met ``listen_addresses=''``, dus
+    alleen op de socket. Een ``pg_isready`` zonder host slaagt daar al tegen, waarna de
+    entrypoint hem stopt en de echte server start. In dat gat verdwijnt de socket, en de
+    eerste query erna valt erin met "No such file or directory". Dat kostte op een koude
+    runner alle ORM-tests in een keer, en viel lokaal nooit op omdat de container daar al
+    warm stond.
+    """
     import time
 
     einde = time.monotonic() + seconden
     while time.monotonic() < einde:
-        if _docker("exec", ZAD_TEST_PG_CONTAINER, "pg_isready", "-U", "postgres", check=False).returncode == 0:
+        klaar = _docker("exec", ZAD_TEST_PG_CONTAINER, "pg_isready", "-U", "postgres", "-h", "127.0.0.1", check=False)
+        if klaar.returncode == 0:
             return
         time.sleep(0.5)
     logboek = _docker("logs", "--tail", "20", ZAD_TEST_PG_CONTAINER, check=False).stdout
