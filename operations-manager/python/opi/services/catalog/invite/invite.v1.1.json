@@ -177,6 +177,18 @@
           ],
           "default": null,
           "description": "Heading shown after a successful redemption."
+        },
+        "title": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/I18nText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What the invite gives access to, as the invitee knows it (for example 'Docs en Grist'). Heading of the invitation pages; empty falls back to the project's display name."
         }
       },
       "required": [
