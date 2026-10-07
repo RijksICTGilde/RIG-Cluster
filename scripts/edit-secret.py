@@ -294,7 +294,10 @@ def edit_flow(args: argparse.Namespace, cluster: Cluster) -> int:
         print("\nNiets gewijzigd, niets geschreven.")
         return 0
 
-    if input(f"\nSchrijf naar {destination}? [j/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
+    # Default JA, zoals in de rotatieflow: je hebt hierboven per veld al gekozen en het
+    # overzicht staat erbij, dus dit is een bevestiging en geen tweede beslissing. De
+    # barriere tegen het verkeerde cluster blijft wel staan: die vraagt de clusternaam.
+    if input(f"\nSchrijf naar {destination}? [J/n] ").strip().lower() in ("n", "nee", "no"):
         print("Afgebroken, niets geschreven.")
         return 1
 
