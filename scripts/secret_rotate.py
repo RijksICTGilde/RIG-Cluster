@@ -842,16 +842,30 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
         # het vervangt niets. Zonder resetpass bleef het oude wachtwoord geldig en accepteerde
         # `default` er twee, terwijl de PING met de nieuwe waarde gewoon slaagde. Zo leek de
         # rotatie te werken en was de oude waarde nog bruikbaar (gemeten op odcn, 07-10-2026).
-        for command in (
-            ["ACL", "SETUSER", "default", "on", "resetpass", f">{new_pw}"],
-            ["ACL", "SAVE"],
+        #
+        # Elk commando is een eigen redis-cli-verbinding, dus een eigen aanmelding. Daarom
+        # hoort bij elk commando de waarde die op DAT moment geldig is: de SETUSER meldt zich
+        # nog met de oude, en vanaf dat commando bestaat die niet meer, dus de SAVE erna moet
+        # de nieuwe gebruiken. Beide met de oude gaf NOAUTH op de SAVE, met als uitkomst een
+        # nieuw wachtwoord in geheugen dat nergens stond opgeslagen (gemeten op odcn, 07-10-2026).
+        for command, auth in (
+            (["ACL", "SETUSER", "default", "on", "resetpass", f">{new_pw}"], ctx.current[ctx.rotating]),
+            (["ACL", "SAVE"], new_pw),
         ):
             result = ctx.kube.exec(
                 "deploy/rig-redis",
-                ["env", f"REDISCLI_AUTH={ctx.current[ctx.rotating]}", "redis-cli", "--no-auth-warning", *command],
+                ["env", f"REDISCLI_AUTH={auth}", "redis-cli", "--no-auth-warning", *command],
+                check=False,
             )
-            _expect(result.stdout.strip(), "OK", ctx)
-        return "ACL aangepast en opgeslagen (OK,SAVE)"
+            outcome = result.stdout.strip()
+            if "OK" not in outcome and not ctx.kube.dry_run:
+                _ok(
+                    f"redis antwoordde niet als verwacht op {' '.join(command[:2])} ('OK' vereist): {outcome[:120]!r}. "
+                    "Staat de SETUSER wel en de SAVE niet, dan draagt het geheugen een waarde die niet op schijf "
+                    "staat en ook niet in het secret: herstel met `kubectl rollout restart deploy/rig-redis`, "
+                    "dan schrijft de init-container de ACL terug uit het secret."
+                )
+        return "ACL vervangen en opgeslagen (resetpass, SAVE)"
 
     def _verify(ctx: Ctx) -> str:
         """Bewijst beide helften: de nieuwe waarde werkt en de oude is dood.
