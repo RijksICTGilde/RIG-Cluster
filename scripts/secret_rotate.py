@@ -837,8 +837,13 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
         # ACL SETUSER leeft in geheugen; ACL SAVE is wat de herstart-persistentie schrijft
         # naar /data/users.acl. Zonder die tweede draait een restart van de pod terug naar de
         # oude waarde (gemeten in de sandbox, 28-09).
+        #
+        # `resetpass` hoort ervoor: in Redis VOEGT `>pw` een wachtwoord toe aan de gebruiker,
+        # het vervangt niets. Zonder resetpass bleef het oude wachtwoord geldig en accepteerde
+        # `default` er twee, terwijl de PING met de nieuwe waarde gewoon slaagde. Zo leek de
+        # rotatie te werken en was de oude waarde nog bruikbaar (gemeten op odcn, 07-10-2026).
         for command in (
-            ["ACL", "SETUSER", "default", "on", f">{new_pw}"],
+            ["ACL", "SETUSER", "default", "on", "resetpass", f">{new_pw}"],
             ["ACL", "SAVE"],
         ):
             result = ctx.kube.exec(
@@ -849,11 +854,26 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
         return "ACL aangepast en opgeslagen (OK,SAVE)"
 
     def _verify(ctx: Ctx) -> str:
+        """Bewijst beide helften: de nieuwe waarde werkt en de oude is dood.
+
+        Alleen de eerste helft toetsen is niet genoeg. Dat liet de rotatie van 07-10-2026 op
+        odcn groen afsluiten terwijl het oude wachtwoord nog werkte, want `>pw` voegde toe in
+        plaats van te vervangen. De cnpg-componenten toetsen beide richtingen al; redis deed
+        dat niet.
+        """
         result = ctx.kube.exec(
             "deploy/rig-redis",
             ["env", f"REDISCLI_AUTH={ctx.new[ctx.rotating]}", "redis-cli", "--no-auth-warning", "PING"],
         )
-        return f"PING met nieuwe waarde: {_expect(result.stdout.strip(), 'PONG', ctx)}"
+        fresh = _expect(result.stdout.strip(), "PONG", ctx)
+        stale = ctx.kube.exec(
+            "deploy/rig-redis",
+            ["env", f"REDISCLI_AUTH={ctx.current[ctx.rotating]}", "redis-cli", "--no-auth-warning", "PING"],
+            check=False,
+        ).stdout.strip()
+        if "PONG" in stale and not ctx.kube.dry_run:
+            _ok(f"de OUDE waarde werkt na de rotatie nog steeds ({stale[:60]!r}): de ACL is niet vervangen")
+        return f"PING met nieuwe waarde: {fresh}; oude waarde afgewezen"
 
     return [
         Step(
@@ -876,10 +896,14 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
         Step(
             "ACL SETUSER default",
             "apply",
-            ["kubectl exec deploy/rig-redis -- env REDISCLI_AUTH=<HUIDIG> redis-cli ACL SETUSER default on '><NIEUW>'"],
+            [
+                "kubectl exec deploy/rig-redis -- env REDISCLI_AUTH=<HUIDIG> redis-cli "
+                "ACL SETUSER default on resetpass '><NIEUW>'",
+                "daarna ACL SAVE, zodat /data/users.acl en het geheugen hetzelfde zeggen",
+            ],
             _apply,
         ),
-        Step("Verifiëren met de nieuwe waarde", "verify", [], _verify),
+        Step("Verifiëren: nieuwe waarde werkt, oude is afgewezen", "verify", [], _verify),
     ]
 
 
