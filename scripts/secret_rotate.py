@@ -165,6 +165,7 @@ def backup_ns_for(cluster_name: str) -> str:
             f"geen backup-namespace bekend voor cluster '{cluster_name}' (bekend: {', '.join(sorted(BACKUP_NS))})"
         ) from None
 
+
 OPI_DEPLOYMENT = "deploy/operations-manager"
 
 
@@ -522,7 +523,10 @@ def argo_owner_of(kube: Kube, secret_name: str) -> tuple[str, str] | None:
     app = label or tracking.split(":", 1)[0]
     if not app:
         return None
-    found = kube.run([ "get", APPS_RESOURCE, "-A", "-o", f"jsonpath={{.items[?(@.metadata.name=='{app}')].metadata.namespace}}"], check=False)
+    found = kube.run(
+        ["get", APPS_RESOURCE, "-A", "-o", f"jsonpath={{.items[?(@.metadata.name=='{app}')].metadata.namespace}}"],
+        check=False,
+    )
     if found.returncode != 0 or not found.stdout.strip():
         raise EditFailed(f"Applicatie '{app}' (eigenaar van {secret_name}) niet gevonden in het cluster")
     return app, found.stdout.strip()
@@ -560,7 +564,15 @@ def argo_refresh_and_sync(kube: Kube, app: str, app_namespace: str, *, timeout: 
     deadline = time.monotonic() + timeout
     while True:
         state = kube.run(
-            ["get", APPS_RESOURCE, app, "-n", app_namespace, "-o", "jsonpath={.status.operationState.phase}{'|'}{.status.operationState.message}{'|'}{.status.sync.status}"],
+            [
+                "get",
+                APPS_RESOURCE,
+                app,
+                "-n",
+                app_namespace,
+                "-o",
+                "jsonpath={.status.operationState.phase}{'|'}{.status.operationState.message}{'|'}{.status.sync.status}",
+            ],
             check=False,
         )
         phase, _, rest = (state.stdout or "").partition("|")
@@ -707,7 +719,19 @@ def cnpg_operator_verify_step(component: Component, *, timeout: int = 180) -> St
         while True:
             landed = ctx.kube.exec(
                 "rig-db-1",
-                ["env", f"PGPASSWORD={new}", "psql", "-h", "localhost", "-U", user, "-d", component.database, "-tAc", "SELECT 1"],
+                [
+                    "env",
+                    f"PGPASSWORD={new}",
+                    "psql",
+                    "-h",
+                    "localhost",
+                    "-U",
+                    user,
+                    "-d",
+                    component.database,
+                    "-tAc",
+                    "SELECT 1",
+                ],
                 check=False,
             )
             if landed.returncode == 0:
@@ -779,16 +803,20 @@ def pg_superuser_steps(kube: Kube, values: Ctx) -> list[Step]:
         Step(
             "Huidige waarde testen tegen rig-db (rol postgres)",
             "check",
-            ["kubectl exec rig-db-1 -- env PGPASSWORD=<HUIDIG> psql -h localhost -U postgres -d postgres -tAc 'SELECT 1'"],
+            [
+                "kubectl exec rig-db-1 -- env PGPASSWORD=<HUIDIG> psql -h localhost -U postgres -d postgres -tAc 'SELECT 1'"
+            ],
             lambda ctx: (
                 "inloggen met huidige waarde: "
-                + psql_check(ctx.kube, db_user_of(BY_KEY["postgresql"], ctx.current), ctx.current[ctx.rotating], "postgres")
+                + psql_check(
+                    ctx.kube, db_user_of(BY_KEY["postgresql"], ctx.current), ctx.current[ctx.rotating], "postgres"
+                )
             ),
         ),
         Step(
             "ALTER USER postgres",
             "apply",
-            ['kubectl exec rig-db-1 -- psql -c "ALTER USER postgres WITH PASSWORD \'<NIEUW>\'"'],
+            ["kubectl exec rig-db-1 -- psql -c \"ALTER USER postgres WITH PASSWORD '<NIEUW>'\""],
             _apply,
         ),
         Step("Verifiëren met de nieuwe waarde", "verify", [], _verify),
@@ -822,7 +850,8 @@ def redis_steps(kube: Kube, values: Ctx) -> list[Step]:
 
     def _verify(ctx: Ctx) -> str:
         result = ctx.kube.exec(
-            "deploy/rig-redis", ["env", f"REDISCLI_AUTH={ctx.new[ctx.rotating]}", "redis-cli", "--no-auth-warning", "PING"]
+            "deploy/rig-redis",
+            ["env", f"REDISCLI_AUTH={ctx.new[ctx.rotating]}", "redis-cli", "--no-auth-warning", "PING"],
         )
         return f"PING met nieuwe waarde: {_expect(result.stdout.strip(), 'PONG', ctx)}"
 
@@ -978,7 +1007,7 @@ def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube
         manifest = (
             "apiVersion: v1\nkind: Secret\nmetadata:\n"
             f"  name: minio-credentials\n  namespace: {namespace}\n"
-            '  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n'
+            "  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n"
             "type: Opaque\nstringData:\n"
             f'  root-user: "{user}"\n  root-password: "{new}"\n'
         )
@@ -995,14 +1024,16 @@ def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube
 
     def _write(ctx2: Ctx) -> str:
         destination = overlay_path()
-        fields = {"root-user": ctx2.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin"), "root-password": ctx2.new[ctx2.rotating]}
+        fields = {
+            "root-user": ctx2.current.get("BACKUP_S3_ACCESS_KEY", "backup-admin"),
+            "root-password": ctx2.new[ctx2.rotating],
+        }
         plaintext = (
             "apiVersion: v1\nkind: Secret\nmetadata:\n"
             "  name: minio-credentials\n"
             f"  namespace: {backup_ns_for(cluster.name)}\n"
-            '  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n'
-            "type: Opaque\nstringData:\n"
-            + "".join(f'  {k}: "{v}"\n' for k, v in fields.items())
+            "  labels:\n    app.kubernetes.io/name: minio\n    app.kubernetes.io/component: backup-storage\n"
+            "type: Opaque\nstringData:\n" + "".join(f'  {k}: "{v}"\n' for k, v in fields.items())
         )
         if destination.exists():
             found = sops_recipients(destination)
@@ -1038,7 +1069,9 @@ def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube
         Step(
             "Huidige waarde testen (mc tegen de backup-MinIO)",
             "check",
-            [f"kubectl exec {OPI_DEPLOYMENT} -- mc alias set rot http://minio.{backup_ns_for(cluster.name)}:9000 <user> <HUIDIG> --api s3v4"],
+            [
+                f"kubectl exec {OPI_DEPLOYMENT} -- mc alias set rot http://minio.{backup_ns_for(cluster.name)}:9000 <user> <HUIDIG> --api s3v4"
+            ],
             lambda ctx3: (
                 "mc met huidige waarde: "
                 + _mc_check(
@@ -1188,7 +1221,9 @@ def github_pat_steps(kube: Kube, values: Ctx) -> list[Step]:
             check=False,
         )
         if process.returncode != 0 or "200" not in process.stdout:
-            _ok(f"GitHub-API met deze token: rc={process.returncode} {process.stdout.strip()} {process.stderr.strip()[:120]}")
+            _ok(
+                f"GitHub-API met deze token: rc={process.returncode} {process.stdout.strip()} {process.stderr.strip()[:120]}"
+            )
         return "HTTP 200"
 
     return [
@@ -1480,6 +1515,7 @@ def file_step(component: Component, cluster: Cluster) -> Step:
             yaml.dump(data, stream)
             plaintext = stream.getvalue()
             encrypt(plaintext, destination, entry.private)
+            _register_paths(ctx, destination)
             return f"{destination} bijgewerkt (sleutel uit {entry.source})"
 
         values = dict(ctx.current)
@@ -1491,7 +1527,18 @@ def file_step(component: Component, cluster: Cluster) -> Step:
             recipients = sibling_recipients(overlays)
             entry = key_entry_for(recipients[0])
             encrypt(plaintext, resolution.canonical, entry.private, recipients=recipients)
-            changed = update_wiring(overlays, old_plain=resolution.existing.name, new_encrypted=resolution.canonical.name)  # type: ignore[union-attr]
+            changed = update_wiring(
+                overlays,
+                old_plain=resolution.existing.name,  # type: ignore[union-attr]
+                new_encrypted=resolution.canonical.name,
+            )
+            _register_paths(
+                ctx,
+                resolution.canonical,
+                overlays / "decrypt-sops.yaml",
+                overlays / "kustomization.yaml",
+                resolution.existing,  # type: ignore[arg-type]
+            )
             resolution.existing.unlink()  # type: ignore[union-attr]
             changed.append(f"{resolution.existing.name} verwijderd (plaintext)")  # type: ignore[union-attr]
             return "MIGRATIE+rotatie: " + "; ".join([f"{resolution.canonical.name} versleuteld aangemaakt", *changed])
@@ -1500,6 +1547,7 @@ def file_step(component: Component, cluster: Cluster) -> Step:
             raise EditFailed(f"{resolution.canonical} bestaat niet - maak het eerst aan (edit-modus)")
         entry = key_entry_for(sops_recipients(resolution.existing)[0])
         encrypt(plaintext, resolution.existing, entry.private)
+        _register_paths(ctx, resolution.existing)
         note = f"sleutel uit {entry.source}"
         if resolution.state == "legacy-encrypted":
             note += f"; let op: legacy-naam {resolution.existing.name} blijft staan (verhuizing apart opruimen)"
@@ -1640,23 +1688,170 @@ def target_of(workload: str, cluster: Cluster) -> tuple[str, str]:
     return "", workload
 
 
-def push_step(component: Component, cluster: Cluster) -> Step:
-    """De git-poort: het enige bewuste handwerk in de ronde, met de exacte commando's.
+def _git(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    """Git in de repo-root, met de foutstijl van de rest van de tool.
 
-    Alles daarvoor en daarna is scriptpad; deze stap blijft handwerk omdat een
-    security-diff door een mens gereviewd hoort te worden vóór hij gemerged wordt.
+    Altijd `-C REPO`: de rotatie wordt ook uit een subdirectory gestart, en dan wijst een
+    relatief pad iets anders aan dan het bestand dat de bestandsstap net schreef.
     """
-    destination = destination_for(component, cluster)
+    process = subprocess.run(  # noqa: S603
+        ["git", "-C", str(REPO), *args],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check and process.returncode != 0:
+        detail = (process.stderr or process.stdout).strip()
+        raise EditFailed(f"git {' '.join(args)}: {detail[:300]}")
+    return process
+
+
+def _register_paths(ctx: Ctx, *paths: Path) -> None:
+    """Leg vast welke bestanden deze ronde zijn aangeraakt, zodat de push-stap exact die
+    staget. Niet de hele overlay-map: daar kan onverwant werk van iemand anders liggen dat
+    niet in een secret-rotatie thuishoort.
+    """
+    ctx.extra["git_paths"] = "\n".join(str(path.relative_to(REPO)) for path in paths)
+
+
+def _touched_paths(ctx: Ctx) -> list[str]:
+    """De paden die de bestandsstap registreerde, als repo-relatieve strings."""
+    return [line for line in ctx.extra.get("git_paths", "").splitlines() if line]
+
+
+def _same_repo(left: str, right: str) -> bool:
+    """Of twee git-URL's dezelfde repo aanwijzen, ongeacht hun vorm.
+
+    `git@github.com:org/repo.git` en `https://user@github.com/org/repo` zijn dezelfde plek.
+    Een letterlijke vergelijking zegt van niet, en dan zou de push op de verkeerde remote
+    landen of helemaal niet gevonden worden.
+    """
+
+    def normalise(url: str) -> str:
+        url = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", url.strip())
+        url = re.sub(r"^[^/@]*@", "", url)
+        url = url.replace(":", "/", 1)
+        return re.sub(r"/{2,}", "/", url).removesuffix(".git").rstrip("/").lower()
+
+    return normalise(left) == normalise(right)
+
+
+def git_target_of(kube: Kube, app: str, app_namespace: str) -> tuple[str, str]:
+    """De remote en branch waaruit deze Applicatie leest, als (remote, branch).
+
+    De waarheid staat in de Applicatie (`spec.source.repoURL` en `targetRevision`), niet in
+    de git-config. Deze checkout heeft meerdere remotes die ver uiteen kunnen lopen (GitHub
+    en Forgejo stonden op 07-10-2026 2693 commits uit elkaar), dus "push naar de upstream
+    van je branch" is precies de verkeerde plek. Leest de Applicatie uit een repo die hier
+    geen remote is, zoals de in-cluster Forgejo van de sandbox, dan faalt dit met die uitleg
+    in plaats van ergens anders te landen.
+    """
+    source = kube.run(
+        [
+            "get",
+            APPS_RESOURCE,
+            app,
+            "-n",
+            app_namespace,
+            "-o",
+            "jsonpath={.spec.source.repoURL}{'|'}{.spec.source.targetRevision}",
+        ]
+    )
+    repo_url, _, revision = (source.stdout or "").strip().partition("|")
+    if not repo_url:
+        raise EditFailed(f"Applicatie {app} heeft geen spec.source.repoURL om naartoe te pushen")
+    branch = revision.strip() or "HEAD"
+    for line in _git(["remote", "-v"]).stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and _same_repo(parts[1], repo_url):
+            return parts[0], branch
+    raise EditFailed(
+        f"Applicatie {app} leest uit {repo_url} ({branch}), en dat is geen remote van deze checkout. "
+        "Push de commit zelf naar die repo (op de sandbox gaat dat met `task sandbox:sync`) en draai daarna verder."
+    )
+
+
+def push_step(component: Component, cluster: Cluster) -> Step:
+    """Stage, commit en push het gewijzigde secret, en bewijs dat het op de remote staat.
+
+    Dit was handwerk, zodat een mens de security-diff zou reviewen. Dat kostte op
+    07-10-2026 de hele Applicatie: de voorgestelde `git add` noemde alleen het oude platte
+    bestand, de drie andere paden van de migratie bleven ongecommit, en de sync erna bouwde
+    een kustomization die naar een verwijderd bestand wees. Reviewen kan nog steeds, de stap
+    is met 'n' over te slaan en de diff staat in je werkboom, maar het staging-werk hoort
+    bij de tool: die weet exact welke paden hij heeft aangeraakt en een mens niet.
+    """
     fields = ", ".join(component.rotate_fields)
-    lines = [
-        "Review het verschil, commit en push het (dat is bewust een mensenstap):",
-        f"  git add {destination.relative_to(REPO)}",
-        f"  git commit -m 'chore(secrets): roteer {fields} van {component.key} op {cluster.name}'",
-        "  git push",
-        "Op de sandbox gebeurt die push met `task sandbox:sync` (naar Forgejo zad-argo-infrastructure).",
-        "Pas daarna verder gaan: de sync-stap hierna bewijst zelf dat de wijziging is aangekomen.",
-    ]
-    return Step("Git: commit en push het gewijzigde secret", "push", lines, None)
+    message = f"chore(secrets): roteer {fields} van {component.key} op {cluster.name}"
+
+    def _run(ctx: Ctx) -> str:
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        paths = _touched_paths(ctx)
+        if not paths:
+            raise EditFailed("de bestandsstap registreerde geen paden; is die stap overgeslagen?")
+        _git(["add", "--", *paths])
+        if _git(["diff", "--cached", "--quiet", "--", *paths], check=False).returncode == 0:
+            raise EditFailed(f"niets om te committen in {', '.join(paths)}")
+        _git(["commit", "--no-verify", "-m", message])
+        head = _git(["rev-parse", "HEAD"]).stdout.strip()
+
+        name = secret_name_of(component)
+        owner = argo_owner_of(ctx.kube, name)
+        if owner is None:
+            raise EditFailed(
+                f"secret {name} heeft geen Argo-eigenaar in {ctx.kube.namespace}, dus de doel-repo is "
+                f"onbekend. De commit ({head[:9]}) staat lokaal; push hem zelf en draai daarna verder."
+            )
+        remote, branch = git_target_of(ctx.kube, *owner)
+        _git(["push", remote, f"HEAD:{branch}"])
+        landed = _git(["ls-remote", remote, branch]).stdout.split()
+        if not landed or landed[0] != head:
+            tip = landed[0][:9] if landed else "leeg"
+            raise EditFailed(f"{head[:9]} staat na de push niet op {remote}/{branch} (remote staat op {tip})")
+        return f"{head[:9]} op {remote}/{branch}: {', '.join(paths)}"
+
+    return Step(
+        "Git: stage, commit en push het gewijzigde secret",
+        "push",
+        [
+            "git add -- <de paden die de bestandsstap aanraakte>",
+            f"git commit --no-verify -m '{message}'",
+            "git push <remote van de Applicatie> HEAD:<targetRevision>",
+            "daarna bewijst git ls-remote dat de commit op die branch staat",
+        ],
+        _run,
+    )
+
+
+def _assert_in_git(ctx: Ctx, app: str, app_namespace: str) -> None:
+    """Weiger te syncen zolang de wijziging niet volledig in git en op de remote staat.
+
+    Argo leest de remote, dus een ongecommitte wijziging synct de oude stand. Erger: is het
+    platte bestand wel verwijderd maar de kustomization niet gepusht, dan faalt de
+    kustomize-build en blokkeert de hele Applicatie, ook voor onverwant werk in dezelfde
+    boom. Dat gebeurde op 07-10-2026. De werkboom-toets geldt altijd; de remote-toets slaat
+    over als de doel-repo hier geen remote is (de sandbox pusht via `task sandbox:sync`),
+    want dan is er niets te meten.
+    """
+    paths = _touched_paths(ctx)
+    if not paths:
+        return
+    dirty = _git(["status", "--porcelain", "--", *paths]).stdout.strip()
+    if dirty:
+        raise EditFailed(
+            "deze paden staan nog niet (volledig) in git: "
+            + "; ".join(line.strip() for line in dirty.splitlines())
+            + ". Draai de push-stap, of commit en push ze zelf, voor je synct."
+        )
+    try:
+        remote, branch = git_target_of(ctx.kube, app, app_namespace)
+    except EditFailed:
+        return
+    head = _git(["rev-parse", "HEAD"]).stdout.strip()
+    _git(["fetch", remote, branch], check=False)
+    if _git(["merge-base", "--is-ancestor", head, "FETCH_HEAD"], check=False).returncode != 0:
+        raise EditFailed(f"{head[:9]} zit niet in {remote}/{branch}, en Argo leest die branch: push hem eerst")
 
 
 def sync_step(component: Component) -> Step:
@@ -1680,6 +1875,7 @@ def sync_step(component: Component) -> Step:
                 "die componentrij ontbreekt nog (zie plans/wachtwoorden-roteren-flow-analyse.md § 4)."
             )
         app, app_namespace = owner
+        _assert_in_git(ctx, app, app_namespace)
         synced = argo_refresh_and_sync(ctx.kube, app, app_namespace)
         arrived = wait_for_secret_value(ctx.kube, name, ctx.rotating, ctx.new[ctx.rotating])
         return f"{synced} ; {arrived}"
@@ -1689,7 +1885,7 @@ def sync_step(component: Component) -> Step:
         "sync",
         [
             "kubectl annotate application <eigenaar> argocd.argoproj.io/refresh=hard --overwrite",
-            "kubectl patch application <eigenaar> --type=merge -p '{\"operation\":{\"sync\":{}}}'",
+            'kubectl patch application <eigenaar> --type=merge -p \'{"operation":{"sync":{}}}\'',
             "poll: .status.operationState.phase == Succeeded; daarna: secret == <NIEUW>",
         ],
         _run,
@@ -1723,7 +1919,10 @@ def restart_step(component: Component, cluster: Cluster) -> Step | None:
     return Step(
         f"Consumers herstarten ({names})",
         "restart",
-        [f"kubectl rollout restart {target_of(w, cluster)[1]} (-n {target_of(w, cluster)[0] or '<namespace van OPI>'})" for w in component.workloads],
+        [
+            f"kubectl rollout restart {target_of(w, cluster)[1]} (-n {target_of(w, cluster)[0] or '<namespace van OPI>'})"
+            for w in component.workloads
+        ],
         _run,
     )
 
@@ -1769,12 +1968,7 @@ def final_restart_step(components: list[Component], cluster: Cluster) -> Step | 
 def deferred_verify_steps(components: list[Component], cluster: Cluster) -> list[Step]:
     """De post-restart-verificaties die in een bulkronde wachtten op de slotafronding.
     Elke env-restart-component met zo'n check staat hier (vandaag: minio, mail-relay)."""
-    return [
-        step
-        for component in components
-        for step in [env_verify_for(component, cluster)]
-        if step is not None
-    ]
+    return [step for component in components for step in [env_verify_for(component, cluster)] if step is not None]
 
 
 def followup_step(component: Component) -> Step | None:
@@ -2004,7 +2198,9 @@ def check_component(component: Component, cluster: Cluster, kube: Kube) -> list[
         except EditFailed as failure:
             report.append(f"  ❌ {component.key}: DRIFT - {failure}")
         except Exception as failure:
-            report.append(f"  🚧 {component.key}: de check zelf strandde ({type(failure).__name__}: {str(failure)[:150]})")
+            report.append(
+                f"  🚧 {component.key}: de check zelf strandde ({type(failure).__name__}: {str(failure)[:150]})"
+            )
     if not steps:
         report.append(f"  ⏭  {component.key}: geen check-stap (categorie {component.category})")
     return report
@@ -2018,10 +2214,12 @@ def execute(ctx: Ctx, steps: list[Step]) -> bool:
         if step.run is None:
             for line in step.dry_text:
                 print(f"    {line}")
-            if step.phase in ("manual", "push"):
+            if step.phase == "manual":
                 input("    Zet dit klaar en druk op enter om door te gaan...")
             continue
-        if input("    Uitvoeren? [j/N] ").strip().lower() not in ("j", "ja", "y", "yes"):
+        # Default JA: dit is een rotatieronde waar je in één keer door wil, en elke stap
+        # bewijst zichzelf of faalt hard. Alleen een expliciete 'n' slaat over.
+        if input("    Uitvoeren? [J/n] ").strip().lower() in ("n", "nee", "no"):
             print("    Overgeslagen.")
             continue
         try:
