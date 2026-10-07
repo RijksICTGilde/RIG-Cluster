@@ -300,7 +300,11 @@ COMPONENTS: list[Component] = [
         template="prometheus-metrics-auth-secret.yaml",
         category="env-restart",
         rotate_fields=("token",),
-        workloads=("deploy/prometheus-server", OPI_DEPLOYMENT),
+        # De workload heet `prometheus`, niet `prometheus-server`: onder die oude naam sloeg
+        # restart_step hem over met een melding, bleef de pod het oude token in zijn env
+        # houden, en viel dat niet op omdat dit component geen app-verificatie heeft
+        # (gemeten op odcn, 07-10-2026).
+        workloads=("deploy/prometheus", OPI_DEPLOYMENT),
         note="ZAD gebruikt dit token via secretKeyRef PROMETHEUS_METRICS_AUTH_TOKEN.",
     ),
     Component(
@@ -491,6 +495,39 @@ def _ok(failure: str) -> None:  # pragma: no cover - hulpje voor leesbaarheid hi
     raise EditFailed(failure)
 
 
+def _accepts(probe: Callable[[], object]) -> bool:
+    """Of een auth-proef de meegegeven waarde accepteert.
+
+    De proeven in dit bestand melden een afwijzing met EditFailed, dus een uitzondering
+    betekent hier "afgewezen". Bij een oude waarde ná een rotatie is dat precies de
+    gewenste uitkomst, en daarom is deze helper de omkering die de aanroepers nodig hebben.
+    """
+    try:
+        probe()
+    except EditFailed:
+        return False
+    return True
+
+
+def _reject_stale(ctx: Ctx, probe: Callable[[], object], *, label: str) -> str:
+    """Faal zolang de OUDE waarde na de rotatie nog geaccepteerd wordt.
+
+    Dit is de tweede helft van het bewijs. Alleen toetsen of de nieuwe waarde werkt liet op
+    07-10-2026 een redis-rotatie groen afsluiten terwijl het oude wachtwoord nog gewoon
+    inlogde: `>pw` vulde de ACL aan in plaats van te vervangen. De cnpg-gate toetste beide
+    richtingen al, de andere componenten niet. In dry-run is er niets gemeten en zegt dit
+    dat ook, in plaats van groen te melden wat niet is geprobeerd.
+    """
+    if ctx.kube.dry_run:
+        return "oude waarde niet getoetst (dry-run)"
+    if _accepts(probe):
+        _ok(
+            f"{label}: de OUDE waarde werkt na de rotatie nog steeds, dus de wissel is niet doorgekomen. "
+            "Controleer of het mechanisme de waarde VERVANGT in plaats van aanvult."
+        )
+    return "oude waarde afgewezen"
+
+
 # --- gedeelde cluster-commando's -----------------------------------------------
 
 APPS_RESOURCE = "applications.argoproj.io"
@@ -659,19 +696,26 @@ def relay_auth_step(component: Component, cluster: Cluster, *, phase: str, which
     HTTP 401 betekent fout, elke andere status (ook een 200 met Stalwart-errorbody) betekent
     dat de AUTHENTICATIE werkte. Wij meten inloggen, niet de zin van de endpoint."""
 
+    def _auth(ctx: Ctx, password: str) -> str:
+        user = ctx.current.get("MAIL_RELAY_ADMIN_USERNAME", "admin")
+        outcome = relay_call(ctx.kube, relay_api_for(cluster.name), user, password, "GET", "/api/principal", None)
+        if "HTTP 401" in outcome:
+            _ok(f"relay-auth afgewezen: {outcome[:120]}")
+        return outcome
+
     def _probe(ctx: Ctx) -> str:
         if ctx.kube.dry_run:
             return "overgeslagen (dry-run)"
         password = ctx.current[ctx.rotating] if which == "huidige" else ctx.new[ctx.rotating]
-        user = ctx.current.get("MAIL_RELAY_ADMIN_USERNAME", "admin")
-        outcome = relay_call(ctx.kube, relay_api_for(cluster.name), user, password, "GET", "/api/principal", None)
-        if "HTTP 401" in outcome:
-            _ok(f"relay-auth met {which} waarde: {outcome[:120]}")
-        return f"relay-auth met {which} waarde OK: {outcome[:80]}"
+        outcome = _auth(ctx, password)
+        line = f"relay-auth met {which} waarde OK: {outcome[:80]}"
+        if which == "nieuwe":
+            line += "; " + _reject_stale(ctx, lambda: _auth(ctx, ctx.current[ctx.rotating]), label="mailrelay-admin")
+        return line
 
     titles = {
         "check": "Huidige waarde testen (relay-auth, fallback-admin)",
-        "verify": "Verifiëren met de nieuwe waarde (relay-auth)",
+        "verify": "Verifiëren (relay-auth): nieuwe waarde werkt, oude is afgewezen",
     }
     return Step(titles[phase], phase, ["GET <relay>/api/*  met basic-auth <waarde>; 401 = mislukt"], _probe)
 
@@ -797,7 +841,13 @@ def pg_superuser_steps(kube: Kube, values: Ctx) -> list[Step]:
 
     def _verify(ctx: Ctx) -> str:
         user = db_user_of(BY_KEY["postgresql"], ctx.current)
-        return f"inloggen met nieuwe waarde: {psql_check(ctx.kube, user, ctx.new[ctx.rotating], 'postgres')}"
+        fresh = psql_check(ctx.kube, user, ctx.new[ctx.rotating], "postgres")
+        stale = _reject_stale(
+            ctx,
+            lambda: psql_check(ctx.kube, user, ctx.current[ctx.rotating], "postgres"),
+            label="postgres-superuser",
+        )
+        return f"inloggen met nieuwe waarde: {fresh}; {stale}"
 
     return [
         Step(
@@ -1130,9 +1180,15 @@ def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube
 def minio_verify_step(endpoint: str) -> Step:
     def _verify(ctx: Ctx) -> str:
         user = ctx.current.get("MINIO_ROOT_USER", "admin")
-        return f"mc met nieuwe waarde: {_mc_check(ctx, endpoint, user, ctx.new[ctx.rotating])}"
+        fresh = _mc_check(ctx, endpoint, user, ctx.new[ctx.rotating])
+        stale = _reject_stale(
+            ctx,
+            lambda: _mc_check(ctx, endpoint, user, ctx.current[ctx.rotating]),
+            label="minio-root",
+        )
+        return f"mc met nieuwe waarde: {fresh}; {stale}"
 
-    return Step("Verifiëren via mc met de nieuwe waarde", "verify", [], _verify)
+    return Step("Verifiëren via mc: nieuwe waarde werkt, oude is afgewezen", "verify", [], _verify)
 
 
 def env_verify_for(component: Component, cluster: Cluster) -> Step | None:
@@ -1199,10 +1255,16 @@ def keycloak_mail_steps(kube: Kube, values: Ctx, relay_url: str, admin_current: 
             _apply,
         ),
         Step(
-            "Verifiëren: SMTP-login met de nieuwe waarde",
+            "Verifiëren: SMTP-login met de nieuwe waarde, oude afgewezen",
             "verify",
-            ["SMTP-login met <NIEUW> (de herstart van deploy/keycloak is een aparte stap hierna)"],
-            lambda ctx: _smtp_check(ctx, ctx.new[ctx.rotating]),
+            [
+                "SMTP-login met <NIEUW> (de herstart van deploy/keycloak is een aparte stap hierna)",
+                "daarna SMTP-login met <HUIDIG>: die moet falen",
+            ],
+            lambda ctx: (
+                f"smtp met nieuwe waarde: {_smtp_check(ctx, ctx.new[ctx.rotating])}; "
+                + _reject_stale(ctx, lambda: _smtp_check(ctx, ctx.current[ctx.rotating]), label="smtp zad-keycloak")
+            ),
         ),
     ]
 
@@ -2241,7 +2303,30 @@ def check_component(component: Component, cluster: Cluster, kube: Kube) -> list[
             )
     if not steps:
         report.append(f"  ⏭  {component.key}: geen check-stap (categorie {component.category})")
+    report.extend(workload_report(component, cluster, kube))
     return report
+
+
+def workload_report(component: Component, cluster: Cluster, kube: Kube) -> list[str]:
+    """Bestaat elke workload die na de rotatie herstart moet worden?
+
+    Informatief, nooit blokkerend: een wachtwoord vervangen mag ook als de consumer hier niet
+    draait. Maar een naam die niet bestaat is wel iets om vóór de ronde te weten, want
+    `restart_step` slaat die over en dan houdt een draaiende pod het oude geheim in zijn env.
+    Zo bleef `prometheus` achter op `deploy/prometheus-server`, een naam die niet bestaat, en
+    omdat dat component geen app-verificatie heeft viel het niet op (odcn, 07-10-2026).
+    """
+    lines: list[str] = []
+    for workload in component.workloads:
+        namespace, name = target_of(workload, cluster)
+        namespace = namespace or kube.namespace
+        if kube.run(["get", name, "-n", namespace], check=False).returncode == 0:
+            lines.append(f"  ✅ {component.key}: {name} bestaat in {namespace}")
+        else:
+            lines.append(
+                f"  -  {component.key}: {name} bestaat niet in {namespace}, dus na de rotatie herstart die niet"
+            )
+    return lines
 
 
 def execute(ctx: Ctx, steps: list[Step]) -> bool:
