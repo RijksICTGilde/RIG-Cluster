@@ -24,9 +24,11 @@ Three layers, read from the projects file down:
               is its Application.
 
 In a Capsule tenant the account may not list every type the cluster serves, so a
-namespace inventory is never complete over all of them. With the deployments repo
-given, completeness is judged over the kinds that repo renders instead: a type nobody
-renders cannot hold a leftover of ours, a rendered type that does not answer can.
+namespace inventory is never complete over all of them. With the deployments repo given,
+completeness is judged over the kinds that repo renders instead, and a rendered type that
+does not answer still refuses. SCHOON then means 'nothing in the kinds this repo renders
+today', which is narrower than 'nothing at all': a kind nothing renders any more, and one
+whose ``kind:`` line is a template, fall outside it.
 
 Existence is read from the Kubernetes API, never from ArgoCD's: ArgoCD answers an
 ambiguous 'permission denied' for applications that do exist, and reading a live
@@ -49,9 +51,15 @@ Usage:
         --projects-repo /path/to/projects --argo-repo /path/to/argo-applications \
         --deployments-repo /path/to/zad-deployments
 
-    # actually delete what it found. Cluster resources are deleted outright; orphaned
-    # repo directories are removed from the checkout, committing them stays yours.
+    # actually delete what it found. Cluster resources are deleted outright.
     uv run python scripts/argocd_orphan_sweep.py --namespace rig-prd-mpfm-w3h --delete
+
+    # deleting orphaned repo directories too (removed from the checkout, committing them
+    # stays yours). That refuses without all three repos AND --cluster: short of them the
+    # directory of a deployment whose Application is momentarily absent reads as an orphan.
+    uv run python scripts/argocd_orphan_sweep.py --cluster odcn-production \
+        --projects-repo /path/to/projects --argo-repo /path/to/argo-applications \
+        --deployments-repo /path/to/zad-deployments --delete
 
 Exit codes: 0 when nothing was found (or everything found was deleted), 1 when something
 remains, 2 when it refused to sweep. That makes it usable as the last step of a delete
@@ -259,7 +267,7 @@ def helmfile_namespaces(projects_repo: Path, cluster: str) -> set[str]:
     return namespaces
 
 
-def expected_render_roots(projects_repo: Path, cluster: str) -> set[str]:
+def expected_render_roots(projects_repo: Path, cluster: str) -> frozenset[str]:
     """The render roots the projects repo asks for on this cluster.
 
     The paths come from the naming functions OPI writes them with, so they cannot drift
@@ -275,11 +283,11 @@ def expected_render_roots(projects_repo: Path, cluster: str) -> set[str]:
             # Same choice as above: a deployment without a cluster protects its root here.
             if deployment.get("cluster", cluster) == cluster:
                 roots.add(generate_deployment_manifest_path(cluster, project, deployment["name"]))
-    return roots
+    return frozenset(roots)
 
 
 def orphaned_applications(
-    argo_repo: Path, cluster: str, expected: set[str], skipped_projects: frozenset[str] = frozenset()
+    argo_repo: Path, cluster: str, expected: frozenset[str], skipped_projects: frozenset[str] = frozenset()
 ) -> list[tuple[str, str]]:
     """The Applications in the argo repo whose render root no deployment asks for, as ``(name, root)``."""
     orphans = []
@@ -416,12 +424,15 @@ async def inventory(
     cluster: str | None = None,
     skipped_projects: frozenset[str] = frozenset(),
     skipped_namespaces: frozenset[str] = frozenset(),
+    expected_roots: frozenset[str] = frozenset(),
 ) -> tuple[list[TrackedResource], list[TrackedResource], list[str]]:
     """Both sources, measured: the orphaned resources, the undecidable ones, and the repo paths.
 
     ``cluster`` names the ``<cluster>/`` folder of the deployments repo whose kinds decide
     whether a namespace that answered for part of its types still counts as measured.
     The skipped projects and namespaces are the helmfile ones (``helmfile_projects``).
+    ``expected_roots`` are the roots the projects repo asks for (``expected_render_roots``),
+    which protect a directory the same way a live Application pointing at it does.
     """
     kubectl = create_kubectl_connector()
 
@@ -517,9 +528,13 @@ async def inventory(
     # Only this cluster's folder: the Applications read above are this cluster's, so every
     # path of another cluster would read as one no Application points at. Measured on
     # odcn-production, 9 October 2026: the whole local/ tree was reported.
+    #
+    # What the projects repo asks for protects a directory too: an Application a force just
+    # removed leaves its deployment standing there, and its directory needed.
+    protected = referenced | expected_roots
     paths = [
         path
-        for path in (orphaned_paths(deployments_repo, referenced) if deployments_repo else [])
+        for path in (orphaned_paths(deployments_repo, protected) if deployments_repo else [])
         if path.split("/")[1] not in skipped_projects and (not cluster or path.split("/")[0] == cluster)
     ]
     return orphans, undecidable, paths
@@ -557,6 +572,7 @@ async def _sweep(
     applications = []
     skipped_projects: frozenset[str] = frozenset()
     skipped_namespaces: frozenset[str] = frozenset()
+    expected: frozenset[str] = frozenset()
     if projects_repo is not None and argo_repo is not None and cluster:
         skipped_projects = frozenset(helmfile_projects(projects_repo))
         skipped_namespaces = frozenset(helmfile_namespaces(projects_repo, cluster))
@@ -565,7 +581,7 @@ async def _sweep(
         applications = orphaned_applications(argo_repo, cluster, expected, skipped_projects)
 
     resources, undecidable, paths = await inventory(
-        namespaces, deployments_repo, cluster, skipped_projects, skipped_namespaces
+        namespaces, deployments_repo, cluster, skipped_projects, skipped_namespaces, expected
     )
     print(format_report(resources, undecidable, paths, applications=applications))
 
@@ -607,7 +623,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--delete",
         action="store_true",
-        help="delete what was found instead of only reporting it",
+        help=(
+            "delete what was found instead of only reporting it; with --deployments-repo it needs "
+            "--projects-repo, --argo-repo and --cluster as well"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -619,6 +638,21 @@ def main(argv: list[str] | None = None) -> int:
             return 2
     if (args.projects_repo is None) != (args.argo_repo is None):
         print("--projects-repo and --argo-repo go together: the one is measured against the other", file=sys.stderr)
+        return 2
+    if (
+        args.delete
+        and args.deployments_repo is not None
+        and not (args.projects_repo and args.argo_repo and args.cluster)
+    ):
+        # Exactly the condition under which _sweep computes the protection. Short of it a
+        # directory is judged on the Applications the cluster has RIGHT NOW, and one a
+        # force just removed leaves its deployment standing there.
+        print(
+            "--delete with --deployments-repo needs --projects-repo, --argo-repo and --cluster "
+            f"(cluster is now '{args.cluster}'): without all three the directory of a deployment whose "
+            "Application is momentarily absent reads as an orphan",
+            file=sys.stderr,
+        )
         return 2
 
     # Which cluster and which ArgoCD this run reads, before it reads them: a sweep pointed

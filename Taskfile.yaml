@@ -2138,6 +2138,10 @@ tasks:
       In een Capsule-tenant (odcn-production) is GITOPS of REPO nodig: het account mag niet
       elk type lijsten, en dan beslist wat de deployments-repo rendert of een namespace
       volledig gemeten is. Het cluster komt uit `task select-cluster`.
+
+      DELETE=1 samen met REPO weigert: een map in de deployments-repo wordt dan beoordeeld
+      op de Applications die het cluster op dit moment heeft. Gebruik GITOPS, dan beschermt
+      ook wat het projectbestand nog vraagt.
     dir: operations-manager/python
     # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
     # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
