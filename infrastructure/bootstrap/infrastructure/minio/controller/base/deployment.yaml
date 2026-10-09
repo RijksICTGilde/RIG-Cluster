@@ -20,6 +20,12 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+        # Zonder dit zet de kubelet bij elke start de ownership van ELK bestand op de PVC
+        # om. Op odcn duurde dat langer dan het rollout-venster, met een
+        # VolumePermissionChangeInProgress-event en een herstart die als mislukt gold
+        # (09-10-2026). OnRootMismatch kijkt alleen naar de top van het volume en doet de
+        # rest alleen als die niet klopt.
+        fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: minio
         # Onze eigen build uit de broncode van deze tag. MinIO heeft docker.io/minio en quay.io/minio

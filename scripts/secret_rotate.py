@@ -76,6 +76,12 @@ from secret_edit import TREES as EDIT_TREES  # type: ignore[reportMissingImports
 # --dry-run één plek hebben om in te grijpen.
 # ---------------------------------------------------------------------------
 
+# Hoe lang een herstart mag duren voor hij als "nog niet gezond" geldt. 180s was te kort:
+# minio deed er langer over doordat Kubernetes de ownership van elk bestand op zijn PVC
+# aanpaste (`VolumePermissionChangeInProgress`). Dat is daar met `fsGroupChangePolicy:
+# OnRootMismatch` verholpen; deze ruimere marge vangt de volgende trage start op.
+ROLLOUT_TIMEOUT = 300
+
 
 class Kube:
     """kubectl-aanroepen voor één cluster, met een dry-run die niets uitvoert."""
@@ -129,10 +135,21 @@ class Kube:
             return None
         return base64.b64decode(result.stdout).decode()
 
-    def rollout_restart(self, workload: str, *, namespace: str | None = None) -> None:
+    def rollout_restart(self, workload: str, *, namespace: str | None = None) -> tuple[bool, str]:
+        """Herstart een workload en wacht tot hij gezond is. Geeft (gezond, uitkomst).
+
+        De wachtstap faalt hier niet hard: een rollout die buiten het venster valt is iets
+        anders dan een mislukte herstart, en de aanroeper moet zijn overige workloads nog af
+        kunnen maken. Op 09-10-2026 brak een trage rollout van minio de ronde halverwege,
+        waardoor OPI nooit herstartte en met het oude geheim bleef draaien.
+        """
         target = namespace or self.namespace
         self.run(["rollout", "restart", "-n", target, workload])
-        self.run(["rollout", "status", "-n", target, workload, "--timeout=180s"])
+        status = self.run(["rollout", "status", "-n", target, workload, f"--timeout={ROLLOUT_TIMEOUT}s"], check=False)
+        if status.returncode != 0:
+            detail = (status.stderr or status.stdout).strip()
+            return False, f"herstart gestart, niet gezond binnen {ROLLOUT_TIMEOUT}s ({detail[:90]})"
+        return True, "herstart en gezond"
 
 
 # ---------------------------------------------------------------------------
@@ -2001,18 +2018,34 @@ def restart_step(component: Component, cluster: Cluster) -> Step | None:
 
     def _run(ctx: Ctx) -> str:
         done: list[str] = []
+        failed: list[str] = []
         for workload in component.workloads:
             namespace, name = target_of(workload, ctx.cluster)
             namespace = namespace or ctx.kube.namespace
             exists = ctx.kube.run(["get", name, "-n", namespace], check=False)
+            detail = (exists.stderr or exists.stdout).strip()
             if exists.returncode != 0:
                 if ctx.kube.dry_run:
                     done.append(f"{name} (dry-run)")
-                    continue
-                done.append(f"{name} overgeslagen (bestaat niet in {namespace})")
+                elif "NotFound" in detail or "not found" in detail:
+                    done.append(f"{name} overgeslagen (bestaat niet in {namespace})")
+                else:
+                    failed.append(f"{name} niet opvraagbaar ({detail[:80]})")
                 continue
-            ctx.kube.rollout_restart(name, namespace=namespace)
-            done.append(f"{name} herstart ({namespace})")
+            healthy, outcome = ctx.kube.rollout_restart(name, namespace=namespace)
+            done.append(f"{name}: {outcome}")
+            if not healthy:
+                failed.append(f"{name}: {outcome}")
+        # Elke consumer wordt aangestoten voordat er iets faalt. Brak de stap bij de eerste
+        # trage rollout af, dan bleef een volgende workload met het oude geheim draaien en
+        # stond nergens wat er nog open was; precies wat op 09-10-2026 met OPI gebeurde.
+        if failed:
+            _ok(
+                "deze consumers werden niet gezond: "
+                + "; ".join(failed)
+                + f". Afgerond: {' ; '.join(done) or 'niets'}. "
+                "De herstart is wel voor alle consumers aangestoten; controleer de pods die hierboven staan."
+            )
         return " ; ".join(done)
 
     names = ", ".join(component.workloads)
