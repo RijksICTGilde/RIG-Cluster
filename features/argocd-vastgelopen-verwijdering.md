@@ -286,8 +286,15 @@ Het tenant-account mag ongeveer 90 van de types die het cluster serveert niet li
 types, en de weigering hierboven sloeg op de eerste namespace al toe. Met de
 deployments-repo erbij beslist wat die repo RENDERT: zijn de kinds die erin staan apart nog
 eens opgevraagd en hebben die allemaal geantwoord, dan telt de namespace als gemeten. Een
-type dat niemand rendert kan geen wees van ons bevatten; een gerenderd type dat zwijgt wel,
-en dan weigert hij nog steeds.
+gerenderd type dat zwijgt is nog steeds een weigering.
+
+`SCHOON` betekent daarmee "niets in de kinds die deze repo vandaag rendert", en dat is
+smaller dan "niets". Twee kinds vallen erbuiten: een kind dat geen enkele deployment meer
+rendert (juist daar staat de rest van een verdwenen deployment), en een kind waarvan de
+`kind:`-regel een template is (dat wordt gemeld, niet meegeteld). Op een cluster waar het
+account elk type mag lijsten, zoals de sandbox, is de volle inventaris meestal al volledig en
+komt deze toets niet aan te pas. Meestal, want een deel-antwoord komt ook van een onbereikbare
+aggregated API, en dan beslist hij daar net zo.
 
 De kinds worden gelezen uit de regels `apiVersion:` en `kind:` vooraan een document, niet
 geparsed: de helmfile-projecten bevatten chart-templates, die pas YAML zijn als ArgoCD ze
@@ -308,6 +315,11 @@ versleutelt alleen wat het als `.to-sops.yaml` schrijft.
   als `ProjectManager._deployment_uses_helmfile`): niet in de argo-laag, niet in de
   deployments-repo, en hun namespaces niet in het cluster. Dat vraagt de projects-repo,
   dus gebruik `GITOPS`.
+* Een map in de deployments-repo die de projects-repo nog vraagt, ook als er op dit moment
+  geen Application naar wijst. Dat is precies de stand die een forcering achterlaat: de
+  deployment staat nog in het projectbestand en ArgoCD maakt de Application opnieuw aan, dus
+  de map is nodig. Zonder deze regel liet de argo-laag die Application terecht staan en
+  haalde de git-laag zijn map weg, met exitcode 0.
 
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
@@ -327,7 +339,11 @@ seconden, een minuut of acht voor heel `odcn-production`. Voor een eenmalige opr
 volstaat dat; voor doorlopende detectie, zie hieronder.
 
 Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
-hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
+hij de wezenmappen uit de checkout; committen en pushen blijft handwerk. `DELETE=1` samen
+met `REPO` weigert (exitcode 2): mappen beoordelen zonder de projects-repo erbij gaat alleen
+op de Applications die het cluster nu heeft. Met `GITOPS` mag het wel, zolang ook de
+clusternaam er is: bij een leeg `CLUSTER_MANAGER` berekent hij de verwachte mappen niet, en
+dan weigert hij om dezelfde reden.
 
 Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er staat iets, wezen of
 resources die hij niet kon plaatsen, `2` geweigerd, waaronder elke mislukte lezing

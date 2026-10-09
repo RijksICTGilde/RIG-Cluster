@@ -858,9 +858,14 @@ class TestCompletenessInATenant:
             return_value={"Deployment.apps": "deployments.apps", "Prometheus.monitoring.coreos.com": "prometheuses"}
         )
         partial = ([_resource("mpfb-8wh-pr-303", "creds", namespace="rig-prd-mpfb-8wh")], False)
-        kubectl.list_tracked_resources = AsyncMock(
-            side_effect=lambda _ns, types: rendered_answer if types == ["deployments.apps"] else partial
-        )
+
+        async def answer(_ns: str, types: list[str]) -> tuple[list[TrackedResource], bool] | None:
+            # An empty type list is None at the connector, not an answer (kubectl.py).
+            if not types:
+                return None
+            return rendered_answer if types == ["deployments.apps"] else partial
+
+        kubectl.list_tracked_resources = AsyncMock(side_effect=answer)
         return kubectl
 
     @pytest.mark.asyncio
@@ -890,6 +895,18 @@ class TestCompletenessInATenant:
             pytest.raises(SweepRefused, match="pass --deployments-repo"),
         ):
             await inventory(["rig-prd-mpfb-8wh"], None, CLUSTER)
+
+    @pytest.mark.asyncio
+    async def test_a_repo_that_renders_nothing_for_this_cluster_refuses(self, tmp_path: Path) -> None:
+        """A stale checkout, or the wrong --cluster, renders no kinds at all. Judging a
+        partial namespace over an empty set would call every one of them measured."""
+        (tmp_path / "local" / "wies" / "pr-9").mkdir(parents=True)
+        kubectl = self._tenant(([], True))
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="every kind the deployments repo renders"),
+        ):
+            await inventory(["rig-prd-mpfb-8wh"], tmp_path, CLUSTER)
 
     @pytest.mark.asyncio
     async def test_a_failed_kind_discovery_refuses(self, tmp_path: Path) -> None:
@@ -987,6 +1004,67 @@ class TestOtherClustersPaths:
         assert paths == [f"{CLUSTER}/wies/pr-9"]
 
 
+class TestWhatTheProjectsRepoAsksFor:
+    """A directory is not an orphan just because no Application points at it RIGHT NOW.
+
+    An Application the cluster has not got yet, or one a force just removed, leaves its
+    deployment standing in the projects repo. The argo layer then calls that Application
+    legitimate while this layer called its directory an orphan, and ``--delete`` removed it
+    and exited 0: measured on this branch before the roots protected it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_root_the_projects_repo_asks_for_is_not_an_orphan(self, tmp_path: Path) -> None:
+        (tmp_path / CLUSTER / "dd-mco" / "productie").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(
+                None, tmp_path, CLUSTER, expected_roots=frozenset({f"{CLUSTER}/dd-mco/productie"})
+            )
+
+        assert paths == []
+
+    @pytest.mark.asyncio
+    async def test_a_root_it_does_not_ask_for_is_still_an_orphan(self, tmp_path: Path) -> None:
+        (tmp_path / CLUSTER / "dd-mco" / "pr-41").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(
+                None, tmp_path, CLUSTER, expected_roots=frozenset({f"{CLUSTER}/dd-mco/productie"})
+            )
+
+        assert paths == [f"{CLUSTER}/dd-mco/pr-41"]
+
+    def test_delete_leaves_the_directory_of_a_live_deployment_standing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The whole chain: projects repo, argo repo, --delete. The Application is NOT on
+        the cluster, which is exactly the state a forced deletion leaves behind."""
+        _project(tmp_path / "p", "dd-mco", [{"name": "productie", "cluster": CLUSTER}])
+        _application(tmp_path / "a", "dd-mco", "dd-mco-productie", {"path": f"{CLUSTER}/dd-mco/productie"})
+        directory = tmp_path / "d" / CLUSTER / "dd-mco" / "productie"
+        directory.mkdir(parents=True)
+        (directory / "s.yaml").write_text("apiVersion: v1\nkind: Secret\nmetadata: {name: s}\n")
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            code = main(
+                [
+                    "--cluster",
+                    CLUSTER,
+                    "--projects-repo",
+                    str(tmp_path / "p"),
+                    "--argo-repo",
+                    str(tmp_path / "a"),
+                    "--deployments-repo",
+                    str(tmp_path / "d"),
+                    "--delete",
+                ]
+            )
+
+        assert (code, directory.exists()) == (0, True)
+        assert capsys.readouterr().out.strip() == CLEAN
+
+
 class TestTheArgoLayerOnTheCommandLine:
     def test_an_application_git_still_keeps_is_reported_and_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1022,9 +1100,47 @@ class TestTheArgoLayerOnTheCommandLine:
 
         assert (tmp_path / "a" / CLUSTER / "dd-mco" / "dd-mco-pr-41-argocd-application.yaml").exists()
 
+    def test_deleting_directories_without_the_projects_repo_is_refused(self, tmp_path: Path) -> None:
+        """Exit 2 alone does not pin this: main() answers 2 for an unreachable cluster too,
+        so without the factory patched the refusal reads as green on a runner without one."""
+        (tmp_path / "d").mkdir()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert main(["--deployments-repo", str(tmp_path / "d"), "--delete"]) == 2
+
+        factory.assert_not_called()
+
+    def test_deleting_directories_without_a_cluster_is_refused(self, tmp_path: Path) -> None:
+        """The protection is computed only when the cluster is named too, so all three repos
+        with an empty --cluster deleted the directory of a live deployment and said SCHOON.
+        An empty CLUSTER_MANAGER in the environment is enough to get here without typing it."""
+        for name in ("d", "p", "a"):
+            (tmp_path / name).mkdir()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert (
+                main(
+                    [
+                        "--deployments-repo",
+                        str(tmp_path / "d"),
+                        "--projects-repo",
+                        str(tmp_path / "p"),
+                        "--argo-repo",
+                        str(tmp_path / "a"),
+                        "--cluster",
+                        "",
+                        "--delete",
+                    ]
+                )
+                == 2
+            )
+
+        factory.assert_not_called()
+
     def test_one_repo_without_the_other_is_refused(self, tmp_path: Path) -> None:
         (tmp_path / "p").mkdir()
-        assert main(["--projects-repo", str(tmp_path / "p")]) == 2
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert main(["--projects-repo", str(tmp_path / "p")]) == 2
+
+        factory.assert_not_called()
 
 
 class TestTheTask:
