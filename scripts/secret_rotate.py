@@ -2315,17 +2315,26 @@ def workload_report(component: Component, cluster: Cluster, kube: Kube) -> list[
     `restart_step` slaat die over en dan houdt een draaiende pod het oude geheim in zijn env.
     Zo bleef `prometheus` achter op `deploy/prometheus-server`, een naam die niet bestaat, en
     omdat dat component geen app-verificatie heeft viel het niet op (odcn, 07-10-2026).
+
+    Alleen een NotFound van de API betekent hier "bestaat niet". Elke andere fout betekent
+    dat de vraag niet gesteld kon worden: een verlopen token meldde anders van elke workload
+    dat hij ontbrak, deploy/operations-manager incluis, en dat is afwezigheid verwarren met
+    niet-gemeten (odcn, 09-10-2026).
     """
     lines: list[str] = []
     for workload in component.workloads:
         namespace, name = target_of(workload, cluster)
         namespace = namespace or kube.namespace
-        if kube.run(["get", name, "-n", namespace], check=False).returncode == 0:
+        result = kube.run(["get", name, "-n", namespace], check=False)
+        detail = (result.stderr or result.stdout).strip()
+        if result.returncode == 0:
             lines.append(f"  ✅ {component.key}: {name} bestaat in {namespace}")
-        else:
+        elif "NotFound" in detail or "not found" in detail:
             lines.append(
                 f"  -  {component.key}: {name} bestaat niet in {namespace}, dus na de rotatie herstart die niet"
             )
+        else:
+            lines.append(f"  🚧 {component.key}: kon {name} in {namespace} niet opvragen: {detail[:110]}")
     return lines
 
 
