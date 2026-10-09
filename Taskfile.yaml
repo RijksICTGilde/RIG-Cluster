@@ -2131,16 +2131,30 @@ tasks:
         task argocd-orphan-sweep                                  # het hele cluster
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
         REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+        GITOPS=~/IdeaProjects/rig-cluster-test-git-repositories task argocd-orphan-sweep
+                                                                  # alle drie de lagen, vanuit git
         NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+
+      In een Capsule-tenant (odcn-production) is GITOPS of REPO nodig: het account mag niet
+      elk type lijsten, en dan beslist wat de deployments-repo rendert of een namespace
+      volledig gemeten is. Het cluster komt uit `task select-cluster`.
     dir: operations-manager/python
     # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
     # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
     # een typefout niets te doen.
+    #
+    # Cluster en ArgoCD-namespace gaan expliciet mee: het script leest anders de .env van
+    # operations-manager/python, en die wijst naar de sandbox (rig-system) ook als
+    # select-cluster op productie staat.
     cmds:
+      - echo "kube-context $(kubectl config current-context)" >&2
       - >-
+        ARGOCD_MANAGER={{.RIG_NAMESPACE}} CLUSTER_MANAGER={{.CLUSTER_TYPE}}
         uv run python scripts/argocd_orphan_sweep.py
         {{if .NAMESPACE}}--namespace {{.NAMESPACE}}{{end}}
-        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
+        {{if .GITOPS}}--projects-repo "{{.GITOPS}}/rig-cluster-projects-github"
+        --argo-repo "{{.GITOPS}}/argo-applications-github"
+        --deployments-repo "{{.GITOPS}}/rig-cluster-application-test-github"{{else if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
         {{if eq (default "0" .DELETE) "1"}}--delete{{end}}
     silent: true
 
