@@ -562,7 +562,11 @@ class TestTheCommandLine:
         (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            assert main(["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path)]) == 1
+            code = main(
+                ["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path), "--cluster", "odcn-production"]
+            )
+
+        assert code == 1
 
     def test_a_deletion_that_took_everything_exits_clean(self) -> None:
         kubectl = self._cluster_with_one_orphan()
