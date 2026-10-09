@@ -969,6 +969,20 @@ class TestHelmfileProjectsAreLeftAlone:
             )
 
 
+class TestOtherClustersPaths:
+    @pytest.mark.asyncio
+    async def test_another_clusters_folder_is_not_this_ones_orphan(self, tmp_path: Path) -> None:
+        """The Applications are read from ONE cluster, so another cluster's render roots
+        have nothing pointing at them here. ``--delete`` would remove the local/ tree."""
+        (tmp_path / "local/wies/staging").mkdir(parents=True)
+        (tmp_path / f"{CLUSTER}/wies/pr-9").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-wies": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(["rig-prd-wies"], tmp_path, CLUSTER)
+
+        assert paths == [f"{CLUSTER}/wies/pr-9"]
+
+
 class TestTheArgoLayerOnTheCommandLine:
     def test_an_application_git_still_keeps_is_reported_and_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
