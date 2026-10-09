@@ -309,6 +309,33 @@ class TestResourceTypeDiscovery:
             assert await connector.list_namespaced_resource_types() is None
 
 
+class TestKindDiscovery:
+    #: Shape of ``api-resources -o wide --no-headers`` as measured on odcn-production,
+    #: 9 October 2026: ``routes`` has no SHORTNAMES and does have CATEGORIES.
+    WIDE = (
+        "configmaps        cm     v1                     true   ConfigMap              create,delete,get,list\n"
+        "ingresses         ing    networking.k8s.io/v1   true   Ingress                create,delete,get,list\n"
+        "routes                   route.openshift.io/v1  true   Route                  create,delete,get,list   all\n"
+    )
+
+    @pytest.mark.asyncio
+    async def test_maps_kind_and_group_onto_the_type_name(self, connector) -> None:
+        run = AsyncMock(return_value=(self.WIDE, "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            kinds = await connector.list_namespaced_kinds()
+
+        assert kinds == {
+            "ConfigMap": "configmaps",
+            "Ingress.networking.k8s.io": "ingresses.networking.k8s.io",
+            "Route.route.openshift.io": "routes.route.openshift.io",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_failed_discovery_is_not_an_empty_cluster(self, connector) -> None:
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "boom", 1))):
+            assert await connector.list_namespaced_kinds() is None
+
+
 class TestListArgocdApplications:
     """The sweep decides from this list what to delete, so it must read the honest source."""
 

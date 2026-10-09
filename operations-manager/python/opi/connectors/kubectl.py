@@ -809,6 +809,38 @@ class KubectlConnector:
             types.append(name)
         return types
 
+    async def list_namespaced_kinds(self) -> dict[str, str] | None:
+        """
+        The namespaced kinds this cluster serves, keyed ``Kind.group`` (core: ``Kind``).
+
+        A manifest names its type by ``apiVersion`` and ``kind``, kubectl by plural and
+        group. This maps the one onto the other, so a set of kinds read from manifests can
+        be queried as the same type names ``list_namespaced_resource_types`` returns.
+
+        Returns:
+            ``{"Deployment.apps": "deployments.apps", "Secret": "secrets", ...}``, or
+            ``None`` when the discovery failed.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["api-resources", "--namespaced=true", "--verbs=list", "-o", "wide", "--no-headers"]
+        )
+        if code != 0:
+            logger.error(f"Failed to list namespaced api-resources: {stderr}")
+            return None
+
+        kinds = {}
+        for line in stdout.splitlines():
+            columns = line.split()
+            # SHORTNAMES may be empty, so columns are found from NAMESPACED, which a
+            # namespaced listing always prints as "true": APIVERSION before it, KIND after.
+            if "true" not in columns:
+                continue
+            at = columns.index("true")
+            plural, api_version, kind = columns[0], columns[at - 1], columns[at + 1]
+            group = api_version.rpartition("/")[0]
+            kinds[f"{kind}.{group}" if group else kind] = f"{plural}.{group}" if group else plural
+        return kinds
+
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None
     ) -> tuple[list[TrackedResource], bool] | None:
