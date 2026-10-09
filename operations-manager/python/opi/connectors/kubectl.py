@@ -36,7 +36,15 @@ _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
 
 #: Types left out of the ArgoCD-ownership inventory. Events are never applied by ArgoCD,
 #: so they carry no ownership mark, but a busy namespace holds thousands of them.
-_TRACKING_SWEEP_SKIPPED_TYPES = {"events", "events.events.k8s.io"}
+#: Endpoints and EndpointSlices are in ArgoCD's own resource.exclusions, so ArgoCD cannot
+#: have created them; they copy their Service's labels, instance label included, and the
+#: Endpoints carry no ownerReference to tell them apart.
+_TRACKING_SWEEP_SKIPPED_TYPES = {
+    "events",
+    "events.events.k8s.io",
+    "endpoints",
+    "endpointslices.discovery.k8s.io",
+}
 
 
 def is_previous_attempt_missing(stderr_text: str) -> bool:

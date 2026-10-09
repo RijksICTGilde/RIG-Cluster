@@ -104,6 +104,20 @@ class TestTrackingId:
         assert resource is not None
         assert (resource.app_name, resource.from_label) == ("app-a", True)
 
+    def test_an_owned_resource_is_its_owners(self) -> None:
+        """Measured on odcn-production, 9 October 2026: CNPG copies the instance label onto
+        the pod and services of the live database algor-odc-db, and the sweep reported
+        them as the orphans of an Application by that name. ``--delete`` takes them."""
+        owned = _item(
+            "Pod",
+            "v1",
+            "algor-odc-db-1",
+            None,
+            instance_label="algor-odc-db",
+            ownerReferences=[{"kind": "Cluster", "name": "algor-odc-db"}],
+        )
+        assert tracked_resource_from_item(owned) is None
+
     def test_the_annotation_wins_over_a_label(self) -> None:
         """With annotation tracking the label may be a leftover from another tool."""
         resource = tracked_resource_from_item(
@@ -301,6 +315,14 @@ class TestResourceTypeDiscovery:
             "-o",
             "name",
         ]
+
+    @pytest.mark.asyncio
+    async def test_skips_what_argocd_excludes_itself(self, connector) -> None:
+        """Endpoints copy their Service's labels and carry no ownerReference, so an
+        operator's Endpoints read as an orphan. ArgoCD excludes the kind, so it is never one."""
+        stdout = "secrets\nendpoints\nendpointslices.discovery.k8s.io\n"
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(stdout, "", 0))):
+            assert await connector.list_namespaced_resource_types() == ["secrets"]
 
     @pytest.mark.asyncio
     async def test_a_failed_discovery_is_not_an_empty_cluster(self, connector) -> None:
