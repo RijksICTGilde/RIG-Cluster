@@ -514,10 +514,13 @@ async def inventory(
         orphans.extend(orphaned_resources(tracked, existing))
         undecidable.extend(undecidable_resources(tracked, existing))
 
+    # Only this cluster's folder: the Applications read above are this cluster's, so every
+    # path of another cluster would read as one no Application points at. Measured on
+    # odcn-production, 9 October 2026: the whole local/ tree was reported.
     paths = [
         path
         for path in (orphaned_paths(deployments_repo, referenced) if deployments_repo else [])
-        if path.split("/")[1] not in skipped_projects
+        if path.split("/")[1] not in skipped_projects and (not cluster or path.split("/")[0] == cluster)
     ]
     return orphans, undecidable, paths
 
