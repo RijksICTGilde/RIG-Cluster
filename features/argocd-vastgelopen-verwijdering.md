@@ -258,12 +258,73 @@ veegactie vangt en als weigering meldt.
 Daarnaast weigert hij op een cluster dat niet te bereiken is. Dat is geen lezing die als
 leeg doorgaat maar een `KubectlConnectionError`, die alle vier de lezingen kunnen gooien.
 
+### Drie lagen, vanuit git
+
+Met de drie GitOps-checkouts erbij (`--projects-repo`, `--argo-repo`,
+`--deployments-repo`, of in de task `GITOPS=<map met de drie>`) leest hij van het
+projectbestand naar beneden:
+
+* **argo-repo**: een Application waarvan de render-root bij geen enkele deployment in het
+  projectbestand hoort. ArgoCD houdt hem, en wat hij uitrolt, terecht in stand zolang hij in
+  git staat. Alleen gemeld: weghalen is een commit in de argo-repo. De verwachte paden komen
+  uit dezelfde functies in `opi/utils/naming.py` waarmee OPI ze schrijft, dus ook
+  `_project` en `infrastructure` tellen mee. Het projectbestand wordt na
+  `migrate_to_latest()` gelezen.
+* **deployments-repo**: zoals hierboven, maar alleen onder de `<cluster>/`-map van het
+  gekozen cluster. De Applications komen uit dat ene cluster, dus elke map van een ander
+  cluster zou anders als wees lezen.
+* **cluster**: zoals hierboven.
+
+Gemeten op `odcn-production`, 9 oktober 2026: drie Applications in de argo-repo
+(`dd-mco-pr-41`, `pm-5sj-pr139`, `toets-hn7-pr-32`), 42 verdwenen Applications met resources
+in het cluster, 27 wezenmappen in de deployments-repo.
+
+### In een Capsule-tenant
+
+Het tenant-account mag ongeveer 90 van de types die het cluster serveert niet lijsten
+(Calico, Elastic, metal3, kyverno, ...). Elke namespace antwoordt dan voor een deel van zijn
+types, en de weigering hierboven sloeg op de eerste namespace al toe. Met de
+deployments-repo erbij beslist wat die repo RENDERT: zijn de kinds die erin staan apart nog
+eens opgevraagd en hebben die allemaal geantwoord, dan telt de namespace als gemeten. Een
+type dat niemand rendert kan geen wees van ons bevatten; een gerenderd type dat zwijgt wel,
+en dan weigert hij nog steeds.
+
+De kinds worden gelezen uit de regels `apiVersion:` en `kind:` vooraan een document, niet
+geparsed: de helmfile-projecten bevatten chart-templates, die pas YAML zijn als ArgoCD ze
+rendert. Een getemplatete `apiVersion` telt voor elke groep met dat kind; een getemplatete
+`kind` wordt gemeld, niet geraden. Een met SOPS versleuteld kind is een Secret: OPI
+versleutelt alleen wat het als `.to-sops.yaml` schrijft.
+
+### Wat nooit een wees is
+
+* Een resource met een `ownerReference`: die hoort bij zijn eigenaar en gaat met die mee.
+  Operators kopiëren het label `app.kubernetes.io/instance` op wat ze maken. Gemeten op
+  `odcn-production`: de pod en services van de levende CNPG-database `algor-odc-db` lazen
+  als wezen van een Application `algor-odc-db` die niet bestaat, en `--delete` had ze
+  meegenomen. Dit geldt ook voor de forcering in OPI, die dezelfde lezing gebruikt.
+* Endpoints en EndpointSlices: ArgoCD sluit ze zelf uit (`resource.exclusions`), en
+  Endpoints dragen geen `ownerReference` om ze aan te herkennen.
+* Alles van een helmfile-project (een deployment met een `helmfile`-lijst, dezelfde toets
+  als `ProjectManager._deployment_uses_helmfile`): niet in de argo-laag, niet in de
+  deployments-repo, en hun namespaces niet in het cluster. Dat vraagt de projects-repo,
+  dus gebruik `GITOPS`.
+
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
 NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
 REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+GITOPS=~/IdeaProjects/rig-cluster-test-git-repositories task argocd-orphan-sweep
+                                                          # alle drie de lagen; nodig in een tenant
 NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
 ```
+
+Cluster en ArgoCD-namespace komen uit `task select-cluster` (`CLUSTER_TYPE`,
+`RIG_NAMESPACE`). Het script las ze eerst uit de `.env` van `operations-manager/python`, en
+die wijst naar de sandbox (`rig-system`), ook met select-cluster op productie.
+
+Hij is traag: per namespace een `kubectl get` over elk type dat het cluster kent, zo'n tien
+seconden, een minuut of acht voor heel `odcn-production`. Voor een eenmalige opruiming
+volstaat dat; voor doorlopende detectie, zie hieronder.
 
 Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
 hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
@@ -278,7 +339,7 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | Bestand | Wat het doet |
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
-| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
@@ -294,3 +355,13 @@ Detectie en alarmering. Dit was veertien dagen onzichtbaar, en een alarm op Appl
 met een `deletionTimestamp` ouder dan een kwartier zou dat afvangen, net als een alarm op
 `user-applications` met een langlopende operatie. Dat hoort bij het bredere gat rond
 servicemonitoring en is een eigen taak.
+
+Doorlopende detectie van wezen. ArgoCD houdt zelf een watch-cache bij van alles in de
+namespaces die hij beheert en kan melden wat daar staat zonder dat een Application het
+bezit: `spec.orphanedResources: {warn: true}` in het AppProject. Dat kost geen extra
+API-verkeer, waar deze veegactie per run duizenden lijstvragen stelt. Voorstel, nog niet
+gebouwd.
+
+De forcering in OPI gebruikt dezelfde volledigheidstoets als de veegactie, maar zonder de
+deployments-repo. In de tenant eindigt elke forcering daardoor als `partial`, waarna stap 7
+(de manifestmap) wordt overgeslagen. Zie issue #205.
