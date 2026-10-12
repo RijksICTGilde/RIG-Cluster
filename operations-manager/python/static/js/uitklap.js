@@ -23,8 +23,9 @@
         if (!rij) return;
 
         /* De bediening van een rij (het vraagteken bij een dienst, een knop in de inhoud)
-           is een eigen besturingselement en mag de rij niet omklappen. */
-        if (event.target.closest('nldd-list-item-action')) return;
+           is een eigen besturingselement en mag de rij niet omklappen. Heette tot NLDD
+           0.8.83 nldd-list-item-action. */
+        if (event.target.closest('nldd-list-item-segment')) return;
 
         /* Een klik BINNEN het uitgeklapte deel is geen klik op de rij: daar staan
            invoervelden, kopieerknoppen en oogjes, en die moeten hun eigen werk doen

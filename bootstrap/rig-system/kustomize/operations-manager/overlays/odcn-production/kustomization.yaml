@@ -12,6 +12,7 @@ resources:
   - configmap.yaml
   - network-policy.yaml
   - prometheusrule-billing.yaml
+  - prometheusrule-image-pull.yaml
 
   # Additional hostname zad.rijksapp.nl with Let's Encrypt (transition period)
   - issuer-letsencrypt.yaml

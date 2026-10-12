@@ -36,7 +36,15 @@ _PREVIOUS_ATTEMPT_MISSING_MARKER = "previous terminated container"
 
 #: Types left out of the ArgoCD-ownership inventory. Events are never applied by ArgoCD,
 #: so they carry no ownership mark, but a busy namespace holds thousands of them.
-_TRACKING_SWEEP_SKIPPED_TYPES = {"events", "events.events.k8s.io"}
+#: Endpoints and EndpointSlices are in ArgoCD's own resource.exclusions, so ArgoCD cannot
+#: have created them; they copy their Service's labels, instance label included, and the
+#: Endpoints carry no ownerReference to tell them apart.
+_TRACKING_SWEEP_SKIPPED_TYPES = {
+    "events",
+    "events.events.k8s.io",
+    "endpoints",
+    "endpointslices.discovery.k8s.io",
+}
 
 
 def is_previous_attempt_missing(stderr_text: str) -> bool:
@@ -679,16 +687,46 @@ class KubectlConnector:
         logger.warning(f"Could not determine existence of ArgoCD Application '{app_name}': {stderr}")
         return None
 
+    async def get_argocd_application(self, app_name: str, namespace: str | None = None) -> dict[str, Any] | None:
+        """
+        One ArgoCD Application CR, read through the Kubernetes API.
+
+        The Kubernetes API and not the ArgoCD API, for the same reason as
+        ``argocd_application_exists`` above, and because the terminate patch next to this one
+        goes through that same API.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
+
+        Returns:
+            The Application CR, or ``None`` when it is absent or could not be read. Those two
+            are one answer on purpose; the log line below says which it was.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "json"]
+        )
+        if code != 0:
+            if "notfound" in stderr.lower().replace(" ", ""):
+                logger.debug(f"ArgoCD Application '{app_name}' does not exist in namespace '{namespace}'")
+            else:
+                logger.warning(f"Could not read ArgoCD Application '{app_name}': {stderr}")
+            return None
+        try:
+            application = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse ArgoCD Application '{app_name}': {e}")
+            return None
+        return application if isinstance(application, dict) else None
+
     async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
         """
-        Remove the running operation from an ArgoCD Application.
+        Remove any running operation from an ArgoCD Application.
 
-        A sync operation that waits on health blocks the deletion: while it runs, the
-        resources-finalizer never gets to its cascade, and it never ends when the
-        workloads it waits for cannot become healthy (an unpullable image, a crashloop).
-        Removing ``/operation`` releases that block, and the cascade then runs in seconds.
-        This is what a delete must do FIRST - removing the finalizer instead takes away
-        the lock that would have done the cascade, and leaves every resource behind.
+        The operation is read first: a json-patch remove on an absent path is rejected
+        with a generic 422 by this apiserver, so reading first avoids false errors when
+        there is no operation running.
 
         Args:
             app_name: The name of the ArgoCD Application
@@ -696,11 +734,18 @@ class KubectlConnector:
 
         Returns:
             True if no running operation remains (removed, none present, or app gone),
-            False if the patch failed for another reason.
+            False if the Application could not be read or the patch failed.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
-        logger.info(f"Removing any running operation from ArgoCD Application '{app_name}' in namespace '{namespace}'")
 
+        operation, read = await self._read_argocd_application_operation(app_name, namespace)
+        if not read:
+            return False
+        if not operation:
+            logger.debug(f"ArgoCD Application '{app_name}' has no running operation")
+            return True
+
+        logger.info(f"Removing the running operation from ArgoCD Application '{app_name}' in namespace '{namespace}'")
         stdout, stderr, code = await self._run_kubectl_command(
             [
                 "patch",
@@ -719,18 +764,32 @@ class KubectlConnector:
             logger.info(f"Removed the running operation from ArgoCD Application '{app_name}'")
             return True
 
-        lowered = stderr.lower()
-        # A json-patch remove on an absent path is rejected, which is the normal case:
-        # the Application simply has no operation running. That is the state we wanted.
-        if "missing path" in lowered or "does not apply" in lowered:
-            logger.debug(f"ArgoCD Application '{app_name}' has no running operation")
-            return True
-        if "notfound" in lowered.replace(" ", ""):
-            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+        # The operation can end, and the Application can go, between the read and the patch.
+        # Reading again says whether it did, where the generic 422 of this apiserver does not.
+        operation, read = await self._read_argocd_application_operation(app_name, namespace)
+        if read and not operation:
+            logger.info(f"The running operation on ArgoCD Application '{app_name}' was already gone")
             return True
 
         logger.error(f"Failed to remove the running operation from ArgoCD Application '{app_name}': {stderr}")
         return False
+
+    async def _read_argocd_application_operation(self, app_name: str, namespace: str) -> tuple[str, bool]:
+        """The running operation of an Application, and whether it could be read at all.
+
+        An Application that does not exist has no operation, and that is a read that
+        succeeded: there is nothing to clear.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "jsonpath={.operation}"]
+        )
+        if code == 0:
+            return stdout.strip(), True
+        if "notfound" in stderr.lower().replace(" ", ""):
+            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+            return "", True
+        logger.error(f"Could not read the running operation of ArgoCD Application '{app_name}': {stderr}")
+        return "", False
 
     async def get_argocd_application_destination_namespace(
         self, app_name: str, namespace: str | None = None
@@ -808,6 +867,38 @@ class KubectlConnector:
                 continue
             types.append(name)
         return types
+
+    async def list_namespaced_kinds(self) -> dict[str, str] | None:
+        """
+        The namespaced kinds this cluster serves, keyed ``Kind.group`` (core: ``Kind``).
+
+        A manifest names its type by ``apiVersion`` and ``kind``, kubectl by plural and
+        group. This maps the one onto the other, so a set of kinds read from manifests can
+        be queried as the same type names ``list_namespaced_resource_types`` returns.
+
+        Returns:
+            ``{"Deployment.apps": "deployments.apps", "Secret": "secrets", ...}``, or
+            ``None`` when the discovery failed.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["api-resources", "--namespaced=true", "--verbs=list", "-o", "wide", "--no-headers"]
+        )
+        if code != 0:
+            logger.error(f"Failed to list namespaced api-resources: {stderr}")
+            return None
+
+        kinds = {}
+        for line in stdout.splitlines():
+            columns = line.split()
+            # SHORTNAMES may be empty, so columns are found from NAMESPACED, which a
+            # namespaced listing always prints as "true": APIVERSION before it, KIND after.
+            if "true" not in columns:
+                continue
+            at = columns.index("true")
+            plural, api_version, kind = columns[0], columns[at - 1], columns[at + 1]
+            group = api_version.rpartition("/")[0]
+            kinds[f"{kind}.{group}" if group else kind] = f"{plural}.{group}" if group else plural
+        return kinds
 
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None
@@ -1382,6 +1473,58 @@ class KubectlConnector:
 
         logger.debug("Found %d application pod(s) for %s/%s", len(pods), namespace, deployment_name)
         return pods
+
+    async def watch_pods(self, label_selector: str) -> asyncio.subprocess.Process | None:
+        """Start a cluster-wide pod watch and return the streaming subprocess.
+
+        ``kubectl get pods -A --watch --output-watch-events`` first prints the current
+        state (each object as an ``ADDED`` event) and then streams every change. That
+        initial burst seeds the caller's cache and comes back after every reconnect, so
+        nothing here has to track a ``resourceVersion``.
+
+        Subprocess rather than a direct call to the API server, like every other
+        Kubernetes read here: kubectl resolves both the in-cluster service account and a
+        local kubeconfig, and ``stream_deployment_logs`` established the shape.
+
+        The caller owns the process: read ``stdout``, terminate it when done, and
+        restart it when it exits (which it does on any API-server hiccup).
+
+        Args:
+            label_selector: Label selector limiting the stream, e.g. ``component=application``
+
+        Returns:
+            The subprocess with a stdout stream, or None when it could not be started.
+        """
+        if not KubectlConnector.isConnected:
+            logger.error("kubectl connection is not available for the pod watch")
+            return None
+
+        cmd = [
+            "kubectl",
+            "get",
+            "pods",
+            "--all-namespaces",
+            "-l",
+            label_selector,
+            "--watch",
+            "--output-watch-events",
+            "-o",
+            "json",
+        ]
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.env,
+            )
+        except Exception as e:
+            logger.error(f"Error starting the pod watch ({label_selector}): {e}")
+            return None
+
+        logger.info(f"Started pod watch for '{label_selector}' (PID: {process.pid})")
+        return process
 
     async def get_pod_container_image(self, namespace: str, pod_name: str, container_name: str) -> str | None:
         """Get the image a running container was started from.

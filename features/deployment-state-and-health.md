@@ -11,8 +11,10 @@ Dat ging mis. Een herverwerking meldde "productie - frontend: image ophalen misl
 zad-waker:latest" voor een component dat niet draaide en dat image niet gebruikt, terwijl
 ArgoCD de applicatie Synced en Healthy noemde. De wekker draagt bewust hetzelfde
 `app`-label (hij moet de Service van het component overnemen), dus de check las diens
-toestand als die van het component. Achter die melding hangt logica die een component
-uitschakelt bij een image-pull-fout.
+toestand als die van het component. Achter die melding hing toen logica die een component
+uitschakelde bij een image-pull-fout; die ingreep is met RC-243 helemaal weg (zie
+`image-pull-backoff-detection.md`), maar het verkeerd toeschrijven van een pod blijft
+evengoed een verkeerde melding.
 
 Dit onderdeel bestaat uit drie dingen:
 

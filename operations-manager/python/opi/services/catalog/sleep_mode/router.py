@@ -22,16 +22,20 @@ either endpoint returns. See ``api_models`` for why there are two state fields.
 
 from __future__ import annotations
 
+import logging
 import secrets
 from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException
 from fastapi.responses import JSONResponse
 
 from opi.services.catalog.sleep_mode import flow
 from opi.services.catalog.sleep_mode.api_models import SleepStatusResponse, WakeResponse
-from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken
-from opi.services.project_store import get_project_store
+from opi.services.catalog.sleep_mode.flow import DeploymentNotFound, InvalidWakeToken, WakeTimeout
+from opi.services.catalog.sleep_mode.state import STATE_WAKING
+from opi.services.project_store import ConflictError, get_project_store
+
+logger = logging.getLogger(__name__)
 
 sleep_mode_router = APIRouter(prefix="/api/sleep-mode", tags=["sleep-mode"])
 
@@ -68,6 +72,18 @@ def _presented_token(project_name: str, wake_token: str | None, api_key: str | N
     raise HTTPException(status_code=401, detail="X-Wake-Token or X-API-Key header required")
 
 
+async def finish_wake_after_response(project_name: str, deployment_name: str) -> None:
+    """Finish the wake once the waker pod has its answer, so the answer is not delayed.
+
+    Nobody is waiting on the outcome here (the waker polls ``/status`` and has its own
+    time-outs), so a wake that does not come back is logged and left to the sweeper.
+    """
+    try:
+        await flow.finish_wake(project_name, deployment_name)
+    except (WakeTimeout, DeploymentNotFound, ConflictError) as exc:
+        logger.info("sleep-mode: could not finish the wake of %s/%s: %s", project_name, deployment_name, exc)
+
+
 @sleep_mode_router.post(
     "/{project_name}/{deployment_name}/wake",
     response_model=WakeResponse,
@@ -80,6 +96,7 @@ def _presented_token(project_name: str, wake_token: str | None, api_key: str | N
 async def wake(
     project_name: str,
     deployment_name: str,
+    background_tasks: BackgroundTasks,
     x_wake_token: WakeTokenHeader = None,
     x_api_key: ApiKeyHeader = None,
 ) -> JSONResponse:
@@ -98,6 +115,8 @@ async def wake(
         raise HTTPException(status_code=401, detail="Invalid wake token") from exc
     except DeploymentNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if result.changed and result.state == STATE_WAKING:
+        background_tasks.add_task(finish_wake_after_response, project_name, deployment_name)
     return JSONResponse(
         {"state": result.state, "sleep_state": result.state}, status_code=202 if result.changed else 200
     )

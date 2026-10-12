@@ -16,17 +16,14 @@ spec:
   # terugdraaien, en weet je achteraf welke build er draait.
   image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig
   version: v3.5.1-rig2
+  # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
+  # cmd-params-keys die hier stonden kwamen nooit bij een component aan (RC-250);
+  # tests/test_argocd_extra_config_keys.py houdt dit blok daarvan vrij.
+  # Op dit cluster veranderde weghalen niets: die waarden herhaalden de operator-default of
+  # stonden langs de werkende route (spec.controller/spec.server) al goed.
   extraConfig:
     timeout.reconciliation: "15m"
     timeout.hard.reconciliation: "0s"
-    server.repo.server.timeout.seconds: "180"
-    controller.sync.timeout.seconds: "300"
-    controller.status.processors: "20"
-    controller.operation.processors: "10"
-    controller.repo.server.timeout.seconds: "180"
-    controller.kubectl.parallelism.limit: "10"
-    controller.sharding.algorithm: "round-robin"
-    reposerver.parallelism.limit: "10"
   server:
     extraCommandArgs:
       - --repo-server-timeout-seconds=180
@@ -41,10 +38,14 @@ spec:
     resources:
       limits:
         cpu: "1"
-        memory: 512Mi
+        # Was 512Mi met een request van 128Mi, en daarop is de server vier keer OOMKilled
+        # (exit 137). Steady state is ~375Mi, dus de request lag een factor 3 te laag en de
+        # limit liet geen ruimte voor een piek. De request dekt nu het gemeten gebruik, de
+        # limit geeft daarboven dezelfde marge nog een keer.
+        memory: 1Gi
       requests:
         cpu: 250m
-        memory: 128Mi
+        memory: 384Mi
     insecure: true
     route:
       annotations:
@@ -202,6 +203,10 @@ spec:
   controller:
     extraCommandArgs:
       - --repo-server-timeout-seconds=180
+      # De bovengrens op een sync-operation; de default 0 is nooit. Als flag en niet als
+      # extraConfig-key, want geen enkele cmd-params-key bereikt onder deze operator de
+      # controller. Waarom dit nodig is en waarom 600: features/vastgelopen-sync-breekt-af.md.
+      - --sync-timeout=600
     env:
       - name: ARGOCD_REPO_SERVER_TIMEOUT_SECONDS
         value: "180"

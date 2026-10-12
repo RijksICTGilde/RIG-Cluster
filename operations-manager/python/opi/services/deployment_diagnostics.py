@@ -17,8 +17,16 @@ from typing import TYPE_CHECKING, Any
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    format_duration,
+    is_stuck,
+    operation_age_seconds,
+    read_sync_operation,
+)
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.event_interpreter import _friendly_resource_name
+from opi.services.image_pull_report import image_pull_failures_for
 from opi.utils.naming import generate_unique_name, split_image_reference
 
 if TYPE_CHECKING:
@@ -294,10 +302,20 @@ def gather_sync_deviations(
     # Sleutel-aanwezigheid, niet truthiness: ArgoCD's ``automated: {}`` betekent aan.
     auto_sync = "automated" in (((status_data.get("spec") or {}).get("syncPolicy")) or {})
 
+    # Loopt er een sync die al te lang staat, dan is "bij de volgende sync" een belofte die
+    # niemand inlost: zolang hij staat wordt elke volgende overgeslagen, en hij eindigt niet uit
+    # zichzelf (RC-250).
+    operation = read_sync_operation(status_data)
+    blocked_for = (
+        format_duration(operation_age_seconds(operation))
+        if is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS)
+        else None
+    )
+
     # Resources the last successful sync already deleted; if such a resource still
     # exists, its deletion is stuck and the next sync will not change that.
     pruned_by_last_sync: set[tuple[str, str]] = set()
-    if operation_state.get("phase") == "Succeeded":
+    if operation.phase == "Succeeded":
         for result in (operation_state.get("syncResult", {}) or {}).get("resources", []) or []:
             if result.get("status") == "Pruned":
                 pruned_by_last_sync.add((result.get("kind", ""), result.get("name", "")))
@@ -320,8 +338,12 @@ def gather_sync_deviations(
             if resource.get("requiresPruning"):
                 if (resource.get("kind", ""), resource.get("name", "")) in pruned_by_last_sync:
                     reason = "is verwijderd, maar het cluster maakt de verwijdering niet af"
+                elif blocked_for:
+                    reason = f"staat niet meer in git, maar de sync die hem moet opruimen loopt al {blocked_for} vast"
                 else:
                     reason = "staat niet meer in git en wordt bij de volgende sync opgeruimd"
+            elif blocked_for:
+                reason = f"wijkt af van git, maar de sync die hem moet bijwerken loopt al {blocked_for} vast"
             elif auto_sync:
                 reason = "wijkt af van git en wordt bij de volgende sync bijgewerkt"
             else:
@@ -447,6 +469,65 @@ def summarize_component_pods(
         )
 
     return summaries
+
+
+@dataclass(frozen=True)
+class ComponentImagePullFailure:
+    """One component of a deployment that cannot pull its image, ready to render.
+
+    Sibling of ``ComponentPodSummary``: that one says what IS serving, this one says what
+    cannot start. A deployment can have both at once, which is exactly what a bad image
+    push looks like while the previous version keeps running.
+    """
+
+    #: The component reference as it stands in the project file.
+    reference: str
+    #: The image it cannot pull, in its SOURCE-registry spelling (not the proxy rewrite).
+    image: str | None
+    #: What the registry answered, in its own words.
+    registry_message: str
+    #: ``absent`` | ``capacity`` | ``undiagnosed``: who can act on this.
+    reason_class: str
+    #: When the pod was created, so "since when" is answerable. The container never
+    #: started, so there is no start time to use instead.
+    since: str
+
+
+def describe_image_pull_failures(
+    deployment: dict[str, Any],
+    project_data: dict[str, Any] | None = None,
+) -> list[ComponentImagePullFailure]:
+    """The components of ``deployment`` that cannot pull, from the live cluster count.
+
+    Read from the in-process snapshot (``image_pull_report``) and not from the project
+    file, because since RC-243 the project file no longer records this: a component that
+    cannot pull is not switched off any more, it simply keeps failing.
+
+    Components the project file marks ``disabled`` are left out: their zero replicas are
+    the intended end state and the card names them and their reason separately.
+    """
+    cluster = deployment.get("cluster") or ""
+    namespace = get_prefixed_namespace(cluster, deployment.get("namespace") or "")
+    deployment_name = deployment.get("name") or ""
+
+    reference_by_app = {
+        generate_unique_name(deployment_name, comp["reference"]): comp["reference"]
+        for comp in deployment.get("components", []) or []
+        if isinstance(comp, dict) and comp.get("reference") and not comp.get("disabled")
+    }
+    if not reference_by_app:
+        return []
+
+    return [
+        ComponentImagePullFailure(
+            reference=reference_by_app[observed.app],
+            image=display_image(observed.image, cluster, project_data) or None,
+            registry_message=observed.message,
+            reason_class=observed.reason_class,
+            since=observed.since,
+        )
+        for observed in image_pull_failures_for(namespace, set(reference_by_app))
+    ]
 
 
 def _compare_image_references(running: str | None, configured: str | None) -> bool | None:

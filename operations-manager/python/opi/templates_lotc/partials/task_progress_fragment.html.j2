@@ -56,19 +56,18 @@
 
     {{ progress_task_list(tasks) }}
 
-    {# De aanroep gaat via :attrs; <c-button> laat geen onclick als los attribuut toe. De
-       vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
+    {# De vorm hiervoor zette de variabele wel en hing hem nergens aan, dus de knop kwam
        zonder klikafhandeling op het scherm: de dialoog ging niet dicht en de pagina
        herlaadde niet. Zelfde vorm als bg/_modal-wizard-progress-fragment.html.j2. #}
     {% if status == "completed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
         {% set afronden_js %}{{ on_complete }}{% endset %}
-        <c-button type="primary" label="{{ on_complete_label | default('Ok') }}" :attrs="{'onclick': afronden_js}" />
+        <c-button type="primary" label="{{ on_complete_label | default('Ok') }}" @click="{{ afronden_js }}" />
     </div>
     {% elif status == "failed" and on_complete is defined and on_complete %}
     <div class="edit-progress-actions">
         {% set sluiten_js %}{{ on_complete }}{% endset %}
-        <c-button type="primary" label="{{ on_complete_label | default('Sluiten') }}" :attrs="{'onclick': sluiten_js}" />
+        <c-button type="primary" label="{{ on_complete_label | default('Sluiten') }}" @click="{{ sluiten_js }}" />
     </div>
     {% endif %}
 </div>

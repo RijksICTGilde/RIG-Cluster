@@ -49,17 +49,17 @@
                 <c-icon icon="check-mark-circle" size="md" />
                 <c-span>Backups ingeschakeld: {{ ctx.schedule | rrule_schedule }}</c-span>
                 <c-button type="secondary" size="sm" show-icon="before" icon="gear"
-                          label="Schema wijzigen" :attrs="{'onclick': schema_instellen}" />
+                          label="Schema wijzigen" @click="{{ schema_instellen }}" />
                 {% else %}
                 <c-icon icon="info-circle" size="md" />
                 <c-span>Geen backup schema ingesteld</c-span>
                 <c-button type="secondary" size="sm" show-icon="before" icon="gear"
-                          label="Schema instellen" :attrs="{'onclick': schema_instellen}" />
+                          label="Schema instellen" @click="{{ schema_instellen }}" />
                 {% endif %}
             </c-cluster>
             <c-cluster gap="sm" align="center">
                 <c-button type="secondary" size="sm" show-icon="before" icon="plus"
-                          label="Backup aanmaken" :attrs="{'onclick': backup_aanmaken}" />
+                          label="Backup aanmaken" @click="{{ backup_aanmaken }}" />
                 {# Wordt door het snapshot-fragment gevuld (hx-swap-oob) zodra bekend is of
                    er iets te herstellen valt. Hier al renderen zou gokken zijn. #}
                 <span id="restore-btn-{{ ctx.deployment_name }}"></span>

@@ -106,7 +106,8 @@ de xfail dan weg moet. De slotronde verwacht `beta` daarom nog.
 
 - `tests/e2e/helpers/lifecycle.py` - `create_project_via_wizard()` doorloopt de wizard en levert de
   technische projectnaam, de API-key en de eerste deployment op. Die naam heeft een willekeurig
-  achtervoegsel en wordt gevonden door de repo-listing voor/na te vergelijken.
+  achtervoegsel en wordt van de voortgangspagina gelezen. Valt de aanmaak daarna om, dan ruimt de
+  helper het project zelf op; zie `features/e2e-sandbox-tests.md`.
 - `ForgejoClient.wait_for_condition()` - pollt de geparste YAML tot een predicaat klopt. Bij falen
   komt de volledige file in de foutmelding, want bij gelijktijdig schrijven is juist wát er wél in
   staat de diagnose.

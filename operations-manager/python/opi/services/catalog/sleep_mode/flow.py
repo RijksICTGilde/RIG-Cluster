@@ -13,6 +13,7 @@ this module -- or the catalog -- stays light.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,10 @@ from opi.services.catalog.sleep_mode.api_models import DISABLED
 
 logger = logging.getLogger(__name__)
 
+#: How often ``finish_wake`` asks whether the app is back. Short, because the user is
+#: watching the task and the waker sits in front of a live app until this finishes.
+WAKE_POLL_SECONDS = 5
+
 
 class DeploymentNotFound(Exception):
     """The project or deployment does not exist."""
@@ -29,6 +34,10 @@ class DeploymentNotFound(Exception):
 
 class InvalidWakeToken(Exception):
     """A wake token was missing or did not match the deployment's stored token."""
+
+
+class WakeTimeout(Exception):
+    """The app did not come back before the waking deadline, so the wake really failed."""
 
 
 @dataclass
@@ -93,6 +102,32 @@ async def _verify_token(project_data: dict, deployment_name: str, presented_toke
     plain = await token_mod.decrypt(stored, project_data)
     if not token_mod.compare(presented_token, plain):
         raise InvalidWakeToken("Wake token mismatch")
+
+
+async def app_is_ready(project_data: dict, deployment: dict, config: Any) -> bool:
+    """Whether the app behind the waker has a ready pod, so a wake can be finished.
+
+    Shared by ``finish_wake`` and the sweeper's CHECK_AWAKE, so both ask the same
+    question. A deployment without a waker component has nothing serving a page, so
+    its wake is done the moment it is asked.
+    """
+    from opi.connectors.kubectl import KubectlConnector
+    from opi.core.cluster_config import get_prefixed_namespace
+    from opi.handlers.project_file_handler import ProjectFileHandler
+    from opi.services.catalog.sleep_mode import manifests
+    from opi.utils.naming import generate_unique_name
+
+    component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
+    if component is None:
+        return True
+    unique_name = generate_unique_name(deployment.get("name", ""), component)
+    namespace = get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", ""))
+    statuses = await KubectlConnector().get_deployment_status(namespace, unique_name)
+    if not statuses:
+        return False
+    raw = statuses[0].get("ready", "0")
+    ready = int(raw.split("/")[0]) if "/" in raw else int(raw)
+    return ready > 0
 
 
 async def wake(
@@ -166,6 +201,112 @@ async def wake(
         steps.done()
         # Only this one deployment is regenerated; Application/AppProject are untouched.
         # The reprocessing names its own steps on the same task.
+        # Don't wait for health: in waking the app can never become Healthy, because the
+        # waker's readiness is inverted on purpose.
+        await trigger_reprocessing(
+            project_name,
+            filename,
+            deployment_name,
+            argocd_resources_changed=False,
+            task_progress_manager=progress,
+            wait_for_healthy=False,
+        )
+        logger.info("sleep-mode: began waking %s/%s", project_name, deployment_name)
+        return WakeResult(changed=True, state=sleep_state.STATE_WAKING)
+    finally:
+        await project_manager.close()
+
+
+async def finish_wake(project_name: str, deployment_name: str, *, progress: Any | None = None) -> WakeResult:
+    """Wait for the app to come back, then move ``waking -> awake`` and prune the waker.
+
+    This is the second half of a wake, and the reason a wake no longer takes half an
+    hour: in ``waking`` the ArgoCD application cannot become Healthy (the waker's
+    readiness is inverted on purpose), so nothing else would notice the app is back
+    until the sweeper's next round. Waiting ends at the ``waking`` deadline the wake
+    itself stamped; past that the deployment is left alone and the sweeper reverts it.
+
+    Idempotent against both the sweeper and a second wake: the state is re-read from git
+    and anything that is no longer ``waking`` is a no-op with no commit.
+    """
+    from opi.core.config import settings
+    from opi.manager.project_manager import ProjectManager
+    from opi.services.catalog.sleep_mode import config as sleep_config
+    from opi.services.catalog.sleep_mode import service
+    from opi.services.catalog.sleep_mode import state as sleep_state
+    from opi.services.project_store import ConflictError, get_project_store
+    from opi.services.resource_tuning_service import trigger_reprocessing
+
+    steps = _Steps(progress)
+    project = get_project_store().get(project_name)
+    if not project or not project.data:
+        raise DeploymentNotFound(f"Project '{project_name}' not found")
+    # The cached data for the wait: read-only, and the wake that got us here wrote
+    # through the cache. The mutation below re-reads from git.
+    project_data = project.data
+    filename = project.filename
+    deployment = _find_deployment(project_data, deployment_name)
+    if deployment is None:
+        raise DeploymentNotFound(f"Deployment '{deployment_name}' not found in project '{project_name}'")
+
+    config = sleep_config.load(project_data, deployment.get("cluster", ""))
+    if config is None:
+        return WakeResult(changed=False, state=DISABLED)
+
+    current = sleep_state.read(project_data, deployment_name)
+    if current.state != sleep_state.STATE_WAKING:
+        steps.note(f"Geen wijziging nodig, de deployment is al {current.state}")
+        return WakeResult(changed=False, state=current.state)
+
+    # ``begin_wake`` always stamps this deadline; the fallback only keeps the loop
+    # bounded if it is missing or unreadable.
+    deadline = sleep_state.parse_expiry(current.expires_at) or (
+        datetime.now(UTC) + timedelta(minutes=settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES)
+    )
+
+    steps.begin("Wachten tot de applicatie opgestart is")
+    while not await app_is_ready(project_data, deployment, config):
+        if datetime.now(UTC) >= deadline:
+            message = (
+                f"De applicatie kwam niet binnen {settings.SLEEP_MODE_WAKING_TIMEOUT_MINUTES} minuten terug; "
+                "de slaapstand-sweeper zet de deployment terug op wakker"
+            )
+            steps.failed(message)
+            logger.warning(
+                "sleep-mode: %s/%s did not come back before its waking deadline", project_name, deployment_name
+            )
+            raise WakeTimeout(message)
+        await asyncio.sleep(WAKE_POLL_SECONDS)
+    steps.done()
+
+    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
+    try:
+        fresh = await project_manager.get_contents()
+        state_now = sleep_state.read(fresh, deployment_name).state
+        if state_now != sleep_state.STATE_WAKING or not service.to_awake(
+            fresh, deployment_name, datetime.now(UTC), config.sleep_after_wake_delta
+        ):
+            # The sweeper or a second wake finished it first; nothing left to write.
+            steps.note(f"Geen wijziging nodig, de deployment is al {state_now}")
+            return WakeResult(changed=False, state=state_now)
+
+        steps.begin("Wektoestand afronden in git")
+        try:
+            await project_manager.save_and_commit_project(
+                fresh, f"sleep-mode: finish wake {deployment_name} in {project_name}"
+            )
+        except ConflictError:
+            # Not retried: the sweeper finishes this on its next round.
+            logger.info(
+                "sleep-mode: finishing the wake of %s/%s hit a write conflict, the sweeper takes it",
+                project_name,
+                deployment_name,
+            )
+            steps.failed("Het projectbestand werd gelijktijdig gewijzigd")
+            raise
+        steps.done()
+        # The waker is gone now, so this application can become Healthy; that wait is
+        # the confirmation the app really is serving again.
         await trigger_reprocessing(
             project_name,
             filename,
@@ -173,8 +314,8 @@ async def wake(
             argocd_resources_changed=False,
             task_progress_manager=progress,
         )
-        logger.info("sleep-mode: began waking %s/%s", project_name, deployment_name)
-        return WakeResult(changed=True, state=sleep_state.STATE_WAKING)
+        logger.info("sleep-mode: finished waking %s/%s, waker pruned", project_name, deployment_name)
+        return WakeResult(changed=True, state=sleep_state.STATE_AWAKE)
     finally:
         await project_manager.close()
 
@@ -273,15 +414,12 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
     Reads the cached project data (this is hot, polled every few seconds) and only hits
     kubectl when there is a waker component to ask about.
     """
-    from opi.connectors.kubectl import KubectlConnector
-    from opi.core.cluster_config import get_prefixed_namespace
     from opi.handlers.project_file_handler import ProjectFileHandler
     from opi.services.catalog.sleep_mode import config as sleep_config
     from opi.services.catalog.sleep_mode import manifests
     from opi.services.catalog.sleep_mode import state as sleep_state
     from opi.services.catalog.sleep_mode.api_models import DISABLED
     from opi.services.project_store import get_project_store
-    from opi.utils.naming import generate_unique_name
 
     project = get_project_store().get(project_name)
     if not project or not project.data:
@@ -312,11 +450,5 @@ async def status(project_name: str, deployment_name: str, *, presented_token: st
         # that is polling keeps its page.
         return {"state": "starting", "sleep_state": current}
 
-    unique_name = generate_unique_name(deployment_name, component)
-    namespace = get_prefixed_namespace(cluster, deployment.get("namespace", ""))
-    statuses = await KubectlConnector().get_deployment_status(namespace, unique_name)
-    ready = 0
-    if statuses:
-        raw = statuses[0].get("ready", "0")
-        ready = int(raw.split("/")[0]) if "/" in raw else int(raw)
-    return {"state": "ready" if ready > 0 else "starting", "sleep_state": current}
+    ready = await app_is_ready(project_data, deployment, config)
+    return {"state": "ready" if ready else "starting", "sleep_state": current}

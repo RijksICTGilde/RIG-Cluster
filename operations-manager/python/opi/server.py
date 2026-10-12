@@ -291,6 +291,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start log watcher scheduler: %s", e)
 
+    # Start the cluster-wide OOM pod watch if this cluster runs it
+    from opi.core.cluster_config import watches_pods_for_oom
+
+    if watches_pods_for_oom(settings.CLUSTER_MANAGER):
+        try:
+            from opi.services.oom_watcher import OomMetricSweeper, OomPodWatcher
+
+            _oom_pod_watcher = OomPodWatcher(cluster=settings.CLUSTER_MANAGER)
+            await _oom_pod_watcher.start()
+            app.state.oom_pod_watcher = _oom_pod_watcher
+
+            _oom_metric_sweeper = OomMetricSweeper(
+                cluster=settings.CLUSTER_MANAGER,
+                interval_seconds=settings.OOM_METRIC_SWEEP_INTERVAL_SECONDS,
+            )
+            await _oom_metric_sweeper.start()
+            app.state.oom_metric_sweeper = _oom_metric_sweeper
+        except Exception as e:
+            logger.error("Failed to start the OOM pod watch: %s", e)
+
+    # Count the pods that cannot pull their image, on every cluster. Not behind a switch
+    # like the watch above; the reason is on ``ImagePullObserver``.
+    try:
+        from opi.services.image_pull_report import ImagePullObserver
+
+        _image_pull_observer = ImagePullObserver(interval_seconds=settings.IMAGE_PULL_OBSERVE_INTERVAL_SECONDS)
+        await _image_pull_observer.start()
+        app.state.image_pull_observer = _image_pull_observer
+    except Exception as e:
+        logger.error("Failed to start the image-pull observer: %s", e)
+
     # Start the sleep-mode sweeper if enabled
     if settings.SLEEP_MODE_SCHEDULER_ENABLED:
         try:
@@ -331,6 +362,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_console_reaper = getattr(app.state, "db_console_reaper", None)
     if db_console_reaper is not None:
         await db_console_reaper.stop()
+
+    # Stop the OOM pod watch
+    oom_metric_sweeper = getattr(app.state, "oom_metric_sweeper", None)
+    if oom_metric_sweeper is not None:
+        await oom_metric_sweeper.stop()
+
+    oom_pod_watcher = getattr(app.state, "oom_pod_watcher", None)
+    if oom_pod_watcher is not None:
+        await oom_pod_watcher.stop()
+
+    # Stop the image-pull observer
+    image_pull_observer = getattr(app.state, "image_pull_observer", None)
+    if image_pull_observer is not None:
+        await image_pull_observer.stop()
 
     # Stop sleep-mode sweeper
     sleep_mode_scheduler = getattr(app.state, "sleep_mode_scheduler", None)

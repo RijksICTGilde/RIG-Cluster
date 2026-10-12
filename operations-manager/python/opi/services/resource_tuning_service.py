@@ -122,6 +122,7 @@ async def trigger_reprocessing(
     deployment_name: str | None = None,
     argocd_resources_changed: bool = True,
     task_progress_manager: Any | None = None,
+    wait_for_healthy: bool = True,
 ) -> bool:
     """
     Trigger project reprocessing via the standard pipeline.
@@ -135,6 +136,9 @@ async def trigger_reprocessing(
         task_progress_manager: Optional progress manager. Pass it when a user is
             watching a task, so the pipeline's own steps (manifests, ArgoCD sync)
             are named on the page instead of disappearing into one long wait.
+        wait_for_healthy: Whether to wait for ArgoCD to report Synced + Healthy.
+            False for a deployment that cannot become Healthy by design, see
+            ``process_project_from_git``.
 
     Returns:
         True if reprocessing succeeded
@@ -146,6 +150,7 @@ async def trigger_reprocessing(
             task_progress_manager=task_progress_manager,
             deployment_name=deployment_name,
             argocd_resources_changed=argocd_resources_changed,
+            wait_for_healthy=wait_for_healthy,
         )
         return bool(result)
     finally:
@@ -582,18 +587,32 @@ async def _analyze_component_resources(
     # (25Mi), which is below what most runtimes need to boot. A container that really
     # ran passes this threshold within seconds.
     if max_observed_mb < cfg.min_observed_mi:
-        if not has_oom_kills:
+        min_memory_mi = float(get_min_memory_limit_mi(cluster))
+        if max_observed_mb > 0:
+            # Er IS gemeten, en wat er gemeten is valt onder wat dit cluster kan zetten.
+            # Dan is het antwoord dat minimum en niet "ik weet niets": een lagere waarde
+            # bestaat hier niet, dus elke meting eronder geeft hetzelfde antwoord.
+            # toets-hn7/frontend meet 2Mi tegen een clusterminimum van 25Mi en viel
+            # hiervoor in de tak eronder, die voor een OOM gaat vermenigvuldigen.
+            logger.info(
+                f"Measured max for {unique_name} is {max_observed_mb:.2f}Mi, below the "
+                f"{min_memory_mi:.0f}Mi this cluster can set; sizing on that minimum"
+            )
+            max_observed_mb = min_memory_mi
+            avg_observed_mb = min_memory_mi
+        elif not has_oom_kills:
             logger.info(
                 f"No usable memory data for {unique_name} "
                 f"(max {max_observed_mb:.2f}Mi below the {cfg.min_observed_mi:g}Mi plausibility floor), skipping"
             )
             return None
-        logger.info(
-            f"No memory data for {unique_name} but OOM kills detected, "
-            f"using current limits ({current_limit_mb:.0f}Mi) as baseline"
-        )
-        max_observed_mb = current_limit_mb
-        avg_observed_mb = current_request_mb
+        else:
+            logger.info(
+                f"No memory data for {unique_name} but OOM kills detected, "
+                f"using current limits ({current_limit_mb:.0f}Mi) as baseline"
+            )
+            max_observed_mb = current_limit_mb
+            avg_observed_mb = current_request_mb
 
     # Check OOM floor from resource history; a stale floor (old OOM, since
     # then observed running well below it) no longer counts
@@ -784,6 +803,40 @@ async def _analyze_component_resources(
         max_request_mb = max(allowed_mb - margin_mb, root_request_mb)
         if _k8s_memory_to_mb(new_request) > max_request_mb:
             new_request = _mb_to_k8s_memory(max_request_mb)
+
+    # Her-toets de deadband op wat er nu daadwerkelijk geschreven zou worden. De poort
+    # hierboven keurt de RECOMMENDATION, maar de headroom-regel en het groeiplafond draaien
+    # daarna en kunnen daar bijna alles van terugdraaien. Wat overblijft is dan een restje
+    # onder de deadband, en dat rolde elke nacht opnieuw de pods uit: asses-k2n/redirect
+    # schoof 104Mi en 105Mi heen en weer op een goedgekeurde DALING van 55Mi, die de
+    # headroom-regel vervolgens wegpoetste. Bleef onzichtbaar tot een van die uitrollen op
+    # 6 oktober 2026 een image-tag nodig had die upstream was opgeruimd.
+    #
+    # Blijven de huidige waarden daarmee net binnen de headroom-marge, dan is dat het
+    # kleinere kwaad: die marge is er voor een piek, en die haalt een verschil van 1Mi niet.
+    # Voor een OOM geldt de deadband niet, hier net zo min als bij de poort.
+    #
+    # Staat voor het honoreren van de gebruikerswens, want die mag wel een klein verschil
+    # zetten: het is een expliciete keuze en geen drift.
+    if not has_oom_kills:
+        request_binnen_deadband = not passes_deviation_gate(
+            current_request_mb,
+            _k8s_memory_to_mb(new_request),
+            increase_threshold,
+            decrease_threshold,
+            cfg.min_delta_mi,
+        )
+        limit_binnen_deadband = not passes_deviation_gate(
+            current_limit_mb,
+            _k8s_memory_to_mb(new_limit),
+            increase_threshold,
+            decrease_threshold,
+            cfg.min_delta_mi,
+        )
+        if request_binnen_deadband and limit_binnen_deadband:
+            new_limit = current_resources["limits_memory"]
+            new_request = current_resources["requests_memory"]
+            floor_blocked = False
 
     # A value the user set by hand wins over the tuner for exactly the fields they set,
     # for as long as that intent lives (RC-141). Applied here, at the end: everything

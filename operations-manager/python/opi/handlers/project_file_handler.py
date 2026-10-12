@@ -10,7 +10,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from deepdiff import DeepDiff
 from jsonpath_ng.ext import parse as jsonpath_parse
@@ -18,6 +18,7 @@ from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -48,6 +49,53 @@ IMAGE_PULL_REASONS = {
     "ImageInspectError",
     "RegistryUnavailable",
 }
+
+
+class ImagePullWaiting(NamedTuple):
+    """The image-pull failure the containers of ONE pod report."""
+
+    container: str
+    image: str
+    #: ``"<waiting reason>: <kubelet message>"``, the registry's own words, unabridged.
+    message: str
+
+
+def read_image_pull_from_statuses(container_statuses: list[dict] | None) -> ImagePullWaiting | None:
+    """The image-pull failure these ``status.containerStatuses`` report, or None.
+
+    The one reader of the waiting state, for both producers of an image-pull message: the
+    pod-health check on the deploy path (``oom_watcher.check_pod_health``) and the
+    cluster-wide count (``opi/services/image_pull_report.py``). The prefix it builds is
+    load-bearing in two directions -- ``is_image_pull_disable_reason`` below matches on it,
+    and ``classify_image_pull_failure`` reads ``invalidimagename`` out of the reason word --
+    so the two must not be able to word it differently.
+
+    The main container wins over a sidecar wherever it sits in the list: a pod can carry
+    one that an auth-wall put in front of it, and that sidecar's pull failure must never
+    masquerade as the component's own image. Among several sidecars the FIRST one answers,
+    so the sentence on the card does not flip between rounds when kubelet reorders them.
+
+    The pod-level guards stay with each caller, because they ask a different question of a
+    pod: "did this rollout fail" skips a superseded generation, "is a pull failing right
+    now" does not.
+    """
+    sidecar: ImagePullWaiting | None = None
+    for container_status in container_statuses or []:
+        waiting = (container_status.get("state", {}) or {}).get("waiting", {}) or {}
+        reason = waiting.get("reason", "")
+        if reason not in IMAGE_PULL_REASONS:
+            continue
+        container = container_status.get("name", "unknown")
+        failure = ImagePullWaiting(
+            container=container,
+            image=container_status.get("image", "") or "",
+            message=f"{reason}: {waiting.get('message', 'image pull failed')}",
+        )
+        if container == APPLICATION_CONTAINER_NAME:
+            return failure
+        if sidecar is None:
+            sidecar = failure
+    return sidecar
 
 
 def is_image_pull_disable_reason(reason: str) -> bool:
@@ -109,18 +157,42 @@ _IMAGE_ABSENT_MARKERS = (
 _REGISTRY_CAPACITY_MARKERS = ("quota has been exceeded",)
 
 
+# The three things an image-pull message can tell us, also the label value of the metric
+# that reports them (see opi/services/image_pull_report.py). A fourth is not free: a label
+# value is a promise to whatever alerts on it.
+IMAGE_PULL_ABSENT = "absent"
+IMAGE_PULL_CAPACITY = "capacity"
+IMAGE_PULL_UNDIAGNOSED = "undiagnosed"
+
+
+def classify_image_pull_failure(message: str | None) -> str:
+    """Which of the three an image-pull message is: absent, capacity, or undiagnosed.
+
+    The single reader of the two marker lists. ``image_is_confirmed_absent`` is this
+    function narrowed to one answer, so a phrase can never mean one thing to the metric
+    and another to the sentence a user reads.
+    """
+    if not message:
+        return IMAGE_PULL_UNDIAGNOSED
+    lowered = message.lower()
+    if any(marker in lowered for marker in _REGISTRY_CAPACITY_MARKERS):
+        return IMAGE_PULL_CAPACITY
+    if any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS):
+        return IMAGE_PULL_ABSENT
+    return IMAGE_PULL_UNDIAGNOSED
+
+
 def image_is_confirmed_absent(message: str | None) -> bool:
     """True only when the registry answered that this image is absent or refused.
 
     False means "we do not know" -- including for an empty message and for any
-    wording never seen before. Callers must treat that as "change nothing".
+    wording never seen before.
+
+    Since RC-243 no caller disables a component on this: it decides WORDING only (which
+    sentence the user reads, which class the metric counts). A heuristic that reads a
+    registry failure as "absent" may cost a sentence, never a pod.
     """
-    if not message:
-        return False
-    lowered = message.lower()
-    if any(marker in lowered for marker in _REGISTRY_CAPACITY_MARKERS):
-        return False
-    return any(marker in lowered for marker in _IMAGE_ABSENT_MARKERS)
+    return classify_image_pull_failure(message) == IMAGE_PULL_ABSENT
 
 
 # Default resource values for deployment containers

@@ -6,6 +6,7 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.oom_watcher import (
     ComponentFailure,
     DeploymentHealthError,
@@ -13,11 +14,15 @@ from opi.services.oom_watcher import (
     _describe_pod_waiting,
     _queue_refresh_task,
     _run_oom_check,
+    apply_oom_tune,
     check_all_components_health,
     check_pod_health,
+    component_health_from_oom_failures,
     create_health_check_callback,
+    record_oom_tune_generation,
     schedule_oom_check,
 )
+from opi.utils.naming import generate_unique_name
 
 # ---------------------------------------------------------------------------
 # Helper: build pod JSON
@@ -349,6 +354,54 @@ class TestCheckPodHealth:
         result = await check_pod_health("rig-prd-ns", "prod-api")
 
         assert result.image_pull_container == "app"
+        assert result.image_pull_image == "registry.example/prod-api:1.0"
+
+    @staticmethod
+    def _pod_failing_on(pod_name: str, container: str, image: str) -> dict:
+        """One pod whose only failing container is the given one."""
+        return {
+            "metadata": {"name": pod_name},
+            "status": {
+                "containerStatuses": [
+                    {
+                        "name": container,
+                        "image": image,
+                        "lastState": {},
+                        "state": {"waiting": {"reason": "ImagePullBackOff", "message": "Back-off pulling image"}},
+                    }
+                ]
+            },
+        }
+
+    @patch("opi.services.oom_watcher.KubectlConnector")
+    @pytest.mark.parametrize("app_pod_first", [True, False])
+    @pytest.mark.asyncio
+    async def test_across_replicas_the_components_own_image_still_wins(self, mock_kubectl_cls, app_pod_first):
+        """Replica A fails on its sidecar, replica B on the component's own image: report B.
+
+        The shared reader settles the precedence WITHIN a pod; this is the other half, the
+        one check_pod_health keeps for itself, and it decides which image the deploy reports
+        and which one the deployment card names. Both orders are here because the guard has
+        a branch each way: hold on to a main-container finding, and let one overwrite a
+        sidecar that was found first.
+
+        The name is taken from APPLICATION_CONTAINER_NAME and not spelled out again, because
+        MAIN_CONTAINER_NAME is an alias of it: a second literal that drifts would stop this
+        comparison from ever matching, and then a sidecar decides what the user is told.
+        """
+        mock_kubectl = MagicMock()
+        mock_kubectl_cls.return_value = mock_kubectl
+        mock_kubectl_cls.isConnected = True
+        sidecar_pod = self._pod_failing_on(
+            "prod-api-aaa", "authorization-wall", "quay.io/oauth2-proxy/oauth2-proxy:v7.7.1"
+        )
+        app_pod = self._pod_failing_on("prod-api-bbb", APPLICATION_CONTAINER_NAME, "registry.example/prod-api:1.0")
+        pods = [app_pod, sidecar_pod] if app_pod_first else [sidecar_pod, app_pod]
+        mock_kubectl.run_command = AsyncMock(return_value=(json.dumps({"items": pods}), "", 0))
+
+        result = await check_pod_health("rig-prd-ns", "prod-api")
+
+        assert result.image_pull_container == APPLICATION_CONTAINER_NAME
         assert result.image_pull_image == "registry.example/prod-api:1.0"
 
     @patch("opi.services.oom_watcher.KubectlConnector")
@@ -983,14 +1036,15 @@ class TestRunOomCheck:
         mock_queue.assert_called_once_with("myproject", "production")
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.disable_components_for_image_pull", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
     @pytest.mark.asyncio
-    async def test_image_pull_triggers_disable_and_queue(
-        self, mock_prefix, mock_get_data, mock_check, mock_disable, mock_queue
+    async def test_image_pull_is_reported_and_nothing_is_written(
+        self, mock_prefix, mock_get_data, mock_check, mock_queue, caplog
     ):
+        """Even "manifest unknown", the most explicit answer a registry gives, writes
+        nothing: the pod that is retrying the pull has to stay (RC-243)."""
         mock_get_data.return_value = (
             {
                 "deployments": [
@@ -1004,23 +1058,29 @@ class TestRunOomCheck:
             },
             "myproject.yaml",
         )
-        # The registry answered that the image is not there, so disabling is correct.
         pull_error = "ImagePullBackOff: Back-off pulling image: ErrImagePull: manifest unknown"
         mock_check.return_value = PodHealthResult("production-api", image_pull_error=pull_error)
 
-        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_disable.assert_called_once_with("myproject", "production", [("api", pull_error)])
-        mock_queue.assert_called_once_with("myproject", "production")
+        # No refresh either: a refresh exists to roll out a write, and there is none.
+        mock_queue.assert_not_called()
+        # The full kubelet message stays in the log -- that is the line the 2026-09-30
+        # outage was reconstructed from -- with the class that chose the wording.
+        logged = "\n".join(caplog.messages)
+        assert pull_error in logged
+        assert "absent" in logged
+        # And it is NOT the "no issues detected" line: something was wrong.
+        assert "no issues detected" not in logged
 
     @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
-    @patch("opi.services.oom_watcher.disable_components_for_image_pull", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.get_project_data")
     @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
     @pytest.mark.asyncio
     async def test_unreachable_registry_leaves_the_component_alone(
-        self, mock_prefix, mock_get_data, mock_check, mock_disable, mock_queue
+        self, mock_prefix, mock_get_data, mock_check, mock_queue, caplog
     ):
         """The 2026-09-10 mirror outage: the pull never reached a registry that could
         answer, so nothing is known about the image and nothing may be written."""
@@ -1045,10 +1105,11 @@ class TestRunOomCheck:
             ),
         )
 
-        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+        with caplog.at_level(logging.WARNING, logger="opi.services.oom_watcher"):
+            await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
-        mock_disable.assert_not_called()
         mock_queue.assert_not_called()
+        assert "undiagnosed" in "\n".join(caplog.messages)
 
     @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
     @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
@@ -1084,6 +1145,73 @@ class TestRunOomCheck:
         await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
 
         mock_check.assert_not_called()
+
+
+class TestFireAndForgetChain:
+    """A committed tune queues its own refresh AND the next check in the chain.
+
+    Both moved into ``apply_oom_tune`` / its caller when the pod watch started sharing
+    the remediation. The chain is what carries the fire-and-forget path over rounds, so
+    it needs its own hold: nothing else in this file fails when it disappears.
+    """
+
+    @staticmethod
+    def _project_data():
+        return (
+            {
+                "deployments": [
+                    {
+                        "name": "production",
+                        "namespace": "myproject",
+                        "cluster": "local",
+                        "components": [{"reference": "api"}],
+                    }
+                ]
+            },
+            "myproject.yaml",
+        )
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_a_committed_tune_queues_a_refresh_and_the_next_check(
+        self, mock_schedule, mock_prefix, mock_get_data, mock_check, mock_queue, mock_observe
+    ):
+        mock_get_data.side_effect = lambda _name: self._project_data()
+        mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
+        mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_queue.assert_awaited_once_with("myproject", "production")
+        mock_schedule.assert_called_once()
+        assert mock_schedule.call_args.kwargs["attempt"] == 2
+        assert mock_schedule.call_args.kwargs["max_attempts"] == 3
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher._queue_refresh_task", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.check_pod_health", new_callable=AsyncMock)
+    @patch("opi.services.oom_watcher.get_project_data")
+    @patch("opi.services.oom_watcher.get_prefixed_namespace", return_value="rig-prd-myproject")
+    @patch("opi.services.oom_watcher.schedule_oom_check")
+    @pytest.mark.asyncio
+    async def test_a_tune_that_commits_nothing_ends_the_chain(
+        self, mock_schedule, mock_prefix, mock_get_data, mock_check, mock_queue, mock_observe
+    ):
+        """No commit means no refresh and no follow-up: the chain ends by itself, which
+        is exactly why the fire-and-forget path may charge the budget late."""
+        mock_get_data.side_effect = lambda _name: self._project_data()
+        mock_check.return_value = PodHealthResult("production-api", oom_detected=True, oom_pod_template_hash="gen-1")
+        mock_observe.return_value = MagicMock(requeue_refresh=False, failures=[])
+
+        await _run_oom_check("myproject", "production", attempt=1, max_attempts=3, delay_seconds=0)
+
+        mock_queue.assert_not_awaited()
+        mock_schedule.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1221,7 +1349,20 @@ class TestPodGenerationLock:
 
     async def _two_detections(self, mock_get_data, mock_check, mock_observe, first_hash, second_hash):
         mock_get_data.side_effect = lambda _name: self._project_data()
-        mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
+
+        # The runner records the generation after its commit, so the fake must too or the
+        # filter reads empty.
+        async def _observe(project_name, deployment_name, component_health):
+            for ref, health in component_health.items():
+                record_oom_tune_generation(
+                    project_name,
+                    deployment_name,
+                    generate_unique_name(deployment_name, ref),
+                    health.oom_pod_template_hash,
+                )
+            return MagicMock(requeue_refresh=True, failures=[])
+
+        mock_observe.side_effect = _observe
 
         task_service = AsyncMock()
         with patch("opi.services.oom_watcher._task_service_ref", task_service):
@@ -1272,16 +1413,72 @@ class TestPodGenerationLock:
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_inline_path_uses_the_same_lock(self, mock_check):
-        """The inline callback observes the same rule as the background check."""
+        """The inline callback observes the same rule, and hands the generation along.
+
+        It does not record: the tune happens in the after-sync hook this failure lands
+        in, and the runner records the generation after its commit. So the generation has
+        to travel on the failure, or the hook cannot tell this evidence from the next pod's.
+        """
         mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True, oom_pod_template_hash="fb654fcc5")]
         callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
 
         with pytest.raises(DeploymentHealthError) as exc_info:
             await callback(5)
         assert exc_info.value.failures[0].failure_type == "oom"
+        assert exc_info.value.failures[0].pod_template_hash == "fb654fcc5"
 
-        # Same generation again: no OOM failure, so no second tune cycle.
+        # Once the hook has answered that generation, the callback stops reporting it.
+        record_oom_tune_generation("myproject", "production", "comp-a", "fb654fcc5")
         await callback(10)
+
+    def test_the_failure_translates_into_the_hook_input(self):
+        """Keyed by reference, with the generation still attached.
+
+        This mapping is the whole inline path: ``project_manager`` hands these to the
+        after-sync hook, and the hook brakes on the generation. Dropping it here was
+        the silent half of the escalation, because an unknown generation tunes.
+        """
+        health = component_health_from_oom_failures(
+            [
+                ComponentFailure(
+                    component_name="pr-103-frontend",
+                    failure_type="oom",
+                    message="OOM kill detected",
+                    component_reference="frontend",
+                    pod_template_hash="6694c99686",
+                ),
+                ComponentFailure(
+                    component_name="pr-103-api",
+                    failure_type="oom",
+                    message="OOM kill detected",
+                    component_reference="api",
+                ),
+            ]
+        )
+
+        assert health["frontend"].oom_pod_template_hash == "6694c99686"
+        assert health["api"].oom_pod_template_hash is None, "an unknown generation stays unknown"
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_the_watcher_path_hands_the_generation_to_the_hook(self, mock_observe):
+        """The background paths feed the same brake, keyed per component."""
+        mock_observe.return_value = MagicMock(requeue_refresh=False, failures=[])
+
+        await apply_oom_tune(
+            "myproject",
+            "production",
+            ["api", "web"],
+            {
+                generate_unique_name("production", "api"): "fb654fcc5",
+                generate_unique_name("production", "web"): None,
+            },
+            source="test",
+        )
+
+        health = mock_observe.call_args.args[2]
+        assert health["api"].oom_pod_template_hash == "fb654fcc5"
+        assert health["web"].oom_pod_template_hash is None
 
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio

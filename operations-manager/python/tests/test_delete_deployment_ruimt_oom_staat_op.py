@@ -59,7 +59,7 @@ async def test_verwijderen_ruimt_beide_sporen_van_de_tune_op() -> None:
     """Aanmaken, laten tunen, verwijderen: geen van beide dicts houdt nog een entry vast."""
     # Laat tunen langs de echte registratiewegen, niet door de dicts zelf te vullen.
     oom_watcher._record_oom_tune_attempt("demo", "pr-1")
-    oom_watcher._record_oom_tune_hash("demo", "pr-1", "pr-1-api", "fb654fcc5")
+    oom_watcher.record_oom_tune_generation("demo", "pr-1", "pr-1-api", "fb654fcc5")
     assert oom_watcher._oom_tune_attempts.get("demo/pr-1") == 1, "voorwaarde: er staat tunestaat"
     assert oom_watcher._last_tuned_pod_template_hash.get("demo/pr-1/pr-1-api") == "fb654fcc5"
 
@@ -82,9 +82,9 @@ async def test_het_opruimen_blijft_bij_het_verwijderde_deployment() -> None:
     project opheffen.
     """
     oom_watcher._record_oom_tune_attempt("demo", "pr-1")
-    oom_watcher._record_oom_tune_hash("demo", "pr-1", "pr-1-api", "aaa")
+    oom_watcher.record_oom_tune_generation("demo", "pr-1", "pr-1-api", "aaa")
     oom_watcher._record_oom_tune_attempt("demo", "pr-2")
-    oom_watcher._record_oom_tune_hash("demo", "pr-2", "pr-2-api", "bbb")
+    oom_watcher.record_oom_tune_generation("demo", "pr-2", "pr-2-api", "bbb")
 
     await _verwijder("demo", "pr-1")
 
