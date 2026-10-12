@@ -24,19 +24,8 @@ vars:
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
   # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
   # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
-  # Ongetrackte bestanden tellen mee, want docker neemt ze op in de build-context.
   SANDBOX_OM_TAG:
-    sh: |
-      tag="$(git rev-parse --short HEAD)"
-      if [ -n "$(git status --porcelain -- operations-manager)" ]; then
-        tag="$tag-dirty-$( {
-          git diff HEAD -- operations-manager
-          git -c core.quotePath=false ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
-            echo "$f"; cat "$f"
-          done
-        } | sha1sum | cut -c1-7)"
-      fi
-      echo "$tag"
+    sh: scripts/bron-tag.sh operations-manager
   SANDBOX_OM_IMAGE: '{{.SANDBOX_OM_REPO}}:{{.SANDBOX_OM_TAG}}'
 
 #set: ['e', 'x']  # equivalent to set -ex
@@ -1800,21 +1789,241 @@ tasks:
     silent: false
 
   build-keycloak-relay-email-sender:
-    desc: "Bouw de relay-emailSender-jar en zet hem naast het Keycloak-manifest"
-    vars:
-      JAR: keycloak-relay-email-sender-1.0.0.jar
-      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
+    desc: "Bouw de relay-emailSender-jar"
     cmds:
       - |
         echo "🔨 Bouwen van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn clean package
-        cd ../..
-        cp "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"
-        echo "✅ JAR gebouwd en gekopieerd naar {{.DOEL}}/{{.JAR}}"
-        echo "   Commit de jar SAMEN met de broncode: de pod krijgt hem uit een ConfigMap,"
-        echo "   niet uit een build. Zie keycloak-migration/relay-email-sender/README.md."
+        echo "✅ JAR gebouwd: keycloak-migration/relay-email-sender/target/keycloak-relay-email-sender-1.0.0.jar"
     silent: false
+
+  publish-keycloak-image:
+    desc: "Bouw de Keycloak-image, push hem naar GHCR (CalVer + latest) en pin de sandbox-overlay"
+    summary: |
+      Vraagt een inlog: `docker login ghcr.io` met een token dat write:packages heeft.
+
+      Dezelfde vorm als publish-operations-manager, met een verschil dat er met opzet is: het
+      pinnen gaat naar de SANDBOX-overlay. De basis en de odcn-overlay blijven staan, dus dit
+      is geen uitrol naar ODCN. Rol uit met `task sandbox:sync`, toets het op de sandbox, en
+      breng die tag daarna met `task pin-keycloak-image TARGET=base` naar de basis.
+
+      Er is geen controle of er wel iets te bouwen valt. "Geen release zonder aanleiding" is
+      hier net als bij de operations-manager een beslissing van de mens.
+    # sandbox:build-builder en niet een eigen buildernaam zoals publish-operations-manager
+    # die heeft: die builder draagt de geheugengrens van de gedeelde server EN het
+    # host-netwerk dat deze bouw nodig heeft. Zonder host-netwerk komt de builder niet bij de
+    # DNS van de server en strandt de eerste regel van de Dockerfile al op "no route to host"
+    # (gemeten, hier en bij sandbox:build-operations-manager-image).
+    deps: [requirements-check, sandbox:build-builder]
+    vars:
+      IMAGE_VERSION:
+        sh: |
+          DIRTY=""
+          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
+          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+    preconditions:
+      # Een inlog met een credential-helper laat een LEGE auths-regel achter, dus de sleutel
+      # is het signaal en niet de inhoud. Hier en niet na de bouw: de validatiebouw staat uit,
+      # dus een vergeten inlog zou pas na de volledige Maven- en kc.sh-ronde stranden.
+      - sh: 'grep -q ''"ghcr\.io"'' "${DOCKER_CONFIG:-$HOME/.docker}/config.json"'
+        msg: |
+          Geen inlog bij ghcr.io gevonden. Draai eerst:
+            docker login ghcr.io   (token met write:packages)
+    cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
+        case "{{.IMAGE_VERSION}}" in
+          *-dirty)
+            echo "LET OP: de werkboom heeft ongecommitte wijzigingen, dus de commit in deze tag"
+            echo "        beschrijft niet wat je publiceert. Commit eerst voor een tag die terug"
+            echo "        te zoeken is."
+            ;;
+        esac
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: .
+          DOCKERFILE_PATH: images/keycloak-zad/Dockerfile
+          IMAGE_NAME: keycloak-zad
+          REGISTRY_IMAGE: ghcr.io/rijksictgilde/zad
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
+          BUILDER_NAME: '{{.SANDBOX_BUILDER_NAME}}'
+          # Dezelfde platforms als de job in docker-images.yml: wat hier ontstaat is wat na
+          # een promotie op ODCN draait.
+          PLATFORMS: linux/amd64,linux/arm64
+          # De validatiebouw zou de hele Maven- en kc.sh-ronde een tweede keer draaien, met
+          # --load en dus voor een architectuur. De multi-arch bouw eronder is de bouw.
+          SKIP_VALIDATION: "true"
+      - task: pin-keycloak-image
+        vars:
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+
+  pin-keycloak-image:
+    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=base: in de basis)"
+    summary: |
+      publish-keycloak-image roept dit aan met de tag die hij net gepusht heeft. Los aanroepen
+      kan ook, bijvoorbeeld om een tag van CI op de sandbox te zetten.
+
+      TARGET=sandbox (de standaard) pint de sandboxed-local overlay. De basis en de
+      odcn-overlay blijven staan, dus dit is geen uitrol naar ODCN. Rol uit met
+      `task sandbox:sync` en toets het daar.
+
+      TARGET=base is de promotie: dezelfde handeling, maar op de basis, waar ODCN zijn tag uit
+      erft. Promoveren is het VERPLAATSEN van precies de tag die op de sandbox heeft gedraaid,
+      dus daar hoort geen eigen IMAGE_TAG bij: die komt uit de sandbox-overlay. Geef je er
+      toch een mee, dan moet het die tag zijn. Deze taak bouwt en pusht nooit: een herbouw
+      levert een ander artefact op, en dan is het bewijs van de sandbox niets waard.
+    vars:
+      TARGET: '{{.TARGET | default "sandbox"}}'
+      IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
+      REPO: ghcr.io/rijksictgilde/zad/keycloak-zad
+      KEYCLOAK: infrastructure/bootstrap/infrastructure/keycloak/controller
+    preconditions:
+      - sh: 'case "{{.TARGET}}" in sandbox|base) exit 0 ;; esac; exit 1'
+        msg: |
+          TARGET is sandbox (de sandboxed-local overlay) of base (de basis, die ODCN erft).
+      # Niet voor base: daar IS de tag die van de sandbox, en die wordt gelezen.
+      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" = "base" ]'
+        msg: |
+          IMAGE_TAG is verplicht, bijvoorbeeld:
+            task pin-keycloak-image IMAGE_TAG=2026.09.26.1432-7ccad61d
+    cmds:
+      - |
+        REPO="{{.REPO}}"
+        TARGET="{{.TARGET}}"
+        TAG="{{.IMAGE_TAG}}"
+        OVERLAY="{{.KEYCLOAK}}/overlays/sandboxed-local/kustomization.yaml"
+        BASIS="{{.KEYCLOAK}}/base/deployment.yaml"
+        PAD="${REPO#ghcr.io/}"
+
+        if [ "$TARGET" = "base" ]; then
+          # De newTag onder DEZE naam, niet de eerste die voorbijkomt; dezelfde grens die het
+          # schrijven verderop heeft.
+          SANDBOXTAG="$(awk -v repo="$REPO" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; next }
+              gevonden && /^ *newTag: / { sub(/^ *newTag: /, ""); gsub(/["\x27]/, ""); print; exit }
+              gevonden && /^ *- name: / { exit }
+          ' "$OVERLAY")"
+
+          # De tag komt uit de sandbox-overlay en nergens anders: de basis mag alleen een tag
+          # dragen die aantoonbaar op de sandbox heeft gedraaid. Een tag die hier met de hand
+          # in te vullen valt, maakt de weg sandbox-eerst leeg; meegeven mag wel, maar dan
+          # alleen als bevestiging van wat er staat.
+          if [ -z "$SANDBOXTAG" ]; then
+            echo "$OVERLAY pint geen tag voor $REPO." >&2
+            echo "Draai eerst: task publish-keycloak-image." >&2
+            exit 1
+          fi
+          if [ -n "$TAG" ] && [ "$TAG" != "$SANDBOXTAG" ]; then
+            echo "$TAG heeft niet op de sandbox gedraaid: die draait $SANDBOXTAG." >&2
+            echo "Promoveren verplaatst de tag van de sandbox; laat IMAGE_TAG weg." >&2
+            exit 1
+          fi
+          TAG="$SANDBOXTAG"
+
+          # Een -dirty-tag hoort bij bron die niet in git staat. Draait die op productie, dan
+          # kan niemand nagaan wat er draait, en is hij ook niet opnieuw te maken.
+          case "$TAG" in
+            *-dirty)
+              echo "$TAG komt van ongecommitte bron en hoort niet op productie." >&2
+              echo "Commit de wijziging, bouw opnieuw, en toets dat op de sandbox." >&2
+              exit 1
+              ;;
+          esac
+
+          # De commit is een losse handeling, dus deze taak wordt ook twee keer gedraaid.
+          HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
+          if [ "$HUIDIG" = "$TAG" ]; then
+            echo "De basis draagt $TAG al."
+            exit 0
+          fi
+        fi
+
+        # DEZELFDE handdruk als de node doet: eerst een anoniem token, dan het manifest van
+        # die tag. Een pakket dat op ghcr privaat staat geeft hier 403, en dat is precies waar
+        # de kind-node op strandt ("failed to fetch anonymous token ... 403 Forbidden"). Zonder
+        # deze controle zou er een tag gepind worden die de omgeving niet kan halen, en dat
+        # blijkt pas bij de eerste podstart. Ook voor de basis: ODCN haalt hetzelfde artefact,
+        # alleen via de rcr-proxy, die ghcr spiegelt.
+        echo "Nagaan of $REPO:$TAG zonder inlog te halen is..."
+        TOKEN="$(curl -fsS "https://ghcr.io/token?scope=repository:$PAD:pull&service=ghcr.io" 2>/dev/null |
+            sed -n 's/.*"token":"\([^"]*\)".*/\1/p')" || true
+        MANIFEST=""
+        if [ -n "$TOKEN" ]; then
+          MANIFEST="$(curl -fsS -o /dev/null -w "ok" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/$PAD/manifests/$TAG" 2>/dev/null)" || true
+        fi
+        if [ "$MANIFEST" != "ok" ]; then
+          echo "$REPO:$TAG is niet zonder inlog te halen." >&2
+          echo "Zet het pakket op ghcr op publiek (Package settings > Change visibility)," >&2
+          echo "of geef de omgeving een pull-secret zoals de odcn-overlay dat heeft." >&2
+          echo "Er is NIETS gepind: deze tag zou niet te pullen zijn." >&2
+          exit 1
+        fi
+
+        if [ "$TARGET" = "base" ]; then
+          # Alleen het stuk achter de dubbele punt: de inspringing van de regel blijft zoals
+          # hij is.
+          awk -v repo="$REPO" -v tag="$TAG" '
+              $0 ~ "^ *image: " repo ":" { sub(/:[^:]*$/, ":" tag) }
+              { print }
+          ' "$BASIS" > "$BASIS.nieuw"
+          mv "$BASIS.nieuw" "$BASIS"
+
+          grep -q "image: $REPO:$TAG$" "$BASIS" || {
+            echo "$BASIS draagt $TAG niet: staat de image-regel voor $REPO er nog?" >&2
+            exit 1
+          }
+
+          echo ""
+          echo "De basis draagt nu $TAG (was ${HUIDIG:-onbekend})."
+          grep -n "image: $REPO:" "$BASIS"
+          echo ""
+          echo "Commit dit; ODCN erft de tag uit de basis en ArgoCD rolt hem uit:"
+          echo "  git add $BASIS && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
+          echo ""
+          echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
+          exit 0
+        fi
+
+        # Alleen de newTag die onder DEZE naam staat: een tweede image in dezelfde lijst hoort
+        # hier niet door geraakt te worden. awk en geen sed zoals pin-operations-manager-image,
+        # want dat pint een image op EEN regel; hier staan naam en tag op twee regels, en een
+        # adres als `/x/,+1` bestaat alleen in GNU sed.
+        #
+        # Aangehaald, want kustomize weigert de HELE overlay op een newTag die als yaml-getal
+        # leest (gemeten: "cannot unmarshal number into Go struct field Image.images.newTag of
+        # type string"). De CalVer-vorm maakt dat vandaag onmogelijk; de aanhalingstekens
+        # houden het waar als de tagvorm ooit verandert.
+        awk -v repo="$REPO" -v tag="$TAG" '
+            $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+            gevonden && /^ *- name: / { gevonden = 0 }
+            gevonden && /^ *newTag: / { sub(/newTag: .*/, "newTag: \"" tag "\""); gevonden = 0 }
+            { print }
+        ' "$OVERLAY" > "$OVERLAY.nieuw"
+        mv "$OVERLAY.nieuw" "$OVERLAY"
+
+        # Leest de aanhalingstekens mee terug: vallen die ooit weg, dan valt het hier om en
+        # niet pas bij `task sandbox:sync`.
+        grep -q "newTag: \"$TAG\"" "$OVERLAY" || {
+          echo "$OVERLAY pint $TAG niet: staat de images-regel voor $REPO er nog?" >&2
+          exit 1
+        }
+
+        echo ""
+        echo "De sandbox draait $REPO:$TAG."
+        grep -n 'newTag:' "$OVERLAY"
+        echo ""
+        echo "Commit deze pin en rol daarna uit:"
+        echo "  git add $OVERLAY && git commit -m 'deploy: keycloak-zad $TAG op de sandbox'"
+        echo "  task sandbox:sync"
+        echo ""
+        echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
+        echo "Promoveren naar productie na de proef: task pin-keycloak-image TARGET=base."
+    silent: true
 
   test-keycloak-relay-email-sender:
     desc: "Draai de tests van de relay-emailSender"
@@ -1823,74 +2032,6 @@ tasks:
         echo "🧪 Tests van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn test
-    silent: false
-
-  check-keycloak-relay-email-sender:
-    desc: "Toets dat de ingecheckte relay-emailSender-jar bij de broncode ernaast hoort"
-    vars:
-      JAR: keycloak-relay-email-sender-1.0.0.jar
-      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
-    cmds:
-      - |
-        # De jar staat in git omdat de pod hem uit een ConfigMap krijgt en niet van het
-        # netwerk (zie de initContainer). Een gebouwd artefact in git kan gaan afwijken van
-        # de bron ernaast, en dan draait er iets anders dan er te lezen valt. Deze taak
-        # bouwt opnieuw en vergelijkt byte voor byte; CI draait hem bij elke PR.
-        #
-        # Dat kan alleen omdat de bouw reproduceerbaar is (project.build.outputTimestamp in
-        # de pom) EN met dezelfde JDK-major draait: de manifest van de jar noemt
-        # Build-Jdk-Spec. CI pint daarom Temurin 21.
-        set -e
-        echo "🔁 Herbouwen van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
-        mvn -q -B clean package
-        cd ../..
-        if cmp -s "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"; then
-          echo "✅ De ingecheckte jar is de bron ernaast."
-        else
-          echo "❌ {{.DOEL}}/{{.JAR}} wijkt af van een verse bouw van de bron."
-          echo "   Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
-          echo "   Bouw je met een andere JDK-major dan 21, dan verschilt alleen het"
-          echo "   manifest (Build-Jdk-Spec); gebruik dan Temurin 21."
-          exit 1
-        fi
-    silent: false
-
-  publish-keycloak-custom-mapper:
-    desc: "Build and publish the Keycloak custom mapper JAR to GitHub Releases"
-    deps: [build-keycloak-custom-mapper]
-    cmds:
-      - |
-        echo "📦 Publishing Keycloak custom mapper to GitHub Releases..."
-        echo ""
-        echo "Prerequisites:"
-        echo "- GitHub CLI (gh) installed and authenticated"
-        echo "- Repository must be public for wget downloads"
-        echo ""
-
-        cd keycloak-migration/custom-mapper
-
-        VERSION="v1.1.0"
-        REPO="RijksICTGilde/RIG-Cluster"
-
-        # Check if release already exists
-        if gh release view "$VERSION" --repo "$REPO" 2>/dev/null; then
-          echo "⚠️  Release $VERSION already exists. Deleting and recreating..."
-          gh release delete "$VERSION" --repo "$REPO" --yes
-        fi
-
-        echo "Creating release $VERSION..."
-        gh release create "$VERSION" \
-          --repo "$REPO" \
-          --title "Keycloak SAML NameID Mapper $VERSION" \
-          --notes "Custom Keycloak mapper for extracting SAML NameID to user attributes using unrestricted XPath" \
-          target/keycloak-saml-nameid-mapper-1.1.0.jar
-
-        echo ""
-        echo "✅ Keycloak custom mapper published successfully!"
-        echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
-        echo ""
-        echo "Verify with: curl -sI https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
     silent: false
 
   export-keycloak-users:
