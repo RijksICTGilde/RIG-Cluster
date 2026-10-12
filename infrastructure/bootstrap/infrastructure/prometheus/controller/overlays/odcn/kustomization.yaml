@@ -37,6 +37,17 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 0
+  # Pods draaien op serviceaccount namespace-manager; de pull-secrets hangen alleen aan
+  # default. Zonder dit blok faalt de pull na een herstart (rewrite naar de rcr-proxy
+  # vraagt authenticatie).
+  - target:
+      kind: Deployment
+      name: prometheus
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: dockerhub-rig-robot-pull-secret
 
 # ODCN kan de upstream-registries niet bereiken en haalt alles via de rcr-proxy. Staat dat
 # pad hier niet in git, dan herschrijft admission het image wel, maar wijkt wat er draait af
@@ -44,3 +55,5 @@ patches:
 images:
   - name: registry.k8s.io/kube-state-metrics/kube-state-metrics
     newName: rcr.rijksapps.nl/k8s-rig/kube-state-metrics/kube-state-metrics
+  - name: prom/prometheus
+    newName: rcr.rijksapps.nl/dockerhub-rig/prom/prometheus
