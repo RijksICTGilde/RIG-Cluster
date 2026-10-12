@@ -69,6 +69,7 @@ class KeycloakService(Service):
         from opi.services.catalog.keycloak.editables import (
             KEYCLOAK_ACCOUNT_LINK_EDITABLE,
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
+            KEYCLOAK_LOGOUT_PATH_EDITABLE,
             KEYCLOAK_REDIRECT_URIS_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE_EDITABLE,
             KEYCLOAK_RESTRICT_ACCESS_EDITABLE,
@@ -86,6 +87,7 @@ class KeycloakService(Service):
             KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE,
             KEYCLOAK_ADDITIONAL_CLIENTS_EDITABLE,
             KEYCLOAK_ACCOUNT_LINK_EDITABLE,
+            KEYCLOAK_LOGOUT_PATH_EDITABLE,
         ]
 
     @on(UIEvent.PROJECT_SECTIONS)
@@ -116,6 +118,7 @@ class KeycloakService(Service):
             from opi.services.catalog.keycloak.visualizers import (
                 KEYCLOAK_ACCOUNT_LINK,
                 KEYCLOAK_ADDITIONAL_CLIENTS,
+                KEYCLOAK_LOGOUT_PATH,
                 KEYCLOAK_REDIRECT_URIS,
                 KEYCLOAK_RESTRICT_ACCESS,
                 KEYCLOAK_RESTRICT_ACCESS_CLIENT_ROLE,
@@ -143,6 +146,7 @@ class KeycloakService(Service):
                     KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG,
                     KEYCLOAK_ADDITIONAL_CLIENTS,
                     KEYCLOAK_ACCOUNT_LINK,
+                    KEYCLOAK_LOGOUT_PATH,
                 ],
                 layout=[
                     Fieldset(legend="Template", children=[cp("template")]),
@@ -171,6 +175,14 @@ class KeycloakService(Service):
                             "via een identity provider inlogt."
                         ),
                         children=[cp("account-link")],
+                    ),
+                    Fieldset(
+                        legend="Uitloggen",
+                        description=(
+                            "Keycloak roept dit pad op de deployment aan zodra iemand uitlogt, zodat de "
+                            "applicatie haar eigen sessie beëindigt."
+                        ),
+                        children=[cp("logout-path")],
                     ),
                     Fieldset(
                         legend="Extra Keycloak clients",
