@@ -206,3 +206,19 @@ becoming an orphan you have to hunt for. Remove it whenever you like:
 task test-db-stop    # docker rm -f zad-test-postgres
 task test-db-reset   # remove it, then let the next run recreate it
 ```
+
+### The test Keycloak
+
+`tests/integration/test_authorization_wall_proxy.py` measures the authorization wall
+against a real Keycloak plus a real oauth2-proxy, in the same long-lived-container style:
+`zad-test-keycloak` on port 58080 (`ZAD_TEST_KEYCLOAK_PORT` to change it) and
+`zad-test-authwall-proxy` on 58081. The tests are marked `requires_infra`, so the default
+run skips them, and they skip themselves when Docker is missing.
+
+```bash
+task test-authwall        # run the measurements
+task test-authwall-stop   # docker rm -f zad-test-keycloak zad-test-authwall-proxy
+task test-authwall-reset  # remove them, then let the next run recreate them
+```
+
+What is measured and why: `features/authorization-wall-meetopstelling.md`.
