@@ -534,6 +534,13 @@ def _reject_stale(ctx: Ctx, probe: Callable[[], object], *, label: str) -> str:
     inlogde: `>pw` vulde de ACL aan in plaats van te vervangen. De cnpg-gate toetste beide
     richtingen al, de andere componenten niet. In dry-run is er niets gemeten en zegt dit
     dat ook, in plaats van groen te melden wat niet is geprobeerd.
+
+    AANROEPVOORWAARDE: toets eerst de NIEUWE waarde, en pas hierna de oude. Een proef kan
+    om twee redenen stukgaan, afgewezen worden of de app niet kunnen bereiken, en die zijn
+    hier niet te onderscheiden: `relay_call` geeft bij een netwerkfout net als bij een 401
+    een EditFailed. Een geslaagde nieuwe-waardeproef is het bewijs dat de app überhaupt
+    antwoordt, en maakt een afwijzing van de oude waarde daarmee betekenisvol. Draai je de
+    twee om, dan leest een onbereikbare app als "de oude waarde is dood".
     """
     if ctx.kube.dry_run:
         return "oude waarde niet getoetst (dry-run)"
