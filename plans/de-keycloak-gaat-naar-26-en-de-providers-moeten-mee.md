@@ -3,7 +3,12 @@
 **Status**: plan, nog niets gebouwd.
 **Datum**: 2026-09-26
 **Aanleiding**: het platform draait `quay.io/keycloak/keycloak:25.0.6` uit september 2024. Keycloak onderhoudt alleen de nieuwste minor, dus we staan twee jaar buiten de beveiligingsstroom: 26.7.4 alleen al (uitgebracht 16 september 2026) repareert zes CVE's. RC-212 heeft de weg vrijgemaakt door de basisversie naar één plek te halen (`images/keycloak-zad/Dockerfile:25`) en de tag per omgeving te pinnen, waardoor een upgrade nu een imagebouw met een proef ervoor is in plaats van een regel in een manifest.
-**Context**: `features/keycloak-26-upgrade.md` (het bestaande migratiedocument), `features/futures/keycloak-26-upgrade.md` (de eerdere fasering en de risicolijst), `features/keycloak-eigen-image.md` (bouwen, pinnen, promoveren), `features/keycloak-mail.md` en `docs/rc158-emailsender-spi-meting.md` (de emailSender-SPI en de meetopstelling ervan), `features/keycloak-always-clear-session-logout.md` en `features/keycloak-rig-metrics.md` (de verificatierecepten van die twee endpoints). Dit plan bouwt op de tak `een-keycloak-image-met-onze-eigen-providers-erin` (RC-212), die nog niet naar main is gemerged.
+**Context**: `features/keycloak-26-upgrade.md` (het bestaande migratiedocument), `features/futures/keycloak-26-upgrade.md` (de eerdere fasering en de risicolijst), `features/keycloak-eigen-image.md` (bouwen, pinnen, promoveren), `features/keycloak-mail.md` en `docs/rc158-emailsender-spi-meting.md` (de emailSender-SPI en de meetopstelling ervan), `features/keycloak-always-clear-session-logout.md` en `features/keycloak-rig-metrics.md` (de verificatierecepten van die twee endpoints). Dit plan bouwt op RC-212, de eigen Keycloak-image.
+**Overgezet op 2026-10-12 (RC-260).** De paragraaf "Wat er vandaag staat, gemeten" en de
+regelnummers in `base/deployment.yaml` die daarop volgen beschrijven de staat van voor die
+merge: de laatste rondes van RC-212 hebben de vlagverdeling, `--proxy-headers` en de
+env-indexen al verzet. Meet die staat opnieuw voor je er een beslissing op bouwt; de analyse
+per provider en per optie staat daar los van.
 
 ## Wat hier niet opnieuw staat
 
@@ -109,7 +114,7 @@ De migratie zelf gebeurt automatisch bij de eerste start van de 26-pod. Twee din
 
 Twee voorwaarden vóór stap 1, en ze staan er niet voor de vorm:
 
-- **De RC-212-reworkronde over de augmentatie en de vlaggen landt eerst.** Anders meet je op 26 een pod die bij elke start opnieuw augmenteert, en is elke afwijking toe te schrijven aan twee dingen tegelijk.
+- **De vlagverdeling van RC-212 is vervuld**: de vier bouwopties staan alleen in de Dockerfile en de pod start met `--optimized`. Zonder dat zou je op 26 een pod meten die bij elke start opnieuw augmenteert, en was elke afwijking aan twee dingen tegelijk toe te schrijven.
 - **RC-212 gaat eerst naar productie, op 25.0.6.** De eigen image heeft daar nog nooit gedraaid. Ga je in één keer naar de eigen image én naar 26, dan is een storing niet toe te wijzen. Dat is dezelfde regel die `features/futures/keycloak-26-upgrade.md` al stelde voor het logout-endpoint.
 
 Daarna:
@@ -118,10 +123,10 @@ Daarna:
 2. Artefactversies verhogen (custom-mapper naar 1.2.0, relay naar 1.1.0), met bij de relay `RelayMailConfig.VERSION` mee (`RelayVersieTest` pint die twee aan elkaar) en de echo's in `Taskfile.yaml:1745` en `:1774`, die de jarnaam uitschrijven.
 3. `mvn -B package` per module, via `task test-keycloak-custom-mapper` en `task test-keycloak-relay-email-sender`. CI draait dit bij elke pull request (job `keycloak-providers` in `.github/workflows/ci.yml:70-83`). Repareer wat omvalt, en lees de tabel hierboven: dat een module compileert, betekent bij drie van de zes providers niets.
 4. De optie-opruiming uit de vorige paragraaf, inclusief `strategy: Recreate` en de drie overlaypatches.
-5. `task sandbox:build-keycloak-image`. Die bouwt, pusht naar ghcr, controleert of de tag anoniem te halen is en pint alleen de sandbox-overlay. Faalt `kc.sh build` op het provider-id, dan zingt de canarie hier en niet in een pod.
+5. `task publish-keycloak-image`. Die bouwt, pusht naar ghcr, controleert of de tag anoniem te halen is en pint alleen de sandbox-overlay. Faalt `kc.sh build` op het provider-id, dan zingt de canarie hier en niet in een pod.
 6. `task sandbox:sync`, en daarna de volledige toetsenlijst uit "Klaar als".
 7. De dump-en-restore-oefening uit "Terugval", op de sandbox, vóór productie. Niet erna.
-8. `task promoveer-keycloak-image`: dezelfde tag, geen herbouw. Het script weigert een `-dirty-`tag (`scripts/promoveer-keycloak-image.sh:45-53`) en leest de tag uit de sandbox-overlay, dus met de hand een versienummer invullen kan hier niet. Commit, ArgoCD synct, ODCN erft de tag uit de basis.
+8. `task pin-keycloak-image TARGET=base`: dezelfde tag, geen herbouw. De taak weigert een `-dirty-`tag en leest de tag uit de sandbox-overlay, dus met de hand een versienummer invullen kan hier niet. Commit, ArgoCD synct, ODCN erft de tag uit de basis.
 9. Op productie: de pg_dump uit "Terugval" vóór de sync, dan de rollout volgen, dan dezelfde toetsenlijst.
 
 ## Terugval
