@@ -19,9 +19,6 @@ patches:
         path: /spec/template/spec/securityContext/fsGroup
         value: 1000
       - op: add
-        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
-        value: 1000
-      - op: add
         path: /spec/template/spec/containers/0/securityContext/runAsUser
         value: 1000
       - op: replace
@@ -37,10 +34,10 @@ patches:
         path: /spec/template/spec/containers/0/resources/requests/memory
         value: "2Gi"
       - op: test
-        path: /spec/template/spec/containers/0/env/6/name
+        path: /spec/template/spec/containers/0/env/4/name
         value: "KC_HOSTNAME"
       - op: replace
-        path: /spec/template/spec/containers/0/env/6/value
+        path: /spec/template/spec/containers/0/env/4/value
         value: "https://keycloak.kind"
       # Add local CA certificate for Java truststore (needed for inter-realm HTTPS calls)
       - op: add
@@ -61,24 +58,6 @@ patches:
         value:
           name: KC_TRUSTSTORE_PATHS
           value: "/opt/keycloak/conf/truststores/kind-local-ca.crt"
-      # Download theme and custom mapper from GitHub releases
-      # For local theme development, replace the theme wget with:
-      #   wget http://host.docker.internal:8888/keycloak-nl-design-system.jar
-      # And run: cd keycloak-theme/output && python3 -m http.server 8888
-      - op: replace
-        path: /spec/template/spec/initContainers/0/command
-        value:
-          - sh
-          - -c
-          - |
-            cd /tmp
-            wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.4.2/keycloak-nl-design-system.jar
-            cp keycloak-nl-design-system.jar /opt/keycloak/providers/
-            wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
-            cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
-            # De derde jar komt uit de ConfigMap en niet van GitHub; zie de basis. Deze
-            # overlay VERVANGT het hele commando, dus de regel moet hier mee.
-            cp /zad-providers/keycloak-relay-email-sender-1.0.0.jar /opt/keycloak/providers/
   # Add management port (9000) to service for metrics endpoint
   - target:
       kind: Service

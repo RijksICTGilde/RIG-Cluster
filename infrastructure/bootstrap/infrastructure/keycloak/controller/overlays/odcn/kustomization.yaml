@@ -49,10 +49,10 @@ patches:
       name: keycloak
     patch: |-
       - op: test
-        path: /spec/template/spec/containers/0/env/6/name
+        path: /spec/template/spec/containers/0/env/4/name
         value: "KC_HOSTNAME"
       - op: replace
-        path: /spec/template/spec/containers/0/env/6/value
+        path: /spec/template/spec/containers/0/env/4/value
         value: "https://keycloak.rijksapp.nl"
   # De mailrelay draait op productie in rig-prd-ron; de basis noemt rig-ron. Een
   # samenvoegpatch en geen JSON-patch met een index: de env-lijst wordt op naam
@@ -61,10 +61,17 @@ patches:
     target:
       kind: Deployment
       name: keycloak
+  # De rcr-proxy vraagt authenticatie, ook voor een image dat op ghcr publiek is.
+  # Zonder dit secret faalt de pull op 'invalid username/password', en dat blijft
+  # onzichtbaar tot de pod voor het eerst opnieuw wordt aangemaakt; zo lag de
+  # platformdatabase op 1 september plat. Hetzelfde secret als de operations-manager.
+  - path: patch-pull-secret.yaml
+    target:
+      kind: Deployment
+      name: keycloak
 
 # Zie de prometheus-overlay voor de reden: zonder het rcr-pad in git blijft ArgoCD OutOfSync.
+# De tag komt uit de basis: dat is de tag die productie draait.
 images:
-  - name: quay.io/keycloak/keycloak
-    newName: rcr.rijksapps.nl/quay-rig/keycloak/keycloak
-  - name: busybox
-    newName: rcr.rijksapps.nl/dockerhub-rig/library/busybox
+  - name: ghcr.io/rijksictgilde/zad/keycloak-zad
+    newName: rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad
