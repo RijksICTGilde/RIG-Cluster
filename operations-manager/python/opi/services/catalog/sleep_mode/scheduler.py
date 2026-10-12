@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 
 from opi.core.config import settings
 from opi.services.catalog.sleep_mode import config as sleep_config
-from opi.services.catalog.sleep_mode import service
+from opi.services.catalog.sleep_mode import flow, service
 from opi.services.catalog.sleep_mode import state as sleep_state
 from opi.services.catalog.sleep_mode.state import STATE_AWAKE, STATE_WAKING
 from opi.services.project_store import ConflictError
@@ -36,15 +36,6 @@ STAMP = "stamp"
 CHECK_AWAKE = "check-awake"
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except ValueError:
-        return None
-
-
 def decide_action(state: str, expires_at: str | None, matches: bool, now: datetime) -> str | None:
     """Pure per-deployment decision: STAMP, SLEEP, REVERT, or None (leave it alone).
 
@@ -52,7 +43,7 @@ def decide_action(state: str, expires_at: str | None, matches: bool, now: dateti
     freshly created deployment acquires its first sleep deadline, without hooking every
     create path); once the deadline passes it sleeps.
     """
-    expiry = _parse_iso(expires_at)
+    expiry = sleep_state.parse_expiry(expires_at)
     if state == STATE_AWAKE and matches:
         if expiry is None:
             return STAMP
@@ -149,27 +140,6 @@ class SleepModeScheduler:
                 # Pace between projects so many expiries do not fire many commits at once.
                 await asyncio.sleep(settings.SLEEP_MODE_PACE_SECONDS)
 
-    async def _app_is_ready(self, project_data: dict, deployment: dict, config) -> bool:
-        """Whether the app behind the waker has a ready pod (so waking can finish)."""
-        from opi.connectors.kubectl import KubectlConnector
-        from opi.core.cluster_config import get_prefixed_namespace
-        from opi.handlers.project_file_handler import ProjectFileHandler
-        from opi.services.catalog.sleep_mode import manifests
-        from opi.utils.naming import generate_unique_name
-
-        component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
-        if component is None:
-            # No waker component: nothing serves a page, so a bare wake is done immediately.
-            return True
-        unique_name = generate_unique_name(deployment.get("name", ""), component)
-        namespace = get_prefixed_namespace(deployment.get("cluster", ""), deployment.get("namespace", ""))
-        statuses = await KubectlConnector().get_deployment_status(namespace, unique_name)
-        if not statuses:
-            return False
-        raw = statuses[0].get("ready", "0")
-        ready = int(raw.split("/")[0]) if "/" in raw else int(raw)
-        return ready > 0
-
     async def _apply(self, project_name: str, filename: str, plan: list[tuple[str, str]], now: datetime) -> bool:
         from opi.handlers.project_file_handler import ProjectFileHandler
         from opi.manager.project_manager import ProjectManager
@@ -220,7 +190,7 @@ class SleepModeScheduler:
                     config = sleep_config.load(project_data, deployment.get("cluster", ""))
                     if config is None:
                         continue
-                    if not await self._app_is_ready(project_data, deployment, config):
+                    if not await flow.app_is_ready(project_data, deployment, config):
                         continue
                     if service.to_awake(project_data, deployment_name, now, config.sleep_after_wake_delta):
                         applied.append(deployment_name)
