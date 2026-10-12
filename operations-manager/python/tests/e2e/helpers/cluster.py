@@ -278,6 +278,11 @@ def force_cleanup_project(project_name: str) -> None:
     """Best-effort teardown net: remove any namespace / ArgoCD app the project
     delete left behind. Never raises - teardown must not fail a test.
 
+    DIT RUIMT HET CLUSTER OP EN NIET HET PROJECTBESTAND. Staat het bestand nog in
+    zad-projects, dan leest de app-of-apps het en maakt de ArgoCD-applicaties er binnen
+    seconden opnieuw uit aan. Voor een halve aanmaak is dit dus geen opruiming; zie
+    ``lifecycle.ruim_mislukte_aanmaak_op``.
+
     The project delete only drops the namespace once the ArgoCD app deletion is
     *confirmed*; on a busy sandbox that confirmation often times out, orphaning the
     (now empty) namespace and a dangling ``Unknown`` ArgoCD app. Left unchecked
