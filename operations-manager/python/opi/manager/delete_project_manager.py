@@ -1396,6 +1396,10 @@ class DeleteProjectManager:
             # Step 2: Delete ArgoCD application file from GitOps
             logger.info(f"Deleting ArgoCD application file for {project_name}/{deployment_name}")
 
+            # Stap 8 mag niet draaien als het argo-bestand nog in git staat (RC-254).
+            # Die check voorkomt dat de Application voorgoed blijft draaien.
+            argocd_file_removed = False
+
             try:
                 gitops_connector = await self.project_manager.get_git_connector_for_argocd()
 
@@ -1466,6 +1470,7 @@ class DeleteProjectManager:
                 deletion_results["operations"].append(
                     {"type": "gitops_commit", "status": "success", "message": commit_message}
                 )
+                argocd_file_removed = True
 
             except Exception as e:
                 argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
@@ -1845,6 +1850,10 @@ class DeleteProjectManager:
                 deletion_results["errors"].extend(minio_results["errors"])
 
             # Step 7: Delete deployment folders from git repositories
+            # Uitgestelde opruiming (RC-254) handelt intentioneel staan gelaten maps af.
+            # Alleen git-fouten zetten dit op False en blokken stap 8.
+            manifest_folder_removed = True
+
             # IMPORTANT: Only delete manifests if ArgoCD app is confirmed deleted.
             # If the app still exists, its resources-finalizer needs the source path
             # to determine which K8s resources to clean up. Deleting the manifests
@@ -1947,6 +1956,7 @@ class DeleteProjectManager:
                                 deletion_results["errors"].append(
                                     f"Failed to commit deployment changes to {repository_name}"
                                 )
+                                manifest_folder_removed = False
                         else:
                             deletion_results["operations"].append(
                                 {
@@ -1970,49 +1980,77 @@ class DeleteProjectManager:
                     )
                     deletion_results["errors"].append(f"Error deleting deployment folder from {repository_name}: {e}")
                     logger.exception("Error deleting deployment folder")
+                    manifest_folder_removed = False
 
             # Step 8: Remove deployment from project file (idempotent + conflict-safe).
             # Deleting a deployment that is already gone (e.g. a concurrent delete won
             # the git race) is success, not an error; on a push conflict we re-read the
             # remote and re-apply instead of failing with "manual intervention required".
-            try:
-                logger.info(f"Removing deployment '{deployment_name}' from project file for project '{project_name}'")
-
-                def _remove_deployment(project_data: dict[str, Any]) -> dict[str, Any] | None:
-                    deployments = project_data.get("deployments", []) or []
-                    remaining = [dep for dep in deployments if dep.get("name") != deployment_name]
-                    if len(remaining) == len(deployments):
-                        return None  # already absent -> idempotent no-op
-                    project_data["deployments"] = remaining
-                    return project_data
-
-                committed = await self.project_manager.mutate_and_commit_project(
-                    _remove_deployment,
-                    f"Delete deployment '{deployment_name}' from project {project_name}",
+            #
+            # Haalt het alleen als git leeg is voor deze deployment (RC-254).
+            # Anders geeft het 404 en kan een retry het niet meer repareren.
+            if not argocd_file_removed or not manifest_folder_removed:
+                reason = (
+                    "ArgoCD application file still in git"
+                    if not argocd_file_removed
+                    else "deployment manifests still in git"
                 )
-
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_file_update",
-                        "target": f"deployment '{deployment_name}'",
-                        "action": "removed_from_project_file" if committed else "already_absent",
-                        "status": "success",
-                    }
-                )
-                logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
-
-            except Exception as e:
                 deletion_results["operations"].append(
                     {
                         "type": "project_file_update",
                         "target": f"deployment '{deployment_name}'",
                         "action": "removed_from_project_file",
-                        "status": "error",
-                        "error": str(e),
+                        "status": "skipped",
+                        "reason": f"{reason} - deployment kept in the project file so a retry can finish it",
                     }
                 )
-                deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
-                logger.exception(f"Error removing deployment '{deployment_name}' from project file")
+                logger.warning(
+                    "Deployment '%s' blijft in het projectbestand van '%s': %s",
+                    deployment_name,
+                    project_name,
+                    reason,
+                )
+            else:
+                try:
+                    logger.info(
+                        f"Removing deployment '{deployment_name}' from project file for project '{project_name}'"
+                    )
+
+                    def _remove_deployment(project_data: dict[str, Any]) -> dict[str, Any] | None:
+                        deployments = project_data.get("deployments", []) or []
+                        remaining = [dep for dep in deployments if dep.get("name") != deployment_name]
+                        if len(remaining) == len(deployments):
+                            return None  # already absent -> idempotent no-op
+                        project_data["deployments"] = remaining
+                        return project_data
+
+                    committed = await self.project_manager.mutate_and_commit_project(
+                        _remove_deployment,
+                        f"Delete deployment '{deployment_name}' from project {project_name}",
+                    )
+
+                    deletion_results["operations"].append(
+                        {
+                            "type": "project_file_update",
+                            "target": f"deployment '{deployment_name}'",
+                            "action": "removed_from_project_file" if committed else "already_absent",
+                            "status": "success",
+                        }
+                    )
+                    logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
+
+                except Exception as e:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "project_file_update",
+                            "target": f"deployment '{deployment_name}'",
+                            "action": "removed_from_project_file",
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
+                    deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
+                    logger.exception(f"Error removing deployment '{deployment_name}' from project file")
 
             # Clean up subdomain registration for this deployment
             try:

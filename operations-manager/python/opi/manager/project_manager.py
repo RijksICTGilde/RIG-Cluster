@@ -43,6 +43,7 @@ from opi.connectors.subdomain import (
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
+from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -296,6 +297,19 @@ def _resolve_deployment_filter(deployment_name: str | None, deployment_names: li
     if deployment_name is not None:
         return [deployment_name]
     return None
+
+
+async def _deployments_being_deleted(project_name: str) -> dict[str, str]:
+    """Deployments with an open delete task, mapped to that task's id (RC-254).
+
+    Een mislukte opvraging levert niets op: dan regenereert de ronde zoals voor deze
+    grendel, wat beter is dan een project niet verwerken omdat de takentabel stilstaat.
+    """
+    try:
+        return await AsyncTaskService(cluster=settings.CLUSTER_MANAGER).find_open_delete_deployments(project_name)
+    except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:
+        logger.warning("Kon de open delete-taken van project %s niet opvragen: %s", project_name, e)
+        return {}
 
 
 # Filename extensions used for generated per-component manifests. A file is only
@@ -3337,6 +3351,11 @@ class ProjectManager:
 
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
+            # process_project heeft deze deployments overgeslagen (RC-254), dus er is geen
+            # Application om op te wachten; wachten zou aflopen op de aanmaaktimeout.
+            being_deleted = await _deployments_being_deleted(project_name)
+            if being_deleted:
+                deployments = [dep for dep in deployments if dep.get("name") not in being_deleted]
             # The project as it stands, for asking the services what they know about a
             # deployment (RC-28). Same contents the deployments above came from.
             sync_project_data = await self.get_contents(record_base=False)
@@ -5409,12 +5428,36 @@ class ProjectManager:
         self._force_clone_override = force_clone
 
         targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        # De scope zoals de AANROEPER hem gaf. De grendel hieronder mag een projectbrede
+        # ronde versmallen, maar dat maakt hem niet tot een gerichte ronde.
+        project_wide = targets is None
 
         try:
             # The snapshot this run works from; its moment is what the reconciliation rows store.
             read_started = time.monotonic()
             project_data = await self.get_contents()
             project_name = await self.get_name()
+
+            # Slaa deployments met een open delete-taak over (RC-254).
+            # Hun Application is minuten eerder uit git dan de deployment zelf.
+            being_deleted = await _deployments_being_deleted(project_name)
+            if being_deleted:
+                in_scope = (
+                    [name for dep in project_data.get("deployments", []) or [] if (name := dep.get("name"))]
+                    if targets is None
+                    else targets
+                )
+                skipped = [name for name in in_scope if name in being_deleted]
+                for name in skipped:
+                    logger.info(
+                        "Deployment '%s' van project '%s' wordt overgeslagen: delete-taak %s staat nog open",
+                        name,
+                        project_name,
+                        being_deleted[name],
+                    )
+                if skipped:
+                    targets = [name for name in in_scope if name not in being_deleted]
+
             logger.info(
                 f"Processing project: {project_name} and deployment {targets if targets is not None else 'all'}"
             )
@@ -5431,7 +5474,7 @@ class ProjectManager:
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
                 # Zonder rij blijft een uitgestelde wijziging aan zo'n project eeuwig wachten.
-                await self._record_reconciliation(project_name, [], targets, read_started)
+                await self._record_reconciliation(project_name, [], project_wide, read_started)
                 self._processing_error = None
                 self._component_failures = None
                 return True
@@ -5612,7 +5655,7 @@ class ProjectManager:
 
             await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
-            await self._record_reconciliation(project_name, deployments, targets, read_started)
+            await self._record_reconciliation(project_name, deployments, project_wide, read_started)
 
             # Execute bootstrap actions for deployments
             for deployment in deployments:
@@ -5648,7 +5691,7 @@ class ProjectManager:
         self,
         project_name: str,
         deployments: list[dict[str, Any]],
-        targets: list[str] | None,
+        project_wide: bool,
         read_started: float,
     ) -> None:
         """Write what this run reconciled (RC-188).
@@ -5666,7 +5709,7 @@ class ProjectManager:
             await record_reconciliation(
                 project_name,
                 [name for name in processed if name not in failed],
-                project_wide=targets is None and not failed,
+                project_wide=project_wide and not failed,
                 read_seconds_ago=time.monotonic() - read_started,
             )
         except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:
