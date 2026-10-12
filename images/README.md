@@ -36,3 +36,8 @@ docker run --rm -it --entrypoint /bin/bash rig-cmp-argo-kustomize-sops:latest
 
 task bootstrap-argo-system
 kubectl rollout restart deployment argocd-repo-server -n rig-system
+
+jupyterhub-hub en jupyterhub-user: de twee images van de JupyterHub-POC (RC-258). De hub is een
+ZAD-component dat met KubeSpawner een pod per gebruiker start; de user-image is JupyterLab met VS
+Code (code-server) als tegel. Alleen voor de sandbox, rechtstreeks naar de in-cluster registry. Zie
+images/jupyterhub-hub/README.md, images/jupyterhub-user/README.md en docs/jupyterhub-poc-verslag.md.

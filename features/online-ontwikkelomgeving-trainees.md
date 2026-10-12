@@ -1,6 +1,6 @@
 # Online ontwikkelomgeving voor trainees (Python in de browser, met AI-assistentie)
 
-**Status**: Idee / te verkennen
+**Status**: Idee, met een POC in uitvoering (RC-258). Zie `docs/jupyterhub-poc-verslag.md` voor wat er gemeten is.
 **Created**: 2026-10-12
 **Aanvrager**: Lorin Hendriks (trainee-programma), via Robbert Uittenbroek
 
@@ -31,13 +31,13 @@ Browser (managed device)
    |
    | HTTPS, SSO Rijk via Keycloak (ZAD)
    v
-JupyterHub (Zero to JupyterHub Helm chart)
-   |-- Authenticator: GenericOAuthenticator (OIDC naar Keycloak), groepen/rollen uit token-claims
-   |-- Spawner: KubeSpawner, 1 pod + 1 PVC per gebruiker, profielen per groep
+JupyterHub als gewoon ZAD-component (eigen image, geen helm)
+   |-- Authenticator: GenericOAuthenticator (OIDC naar Keycloak), rol als poort
+   |-- Spawner: KubeSpawner, 1 pod + 1 PVC per gebruiker
    |-- Idle culler: ruimt inactieve pods op
    v
 Pod per gebruiker (eigen image)
-   |-- code-server (VS Code in de browser) als default UI, via jupyter-vscode-proxy  -> /vscode
+   |-- JupyterLab als voorkant, code-server als tegel, via jupyter-vscode-proxy  -> /vscode
    |-- Python + vaste set libraries
    |-- Extensies via Open VSX: Python, basedpyright, AI-assistent (Continue / Cline / Roo Code)
    |-- Terminal-agent: OpenCode en/of Aider
@@ -51,7 +51,14 @@ Pod per gebruiker (eigen image)
 
 We gebruiken JupyterHub als multi-user laag en niet als notebook-omgeving. Trainees landen direct in VS Code (code-server) en zien geen notebooks, tenzij een groep daar juist om vraagt.
 
-- Zero to JupyterHub (Helm): https://z2jh.jupyter.org
+**Hoe we hem uitrollen: als ZAD-component, zonder helm en zonder helmfile** (besloten in
+RC-258). De hub is een eigen image met `jupyterhub_config.py` erin, en leest alles wat per
+project verschilt uit env vars die de diensten van het project leveren. Reden: we willen
+weten wat we draaien, en het moet op de bestaande ZAD-tooling passen (diensten, Keycloak,
+netpols, Argo). De Zero to JupyterHub-chart blijft wel bruikbaar als bron voor de config en
+de rechten; we rollen hem niet uit.
+
+- Zero to JupyterHub (Helm, als leesbron): https://z2jh.jupyter.org
 - JupyterHub: https://jupyterhub.readthedocs.io
 - KubeSpawner, voor een pod per gebruiker en profielen: https://jupyterhub-kubespawner.readthedocs.io
 - De licentie is BSD. Er is geen betaalde laag, en groepsbeheer zit in de gratis versie.
@@ -161,11 +168,11 @@ Aandachtspunten voor AI:
 
 ## Inpassing in ZAD: open punten (eerst uitzoeken)
 
-1. **Mag een app dynamisch pods spawnen?** Dit is de grootste blocker. KubeSpawner heeft een ServiceAccount nodig met rechten om pods, PVC's en services aan te maken en te verwijderen in de eigen namespace. ZAD/OPI genereert nu manifests via GitOps (ArgoCD). Pods die JupyterHub aanmaakt, vallen daarbuiten. Vragen:
-   - Past dit binnen de Capsule-tenant en de RBAC die OPI genereert?
+1. **Mag een app dynamisch pods spawnen?** Dit is de grootste blocker, en RC-258 meet hem. KubeSpawner heeft rechten nodig op pods, PVC's en events in de eigen namespace. ZAD genereert nu geen Role en RoleBinding, dus die worden in de POC met de hand toegepast; de set die nu is toegepast staat in `features/jupyterhub-poc/hub-role.yaml`; of elke regel ook nodig is, is nog niet gemeten. Let op: elk component in een project draait op dezelfde ServiceAccount, dus die rechten gelden voor het hele project. Wat nog open staat:
+   - Past dit binnen de Capsule-tenant en de RBAC die OPI genereert? Op de sandbox niet te meten.
    - Gaat ArgoCD deze pods als drift of orphans zien? (zie `manifest-inventory-cleanup.md` en `service-orphan-reconciliation.md`)
    - Waar komen ResourceQuota en LimitRange per namespace vandaan?
-2. **Hoe deployen we de Hub?** Als Helm-chart, zie `helmfile-single-app-deployment.md`. Dan wordt het een ZAD-"systeemservice" (`system-services-with-a-ui.md`). Of als gewoon project met een gerenderde chart.
+2. **Hoe deployen we de Hub?** Beantwoord in RC-258: als gewoon ZAD-component met een eigen image, zonder helm en zonder helmfile. Zie hierboven.
 3. **NetworkPolicies:** de standaard staat nu op allow-all binnen de namespace (`restrictive-network-policies.md`). Voor deze use-case moet dat strikt:
    - pod naar pod tussen gebruikers dicht;
    - egress alleen naar Hub, VLAM-proxy, code.overheid.nl en PyPI of een mirror;

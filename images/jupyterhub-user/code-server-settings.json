@@ -1,0 +1,7 @@
+{
+  "chat.disableAIFeatures": true,
+  "security.workspace.trust.enabled": false,
+  "workbench.startupEditor": "none",
+  "telemetry.telemetryLevel": "off",
+  "extensions.autoUpdate": false
+}
