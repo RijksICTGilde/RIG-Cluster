@@ -204,6 +204,98 @@ async def test_a_deployment_that_is_meant_to_have_no_pods_is_not_asked():
 
 
 @pytest.mark.asyncio
+async def test_a_running_sync_reports_how_long_it_runs_and_that_it_blocks(monkeypatch):
+    """RC-250: "Operatie: Running" stond 45 minuten lang onveranderd op de kaart. Zonder de
+    duur en zonder "dit houdt elke volgende sync tegen" is dat niet te beoordelen."""
+    status_data = {
+        "operation": {"sync": {"revision": "6a0295a671"}},
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {
+                "phase": "Running",
+                "startedAt": "2026-10-05T14:54:30Z",
+                "message": "waiting for healthy state of apps/Deployment/pr-68-website",
+                "syncResult": {"revision": "6a0295a671"},
+            },
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_phase"] == "Running"
+    # Een echte duur en niet None: de startedAt staat ver in het verleden.
+    duur = result["operation_duration"]
+    assert duur is not None
+    assert duur.endswith(("uur", "minuten", "minuut"))
+    assert result["operation_is_stuck"] is True
+    # De terugval op reconciledAt hoort hier niet te slaan: er rondde niets af.
+    assert result["last_sync"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_detached_running_state_blocks_nothing(monkeypatch):
+    """Dezelfde stand zonder ``.operation``: wat achterblijft na een beeindiging. Rapporteren
+    ja, maar niet als blokkade, want auto-sync is dan vrij."""
+    status_data = {
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {"phase": "Running", "startedAt": "2026-10-05T14:54:30Z"},
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_phase"] == "Running"
+    assert result["operation_is_stuck"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_sync_without_a_start_reports_no_duration():
+    """RC-250: zonder leesbare ``startedAt`` is er geen duur, en "loopt al onbekend lang" op
+    de kaart zetten antwoordt de vraag niet waarvoor die regel er staat. De blokkade zelf
+    blijft wel staan: aan een aangehechte operation zonder begin verandert niets meer."""
+    status_data = {
+        "operation": {"sync": {"revision": "6a0295a671"}},
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {"phase": "Running"},
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_duration"] is None
+    assert result["operation_is_stuck"] is True
+
+
+@pytest.mark.asyncio
 async def test_a_component_that_cannot_pull_reaches_the_card():
     """The card's block is fed from here, and nothing else fills that key.
 

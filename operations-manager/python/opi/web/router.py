@@ -17,6 +17,13 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.templates_lotc import templates_lotc
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    format_duration,
+    is_stuck,
+    operation_age_seconds,
+    read_sync_operation,
+)
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
@@ -1317,11 +1324,12 @@ async def dashboard(request: Request):
                                 if inactivity and argo_status == "Healthy":
                                     argo_status = inactivity
                                 deployment_statuses.append(argo_status)
-                                # Extract last deployed timestamp
-                                operation_state = status_data.get("status", {}).get("operationState", {})
-                                finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
-                                    "reconciledAt"
-                                )
+                                # Wanneer er voor het laatst werkelijk iets is UITGEROLD, zonder
+                                # terugval op ``reconciledAt``. Die terugval meldde bij een
+                                # vastgelopen sync de tijd van de laatste VERGELIJKING als het
+                                # moment van uitrollen, en dat staat hier als "3 uur geleden" op
+                                # het scherm (RC-250). Geen uitrol betekent geen regel.
+                                finished_at = read_sync_operation(status_data).finished_at
                                 if finished_at and (not latest_deploy or finished_at > latest_deploy):
                                     latest_deploy = finished_at
                             else:
@@ -2105,6 +2113,14 @@ async def _fetch_argocd_deployment_status(
         if not last_sync and sync.get("status") == "Synced":
             last_sync = status.get("reconciledAt")
 
+        # Sinds wanneer de lopende sync loopt, en of hij daarmee vastligt. Zonder die twee is
+        # een phase `Running` niet te beoordelen: op 5 oktober 2026 stond die 45 minuten
+        # onveranderd (RC-250).
+        operation = read_sync_operation(status_data)
+        operation_duration = (
+            format_duration(operation_age_seconds(operation)) if operation.ongoing and operation.started_at else None
+        )
+
         return {
             "app_name": app_name,
             "available": True,
@@ -2115,6 +2131,8 @@ async def _fetch_argocd_deployment_status(
             "last_sync": last_sync,
             "operation_phase": operation_state.get("phase"),
             "operation_message": operation_state.get("message"),
+            "operation_duration": operation_duration,
+            "operation_is_stuck": is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS),
             "errors": errors,
             "deviations": deviations,
             "pods": pod_summaries,

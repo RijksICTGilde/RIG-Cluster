@@ -687,6 +687,39 @@ class KubectlConnector:
         logger.warning(f"Could not determine existence of ArgoCD Application '{app_name}': {stderr}")
         return None
 
+    async def get_argocd_application(self, app_name: str, namespace: str | None = None) -> dict[str, Any] | None:
+        """
+        One ArgoCD Application CR, read through the Kubernetes API.
+
+        The Kubernetes API and not the ArgoCD API, for the same reason as
+        ``argocd_application_exists`` above, and because the terminate patch next to this one
+        goes through that same API.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
+
+        Returns:
+            The Application CR, or ``None`` when it is absent or could not be read. Those two
+            are one answer on purpose; the log line below says which it was.
+        """
+        namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "json"]
+        )
+        if code != 0:
+            if "notfound" in stderr.lower().replace(" ", ""):
+                logger.debug(f"ArgoCD Application '{app_name}' does not exist in namespace '{namespace}'")
+            else:
+                logger.warning(f"Could not read ArgoCD Application '{app_name}': {stderr}")
+            return None
+        try:
+            application = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse ArgoCD Application '{app_name}': {e}")
+            return None
+        return application if isinstance(application, dict) else None
+
     async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
         """
         Remove any running operation from an ArgoCD Application.

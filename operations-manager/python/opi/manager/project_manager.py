@@ -99,6 +99,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
+from opi.services.argocd_operation import terminate_stuck_operation
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -3620,6 +3621,7 @@ class ProjectManager:
                             f"Timed out after 300s waiting for '{app_name}' ({dep_name}) to sync; "
                             f"last observed state: {last_state}"
                         )
+                        await self._terminate_operation_we_waited_on(app_name, cluster)
                         if app_subtask:
                             progress_manager.fail_subtask(app_subtask, "time-out na 300s")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
@@ -3984,9 +3986,63 @@ class ProjectManager:
             )
             await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")
 
+        # Vlak VOOR de push, en niet erna: ArgoCD probeert een revisie die al eens faalde niet
+        # opnieuw, dus beëindigen na de push laat de blokkade staan voor precies de commit die
+        # hem moet oplossen. Een storing hierin houdt de push niet tegen: dit staat tussen de
+        # commits en de push, dus stranden zou de manifests gecommit en ongepusht achterlaten
+        # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
+        await self._clear_blocking_sync_operations(deployments)
+
         await project_repo_connector.push_changes()
 
         logger.info(f"Successfully processed repository: {repo_config['name']}")
+
+    async def _terminate_operation_we_waited_on(self, app_name: str, cluster: str | None) -> None:
+        """Beëindig de operation waarop OPI's eigen wacht net is afgelopen.
+
+        Zonder drempel, anders dan bij de ronde voor de push: die operation is per constructie
+        JONGER dan de drempel, want ``wait_for_application_synced`` start zijn teller pas na de
+        refresh en de render, en ArgoCD begint de operation daarna. Met de standaarddrempel
+        bleef precies de blokkade staan die deze tak moet opruimen (gemeten: 299s oud gaf nul
+        patch-aanroepen). En "nog gewoon bezig" is hier geen mogelijkheid meer: OPI heeft net
+        300s op deze operation gewacht en opgegeven. Dat hij nog aanhangt en nog loopt
+        (``blocks_next_sync``) is daarmee de enige vraag die overblijft.
+
+        Laat staan maakt van een mislukte uitrol ook een blokkade op elke volgende: op 5
+        oktober 2026 kostte dat na de time-out nog 21 minuten zonder enige sync.
+
+        Lukt het beëindigen niet, dan blijft de time-out wel gerapporteerd: de aanroep staat
+        voor ``fail_subtask`` en voor de ``timeout``-uitkomst, en een omgevallen kubectl mag
+        daar geen ``KubectlConnectionError`` van maken. ``terminate_stuck_operation`` vangt die
+        daarom zelf af.
+        """
+        await terminate_stuck_operation(
+            self._kubectl_connector,
+            app_name,
+            get_argo_namespace(cluster or settings.CLUSTER_MANAGER),
+            threshold_seconds=0,
+        )
+
+    async def _clear_blocking_sync_operations(self, deployments: list[dict[str, Any]]) -> None:
+        """Beëindig de sync-operations die een volgende sync op deze deployments blokkeren.
+
+        Hier WEL met de drempel: deze ronde loopt voor elke push en kijkt naar operations die
+        een andere taak of een sweep heeft achtergelaten, dus een uitrol die nog gewoon bezig
+        is blijft staan.
+        """
+        project_name = await self.get_name()
+        if not project_name:
+            return
+        for deployment in deployments:
+            dep_name = deployment.get("name")
+            cluster = deployment.get("cluster")
+            if not dep_name or not cluster:
+                continue
+            await terminate_stuck_operation(
+                self._kubectl_connector,
+                generate_argocd_application_name(project_name, str(dep_name)),
+                get_argo_namespace(str(cluster)),
+            )
 
     # TODO: maybe this should be moved to project_file manager
     async def get_repository_path(self, repository_name: str) -> str | None:

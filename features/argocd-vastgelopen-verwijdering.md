@@ -187,15 +187,34 @@ Dezelfde vorm stond op de twee handgeschreven platform-Applications onder
 `bootstrap/rig-system/kustomize/overlays/odcn-production/`: `SyncTimeout=60s`, om dezelfde
 reden weg. ArgoCD v3.5.1 kent die naam niet als sync option; wat hij wel `SyncTimeout`
 noemt is een interne wachttijd op een informer-cache in de API-server. Een bovengrens op
-het wachten bestaat wel, maar als instelling op de ArgoCD-instantie:
-`controller.sync.timeout.seconds: "300"` in de `extraConfig` van `argocd-deployment.yaml`,
-op odcn-production gezet en op de twee andere overlays niet. Die grens breekt een
-hangende sync niet af, want hij vraagt om beëindiging en de operatie blijft staan tot
-`.operation` zelf weg is.
+het wachten bestaat wel, maar als instelling op de ArgoCD-instantie.
+
+Een eerdere versie van dit document zei dat die grens op odcn-production aanstond, op grond
+van `controller.sync.timeout.seconds: "300"` in de `extraConfig` van
+`argocd-deployment.yaml`, en dat hij een hangende sync niet afbreekt. Beide beweringen zijn
+onwaar, en de tweede was beredeneerd en niet gemeten. `extraConfig` rendert in `argocd-cm`
+en dit is een cmd-params-key, die daar niemand leest: het command van de draaiende
+controller droeg geen `--sync-timeout`, en in 2,5 uur controller-log stond geen enkele
+`Terminating in-progress operation due to timeout` terwijl een sync 45 minuten liep. Wat
+hier gemeten is, is dus een instantie zonder grens.
+
+De grens staat nu als `--sync-timeout=600` in `spec.controller.extraCommandArgs` van alle
+drie de overlays, de enige weg die deze operator naar de controller heeft, en is op de
+sandbox nagemeten: op precies 600 seconden logt de controller
+`Terminating in-progress operation due to timeout`, zet hij de phase `Terminating -> Failed`
+met bericht `Operation terminated`, en start hij in dezelfde seconde een sync op de nieuwste
+revisie. Zie `plans/een-sync-die-niet-afbreekt-blokkeert-elke-volgende.md` voor de metingen.
+
+Let op bij het nameten in de controller-log: de regels `sync/terminate complete` die hij op
+elke reconcile logt zijn NIET die grens. RC-250 zag dezelfde regels op een instantie waar de
+grens wel aanstond en op een waar hij uit stond; ze horen bij het afbreken van de
+sync-context per reconcile, na `Resuming in-progress operation`.
 
 `PruneLast=true` blijft staan. Die kwam mee met de eerste commit van de repo en nergens in
 de historie of documentatie staat waarvoor hij nodig was. Zonder die reden is weghalen
-gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin.
+gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin. RC-250
+heeft die reden inmiddels gemeten, en het is geen kandidaat meer: zie
+`features/vastgelopen-sync-breekt-af.md` onder "Wanneer dit speelt".
 
 ## Nagemeten op de sandbox
 
