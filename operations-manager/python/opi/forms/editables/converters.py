@@ -6,6 +6,7 @@ from typing import Any
 import yaml
 
 from opi.core.rrule_utils import build_rrule, format_rrule, parse_rrule
+from opi.utils.url_paths import normalize_logout_path
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,33 @@ class EmptyToNoneConverter:
         if not value:
             return None
         return value
+
+    def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
+        return str(value) if value else ""
+
+
+class LogoutPathConverter:
+    """Schrijft het logout-pad genormaliseerd weg, zodat formulier en API hetzelfde opleveren.
+
+    De API normaliseert al via de ``field_validator`` van ``KeycloakConfig``; zonder deze
+    converter zou dezelfde invoer via het formulier een ANDER projectbestand opleveren.
+
+    Een onjuiste waarde komt hier ongewijzigd uit. Valideren en schrijven zijn in de
+    processor losgekoppeld (``_write_field`` draait ook als ``_validate_field`` fouten
+    vond), dus gooien zou de save laten klappen in plaats van de foutmelding van
+    ``LogoutPathValidator`` bij het veld te laten zien.
+    """
+
+    def read(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        return value or ""
+
+    def write(self, value: Any, context_data: dict[str, Any] | None = None) -> Any:
+        if not value:
+            return None
+        try:
+            return normalize_logout_path(value)
+        except ValueError:
+            return value
 
     def view(self, value: Any, context_data: dict[str, Any] | None = None) -> str:
         return str(value) if value else ""

@@ -196,6 +196,19 @@
       "title": "Additional Redirect Uris",
       "type": "array"
     },
+    "logout-path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path on the component that ends its own session, relative to the deployment's own host (e.g. /api/v1.0/logout/). Keycloak calls it as this client's front-channel logout URL. Leave it out when the application already clears its session before it sends the browser to the end-session endpoint.",
+      "title": "Logout-Path"
+    },
     "realm-roles": {
       "description": "Realm roles to create.",
       "items": {
