@@ -3378,13 +3378,13 @@ class ProjectManager:
             synced_deployment_count = 0
 
             if deployments and project_name:
-                from opi.services.catalog.base import ComponentHealth
                 from opi.services.deployment_observation import run_after_sync_observation
                 from opi.services.deployment_state import collect_deployment_state
                 from opi.services.oom_watcher import (
                     MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
                     DeploymentHealthError,
+                    component_health_from_oom_failures,
                     create_health_check_callback,
                     describe_components_waiting,
                 )
@@ -3735,10 +3735,7 @@ class ProjectManager:
                                 argo_task,
                                 f"Te weinig geheugen voor {oom_names} in {app_name}, geheugenlimiet bijstellen...",
                             )
-                        component_health = {
-                            (f.component_reference or f.component_name): ComponentHealth(oom_detected=True)
-                            for f in oom_failures
-                        }
+                        component_health = component_health_from_oom_failures(oom_failures)
                         try:
                             observation = await run_after_sync_observation(project_name, dep_name, component_health)
                             if observation.requeue_refresh:

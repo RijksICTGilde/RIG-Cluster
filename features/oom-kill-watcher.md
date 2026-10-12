@@ -50,7 +50,7 @@ stopped the 24 August 2026 incident, where `asses-k2n/pr-494` walked from 45Mi t
 | Brake | What it bounds | Where |
 |---|---|---|
 | The tune budget | 3 tune cycles per deployment | `_oom_tune_attempts` in `oom_watcher.py` |
-| The pod-generation lock | one tune per pod generation | `_last_tuned_pod_template_hash` in `oom_watcher.py` |
+| The pod-generation lock | one tune per pod generation | `_last_tuned_pod_template_hash` in `oom_watcher.py`, applied in the tuner's `AFTER_SYNC` hook and recorded after the commit |
 | The growth ceiling | 8x the declared limit | `max_growth_factor` in the resource-tuning service config |
 | The cluster ceiling | `get_max_memory_limit_mi` (4096Mi on odcn-production) | `cluster_config.py` |
 
@@ -65,23 +65,50 @@ manual refresh, an image bump. The automated refresh a tune queues for itself ca
 clears it too (`handle_delete_deployment`), so a removed deployment leaves neither the
 counter nor its pod-generation lock behind.
 
+**A user action clears it at the START of the handler, not at the end.** The sync wait
+inside that same handler tunes and records which pod generation it answered, so clearing
+afterwards threw away exactly that. toets-hn7/pr-103: the upsert tuned 25Mi -> 139Mi,
+recorded the generation, and wiped it when the task finished; the automated refresh 42
+seconds later read an empty slate and multiplied again. Clearing first also means the
+handler's own inline check runs on its own budget rather than the previous round's.
+
 **The budget counts attempted cycles, not realised changes**, and the two paths therefore
 charge at different moments. That asymmetry is deliberate. The fire-and-forget path
 charges only after the tune committed something, which it can afford because a
 non-committing round queues no refresh and schedules no follow-up check, so the chain
 ends by itself. The inline path charges on detection, before raising
 `DeploymentHealthError`: the tune runs afterwards in `project_manager`, outside the
-callback, so the callback cannot know the outcome, and the counter is its only brake.
+callback, so the callback cannot know the outcome, and the counter is the only brake the
+callback itself carries.
 Charging early costs almost nothing in practice - a non-committing inline detection
 queues no automated refresh, so a next round can only come from a user action, and every
 user action resets the budget first.
 
-**The pod-generation lock.** A tune only means something once it is running. Both paths
-record the `pod-template-hash` of the pod the OOM was observed on; a later detection on
-that same hash is not new evidence, because the previous increase has not rolled out yet.
-(The existing superseded-generation filter cannot catch this: at that moment the pod still
-IS the current generation.) When the hash cannot be determined the OOM counts as fresh -
-blocking there would silence the auto-tune the moment kubectl hiccups.
+**The pod-generation lock.** A tune only means something once it is running. A later
+detection on the `pod-template-hash` the previous tune already answered is not new
+evidence, because that increase has not rolled out yet. (The superseded-generation filter
+cannot catch this: at that moment the pod still IS the current generation.) When the hash
+cannot be determined the OOM counts as fresh - blocking there would silence the auto-tune
+the moment kubectl hiccups.
+
+It sits on the shared door, the resource-tuning service's `AFTER_SYNC` hook, so every path
+that tunes gets it rather than each caller remembering separately. `ComponentHealth`
+carries the generation there, and for the inline deploy path `ComponentFailure` brings it
+from the health check to that hook. The three detecting paths read the lock as an early
+filter, so a stale generation never becomes a health error, but the hook is what refuses
+the tune, and only for the components it actually raised.
+
+The hook REPORTS the generation it answered (`ObservationOutcome.oom_tune_generations`) and
+the runner records it once its single commit succeeded. Recording before that commit marks
+a generation answered for an increase that never reached git: the next check then refuses
+with "the previous tune answered" while nothing was tuned, and on the watcher path the
+budget is not charged either, so no brake reports anything at all.
+
+The detectors used to write it, and the inline path escaped it twice over: the health check
+recorded before the tune, so the hook behind it read the detector's own record, and the hook
+had no lock of its own. toets-hn7/pr-103 therefore walked from 25Mi to its 200Mi ceiling in
+42 seconds on two OOM lines from one pod, `pr-103-frontend-6694c99686-dj56w`, which ran on
+the 25Mi template.
 
 **The growth ceiling** is described in [Auto Resource Tuning](auto-resource-tuning.md).
 
@@ -150,7 +177,7 @@ cannot: every automated refresh starts a new chain at `attempt=1`.
 - Check logs for `Health watcher: auto-tune committed changes` (the tune now runs through the generic after-sync hook scan; see auto-resource-tuning.md)
 - If the tune budget is spent, you'll see: `Health watcher: OOM tune budget (3 cycles) spent for ...` (background path) or `Health check: max OOM tune attempts (3) reached for ...` (inline path)
 - If the growth ceiling refuses the increase, the message names the declared limit, the current limit and the factor, and asks for manual intervention - a limit WAS computed, it was refused
-- If a detection lands on the generation a previous tune already answered: `... is on pod generation <hash>, the same one the previous tune answered - waiting for that increase to roll out`
+- If a detection lands on the generation a previous tune already answered: `... is on pod generation <hash>, the same one the previous tune answered - waiting for that increase to roll out` (the detectors), or `Resource tuning: OOM for <refs> in <project>/<deployment> is on the pod generation the previous tune already answered` (the hook, which is where the tune is actually refused)
 - Verify the metrics backend (Prometheus) is available - the tune service needs it to compute recommendations
 
 ### kubectl connectivity

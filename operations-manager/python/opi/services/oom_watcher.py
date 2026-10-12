@@ -48,6 +48,7 @@ from opi.handlers.project_file_handler import classify_image_pull_failure, read_
 from opi.services.catalog.base import (
     APPLICATION_CONTAINER_NAME,
     SERVICE_ROLE_LABEL_KEY,
+    ComponentHealth,
     all_application_pods_selector,
     application_pod_selector,
     is_application_pod,
@@ -123,6 +124,8 @@ _oom_tune_attempts: dict[str, int] = {}
 # The pod-template-hash the last OOM tune acted on, per "project/deployment/component".
 # A detection on that same hash is not new evidence: the pod that OOM'd is still the
 # one from before the previous increase, so that increase has not rolled out yet.
+# Written by the after-sync observation runner, after its commit succeeded: an increase
+# that was never written answers no generation.
 _last_tuned_pod_template_hash: dict[str, str] = {}
 
 # Module-level task service reference for the fire-and-forget path.
@@ -182,13 +185,17 @@ def oom_is_fresh_evidence(
     )
 
 
-def _record_oom_tune_hash(
+def record_oom_tune_generation(
     project_name: str,
     deployment_name: str,
     component_name: str,
     pod_template_hash: str | None,
 ) -> None:
-    """Remember which pod generation this tune answered."""
+    """Remember which pod generation this tune answered.
+
+    Called by the after-sync observation runner once its commit succeeded, for the
+    components the tuning hook actually changed.
+    """
     if pod_template_hash:
         _last_tuned_pod_template_hash[_oom_hash_key(project_name, deployment_name, component_name)] = pod_template_hash
 
@@ -239,6 +246,22 @@ class ComponentFailure:
     logs: list[str] | None = None  # last log lines captured before failure
     container_name: str = ""  # the container that failed: main "app" vs an injected sidecar
     image: str = ""  # the image reference that failed to pull (image_pull only)
+    # pod-template-hash the OOM was seen on (oom only): helps the hook distinguish fresh evidence
+    pod_template_hash: str = ""
+
+
+def component_health_from_oom_failures(failures: list[ComponentFailure]) -> dict[str, ComponentHealth]:
+    """Turn OOM failures into the observation hook's input, keyed by component reference.
+
+    Carries the pod generation along: without it the hook cannot tell this evidence from
+    the next pod's and tunes twice on one OOM (toets-hn7/pr-103).
+    """
+    return {
+        (f.component_reference or f.component_name): ComponentHealth(
+            oom_detected=True, oom_pod_template_hash=f.pod_template_hash or None
+        )
+        for f in failures
+    }
 
 
 class DeploymentHealthError(Exception):
@@ -635,8 +658,9 @@ async def apply_oom_tune(
     the tune itself cannot drift apart between them.
 
     ``pod_hashes`` maps each component unique name to the pod generation the OOM was seen
-    on; ``source`` only reaches the log lines. Returns True when the tune committed a
-    change, and a refresh was queued for it.
+    on and is handed to the observation hook, which tunes once per generation; the runner
+    records that generation once its commit succeeded. ``source`` only reaches the log
+    lines. Returns True when the tune committed a change, and a refresh was queued for it.
     """
     if oom_tune_budget_spent(project_name, deployment_name):
         logger.warning(
@@ -658,17 +682,20 @@ async def apply_oom_tune(
 
     # Route through the same after-sync hook scan the inline deploy path uses, so the
     # OOM remediation is not hardcoded here either. The runner commits once.
-    from opi.services.catalog.base import ComponentHealth
     from opi.services.deployment_observation import run_after_sync_observation
 
-    component_health = {ref: ComponentHealth(oom_detected=True) for ref in component_refs}
+    component_health = {
+        ref: ComponentHealth(
+            oom_detected=True,
+            oom_pod_template_hash=pod_hashes.get(generate_unique_name(deployment_name, ref)),
+        )
+        for ref in component_refs
+    }
     try:
         observation = await run_after_sync_observation(project_name, deployment_name, component_health)
         committed = observation.requeue_refresh
         if committed:
             used = _record_oom_tune_attempt(project_name, deployment_name)
-            for unique_name, pod_hash in pod_hashes.items():
-                _record_oom_tune_hash(project_name, deployment_name, unique_name, pod_hash)
             logger.info(
                 "Health watcher: auto-tune committed changes for %s/%s (%d/%d OOM tune cycles used)",
                 project_name,
@@ -1075,9 +1102,6 @@ def create_health_check_callback(
                     )
             if oom_actionable:
                 has_oom = True
-                _record_oom_tune_hash(
-                    project_name, deployment_name, health.component_name, health.oom_pod_template_hash
-                )
                 failures.append(
                     ComponentFailure(
                         component_name=health.component_name,
@@ -1086,6 +1110,7 @@ def create_health_check_callback(
                         deployment_name=deployment_name,
                         component_reference=comp_ref,
                         logs=logs,
+                        pod_template_hash=health.oom_pod_template_hash or "",
                     )
                 )
             if health.image_pull_error:

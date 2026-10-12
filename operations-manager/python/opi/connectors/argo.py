@@ -43,6 +43,19 @@ CONNECT_RETRY_SECONDS = 30.0
 _CONNECT_RETRY_FIRST_DELAY = 1.0
 
 
+def _exc_text(error: BaseException) -> str:
+    """De tekst van een uitzondering, of de klasse als die tekst leeg is.
+
+    ``asyncio.TimeoutError`` heeft een lege ``str()``, en juist een read timeout is de meest
+    voorkomende fout op deze paden. Een kale interpolatie van de uitzondering logde daar dus
+    niets: op 6 oktober 2026 stond er twee keer "Error getting application status:" met niets
+    erachter, en dat liet een taak sneuvelen zonder spoor. De repr is geen alternatief, want
+    de uitzonderingen die WEL een tekst hebben worden daarmee slechter leesbaar: aiohttp zegt
+    "Cannot connect to host argocd-server:80" en de repr daarvan is een ConnectionKey vol velden.
+    """
+    return str(error) or type(error).__name__
+
+
 async def _retry_on_connect_error[T](
     operation: Callable[[], Awaitable[T]],
     budget_seconds: float,
@@ -137,7 +150,7 @@ class ArgoConnector:
             try:
                 self._perform_login()
             except Exception as e:
-                logger.warning(f"Initial login failed during initialization: {e}")
+                logger.warning(f"Initial login failed during initialization: {_exc_text(e)}")
                 logger.info("Will attempt async login when methods are called")
 
     def _cache_key(self) -> tuple[str, str]:
@@ -211,7 +224,7 @@ class ArgoConnector:
                 return False
 
         except Exception as e:
-            logger.error(f"Error during ArgoCD login: {e}")
+            logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
 
     async def login(self) -> bool:
@@ -224,7 +237,7 @@ class ArgoConnector:
         try:
             return await _retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
         except Exception as e:
-            logger.error(f"Error during ArgoCD login: {e}")
+            logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
 
     async def _login_once(self) -> bool:
@@ -467,8 +480,8 @@ class ArgoConnector:
         except RuntimeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting application status: {e}")
-            raise RuntimeError(f"Error getting application status: {e}")
+            logger.error(f"Error getting application status: {_exc_text(e)}")
+            raise RuntimeError(f"Error getting application status: {_exc_text(e)}")
 
     async def get_application_manifests(
         self, app_name: str | None = None, revision: str | None = None
@@ -546,7 +559,7 @@ class ArgoConnector:
                 return []
 
         except Exception as e:
-            logger.error(f"Error getting resource tree for {app_name}: {e}")
+            logger.error(f"Error getting resource tree for {app_name}: {_exc_text(e)}")
             return []
 
     async def list_applications(self) -> list[dict[str, Any]]:
@@ -570,7 +583,7 @@ class ArgoConnector:
                 logger.error(f"List applications request failed with status {status_code}: {response_text}")
                 return []
         except Exception as e:
-            logger.error(f"Error listing applications: {e}")
+            logger.error(f"Error listing applications: {_exc_text(e)}")
             return []
 
     async def login_and_sync(self, app_name: str | None = None) -> str | None:
@@ -759,7 +772,7 @@ class ArgoConnector:
                 )
 
             except Exception as e:
-                logger.error(f"Error checking application deletion status: {e}")
+                logger.error(f"Error checking application deletion status: {_exc_text(e)}")
 
             if attempt < max_retries - 1:  # Don't sleep on the last attempt
                 await asyncio.sleep(retry_delay)
