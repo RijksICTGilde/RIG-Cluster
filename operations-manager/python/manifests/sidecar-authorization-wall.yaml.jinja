@@ -16,11 +16,45 @@
             - --email-domain=*
 {% endif %}
             - --cookie-secure=true
+            {# Lax en niet strict: Keycloak komt met een top-level redirect terug op
+               /oauth2/callback, en strict houdt het cookie daar tegen. Expliciet, omdat
+               de browser anders zelf kiest. #}
+            - --cookie-samesite=lax
+            {# Het cookie mag niet langer geldig beweren te zijn dan de Keycloak-sessie
+               waarop het leunt. Projectrealms krijgen geen ssoSession*-waarden uit een
+               blueprint, dus daar geldt Keycloak's eigen 10 uur; oauth2-proxy zou er
+               zonder deze vlag 168 uur van maken. #}
+            - --cookie-expire=10h
+            {# Vernieuwen vóór de grens in plaats van erna. Zonder deze vlag vernieuwt de
+               proxy pas als de sessie al verlopen is, en dan komen alle requests van één
+               pagina tegelijk op een dode sessie aan en bieden ze allemaal hetzelfde
+               refresh token aan. Keycloak roteert dat, dus er wint één en de rest krijgt
+               een 403 met de inlogpagina als HTML. #}
+            - --cookie-refresh=3m
+            {# Een fetch() hoort een 401 te krijgen en geen redirect: een 302 naar Keycloak
+               ketst cross-origin af op CORS en komt bij de applicatie aan als netwerkfout
+               zonder statuscode. #}
+            - --api-route=^/api/
+            {# Hetzelfde voor statische bestanden, op extensie omdat de paden per applicatie
+               verschillen. Zonder deze regel start elk sessieloos verzoek om een stylesheet
+               of een icoon een eigen OAuth-flow bij Keycloak, terwijl de browser met het
+               antwoord niets kan: HTML is geen CSS. #}
+            - --api-route=\.(css|js|mjs|map|json|png|jpe?g|gif|svg|webp|avif|ico|woff2?|ttf|otf|eot)$
+            {# Blijft op false, dus een navigatie zonder sessie krijgt de inlogkaart. Die
+               kaart is het enige dat --banner rendert, en vijf projecten gebruiken dat veld.
+               Doorsturen naar Keycloak zou de bediener een klik schelen, maar dat is een
+               aparte afweging over het tussenscherm: zie
+               features/futures/authorization-wall-rolcontrole-in-de-proxy.md. #}
             - --skip-provider-button=false
-            - --custom-templates-dir=/etc/oauth2-proxy/templates
+            {# Parallelle aanvragen mogen elkaars inlogpoging niet slopen. Zonder deze vlag
+               deelt oauth2-proxy één CSRF-cookie, dat een tweede gestarte flow overschrijft,
+               waarna de callback van de eerste afketst met een 500. Twee tabbladen die
+               binnen het kwartier beide op Inloggen drukken is genoeg. #}
+            - --cookie-csrf-per-request=true
 {% if authorization_wall.banner %}
             - {{ ("--banner=" ~ authorization_wall.banner) | tojson }}
 {% endif %}
+            - --custom-templates-dir=/etc/oauth2-proxy/templates
             # Require a verified email address: reject any token whose email_verified is not true.
             # Explicit (this is oauth2-proxy's default, but the security intent must be visible).
             - --insecure-oidc-allow-unverified-email=false

@@ -55,6 +55,38 @@ Opgelost door een `oidc-audience-mapper` met `included.client.audience: <client-
 4. Een test die vastlegt dat de rol in het manifest dezelfde is als die in `restrict-access`, want twee plekken die hetzelfde moeten zeggen lopen anders uit elkaar.
 5. Migratie: bestaande walls krijgen bij de eerstvolgende verwerking een rolcontrole erbij. Wie vandaag binnenkomt houdt toegang, want Keycloak eist die rol al; het verschil raakt alleen wie er via een omweg in kwam.
 
+## Gemeten op 5 oktober 2026, en twee correcties
+
+De projectbestanden in `rig-cluster-projects-github/projects/` zijn geteld. Elf projecten hebben een authorization wall, en de rolpoort staat er zo:
+
+| `restrict-access` | projecten |
+|---|---|
+| `enabled: true` | ai-3rt, dp-bn7, hwmaw-ovh, fp-unj, no-ks4, toets-hn7 |
+| `enabled: false` | mpfb-8wh, mpfm-w3h |
+| geen blok | dsm1j2-2ws, jongo-lh2, tvas-7pb |
+
+**Correctie 1.** Dit document stelt hierboven dat de wall aanzetten de rolcontrole afdwingt, en gebruikt dat als argument tegen een eigen rol ("Er is een rol, hij staat op een plek, en hij geldt"). Dat geldt voor 6 van de 11. `locked_by_service="authorization-wall"` is een formuliermechanisme: de wizard vergrendelt het vinkje, maar een projectbestand mag `enabled: false` zeggen en doet dat ook. Voor 5 van de 11 walls is er dus geen rolpoort, en die draaien op authenticatie zonder autorisatie. Dat haalt de bodem onder het hoofdargument voor uitstel weg, en het maakt smaak A zwakker dan hij hierboven lijkt: hergebruik van de `restrict-access`-rol levert bij die vijf niets op, want daar staat geen rol.
+
+**Correctie 2.** Er is **geen aparte Keycloak-client** nodig, en dit document stelt dat ook niet voor. Nodig is een `oidc-audience-mapper` op de client die er al is, omdat `--provider=keycloak-oidc` de `aud`-claim valideert en Keycloak daar standaard `account` in zet. De clients die hierboven genoemd worden (`additional-clients`, de invite-client, de account-console) zijn bestaande clients die buiten de rolcontrole vallen, en dus de scherpe rand, niet een voorstel. Dit stond verkeerd gelezen in een sessie en is het vastleggen waard: er komt geen tweede inlogsplitsing bij.
+
+**Vervallen rand.** Hierboven staat dat onze sidecar geen `--cookie-expire` en geen `--cookie-refresh` zet, dus dat een sessie 168 uur leeft zonder hercontrole en een afgenomen rol pas bij de volgende aanmelding werkt. Sinds commit `e51b5ad25` staat er `--cookie-expire=10h` en `--cookie-refresh=3m`. Of oauth2-proxy `--allowed-role` bij een refresh opnieuw toetst en niet alleen bij het aanmaken van de sessie is niet gemeten; dat hoort bij het oppakken getoetst te worden en niet aangenomen.
+
+## De vraag die hier nog niet stond: per component
+
+De wall hangt aan een component, maar zijn config zit op projectniveau: `config_api_fields` en `config_editables` geven alleen iets terug voor `ConfigLayer.PROJECT`, en dat ene veld is de bannertekst. Het gebruik waar deze wens uit voortkomt is per applicatie: iedereen mag inloggen, maar alleen wie `admin` heeft opent **deze** app. Een project met drie componenten achter een wall wil dan drie verschillende rollen kunnen zetten. Dat is geen extra veld maar een nieuwe configuratielaag voor deze dienst, en de comment in `authorization_wall/__init__.py` houdt die laag vandaag bewust leeg omdat de banner projectbreed is.
+
+Dat verandert ook hoe smaak B gelezen hoort te worden. De aanname hierboven is dat een wallrol naast de `restrict-access`-rol een tweede waarheid over hetzelfde zet. In de lezing die de wens voedt zijn het twee verschillende poorten: `restrict-access` beantwoordt "mag je authenticeren bij dit realm", de wallrol beantwoordt "mag je deze applicatie openen". Dat is geen duplicaat maar een laag eronder, en als dat de bedoeling is hoort niet alleen het veld erbij, maar hoort ook de harde `requires` plus de vergrendeling heroverwogen te worden. Anders bestaat het veld wel, maar blijft de interessantste stand (iedereen kan inloggen, alleen admin komt erdoor) onbereikbaar via de wizard.
+
+## Het tussenscherm, een losse vraag
+
+Hoort hier omdat het dezelfde dienst raakt, maar het is een andere afweging dan de rolcontrole.
+
+De wall antwoordt een sessieloze navigatie met een 403 en een inlogkaart met een knop (`--skip-provider-button=false`). Bij een levende SSO-sessie in Keycloak is dat een scherm van ongeveer twee seconden: de bediener klikt op Inloggen en is binnen zonder wachtwoord. In de productielogs van `rig-prd-mpfm-w3h` is dat terug te zien, bijvoorbeeld op 1 oktober 07:26:41 en 07:27:13, telkens 403 op `/`, twee seconden later `/oauth2/start`, en daarna binnen. Het registreert nauwelijks als scherm, en daardoor is het lang onopgemerkt gebleven.
+
+Met `--skip-provider-button=true` verdwijnt die klik: de muur stuurt rechtstreeks door en Keycloak beslist of er een scherm nodig is. De prijs is dat `sign_in.html` dan nooit meer rendert, en dat is de enige plek waar `--banner` staat. Vijf projecten hebben daar echte tekst: hwmaw-ovh, jongo-lh2, dp-bn7, fp-unj ("Toegang op uitnodiging") en no-ks4 ("Dit is invite only."). Bij de laatste twee vertelt die tekst iemand juist waarom hij geweigerd kan worden, dus stil laten vervallen is geen optie.
+
+De wegen, geen van de drie gekozen: de kaart houden voor projecten met een banner (maar dan blijft het tussenscherm bestaan voor precies de projecten die een boodschap hebben), de tekst naar het Keycloak-inlogthema verhuizen (past bij de wens, maar het is niet uitgezocht of dat per realm kan zonder een thema per project), of de banner laten vervallen en de vijf eigenaren inlichten.
+
 ## De ontwerpvraag, en twee smaken
 
 **Smaak A, geen nieuw veld.** De wall gebruikt de rol die al in `services/keycloak/config/restrict-access` staat. Geen schemawijziging, geen tweede waarheid, de `requires` blijft hard, en de gebruiker kiest niets nieuws. Dit is het meeste effect voor de minste complexiteit, en het is niet wat "een optionele rol op de wall" betekent. Als we dit ooit oppakken is dit de variant die eerst op tafel hoort.
