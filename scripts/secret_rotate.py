@@ -715,6 +715,20 @@ def relay_ok(outcome: str) -> bool:
     return "HTTP 401" not in outcome and '"error"' not in outcome
 
 
+def relay_summary(outcome: str) -> str:
+    """Wat er van een relay-antwoord in een melding, log of terminal mag.
+
+    De statusregel, en bij een Stalwart-fout de foutnaam erachter. Nooit de rest van de body:
+    `/api/principal` geeft de principals terug MET hun `secrets`-veld, en het antwoord op de
+    PATCH bevat het net gezette geheim. Op 12-10-2026 drukte de check van mail-relay daardoor
+    het geheim van een andere principal af. De beslissing blijft wel op de hele body kijken,
+    zie `relay_ok`; alleen wat de gebruiker te zien krijgt is ingekort.
+    """
+    status = outcome.split(":", 1)[0].strip() or "geen antwoord"
+    failure = re.search(r'"error"\s*:\s*"([A-Za-z]+)"', outcome)
+    return f"{status}, error={failure.group(1)}" if failure else status
+
+
 def relay_auth_step(component: Component, cluster: Cluster, *, phase: str, which: str) -> Step:
     """De auth-proef voor de relay-fallback-admin. Strikte regel na de meting van vandaag:
     HTTP 401 betekent fout, elke andere status (ook een 200 met Stalwart-errorbody) betekent
@@ -724,7 +738,7 @@ def relay_auth_step(component: Component, cluster: Cluster, *, phase: str, which
         user = ctx.current.get("MAIL_RELAY_ADMIN_USERNAME", "admin")
         outcome = relay_call(ctx.kube, relay_api_for(cluster.name), user, password, "GET", "/api/principal", None)
         if "HTTP 401" in outcome:
-            _ok(f"relay-auth afgewezen: {outcome[:120]}")
+            _ok(f"relay-auth afgewezen: {relay_summary(outcome)}")
         return outcome
 
     def _probe(ctx: Ctx) -> str:
@@ -732,7 +746,7 @@ def relay_auth_step(component: Component, cluster: Cluster, *, phase: str, which
             return "overgeslagen (dry-run)"
         password = ctx.current[ctx.rotating] if which == "huidige" else ctx.new[ctx.rotating]
         outcome = _auth(ctx, password)
-        line = f"relay-auth met {which} waarde OK: {outcome[:80]}"
+        line = f"relay-auth met {which} waarde OK: {relay_summary(outcome)}"
         if which == "nieuwe":
             line += "; " + _reject_stale(ctx, lambda: _auth(ctx, ctx.current[ctx.rotating]), label="mailrelay-admin")
         return line
@@ -1262,8 +1276,8 @@ def keycloak_mail_steps(kube: Kube, values: Ctx, relay_url: str, admin_current: 
             payload_tpl % ctx.new[ctx.rotating],
         )
         if not relay_ok(outcome):
-            _ok(f"relay weigerde de wijziging: {outcome[:150]}")
-        return f"principal {principal} bijgewerkt ({outcome[:80]})"
+            _ok(f"relay weigerde de wijziging: {relay_summary(outcome)}")
+        return f"principal {principal} bijgewerkt ({relay_summary(outcome)})"
 
     return [
         Step(
