@@ -2160,16 +2160,34 @@ tasks:
         task argocd-orphan-sweep                                  # het hele cluster
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
         REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+        GITOPS=~/IdeaProjects/rig-cluster-test-git-repositories task argocd-orphan-sweep
+                                                                  # alle drie de lagen, vanuit git
         NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+
+      In een Capsule-tenant (odcn-production) is GITOPS of REPO nodig: het account mag niet
+      elk type lijsten, en dan beslist wat de deployments-repo rendert of een namespace
+      volledig gemeten is. Het cluster komt uit `task select-cluster`.
+
+      DELETE=1 samen met REPO weigert: een map in de deployments-repo wordt dan beoordeeld
+      op de Applications die het cluster op dit moment heeft. Gebruik GITOPS, dan beschermt
+      ook wat het projectbestand nog vraagt.
     dir: operations-manager/python
     # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
     # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
     # een typefout niets te doen.
+    #
+    # Cluster en ArgoCD-namespace gaan expliciet mee: het script leest anders de .env van
+    # operations-manager/python, en die wijst naar de sandbox (rig-system) ook als
+    # select-cluster op productie staat.
     cmds:
+      - echo "kube-context $(kubectl config current-context)" >&2
       - >-
+        ARGOCD_MANAGER={{.RIG_NAMESPACE}} CLUSTER_MANAGER={{.CLUSTER_TYPE}}
         uv run python scripts/argocd_orphan_sweep.py
         {{if .NAMESPACE}}--namespace {{.NAMESPACE}}{{end}}
-        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
+        {{if .GITOPS}}--projects-repo "{{.GITOPS}}/rig-cluster-projects-github"
+        --argo-repo "{{.GITOPS}}/argo-applications-github"
+        --deployments-repo "{{.GITOPS}}/rig-cluster-application-test-github"{{else if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
         {{if eq (default "0" .DELETE) "1"}}--delete{{end}}
     silent: true
 
@@ -2276,6 +2294,33 @@ tasks:
         E2E_TRACE=${E2E_TRACE:-1}
         uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" -v --timeout=300
     silent: false
+
+  sandbox:verwijder-weesproject:
+    desc: "Verwijder een achtergebleven testproject van de sandbox, inclusief zijn projectbestand"
+    dir: operations-manager/python
+    summary: |
+      Een aanmaak die halverwege omviel liet zijn projectbestand in zad-projects staan.
+      Dat bestand is de bron: de app-of-apps maakt de ArgoCD-applicaties er steeds
+      opnieuw uit aan, dus wat je op het cluster weghaalt staat er seconden later weer.
+
+      Meerdere namen mogen, gescheiden door spaties.
+
+        task sandbox:verwijder-weesproject NAAM=test-ej1
+        task sandbox:verwijder-weesproject NAAM="test-ej1 test-vim"
+    vars:
+      NAAM: '{{.NAAM}}'
+    preconditions:
+      - sh: '[ -n "{{.NAAM}}" ]'
+        msg: 'Geef de technische projectnaam mee: task sandbox:verwijder-weesproject NAAM=test-ej1'
+    cmds:
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        uv run python -m tests.e2e.helpers.weesprojecten {{.NAAM}}
+    silent: true
 
   test-e2e-sandbox-reallife:
     desc: "Run the long real-life E2E suite (5 projects, semi-concurrent UI+API mutations) against a running sandbox"

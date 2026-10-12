@@ -44,7 +44,7 @@
 
                                                 <c-text-input-field id="text-basic-2" name="text-basic-2" label="Text"/>
 
-                                                <c-text-input-field id="text-error" name="text-error" label="Text with an error"/>
+                                                <c-text-input-field id="text-error" name="text-error" label="Text with an error" error="Deze waarde kan niet"/>
 
                                                 <c-text-input-field id="text-warning" name="text-warning" label="Text with a warning"/>
 
@@ -57,30 +57,40 @@
                                                 <c-text-input-field id="number-input" name="number-input" label="Number" type="number"/>
 
                                                 <c-textarea-field id="textarea-basic" name="textarea-basic" label="Textarea"/>
+
+                                                <c-textarea-field id="textarea-error" name="textarea-error" label="Textarea with an error" error="Te lang"/>
                                             </c-fieldset>
 
                                             {# Options section #}
                                             <c-fieldset legend="Options">
                                                 <c-radio-button-field id="radio-basic" name="radio-buttons" label="Radio buttons"/>
 
-                                                <c-radio-button-field id="radio-error" name="radio-buttons-error" label="Radio buttons invalid"/>
+                                                <c-radio-button-field id="radio-error" name="radio-buttons-error" label="Radio buttons invalid" error="Kies een van de opties"/>
 
                                                 <c-radio-button-field id="radio-warning" name="radio-buttons-warning" label="Radio buttons with warning"/>
 
                                                 <c-checkbox-field id="checkbox-basic" name="checkboxes" label="Checkboxes"/>
 
-                                                <c-checkbox-field id="checkbox-error" name="checkboxes-error" label="Checkboxes with error"/>
+                                                <c-checkbox-field id="checkbox-error" name="checkboxes-error" label="Checkboxes with error" error="Dit vakje moet aan"/>
 
                                                 <c-checkbox-field id="checkbox-warning" name="checkboxes-warning" label="Checkboxes with a warning"/>
 
                                                 <c-select-field id="select-basic" name="select-basic" label="Select"/>
+
+                                                <c-select-field id="select-error" name="select-error" label="Select with an error" native="true" error="Kies een geldige waarde">
+                                                    <option value="a">A</option>
+                                                </c-select-field>
                                             </c-fieldset>
 
                                             {# Other inputs section #}
                                             <c-fieldset legend="Other">
                                                 <c-file-input-field id="file-input" name="file-input" label="File"/>
 
+                                                <c-file-input-field id="file-error" name="file-error" label="File with an error" error="Bestand te groot"/>
+
                                                 <c-date-input-field id="date-input" name="date-input" label="Date"/>
+
+                                                <c-date-input-field id="date-error" name="date-error" label="Date with an error" error="Datum in het verleden"/>
 
                                                 {# Time input - manual HTML as no component exists yet #}
                                                 <div class="utrecht-form-field rvo-form-field rvo-layout-column rvo-layout-gap--sm">

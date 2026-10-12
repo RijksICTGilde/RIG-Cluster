@@ -44,7 +44,7 @@ Twee bomen, allebei met een map per cluster:
 | boom | mappen vandaag | wat erin zit |
 |---|---|---|
 | `bootstrap/rig-system/kustomize/overlays/` | `local`, `odcn-production`, `sandboxed-local` | ArgoCD-deployment, namespace, repo-secrets, netwerkbeleid |
-| `bootstrap/rig-system/kustomize/operations-manager/overlays/` | `local`, `odcn-production`, `sandboxed-local`, `sandboxed-local-debug`, `sandboxed-local-dev` | OPI zelf: ingress, configmap, networkpolicy, letsencrypt-issuer, billing-prometheusrule, image-pin |
+| `bootstrap/rig-system/kustomize/operations-manager/overlays/` | `local`, `odcn-production`, `sandboxed-local`, `sandboxed-local-debug`, `sandboxed-local-dev` | OPI zelf: ingress, configmap, networkpolicy, letsencrypt-issuer, billing-prometheusrule, image-pull-prometheusrule, image-pin |
 | `infrastructure/bootstrap/clusters/` | `local`, `odcn`, `sandboxed-local` | de lijst van infracomponenten die op dat cluster meegaan |
 
 Onder `infrastructure/bootstrap/infrastructure/` staan **20 `overlays/`-mappen met samen 40

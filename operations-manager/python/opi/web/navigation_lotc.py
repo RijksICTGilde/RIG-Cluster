@@ -47,10 +47,11 @@ ROOS_TO_NLDD_ICONS = {
     "delta-naar-links": "caret-left",
     "delta-naar-rechts": "caret-right",
     "delta-omlaag": "caret-down",
-    # square-and-arrow-down, niet square-arrow-down. Die tweede naam staat in de
-    # iconenlijst van LOTC maar zit NIET in de bundel die de browser laadt, dus hij
-    # rendeerde leeg. Gemeten in een browser, niet uit de lijst gelezen.
-    "downloaden": "square-and-arrow-down",
+    # square-arrow-down, niet square-and-arrow-down. Met NLDD 0.8.80 was dat omgekeerd;
+    # op 0.8.92 bestaat square-and-arrow-down niet meer. Welke van de twee namen de
+    # bundel TEKENT wisselt per versie, en de andere rendeert een leeg svg-element.
+    # Gemeten in de bundel, niet uit de iconenlijst gelezen.
+    "downloaden": "square-arrow-down",
     # Uitloggen. Stond hier niet, dus het menu-item droeg een lege plek; zichtbaar werd
     # dat pas toen de icoontoets ook het MENU ging meten (RC-67).
     "uitgang": "arrow-right-out-bucket",

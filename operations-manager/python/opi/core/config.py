@@ -509,6 +509,15 @@ class Settings(BaseSettings):
     OOM_WATCHER_DELAY_SECONDS: int = 120  # Wait before checking for OOM kills
     OOM_WATCHER_MAX_ATTEMPTS: int = 3  # Max tune cycles per deploy
 
+    # Cluster-wide pod watch (OOM kills outside the deploy window). Whether it runs at
+    # all is the cluster's call (``watches_pods_for_oom``); this only paces the sweep.
+    OOM_METRIC_SWEEP_INTERVAL_SECONDS: int = 3600  # Safety-net query interval
+
+    # How often the cluster is counted for pods that cannot pull their image. One kubectl
+    # LIST per pass, and the alert on it only fires after 15 minutes, so a shorter
+    # interval buys nothing.
+    IMAGE_PULL_OBSERVE_INTERVAL_SECONDS: int = 60
+
     # Federation settings
     FEDERATION_ROLE: str = "standalone"  # standalone | master | slave
     FEDERATION_PEERS: str = ""  # JSON: [{"cluster":"local","url":"...","api_key":"..."}]

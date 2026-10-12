@@ -92,6 +92,14 @@ This is the cleanest long-term fix because it keeps "registry → secret" knowle
 
 ## Adjacent Bug Found While Investigating
 
+> **ACHTERHAALD (RC-243).** Er is geen auto-disable op `ImagePullBackOff` meer: OPI zet
+> zo'n component niet meer op nul replicas, maar laat hem staan zodat kubelet de pull
+> opnieuw probeert. De verkeerde opzoeking hieronder heeft daarmee geen aanroeper en de
+> voorgestelde fix geen bestemming: `disable_components_for_image_pull` is uit
+> `oom_watcher.py` verdwenen, en `resource_tuning_service.py` schrijft alleen het
+> opheffen van een OOM-disable. De storingsanalyse hieronder blijft leesbaar als
+> beschrijving van WAT er misging. Zie `features/image-pull-backoff-detection.md`.
+
 `oom_watcher` / `resource_tuning_service` auto-disable on `ImagePullBackOff` looks up the wrong component identifier. In the dp-bn7 incident:
 
 ```

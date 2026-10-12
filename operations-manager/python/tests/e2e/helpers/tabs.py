@@ -26,6 +26,18 @@ if TYPE_CHECKING:
     from playwright.sync_api import Page
 
 
+#: Zo lang mag het duren voordat het paneel van het tabblad in beeld staat.
+#:
+#: Na de ``page.goto`` in ``open_tab`` stond hier een
+#: ``page.wait_for_load_state("networkidle")``. Gemeten (RC-197): bij een hostload van 30+
+#: op 4 cores strandden 7 tests in 6 bestanden op de 30 s-grens van Playwright, terwijl ze
+#: los groen waren. Zie "Wachten in een browsertest" in features/e2e-ui-testing.md.
+#:
+#: Het paneel ``#tab-<tabblad>`` komt uit bg/project-tabs.html.j2 en staat in de HTML die
+#: de server meteen meestuurt, dus het is er zodra ``goto`` terug is.
+TABBLAD_TIMEOUT_MS = 5000
+
+
 def open_tab(page: Page, tab: str) -> None:
     """Open het tabblad ``tab`` op de projectdetailpagina die al open staat.
 
@@ -46,4 +58,4 @@ def open_tab(page: Page, tab: str) -> None:
     segmenten = stukken.path.strip("/").split("/")
     projectnaam = segmenten[1] if len(segmenten) > 1 else ""
     page.goto(f"{stukken.scheme}://{stukken.netloc}{project_tab_url(projectnaam, tab)}")
-    page.wait_for_load_state("networkidle")
+    page.locator(f"#tab-{tab}").wait_for(state="visible", timeout=TABBLAD_TIMEOUT_MS)

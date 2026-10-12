@@ -34,7 +34,9 @@ beide varianten even hard.
 ## Wat er nu gebeurt
 
 De volgorde in de verwijderroute is: **operatie beëindigen, verwijderen, wachten**, en
-lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
+lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**. Kon de finalizer
+niet weg omdat de veegactie niet alles meekreeg, dan wordt **de cascade afgewacht** die die
+finalizer draagt.
 
 1. `KubectlConnector.terminate_argocd_application_operation()` haalt de lopende operatie
    weg, met de patch die met de hand aantoonbaar werkte:
@@ -42,6 +44,10 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    ```
    kubectl -n <ns> patch application <naam> --type=json -p '[{"op":"remove","path":"/operation"}]'
    ```
+
+   `.operation` wordt eerst gelezen, zodat de patch alleen loopt als er iets te verwijderen
+   is. Mislukt het alsnog, dan wordt `.operation` teruggelezen om te zien of de operatie
+   ondertussen is afgelopen.
 
    Dit gebeurt op elke plek waar OPI een Application laat verwijderen die een workload
    onder zich heeft: de wezenopruiming, de infrastructuur-Application, `delete_deployment`
@@ -82,9 +88,17 @@ resources die blijven staan is precies wat de schade maakte. Drie dingen maken d
   geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
   resources. Zonder die derde uitkomst mee te geven is de melding `success`.
 
-Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en antwoordt
-`_force_delete_stuck_application()` met `False`, dus de aanroeper meldt
-`finalizer_removed: false` en wacht niet op een Application die er expres nog staat.
+Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en meldt
+`_force_delete_stuck_application()` `finalizer_removed: false` met `swept_partially: true`,
+dus de aanroeper meldt `finalizer_removed: false`.
+
+Blijft de finalizer zo staan, dan wacht `_force_delete_or_await_cascade()` op de cascade die
+die finalizer draagt. Die is vrij omdat de operatie al beëindigd en alle leesbare resources
+al weg zijn. Verdwijnt de Application in dat venster, dan loopt de rest van de
+verwijderroute door, inclusief de manifestmap. De redenen van de partial sweep blijven
+zichtbaar als geschiedenis in de operatie `argocd_app_cascade_wait`. Gaat de Application
+niet weg, dan wordt de manifestmap gemarkeerd voor uitgestelde opruiming en meldt de delete
+een fout.
 
 Kan de bestemmingsnamespace niet gelezen worden of lukt de inventaris van die namespace
 helemaal niet, dan gaat de finalizer wel weg (een Application die blijft staan blokkeert de
@@ -173,15 +187,34 @@ Dezelfde vorm stond op de twee handgeschreven platform-Applications onder
 `bootstrap/rig-system/kustomize/overlays/odcn-production/`: `SyncTimeout=60s`, om dezelfde
 reden weg. ArgoCD v3.5.1 kent die naam niet als sync option; wat hij wel `SyncTimeout`
 noemt is een interne wachttijd op een informer-cache in de API-server. Een bovengrens op
-het wachten bestaat wel, maar als instelling op de ArgoCD-instantie:
-`controller.sync.timeout.seconds: "300"` in de `extraConfig` van `argocd-deployment.yaml`,
-op odcn-production gezet en op de twee andere overlays niet. Die grens breekt een
-hangende sync niet af, want hij vraagt om beëindiging en de operatie blijft staan tot
-`.operation` zelf weg is.
+het wachten bestaat wel, maar als instelling op de ArgoCD-instantie.
+
+Een eerdere versie van dit document zei dat die grens op odcn-production aanstond, op grond
+van `controller.sync.timeout.seconds: "300"` in de `extraConfig` van
+`argocd-deployment.yaml`, en dat hij een hangende sync niet afbreekt. Beide beweringen zijn
+onwaar, en de tweede was beredeneerd en niet gemeten. `extraConfig` rendert in `argocd-cm`
+en dit is een cmd-params-key, die daar niemand leest: het command van de draaiende
+controller droeg geen `--sync-timeout`, en in 2,5 uur controller-log stond geen enkele
+`Terminating in-progress operation due to timeout` terwijl een sync 45 minuten liep. Wat
+hier gemeten is, is dus een instantie zonder grens.
+
+De grens staat nu als `--sync-timeout=600` in `spec.controller.extraCommandArgs` van alle
+drie de overlays, de enige weg die deze operator naar de controller heeft, en is op de
+sandbox nagemeten: op precies 600 seconden logt de controller
+`Terminating in-progress operation due to timeout`, zet hij de phase `Terminating -> Failed`
+met bericht `Operation terminated`, en start hij in dezelfde seconde een sync op de nieuwste
+revisie. Zie `plans/een-sync-die-niet-afbreekt-blokkeert-elke-volgende.md` voor de metingen.
+
+Let op bij het nameten in de controller-log: de regels `sync/terminate complete` die hij op
+elke reconcile logt zijn NIET die grens. RC-250 zag dezelfde regels op een instantie waar de
+grens wel aanstond en op een waar hij uit stond; ze horen bij het afbreken van de
+sync-context per reconcile, na `Resuming in-progress operation`.
 
 `PruneLast=true` blijft staan. Die kwam mee met de eerste commit van de repo en nergens in
 de historie of documentatie staat waarvoor hij nodig was. Zonder die reden is weghalen
-gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin.
+gokken, en de twee stappen hierboven lossen het geval ook op met `PruneLast` erin. RC-250
+heeft die reden inmiddels gemeten, en het is geen kandidaat meer: zie
+`features/vastgelopen-sync-breekt-af.md` onder "Wanneer dit speelt".
 
 ## Nagemeten op de sandbox
 
@@ -258,15 +291,92 @@ veegactie vangt en als weigering meldt.
 Daarnaast weigert hij op een cluster dat niet te bereiken is. Dat is geen lezing die als
 leeg doorgaat maar een `KubectlConnectionError`, die alle vier de lezingen kunnen gooien.
 
+### Drie lagen, vanuit git
+
+Met de drie GitOps-checkouts erbij (`--projects-repo`, `--argo-repo`,
+`--deployments-repo`, of in de task `GITOPS=<map met de drie>`) leest hij van het
+projectbestand naar beneden:
+
+* **argo-repo**: een Application waarvan de render-root bij geen enkele deployment in het
+  projectbestand hoort. ArgoCD houdt hem, en wat hij uitrolt, terecht in stand zolang hij in
+  git staat. Alleen gemeld: weghalen is een commit in de argo-repo. De verwachte paden komen
+  uit dezelfde functies in `opi/utils/naming.py` waarmee OPI ze schrijft, dus ook
+  `_project` en `infrastructure` tellen mee. Het projectbestand wordt na
+  `migrate_to_latest()` gelezen.
+* **deployments-repo**: zoals hierboven, maar alleen onder de `<cluster>/`-map van het
+  gekozen cluster. De Applications komen uit dat ene cluster, dus elke map van een ander
+  cluster zou anders als wees lezen.
+* **cluster**: zoals hierboven.
+
+Gemeten op `odcn-production`, 9 oktober 2026: drie Applications in de argo-repo
+(`dd-mco-pr-41`, `pm-5sj-pr139`, `toets-hn7-pr-32`), 42 verdwenen Applications met resources
+in het cluster, 27 wezenmappen in de deployments-repo.
+
+### In een Capsule-tenant
+
+Het tenant-account mag ongeveer 90 van de types die het cluster serveert niet lijsten
+(Calico, Elastic, metal3, kyverno, ...). Elke namespace antwoordt dan voor een deel van zijn
+types, en de weigering hierboven sloeg op de eerste namespace al toe. Met de
+deployments-repo erbij beslist wat die repo RENDERT: zijn de kinds die erin staan apart nog
+eens opgevraagd en hebben die allemaal geantwoord, dan telt de namespace als gemeten. Een
+gerenderd type dat zwijgt is nog steeds een weigering.
+
+`SCHOON` betekent daarmee "niets in de kinds die deze repo vandaag rendert", en dat is
+smaller dan "niets". Twee kinds vallen erbuiten: een kind dat geen enkele deployment meer
+rendert (juist daar staat de rest van een verdwenen deployment), en een kind waarvan de
+`kind:`-regel een template is (dat wordt gemeld, niet meegeteld). Op een cluster waar het
+account elk type mag lijsten, zoals de sandbox, is de volle inventaris meestal al volledig en
+komt deze toets niet aan te pas. Meestal, want een deel-antwoord komt ook van een onbereikbare
+aggregated API, en dan beslist hij daar net zo.
+
+De kinds worden gelezen uit de regels `apiVersion:` en `kind:` vooraan een document, niet
+geparsed: de helmfile-projecten bevatten chart-templates, die pas YAML zijn als ArgoCD ze
+rendert. Een getemplatete `apiVersion` telt voor elke groep met dat kind; een getemplatete
+`kind` wordt gemeld, niet geraden. Een met SOPS versleuteld kind is een Secret: OPI
+versleutelt alleen wat het als `.to-sops.yaml` schrijft.
+
+### Wat nooit een wees is
+
+* Een resource met een `ownerReference`: die hoort bij zijn eigenaar en gaat met die mee.
+  Operators kopiëren het label `app.kubernetes.io/instance` op wat ze maken. Gemeten op
+  `odcn-production`: de pod en services van de levende CNPG-database `algor-odc-db` lazen
+  als wezen van een Application `algor-odc-db` die niet bestaat, en `--delete` had ze
+  meegenomen. Dit geldt ook voor de forcering in OPI, die dezelfde lezing gebruikt.
+* Endpoints en EndpointSlices: ArgoCD sluit ze zelf uit (`resource.exclusions`), en
+  Endpoints dragen geen `ownerReference` om ze aan te herkennen.
+* Alles van een helmfile-project (een deployment met een `helmfile`-lijst, dezelfde toets
+  als `ProjectManager._deployment_uses_helmfile`): niet in de argo-laag, niet in de
+  deployments-repo, en hun namespaces niet in het cluster. Dat vraagt de projects-repo,
+  dus gebruik `GITOPS`.
+* Een map in de deployments-repo die de projects-repo nog vraagt, ook als er op dit moment
+  geen Application naar wijst. Dat is precies de stand die een forcering achterlaat: de
+  deployment staat nog in het projectbestand en ArgoCD maakt de Application opnieuw aan, dus
+  de map is nodig. Zonder deze regel liet de argo-laag die Application terecht staan en
+  haalde de git-laag zijn map weg, met exitcode 0.
+
 ```bash
 task argocd-orphan-sweep                                  # het hele cluster
 NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
 REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+GITOPS=~/IdeaProjects/rig-cluster-test-git-repositories task argocd-orphan-sweep
+                                                          # alle drie de lagen; nodig in een tenant
 NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
 ```
 
+Cluster en ArgoCD-namespace komen uit `task select-cluster` (`CLUSTER_TYPE`,
+`RIG_NAMESPACE`). Het script las ze eerst uit de `.env` van `operations-manager/python`, en
+die wijst naar de sandbox (`rig-system`), ook met select-cluster op productie.
+
+Hij is traag: per namespace een `kubectl get` over elk type dat het cluster kent, zo'n tien
+seconden, een minuut of acht voor heel `odcn-production`. Voor een eenmalige opruiming
+volstaat dat; voor doorlopende detectie, zie hieronder.
+
 Zonder `DELETE=1` verandert hij niets. Met `DELETE=1` verwijdert hij de resources, en haalt
-hij de wezenmappen uit de checkout; committen en pushen blijft handwerk.
+hij de wezenmappen uit de checkout; committen en pushen blijft handwerk. `DELETE=1` samen
+met `REPO` weigert (exitcode 2): mappen beoordelen zonder de projects-repo erbij gaat alleen
+op de Applications die het cluster nu heeft. Met `GITOPS` mag het wel, zolang ook de
+clusternaam er is: bij een leeg `CLUSTER_MANAGER` berekent hij de verwachte mappen niet, en
+dan weigert hij om dezelfde reden.
 
 Exitcodes: `0` niets gevonden (hij meldt dan `SCHOON`), `1` er staat iets, wezen of
 resources die hij niet kon plaatsen, `2` geweigerd, waaronder elke mislukte lezing
@@ -278,8 +388,8 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | Bestand | Wat het doet |
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
-| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
-| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
 | `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, en de merktekens zelf |
@@ -294,3 +404,16 @@ Detectie en alarmering. Dit was veertien dagen onzichtbaar, en een alarm op Appl
 met een `deletionTimestamp` ouder dan een kwartier zou dat afvangen, net als een alarm op
 `user-applications` met een langlopende operatie. Dat hoort bij het bredere gat rond
 servicemonitoring en is een eigen taak.
+
+Doorlopende detectie van wezen. ArgoCD houdt zelf een watch-cache bij van alles in de
+namespaces die hij beheert en kan melden wat daar staat zonder dat een Application het
+bezit: `spec.orphanedResources: {warn: true}` in het AppProject. Dat kost geen extra
+API-verkeer, waar deze veegactie per run duizenden lijstvragen stelt. Voorstel, nog niet
+gebouwd.
+
+De volledigheidstoets van de forcering soepeler maken. Die gebruikt dezelfde toets als de
+veegactie, maar zonder de deployments-repo erbij, dus in een tenant eindigt elke forcering
+als `partial`. Het wachten op de cascade hierboven lost op wat dat kostte (de manifestmap,
+issue #205) zonder de guard aan te raken. Hem baseren op de gerenderde kinds, zoals de
+veegactie met `--deployments-repo` doet, is pas aan de orde als blijkt dat dat niet
+volstaat.

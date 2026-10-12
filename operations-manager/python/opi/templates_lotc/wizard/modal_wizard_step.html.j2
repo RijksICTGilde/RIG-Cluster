@@ -62,7 +62,10 @@
 
     {% set _step_url_prefix = step_base_url if step_base_url else "/projects/" ~ project_name ~ "/modal-wizard/" ~ flow_id ~ "/step/" %}
     {% set _token_qs = "?_wizard_token=" ~ wizard_token if wizard_token else "" %}
+    {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+       in tests/test_template_structure.py voor het waarom. #}
     <form id="modal-wizard-form"
+          novalidate
           autocomplete="off"
           hx-ext="json-enc"
           hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'

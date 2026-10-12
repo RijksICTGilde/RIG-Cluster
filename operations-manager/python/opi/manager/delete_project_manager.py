@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
@@ -25,6 +26,7 @@ from opi.utils.argocd_tracking import LABEL_VALUE_MAX, may_be_cut_from
 from opi.utils.naming import generate_project_admin_username, generate_project_realm_name
 
 if TYPE_CHECKING:
+    from opi.connectors.argo import ArgoConnector
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
     from opi.utils.argocd_tracking import TrackedResource
 from opi.utils.naming import (
@@ -41,6 +43,11 @@ from opi.utils.naming import (
 from opi.utils.project_utils import project_level_deployment
 
 logger = logging.getLogger(__name__)
+
+# How long to wait for the cascade an Application kept its finalizer for. All 15 forced
+# deletes measured on 9 October 2026 were gone from the cluster within a few minutes.
+CASCADE_WAIT_RETRIES = 36
+CASCADE_WAIT_DELAY = 5
 
 
 def parse_retention_period_hours(value: str | None) -> int:
@@ -100,6 +107,22 @@ def _split_on_the_mark(
     return tracked, undecidable
 
 
+@dataclass(frozen=True)
+class ForcedDeletion:
+    """Result of forcing a stuck Application."""
+
+    finalizer_removed: bool
+    swept_partially: bool  # True if the finalizer remains because the sweep was partial
+
+
+@dataclass(frozen=True)
+class StuckApplicationOutcome:
+    """How a stuck Application ended: gone or not, and by whose hand."""
+
+    application_gone: bool
+    finalizer_removed: bool
+
+
 class DeleteProjectManager:
     """Manager for project and deployment deletion operations."""
 
@@ -115,7 +138,8 @@ class DeleteProjectManager:
     async def _terminate_application_operation(self, app_name: str, deletion_results: dict[str, Any]) -> None:
         """Clear a running sync operation on an Application before it is deleted.
 
-        Why this has to come first: KubectlConnector.terminate_argocd_application_operation.
+        Why this has to come first: a sync operation that is waiting on health blocks the
+        deletion for as long as it runs (features/argocd-vastgelopen-verwijdering.md).
         """
         kubectl = self.project_manager._kubectl_connector
         terminated = await kubectl.terminate_argocd_application_operation(app_name)
@@ -129,7 +153,7 @@ class DeleteProjectManager:
         if not terminated:
             logger.warning(f"Could not clear a running operation on ArgoCD application {app_name}")
 
-    async def _force_delete_stuck_application(self, app_name: str, deletion_results: dict[str, Any]) -> bool:
+    async def _force_delete_stuck_application(self, app_name: str, deletion_results: dict[str, Any]) -> ForcedDeletion:
         """Delete an Application that would not go away: its resources first, then its finalizer.
 
         Removing the finalizer is what makes the Application disappear, but it also cancels
@@ -148,7 +172,7 @@ class DeleteProjectManager:
         parent for everyone.
 
         Returns:
-            True if the finalizer was removed.
+            Whether the finalizer was removed, and whether the sweep was partial.
         """
         kubectl = self.project_manager._kubectl_connector
         swept_partially = False
@@ -238,7 +262,7 @@ class DeleteProjectManager:
                 f"ArgoCD application '{app_name}' was left standing with its finalizer: its resources are not "
                 "verifiably gone, and removing the finalizer would cancel the cascade that can still delete them"
             )
-            return False
+            return ForcedDeletion(finalizer_removed=False, swept_partially=True)
 
         finalizer_removed = await kubectl.remove_argocd_application_finalizers(app_name)
         deletion_results["operations"].append(
@@ -248,7 +272,48 @@ class DeleteProjectManager:
                 "status": "success" if finalizer_removed else "failed",
             }
         )
-        return finalizer_removed
+        return ForcedDeletion(finalizer_removed=finalizer_removed, swept_partially=False)
+
+    async def _force_delete_or_await_cascade(
+        self, app_name: str, deletion_results: dict[str, Any], argo_connector: ArgoConnector
+    ) -> StuckApplicationOutcome:
+        """Force a stuck Application away, or wait for its cascade to complete."""
+        kubectl = self.project_manager._kubectl_connector
+        errors_before = len(deletion_results["errors"])
+        forced = await self._force_delete_stuck_application(app_name, deletion_results)
+
+        if forced.finalizer_removed:
+            gone = await argo_connector.wait_for_application_deletion(
+                app_name, max_retries=10, kubectl_connector=kubectl
+            )
+            return StuckApplicationOutcome(application_gone=gone, finalizer_removed=True)
+
+        if not forced.swept_partially:
+            return StuckApplicationOutcome(application_gone=False, finalizer_removed=False)
+
+        logger.info(
+            f"ArgoCD application {app_name} kept its finalizer after a partial sweep - "
+            "waiting for the cascade that finalizer carries"
+        )
+        gone = await argo_connector.wait_for_application_deletion(
+            app_name,
+            max_retries=CASCADE_WAIT_RETRIES,
+            retry_delay=CASCADE_WAIT_DELAY,
+            kubectl_connector=kubectl,
+        )
+        cascade_wait: dict[str, Any] = {
+            "type": "argocd_app_cascade_wait",
+            "target": app_name,
+            "status": "success" if gone else "timeout",
+        }
+        if gone:
+            # The cascade deletes everything under the Application, the part the sweep could
+            # not list included, so its reasons for keeping the finalizer no longer describe
+            # anything that was left behind. They stay readable here, as history.
+            cascade_wait["withdrawn_errors"] = deletion_results["errors"][errors_before:]
+            del deletion_results["errors"][errors_before:]
+        deletion_results["operations"].append(cascade_wait)
+        return StuckApplicationOutcome(application_gone=gone, finalizer_removed=False)
 
     async def _known_application_names(self) -> set[str] | None:
         """Every ArgoCD Application name on this cluster, or ``None`` when the read failed.
@@ -726,13 +791,11 @@ class DeleteProjectManager:
                             f"Infrastructure Application {infra_app_name} deletion timed out - "
                             "force mode: deleting its resources, then removing finalizers"
                         )
-                        finalizer_removed = await self._force_delete_stuck_application(infra_app_name, deletion_results)
-                        if finalizer_removed:
-                            infra_app_deleted = await argo_connector.wait_for_application_deletion(
-                                infra_app_name,
-                                max_retries=10,
-                                kubectl_connector=self.project_manager._kubectl_connector,
-                            )
+                        outcome = await self._force_delete_or_await_cascade(
+                            infra_app_name, deletion_results, argo_connector
+                        )
+                        infra_app_deleted = outcome.application_gone
+                        finalizer_removed = outcome.finalizer_removed
 
                     deletion_results["operations"].append(
                         {
@@ -1333,6 +1396,10 @@ class DeleteProjectManager:
             # Step 2: Delete ArgoCD application file from GitOps
             logger.info(f"Deleting ArgoCD application file for {project_name}/{deployment_name}")
 
+            # Stap 8 mag niet draaien als het argo-bestand nog in git staat (RC-254).
+            # Die check voorkomt dat de Application voorgoed blijft draaien.
+            argocd_file_removed = False
+
             try:
                 gitops_connector = await self.project_manager.get_git_connector_for_argocd()
 
@@ -1403,6 +1470,7 @@ class DeleteProjectManager:
                 deletion_results["operations"].append(
                     {"type": "gitops_commit", "status": "success", "message": commit_message}
                 )
+                argocd_file_removed = True
 
             except Exception as e:
                 argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
@@ -1517,19 +1585,17 @@ class DeleteProjectManager:
                         argocd_app_deleted = True
                     else:
                         # Timeout - in force mode, try to remove finalizers
+                        finalizer_removed = False
                         if force:
                             logger.warning(
                                 f"ArgoCD application {app_name} deletion timed out - "
                                 "force mode: deleting its resources, then removing finalizers"
                             )
-                            finalizer_removed = await self._force_delete_stuck_application(app_name, deletion_results)
-                            if finalizer_removed:
-                                # Wait for the app to be garbage collected using proper retry logic
-                                argocd_app_deleted = await argo_connector.wait_for_application_deletion(
-                                    app_name,
-                                    max_retries=10,
-                                    kubectl_connector=self.project_manager._kubectl_connector,
-                                )
+                            outcome = await self._force_delete_or_await_cascade(
+                                app_name, deletion_results, argo_connector
+                            )
+                            argocd_app_deleted = outcome.application_gone
+                            finalizer_removed = outcome.finalizer_removed
 
                         deletion_results["operations"].append(
                             {
@@ -1539,7 +1605,7 @@ class DeleteProjectManager:
                                 "deployment": deployment_name,
                                 "status": "timeout",
                                 "error": "Application deletion via GitOps timed out",
-                                "finalizer_removed": force and finalizer_removed if force else False,
+                                "finalizer_removed": finalizer_removed,
                             }
                         )
                         if not force:
@@ -1784,6 +1850,10 @@ class DeleteProjectManager:
                 deletion_results["errors"].extend(minio_results["errors"])
 
             # Step 7: Delete deployment folders from git repositories
+            # Uitgestelde opruiming (RC-254) handelt intentioneel staan gelaten maps af.
+            # Alleen git-fouten zetten dit op False en blokken stap 8.
+            manifest_folder_removed = True
+
             # IMPORTANT: Only delete manifests if ArgoCD app is confirmed deleted.
             # If the app still exists, its resources-finalizer needs the source path
             # to determine which K8s resources to clean up. Deleting the manifests
@@ -1886,6 +1956,7 @@ class DeleteProjectManager:
                                 deletion_results["errors"].append(
                                     f"Failed to commit deployment changes to {repository_name}"
                                 )
+                                manifest_folder_removed = False
                         else:
                             deletion_results["operations"].append(
                                 {
@@ -1909,49 +1980,77 @@ class DeleteProjectManager:
                     )
                     deletion_results["errors"].append(f"Error deleting deployment folder from {repository_name}: {e}")
                     logger.exception("Error deleting deployment folder")
+                    manifest_folder_removed = False
 
             # Step 8: Remove deployment from project file (idempotent + conflict-safe).
             # Deleting a deployment that is already gone (e.g. a concurrent delete won
             # the git race) is success, not an error; on a push conflict we re-read the
             # remote and re-apply instead of failing with "manual intervention required".
-            try:
-                logger.info(f"Removing deployment '{deployment_name}' from project file for project '{project_name}'")
-
-                def _remove_deployment(project_data: dict[str, Any]) -> dict[str, Any] | None:
-                    deployments = project_data.get("deployments", []) or []
-                    remaining = [dep for dep in deployments if dep.get("name") != deployment_name]
-                    if len(remaining) == len(deployments):
-                        return None  # already absent -> idempotent no-op
-                    project_data["deployments"] = remaining
-                    return project_data
-
-                committed = await self.project_manager.mutate_and_commit_project(
-                    _remove_deployment,
-                    f"Delete deployment '{deployment_name}' from project {project_name}",
+            #
+            # Haalt het alleen als git leeg is voor deze deployment (RC-254).
+            # Anders geeft het 404 en kan een retry het niet meer repareren.
+            if not argocd_file_removed or not manifest_folder_removed:
+                reason = (
+                    "ArgoCD application file still in git"
+                    if not argocd_file_removed
+                    else "deployment manifests still in git"
                 )
-
-                deletion_results["operations"].append(
-                    {
-                        "type": "project_file_update",
-                        "target": f"deployment '{deployment_name}'",
-                        "action": "removed_from_project_file" if committed else "already_absent",
-                        "status": "success",
-                    }
-                )
-                logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
-
-            except Exception as e:
                 deletion_results["operations"].append(
                     {
                         "type": "project_file_update",
                         "target": f"deployment '{deployment_name}'",
                         "action": "removed_from_project_file",
-                        "status": "error",
-                        "error": str(e),
+                        "status": "skipped",
+                        "reason": f"{reason} - deployment kept in the project file so a retry can finish it",
                     }
                 )
-                deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
-                logger.exception(f"Error removing deployment '{deployment_name}' from project file")
+                logger.warning(
+                    "Deployment '%s' blijft in het projectbestand van '%s': %s",
+                    deployment_name,
+                    project_name,
+                    reason,
+                )
+            else:
+                try:
+                    logger.info(
+                        f"Removing deployment '{deployment_name}' from project file for project '{project_name}'"
+                    )
+
+                    def _remove_deployment(project_data: dict[str, Any]) -> dict[str, Any] | None:
+                        deployments = project_data.get("deployments", []) or []
+                        remaining = [dep for dep in deployments if dep.get("name") != deployment_name]
+                        if len(remaining) == len(deployments):
+                            return None  # already absent -> idempotent no-op
+                        project_data["deployments"] = remaining
+                        return project_data
+
+                    committed = await self.project_manager.mutate_and_commit_project(
+                        _remove_deployment,
+                        f"Delete deployment '{deployment_name}' from project {project_name}",
+                    )
+
+                    deletion_results["operations"].append(
+                        {
+                            "type": "project_file_update",
+                            "target": f"deployment '{deployment_name}'",
+                            "action": "removed_from_project_file" if committed else "already_absent",
+                            "status": "success",
+                        }
+                    )
+                    logger.info("Deployment '%s' removed from project file (committed=%s)", deployment_name, committed)
+
+                except Exception as e:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "project_file_update",
+                            "target": f"deployment '{deployment_name}'",
+                            "action": "removed_from_project_file",
+                            "status": "error",
+                            "error": str(e),
+                        }
+                    )
+                    deletion_results["errors"].append(f"Error removing deployment from project file: {e}")
+                    logger.exception(f"Error removing deployment '{deployment_name}' from project file")
 
             # Clean up subdomain registration for this deployment
             try:
