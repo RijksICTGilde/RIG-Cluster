@@ -11,6 +11,13 @@ over HTTP (/, /healthz, /status). Used as the sandbox E2E all-services fixture; 
 scan-driven from OPI's service registry. See images/e2e-allservices/README.md and
 features/e2e-allservices-image.md. Build+publish: `task publish-e2e-allservices`.
 
+keycloak-zad: de Keycloak van het platform met onze eigen providers er al in (de
+relay-emailSender, de SAML-mapper met de vier SPI's, en het NL-design-thema van MinBZK). De twee
+eigen jars worden uit de bron in deze repo gebouwd, het thema wordt tijdens de bouw opgehaald en
+op checksum gecontroleerd, dus de pod haalt bij het starten niets meer op. Zie
+features/keycloak-eigen-image.md. Build+push naar ghcr en de pin van de sandbox-overlay:
+`task publish-keycloak-image`.
+
 argocd-rig: upstream Argo CD v3.3.12 plus two namespace-sync fixes, so the cluster cache survives a
 namespace being deleted or RBAC-restricted (we run namespace-mode with 47 namespaces). The patches in
 images/argocd-rig/patches/ are the source of truth; `task src:verify` proves the build worktree is
