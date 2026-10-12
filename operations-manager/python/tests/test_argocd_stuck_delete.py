@@ -12,12 +12,18 @@ Two things have to be true of the delete route, and both are about ORDER:
 So these tests assert sequences, not just that the calls happened.
 """
 
+from inspect import signature
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.argo import ArgoConnector
 from opi.connectors.kubectl import KubectlConnector
-from opi.manager.delete_project_manager import DeleteProjectManager
+from opi.manager.delete_project_manager import (
+    CASCADE_WAIT_DELAY,
+    CASCADE_WAIT_RETRIES,
+    DeleteProjectManager,
+    ForcedDeletion,
+)
 from opi.utils.argocd_tracking import (
     INSTANCE_LABEL,
     LABEL_VALUE_MAX,
@@ -221,47 +227,100 @@ class TestMayBeCutFrom:
 
 
 class TestTerminateOperation:
+    #: What ``kubectl get -o jsonpath={.operation}`` prints for an Application that has one.
+    #: An absent object field prints nothing at exit 0, a present one its JSON; measured on
+    #: the sandbox apiserver on 9 October 2026.
+    RUNNING = ('{"initiatedBy":{"automated":true},"sync":{"revision":"abc"}}', "", 0)
+
     @pytest.mark.asyncio
     async def test_sends_the_json_patch_that_removes_the_operation(self, connector) -> None:
         """The measured repair: remove /operation, not the finalizer."""
-        run = AsyncMock(return_value=("patched", "", 0))
+        run = AsyncMock(side_effect=[self.RUNNING, ("patched", "", 0)])
         with patch.object(connector, "_run_kubectl_command", run):
             assert await connector.terminate_argocd_application_operation("mpfm-w3h-pr-310", "argocd") is True
 
-        args = run.await_args.args[0]
-        assert args[:5] == ["patch", "application", "mpfm-w3h-pr-310", "-n", "argocd"]
-        assert "--type" in args
-        assert args[args.index("--type") + 1] == "json"
-        assert args[-1] == '[{"op":"remove","path":"/operation"}]'
+        read, patch_args = (call.args[0] for call in run.await_args_list)
+        assert read == ["get", "application", "mpfm-w3h-pr-310", "-n", "argocd", "-o", "jsonpath={.operation}"]
+        assert patch_args[:5] == ["patch", "application", "mpfm-w3h-pr-310", "-n", "argocd"]
+        assert "--type" in patch_args
+        assert patch_args[patch_args.index("--type") + 1] == "json"
+        assert patch_args[-1] == '[{"op":"remove","path":"/operation"}]'
+
+    @pytest.mark.asyncio
+    async def test_no_operation_running_is_not_patched_at_all(self, connector) -> None:
+        """The reason this reads before it patches (#205).
+
+        A json-patch remove on an absent path is rejected, and the apiserver of
+        odcn-production rejects it with a generic 422 that names neither the path nor the
+        reason: ``the server rejected our request due to an error in our request``. Reading
+        the outcome off that message logged an ERROR on every single delete, because an
+        Application with no operation on it is the most common case there is.
+        """
+        run = AsyncMock(return_value=("", "", 0))
+        with patch.object(connector, "_run_kubectl_command", run):
+            assert await connector.terminate_argocd_application_operation("app-a") is True
+
+        assert [call.args[0][0] for call in run.await_args_list] == ["get"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "stderr",
         [
+            "The request is invalid: the server rejected our request due to an error in our request",
             'remove operation does not apply: doc is missing path: "/operation": missing value',
-            'doc is missing path: "/operation"',
-            "remove operation does not apply",
+            'Error from server (NotFound): applications.argoproj.io "app-a" not found',
         ],
     )
-    async def test_no_operation_running_is_not_a_failure(self, connector, stderr: str) -> None:
-        """A json-patch remove on an absent path is rejected; that is the normal case.
+    async def test_an_operation_that_ends_between_the_read_and_the_patch_is_not_a_failure(
+        self, connector, stderr: str
+    ) -> None:
+        """A sync can finish, and the Application can go, in between the two calls.
 
-        The branch reads two spellings and each one counts on its own. Narrowing it to one
-        turns 'nothing was running' into a reported failure on the most common path there
-        is: an Application with no operation on it.
+        Which of the two happened is read, not inferred from the rejection: the generic 422
+        of odcn-production carries neither the path nor the reason, so the message cannot
+        tell this apart from a patch that genuinely failed.
         """
-        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", stderr, 1))):
+        gone = ("", "", 0)
+        with patch.object(
+            connector, "_run_kubectl_command", AsyncMock(side_effect=[self.RUNNING, ("", stderr, 1), gone])
+        ):
             assert await connector.terminate_argocd_application_operation("app-a") is True
 
     @pytest.mark.asyncio
     async def test_missing_application_is_not_a_failure(self, connector) -> None:
         stderr = 'Error from server (NotFound): applications.argoproj.io "app-a" not found'
-        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", stderr, 1))):
+        run = AsyncMock(return_value=("", stderr, 1))
+        with patch.object(connector, "_run_kubectl_command", run):
             assert await connector.terminate_argocd_application_operation("app-a") is True
 
+        assert [call.args[0][0] for call in run.await_args_list] == ["get"]
+
     @pytest.mark.asyncio
-    async def test_any_other_error_is_a_failure(self, connector) -> None:
+    async def test_an_unreadable_application_is_a_failure(self, connector) -> None:
+        """Not knowing whether an operation is running is not the same as there being none:
+        the block this clears is what keeps a delete hanging for a fortnight.
+        """
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("", "connection reset", 1))):
+            assert await connector.terminate_argocd_application_operation("app-a") is False
+
+    @pytest.mark.asyncio
+    async def test_a_patch_that_fails_with_the_operation_still_there_is_a_failure(self, connector) -> None:
+        with patch.object(
+            connector,
+            "_run_kubectl_command",
+            AsyncMock(side_effect=[self.RUNNING, ("", "the request is invalid", 1), self.RUNNING]),
+        ):
+            assert await connector.terminate_argocd_application_operation("app-a") is False
+
+    @pytest.mark.asyncio
+    async def test_a_patch_whose_outcome_cannot_be_read_back_is_a_failure(self, connector) -> None:
+        """The re-read is there to tell a race apart from a real failure, so a re-read that
+        itself fails may not stand in for 'the operation is gone'."""
+        with patch.object(
+            connector,
+            "_run_kubectl_command",
+            AsyncMock(side_effect=[self.RUNNING, ("", "the request is invalid", 1), ("", "connection reset", 1)]),
+        ):
             assert await connector.terminate_argocd_application_operation("app-a") is False
 
 
@@ -608,7 +667,9 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=True, swept_partially=False
+        )
 
         assert calls == [
             "read_namespace",
@@ -673,7 +734,9 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results) is False
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application(self.FORCED, results) == ForcedDeletion(
+            finalizer_removed=False, swept_partially=True
+        )
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert (operation["undecidable"], operation["deleted"], operation["status"]) == (1, 0, "partial")
@@ -783,7 +846,9 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=True, swept_partially=False
+        )
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "success"
@@ -802,7 +867,9 @@ class TestForceDeleteStuckApplication:
         pm._kubectl_connector.delete_tracked_resources = AsyncMock(return_value=[_tracked("app-a", "a")])
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is False
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=False, swept_partially=True
+        )
 
         operation = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
         assert operation["status"] == "partial"
@@ -823,7 +890,9 @@ class TestForceDeleteStuckApplication:
         pm._kubectl_connector = _recording_kubectl(calls, destination=None, tracked=[])
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=True, swept_partially=False
+        )
 
         assert calls == ["read_namespace", "remove_finalizers"]
         assert any("destination namespace" in error for error in results["errors"])
@@ -842,7 +911,9 @@ class TestForceDeleteStuckApplication:
         pm._kubectl_connector = _recording_kubectl(calls, destination="rig-prd-mpfm-w3h", tracked=None)
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is True
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=True, swept_partially=False
+        )
 
         assert calls == ["read_namespace", "list_resources", "remove_finalizers"]
         pm._kubectl_connector.delete_tracked_resources.assert_not_awaited()
@@ -871,7 +942,9 @@ class TestForceDeleteStuckApplication:
         )
         results: dict = {"operations": [], "errors": []}
 
-        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) is False
+        assert await DeleteProjectManager(pm)._force_delete_stuck_application("app-a", results) == ForcedDeletion(
+            finalizer_removed=False, swept_partially=True
+        )
 
         # The part that DID answer still goes: half a sweep beats none.
         assert [r.name for r in pm._kubectl_connector.delete_tracked_resources.await_args_list[0].args[0]] == [
@@ -1025,6 +1098,52 @@ class TestOperationClearedBeforeTheWait:
         assert "delete_resources" not in calls
 
     @pytest.mark.asyncio
+    async def test_a_half_swept_infrastructure_application_waits_for_its_cascade(self) -> None:
+        """The sibling call site. In a tenant this sweep is partial too, so reverting the
+        wait here puts the old outcome back for the infrastructure Application without the
+        deployment route noticing.
+        """
+        calls: list[str] = []
+        pm = AsyncMock()
+        pm._kubectl_connector = _recording_kubectl(
+            calls, destination="ns", tracked=[_tracked("mpfm-w3h-infrastructure", "db-creds")], complete=False
+        )
+        pm._manifest_generator = MagicMock()
+
+        gitops = AsyncMock()
+        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
+
+        answers = [False, True]
+
+        async def _wait(*args, **kwargs):
+            calls.append("wait_for_deletion")
+            return answers.pop(0)
+
+        argo = AsyncMock()
+        argo.refresh_application = AsyncMock(return_value=True)
+        argo.application_exists = AsyncMock(return_value=True)
+        argo.wait_for_application_deletion = AsyncMock(side_effect=_wait)
+
+        results: dict = {"operations": [], "errors": []}
+        project_data = {"name": "mpfm-w3h", "services": ["namespace-postgresql-database"]}
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm)._cleanup_project_infrastructure(
+                "mpfm-w3h", "local", project_data, results, force=True
+            )
+
+        assert "remove_finalizers" not in calls
+        cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
+        assert (cascade["target"], cascade["status"]) == ("mpfm-w3h-infrastructure", "success")
+        assert results["errors"] == []
+        wait = next(op for op in results["operations"] if op["type"] == "infrastructure_app_deletion_wait")
+        assert wait["finalizer_removed"] is False
+
+    @pytest.mark.asyncio
     async def test_deleting_a_deployment_clears_the_operation_before_waiting(self) -> None:
         calls: list[str] = []
         pm, argo, project_data, deployment = _deployment_harness(calls)
@@ -1109,13 +1228,13 @@ class TestOperationClearedBeforeTheWait:
     async def test_a_half_swept_deployment_is_reported_as_not_forced_away(self) -> None:
         """What the ROUTE makes of a half sweep, which is what an operator ends up reading.
 
-        The half answer reaches here as ``finalizer_removed: False``, and the wait that
-        follows the removal does not run: waiting for an Application that was deliberately
-        left standing would only end on its timeout.
+        The half answer reaches here as ``finalizer_removed: False``, and the finalizer is
+        still on the Application: what follows is a wait for the cascade it carries, not a
+        second removal.
         """
         calls: list[str] = []
         pm, argo, project_data, deployment = _deployment_harness(
-            calls, wait_results=[False], tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")], complete=False
+            calls, wait_results=[False, False], tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")], complete=False
         )
         pm.get_contents = AsyncMock(return_value=project_data)
         pm.get_deployment_by_name = AsyncMock(return_value=deployment)
@@ -1130,7 +1249,6 @@ class TestOperationClearedBeforeTheWait:
         ):
             results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
 
-        assert calls.count("wait_for_deletion") == 1
         assert "remove_finalizers" not in calls
         gitops = next(op for op in results["operations"] if op["type"] == "argocd_app_gitops_deletion")
         assert gitops["finalizer_removed"] is False
@@ -1192,3 +1310,141 @@ class TestOperationClearedBeforeTheWait:
 
         cleanup = next(op for op in results["operations"] if op["type"] == "orphaned_argocd_application_cleanup")
         assert (cleanup["target"], cleanup["status"]) == ("mpfm-w3h-pr-310", status)
+
+
+# ---------------------------------------------------------------------------
+# RC-255 / #205: the manifest folder after a sweep that could not get everything
+# ---------------------------------------------------------------------------
+
+MANIFEST_FOLDER = "/tmp/gitops/local/mpfm-w3h/pr-310"
+
+
+async def _delete_a_half_swept_deployment(calls: list[str], *, cascade_ends: bool) -> dict:
+    """A forced deployment delete whose sweep is partial and whose manifest folder exists.
+
+    That is every forced delete in a Capsule tenant: the account may not list some 90 of the
+    cluster's types, so the inventory is never complete and the sweep is always ``partial``.
+    """
+    pm, argo, project_data, deployment = _deployment_harness(
+        calls,
+        wait_results=[False, cascade_ends],
+        tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")],
+        complete=False,
+    )
+    pm.get_contents = AsyncMock(return_value=project_data)
+    pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+
+    project_store = MagicMock()
+    project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+    deferred = MagicMock()
+    deferred.return_value.mark_resource = AsyncMock(return_value=True)
+
+    subdomains = MagicMock()
+    subdomains.return_value.delete_by_deployment = AsyncMock(return_value=0)
+
+    with (
+        patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+        patch("opi.manager.delete_project_manager.SubdomainConnector", subdomains),
+        patch("opi.services.marked_for_deletion_service.MarkedForDeletionService", deferred),
+        patch("os.path.exists", side_effect=lambda path: path == MANIFEST_FOLDER),
+        patch("opi.manager.delete_project_manager.shutil.rmtree") as rmtree,
+    ):
+        results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
+
+    results["_rmtree"] = rmtree
+    results["_deferred"] = deferred
+    results["_argo"] = argo
+    return results
+
+
+class TestTheManifestFolderAfterAPartialSweep:
+    """#205: the deployments-repo was the one of four places that stayed dirty.
+
+    Measured on odcn-production on 9 October 2026 over 15 deletes: cluster, project file and
+    argo-repo clean every time, the deployments-repo clean 13 times. The two that stayed
+    behind are this: the sweep is partial in a tenant, so the finalizer stays, so
+    ``argocd_app_deleted`` stays False, so step 7 skips the folder. ArgoCD finished the
+    cascade itself minutes later, but by then the task had already reported failure.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_cascade_is_waited_for_and_the_folder_goes(self) -> None:
+        calls: list[str] = []
+        results = await _delete_a_half_swept_deployment(calls, cascade_ends=True)
+
+        # The sweep deleted what it could read, the finalizer stayed, and the wait that
+        # follows is for the cascade that finalizer carries.
+        assert calls == [
+            "terminate_operation",
+            "wait_for_deletion",
+            "read_namespace",
+            "list_resources",
+            "list_applications",
+            "delete_resources",
+            "wait_for_deletion",
+        ]
+        cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
+        assert cascade["status"] == "success"
+        results["_rmtree"].assert_called_once_with(MANIFEST_FOLDER)
+        folder = next(op for op in results["operations"] if op["type"] == "deployment_folder_deletion")
+        assert folder["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_a_delete_that_ends_clean_is_reported_as_a_success(self) -> None:
+        """The other half of the same fix. The reasons the sweep kept the finalizer are
+        errors, and ``success`` is ``errors == []``, so leaving them standing reports a
+        failure for a deployment that is demonstrably gone, and nobody looks again.
+        """
+        results = await _delete_a_half_swept_deployment([], cascade_ends=True)
+
+        assert results["errors"] == []
+        assert results["success"] is True
+        # Withdrawn, not forgotten: a partial sweep stays in the history as an operation.
+        cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
+        assert any("left standing with its finalizer" in error for error in cascade["withdrawn_errors"])
+        sweep = next(op for op in results["operations"] if op["type"] == "argocd_app_tracked_resource_deletion")
+        assert sweep["status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_an_application_that_outlasts_the_cascade_wait_keeps_its_folder(self) -> None:
+        """The guard this fix may not soften. An Application that is still there needs its
+        source path: its finalizer reads it to work out what to delete. So the folder is
+        marked for deferred cleanup and the delete reports a failure.
+        """
+        calls: list[str] = []
+        results = await _delete_a_half_swept_deployment(calls, cascade_ends=False)
+
+        cascade = next(op for op in results["operations"] if op["type"] == "argocd_app_cascade_wait")
+        assert cascade["status"] == "timeout"
+        results["_rmtree"].assert_not_called()
+        folder = next(op for op in results["operations"] if op["type"] == "deployment_folder_deletion")
+        assert folder["status"] == "deferred"
+        assert results["_deferred"].return_value.mark_resource.await_args.kwargs["resource_name"] == (
+            "local/mpfm-w3h/pr-310"
+        )
+        assert results["success"] is False
+        assert any("left standing with its finalizer" in error for error in results["errors"])
+
+    @pytest.mark.asyncio
+    async def test_the_cascade_wait_outlasts_the_cascades_measured_on_production(self) -> None:
+        """All 15 were gone within a few minutes; a wait shorter than that hands the folder
+        to a nightly reconciliation that runs as a dry-run in production.
+
+        Measured on what the CALL hands over, bound against the connector's own signature
+        so the defaults count: ``wait_for_application_deletion`` falls back to 5 x 3s, so a
+        call that passes only ``max_retries`` waits 15s while the constants still read 180.
+        """
+        results = await _delete_a_half_swept_deployment([], cascade_ends=True)
+
+        cascade_wait = results["_argo"].wait_for_application_deletion.await_args_list[1]
+        bound = signature(ArgoConnector.wait_for_application_deletion).bind(
+            None, *cascade_wait.args, **cascade_wait.kwargs
+        )
+        bound.apply_defaults()
+        assert bound.arguments["max_retries"] * bound.arguments["retry_delay"] >= 180
+        assert (bound.arguments["max_retries"], bound.arguments["retry_delay"]) == (
+            CASCADE_WAIT_RETRIES,
+            CASCADE_WAIT_DELAY,
+        )

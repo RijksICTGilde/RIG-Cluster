@@ -34,7 +34,9 @@ beide varianten even hard.
 ## Wat er nu gebeurt
 
 De volgorde in de verwijderroute is: **operatie beëindigen, verwijderen, wachten**, en
-lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
+lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**. Kon de finalizer
+niet weg omdat de veegactie niet alles meekreeg, dan wordt **de cascade afgewacht** die die
+finalizer draagt.
 
 1. `KubectlConnector.terminate_argocd_application_operation()` haalt de lopende operatie
    weg, met de patch die met de hand aantoonbaar werkte:
@@ -42,6 +44,10 @@ lukt dat niet: **resources zelf verwijderen, en pas daarna de finalizer**.
    ```
    kubectl -n <ns> patch application <naam> --type=json -p '[{"op":"remove","path":"/operation"}]'
    ```
+
+   `.operation` wordt eerst gelezen, zodat de patch alleen loopt als er iets te verwijderen
+   is. Mislukt het alsnog, dan wordt `.operation` teruggelezen om te zien of de operatie
+   ondertussen is afgelopen.
 
    Dit gebeurt op elke plek waar OPI een Application laat verwijderen die een workload
    onder zich heeft: de wezenopruiming, de infrastructuur-Application, `delete_deployment`
@@ -82,9 +88,17 @@ resources die blijven staan is precies wat de schade maakte. Drie dingen maken d
   geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
   resources. Zonder die derde uitkomst mee te geven is de melding `success`.
 
-Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en antwoordt
-`_force_delete_stuck_application()` met `False`, dus de aanroeper meldt
-`finalizer_removed: false` en wacht niet op een Application die er expres nog staat.
+Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en meldt
+`_force_delete_stuck_application()` `finalizer_removed: false` met `swept_partially: true`,
+dus de aanroeper meldt `finalizer_removed: false`.
+
+Blijft de finalizer zo staan, dan wacht `_force_delete_or_await_cascade()` op de cascade die
+die finalizer draagt. Die is vrij omdat de operatie al beëindigd en alle leesbare resources
+al weg zijn. Verdwijnt de Application in dat venster, dan loopt de rest van de
+verwijderroute door, inclusief de manifestmap. De redenen van de partial sweep blijven
+zichtbaar als geschiedenis in de operatie `argocd_app_cascade_wait`. Gaat de Application
+niet weg, dan wordt de manifestmap gemarkeerd voor uitgestelde opruiming en meldt de delete
+een fout.
 
 Kan de bestemmingsnamespace niet gelezen worden of lukt de inventaris van die namespace
 helemaal niet, dan gaat de finalizer wel weg (een Application die blijft staan blokkeert de
@@ -356,7 +370,7 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
 | `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
-| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, en de vier verwijderplekken |
+| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
 | `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, en de merktekens zelf |
@@ -378,6 +392,9 @@ bezit: `spec.orphanedResources: {warn: true}` in het AppProject. Dat kost geen e
 API-verkeer, waar deze veegactie per run duizenden lijstvragen stelt. Voorstel, nog niet
 gebouwd.
 
-De forcering in OPI gebruikt dezelfde volledigheidstoets als de veegactie, maar zonder de
-deployments-repo. In de tenant eindigt elke forcering daardoor als `partial`, waarna stap 7
-(de manifestmap) wordt overgeslagen. Zie issue #205.
+De volledigheidstoets van de forcering soepeler maken. Die gebruikt dezelfde toets als de
+veegactie, maar zonder de deployments-repo erbij, dus in een tenant eindigt elke forcering
+als `partial`. Het wachten op de cascade hierboven lost op wat dat kostte (de manifestmap,
+issue #205) zonder de guard aan te raken. Hem baseren op de gerenderde kinds, zoals de
+veegactie met `--deployments-repo` doet, is pas aan de orde als blijkt dat dat niet
+volstaat.
