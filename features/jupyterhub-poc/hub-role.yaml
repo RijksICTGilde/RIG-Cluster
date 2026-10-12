@@ -1,0 +1,56 @@
+# De rechten die KubeSpawner in de eigen namespace nodig heeft (RC-258).
+#
+# DIT MANIFEST WORDT NIET DOOR ARGOCD TOEGEPAST: ZAD kan nog geen Role en RoleBinding
+# genereren, dus in de POC worden ze met de hand op de sandbox toegepast. Het is de
+# documentatie van de set die nu is toegepast, en de basis voor het vervolgwerk bij taak 9
+# in docs/jupyterhub-poc-verslag.md.
+#
+# De RoleBinding wijst naar de ServiceAccount van het PROJECT ("<project>-sa"). Elk
+# component van het project draait op diezelfde ServiceAccount, dus deze rechten gelden
+# voor alle componenten en niet alleen voor de hub. Dat is de reden dat de POC een eigen
+# project heeft.
+#
+# DE NAMEN HIERONDER ZIJN NIET LETTERLIJK: `rig-jupyterhub-poc` en `jupyterhub-poc-sa`
+# volgen uit de technische naam die ZAD per aanmaak zelf verzint. Vul de naam van je eigen
+# project in voordat je dit toepast; op de sandbox was dat `rig-jp-574` en `jp-574-sa`.
+#
+# Een regel die GEMETEN is, is gemeten door het recht weg te halen en te kijken wat er
+# stukgaat; de meting staat in het verslag bij taak 4. Een regel die hieronder als
+# VERMOEDEN staat is nog niet zo gemeten en dus nog niet aantoonbaar minimaal.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jupyterhub-spawner
+  namespace: rig-jupyterhub-poc
+rules:
+  # VERMOEDEN. De spawner maakt de user-pod aan, leest hem tot hij Ready is, en verwijdert
+  # hem bij stoppen en bij cullen; `list` en `watch` voeden de pod-reflector waarmee
+  # KubeSpawner de status bijhoudt.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # VERMOEDEN. De PVC per gebruiker, aangemaakt bij de eerste spawn en verwijderd als de
+  # gebruiker wordt verwijderd (delete_pvc).
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # VERMOEDEN. KubeSpawner leest pod-events om bij een mislukte spawn te kunnen zeggen
+  # waarom (ImagePullBackOff, FailedScheduling). Zonder dit recht spawnt hij wel, maar is
+  # de foutmelding leeg.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jupyterhub-spawner
+  namespace: rig-jupyterhub-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: jupyterhub-spawner
+subjects:
+  - kind: ServiceAccount
+    name: jupyterhub-poc-sa
+    namespace: rig-jupyterhub-poc
