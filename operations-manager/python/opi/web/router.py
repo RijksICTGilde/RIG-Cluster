@@ -2020,6 +2020,7 @@ async def _fetch_argocd_deployment_status(
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
+        describe_image_pull_failures,
         gather_deployment_errors,
         gather_sync_deviations,
         summarize_component_pods,
@@ -2117,6 +2118,11 @@ async def _fetch_argocd_deployment_status(
             "errors": errors,
             "deviations": deviations,
             "pods": pod_summaries,
+            # Costs no cluster call: the observer counted this cluster at most a minute
+            # ago. Read on the healthy branch too, deliberately -- a component that
+            # cannot pull keeps the application Degraded, but if ArgoCD ever says
+            # otherwise the card still has to say what is wrong.
+            "image_pull_failures": describe_image_pull_failures(deployment, project_data),
         }
     except Exception:
         # De melding komt in ``errors`` en die tekent de kaart uit; wat ArgoCD hier

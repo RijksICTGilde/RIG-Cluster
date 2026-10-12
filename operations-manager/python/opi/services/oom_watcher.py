@@ -15,8 +15,8 @@ Provides three mechanisms:
 
 2. **Fire-and-forget** (``schedule_oom_check``):
    After a deploy or refresh completes, a delayed background check queries
-   kubectl for OOM kills and image pull errors.  If detected, queues a
-   task for remediation via the task queue (no direct reprocessing).
+   kubectl for OOM kills and image pull errors.  An OOM queues a task for
+   remediation via the task queue (no direct reprocessing).
 
 3. **Cluster-wide pod watch** (``OomPodWatcher``, ``OomMetricSweeper``):
    Streams every application pod on this cluster, so an OOM on a pod that has been
@@ -26,8 +26,8 @@ Provides three mechanisms:
 
 Failure type handling:
 - **OOM**: Auto-tune memory limits and queue a refresh task.
-- **ImagePullBackOff**: Queue a task to disable the component (``replicas: 0``).
-  Re-enabled when a new image is pushed via ``update_image_and_regenerate()``.
+- **ImagePullBackOff**: Report only, no remediation (RC-243). Kubelet retries the pull
+  with its own backoff, so the pod that recovers has to stay.
 - **CrashLoopBackOff**: Report only, no remediation.  Pods stay running
   so users can access logs.
 """
@@ -44,8 +44,9 @@ from opi.connectors.prometheus import get_metrics_connector
 from opi.core.cluster_config import get_namespace_prefix, get_prefixed_namespace
 from opi.core.config import settings
 from opi.handlers.project_file_handler import IMAGE_PULL_REASONS as _IMAGE_PULL_REASONS
-from opi.handlers.project_file_handler import image_is_confirmed_absent
+from opi.handlers.project_file_handler import classify_image_pull_failure, read_image_pull_from_statuses
 from opi.services.catalog.base import (
+    APPLICATION_CONTAINER_NAME,
     SERVICE_ROLE_LABEL_KEY,
     all_application_pods_selector,
     application_pod_selector,
@@ -258,11 +259,14 @@ class DeploymentHealthError(Exception):
 # ImagePullBackOff, and terminal (it never self-heals), so it counts as image-pull.
 _CRASH_LOOP_REASONS = {"CrashLoopBackOff"}
 
-# The component's own container is named "app" in deployment.yaml.jinja; every other
-# container in the pod (authorization-wall, db-console, ...) is an injected sidecar.
 # Used to distinguish "the user's image failed" from "a platform sidecar image failed",
 # which must be reported (and remediated) differently.
-MAIN_CONTAINER_NAME = "app"
+#
+# An alias and not a second literal: the shared image-pull reader settles the precedence
+# WITHIN a pod against ``APPLICATION_CONTAINER_NAME`` and ``check_pod_health`` settles it
+# ACROSS pods against this name, so two spellings of "app" could drift apart and quietly
+# break the half that reads the other one's output.
+MAIN_CONTAINER_NAME = APPLICATION_CONTAINER_NAME
 
 # Label Kubernetes puts on every ReplicaSet and its pods to identify the pod
 # template generation they belong to. Used to evaluate only the current generation.
@@ -432,29 +436,10 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                         result.oom_detected = True
                         result.oom_pod_template_hash = pod_template_hash or current_pod_template_hash
 
-                # Check waiting state for ImagePull and CrashLoop
+                # Check waiting state for CrashLoop. The image-pull half of the waiting
+                # state is read per POD below, by the shared reader.
                 waiting = container_status.get("state", {}).get("waiting", {})
                 waiting_reason = waiting.get("reason", "")
-
-                if waiting_reason in _IMAGE_PULL_REASONS:
-                    message = waiting.get("message", "image pull failed")
-                    image = container_status.get("image", "")
-                    logger.info(
-                        "Image pull error for pod %s container %s (image %s) in %s: %s - %s",
-                        pod_name,
-                        container_name,
-                        image,
-                        namespace,
-                        waiting_reason,
-                        message,
-                    )
-                    # A pod can have several containers; the main "app" container is the
-                    # user's own image and takes precedence. Never let a sidecar's failure
-                    # overwrite (or masquerade as) the main container's.
-                    if result.image_pull_error is None or container_name == MAIN_CONTAINER_NAME:
-                        result.image_pull_error = f"{waiting_reason}: {message}"
-                        result.image_pull_container = container_name
-                        result.image_pull_image = image
 
                 if waiting_reason in _CRASH_LOOP_REASONS:
                     message = waiting.get("message", "container keeps crashing")
@@ -467,6 +452,23 @@ async def check_pod_health(namespace: str, unique_name: str) -> PodHealthResult:
                     )
                     result.crash_loop_detected = True
                     result.crash_loop_message = f"CrashLoopBackOff: {message}"
+
+            pull = read_image_pull_from_statuses(pod.get("status", {}).get("containerStatuses", []))
+            if pull is not None:
+                logger.info(
+                    "Image pull error for pod %s container %s (image %s) in %s: %s",
+                    pod_name,
+                    pull.container,
+                    pull.image,
+                    namespace,
+                    pull.message,
+                )
+                # Across pods the main "app" container is the user's own image and takes
+                # precedence; within one pod the shared reader already settled that.
+                if result.image_pull_error is None or pull.container == MAIN_CONTAINER_NAME:
+                    result.image_pull_error = pull.message
+                    result.image_pull_container = pull.container
+                    result.image_pull_image = pull.image
 
     except Exception as e:
         logger.warning("Error checking pod health for %s/%s: %s", namespace, unique_name, e)
@@ -619,53 +621,6 @@ async def describe_components_waiting(
     return results
 
 
-async def disable_components_for_image_pull(
-    project_name: str,
-    deployment_name: str,
-    disabled_components: list[tuple[str, str]],
-) -> None:
-    """
-    Disable components with image pull errors: update YAML and commit.
-
-    Does NOT trigger reprocessing — the caller is responsible for that
-    (typically by queuing a refresh task through the task queue).
-
-    Args:
-        project_name: Name of the project
-        deployment_name: Name of the deployment
-        disabled_components: List of (component_reference, error_message) tuples
-    """
-    from opi.handlers.project_file_handler import ProjectFileHandler
-    from opi.manager.project_manager import ProjectManager
-    from opi.services.resource_tuning_service import get_project_data_from_git
-
-    project_data, filename = await get_project_data_from_git(project_name)
-    # No connector is threaded in: ProjectManager takes the warm one from the store
-    # itself, so no caller can hold -- or close -- it.
-    project_manager = ProjectManager(project_file_relative_path=f"projects/{filename}")
-    try:
-        file_handler = ProjectFileHandler()
-        names = []
-        for component_ref, error_message in disabled_components:
-            file_handler.set_deployment_component_disabled(
-                project_data, deployment_name, component_ref, True, error_message
-            )
-            names.append(component_ref)
-
-        commit_msg = f"auto-disable: image pull errors for {', '.join(names)} in {project_name}/{deployment_name}"
-        await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
-    finally:
-        await project_manager.close()
-
-    logger.info(
-        "Disabled %d component(s) with image pull errors in %s/%s: %s",
-        len(disabled_components),
-        project_name,
-        deployment_name,
-        ", ".join(n for n, _ in disabled_components),
-    )
-
-
 async def apply_oom_tune(
     project_name: str,
     deployment_name: str,
@@ -783,8 +738,8 @@ async def _run_oom_check(
 
     # What the services report about this deployment. It is weighed by the judgement
     # below, which never lets it excuse an observed problem -- the point of collecting it
-    # here is that the remediation (disabling a component on an image-pull failure) is the
-    # most destructive thing this module does, so it must run on a complete picture.
+    # here is that the remediation (raising a memory limit on an OOM kill) writes to the
+    # project file, so it must run on a complete picture.
     state = collect_deployment_state(project_data, deployment_name)
     if state.facts:
         logger.info(
@@ -799,7 +754,7 @@ async def _run_oom_check(
     health_service = deployment_health_service()
     oom_component_refs: list[str] = []
     oom_pod_hashes: dict[str, str | None] = {}  # unique_name -> the generation that OOM'd
-    image_pull_errors: list[tuple[str, str]] = []  # (component_ref, error_message)
+    image_pull_refs: list[str] = []  # components that cannot pull, reported only
     components = target_dep.get("components", [])
     for comp in components:
         component_ref = comp.get("reference", "")
@@ -827,31 +782,24 @@ async def _run_oom_check(
                     health.oom_pod_template_hash,
                 )
         if health.image_pull_error:
-            if image_is_confirmed_absent(health.image_pull_error):
-                image_pull_errors.append((component_ref, health.image_pull_error))
-            else:
-                logger.warning(
-                    "Health watcher: the registry did not tell us the image is absent for %s/%s "
-                    "component %s, leaving it enabled so kubelet retries the pull: %s",
-                    project_name,
-                    deployment_name,
-                    component_ref,
-                    health.image_pull_error,
-                )
+            # Reported, never remediated (RC-243). The classification still picks the
+            # wording; what it no longer does is decide that a component goes to zero
+            # replicas. See features/image-pull-backoff-detection.md.
+            image_pull_refs.append(component_ref)
+            logger.warning(
+                "Health watcher: %s/%s component %s cannot pull its image (%s), leaving it "
+                "enabled so kubelet retries the pull: %s",
+                project_name,
+                deployment_name,
+                component_ref,
+                classify_image_pull_failure(health.image_pull_error),
+                health.image_pull_error,
+            )
         # CrashLoopBackOff: no remediation in fire-and-forget — only reported inline
-
-    # Handle image pull errors: disable in YAML, then queue refresh task
-    if image_pull_errors:
-        try:
-            await disable_components_for_image_pull(project_name, deployment_name, image_pull_errors)
-            # Queue a refresh task instead of direct reprocessing
-            await _queue_refresh_task(project_name, deployment_name)
-        except Exception as e:
-            logger.error("Failed to handle image pull errors in %s/%s: %s", project_name, deployment_name, e)
 
     # Handle OOM kills: tune resources (git-only), then queue refresh
     if not oom_component_refs:
-        if not image_pull_errors:
+        if not image_pull_refs:
             logger.info(
                 "Health watcher: no issues detected for %s/%s (attempt %d/%d)",
                 project_name,

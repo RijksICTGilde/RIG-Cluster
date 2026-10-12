@@ -54,10 +54,11 @@ dat iemand kan zien waaróm hij uitstond, is erger dan een component dat uitblij
 
 ### deployment-health: zet het component weer aan
 
-Elke automatische uitschakeling is een oordeel over de inhoud die er draaide:
-`ImagePullBackOff` over een image die niet op te halen was, `OOMKilled` over een die het
-geheugen opat, een crashloop over een die niet overeind bleef. Een rollout vervangt precies
-die inhoud, dus het component gaat weer aan -- **ongeacht de reden**.
+Elke automatische uitschakeling is een oordeel over de inhoud die er draaide: `OOMKilled`
+over een image die het geheugen opat, een crashloop over een die niet overeind bleef, en
+tot RC-243 ook `ImagePullBackOff` over een die niet op te halen was. Een rollout vervangt
+precies die inhoud, dus het component gaat weer aan -- **ongeacht de reden**. Die laatste
+soort wordt niet meer geschreven, maar oude exemplaren komen hier nog langs.
 
 Het alternatief is echt overwogen: een OOM komt waarschijnlijk terug, dus alleen
 image-pull opheffen scheelt één rondje aan-uit. Dat is de verkeerde afweging. Een nieuwe
