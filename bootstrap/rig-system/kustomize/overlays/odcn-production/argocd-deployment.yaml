@@ -38,10 +38,14 @@ spec:
     resources:
       limits:
         cpu: "1"
-        memory: 512Mi
+        # Was 512Mi met een request van 128Mi, en daarop is de server vier keer OOMKilled
+        # (exit 137). Steady state is ~375Mi, dus de request lag een factor 3 te laag en de
+        # limit liet geen ruimte voor een piek. De request dekt nu het gemeten gebruik, de
+        # limit geeft daarboven dezelfde marge nog een keer.
+        memory: 1Gi
       requests:
         cpu: 250m
-        memory: 128Mi
+        memory: 384Mi
     insecure: true
     route:
       annotations:

@@ -14,11 +14,15 @@ from opi.services.oom_watcher import (
     _describe_pod_waiting,
     _queue_refresh_task,
     _run_oom_check,
+    apply_oom_tune,
     check_all_components_health,
     check_pod_health,
+    component_health_from_oom_failures,
     create_health_check_callback,
+    record_oom_tune_generation,
     schedule_oom_check,
 )
+from opi.utils.naming import generate_unique_name
 
 # ---------------------------------------------------------------------------
 # Helper: build pod JSON
@@ -1345,7 +1349,20 @@ class TestPodGenerationLock:
 
     async def _two_detections(self, mock_get_data, mock_check, mock_observe, first_hash, second_hash):
         mock_get_data.side_effect = lambda _name: self._project_data()
-        mock_observe.return_value = MagicMock(requeue_refresh=True, failures=[])
+
+        # The runner records the generation after its commit, so the fake must too or the
+        # filter reads empty.
+        async def _observe(project_name, deployment_name, component_health):
+            for ref, health in component_health.items():
+                record_oom_tune_generation(
+                    project_name,
+                    deployment_name,
+                    generate_unique_name(deployment_name, ref),
+                    health.oom_pod_template_hash,
+                )
+            return MagicMock(requeue_refresh=True, failures=[])
+
+        mock_observe.side_effect = _observe
 
         task_service = AsyncMock()
         with patch("opi.services.oom_watcher._task_service_ref", task_service):
@@ -1396,16 +1413,72 @@ class TestPodGenerationLock:
     @patch("opi.services.oom_watcher.check_all_components_health", new_callable=AsyncMock)
     @pytest.mark.asyncio
     async def test_inline_path_uses_the_same_lock(self, mock_check):
-        """The inline callback observes the same rule as the background check."""
+        """The inline callback observes the same rule, and hands the generation along.
+
+        It does not record: the tune happens in the after-sync hook this failure lands
+        in, and the runner records the generation after its commit. So the generation has
+        to travel on the failure, or the hook cannot tell this evidence from the next pod's.
+        """
         mock_check.return_value = [PodHealthResult("comp-a", oom_detected=True, oom_pod_template_hash="fb654fcc5")]
         callback = create_health_check_callback("myproject", "production", "rig-prd-ns", ["comp-a"], grace_seconds=0)
 
         with pytest.raises(DeploymentHealthError) as exc_info:
             await callback(5)
         assert exc_info.value.failures[0].failure_type == "oom"
+        assert exc_info.value.failures[0].pod_template_hash == "fb654fcc5"
 
-        # Same generation again: no OOM failure, so no second tune cycle.
+        # Once the hook has answered that generation, the callback stops reporting it.
+        record_oom_tune_generation("myproject", "production", "comp-a", "fb654fcc5")
         await callback(10)
+
+    def test_the_failure_translates_into_the_hook_input(self):
+        """Keyed by reference, with the generation still attached.
+
+        This mapping is the whole inline path: ``project_manager`` hands these to the
+        after-sync hook, and the hook brakes on the generation. Dropping it here was
+        the silent half of the escalation, because an unknown generation tunes.
+        """
+        health = component_health_from_oom_failures(
+            [
+                ComponentFailure(
+                    component_name="pr-103-frontend",
+                    failure_type="oom",
+                    message="OOM kill detected",
+                    component_reference="frontend",
+                    pod_template_hash="6694c99686",
+                ),
+                ComponentFailure(
+                    component_name="pr-103-api",
+                    failure_type="oom",
+                    message="OOM kill detected",
+                    component_reference="api",
+                ),
+            ]
+        )
+
+        assert health["frontend"].oom_pod_template_hash == "6694c99686"
+        assert health["api"].oom_pod_template_hash is None, "an unknown generation stays unknown"
+
+    @patch("opi.services.deployment_observation.run_after_sync_observation", new_callable=AsyncMock)
+    @pytest.mark.asyncio
+    async def test_the_watcher_path_hands_the_generation_to_the_hook(self, mock_observe):
+        """The background paths feed the same brake, keyed per component."""
+        mock_observe.return_value = MagicMock(requeue_refresh=False, failures=[])
+
+        await apply_oom_tune(
+            "myproject",
+            "production",
+            ["api", "web"],
+            {
+                generate_unique_name("production", "api"): "fb654fcc5",
+                generate_unique_name("production", "web"): None,
+            },
+            source="test",
+        )
+
+        health = mock_observe.call_args.args[2]
+        assert health["api"].oom_pod_template_hash == "fb654fcc5"
+        assert health["web"].oom_pod_template_hash is None
 
     @patch("opi.services.oom_watcher.KubectlConnector")
     @pytest.mark.asyncio

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.forms.visualizers.providers import ServiceOptionsProvider
+from opi.services import oom_watcher
 from opi.services.catalog.base import ObservationOutcome, Service
 from opi.services.catalog.events import on
 from opi.services.deployment_observation import run_after_sync_observation
@@ -174,6 +175,97 @@ class TestResourceTuningCeilingMessage:
         message = outcomes[0].failures[0]
         assert "ceiling" not in message.lower()
         assert message.endswith("but auto-tune could not determine new limits")
+
+
+class TestPerComponentGenerationLock:
+    """The pod-generation lock inside ``tune_after_oom`` acts per component, not per scan.
+
+    A scan can report several OOM'd components at once. One of them can be stuck on a
+    pod generation a previous tune already answered while another is genuinely fresh
+    evidence; the stale one must not ride along into the same batch, or a component
+    waiting for its rollout gets tuned again on the pod it was already raised for.
+    """
+
+    @staticmethod
+    def _project() -> dict:
+        resources = {"requests": {"memory": "45Mi", "cpu": "50m"}, "limits": {"memory": "45Mi", "cpu": "1000m"}}
+        return {
+            "name": "my-project",
+            "components": [
+                {"name": "api", "resources": resources},
+                {"name": "worker", "resources": resources},
+            ],
+            "deployments": [
+                {
+                    "name": "production",
+                    "namespace": "my-project",
+                    "cluster": "odcn-production",
+                    "components": [{"reference": "api"}, {"reference": "worker"}],
+                }
+            ],
+        }
+
+    @pytest.fixture(autouse=True)
+    def _clean_generation_state(self):
+        oom_watcher._last_tuned_pod_template_hash.clear()
+        yield
+        oom_watcher._last_tuned_pod_template_hash.clear()
+
+    @pytest.mark.asyncio
+    async def test_a_stale_component_is_left_out_of_the_batch(self):
+        from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
+
+        oom_watcher.record_oom_tune_generation("my-project", "production", "production-api", "stale-hash")
+        service = get_service(ServiceType.RESOURCE_TUNING)
+        ctx = DeploymentObservationContext(
+            project_name="my-project",
+            deployment_name="production",
+            project_data=self._project(),
+            cluster="odcn-production",
+            namespace="rig-prd-my-project",
+            component_health={
+                "api": ComponentHealth(oom_detected=True, oom_pod_template_hash="stale-hash"),
+                "worker": ComponentHealth(oom_detected=True, oom_pod_template_hash="fresh-hash"),
+            },
+        )
+
+        with patch(
+            "opi.services.resource_tuning_service.apply_resource_tuning",
+            new_callable=AsyncMock,
+        ) as mock_apply:
+            mock_apply.return_value = ([{"component": "worker", "new_limit": "120Mi"}], [])
+            outcomes = await service.tune_after_oom(ctx)
+
+        assert mock_apply.call_args.kwargs["oom_components"] == ["worker"], (
+            "the component stuck on an answered generation must not be tuned again"
+        )
+        assert outcomes[0].oom_tune_generations == {"production-worker": "fresh-hash"}, (
+            "only the component that was actually tuned gets its generation reported"
+        )
+
+    @pytest.mark.asyncio
+    async def test_all_components_stale_tunes_nothing(self):
+        from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
+
+        oom_watcher.record_oom_tune_generation("my-project", "production", "production-api", "stale-hash")
+        service = get_service(ServiceType.RESOURCE_TUNING)
+        ctx = DeploymentObservationContext(
+            project_name="my-project",
+            deployment_name="production",
+            project_data=self._project(),
+            cluster="odcn-production",
+            namespace="rig-prd-my-project",
+            component_health={"api": ComponentHealth(oom_detected=True, oom_pod_template_hash="stale-hash")},
+        )
+
+        with patch(
+            "opi.services.resource_tuning_service.apply_resource_tuning",
+            new_callable=AsyncMock,
+        ) as mock_apply:
+            outcomes = await service.tune_after_oom(ctx)
+
+        mock_apply.assert_not_called()
+        assert outcomes == []
 
 
 class TestSystemServiceKind:

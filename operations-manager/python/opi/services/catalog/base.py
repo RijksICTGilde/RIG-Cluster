@@ -391,6 +391,9 @@ class ComponentHealth:
     oom_detected: bool = False
     crash_loop: bool = False
     image_pull_error: str | None = None
+    #: pod-template-hash of the pod the OOM was seen on; None when unknown. The OOM
+    #: observation hook tunes once per generation, so it needs to know which one.
+    oom_pod_template_hash: str | None = None
 
 
 @dataclass
@@ -433,6 +436,9 @@ class ObservationOutcome:
     failures: list[str] = field(default_factory=list)
     #: Non-blocking messages for the task progress.
     notices: list[str] = field(default_factory=list)
+    #: Pod generation the OOM tune answered, per component unique name. Recorded by the
+    #: runner after the commit: an increase that was never written answers nothing.
+    oom_tune_generations: dict[str, str | None] = field(default_factory=dict)
 
 
 @dataclass

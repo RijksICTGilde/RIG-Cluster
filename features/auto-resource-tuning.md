@@ -26,7 +26,7 @@ Available both as an on-demand API endpoint (`POST /api/resources/{project_name}
                v                        v
           Resource Analyzer  (memory + CPU recommendation)
                          |
-          request+buffer -> deadband gate -> OOM floor -> min/max clamps
+   request+buffer -> deadband gate -> OOM floor -> min/max clamps -> deadband again
                          |
                          v
    Project YAML  --(git commit)-->  reprocess  -->  ArgoCD  -->  pod rollout
@@ -44,8 +44,8 @@ For each component in the target deployment(s):
    - **CPU**: if the cluster has VPA and the component's `VerticalPodAutoscaler` has a populated `.status` → use its CPU `target`. (No Prometheus CPU path exists.)
    - **Memory**: use the VPA memory `target` **only if it exceeds `VPA_MEMORY_FLOOR_MI`** (the recommender's floor). Otherwise (no VPA, empty `.status`, or target at the floor) fall back to Prometheus `max_over_time(container_memory_working_set_bytes{...})` over `window_hours`.
    - OOM kills come from **two** sources, ORed together: the watcher's own signal (`oom_triggered`, read straight off the pod status as `reason=OOMKilled`) and a Prometheus confirmation query (`kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}`). The watcher's signal is a fact, not a measurement, so an empty or failing query can never cancel it — exactly the path where Prometheus is emptiest, because a container that OOMs a second after start reaches no scrape interval. When OOM kills are present the VPA target is not used (the OOM path drives the limit instead).
-5. Skip if the observed max is below `min_observed_mi` (see Plausibility Floor below), unless OOM kills were detected.
-6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps.
+5. Skip if nothing at all was observed (see Plausibility Floor below), unless OOM kills were detected. A measured value below the cluster minimum is sized on that minimum.
+6. Compute the recommendation (analyzer), apply the deadband gate, OOM floor, and clamps, then re-check the deadband on the values that would actually be written (see Deviation Deadband below).
 7. **Leave the fields the user set by hand alone** for as long as that intent lives (see
    `features/handmatig-gezette-resources.md`). Per field, not per component: a pinned CPU
    does not stop memory from being tuned. The one exception is an active OOM kill, which
@@ -277,9 +277,16 @@ If the component was auto-disabled for an OOM kill, the repair also **clears tha
 
 ### Plausibility Floor
 
-An observed max below `min_observed_mi` (5Mi) counts as **no data**, not as a real measurement, and the component is skipped (unless OOM kills were detected, which takes the OOM path with the current YAML values as baseline).
+Only **nothing at all** counts as no data, and then the component is skipped (unless OOM
+kills were detected, which takes the OOM path with the current YAML values as baseline).
 
-This replaces an exact-zero test that was meant to catch the same thing and did not. A pod that existed only briefly inside the window reports a fraction of a Mi: that is not zero, so it passed, and it prints as `0Mi` in the reason line, which is what `mpfpsm-lcl/pr-200` recorded (`Request: max 0Mi + 25% = 25Mi`). Any container that really ran passes 5Mi within seconds, so nothing legitimate is lost.
+A measured value above 0 but below the cluster minimum (`get_min_memory_limit_mi`, 25Mi
+everywhere) is sized on that minimum. Below 25Mi there is nothing to set, so every
+measurement under it has the same answer anyway, and the alternative was worse: at under
+`min_observed_mi` (5Mi) such a component fell into the OOM path, which multiplies. That is
+toets-hn7/frontend, measured at 2Mi against a minimum of 25Mi.
+
+The 5Mi floor replaces an exact-zero test that was meant to catch the same thing and did not. A pod that existed only briefly inside the window reports a fraction of a Mi: that is not zero, so it passed, and it prints as `0Mi` in the reason line, which is what `mpfpsm-lcl/pr-200` recorded (`Request: max 0Mi + 25% = 25Mi`). Any container that really ran passes 5Mi within seconds, so nothing legitimate is lost.
 
 ### Limit/Request Margin
 
@@ -348,7 +355,7 @@ vars in practice, and a system service owns its own config. Change a value in
 | `min_delta_mi` | `16` | Ignore memory changes smaller than this (absolute deadband) |
 | `min_delta_m` | `10` | Ignore CPU changes smaller than this in millicores (absolute deadband) |
 | `min_limit_headroom_mi` | `64` | Minimum absolute headroom the memory limit keeps above the request (so limit never equals request) |
-| `min_observed_mi` | `5.0` | Below this observed max the measurement counts as "no data" instead of as a real value |
+| `min_observed_mi` | `5.0` | Below this observed max a measurement is implausible; above 0 it is sized on the cluster minimum, at 0 it counts as "no data" |
 | `max_growth_factor` | `8.0` | The automatic path may raise a deployment override to at most this multiple of the declared limit (see Growth Ceiling) |
 | `user_intent_min_age_days` | `10` | A value a user set by hand may expire after this many days... |
 | `user_intent_stable_percent` | `50` | ...if the measured usage stays below this percent of what they set |
@@ -370,7 +377,18 @@ A change must clear **both** an absolute floor and a percentage threshold, so th
 - **Absolute floor** (`RESOURCE_TUNING_MIN_DELTA_MI` / `_M`): ignore changes of only a few Mi / millicores, so tiny pods near the cluster minimum don't get resized every sweep over a handful of megabytes.
 - **Percentage** (asymmetric): an **increase** applies at ≥ `RESOURCE_TUNING_INCREASE_THRESHOLD` (react promptly - reliability); a **decrease** must clear the larger `RESOURCE_TUNING_DECREASE_THRESHOLD` (conservative - a small reclaim isn't worth a pod rollout).
 
-OOM-driven increases bypass the deadband entirely. The deadband is also what makes an explicit cooldown unnecessary: a right-sized project's recommendation stays within the deadband of its current size, so the nightly sweep simply produces no change for it.
+**It is measured twice: on the recommendation and on the final values.** The gate at the
+top judges what the analyzer proposes, but the limit/request margin and the growth ceiling
+run after it and can undo almost all of that. What is left over is then a remainder under
+the deadband, and it used to be written anyway: asses-k2n/redirect shifted between 104Mi
+and 105Mi every night on an approved DECREASE of 55Mi that the margin rule then wiped out.
+Every flip is a new pod template, so a rollout and an image pull, and on 6 October 2026
+one of those pulls needed a tag that had been cleaned up upstream.
+
+The second check sits BEFORE the hand-set values are honoured, because a manual pin may
+set a small difference: that is a choice, not drift.
+
+OOM-driven increases bypass the deadband entirely, at both checks. The deadband is also what makes an explicit cooldown unnecessary: a right-sized project's recommendation stays within the deadband of its current size, so the nightly sweep simply produces no change for it.
 
 ### Opt-Out
 
@@ -406,7 +424,7 @@ All changes flow through git commits. The tuner reads recommendations (from the 
 | Mechanism | Purpose |
 |-----------|---------|
 | **Cluster minimum** | Never set memory below 25Mi |
-| **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m) |
+| **Deviation deadband** | Only commit when the change clears both a % threshold (10% up / 30% down) and an absolute floor (16Mi / 10m), measured twice: on the recommendation and on the final values |
 | **OOM kill priority** | Always increase memory when OOM kills are present; the not-Available guard is skipped on the OOM path so it never blocks a needed bump |
 | **Root left untouched** | The tuner writes only deployment overrides; the declared root component is never ratcheted (no last-writer-wins race across deployments) |
 | **Declared root as floor** | An override is never tuned below the memory the user declared on the component (lower bound only) |
