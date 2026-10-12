@@ -38,14 +38,11 @@ We created a **custom Keycloak mapper** that extracts SAML NameID to user attrib
    task build-keycloak-custom-mapper
    ```
 
-2. **Publish to GitHub** (optional):
-   ```bash
-   task publish-keycloak-custom-mapper
-   ```
+2. **Deploy to Keycloak**: the JAR goes into the image the Keycloak pod runs
+   (`images/keycloak-zad/`), which builds it from this source. See
+   [features/keycloak-eigen-image.md](../features/keycloak-eigen-image.md).
 
-3. **Deploy to Keycloak**: Update deployment init container to download the JAR (see [custom-mapper/README.md](./custom-mapper/README.md))
-
-4. **Configure in Keycloak UI** (see detailed configuration below)
+3. **Configure in Keycloak UI** (see detailed configuration below)
 
 ## SSO Rijk Configuration
 

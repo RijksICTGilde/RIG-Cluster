@@ -9,7 +9,9 @@ This is a deliberate piece of work, sequenced **after** the always-clear-session
 ## Scope
 
 In scope:
-- Runtime image bump on `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml` and all overlays.
+- Runtime image bump. The base version sits in `images/keycloak-zad/Dockerfile`, which builds our own
+  image with the providers in it; the tag of that build is pinned per environment
+  (`features/keycloak-eigen-image.md`).
 - `keycloak-migration/custom-mapper/pom.xml` Keycloak dep bump + recompile + retest of all four custom providers:
   - `UnrestrictedXPathAttributeMapper`
   - `RequireClientRoleAuthenticator`
@@ -53,7 +55,8 @@ Branch off `main`. Do not bundle with logout-endpoint work.
 
 ### Phase 2 — Sandbox runtime
 
-- [ ] Bump image tag in the sandbox overlay only.
+- [ ] Build the image on the new base version and pin its tag in the sandbox overlay only
+      (`task publish-keycloak-image`).
 - [ ] Audit `deployment.yaml` env vars; fix anything 26 has removed or changed.
 - [ ] Update `KC_HOSTNAME` semantics (full URL form).
 - [ ] Roll the sandbox Keycloak pod. Verify on first boot:
@@ -71,7 +74,9 @@ Branch off `main`. Do not bundle with logout-endpoint work.
 - [ ] Schedule a maintenance window with stakeholders. Keycloak DB migrations are forward-only.
 - [ ] Take a Postgres dump of the production Keycloak DB.
 - [ ] Verify the dump can be restored to a scratch namespace.
-- [ ] Bump image tag in the production overlay.
+- [ ] Move that same tag into the pin production runs with
+      `task pin-keycloak-image TARGET=base`: it copies the sandbox pin into
+      `infrastructure/.../keycloak/controller/base/deployment.yaml` without rebuilding.
 - [ ] Watch the rollout. DB migrations run on first 26.x pod startup; this can take longer than a normal restart depending on table sizes.
 - [ ] Run the full Phase 2 verification matrix against production.
 - [ ] Validate the BZK SAML federation end-to-end:
