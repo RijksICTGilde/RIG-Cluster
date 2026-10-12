@@ -180,6 +180,8 @@ users:
     removeDefaultGroups: true             # Remove Keycloak's default group assignments
 ```
 
+**Note:** A user created here starts out unconfirmed: `create_user` sets `emailVerified: false` plus a `VERIFY_EMAIL` required action for any item with an `email`, and nothing in OPI sends that mail or clears the flag again. Behind an authorization wall such an account is rejected for good; see [KNOWN-ISSUES.md](/docs/KNOWN-ISSUES.md).
+
 ### Service Account Roles
 
 For confidential clients with service accounts:

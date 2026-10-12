@@ -1,18 +1,28 @@
 """De bedrading van de bevestigingsstap door de uitnodigingsroutes (RC-191).
 
-Twee dingen die het sjabloon zelf niet kan bewijzen:
+Wat het sjabloon zelf niet kan bewijzen:
 
 1. De LOKALE registratie zet ``verify_email`` in de sessie, en geeft door of de mail eruit
    ging. De SSO-tak zet die vlag niet, want die gebruiker is via ``trustEmail`` al
    geverifieerd.
 2. De succespagina leest die vlag terug en geeft hem aan het sjabloon.
+3. De premisse onder punt 1: de SSO-weg logt in op het PROJECTREALM. Daarom heeft Keycloak
+   zijn first-broker-login al gedaan voordat de callback draait, en komt die gebruiker via
+   ``trustEmail`` geverifieerd binnen (RC-244).
 """
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.api.invite_routes import invite_register_submit, invite_sso_callback, invite_success
+from opi.api.invite_routes import (
+    invite_idp_start,
+    invite_register_submit,
+    invite_sso_callback,
+    invite_sso_start,
+    invite_success,
+)
+from opi.utils.naming import generate_project_realm_name
 
 PROJECT = ("demo", {"display-name": "Demo-applicatie"}, {"contact_email": "beheer@example.org"}, "sandbox")
 
@@ -154,3 +164,33 @@ async def test_zonder_vlag_krijgt_de_succespagina_de_oude_tekst() -> None:
     context = await _success_context({"email": "iemand@example.org", "created": True, "assigned": {}})
 
     assert context["verify_email"] is False
+
+
+@pytest.mark.parametrize("deur", ["sso", "idp"])
+@pytest.mark.asyncio
+async def test_de_sso_weg_logt_in_op_het_projectrealm(deur: str) -> None:
+    """De premisse onder punt 1, en onder de keten in ``docs/KNOWN-ISSUES.md``.
+
+    Keycloak doet de first-broker-login, en daarmee ``idp-create-user-if-unique`` plus
+    ``trustEmail``, alleen in het realm waar de uitgenodigde inlogt. Wijst een van deze twee
+    deuren naar een ander realm, dan bestaat de gebruiker in het projectrealm nog niet, komt
+    de aanmaaktak van ``complete_sso_invite`` wel in beeld en is de weerlegging onwaar.
+    """
+    request = _request()
+    manager = _invite_manager({})
+    manager.get_realm_auth_methods = AsyncMock(return_value={"identity_providers": [{"alias": "sso-rijk"}]})
+    with (
+        patch("opi.api.invite_routes._find_project_by_invite_key", AsyncMock(return_value=PROJECT)),
+        patch("opi.api.invite_routes.InviteManager", return_value=manager),
+        patch("opi.api.invite_routes._get_keycloak_url_for_cluster", return_value="https://kc.example.org"),
+    ):
+        if deur == "sso":
+            response = await invite_sso_start(request, "sleutel")
+        else:
+            response = await invite_idp_start(request, "sleutel", "sso-rijk")
+
+    realm = generate_project_realm_name("demo", "sandbox")
+    assert response.headers["location"].startswith(
+        f"https://kc.example.org/realms/{realm}/protocol/openid-connect/auth?"
+    )
+    assert request.session["invite_flow"]["realm_name"] == realm
