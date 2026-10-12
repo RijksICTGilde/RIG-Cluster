@@ -1,5 +1,9 @@
 # Validatie van de foutpagina voor de authorization wall en van de opgeschreven oorzaak
 
+**Dit plan is uitgevoerd.** RC-244 heeft het op 5 oktober gedraaid en alle vijf poorten gehaald (`gates_passed=5`, `rework_rounds=3`). Drie bevindingen, waarvan twee een bewering uit dit plan weerleggen: voorafmaken is niet alleen een console-handeling, want een lokale invite-registratie en de `users:`-sectie van een keycloak-template doen het ook en geen van beide zet de vlag; en de onbevestigde uitnodiging zit op `complete_local_invite` en niet op de SSO-tak, want `invite_sso_start` stuurt de uitgenodigde naar het projectrealm zelf zodat `complete_sso_invite` zijn `create_user`-tak nooit bereikt. De derde was een gat in de toets die bij dit werk hoorde: de injectietoets dekte het data-blok van de configmap niet, de sectie waar `error.html` in leeft.
+
+De taak zelf staat op `cancelled` en dat is geen oordeel over de uitkomst: zijn basis `claude/authwall-foutpagina` stamt van GitHub's main en is geen voorouder van `forgejo/main`, dus een merge zou zes commits dubbel in de historie zetten. De bevindingen zijn daarom als negen cherry-picks geland via `claude/rc244-correcties`. Wat hieronder staat is de opdracht zoals hij geschreven is; de secties 1 en 10 beschrijven de stand van 2 oktober en zijn niet bijgewerkt.
+
 Dit plan laat niets bouwen. Het werk staat er al, en wat hier gevraagd wordt is een onafhankelijke toets op de uitwerking en op de beweringen die eromheen zijn opgeschreven. De reden dat dit een eigen taak is: de oorzaak is in de sessie van 30 september twee keer verkeerd opgeschreven en twee keer herzien, dus de causale keten is het onderdeel met het hoogste risico en juist dat staat nu in twee documenten die anderen gaan vertrouwen.
 
 ## 1. Waar het staat
