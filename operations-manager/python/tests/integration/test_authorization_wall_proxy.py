@@ -334,9 +334,12 @@ async def test_f3_een_verloren_cookiedeel_sloopt_de_hele_sessie(wall: Wall, zet_
     """Wat een gesplitste sessie wel doet: hij wordt breekbaar.
 
     Met een cookie valt er niets gedeeltelijk te verliezen. Met twee is elk deel een
-    enkelvoudig faalpunt, en wie er een kwijtraakt heeft geen sessie meer. Het beeld dat
-    dat oplevert is precies de storing uit de productielogs: de muur op het document en
-    een 401 op elke subresource.
+    enkelvoudig faalpunt, en wie er een kwijtraakt heeft geen sessie meer.
+
+    Het beeld dat dat oplevert is NIET de storing uit de productielogs, en dat onderscheid
+    is de waarde van deze test. Hier valt de sessie uniform om, dus de muur op het document
+    en een 401 op elke subresource. In productie hield het document juist zijn 200 met het
+    e-mailadres erbij terwijl de subresources in diezelfde seconde geen sessie hadden.
     """
     zet_wall(wall, wall.args)
     await login(client, "veel", WACHTWOORD)
