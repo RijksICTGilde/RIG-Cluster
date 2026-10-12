@@ -529,7 +529,7 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
         request=request,
         project_name=project_name,
         task_type="refresh_project",
-        payload={"project_name": project_name, "force_clone": False},
+        payload={"project_name": project_name, "force_clone": False, "reset_running_sync": True},
         current_step="Project herverwerken gestart...",
         success_message="Project succesvol herverwerkt!",
     )
@@ -568,6 +568,7 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
             "project_name": project_name,
             "deployment_name": deployment_name,
             "force_clone": False,
+            "reset_running_sync": True,
         },
         deployment_name=deployment_name,
         current_step=f"Deployment '{deployment_name}' herverwerken gestart...",

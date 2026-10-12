@@ -1374,6 +1374,7 @@ async def refresh_project_v2(
         payload={
             "project_name": project_name,
             "force_clone": force_clone,
+            "reset_running_sync": True,
         },
     )
     return _accepted_response(task, "refresh_project")
@@ -1598,6 +1599,7 @@ async def refresh_deployment_v2(
             "project_name": project_name,
             "deployment_name": deployment_name,
             "force_clone": force_clone,
+            "reset_running_sync": True,
         },
     )
     return _accepted_response(task, "refresh_deployment")

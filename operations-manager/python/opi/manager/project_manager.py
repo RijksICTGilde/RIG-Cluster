@@ -99,7 +99,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
-from opi.services.argocd_operation import terminate_stuck_operation
+from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -656,6 +656,8 @@ class ProjectManager:
         # Per-component failure details (set when DeploymentHealthError is caught)
         self._component_failures: list[dict[str, Any]] | None = None
 
+        self._terminated_sync_operations: list[str] = []
+
         # Change context from YAML diff (populated by process_project_changes)
         # Structure: {"previous_yaml": {...}, "current_yaml": {...}, "changes": {"added": {}, "changed": {}, "deleted": {}}}
         self._project_changes: dict[str, Any] | None = None
@@ -887,6 +889,10 @@ class ProjectManager:
     def get_component_failures(self) -> list[dict[str, Any]] | None:
         """Get per-component failure details from the most recent deployment sync."""
         return self._component_failures
+
+    def get_terminated_sync_operations(self) -> list[str]:
+        """De deployments waarvan deze run een lopende sync-operation heeft beëindigd."""
+        return self._terminated_sync_operations
 
     async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None:
         """Queue a refresh_deployment task via the task queue."""
@@ -3084,6 +3090,7 @@ class ProjectManager:
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
         wait_for_healthy: bool = True,
+        reset_running_sync: bool = False,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -3101,6 +3108,8 @@ class ProjectManager:
             task_progress_manager: Optional progress manager for tracking operation status
             deployment_name: Optional single deployment to process
             force_clone: Force clone even if target resources exist (runtime parameter)
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
             deployment_names: Optional explicit set of deployments to process (takes
                 precedence over ``deployment_name``). Use this to scope a redeploy to
                 the deployment(s) actually affected by a change (e.g. domain approval),
@@ -3315,7 +3324,10 @@ class ProjectManager:
             process_step = self._begin_step("Diensten en manifesten bijwerken")
             try:
                 process_success = await self.process_project(
-                    force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
+                    force_clone=force_clone,
+                    deployment_names=targets,
+                    force_reenable=force_reenable,
+                    reset_running_sync=reset_running_sync,
                 )
             except Exception as e:
                 self._end_step(process_step, str(e))
@@ -3912,7 +3924,10 @@ class ProjectManager:
         return project_data  # For now, treat everything as "added"
 
     async def _process_application_manifests(
-        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+        self,
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+        reset_running_sync: bool = False,
     ) -> None:
         """
         Process application manifests for the in-scope deployments.
@@ -3925,6 +3940,8 @@ class ProjectManager:
                 every deployment's manifest folder -- which would otherwise
                 rewrite unrelated deployments and collide with a concurrent
                 delete.
+            reset_running_sync: Break off a sync that is still running, however
+                young. Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns: None
         """
@@ -3960,7 +3977,7 @@ class ProjectManager:
             if not repo_info:
                 raise Exception(f"Repository configuration not found: {repo_name}")
 
-            await self._process_repository_manifests(repo_info, repo_deployments)
+            await self._process_repository_manifests(repo_info, repo_deployments, reset_running_sync=reset_running_sync)
 
         logger.info(f"Successfully processed all application manifests for {project_name}")
 
@@ -3968,6 +3985,7 @@ class ProjectManager:
         self,
         repo_config: dict[str, Any],
         deployments: list[dict[str, Any]],
+        reset_running_sync: bool = False,
     ) -> None:
         """
         Process manifests for a specific repository.
@@ -3975,6 +3993,8 @@ class ProjectManager:
         Args:
             repo_config: Repository configuration
             deployments: List of deployments for this repository
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns:
             None
@@ -4006,7 +4026,7 @@ class ProjectManager:
         # hem moet oplossen. Een storing hierin houdt de push niet tegen: dit staat tussen de
         # commits en de push, dus stranden zou de manifests gecommit en ongepusht achterlaten
         # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
-        await self._clear_blocking_sync_operations(deployments)
+        await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
 
         await project_repo_connector.push_changes()
 
@@ -4038,26 +4058,42 @@ class ProjectManager:
             threshold_seconds=0,
         )
 
-    async def _clear_blocking_sync_operations(self, deployments: list[dict[str, Any]]) -> None:
+    async def _clear_blocking_sync_operations(
+        self, deployments: list[dict[str, Any]], reset_running_sync: bool = False
+    ) -> None:
         """Beëindig de sync-operations die een volgende sync op deze deployments blokkeren.
 
-        Hier WEL met de drempel: deze ronde loopt voor elke push en kijkt naar operations die
-        een andere taak of een sweep heeft achtergelaten, dus een uitrol die nog gewoon bezig
-        is blijft staan.
+        Normaal WEL met de drempel: deze ronde loopt voor elke push en kijkt naar operations
+        die een andere taak of een sweep heeft achtergelaten, dus een uitrol die nog gewoon
+        bezig is blijft staan.
+
+        ``reset_running_sync`` zet de drempel op 0: bij een refresh drukt iemand op reset, en
+        dan is "nog gewoon bezig" geen reden meer om te wachten. Dezelfde afweging als op de
+        time-out-tak (``_terminate_operation_we_waited_on``). De vlag staat bij het endpoint,
+        zodat een interne aanroeper hem niet stilzwijgend erft.
         """
         project_name = await self.get_name()
         if not project_name:
             return
+        threshold = 0 if reset_running_sync else STUCK_OPERATION_THRESHOLD_SECONDS
+        terminated: list[str] = []
         for deployment in deployments:
             dep_name = deployment.get("name")
             cluster = deployment.get("cluster")
             if not dep_name or not cluster:
                 continue
-            await terminate_stuck_operation(
+            if await terminate_stuck_operation(
                 self._kubectl_connector,
                 generate_argocd_application_name(project_name, str(dep_name)),
                 get_argo_namespace(str(cluster)),
-            )
+                threshold_seconds=threshold,
+            ):
+                terminated.append(str(dep_name))
+        if not terminated:
+            return
+        self._terminated_sync_operations.extend(terminated)
+        # De stap begint en eindigt in een keer, want het werk is al gedaan.
+        self._end_step(self._begin_step("Lopende sync afgebroken: " + ", ".join(terminated)))
 
     # TODO: maybe this should be moved to project_file manager
     async def get_repository_path(self, repository_name: str) -> str | None:
@@ -5457,6 +5493,7 @@ class ProjectManager:
         force_clone: bool = False,
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
+        reset_running_sync: bool = False,
     ) -> bool:
         """
         Process the project file and create all required resources.
@@ -5466,6 +5503,8 @@ class ProjectManager:
             force_clone: Force clone even if target resources exist (runtime parameter)
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``; empty list = none)
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -5474,6 +5513,7 @@ class ProjectManager:
 
         # Store force_clone override for nested calls (e.g., PVC manager)
         self._force_clone_override = force_clone
+        self._terminated_sync_operations = []
 
         targets = _resolve_deployment_filter(deployment_name, deployment_names)
         # De scope zoals de AANROEPER hem gaf. De grendel hieronder mag een projectbrede
@@ -5644,7 +5684,7 @@ class ProjectManager:
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
-            await self._process_application_manifests(deployment_names=targets)
+            await self._process_application_manifests(deployment_names=targets, reset_running_sync=reset_running_sync)
 
             # Now update clone-from status for all deployments that had clones performed
             # (covers DB, MinIO, and PVC clones reported during manifest generation)

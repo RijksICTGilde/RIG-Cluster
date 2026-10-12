@@ -380,6 +380,8 @@ class TestClearBlockingSyncOperations:
         fake._kubectl_connector = MagicMock()
         fake._kubectl_connector.get_argocd_application = AsyncMock(return_value=_application())
         fake._kubectl_connector.terminate_argocd_application_operation = AsyncMock(return_value=True)
+        # Instance-attribuut, dus ``spec=ProjectManager`` levert hem niet.
+        fake._terminated_sync_operations = []
         return fake
 
     @pytest.mark.asyncio
@@ -547,13 +549,13 @@ class TestItRunsBeforeThePush:
         fake.get_git_connector_for_deployment = AsyncMock(return_value=git)
         fake._process_deployment_manifests = AsyncMock(side_effect=lambda *a: order.append("manifests"))
         fake.get_deployments = AsyncMock(return_value=[])
-        fake._clear_blocking_sync_operations = AsyncMock(side_effect=lambda *a: order.append("clear"))
+        fake._clear_blocking_sync_operations = AsyncMock(side_effect=lambda *a, **kw: order.append("clear"))
 
         deployments = [{"name": "pr-68", "cluster": "odcn-production", "namespace": "dd-mco"}]
         await ProjectManager._process_repository_manifests(fake, {"name": "main-repo"}, deployments)
 
         assert order == ["manifests", "commit", "clear", "push"]
-        fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments)
+        fake._clear_blocking_sync_operations.assert_awaited_once_with(deployments, reset_running_sync=False)
 
     @pytest.mark.asyncio
     async def test_an_unreachable_kubectl_does_not_hold_up_the_push(self) -> None:
@@ -582,8 +584,9 @@ class TestItRunsBeforeThePush:
         )
         # De echte opruimronde en niet een mock ervan: de grendel zit in
         # ``terminate_stuck_operation``, dus een mock hier zou de reparatie wegnemen.
-        fake._clear_blocking_sync_operations = lambda deployments: ProjectManager._clear_blocking_sync_operations(
-            fake, deployments
+        fake._terminated_sync_operations = []
+        fake._clear_blocking_sync_operations = lambda deployments, reset_running_sync: (
+            ProjectManager._clear_blocking_sync_operations(fake, deployments, reset_running_sync)
         )
 
         await ProjectManager._process_repository_manifests(

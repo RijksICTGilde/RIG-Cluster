@@ -16,6 +16,12 @@ from opi.services.project_store import get_project_store
 logger = logging.getLogger(__name__)
 
 
+def terminated_sync_fields(project_manager: Any) -> dict[str, list[str]]:
+    """De deployments waarvan deze run een lopende sync afbrak, als die er zijn."""
+    terminated = project_manager.get_terminated_sync_operations()
+    return {"terminated_syncs": terminated} if terminated else {}
+
+
 async def handle_clone_database(payload: dict, progress: Any) -> dict:
     """Handle async database clone task.
 
@@ -295,6 +301,9 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             - project_name: Project name
             - deployment_name: Deployment to refresh
             - force_clone: Whether to force clone even if target resources exist
+            - reset_running_sync: Whether a sync that is still running must be broken
+              off, however young. The refresh endpoints set this; an automated caller (the
+              OOM watcher queues a refresh for itself) leaves it out.
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
@@ -308,6 +317,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
     force_clone: bool = payload.get("force_clone", False)
+    reset_running_sync: bool = payload.get("reset_running_sync", False)
     # The automated refresh queued right after an auto-disable must NOT retry
     # moving-tag (e.g. :latest) disables, or a still-broken component would flap.
     # User-initiated refreshes (no flag) are an explicit retry request.
@@ -358,6 +368,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             deployment_name=deployment_name,
             force_clone=force_clone,
             force_reenable=not automated_remediation,
+            reset_running_sync=reset_running_sync,
         )
 
         if processing_result:
@@ -406,6 +417,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                         if (component_failures := project_manager.get_component_failures())
                         else {}
                     ),
+                    **terminated_sync_fields(project_manager),
                 },
             }
         else:
@@ -428,6 +440,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                     "status": "failed",
                     "error": error_msg,
                     **({"component_failures": component_failures} if component_failures else {}),
+                    **terminated_sync_fields(project_manager),
                 },
             }
 
@@ -450,6 +463,9 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         payload: Task payload containing:
             - project_name: Project name
             - force_clone: Whether to force clone even if target resources exist
+            - reset_running_sync: Whether a sync that is still running must be broken
+              off, however young. The refresh endpoints set this; the internal caller in
+              the component-delete path decides for itself.
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
@@ -461,6 +477,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
 
     project_name: str = payload["project_name"]
     force_clone: bool = payload.get("force_clone", False)
+    reset_running_sync: bool = payload.get("reset_running_sync", False)
 
     if not validate_project_name(project_name):
         error_msg = (
@@ -500,6 +517,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             project_file_path,
             task_progress_manager=progress,
             force_clone=force_clone,
+            reset_running_sync=reset_running_sync,
         )
 
         if processing_result:
@@ -535,6 +553,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                         if (component_failures := project_manager.get_component_failures())
                         else {}
                     ),
+                    **terminated_sync_fields(project_manager),
                 },
             }
         else:
@@ -555,6 +574,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                     "status": "failed",
                     "error": error_msg,
                     **({"component_failures": component_failures} if component_failures else {}),
+                    **terminated_sync_fields(project_manager),
                 },
             }
 

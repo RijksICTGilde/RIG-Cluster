@@ -27,10 +27,10 @@ ONGOING_PHASES = frozenset({"Running", "Terminating"})
 #: Gelijk aan OPI's eigen wacht van 300s: wat langer loopt dan waar OPI zelf op wacht, wacht
 #: op iets wat niet meer komt. Lager zou een uitrol kunnen afbreken die nog gewoon bezig is.
 #:
-#: Dat geldt voor wie naar een uitrol van IEMAND ANDERS kijkt: de ronde voor een push en het
-#: rapport. Op OPI's eigen time-out-tak is "nog gewoon bezig" geen mogelijkheid meer, en de
-#: operation is daar per constructie jonger dan deze drempel, dus die geeft 0 mee
-#: (``ProjectManager._terminate_operation_we_waited_on``).
+#: Dat geldt voor wie naar een uitrol van IEMAND ANDERS kijkt: de ronde voor een gewone push
+#: en het rapport. Waar "nog gewoon bezig" geen mogelijkheid meer is wordt 0 meegegeven: op
+#: OPI's eigen time-out-tak (``ProjectManager._terminate_operation_we_waited_on``) en op het
+#: refresh-pad, waar iemand op reset drukt (``reset_running_sync``).
 STUCK_OPERATION_THRESHOLD_SECONDS = 300
 
 
