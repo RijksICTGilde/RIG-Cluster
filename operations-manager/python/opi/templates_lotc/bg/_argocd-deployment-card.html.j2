@@ -406,12 +406,25 @@
                 </c-action-group>
             {% endif %}
 
+            {# "Sync van ArgoCD" en niet "Operatie": dit is de cluster die een commit toepast,
+               niet ZAD's eigen wachtrij, en die twee stonden met hetzelfde woord op het
+               scherm. #}
             {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
-                {% set operation_line = 'Operatie: ' ~ status.operation_phase %}
+                {% set operation_line = 'Sync van ArgoCD: ' ~ status.operation_phase %}
+                {% if status.get('operation_duration') %}
+                    {% set operation_line = operation_line ~ ', loopt al ' ~ status.operation_duration %}
+                {% endif %}
                 <c-alert type="{{ 'warning' if status.operation_phase == 'Running' else 'error' }}" heading="{{ operation_line }}">
-                    {% if status.get('operation_message') %}
-                        {{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}
-                    {% endif %}
+                    <c-stack gap="xs">
+                        {% if status.get('operation_message') %}
+                            <c-span>{{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}</c-span>
+                        {% endif %}
+                        {% if status.get('operation_is_stuck') %}
+                            <c-span>Zolang deze sync loopt, slaat ArgoCD elke volgende over en komt een
+                                nieuwe versie niet op het cluster. Herverwerk de deployment om hem af te
+                                breken; je hoeft hem niet weg te gooien.</c-span>
+                        {% endif %}
+                    </c-stack>
                 </c-alert>
             {% endif %}
 

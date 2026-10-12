@@ -62,6 +62,7 @@ from opi.api.v2.models import (
     PendingRolloutResponse,
     ProjectListItem,
     ProjectListResponse,
+    RunningSync,
     StatusDeviation,
     StatusError,
     SubdomainCheckResponse,
@@ -108,6 +109,7 @@ from opi.handlers.project_file_handler import (
 )
 from opi.manager.project_validation import validate_component_references
 from opi.services.approvals import collect_deployment_approval_notices
+from opi.services.argocd_operation import read_sync_operation
 from opi.services.catalog.actions import (
     ActionContext,
     ActionField,
@@ -211,8 +213,24 @@ class _LiveStatus(NamedTuple):
     status: DeploymentStatus
     revision: str | None
     last_synced_at: str | None
+    rolled_out_revision: str | None
+    running_sync: RunningSync | None
     errors: list[StatusError]
     deviations: list[StatusDeviation]
+
+
+def _empty_live_status(status: DeploymentStatus) -> _LiveStatus:
+    """A sentinel status with nothing live behind it, by keyword so a new field cannot
+    silently land in the wrong slot."""
+    return _LiveStatus(
+        status=status,
+        revision=None,
+        last_synced_at=None,
+        rolled_out_revision=None,
+        running_sync=None,
+        errors=[],
+        deviations=[],
+    )
 
 
 def _collapse_argo_status(
@@ -248,17 +266,32 @@ def _extract_live_status(status_data: dict[str, Any] | None, *, fully_disabled: 
     this function does not call out.
     """
     if not status_data:
-        return _LiveStatus(DeploymentStatus.Pending, None, None, [], [])
+        return _empty_live_status(DeploymentStatus.Pending)
 
     status = status_data.get("status", {}) or {}
     sync = status.get("sync", {}) or {}
     health = status.get("health", {}) or {}
-    operation_state = status.get("operationState", {}) or {}
+    operation = read_sync_operation(status_data)
 
     return _LiveStatus(
         status=_collapse_argo_status(sync.get("status"), health.get("status"), fully_disabled=fully_disabled),
         revision=sync.get("revision") or None,
-        last_synced_at=operation_state.get("finishedAt") or status.get("reconciledAt"),
+        # Alleen ``finishedAt``, zonder terugval op ``reconciledAt``. Die terugval meldde bij een
+        # lopende sync het moment van de laatste VERGELIJKING, en gaf zo de indruk dat een
+        # wijziging was aangekomen terwijl er niets was uitgerold (RC-250).
+        last_synced_at=operation.finished_at,
+        rolled_out_revision=operation.revision,
+        running_sync=(
+            RunningSync(
+                phase=operation.phase or "",
+                started_at=operation.started_at,
+                revision=operation.revision,
+                message=operation.message,
+                blocks_next_sync=operation.blocks_next_sync,
+            )
+            if operation.ongoing
+            else None
+        ),
         errors=[],
         deviations=[],
     )
@@ -361,7 +394,7 @@ async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
 
 def _unavailable() -> _LiveStatus:
     """The "we couldn't fetch" sentinel for lenient list mode."""
-    return _LiveStatus(DeploymentStatus.Unavailable, None, None, [], [])
+    return _empty_live_status(DeploymentStatus.Unavailable)
 
 
 async def _fetch_live_statuses_lenient(
@@ -456,6 +489,8 @@ def _build_deployment_detail(
         status=live.status,
         sync_revision=live.revision,
         last_synced_at=live.last_synced_at,
+        rolled_out_revision=live.rolled_out_revision,
+        running_sync=live.running_sync,
         errors=live.errors,
         deviations=live.deviations,
         # Hier en niet alleen in het antwoord op de schrijfactie: een aanvraag loopt

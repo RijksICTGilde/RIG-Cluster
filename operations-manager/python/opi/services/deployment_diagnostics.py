@@ -17,6 +17,13 @@ from typing import TYPE_CHECKING, Any
 from opi.api.v2.models import ErrorCategory
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    format_duration,
+    is_stuck,
+    operation_age_seconds,
+    read_sync_operation,
+)
 from opi.services.catalog.image_registries.resolution import display_image
 from opi.services.event_interpreter import _friendly_resource_name
 from opi.services.image_pull_report import image_pull_failures_for
@@ -295,10 +302,20 @@ def gather_sync_deviations(
     # Sleutel-aanwezigheid, niet truthiness: ArgoCD's ``automated: {}`` betekent aan.
     auto_sync = "automated" in (((status_data.get("spec") or {}).get("syncPolicy")) or {})
 
+    # Loopt er een sync die al te lang staat, dan is "bij de volgende sync" een belofte die
+    # niemand inlost: zolang hij staat wordt elke volgende overgeslagen, en hij eindigt niet uit
+    # zichzelf (RC-250).
+    operation = read_sync_operation(status_data)
+    blocked_for = (
+        format_duration(operation_age_seconds(operation))
+        if is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS)
+        else None
+    )
+
     # Resources the last successful sync already deleted; if such a resource still
     # exists, its deletion is stuck and the next sync will not change that.
     pruned_by_last_sync: set[tuple[str, str]] = set()
-    if operation_state.get("phase") == "Succeeded":
+    if operation.phase == "Succeeded":
         for result in (operation_state.get("syncResult", {}) or {}).get("resources", []) or []:
             if result.get("status") == "Pruned":
                 pruned_by_last_sync.add((result.get("kind", ""), result.get("name", "")))
@@ -321,8 +338,12 @@ def gather_sync_deviations(
             if resource.get("requiresPruning"):
                 if (resource.get("kind", ""), resource.get("name", "")) in pruned_by_last_sync:
                     reason = "is verwijderd, maar het cluster maakt de verwijdering niet af"
+                elif blocked_for:
+                    reason = f"staat niet meer in git, maar de sync die hem moet opruimen loopt al {blocked_for} vast"
                 else:
                     reason = "staat niet meer in git en wordt bij de volgende sync opgeruimd"
+            elif blocked_for:
+                reason = f"wijkt af van git, maar de sync die hem moet bijwerken loopt al {blocked_for} vast"
             elif auto_sync:
                 reason = "wijkt af van git en wordt bij de volgende sync bijgewerkt"
             else:
