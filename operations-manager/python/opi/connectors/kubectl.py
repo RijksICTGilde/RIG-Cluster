@@ -689,14 +689,11 @@ class KubectlConnector:
 
     async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
         """
-        Remove the running operation from an ArgoCD Application.
+        Remove any running operation from an ArgoCD Application.
 
-        A sync operation that waits on health blocks the deletion: while it runs, the
-        resources-finalizer never gets to its cascade, and it never ends when the
-        workloads it waits for cannot become healthy (an unpullable image, a crashloop).
-        Removing ``/operation`` releases that block, and the cascade then runs in seconds.
-        This is what a delete must do FIRST - removing the finalizer instead takes away
-        the lock that would have done the cascade, and leaves every resource behind.
+        The operation is read first: a json-patch remove on an absent path is rejected
+        with a generic 422 by this apiserver, so reading first avoids false errors when
+        there is no operation running.
 
         Args:
             app_name: The name of the ArgoCD Application
@@ -704,11 +701,18 @@ class KubectlConnector:
 
         Returns:
             True if no running operation remains (removed, none present, or app gone),
-            False if the patch failed for another reason.
+            False if the Application could not be read or the patch failed.
         """
         namespace = namespace or get_argo_namespace(settings.CLUSTER_MANAGER)
-        logger.info(f"Removing any running operation from ArgoCD Application '{app_name}' in namespace '{namespace}'")
 
+        operation, read = await self._read_argocd_application_operation(app_name, namespace)
+        if not read:
+            return False
+        if not operation:
+            logger.debug(f"ArgoCD Application '{app_name}' has no running operation")
+            return True
+
+        logger.info(f"Removing the running operation from ArgoCD Application '{app_name}' in namespace '{namespace}'")
         stdout, stderr, code = await self._run_kubectl_command(
             [
                 "patch",
@@ -727,18 +731,32 @@ class KubectlConnector:
             logger.info(f"Removed the running operation from ArgoCD Application '{app_name}'")
             return True
 
-        lowered = stderr.lower()
-        # A json-patch remove on an absent path is rejected, which is the normal case:
-        # the Application simply has no operation running. That is the state we wanted.
-        if "missing path" in lowered or "does not apply" in lowered:
-            logger.debug(f"ArgoCD Application '{app_name}' has no running operation")
-            return True
-        if "notfound" in lowered.replace(" ", ""):
-            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+        # The operation can end, and the Application can go, between the read and the patch.
+        # Reading again says whether it did, where the generic 422 of this apiserver does not.
+        operation, read = await self._read_argocd_application_operation(app_name, namespace)
+        if read and not operation:
+            logger.info(f"The running operation on ArgoCD Application '{app_name}' was already gone")
             return True
 
         logger.error(f"Failed to remove the running operation from ArgoCD Application '{app_name}': {stderr}")
         return False
+
+    async def _read_argocd_application_operation(self, app_name: str, namespace: str) -> tuple[str, bool]:
+        """The running operation of an Application, and whether it could be read at all.
+
+        An Application that does not exist has no operation, and that is a read that
+        succeeded: there is nothing to clear.
+        """
+        stdout, stderr, code = await self._run_kubectl_command(
+            ["get", "application", app_name, "-n", namespace, "-o", "jsonpath={.operation}"]
+        )
+        if code == 0:
+            return stdout.strip(), True
+        if "notfound" in stderr.lower().replace(" ", ""):
+            logger.info(f"ArgoCD Application '{app_name}' does not exist")
+            return "", True
+        logger.error(f"Could not read the running operation of ArgoCD Application '{app_name}': {stderr}")
+        return "", False
 
     async def get_argocd_application_destination_namespace(
         self, app_name: str, namespace: str | None = None
