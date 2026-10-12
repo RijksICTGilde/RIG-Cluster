@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,16 @@ class SleepState:
     state: str = STATE_AWAKE
     expires_at: str | None = None
     wake_token: str | None = None
+
+
+def parse_expiry(value: str | None) -> datetime | None:
+    """The stored ``expires-at`` as a datetime, or None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 def _find_deployment(project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:

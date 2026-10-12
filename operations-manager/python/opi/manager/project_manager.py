@@ -3083,6 +3083,7 @@ class ProjectManager:
         argocd_resources_changed: bool = True,
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
+        wait_for_healthy: bool = True,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -3110,6 +3111,11 @@ class ProjectManager:
                 Application CR is not yet present), so this flag no longer controls
                 it. Redeploys of existing apps skip the expensive umbrella refresh
                 regardless of this value.
+            wait_for_healthy: Wait for each application to become Synced + Healthy.
+                Pass False when the deployment this run produces cannot become Healthy
+                by design (sleep-mode's waking state), so the wait would only ever end
+                on the 300s time-out. The manifest push, the ArgoCD refresh and the
+                render check still run, so a broken kustomization still fails fast.
 
         Returns:
             True if all operations were successful, False otherwise
@@ -3587,6 +3593,15 @@ class ProjectManager:
                                 render_detail,
                             )
 
+                        if not wait_for_healthy:
+                            logger.info(
+                                "Application '%s' refreshed and rendered; not waiting for Synced/Healthy", app_name
+                            )
+                            if app_subtask:
+                                progress_manager.update_task(app_subtask, dep_name, subject="uitgerold")
+                                progress_manager.complete_subtask(app_subtask)
+                            return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
+
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
@@ -3868,7 +3883,10 @@ class ProjectManager:
                     progress_manager.complete_task(notice)
                 return True
             else:
-                logger.info("All ArgoCD applications are synced and healthy")
+                if wait_for_healthy:
+                    logger.info("All ArgoCD applications are synced and healthy")
+                else:
+                    logger.info("All ArgoCD applications are refreshed and rendered; health was not awaited")
                 if progress_manager and argo_task:
                     progress_manager.complete_task(argo_task)
                 return True

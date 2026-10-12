@@ -36,6 +36,7 @@ async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dic
         the deployment is in the state the user asked for, which is not an error.
     """
     from opi.services.catalog.sleep_mode import flow
+    from opi.services.catalog.sleep_mode import state as sleep_state
 
     project_name = payload["project_name"]
     deployment_name = payload["deployment_name"]
@@ -52,6 +53,10 @@ async def handle_sleep_transition(payload: dict[str, Any], progress: Any) -> dic
             if direction == "sleep"
             else await flow.wake(project_name, deployment_name, progress=progress)
         )
+        # The user is watching, so the second half of the wake (waiting for the app,
+        # then pruning the waker) belongs in this task instead of in the sweeper.
+        if direction != "sleep" and result.changed and result.state == sleep_state.STATE_WAKING:
+            result = await flow.finish_wake(project_name, deployment_name, progress=progress)
     except Exception as exc:
         progress.fail_task(heading, str(exc))
         progress.fail_project(str(exc))
