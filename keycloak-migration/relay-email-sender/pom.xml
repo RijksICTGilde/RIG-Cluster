@@ -17,11 +17,11 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <keycloak.version>25.0.6</keycloak.version>
-        <!-- REPRODUCEERBARE BOUW. De jar staat in git (zie README) en een CI-stap bouwt
-             hem opnieuw en vergelijkt byte voor byte. Dat kan alleen als de bouw geen
-             klok gebruikt: deze eigenschap zet elke tijdstempel in het archief en in het
-             manifest op deze vaste waarde (maven-jar-plugin >= 3.2.0, `Reproducible
-             Builds`). Haal hem weg en de vergelijking in CI faalt op elke commit. -->
+        <!-- REPRODUCEERBARE BOUW. Zonder dit gebruikt de bouw de klok, en dan levert
+             elke imagebouw een andere jar op: een ongewijzigde bron geeft dan toch een
+             nieuwe laag, en een image-tag zegt niets meer over wat erin zit. Deze
+             eigenschap zet elke tijdstempel in het archief en in het manifest op deze
+             vaste waarde (maven-jar-plugin >= 3.2.0, `Reproducible Builds`). -->
         <project.build.outputTimestamp>2026-08-26T00:00:00Z</project.build.outputTimestamp>
     </properties>
 
