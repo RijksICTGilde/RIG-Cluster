@@ -8,6 +8,7 @@ from pydantic import TypeAdapter, ValidationError
 from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
 from opi.services.catalog.config_settings import ConfigSetting, SettingError
 from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
+from opi.utils.url_paths import normalize_logout_path
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -344,6 +345,30 @@ class PathValidator:
             return ["Pad moet beginnen met /"]
         if " " in v:
             return ["Pad mag geen spaties bevatten"]
+        return []
+
+
+class LogoutPathValidator:
+    """Het logout-pad, getoetst met dezelfde normalisatie die het configmodel gebruikt.
+
+    Niet ``PathValidator``: die weigert een pad zonder leidende slash, en juist dat wordt
+    hier stil rechtgezet. Niet ``ModelFieldValidator``: die toetst de annotatie
+    (``str | None``) en ziet de ``field_validator`` van het model dus niet.
+    """
+
+    MESSAGE = (
+        "Geef alleen het pad op de applicatie zelf, bijvoorbeeld /api/v1.0/logout/, met "
+        "alleen letters, cijfers en / - . _ ~ erin. Het platform zet de hostname van de "
+        "deployment ervoor."
+    )
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        try:
+            normalize_logout_path(value)
+        except ValueError:
+            return [self.MESSAGE]
         return []
 
 

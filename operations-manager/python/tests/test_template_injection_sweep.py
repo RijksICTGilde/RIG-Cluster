@@ -14,10 +14,8 @@ values still produce a valid manifest.
 
 import pytest
 from opi.generation.manifests import render_template
-from opi.handlers.project_file_handler import (
-    _normalize_path_config,
-    _sanitize_path_value,
-)
+from opi.handlers.project_file_handler import _normalize_path_config
+from opi.utils.url_paths import sanitize_path_value
 from ruamel.yaml import YAML
 
 # A payload that, before the fix, broke out of the quoted YAML scalar and
@@ -232,14 +230,14 @@ class TestPathSanitizationAtSource:
     )
     def test_dangerous_values_rejected(self, bad):
         with pytest.raises(ValueError, match="Component path"):
-            _sanitize_path_value(bad, "match")
+            sanitize_path_value(bad, "match")
 
     @pytest.mark.parametrize(
         "good",
         ["/", "/api", "/v1/users", "/kader", "/a-b_c.d~e", "/Some/Path"],
     )
     def test_legitimate_paths_accepted(self, good):
-        assert _sanitize_path_value(good, "match") == good
+        assert sanitize_path_value(good, "match") == good
 
     def test_normalize_path_config_dict_and_string(self):
         assert _normalize_path_config("/api") == {"match": "/api", "rewrite": None}

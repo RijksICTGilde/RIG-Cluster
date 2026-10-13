@@ -297,7 +297,7 @@ Fetch it to see every path, method, and auth scheme when reviewing endpoint cove
 - Covers: wizard create/edit/validation, edit modals (identity/team/services/backup), self-service portal, detail pages, navigation, component rendering, user admin
 
 ### Pytest Markers
-`@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`, `@pytest.mark.reallife`, `@pytest.mark.punt14`, `@pytest.mark.serial`, `@pytest.mark.upgrade_safety`
+`@pytest.mark.slow`, `@pytest.mark.enable_auth`, `@pytest.mark.requires_infra`, `@pytest.mark.e2e`, `@pytest.mark.sandbox`, `@pytest.mark.reallife`, `@pytest.mark.punt14`, `@pytest.mark.serial`, `@pytest.mark.upgrade_safety`, `@pytest.mark.keycloak_harness`
 
 ## Code Style (Non-Obvious Rules)
 
