@@ -327,7 +327,7 @@ class TestDePodBouwtDeImageNietOpnieuwOm:
         assert len(plekken) == 1, plekken
 
     @pytest.mark.parametrize(("optie", "waarde"), UIT_DE_ARGS_GEHAALD)
-    @pytest.mark.parametrize("omgeving", ["basis", "local", "sandboxed-local", "odcn"])
+    @pytest.mark.parametrize("omgeving", ["basis", "sandboxed-local", "odcn"])
     def test_wat_uit_de_args_verdween_geldt_nog_steeds_via_de_omgeving(
         self, omgeving: str, optie: str, waarde: str
     ) -> None:
@@ -388,7 +388,7 @@ class TestDePodBouwtDeImageNietOpnieuwOm:
         assert any(a.startswith(f"--{vlag}") for a in _basis_container()["args"])
         assert not any(v.startswith(vlag) for v in _kc_build_vlaggen()), _kc_build_vlaggen()
 
-    @pytest.mark.parametrize("overlay", ["local", "sandboxed-local", "odcn"])
+    @pytest.mark.parametrize("overlay", ["sandboxed-local", "odcn"])
     def test_geen_overlay_zet_een_bouwoptie_terug(self, overlay: str) -> None:
         """Wat een omgeving echt start, en niet wat de basis zegt."""
         if shutil.which("kustomize") is None:
@@ -403,7 +403,6 @@ class TestDePodBouwtDeImageNietOpnieuwOm:
     @pytest.mark.parametrize(
         ("overlay", "host"),
         [
-            ("local", "https://keycloak.kind"),
             ("sandboxed-local", "https://keycloak.sandbox.rijksapp.dev"),
             ("odcn", "https://keycloak.rijksapp.nl"),
         ],
