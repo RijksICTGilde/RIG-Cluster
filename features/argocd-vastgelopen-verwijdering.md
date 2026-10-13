@@ -115,7 +115,7 @@ ArgoCD, en dit platform draait er twee:
 | clustertype | ingesteld in | merkteken op de resource |
 |---|---|---|
 | `odcn-production` | `bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml` (`resourceTrackingMethod: annotation`) | annotatie `argocd.argoproj.io/tracking-id` |
-| `local`, `sandboxed-local` | niets ingesteld, dus de standaard van ArgoCD | label `app.kubernetes.io/instance` |
+| `sandboxed-local` | niets ingesteld, dus de standaard van ArgoCD | label `app.kubernetes.io/instance` |
 
 Gemeten op het sandboxcluster op 24 september 2026: `argocd-cm` zegt
 `application.resourceTrackingMethod: label`, en geen enkele resource onder een levende
@@ -198,9 +198,9 @@ controller droeg geen `--sync-timeout`, en in 2,5 uur controller-log stond geen 
 `Terminating in-progress operation due to timeout` terwijl een sync 45 minuten liep. Wat
 hier gemeten is, is dus een instantie zonder grens.
 
-De grens staat nu als `--sync-timeout=600` in `spec.controller.extraCommandArgs` van alle
-drie de overlays, de enige weg die deze operator naar de controller heeft, en is op de
-sandbox nagemeten: op precies 600 seconden logt de controller
+De grens staat nu als `--sync-timeout=600` in `spec.controller.extraCommandArgs` van beide
+overlays, de enige weg die deze operator naar de controller heeft, en is op de sandbox
+nagemeten: op precies 600 seconden logt de controller
 `Terminating in-progress operation due to timeout`, zet hij de phase `Terminating -> Failed`
 met bericht `Operation terminated`, en start hij in dezelfde seconde een sync op de nieuwste
 revisie. Zie `plans/een-sync-die-niet-afbreekt-blokkeert-elke-volgende.md` voor de metingen.
@@ -364,8 +364,9 @@ NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
 ```
 
 Cluster en ArgoCD-namespace komen uit `task select-cluster` (`CLUSTER_TYPE`,
-`RIG_NAMESPACE`). Het script las ze eerst uit de `.env` van `operations-manager/python`, en
-die wijst naar de sandbox (`rig-system`), ook met select-cluster op productie.
+`RIG_NAMESPACE`); zonder die keuze weigert de taak. Het script las ze eerst uit de `.env`
+van `operations-manager/python`, en die wijst naar de sandbox (`rig-system`), ook met
+select-cluster op productie.
 
 Hij is traag: per namespace een `kubectl get` over elk type dat het cluster kent, zo'n tien
 seconden, een minuut of acht voor heel `odcn-production`. Voor een eenmalige opruiming

@@ -15,7 +15,7 @@ tasks:
   build-and-load:
     desc: "Build kopia image and load into kind cluster"
     vars:
-      CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
+      CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
     cmds:
       - task: build-local
       - |

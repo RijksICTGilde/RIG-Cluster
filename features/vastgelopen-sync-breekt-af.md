@@ -26,8 +26,8 @@ en dan is de data weg terwijl ArgoCD `Synced` meldt.
 
 ### 1. De controller breekt na tien minuten af
 
-`--sync-timeout=600` in `spec.controller.extraCommandArgs` van de ArgoCD-CR, in alle drie de
-overlays (`odcn-production`, `sandboxed-local`, `local`). De controller zet dan
+`--sync-timeout=600` in `spec.controller.extraCommandArgs` van de ArgoCD-CR, in beide
+overlays (`odcn-production` en `sandboxed-local`). De controller zet dan
 `phase: Terminating`, laat de sync afbreken met `Operation terminated`, en start in dezelfde
 seconde een nieuwe sync op de NIEUWSTE revisie. Een fix die al in git stond rolt daarmee
 alsnog uit, zonder dat iemand iets doet.

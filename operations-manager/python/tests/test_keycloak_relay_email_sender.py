@@ -124,15 +124,21 @@ class TestDeJarInDePod:
         commando = "\n".join(init["command"])
         assert f"cp /zad-providers/{naam} /opt/keycloak/providers/" in commando
 
-    def test_de_local_overlay_kopieert_hem_ook(self) -> None:
-        """Die overlay VERVANGT het hele commando van de initContainer.
-
-        Vergeet je de regel daar, dan mist de jar precies op het clustertype waar niemand
-        het merkt tot Keycloak weigert te starten.
+    def test_geen_overlay_vervangt_het_commando_zonder_de_jar(self) -> None:
+        """Een overlay die het hele commando van de initContainer overneemt, moet de cp-regel
+        meenemen: vergeet je hem, dan mist de jar op precies dat clustertype en merkt niemand
+        het tot Keycloak weigert te starten. De local-overlay deed dat en is weg; dit houdt de
+        eis staan voor de volgende.
         """
         naam = Path(self._jar_uit_de_generator()).name
-        overlay = (KEYCLOAK_OVERLAYS / "local/kustomization.yaml").read_text()
-        assert f"cp /zad-providers/{naam} /opt/keycloak/providers/" in overlay
+        overlays = sorted(KEYCLOAK_OVERLAYS.glob("*/kustomization.yaml"))
+        assert overlays, f"geen overlay gelezen onder {KEYCLOAK_OVERLAYS}"
+
+        for overlay in overlays:
+            tekst = overlay.read_text()
+            if "/initContainers/0/command" not in tekst:
+                continue
+            assert f"cp /zad-providers/{naam} /opt/keycloak/providers/" in tekst, overlay.parent.name
 
     def test_de_jar_komt_niet_van_het_netwerk(self) -> None:
         """Aan deze jar hangt een startvlag waarzonder Keycloak weigert te starten.

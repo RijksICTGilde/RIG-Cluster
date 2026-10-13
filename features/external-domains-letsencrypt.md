@@ -204,7 +204,3 @@ This feature uses namespace-scoped Issuers because:
 | `opi/core/cluster_config.py` | Cluster-level Let's Encrypt contact email |
 | `manifests/issuer-letsencrypt.yaml.jinja` | Issuer manifest template |
 | `manifests/ingress.yaml.jinja` | Ingress template with issuer annotation support |
-
-## Related Features
-
-- [Local HTTPS Certificates](local-https-certificates.md) - TLS for local development with custom CA

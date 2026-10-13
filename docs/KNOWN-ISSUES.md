@@ -88,7 +88,7 @@ gepubliceerde image, niet met een build uit de bron. Dat lost zichzelf op zodra 
 een pin krijgt van na de reparatie hierboven; tot die tijd is het al gepubliceerde image het
 enige exemplaar dat er is.
 
-**Blijft staan 2: local en sandboxed-local wijzen nog naar het dode adres.** Alleen de
+**Blijft staan 2: sandboxed-local wijst nog naar het dode adres.** Alleen de
 odcn-overlays vervangen `quay.io/minio/minio` door de eigen build. De base-deployments
 eronder, en `bootstrap/rig-system/kustomize/backup-destination/base/deployment.yaml` die
 helemaal geen odcn-overlay heeft, houden de kale quay-referentie. Wat er draait, draait op

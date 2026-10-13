@@ -70,10 +70,10 @@ paragraaf heeft en geen regel in een checklist.
 
 0. In `keycloak-migration/relay-email-sender/pom.xml` set `keycloak.version` to `26.7.0` and
    bump the artifact version. Die versie zit in de BESTANDSNAAM van de jar, dus hij staat op
-   vier plekken: de pom, `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk),
-   de bestandsnaam onder `.../keycloak/controller/base/providers/` plus de
-   `configMapGenerator` die hem noemt, en het `cp`-commando in de initContainer (in de basis
-   EN in de local-overlay, die het hele commando vervangt). Bouwen en meecommitten met
+   meerdere plekken: de pom, `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee
+   gelijk), de bestandsnaam onder `.../keycloak/controller/base/providers/` plus de
+   `configMapGenerator` die hem noemt, en het `cp`-commando in de initContainer van de
+   basis. Bouwen en meecommitten met
    `task build-keycloak-relay-email-sender`; `task check-keycloak-relay-email-sender` en CI
    vergelijken de ingecheckte jar byte voor byte met een verse bouw. Deze jar wordt NIET als
    release gepubliceerd - hij komt uit git.

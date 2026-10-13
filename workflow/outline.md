@@ -223,7 +223,7 @@ config:
 ## Two Distinct Concerns
 
 ### Infrastructure
-Declarative Kustomize manifests that bootstrap the cluster itself - PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{local,sandboxed-local,odcn}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
+Declarative Kustomize manifests that bootstrap the cluster itself - PostgreSQL, Keycloak, MinIO, Forgejo, Prometheus, Redis, ArgoCD, cert-manager, ingress-nginx, and more. Each component follows `base/` + `overlays/{sandboxed-local,odcn}/`. Secrets are SOPS+AGE encrypted. All operations via Taskfile (100+ tasks, no shell scripts).
 
 ### Application (OPI)
 A Python 3.14 FastAPI app with a web UI (Jinja2 + Lord of the Components, NLDD-thema) and a REST API. Handles the full lifecycle: project creation, database provisioning, Keycloak realm setup, MinIO buckets, manifest generation, ArgoCD management, backup/restore, resource tuning, user admin.
