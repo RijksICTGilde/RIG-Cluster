@@ -30,23 +30,8 @@ COPY --from=providers /bouw/relay-email-sender/target/keycloak-relay-email-sende
 COPY --from=providers /bouw/custom-mapper/target/keycloak-saml-nameid-mapper-*.jar /opt/keycloak/providers/
 COPY --from=providers /bouw/keycloak-nl-design-system.jar /opt/keycloak/providers/
 
-# Keycloak neemt providers pas op bij een augmentatie; zonder deze stap doet de pod dat werk
-# bij elke start alsnog (gemeten: ruim negen seconden).
-#
-# DE VIER BOUWOPTIES HIERONDER HEBBEN HIER HUN ENIGE PLEK. `kc.sh build` legt ze vast in
-# META-INF/keycloak-persisted.properties, en de deployment start met --optimized: staat zo'n
-# vlag daar als startargument, dan WEIGERT Keycloak te starten, en als omgevingsvariabele
-# negeert hij hem met een waarschuwing. Gemeten in RC-212, uitgeschreven in
-# features/keycloak-eigen-image.md.
-#
-# --spi-email-sender-provider is geen vijfde bouwoptie: een spi-optie wordt NIET vastgelegd,
-# dus de waarde die GELDT is die in de deployment. Hier laat hij de BOUW falen op een
-# provider-id dat niet oplost ("Failed to find provider ... for emailSender", exit 1), zodat
-# de canarie uit RC-158 voor de uitrol zingt in plaats van in een pod op productie. Dat beide
-# plekken dezelfde id noemen, pint test_de_bouwcanarie_noemt_dezelfde_verzender_als_de_pod.
-#
-# --spi-theme-welcome-theme staat hier NIET: zonder canariewaarde is de deployment zijn enige
-# plek (gemeten: zonder het startargument komt de welkomstpagina zonder nl-design-system op).
+# Keycloak neemt providers pas op bij een augmentatie. De bouwopties, --optimized en spi-providers
+# zijn verdeeld over Dockerfile en deployment: zie features/keycloak-eigen-image.md.
 RUN /opt/keycloak/bin/kc.sh build \
       --db=postgres \
       --health-enabled=true \
