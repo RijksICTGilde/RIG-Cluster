@@ -358,6 +358,11 @@ prijs van de verhuizing en hij is bewust betaald. Clustertype
 hebben er een. Wie een lokale invite-gebruiker moet binnenlaten op een cluster zonder post,
 zet `emailVerified` met de hand in de beheerconsole.
 
+**Ook met een relay kan dat account buiten blijven.** Een authorization wall weigert een
+onbevestigd adres, dus zolang niemand de bevestiging aanklikt komt die gebruiker er niet in, en
+op de `users:`-weg van een keycloak-template gaat er geen bevestigingsmail uit. Welke wegen
+zo'n account aanmaken en hoe je het repareert: `docs/KNOWN-ISSUES.md`.
+
 ### De grendel: `verifyEmail` mag nooit voor de post uit lopen
 
 Een realm die verifieert en niet kan mailen **sluit gebruikers die hun adres wijzigen buiten**:
