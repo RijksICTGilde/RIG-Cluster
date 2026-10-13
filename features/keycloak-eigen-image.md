@@ -101,10 +101,11 @@ admission; staat de herschreven vorm niet in git, dan blijft de applicatie in Ar
 OutOfSync. Die proxy vraagt bovendien authenticatie, ook voor een image dat op ghcr publiek
 is, vandaar `ghcr-rig-robot-pull-secret`.
 
-Zolang er nog niets gebouwd en gepromoveerd is, dragen de basis en de sandbox-overlay met
-opzet geen tag maar het woord `promoveer-eerst` respectievelijk `bouw-eerst`. Een verzonnen
-versienummer zou eruitzien als een image die te halen valt, en dat blijkt dan pas wanneer de
-pod opnieuw wordt aangemaakt.
+De begintoestand van die twee plekken is geen tag maar een woord: `promoveer-eerst` in de
+basis, `bouw-eerst` in de sandbox-overlay. Een verzonnen versienummer zou eruitzien als een
+image die te halen valt, en dat blijkt dan pas wanneer de pod opnieuw wordt aangemaakt.
+Zodra er gebouwd of gepromoveerd is, staat er een echte tag; `publish-keycloak-image` en
+`pin-keycloak-image` schrijven alleen het stuk achter de dubbele punt.
 
 ## Bouwen
 
