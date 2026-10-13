@@ -48,7 +48,7 @@ kubernetes_sd_configs:
   - role: pod
 ```
 
-Compare this to local/sandboxed-local, which has full cluster access and uses explicit namespace lists:
+Compare this to sandboxed-local, which has full cluster access and uses explicit namespace lists:
 
 ```yaml
 kubernetes_sd_configs:

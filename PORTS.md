@@ -15,7 +15,7 @@ Twee dingen willen hier dezelfde poorten: het lokale kind-cluster en de forward 
 | 3000 | Forgejo | alleen bij de `kubectl port-forward`-fallback in de setup |
 | 5001 | `kind-registry`, de registry naast het kind-cluster | vanaf `task sandbox:setup`, blijft na `sandbox:destroy` (`docs/sandbox-kind-registry.md`) |
 
-Poort 80 en 443 komen bij kind uit `kind-config.yaml` (`extraPortMappings`), en bij de forward uit de twee `-L`-regels in het script. 9595 en 5678 staan in de drie `operations-manager/skaffold*.yaml`.
+Poort 80 en 443 komen bij kind uit `sandboxed-local/kind-config.yaml` (`extraPortMappings`), en bij de forward uit de twee `-L`-regels in het script. 9595 en 5678 staan in de `operations-manager/skaffold*.yaml`.
 
 ## De sandbox-forward
 

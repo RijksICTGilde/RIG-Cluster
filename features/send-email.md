@@ -172,8 +172,8 @@ projectnaamruimte zet.
 
 ## Het netwerkbeleid komt uit de dienst
 
-De relay draait in een eigen namespace (`rig-prd-ron` op productie, `rig-ron` op local en
-sandbox: ODCN eist dat een namespace daar met de clusterprefix begint) en niet in de
+De relay draait in een eigen namespace (`rig-prd-ron` op productie, `rig-ron` op de sandbox:
+ODCN eist dat een namespace daar met de clusterprefix begint) en niet in de
 operations-namespace, want de Calico-annotatie `egress.projectcalico.org/egressGatewayPolicy`
 neemt exact één waarde: RON aanzetten op `rig-prd-operations` kost daar het internet, en
 daarmee ArgoCD, de registry en Keycloak.
@@ -333,7 +333,7 @@ Een upstream is niet meer dan **host, poort, TLS, en eventueel inloggegevens**. 
 | Waar | Wat het werkelijk is |
 |---|---|
 | Productie | `rmrmail.rijksweb.nl:25` over RON, geen auth (hun toelating staat op ons uitgaande IP) |
-| Sandbox en local | de SMTP-sink `rig-mail-sink:25` in dezelfde namespace, geen auth |
+| Sandbox | de SMTP-sink `rig-mail-sink:25` in dezelfde namespace, geen auth |
 | Een tweede cluster, later | het chisel-eindpunt naar de relay op het hoofdcluster, **wél** auth, want onze eigen submissiepoort eist die |
 
 Vandaag varieert daarvan alleen de host, en die staat per cluster in `MAIL_UPSTREAM_HOST` in het geheim. De poort staat vast op 25 en dat is geen toeval: de Service van de sink vertaalt 25 naar 1025, zodat de sink als niet-root kan draaien zonder dat de poort een instelling per cluster hoeft te worden. Een numerieke instelling via een omgevingsvariabele is hier precies de knop die je niet wilt, want bij een verkeerd type valt Stalwart stil terug op zijn standaard 25 en dan werkt productie per ongeluk wel en de sandbox stil niet.
@@ -352,7 +352,7 @@ Tot die tweede upstream er is, kiest het cluster en niet de service. Elk scenari
 
 ## De sandbox: een sink in plaats van een echte mailserver
 
-`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlays `local` en `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar. Ingeladen wordt hij via de component `sink/as-upstream` en niet via `sink/base` rechtstreeks: die component levert de sink samen met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS: "true"`, want de sink draagt een zelfondertekend certificaat en zonder die schakelaar blijft elke bezorging steken op `invalid peer certificate`. Zo kan een cluster de sink niet krijgen zonder de schakelaar.
+`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlay `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar. Ingeladen wordt hij via de component `sink/as-upstream` en niet via `sink/base` rechtstreeks: die component levert de sink samen met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS: "true"`, want de sink draagt een zelfondertekend certificaat en zonder die schakelaar blijft elke bezorging steken op `invalid peer certificate`. Zo kan een cluster de sink niet krijgen zonder de schakelaar.
 
 Hij doet precies twee dingen: hij neemt SMTP aan en bezorgt niets, en hij geeft elk bericht integraal terug via een HTTP-API (`/api/v1/messages`, `/api/v1/message/{id}` met `From` en `ReturnPath`, en `/api/v1/message/{id}/headers`). Niets wordt bewaard, want er is geen `MP_DATABASE` gezet: een herstart is de manier om schoon te beginnen.
 
@@ -422,7 +422,7 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    daarom als `namespace-ron.yaml` in de bootstrap-overlay
    (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
    (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
-   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system` past hem met
+   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` past hem met
    kubectl toe, buiten ArgoCD om. Wat daarna nog een handeling is (de sleutel staat niet
    in git): het sleutelsecret in de namespace zetten, dezelfde inhoud als in
    `rig-prd-operations`:

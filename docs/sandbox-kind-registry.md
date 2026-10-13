@@ -148,9 +148,6 @@ lagen die hij mist.
 4. Apply en `rollout status`. Een `rollout restart` is niet meer nodig: de tag verandert,
    dus de podspec ook.
 
-De algemene `task update-operations-manager` laadt met `kind load`. Na `sandbox:setup` leest
-hij de sandbox-env, dus hij stopt dan meteen met een verwijzing naar deze taak.
-
 `task sandbox:skaffold-dev` pusht naar dezelfde registry (`build.local.push`) en roept
 daarom `sandbox:setup-registry` als eerste stap aan, net als `sandbox:update-operations-manager`.
 Zonder dat komt een ontbrekende registry naar buiten als een push-timeout op `localhost:5001`.

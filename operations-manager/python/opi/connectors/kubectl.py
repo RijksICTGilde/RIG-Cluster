@@ -9,6 +9,7 @@ import base64
 import json
 import logging
 import os
+import re
 from datetime import UTC
 from typing import Any
 
@@ -45,6 +46,22 @@ _TRACKING_SWEEP_SKIPPED_TYPES = {
     "endpoints",
     "endpointslices.discovery.k8s.io",
 }
+
+
+def types_named_in_kubectl_error(stderr_text: str, types: list[str]) -> list[str]:
+    """Which of the queried types kubectl blamed in its error output.
+
+    A ``kubectl get`` over many types exits non-zero when ONE of them fails, still prints
+    the rest, and names that type exactly as it was asked for ("deployments.apps is
+    forbidden").
+
+    Matched on a name boundary, not as a substring: ``secrets`` sits inside
+    ``externalsecrets.external-secrets.io``, and blaming the wrong type sends the reader of
+    the log elsewhere. A deprecation warning in the same stderr cannot blame a type by
+    accident, because those name a group and a Kind, never the ``plural.group`` string a
+    type is queried under (measured on the sandbox).
+    """
+    return [t for t in types if re.search(rf"(?<![\w.-]){re.escape(t)}(?![\w.-])", stderr_text)]
 
 
 def is_previous_attempt_missing(stderr_text: str) -> bool:
@@ -720,13 +737,66 @@ class KubectlConnector:
             return None
         return application if isinstance(application, dict) else None
 
+    async def argocd_application_deletion_progress(
+        self, app_name: str, namespace: str | None = None, resource_types: list[str] | None = None
+    ) -> tuple[bool, int, bool] | None:
+        """How far along the cascade of a deleting ArgoCD Application is.
+
+        Slow and stuck look the same if you only ask whether the Application is gone yet.
+        What tells them apart is whether resources are still DISAPPEARING, and that is
+        counted in the destination namespace through kubectl.
+
+        Not read from the Application's own ``status.resources``: the controller stops
+        recomputing that once the object has a deletionTimestamp. Measured on the sandbox
+        on 1 October 2026, an Application of 14 resources whose ConfigMaps were held by a
+        finalizer: ``status.resources`` stayed on 14 for the whole 78s cascade while the
+        live count went 14, 13, 12, 8, 4, 0. A frozen number reads as a stall, which is
+        exactly the behaviour this is here to replace.
+
+        The count is every ArgoCD-owned resource in that namespace, not only this
+        Application's. Filtering on the name would answer 0 for a long-named Application on
+        a label cluster, where the mark is the name CUT to 63 characters, and a permanent 0
+        is a permanent stall. A namespace that keeps emptying is a cascade at work, and one
+        that stops emptying while our Application stays is the stall we are looking for.
+
+        Args:
+            app_name: The name of the ArgoCD Application
+            namespace: Namespace holding the Application CR; defaults to this instance's cluster
+            resource_types: kubectl type names to inventory; defaults to discovering them.
+                A caller that polls passes the types it discovered once.
+
+        Returns:
+            (deletion underway, ArgoCD-owned resources left in the destination namespace,
+            inventory complete), or ``None`` when the Application or its namespace could
+            not be read. None is not "no progress", but it is no proof of progress either.
+        """
+        application = await self.get_argocd_application(app_name, namespace)
+        if application is None:
+            return None
+
+        metadata = application.get("metadata") or {}
+        underway = bool(metadata.get("deletionTimestamp"))
+        destination = ((application.get("spec") or {}).get("destination") or {}).get("namespace")
+        if not destination:
+            logger.debug(
+                f"ArgoCD Application '{app_name}' names no destination namespace, "
+                f"so there is no namespace to measure the cascade in"
+            )
+            return None
+
+        inventory = await self.list_tracked_resources(destination, resource_types)
+        if inventory is None:
+            return None
+        tracked, complete = inventory
+        return underway, len(tracked), complete
+
     async def terminate_argocd_application_operation(self, app_name: str, namespace: str | None = None) -> bool:
         """
         Remove any running operation from an ArgoCD Application.
 
         The operation is read first: a json-patch remove on an absent path is rejected
         with a generic 422 by this apiserver, so reading first avoids false errors when
-        there is no operation running.
+        there is no operation running. Zie features/argocd-vastgelopen-verwijdering.md.
 
         Args:
             app_name: The name of the ArgoCD Application
@@ -941,7 +1011,17 @@ class KubectlConnector:
             # reporting nothing, as long as the caller hears that it IS a part: the types
             # that stayed silent are exactly where a leftover resource hides.
             complete = False
-            logger.warning(f"Partial inventory of namespace '{namespace}' (kubectl reported: {stderr})")
+            failed_types = types_named_in_kubectl_error(stderr, types)
+            if failed_types:
+                logger.warning(
+                    f"Partial inventory of namespace '{namespace}': {len(failed_types)} of {len(types)} "
+                    f"types could not be listed ({', '.join(failed_types)}). kubectl reported: {stderr}"
+                )
+            else:
+                logger.warning(
+                    f"Partial inventory of namespace '{namespace}', and kubectl named none of the "
+                    f"{len(types)} queried types as the one that failed: {stderr}"
+                )
 
         try:
             data = json.loads(stdout)

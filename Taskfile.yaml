@@ -5,8 +5,7 @@ dotenv: ['.env', '.env-taskfile-current']
 vars:
   KIND_VERSION: 1.32.0
   # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
-  KIND_CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
-  CLUSTER_TYPE: '{{default "local" .CLUSTER_TYPE}}'
+  KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
   # Sandbox-builds draaien vaak op een gedeelde server naast andere sessies en het
   # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
@@ -45,30 +44,24 @@ tasks:
         echo "=================="
         echo ""
         echo "Available clusters:"
-        echo "1) local (kind cluster)"
-        echo "2) odcn-production"
-        echo "3) sandboxed-local (self-contained sandbox with Forgejo)"
+        echo "1) odcn-production"
+        echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
         echo ""
-        printf "Select cluster [1-3]: "
+        printf "Select cluster [1-2]: "
         read -r CLUSTER_CHOICE
 
         case $CLUSTER_CHOICE in
           1)
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
-            ;;
-          2)
             ENV_FILE=".env-taskfile-odcn-production"
             CLUSTER_NAME="odcn-production"
             ;;
-          3)
+          2)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
             ;;
           *)
-            echo "❌ Invalid selection. Defaulting to local cluster."
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
+            echo "❌ Invalid selection: '$CLUSTER_CHOICE'. Nothing changed."
+            exit 1
             ;;
         esac
 
@@ -438,198 +431,14 @@ tasks:
     cmds:
       - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
 
-  generate-local-ca:
-    desc: "Generate root CA for local development HTTPS (one-time)"
-    cmds:
-      - |
-        mkdir -p security/tls
-
-        if [ -f security/tls/ca.crt ]; then
-          echo "CA already exists at security/tls/ca.crt"
-          echo "To regenerate, first remove security/tls/ca.crt and security/tls/ca.key"
-          exit 0
-        fi
-
-        echo "Generating root CA for local development..."
-        openssl genrsa -out security/tls/ca.key 4096
-
-        # Create CA with proper key usage extensions for modern OpenSSL/Python
-        openssl req -x509 -new -nodes -key security/tls/ca.key \
-          -sha256 -days 3650 -out security/tls/ca.crt \
-          -subj "/CN=Kind Local Development CA/O=RIG" \
-          -addext "basicConstraints=critical,CA:TRUE" \
-          -addext "keyUsage=critical,keyCertSign,cRLSign"
-
-        echo ""
-        echo "CA generated successfully:"
-        echo "  Certificate: security/tls/ca.crt"
-        echo "  Private key: security/tls/ca.key"
-        echo ""
-        echo "Next steps:"
-        echo "  1. Install CA in OS trust store: task install-local-ca"
-        echo "  2. (Re)create Kind cluster: task create-local-kind-cluster"
-        echo "  3. Import CA to cert-manager: task import-ca-to-cluster"
-    silent: false
-
-  install-local-ca:
-    desc: "Install CA in local OS trust store (browsers will trust it)"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ]; then
-          echo "CA certificate not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "This will install the CA in your OS trust store."
-        echo "CA file: security/tls/ca.crt"
-        echo ""
-        printf "Continue? [y/N] "
-        read -r confirm
-        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-          echo "Cancelled."
-          exit 1
-        fi
-
-        if [ "$(uname)" = "Darwin" ]; then
-          echo "Installing CA in macOS Keychain..."
-          sudo security add-trusted-cert -d -r trustRoot \
-            -k /Library/Keychains/System.keychain security/tls/ca.crt
-          echo "CA installed in macOS Keychain"
-        elif [ -d /usr/local/share/ca-certificates ]; then
-          echo "Installing CA in Linux trust store..."
-          sudo cp security/tls/ca.crt /usr/local/share/ca-certificates/kind-local-ca.crt
-          sudo update-ca-certificates
-          echo "CA installed in Linux trust store"
-        else
-          echo "Unsupported OS. Please manually install security/tls/ca.crt in your trust store."
-          exit 1
-        fi
-    silent: false
-
-  import-ca-to-cluster:
-    desc: "Import CA into Kubernetes for cert-manager to use"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ] || [ ! -f "security/tls/ca.key" ]; then
-          echo "CA files not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "Importing CA into cert-manager namespace..."
-        kubectl create secret tls kind-ca-secret \
-          --cert=security/tls/ca.crt \
-          --key=security/tls/ca.key \
-          -n cert-manager \
-          --dry-run=client -o yaml | kubectl apply -f -
-
-        echo "CA imported to cluster as kind-ca-secret in cert-manager namespace"
-    silent: false
-
-  inject-ca-to-running-cluster:
-    desc: "Inject CA into all running Kind cluster nodes (alternative to recreating cluster)"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ]; then
-          echo "CA certificate not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "Injecting CA into all Kind cluster nodes..."
-        echo ""
-
-        # Get all nodes in the Kind cluster
-        NODES=$(docker ps --filter "name={{.KIND_CLUSTER_NAME}}" --format "{{`{{.Names}}`}}")
-
-        if [ -z "$NODES" ]; then
-          echo "No running nodes found for cluster '{{.KIND_CLUSTER_NAME}}'"
-          exit 1
-        fi
-
-        for NODE_NAME in $NODES; do
-          echo "Injecting CA into node: $NODE_NAME"
-
-          # Copy CA certificate into the node's trust store
-          docker cp security/tls/ca.crt "$NODE_NAME:/etc/ssl/certs/kind-local-ca.crt"
-
-          # Update the CA certificates bundle inside the node
-          docker exec "$NODE_NAME" update-ca-certificates
-
-          echo "  Done: $NODE_NAME"
-        done
-
-        echo ""
-        echo "CA injected into all nodes."
-        echo "Note: Existing pods may need to be restarted to pick up the new CA."
-        echo "New pods will automatically trust the CA."
-    silent: false
-
-  configure-coredns-kind-domains:
-    desc: "Configure CoreDNS to resolve *.kind domains to ingress controller (re-runnable)"
-    cmds:
-      - |
-        echo "🔧 Configuring CoreDNS to resolve *.kind domains..."
-        echo ""
-
-        # Get current CoreDNS Corefile
-        CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
-
-        # Check if rewrite rule already exists
-        if echo "$CURRENT_COREFILE" | grep -q "name regex.*\.kind"; then
-          echo "✅ CoreDNS rewrite rule for *.kind already exists"
-          echo "   No changes needed"
-          exit 0
-        fi
-
-        echo "📝 Adding rewrite rule for *.kind domains..."
-        echo "   All *.kind domains will resolve to: ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-        echo ""
-
-        # Create new Corefile with rewrite rule inserted after 'ready' line
-        NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
-          /ready/ {
-            print
-            print "    rewrite stop {"
-            print "        name regex (.+)\\.kind ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-            print "        answer auto"
-            print "    }"
-            next
-          }
-          {print}
-        ')
-
-        # Create a temporary file with the patch
-        TEMP_FILE=$(mktemp)
-        cat > "$TEMP_FILE" <<EOF
-        {
-          "data": {
-            "Corefile": $(echo "$NEW_COREFILE" | jq -Rs .)
-          }
-        }
-        EOF
-
-        # Apply the patch
-        echo "🔄 Patching CoreDNS ConfigMap..."
-        kubectl patch configmap coredns -n kube-system --type merge --patch-file "$TEMP_FILE"
-
-        # Clean up temp file
-        rm "$TEMP_FILE"
-
-        # Restart CoreDNS to apply changes
-        echo "🔄 Restarting CoreDNS deployment..."
-        kubectl rollout restart deployment coredns -n kube-system
-
-        echo ""
-        echo "✅ CoreDNS configured successfully!"
-        echo "   All *.kind domains now resolve to ingress-nginx-controller"
-        echo ""
-        echo "💡 You can verify by running:"
-        echo "   kubectl run -it --rm --restart=Never --image=busybox:1.28 dnstest -- nslookup keycloak.kind"
-    silent: false
-
   bootstrap-argo-system:
     desc: "Apply minimal bootstrap (namespace + ArgoCD) to start the GitOps process"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
       KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
     cmds:
@@ -694,7 +503,7 @@ tasks:
   bootstrap-backup-destination:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
-      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn | local
+      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn
       KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
     cmds:
@@ -726,40 +535,6 @@ tasks:
     dir: operations-manager/python
     cmds:
       - uv run python scripts/log_watch/watch.py --loop
-
-  uninstall-local-kind-cluster:
-    desc: "Uninstall local set-up by deleting the Kind cluster."
-    cmds:
-      - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
-      - echo -e "✅ Kind cluster '{{.KIND_CLUSTER_NAME}}' successfully uninstalled\n"
-    silent: true
-
-  create-local-kind-cluster:
-    desc: "Create a local Kind cluster with ingress support"
-    cmds:
-      - |
-        echo "========================================="
-        echo "Creating Kind cluster: {{.KIND_CLUSTER_NAME}}"
-        echo "========================================="
-        echo ""
-
-        # Check if cluster already exists
-        if kind get clusters | grep -q "^{{.KIND_CLUSTER_NAME}}$"; then
-          echo "⚠️  Cluster '{{.KIND_CLUSTER_NAME}}' already exists"
-          echo "To recreate, first run: task uninstall-local-kind-cluster"
-          exit 1
-        fi
-
-        # Create cluster from config
-        echo "📦 Creating cluster from kind-config.yaml..."
-        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind-config.yaml
-
-        echo ""
-        echo "✅ Kind cluster created successfully!"
-        echo ""
-        echo "Cluster details:"
-        kubectl cluster-info --context kind-{{.KIND_CLUSTER_NAME}}
-    silent: false
 
   install-cnpg-operator:
     desc: "Install CloudNativePG operator for PostgreSQL"
@@ -832,59 +607,15 @@ tasks:
         echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
     silent: true
 
-  setup-local-cluster:
-    desc: "Complete setup: create cluster, install operators, and bootstrap infrastructure"
-    cmds:
-      # Generate keys and certificates first (before cluster creation)
-      - task: generate-age-key
-      - task: generate-local-ca
-      # Create cluster (mounts CA via extraMounts)
-      - task: create-local-kind-cluster
-      # Install cluster components
-      - task: install-ingress-nginx
-      - task: install-cnpg-operator
-      - task: configure-coredns-kind-domains
-      - task: prepare-argocd-operator
-      - task: update-cmp-kustomize-sops
-      # Generate secrets
-      - task: generate-bootstrap-secrets-for-cluster
-      - task: generate-infrastructure-secrets-for-cluster
-      # Deploy operations manager
-      - task: update-operations-manager
-      # Import CA to cert-manager (after cluster is ready)
-      - task: import-ca-to-cluster
-      - |
-        echo ""
-        echo "========================================="
-        echo "Local cluster setup complete!"
-        echo "========================================="
-        echo ""
-        echo "Next steps:"
-        echo ""
-        echo "1. Install CA in your OS trust store (one-time, for browser HTTPS):"
-        echo "   task install-local-ca"
-        echo ""
-        echo "2. Start git daemon (for infrastructure repo):"
-        echo "   git daemon --base-path=. --export-all --reuseaddr --informative-errors --verbose --enable=upload-pack --port=9090 --listen=0.0.0.0 --log-destination=stderr"
-        echo ""
-        echo "3. Bootstrap ArgoCD:"
-        echo "   task bootstrap-argo-system"
-        echo ""
-        echo "4. Add to /etc/hosts:"
-        echo "   127.0.0.1 argo.kind keycloak.kind minio.kind operations-manager.kind forgejo.kind"
-        echo ""
-        echo "5. Access services:"
-        echo "   - ArgoCD: https://argo.kind (admin/admin)"
-        echo "   - Forgejo: https://forgejo.kind (rig-admin/admin1234)"
-        echo "   - Keycloak: https://keycloak.kind"
-        echo "   - Operations Manager: https://operations-manager.kind"
-    silent: false
-
   generate-env-secrets-for-operations-manager:
     desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
@@ -962,68 +693,15 @@ tasks:
         echo "Namespace: {{.NAMESPACE}}"
     silent: true
 
-  update-operations-manager:
-    desc: "Build and deploy the operations-manager to the current cluster"
-    vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-    cmds:
-      # Na sandbox:setup leest deze taak de sandbox-env, waarvan de overlay naar de
-      # registry wijst: kind load zou stil de vorige build uitrollen. Eerste stap, want
-      # deps draaien al vóór een precondition.
-      - |
-        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
-          echo "Dit is een sandbox: gebruik task sandbox:update-operations-manager." >&2
-          exit 1
-        fi
-      - task: generate-env-secrets-for-operations-manager
-      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
-      # version.json in die er toevallig lag, en meldt de pod een andere commit.
-      - task: version:generate
-      - |
-        echo "Building operations-manager Docker image with BuildKit optimizations..."
-        docker buildx build \
-          --target application \
-          --cache-from operations-manager:latest \
-          --cache-from operations-manager:cache-base-system \
-          --cache-from operations-manager:cache-dependencies \
-          --load \
-          -t operations-manager \
-          -f operations-manager/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
-      - |
-        echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
-      - echo -e "✅ Operations manager updated successfully!"
-    silent: true
-
-  skaffold-dev:
-    desc: "Start Skaffold with hot-reload mode for fast development iteration"
-    cmds:
-      - echo "Starting Skaffold in hot-reload mode..."
-      - echo "Files will sync automatically and uvicorn will auto-reload"
-      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --kube-context kind-{{.KIND_CLUSTER_NAME}} --port-forward -f operations-manager/skaffold.yaml
-
-  skaffold-debug:
-    desc: "Instructions for running Skaffold in debug mode"
-    cmds:
-      - echo 'To enable debug mode'
-      - echo '1. Edit bootstrap/rig-system/kustomize/operations-manager/overlays/local/kustomization.yaml'
-      - echo '2. Comment out enable-hot-reload.yaml patch'
-      - echo '3. Uncomment enable-debug.yaml patch'
-      - echo '4. Run kubectl apply -k bootstrap/rig-system/kustomize/operations-manager/overlays/local'
-      - echo '5. Wait for pod restart with kubectl rollout status deployment/operations-manager -n rig-system'
-      - echo '6. Start Skaffold with task skaffold-dev'
-      - echo '7. In IntelliJ Run → Debug Remote Debug - Operations Manager'
-      - echo '8. Debugger will attach to localhost 5678'
-
   deploy-operations-manager:
     desc: "Deploy the operations-manager to the current cluster"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
@@ -1032,9 +710,8 @@ tasks:
         # On odcn-production the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where apply may see nothing new: local loads
-        # the image into kind under a fixed `:latest`, and the sandbox overlay keeps the
-        # tag of its last configure.
+        # briefly see three pods. Only restart where apply may see nothing new: the sandbox
+        # overlay keeps the tag of its last configure.
         if [ "{{.CLUSTER}}" = "odcn-production" ]; then
           echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         else
@@ -1321,23 +998,6 @@ tasks:
         echo "  task deploy-operations-manager CLUSTER_TYPE=odcn-production"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
-    silent: true
-
-  update-cmp-kustomize-sops:
-    desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
-    vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-    cmds:
-      - |
-        echo "Building cmp-kustomize-sops Docker image..."
-        docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
-      - |
-        echo "Restarting ArgoCD repo-server to pick up new CMP image..."
-        kubectl rollout restart deployment argocd-repo-server -n {{.RIG_NAMESPACE}}
-      - echo -e "✅ CMP kustomize-sops image updated successfully!"
     silent: true
 
   publish-cmp-kustomize-sops:
@@ -2298,6 +1958,8 @@ tasks:
       waar geen enkele Application naar verwijst. Meldt alleen; met DELETE=1 verwijdert hij
       wat hij vond. Meldt hij SCHOON, dan is er niets achtergebleven.
 
+      Het cluster komt uit `task select-cluster`; zonder die keuze weigert hij.
+
         task argocd-orphan-sweep                                  # het hele cluster
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
         REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
@@ -2307,11 +1969,13 @@ tasks:
 
       In een Capsule-tenant (odcn-production) is GITOPS of REPO nodig: het account mag niet
       elk type lijsten, en dan beslist wat de deployments-repo rendert of een namespace
-      volledig gemeten is. Het cluster komt uit `task select-cluster`.
+      volledig gemeten is.
 
       DELETE=1 samen met REPO weigert: een map in de deployments-repo wordt dan beoordeeld
       op de Applications die het cluster op dit moment heeft. Gebruik GITOPS, dan beschermt
       ook wat het projectbestand nog vraagt.
+    requires:
+      vars: [CLUSTER_TYPE]
     dir: operations-manager/python
     # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
     # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
@@ -2616,6 +2280,7 @@ tasks:
       - task: prepare-argocd-operator
       - task: bootstrap-argo-system
         vars:
+          CLUSTER_TYPE: sandboxed-local
           KEY_FILE: security/sandbox-key.txt
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready

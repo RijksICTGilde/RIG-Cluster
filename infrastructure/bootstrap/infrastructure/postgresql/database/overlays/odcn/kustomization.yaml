@@ -103,7 +103,7 @@ patches:
       # van voren af aan. Gemeten op 1 september: de pod werd elke ~45 seconden
       # vervangen en de database was daardoor niet stabiel bereikbaar.
       #
-      # Alleen in deze overlay. Base en de lokale overlays hebben geen
+      # Alleen in deze overlay. Base en de sandbox-overlay hebben geen
       # admission-herschrijving en geen toegang tot rcr, dus die houden ghcr.io.
       - op: replace
         path: /spec/imageName

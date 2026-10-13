@@ -60,7 +60,8 @@
         "services/keycloak/config/restrict-access/role",
         "services/keycloak/config/restrict-access/error-message",
         "services/keycloak/config/additional-clients",
-        "services/keycloak/config/account-link"
+        "services/keycloak/config/account-link",
+        "services/keycloak/config/logout-path"
       ],
       "post_save_action": "process_project",
       "section_id": "keycloak-config",
@@ -379,7 +380,8 @@
         "services/keycloak/config/restrict-access/role",
         "services/keycloak/config/restrict-access/error-message",
         "services/keycloak/config/additional-clients",
-        "services/keycloak/config/account-link"
+        "services/keycloak/config/account-link",
+        "services/keycloak/config/logout-path"
       ],
       "post_save_action": "process_project",
       "section_id": "keycloak-config",

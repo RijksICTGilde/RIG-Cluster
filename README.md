@@ -37,7 +37,6 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 | Type | Description |
 |------|-------------|
 | `sandboxed-local` | Self-contained Kind cluster with in-cluster Forgejo, real TLS (`*.sandbox.rijksapp.dev`) |
-| `local` | Kind cluster with external Git (GitHub + git daemon), self-signed CA |
 | `odcn-production` | Production cluster in ODC-Noord |
 
 ## Services
@@ -54,7 +53,6 @@ Project definitions go in, ArgoCD applications and deployment manifests come out
 ## Documentation
 
 - [Getting Started](docs/getting-started.md) - local setup guide
-- [Local Kind Cluster Setup](docs/local-kind-cluster-setup.md) - alternative local setup with external Git
 - [Keycloak Configuration](docs/keycloak.md) - Keycloak administration
 - [Keycloak YAML Configuration](docs/keycloak-yaml-configuration.md) - declarative Keycloak setup
 
