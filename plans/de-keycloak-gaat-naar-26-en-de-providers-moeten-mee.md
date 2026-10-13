@@ -74,7 +74,7 @@ Ga dus vóór de imagebouw na of MinBZK/keycloak-theme een release heeft die 26 
 
 ## De opties: waar de waarheid hoort te liggen
 
-De opties staan vandaag op vier plekken: ingebakken in `kc.sh build` (`Dockerfile:40-46`), als `args` in de deployment (`base/deployment.yaml:53-54`), als `env` in diezelfde deployment (`:56-146`), en als JSON-patch in elk van de drie overlays. Twee ervan spreken elkaar al tegen, en de augmentatie bij elke podstart is het zichtbare gevolg van dezelfde verspreiding.
+De opties staan vandaag op vier plekken: ingebakken in `kc.sh build` in de Dockerfile, als `args` in de deployment (`base/deployment.yaml:53-54`), als `env` in diezelfde deployment (`:56-146`), en als JSON-patch in elk van de drie overlays. Twee ervan spreken elkaar al tegen, en de augmentatie bij elke podstart is het zichtbare gevolg van dezelfde verspreiding.
 
 Alle manifestverwijzingen in deze paragraaf zijn relatief aan `infrastructure/bootstrap/infrastructure/keycloak/controller/`.
 
@@ -82,7 +82,7 @@ Alle manifestverwijzingen in deze paragraaf zijn relatief aan `infrastructure/bo
 
 1. **Een build-time-optie staat alleen in de Dockerfile.** Dat zijn `db`, `health-enabled`, `metrics-enabled`, `features` en de providerkeuzes. Staat dezelfde waarde ook in de runtime-omgeving, dan augmenteert de pod alsnog; dat is precies wat er vandaag gebeurt. De RC-212-reworkronde beslist hoe, deze migratie erft die beslissing.
 2. **Een runtime-optie die op elk cluster hetzelfde is, staat als `KC_`-variabele in de basis, en niet in `args`.** `args` is één lijst die een overlay alleen in zijn geheel kan vervangen; een env-lijst wordt op naam samengevoegd, en `overlays/odcn/patch-mail-relay-host.yaml:16-18` leunt daar al op. Wat er in `args` overblijft is `["start"]`.
-3. **Een verschil per cluster staat in de overlay, als merge-patch op de NAAM van de variabele.** Vandaag doen alle drie de overlays dat met een JSON-patch op index 6, met een `op: test` ervoor (`overlays/local/kustomization.yaml:36-41`, `overlays/sandboxed-local/kustomization.yaml:51-56`, `overlays/odcn/kustomization.yaml:59-64`). Die guard doet zijn werk, maar hij pint de ORDE van de eerste zeven variabelen vast: haal je `KC_PROXY_HEADERS` op `:66` weg, dan schuift `KC_HOSTNAME` naar index 5 en falen alle drie de overlays bij `kustomize build`. Luid falen is goed, drie keer moeten meeverhuizen is onnodig. De mail-relay-patch laat zien hoe het zonder index kan.
+3. **Een verschil per cluster staat in de overlay, als merge-patch op de NAAM van de variabele.** Vandaag doen alle drie de overlays dat met een JSON-patch op index 4, met een `op: test` op de naam van die index ervoor. Die guard doet zijn werk, maar hij pint de ORDE van de eerste vijf variabelen vast: haal je `KC_PROXY_HEADERS` weg, dan schuift `KC_HOSTNAME` naar index 3 en falen alle drie de overlays bij `kustomize build`. Luid falen is goed, drie keer moeten meeverhuizen is onnodig. De mail-relay-patch laat zien hoe het zonder index kan.
 
 Per variabele uit de gemeten podomgeving:
 
@@ -120,8 +120,8 @@ Twee voorwaarden vóór stap 1, en ze staan er niet voor de vorm:
 Daarna:
 
 1. `keycloak.version` op `26.7.4` in `keycloak-migration/relay-email-sender/pom.xml:19` en `keycloak-migration/custom-mapper/pom.xml:19`, en dezelfde versie in `images/keycloak-zad/Dockerfile:25`. Toets: `test_de_basisversie_is_die_waar_de_modules_tegen_bouwen` blijft groen, en die toets is de reden dat dit niet half kan.
-2. Artefactversies verhogen (custom-mapper naar 1.2.0, relay naar 1.1.0), met bij de relay `RelayMailConfig.VERSION` mee (`RelayVersieTest` pint die twee aan elkaar) en de echo's in `Taskfile.yaml:1745` en `:1774`, die de jarnaam uitschrijven.
-3. `mvn -B package` per module, via `task test-keycloak-custom-mapper` en `task test-keycloak-relay-email-sender`. CI draait dit bij elke pull request (job `keycloak-providers` in `.github/workflows/ci.yml:70-83`). Repareer wat omvalt, en lees de tabel hierboven: dat een module compileert, betekent bij drie van de zes providers niets.
+2. Artefactversies verhogen (custom-mapper naar 1.2.0, relay naar 1.1.0), met bij de relay `RelayMailConfig.VERSION` mee (`RelayVersieTest` pint die twee aan elkaar) en de echo's in de taken `build-keycloak-custom-mapper` en `build-keycloak-relay-email-sender`, die de jarnaam uitschrijven.
+3. `mvn -B package` per module, via `task test-keycloak-custom-mapper` en `task test-keycloak-relay-email-sender`. CI draait dit bij elke pull request (job `keycloak-providers` in `.github/workflows/ci.yml`). Repareer wat omvalt, en lees de tabel hierboven: dat een module compileert, betekent bij drie van de zes providers niets.
 4. De optie-opruiming uit de vorige paragraaf, inclusief `strategy: Recreate` en de drie overlaypatches.
 5. `task publish-keycloak-image`. Die bouwt, pusht naar ghcr, controleert of de tag anoniem te halen is en pint alleen de sandbox-overlay. Faalt `kc.sh build` op het provider-id, dan zingt de canarie hier en niet in een pod.
 6. `task sandbox:sync`, en daarna de volledige toetsenlijst uit "Klaar als".
