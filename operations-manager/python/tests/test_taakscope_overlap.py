@@ -295,3 +295,77 @@ async def test_find_blocking_task_is_none_voor_een_taak_die_al_draait(orm_db) ->
     draait = await _rij(scope=["pr-244"], status="running", seconden=10)
 
     assert await _svc().find_blocking_task(draait) is None
+
+
+# ---------------------------------------------------------------------------
+# 9. RC-238: de delete en de re-add van 29 september
+# ---------------------------------------------------------------------------
+
+
+async def test_rc238_een_re_add_wacht_op_de_delete_van_dezelfde_deployment(orm_db) -> None:
+    """Het incident van 29 september, langs ``create_task`` en niet langs een gezette scope.
+
+    Op 29 september gingen drie deletes van ``nd-j7s`` tegelijk, en drie minuten later
+    voegde de gebruiker dezelfde deployments weer toe. Die twee opdrachten mogen nooit
+    naast elkaar lopen: de een haalt de Application weg waar de ander hem net neerzet.
+
+    De overlapmatrix hierboven zet de scope met de hand, en ``test_create_task_zet_de_scope``
+    meet alleen de afleiding. Deze toets rijgt die twee aan elkaar voor precies de vorm uit
+    het incident: twee TASKTYPES die niets van elkaar weten komen via de afleiding op
+    dezelfde scope uit, en pas daardoor ziet de claim-grendel ze.
+    """
+    svc = _svc(cluster="odcn-production")
+    verwijder = await svc.create_task(
+        task_type="delete_deployment",
+        project_name="nd-j7s",
+        deployment_name="pr-63",
+        cluster="odcn-production",
+        payload={"deployment_name": "pr-63"},
+    )
+    opnieuw = await svc.create_task(
+        task_type="upsert_deployment",
+        project_name="nd-j7s",
+        deployment_name="pr-63",
+        cluster="odcn-production",
+        payload={"image": "app:pr-63"},
+    )
+
+    eerste = await svc.claim_next_task(cluster="odcn-production")
+    assert eerste is not None
+    assert eerste["task_id"] == verwijder["task_id"], "de delete is de oudste en gaat voor"
+
+    assert await svc.claim_next_task(cluster="odcn-production") is None, (
+        "de re-add van pr-63 moet achter de delete van pr-63 blijven wachten"
+    )
+    assert (await svc.get_task(opnieuw["task_id"]))["status"] == "pending", (
+        "overgeslagen tot de volgende poll, niet weggegooid"
+    )
+
+
+async def test_rc238_een_re_add_van_een_andere_deployment_loopt_er_wel_naast(orm_db) -> None:
+    """De andere helft van dezelfde eis: pr-64 hoort niet op pr-63 te wachten.
+
+    Drie PR-deployments in een namespace zijn drie scopes, en ze serieel maken zou elke
+    PR-stroom achter zijn buurman zetten.
+    """
+    svc = _svc(cluster="odcn-production")
+    verwijder = await svc.create_task(
+        task_type="delete_deployment",
+        project_name="nd-j7s",
+        deployment_name="pr-63",
+        cluster="odcn-production",
+        payload={"deployment_name": "pr-63"},
+    )
+    buur = await svc.create_task(
+        task_type="upsert_deployment",
+        project_name="nd-j7s",
+        deployment_name="pr-64",
+        cluster="odcn-production",
+        payload={"image": "app:pr-64"},
+    )
+
+    geclaimd = [await svc.claim_next_task(cluster="odcn-production") for _ in range(2)]
+
+    assert [t["task_id"] for t in geclaimd if t] == [verwijder["task_id"], buur["task_id"]], (
+        "beide taken horen geclaimd te worden, in de volgorde waarin ze zijn aangemaakt"
+    )

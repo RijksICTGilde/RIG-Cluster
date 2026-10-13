@@ -33,7 +33,7 @@ There is **no remote server and no shared state**. If a colleague also runs the 
 
 ## What runs in it
 
-`sandboxed-local` is one of three cluster types (alongside `local` and `odcn-production`). Unlike `local` (external GitHub + git daemon), the sandbox runs an **in-cluster Forgejo** that is the GitOps source of truth. `task sandbox:setup` (~5-10 min) brings up: ingress-nginx, PostgreSQL (CNPG), Forgejo, Keycloak, MinIO, a container registry, Prometheus, ArgoCD, and the Operations Manager.
+`sandboxed-local` is a cluster type alongside `odcn-production`. The sandbox runs an **in-cluster Forgejo** that is the GitOps source of truth. `task sandbox:setup` (~5-10 min) brings up: ingress-nginx, PostgreSQL (CNPG), Forgejo, Keycloak, MinIO, a container registry, Prometheus, ArgoCD, and the Operations Manager.
 
 ZAD drives three Forgejo repos, exactly as in production: `zad-projects` (one YAML per project, source of truth), `zad-argo-user-applications`, and `zad-deployments`.
 

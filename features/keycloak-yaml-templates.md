@@ -236,6 +236,11 @@ users:
     removeDefaultRoles: false  # Set true to remove default role assignments first
 ```
 
+**A user created here starts out unconfirmed.** `create_user` sets `emailVerified: false` plus a
+`VERIFY_EMAIL` required action for any item with an `email`, and nothing in OPI sends that mail
+or clears the flag again. Behind an authorization wall such an account is rejected for good; see
+`docs/KNOWN-ISSUES.md`.
+
 #### User Options
 
 | Property | Type | Description |

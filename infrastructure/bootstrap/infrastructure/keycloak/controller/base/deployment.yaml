@@ -115,7 +115,7 @@ spec:
             # een veld dat een projectbeheerder kan omzetten. Zie
             # keycloak-migration/relay-email-sender/ en features/keycloak-mail.md.
             #
-            # De basis is het cluster met de relay in rig-ron (local en sandboxed-local);
+            # De basis is het cluster met de relay in rig-ron (sandboxed-local);
             # de odcn-overlay zet de host om naar rig-prd-ron.
             - name: ZAD_MAIL_RELAY_HOST
               value: "rig-mail-relay.rig-ron.svc.cluster.local"

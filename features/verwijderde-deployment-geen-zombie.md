@@ -65,11 +65,15 @@ in het projectbestand staan, faalt de taak met de fout van stap 2 of 7, en kan e
 het opnieuw proberen. De overgeslagen stap komt als operatie terug met
 `status: "skipped"` en de reden erbij.
 
-De uitgestelde opruiming uit `features/argocd-vastgelopen-verwijdering.md` blokkeert stap 8
-niet. Die laat de manifestmap bewust staan omdat de Application nog niet verifieerbaar weg
-is, maar schrijft er een rij bij die hem terugvindt. Dat is een andere situatie dan een
-mislukte git-bewerking, die een map achterlaat die niemand meer kent. Het gedrag van
-force-mode verandert hier niet.
+RC-238 heeft daar een derde voorwaarde bij gezet, om een eigen reden: ook een cluster-delete
+die niet BEVESTIGD is houdt stap 8 tegen (zie "De project file volgt het cluster" in
+`features/argocd-vastgelopen-verwijdering.md`). Dat raakt de uitgestelde opruiming, die de
+manifestmap bewust laat staan omdat de Application nog niet verifieerbaar weg is: die liep
+voorheen door naar stap 8 en doet dat nu niet meer. De rij die de map terugvindt wordt nog
+steeds geschreven, en de deployment blijft in het projectbestand staan, dus beide kanten
+vragen nog om dezelfde stand en een retry kan het afmaken. Een mislukte git-bewerking blijft
+een andere zaak: die laat een map achter die niemand meer kent. Het gedrag van force-mode
+verandert hier niet.
 
 ## Waar het staat
 

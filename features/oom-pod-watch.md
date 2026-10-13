@@ -186,8 +186,8 @@ over alle pods open en remedieert zelf. `watches_pods_for_oom(cluster)` is de en
 De weg naar de pods verschilt per cluster, en dat is precies wat stap 6 van het plan (de
 vlag aanzetten op odcn-production) moet weten.
 
-Op `local` en `sandboxed-local` loopt hij via de ClusterRole van OPI
-(`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/cluster-role.yaml`).
+Op `sandboxed-local` loopt hij via de ClusterRole van OPI
+(`bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/cluster-role.yaml`).
 Die heeft `pods: [create, get, list, delete, watch]` cluster-breed, en een watch gebruikt
 dezelfde rechten als een list, dus daar is niets extra's nodig. Zo is de watch ook
 nagemeten.

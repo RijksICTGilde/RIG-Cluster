@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +45,44 @@ from opi.utils.naming import (
 from opi.utils.project_utils import project_level_deployment
 
 logger = logging.getLogger(__name__)
+
+#: Hoeveel de wachten van EEN taak samen mogen doorlopen ZOLANG de cascade zichtbaar
+#: vordert. Vordert er niets meer, dan stopt de wacht op de stilstand en niet op deze grens.
+#:
+#: Een budget per taak en niet per wacht, omdat twee van de drie aanroepers in een lus over
+#: de deployments staan: per wacht zou een project met drie deployments aan puur wachten al
+#: boven TASK_WORKER_MAX_DURATION (1800s) uitkomen, en die grens kapt de handler HARD af,
+#: dus zonder force-route en zonder resultaat. 600s plus de gewone vensters van de overige
+#: wachten (200s per deployment, 60s voor de infra-Application) laat ruimte voor de
+#: force-route en het gitwerk daarna.
+#:
+#: Het budget wordt op de KLOK afgerekend en niet op de vensters die zijn uitgedeeld. Dat is
+#: nodig omdat een poll meer kost dan zijn retry_delay: de inventaris van de doelnamespace was
+#: op de sandbox 1,8s op een namespace met 271 resources. Een wacht kan zijn eigen venster in
+#: wandkloktijd dus overschrijden, en dat gaat dan van de volgende wacht af.
+DELETION_PROGRESS_BUDGET_SECONDS = 600
+
+#: Het budget loopt per asyncio-taak, en dat is precies een taak van de task worker: die
+#: voert elke handler als eigen taak uit. Een parameter zou langs drie aanroepers en twee
+#: lussen in project_manager moeten reizen die er zelf niets mee doen.
+_DELETION_PROGRESS_DEADLINE: ContextVar[float | None] = ContextVar("deletion_progress_deadline", default=None)
+
+
+def deletion_progress_window() -> int | None:
+    """Wat deze wacht nog van het voortgangsbudget van zijn taak mag gebruiken.
+
+    ``None`` betekent dat het budget op is. Die wacht houdt dan het gewone venster en loopt
+    dus netjes rood af, met de force-route erachter, in plaats van door de harde taakgrens
+    midden in de delete afgekapt te worden.
+    """
+    now = time.monotonic()
+    deadline = _DELETION_PROGRESS_DEADLINE.get()
+    if deadline is None:
+        _DELETION_PROGRESS_DEADLINE.set(now + DELETION_PROGRESS_BUDGET_SECONDS)
+        return DELETION_PROGRESS_BUDGET_SECONDS
+    remaining = int(deadline - now)
+    return remaining if remaining > 0 else None
+
 
 # How long to wait for the cascade an Application kept its finalizer for. All 15 forced
 # deletes measured on 9 October 2026 were gone from the cluster within a few minutes.
@@ -771,6 +811,7 @@ class DeleteProjectManager:
                     infra_app_name,
                     max_retries=20,
                     kubectl_connector=self.project_manager._kubectl_connector,
+                    progress_window_seconds=deletion_progress_window(),
                 )
 
                 if deletion_complete:
@@ -1569,6 +1610,7 @@ class DeleteProjectManager:
                         max_retries=40,
                         retry_delay=5,
                         kubectl_connector=self.project_manager._kubectl_connector,
+                        progress_window_seconds=deletion_progress_window(),
                     )
 
                     if deletion_complete:
@@ -1987,14 +2029,24 @@ class DeleteProjectManager:
             # the git race) is success, not an error; on a push conflict we re-read the
             # remote and re-apply instead of failing with "manual intervention required".
             #
-            # Haalt het alleen als git leeg is voor deze deployment (RC-254).
-            # Anders geeft het 404 en kan een retry het niet meer repareren.
-            if not argocd_file_removed or not manifest_folder_removed:
-                reason = (
-                    "ArgoCD application file still in git"
-                    if not argocd_file_removed
-                    else "deployment manifests still in git"
-                )
+            # Alleen als git leeg is voor deze deployment (RC-254): anders geeft stap 8 een
+            # 404 en kan een retry het niet meer repareren.
+            #
+            # En alleen als de cluster-delete BEVESTIGD is. Het projectbestand is de
+            # gewenste staat die elke latere run leest, dus een verwijdering die gecommit
+            # wordt terwijl de resources nog staan laat niemand aan beide kanten nog om de
+            # verwijdering vragen. De entry laten staan houdt de delete herhaalbaar.
+            #
+            # delete_deployment_from_yaml_change heeft met opzet geen tegenhanger van deze
+            # stap: daar heeft de gebruiker de entry zelf weggehaald, dus het bestand is de
+            # INVOER en er is niets om terug te schrijven.
+            if not argocd_file_removed or not manifest_folder_removed or not argocd_app_deleted:
+                if not argocd_file_removed:
+                    reason = "ArgoCD application file still in git"
+                elif not manifest_folder_removed:
+                    reason = "deployment manifests still in git"
+                else:
+                    reason = "ArgoCD application not confirmed deleted"
                 deletion_results["operations"].append(
                     {
                         "type": "project_file_update",
@@ -2010,6 +2062,13 @@ class DeleteProjectManager:
                     project_name,
                     reason,
                 )
+                if not argocd_app_deleted:
+                    # De gitfouten hierboven melden zich zelf al als fout; een onbevestigde
+                    # cluster-delete deed dat niet, en zonder fout eindigt de taak groen.
+                    deletion_results["errors"].append(
+                        f"Deployment '{deployment_name}' was kept in the project file: the ArgoCD "
+                        f"application was not confirmed deleted"
+                    )
             else:
                 try:
                     logger.info(
@@ -2309,6 +2368,7 @@ class DeleteProjectManager:
                     max_retries=40,
                     retry_delay=5,
                     kubectl_connector=self.project_manager._kubectl_connector,
+                    progress_window_seconds=deletion_progress_window(),
                 )
                 deletion_results["operations"].append(
                     {

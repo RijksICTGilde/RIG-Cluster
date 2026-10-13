@@ -29,6 +29,7 @@ FILENAME_PREFIX = f"{ServiceType.IMAGE_REGISTRIES.value}-"
 #: Terugval als de clusterconfig geen ``organization_api_version`` noemt: de gemeten
 #: ODCN-waarde, zie features/image-registries.md.
 DEFAULT_ORGANIZATION_API_VERSION = "quay.k8s.rijksapps.nl/v1alpha1"
+DEFAULT_QUOTA_LIMIT_GIB = 10
 
 
 class MissingRegistryCredentialsError(ValueError):
@@ -100,6 +101,7 @@ class QuayProxyOrganizationBackend:
         cluster_config = get_image_registries_config(ctx.cluster)
         customer_name = cluster_config.get("customer_name", "")
         rotation_days = cluster_config.get("rotation_days", 90)
+        quota_limit_gib = cluster_config.get("quota_limit_gib", DEFAULT_QUOTA_LIMIT_GIB)
         organization = organization_name(str(upstream), customer_name, ctx.project_name)
 
         password = _plain_password(registry, ctx)
@@ -138,6 +140,7 @@ class QuayProxyOrganizationBackend:
                     "credentials_secret": credentials_secret,
                     "pull_secret_name": pull_secret_name(str(upstream), customer_name, ctx.project_name),
                     "rotation_days": rotation_days,
+                    "quota_limit_gib": quota_limit_gib,
                 },
             )
         )

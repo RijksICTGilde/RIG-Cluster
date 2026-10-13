@@ -11,7 +11,7 @@
 # hij geeft elk bericht integraal terug via een HTTP-API. Daarmee wordt een identiteits-
 # regel een assertie in een test in plaats van een belofte in een comment.
 #
-# ALLEEN VOOR local EN sandboxed-local. Deze map wordt niet vanuit de odcn-overlay
+# ALLEEN VOOR sandboxed-local. Deze map wordt niet vanuit de odcn-overlay
 # ingeladen, dus dit image hoeft niet langs de registry en het signature-beleid van ODCN.
 #
 # GEEN AUTHENTICATIE OP DE SINK, en dat is niet slordig maar bruikbaar. De relay biedt aan

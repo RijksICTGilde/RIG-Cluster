@@ -36,10 +36,15 @@ docker push your-registry.com/rig-cmp-argo-kustomize-sops:latest
 docker buildx build --platform linux/amd64,linux/arm64 -t ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest --push .
 
 LOCAL Kind, NOTE: use the correct clustername
-kind load docker-image rig-cmp-argo-kustomize-sops:latest --name gitops-fluxcd
+kind load docker-image rig-cmp-argo-kustomize-sops:latest --name rig-sandbox
 
 To run locally with shell access:
 docker run --rm -it --entrypoint /bin/bash rig-cmp-argo-kustomize-sops:latest
 
-task bootstrap-argo-system
+task bootstrap-argo-system CLUSTER_TYPE=sandboxed-local KEY_FILE=security/sandbox-key.txt
 kubectl rollout restart deployment argocd-repo-server -n rig-system
+
+jupyterhub-hub en jupyterhub-user: de twee images van de JupyterHub-POC (RC-258). De hub is een
+ZAD-component dat met KubeSpawner een pod per gebruiker start; de user-image is JupyterLab met VS
+Code (code-server) als tegel. Alleen voor de sandbox, rechtstreeks naar de in-cluster registry. Zie
+images/jupyterhub-hub/README.md, images/jupyterhub-user/README.md en docs/jupyterhub-poc-verslag.md.

@@ -481,7 +481,7 @@ De acht bronnen uit de opdracht zijn een startpunt en geen afbakening. Dit kwam 
 | Een bijlage is toegevoegd, gewijzigd of verwijderd | de taken `configure_attachment` en `delete_attachment`; dienst `opi/services/catalog/attachments/` | deployment | projectbeheerder | ter informatie | postvak |
 | Een geheim of sleutel is geroteerd | **bestaat nog niet als gebeurtenis**: rotatie gebeurt bij het opnieuw verwerken van een project | project | projectbeheerder | ter informatie | postvak |
 | Een dienst is aan een project toegevoegd of eruit gehaald | de taken `add_service` en de dienstverwijdering (`handle_service_removal` per dienst) | project | projectbeheerder | ter informatie | postvak |
-| De bootstrap in git wijkt af van wat er draait | **bestaat nog niet**: punt 11 van `plans/mail-vervolgpunten.md` beschrijft het probleem (een commit in `bootstrap/rig-system/.../odcn-production` is pas een wijziging als iemand `task bootstrap-argo-system` draait) en stelt een detectie voor | platform | platformbeheerder | storing | ntfy |
+| De bootstrap in git wijkt af van wat er draait | **bestaat nog niet**: punt 11 van `plans/mail-vervolgpunten.md` beschrijft het probleem (een commit in `bootstrap/rig-system/.../odcn-production` is pas een wijziging als iemand `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` draait) en stelt een detectie voor | platform | platformbeheerder | storing | ntfy |
 | Een clonebewerking heeft een nieuwe generatie gemaakt | `opi/manager/revision_manager.py`, via `opi/services/catalog/shared/revisions.py` | deployment | projectbeheerder | ter informatie | geen |
 
 **`cross-domain-access` verdient de aandacht die het niet krijgt in de opdracht.** Het is de
