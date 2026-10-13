@@ -25,7 +25,7 @@ per provider en per optie staat daar los van.
 1. **Doelversie 26.7.4**, niet 26.7.0 zoals `features/keycloak-26-upgrade.md:1` nog noemt. 26.7 is vandaag de enige lijn met beveiligingsonderhoud; er is geen 27.x, de volgende release in de pijplijn is 26.8.
 2. **Zes providers, niet vier.** Beide bestaande documenten tellen "vier SPI's in de custom-jar" plus de emailSender. De pod laadt er vandaag zes, over vijf SPI's, en twee ervan zitten op dezelfde SPI (`realm-restapi-extension`). De toets hoort per provider te gaan, niet per bullet.
 3. **Een compilatie bewijst hier bijna niets.** De twee API's waarvan je zou verwachten dat ze omvallen, zijn in 26 gedeprecieerd en niet verwijderd. Ze blijven dus compileren en kunnen alsnog van betekenis veranderen. Zie de tabel hieronder.
-4. **Waar de waarheid van de opties hoort te liggen**, met een advies en met de gevolgen voor de drie overlays.
+4. **Waar de waarheid van de opties hoort te liggen**, met een advies en met de gevolgen voor de overlays.
 5. **De pod moet uit tijdens de migratie**, en dat is vandaag niet geregeld. Upstream: rolling updates zijn niet mogelijk bij een minor- of major-upgrade, en de database mag pas migreren als alle oude nodes uit zijn. De deployment heeft geen `strategy`, dus de standaard RollingUpdate laat de 26-pod het schema migreren terwijl de 25-pod nog loopt.
 6. **Een terugvalweg die bestaat**, in plaats van een verwijzing naar een backup die er niet is.
 7. **Twee toetsen die vandaag niets bewijzen** en die dus geen bewijs mogen worden: `keycloak-migration/custom-mapper/test-local-docker.sh` en het fail-soft gedrag van de metriekenexport.
@@ -74,7 +74,7 @@ Ga dus vóór de imagebouw na of MinBZK/keycloak-theme een release heeft die 26 
 
 ## De opties: waar de waarheid hoort te liggen
 
-De opties staan vandaag op vier plekken: ingebakken in `kc.sh build` in de Dockerfile, als `args` in de deployment (`base/deployment.yaml:53-54`), als `env` in diezelfde deployment (`:56-146`), en als JSON-patch in elk van de drie overlays. Twee ervan spreken elkaar al tegen, en de augmentatie bij elke podstart is het zichtbare gevolg van dezelfde verspreiding.
+De opties staan vandaag op vier plekken: ingebakken in `kc.sh build` in de Dockerfile, als `args` in de deployment (`base/deployment.yaml:53-54`), als `env` in diezelfde deployment (`:56-146`), en als JSON-patch in elke overlay. Twee ervan spreken elkaar al tegen, en de augmentatie bij elke podstart is het zichtbare gevolg van dezelfde verspreiding.
 
 Alle manifestverwijzingen in deze paragraaf zijn relatief aan `infrastructure/bootstrap/infrastructure/keycloak/controller/`.
 
@@ -82,13 +82,13 @@ Alle manifestverwijzingen in deze paragraaf zijn relatief aan `infrastructure/bo
 
 1. **Een build-time-optie staat alleen in de Dockerfile.** Dat zijn `db`, `health-enabled`, `metrics-enabled`, `features` en de providerkeuzes. Staat dezelfde waarde ook in de runtime-omgeving, dan augmenteert de pod alsnog; dat is precies wat er vandaag gebeurt. De RC-212-reworkronde beslist hoe, deze migratie erft die beslissing.
 2. **Een runtime-optie die op elk cluster hetzelfde is, staat als `KC_`-variabele in de basis, en niet in `args`.** `args` is één lijst die een overlay alleen in zijn geheel kan vervangen; een env-lijst wordt op naam samengevoegd, en `overlays/odcn/patch-mail-relay-host.yaml:16-18` leunt daar al op. Wat er in `args` overblijft is `["start"]`.
-3. **Een verschil per cluster staat in de overlay, als merge-patch op de NAAM van de variabele.** Vandaag doen alle drie de overlays dat met een JSON-patch op index 4, met een `op: test` op de naam van die index ervoor. Die guard doet zijn werk, maar hij pint de ORDE van de eerste vijf variabelen vast: haal je `KC_PROXY_HEADERS` weg, dan schuift `KC_HOSTNAME` naar index 3 en falen alle drie de overlays bij `kustomize build`. Luid falen is goed, drie keer moeten meeverhuizen is onnodig. De mail-relay-patch laat zien hoe het zonder index kan.
+3. **Een verschil per cluster staat in de overlay, als merge-patch op de NAAM van de variabele.** Vandaag doet elke overlay dat met een JSON-patch op index 4, met een `op: test` op de naam van die index ervoor. Die guard doet zijn werk, maar hij pint de ORDE van de eerste vijf variabelen vast: haal je `KC_PROXY_HEADERS` weg, dan schuift `KC_HOSTNAME` naar index 3 en faalt elke overlay bij `kustomize build`. Luid falen is goed, hem per overlay moeten meeverhuizen is onnodig. De mail-relay-patch laat zien hoe het zonder index kan.
 
 Per variabele uit de gemeten podomgeving:
 
 | Variabele | Wat ermee moet | Waarom |
 |---|---|---|
-| `KC_HOSTNAME` | Blijft, als volledige URL. De basis draagt op `:74-75` nog `keycloak.kind`, en dat is de laatste v1-vorm in de repo; alle drie de overlays zetten er al een `https://`-URL over. Zet de basis gelijk aan de overlays of laat de basis geen waarde dragen | Hostname v2 accepteert een volledige URL en dat is de enige vorm waarin pad en poort nog uit te drukken zijn |
+| `KC_HOSTNAME` | Blijft, als volledige URL. De basis draagt op `:74-75` nog `keycloak.kind`, en dat is de laatste v1-vorm in de repo; de overlays zetten er al een `https://`-URL over. Zet de basis gelijk aan de overlays of laat de basis geen waarde dragen | Hostname v2 accepteert een volledige URL en dat is de enige vorm waarin pad en poort nog uit te drukken zijn |
 | `KC_HOSTNAME_PORT` | **Weg** (`:78-79`) | Verwijderd in 26.0: "There is no way to set path or port separately", dat gaat nu via de volledige URL. Een verwijderde optie die als `KC_`-variabele blijft staan, is een startfout en niet een waarschuwing; ga dat niet uitproberen op productie |
 | `KC_PROXY_ADDRESS_FORWARDING` | **Weg** (`:80-81`) | De `proxy`-optie en zijn varianten zijn in 26.0 verwijderd, vervangen door `proxy-headers` plus de hostname-opties |
 | `KC_PROXY_HEADERS` / `--proxy-headers` | Eén waarde, op één plek, en dat wordt `xforwarded` in de env. De arg vervalt | `xforwarded` is wat nginx en HAProxy sturen. Vandaag wint de arg met `forwarded` en ziet Keycloak het proxy-IP in plaats van dat van de bezoeker. Dit is een beveiligingsrelevant verschil (events, brute-force) en geen opmaakkwestie |
@@ -122,7 +122,7 @@ Daarna:
 1. `keycloak.version` op `26.7.4` in `keycloak-migration/relay-email-sender/pom.xml:19` en `keycloak-migration/custom-mapper/pom.xml:19`, en dezelfde versie in `images/keycloak-zad/Dockerfile:25`. Toets: `test_de_basisversie_is_die_waar_de_modules_tegen_bouwen` blijft groen, en die toets is de reden dat dit niet half kan.
 2. Artefactversies verhogen (custom-mapper naar 1.2.0, relay naar 1.1.0), met bij de relay `RelayMailConfig.VERSION` mee (`RelayVersieTest` pint die twee aan elkaar) en de echo's in de taken `build-keycloak-custom-mapper` en `build-keycloak-relay-email-sender`, die de jarnaam uitschrijven.
 3. `mvn -B package` per module, via `task test-keycloak-custom-mapper` en `task test-keycloak-relay-email-sender`. CI draait dit bij elke pull request (job `keycloak-providers` in `.github/workflows/ci.yml`). Repareer wat omvalt, en lees de tabel hierboven: dat een module compileert, betekent bij drie van de zes providers niets.
-4. De optie-opruiming uit de vorige paragraaf, inclusief `strategy: Recreate` en de drie overlaypatches.
+4. De optie-opruiming uit de vorige paragraaf, inclusief `strategy: Recreate` en de overlaypatches.
 5. `task publish-keycloak-image`. Die bouwt, pusht naar ghcr, controleert of de tag anoniem te halen is en pint alleen de sandbox-overlay. Faalt `kc.sh build` op het provider-id, dan zingt de canarie hier en niet in een pod.
 6. `task sandbox:sync`, en daarna de volledige toetsenlijst uit "Klaar als".
 7. De dump-en-restore-oefening uit "Terugval", op de sandbox, vóór productie. Niet erna.
@@ -172,7 +172,7 @@ Elk criterium met hoe je het meet. De eerste vier bewijzen de providers; dat de 
 3. **De pod augmenteert niet bij het starten.** Meten: "Changes detected in configuration" staat niet in de startlog. Dit criterium is geërfd van de RC-212-rework en staat hier omdat de opties in deze migratie opnieuw worden aangeraakt.
 4. **De startlog bevat geen enkele waarschuwing over een onbekende of verwijderde optie, en de pod is niet eerder gefaald op een startfout.** Meten: de volledige startlog van een verse pod in de PR.
 5. **Het IP van de bezoeker staat in de events, niet dat van de proxy.** Meten: één login op de sandbox, dan het login-event in het admin-console of via de admin-API, en het IP vergelijken met het eigen adres.
-6. **De drie overlays bouwen en de guards staan er nog.** Meten: `kustomize build` op alle drie de overlaypaden, en na de promotie `grep` op de tag in basis en overlay.
+6. **De overlays bouwen en de guards staan er nog.** Meten: `kustomize build` op elk overlaypad, en na de promotie `grep` op de tag in basis en overlay.
 7. **De restore is geoefend, niet alleen beschreven.** Meten: het verslag van de sandbox-restore in de PR, met de commandoregel die hem terugzette en een inlog erna.
 8. **Prometheus scrapet Keycloak nog en levert inhoud.** Meten: het target van job `keycloak-rig-metrics` staat up EN `rig_keycloak_users_by_idp_total` heeft meer dan één alias.
 9. **OPI verwerkt een bestaand project opnieuw zonder fout op de admin-API.** Meten: een reprocess op de sandbox, en de log zonder 4xx van Keycloak.

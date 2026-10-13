@@ -91,7 +91,6 @@ bewaakt `test_geen_bouwoptie_staat_in_de_omgeving` dat.
 | `controller/base/deployment.yaml` | de tag die PRODUCTIE draait |
 | `controller/overlays/sandboxed-local/kustomization.yaml` | een eigen `newTag` |
 | `controller/overlays/odcn/kustomization.yaml` | alleen het pad naar de rcr-spiegel, plus het pull-secret |
-| `controller/overlays/local/kustomization.yaml` | geen `images:`-blok, dus de tag van de basis |
 
 De odcn-overlay erft de tag van de basis. Zou hij een eigen `newTag` dragen, dan kan die
 uiteenlopen met wat er als "de tag die productie draait" in de basis staat, en dan is er geen
@@ -106,11 +105,6 @@ Zolang er nog niets gebouwd en gepromoveerd is, dragen de basis en de sandbox-ov
 opzet geen tag maar het woord `promoveer-eerst` respectievelijk `bouw-eerst`. Een verzonnen
 versienummer zou eruitzien als een image die te halen valt, en dat blijkt dan pas wanneer de
 pod opnieuw wordt aangemaakt.
-
-Dat treft ook het local-cluster: die overlay erft `promoveer-eerst` uit de basis en
-`pin-keycloak-image` heeft geen TARGET voor local, dus tot de eerste promotie start Keycloak
-daar niet. De weg erheen is de gewone promotie: pin de sandbox met een gepushte tag en zet
-die daarna met `TARGET=base` in de basis.
 
 ## Bouwen
 
