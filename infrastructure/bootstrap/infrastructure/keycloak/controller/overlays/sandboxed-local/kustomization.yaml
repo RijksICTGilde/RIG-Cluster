@@ -11,7 +11,8 @@ resources:
 # `task publish-keycloak-image` schrijft deze regel, en pas nadat hij de image naar
 # ghcr gepusht en zonder inlog teruggelezen heeft. Met de hand een tag invullen slaat die
 # controle over: de sandbox pullt gewoon uit ghcr, dus een tag die daar niet staat komt niet
-# verder dan ImagePullBackOff. De waarde hieronder is daarom met opzet geen tag.
+# verder dan ImagePullBackOff. Is er nog nooit gebouwd, dan staat hier daarom het woord
+# bouw-eerst en geen tag.
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
     newTag: "2026.10.13.1948-72684cb4"

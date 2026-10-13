@@ -34,8 +34,8 @@ spec:
           # HIJ WORDT NIET MET DE HAND GESCHREVEN. `task pin-keycloak-image TARGET=base` zet hem
           # hier neer, gelezen uit de sandbox-overlay, die alleen een gepushte tag draagt.
           #
-          # De waarde hieronder is met opzet geen tag: er is nog niets gepromoveerd, en een
-          # verzonnen versienummer zou er wel uitzien als een image die te halen valt.
+          # Is er nog nooit gepromoveerd, dan staat hier het woord promoveer-eerst en geen
+          # tag: een verzonnen versienummer zou eruitzien als een image die te halen valt.
           image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.10.13.1948-72684cb4
           # DE VLAG DIE DE EIGEN VERZENDER AANWIJST. Zonder hem verstuurt de
           # standaardprovider, en die leest de smtpServer van de realm - de weg waarlangs
