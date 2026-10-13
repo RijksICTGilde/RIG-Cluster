@@ -324,15 +324,16 @@ het faalt dicht. De fundament-overlay moet een eigen selector krijgen (namespace
 tenantlabel van wat fundament aan multi-tenancy gebruikt). Opnemen als expliciet punt in de
 checklist, niet als "kopieer de odcn-overlay".
 
-#### p. `Taskfile.yaml:629`, `:715` — de AGE-sleutelkeuze is een tweeweg-ternair
+#### p. De twee `KEY_FILE`-regels in `Taskfile.yaml` — de AGE-sleutelkeuze is een tweeweg-ternair
 
 ```
 KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
 ```
 
 Alles wat **niet** `sandboxed-local` is, valt terug op `security/key.txt` — de
-**productiesleutel van ODCN**. Een onbekende clustersoort komt hier niet meer langs: beide
-taken eisen `CLUSTER_TYPE` met een `enum` van `sandboxed-local` en `odcn-production`, dus
+**productiesleutel van ODCN**. Een onbekende clustersoort komt hier niet meer langs:
+`generate-env-secrets-for-operations-manager` en `deploy-operations-manager` eisen beide
+`CLUSTER_TYPE` met een `enum` van `sandboxed-local` en `odcn-production`, dus
 `fundament-production` wordt geweigerd zolang het daar niet in staat. Het punt vuurt op de dag
 dat fundament aan die enum wordt toegevoegd: de ternair kiest dan stil de ODCN-sleutel, en de
 secrets zijn daarmee door iedereen met de ODCN-sleutel te ontsleutelen. Er komt geen
@@ -354,7 +355,7 @@ punt van (p).
 | # | punt | bestand:regel | prioriteit |
 |---|---|---|---|
 | 1 | egress-annotatie op namespace | `manifests/namespace.yaml.jinja:10` | **blokkerend** — kan namespace-creatie laten falen |
-| 2 | AGE-sleutel per cluster | `Taskfile.yaml:629,715` | **blokkerend** — kiest anders de ODCN-sleutel zodra fundament in de `CLUSTER_TYPE`-enum staat |
+| 2 | AGE-sleutel per cluster | `Taskfile.yaml`, de twee `KEY_FILE`-regels | **blokkerend** — kiest anders de ODCN-sleutel zodra fundament in de `CLUSTER_TYPE`-enum staat |
 | 3 | UID/SCC-keuze op eigenschap i.p.v. clusternaam | `manifests/pod-security-context.yaml.jinja:8` | hoog |
 | 4 | snapshotclass uit één bron; vangnet leeg i.p.v. de ODCN-waarde | `opi/core/config.py:438`, `opi/manager/backup/base.py:467` | midden — de terugval op de clusterwaarde bestaat al (`base.py:490`) |
 | 5 | external-dns-image uit de mirror in de base | `infrastructure/.../external-dns/controller/base/deployment.yaml:28` | midden |
