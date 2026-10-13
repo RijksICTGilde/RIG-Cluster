@@ -334,8 +334,8 @@ protocol = "smtp"
 # webpki-validatie komen. Hij hoort dus op false te staan en doet dat ook overal waar
 # de sink niet meekomt: de waarde komt uit de omgeving en de basis van het Deployment
 # zet hem op "false". Omgezet wordt hij door de component mail/sink/as-upstream, die de
-# sink en deze schakelaar samen levert - een cluster dat de sink inlaadt (local en
-# sandboxed-local) kan de schakelaar dus niet vergeten, en odcn, dat de sink niet
+# sink en deze schakelaar samen levert - een cluster dat de sink inlaadt
+# (sandboxed-local) kan de schakelaar dus niet vergeten, en odcn, dat de sink niet
 # inlaadt, blijft strikt.
 [remote.upstream.tls]
 implicit = false

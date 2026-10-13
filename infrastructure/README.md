@@ -8,7 +8,6 @@ Kustomize-based Kubernetes infrastructure configuration for all RIG-Cluster envi
 infrastructure/
 +-- bootstrap/
     |-- clusters/                    # Per-environment overlays
-    |   |-- local/                   #   Kind cluster with external Git
     |   |-- sandboxed-local/         #   Kind cluster with in-cluster Forgejo
     |   +-- odcn/                    #   Production (ODC-Noord)
     |
@@ -20,7 +19,6 @@ infrastructure/
         |-- vault/                   #   Secret management
         |-- redis/                   #   Caching
         |-- prometheus/              #   Monitoring
-        |-- cert-manager/            #   TLS certificates
         |-- external-dns/            #   DNS management (TransIP)
         |-- forgejo/                 #   In-cluster Git (sandbox only)
         |-- backup-destination/      #   PVC backup storage (Kopia)
@@ -39,10 +37,10 @@ Each component follows base/overlays:
 component/
 |-- config/
 |   |-- base/
-|   +-- overlays/ (local, sandboxed-local, odcn)
+|   +-- overlays/ (sandboxed-local, odcn)
 +-- controller/
     |-- base/
-    +-- overlays/ (local, sandboxed-local, odcn)
+    +-- overlays/ (sandboxed-local, odcn)
 ```
 
 ## Building

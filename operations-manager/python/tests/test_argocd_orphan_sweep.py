@@ -1179,13 +1179,21 @@ class TestTheTaskAsRendered:
 
     @staticmethod
     def _rendered(**env: str) -> str:
+        # CLUSTER_TYPE staat in de standaard-env: de taak eist hem, want zonder gekozen
+        # cluster gaf hij CLUSTER_MANAGER leeg mee. Een test over DELETE of de repo-paden
+        # zegt niets over welk cluster het is.
         proc = subprocess.run(
             ["task", "--dry", "-v", SWEEP_TASK],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             timeout=120,
-            env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", ""), **env},
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": os.environ.get("HOME", ""),
+                "CLUSTER_TYPE": "sandboxed-local",
+                **env,
+            },
         )
         assert proc.returncode == 0, proc.stderr
         # go-task writes the command it would run to stderr, not to stdout.

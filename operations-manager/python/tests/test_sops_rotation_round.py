@@ -134,7 +134,7 @@ def no_coverage_sweep() -> Iterator[None]:
     """Give the coverage guard an empty inventory for every test here.
 
     ``coverage_gaps()`` reads the REAL tree, and the tests below point the tool's file selection
-    at a temporary one. Without this every final check would report the repo's own six loose-value
+    at a temporary one. Without this every final check would report the repo's own loose-value
     files as uncovered, because the selection they patched no longer names them. The logic that
     decides what "covered" means stays live; only the inventory is emptied, and the tests that are
     ABOUT the guard bring their own.

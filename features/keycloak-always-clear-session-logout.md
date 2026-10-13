@@ -76,7 +76,7 @@ To enable for another IdP: set the two `config:` fields above in the realm's boo
 
 Per-IdP revert: in the IdP's YAML `config:`, point `singleLogoutServiceUrl` back at the original upstream URL and remove `downstreamLogoutUrl`. After re-reconciliation the IdP is back to stock behavior — though the Java code stays loaded in the JAR (dormant; only fires when an IdP's SLO URL points at it).
 
-To remove the JAR contribution entirely: revert the version in `deployment.yaml` and `patch-custom-mapper.yaml`, or delete the factory registration in `META-INF/services/...RealmResourceProviderFactory`.
+To remove the JAR contribution entirely: revert the version in `keycloak/controller/base/deployment.yaml`, or delete the factory registration in `META-INF/services/...RealmResourceProviderFactory`.
 
 ## Verification
 

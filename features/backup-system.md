@@ -101,7 +101,7 @@ components:
 
 deployments:
   - name: production
-    cluster: local
+    cluster: sandboxed-local
     namespace: my-project
     # ...
 ```
@@ -154,7 +154,7 @@ curl -X GET "http://localhost:9595/api/v1/restore/snapshots/local/rig-my-project
 **Example Response:**
 ```json
 {
-  "cluster": "local",
+  "cluster": "sandboxed-local",
   "namespace": "my-project",
   "snapshots": [
     {
@@ -509,10 +509,10 @@ identity and are exempt from automatic retention entirely.
 
 ### Local Development Setup
 
-For local testing, the backup destination MinIO is included in the bootstrap:
+For local testing, the backup destination MinIO is included in the sandbox bootstrap:
 
 ```bash
-task bootstrap-argo-system
+task sandbox:setup
 ```
 
 This creates:
@@ -1133,7 +1133,7 @@ Common issues:
 
 The operations-manager service account (`namespace-manager`) requires specific permissions to perform backup operations. These are configured in:
 
-**File**: `bootstrap/rig-system/kustomize/operations-manager/overlays/local/cluster-role.yaml`
+**File**: `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/cluster-role.yaml`
 
 ### Required Permissions
 
@@ -1181,13 +1181,13 @@ The operations-manager service account (`namespace-manager`) requires specific p
 After modifying the ClusterRole, apply with:
 
 ```bash
-kubectl apply -f bootstrap/rig-system/kustomize/operations-manager/overlays/local/cluster-role.yaml
+kubectl apply -f bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/cluster-role.yaml
 ```
 
 Or rebuild with kustomize:
 
 ```bash
-kustomize build bootstrap/rig-system/kustomize/operations-manager/overlays/local | kubectl apply -f -
+kustomize build bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local | kubectl apply -f -
 ```
 
 ### Verifying Permissions
