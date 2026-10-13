@@ -14,7 +14,7 @@ resources:
 # verder dan ImagePullBackOff. De waarde hieronder is daarom met opzet geen tag.
 images:
   - name: ghcr.io/rijksictgilde/zad/keycloak-zad
-    newTag: "bouw-eerst"
+    newTag: "2026.10.13.1948-72684cb4"
 
 patches:
   - target:
