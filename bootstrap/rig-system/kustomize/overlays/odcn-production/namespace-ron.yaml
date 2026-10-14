@@ -7,8 +7,8 @@
 #
 # Wat er naast de namespace nog nodig is en niet uit git kan komen: het secret
 # sops-age-key in deze namespace (de CMP leest de AGE-sleutel in de namespace van de
-# app). Kopieer hem uit rig-prd-operations; het commando staat in features/send-email.md
-# bij de aanzetstappen.
+# app). Dezelfde taak die dit bestand toepast zet dat secret er sinds RC-261 zelf in,
+# als het er nog niet is.
 # Het label argocd.argoproj.io/managed-by staat hier BEWUST NIET in: de Kyverno-policy
 # van ODCN (validate-argocd-customer-prefix-on-namespace) valideert dat label met een
 # APICall naar de namespace zelf, en die bestaat bij het aanmaken nog niet - de policy

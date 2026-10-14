@@ -46,3 +46,22 @@ patches:
         path: /spec/template/spec/securityContext/runAsGroup
       - op: remove
         path: /spec/template/spec/securityContext/fsGroup
+  # De pull-secrets van de namespace hangen alleen aan het default-serviceaccount, en op
+  # een verse namespace pas na 7 tot 10 minuten (plans/private-images-uit-een-eigen-
+  # registry.md). Expliciet op de pod betekent dat de eerste uitrol niet op dat venster
+  # hoeft te wachten. Precedent: 584d40639 (prometheus).
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: dockerhub-rig-robot-pull-secret
+
+# ODCN kan Docker Hub niet bereiken en haalt alles via de rcr-proxy. Staat dat pad hier niet
+# in git, dan herschrijft admission het image wel, maar wijkt wat er draait af van wat ArgoCD
+# in git ziet en staat ron-infrastructure permanent OutOfSync.
+images:
+  - name: stalwartlabs/mail-server
+    newName: rcr.rijksapps.nl/dockerhub-rig/stalwartlabs/mail-server

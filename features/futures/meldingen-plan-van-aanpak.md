@@ -393,11 +393,9 @@ gesprek met het mailteam, en de naamruimteregel blijft intact.
 Vier dingen, alle vier al gemeten en vastgelegd in `plans/mail-vervolgpunten.md`. Ze staan hier
 omdat ze de bruikbaarheid van dit kanaal bepalen, niet omdat dit traject ze moet oplossen.
 
-1. **De relay staat op productie nog niet aan.** Punt 5 van `mail-vervolgpunten.md`: de
-   manifesten en geheimen zijn klaar, wat rest zijn afspraken en twee regels configuratie
-   (`MAIL_RELAY_API_URL` aan in de OPI-overlay, de Application `ron-infrastructure` aan). Zonder
-   dat is `MAIL_RELAY_API_URL` leeg, en dan maakt `ensure_platform_account` netjes geen account
-   aan en meldt het in het log.
+1. **De relay staat aan (punt 5: GEDAAN).** Open blijven twee afspraken: die met het mailteam
+   over `noreply-rijksapp(+project)@rijksoverheid.nl` als afzender, en een bounce-postbus die OPI
+   via IMAP mag legen. Zonder die postbus is onbestelbare post onzichtbaar.
 2. **De upstream weigert ontvangers buiten `rijksoverheid.nl`.** Punt 8, gemeten op 21 augustus
    2026: naar een adres bij rijksoverheid.nl volgde `250 ok`, naar een gmail-adres `550 #5.1.0
    Address rejected` op de RCPT TO. **Dat raakt dit traject direct.** In
@@ -418,9 +416,9 @@ omdat ze de bruikbaarheid van dit kanaal bepalen, niet omdat dit traject ze moet
    mislukt terwijl hij nog loopt.
 
 **Conclusie voor de fasering: e-mail is niet fase 1.** Het account is er, het netwerkpad is er,
-de client is klein werk. Maar het kanaal is pas eerlijk als de relay op productie aanstaat en
-als duidelijk is wat er met een niet-bezorgbaar adres gebeurt. Tot die tijd is het postvak het
-kanaal, en dat werkt voor iedereen.
+de client is klein werk. Maar het kanaal is pas eerlijk als de afzenderafspraak met het
+mailteam staat en als duidelijk is wat er met een niet-bezorgbaar adres gebeurt. Tot die tijd is
+het postvak het kanaal, en dat werkt voor iedereen.
 
 ### Afmelden, samenvatten, en hoeveel er in een mail hoort
 
@@ -919,9 +917,9 @@ samenvatting, de afmeldlink.
 `opi/templates_lotc/account/meldingen.html.j2`,
 `opi/api/v2/notifications_router.py` (de twee voorkeurendpoints).
 
-**Voorwaarde die buiten dit traject ligt**: de relay moet op productie aanstaan
-(`plans/mail-vervolgpunten.md` punt 5), en er moet een antwoord zijn op de vraag wat er gebeurt
-met een ontvanger buiten `rijksoverheid.nl` (punt 8).
+**Voorwaarde die buiten dit traject ligt**: er moet een antwoord zijn op de vraag wat er
+gebeurt met een ontvanger buiten `rijksoverheid.nl` (`plans/mail-vervolgpunten.md` punt 8). De
+relay zelf draait op productie en is geen voorwaarde meer.
 
 ### Fase 4: Mattermost en het inkomende endpoint
 
@@ -992,8 +990,8 @@ plusdeel-adres.**
 
 **8. E-mail is fase 3 en geen fase 1.**
 *Aanbeveling: ja.* Het account, het netwerkpad en de relay-machinerie liggen er; wat ontbreekt
-is de SMTP-client. Maar het kanaal is pas eerlijk als de relay op productie aanstaat en als
-duidelijk is wat er gebeurt met een ontvanger buiten `rijksoverheid.nl`.
+is de SMTP-client. Maar het kanaal is pas eerlijk als de afzenderafspraak met het mailteam
+staat en als duidelijk is wat er gebeurt met een ontvanger buiten `rijksoverheid.nl`.
 
 **9. Mattermost: een bot met privéberichten, met zelfkoppeling via een verificatiecode. Een
 kanaalwebhook is iets anders en komt later, als PROJECTinstelling.**
