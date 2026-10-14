@@ -10,7 +10,7 @@ import logging
 import time
 from typing import Any
 
-from opi.core.task_errors import CLIENT_ERROR_TYPES
+from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
 
@@ -346,6 +346,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 # component_failures. Dit type valt daarom bij de client op "niet toe te
                 # schrijven", wat hier de eerlijke uitkomst is.
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "processing": {
                     "status": "failed",
                     "error": error_msg,

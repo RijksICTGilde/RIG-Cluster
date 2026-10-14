@@ -22,13 +22,30 @@ import aiohttp
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.naming import MAIL_LOCAL_PART_MAX_LENGTH
 
 logger = logging.getLogger(__name__)
 
+#: Hoelang een management-aanroep mag blijven proberen te verbinden. Een podwissel van de
+#: relay laat de Service even zonder endpoint, en zonder deze marge kost dat een hele
+#: uitrol. Zelfde budget en dezelfde helper als de ArgoCD-connector.
+RELAY_CONNECT_RETRY_SECONDS = 30.0
+
+#: Een readiness-meting mag niet in een trage relay blijven hangen: de uitkomst van een
+#: meting die langer duurt dan de tik zelf is toch niet meer actueel.
+RELAY_READY_TIMEOUT_SECONDS = 5.0
+
 
 class MailRelayError(RuntimeError):
     """The relay refused or could not answer a management call."""
+
+
+class MailRelayUnavailableError(MailRelayError):
+    """De relay was niet bereikbaar. Dit is een storing van het platform, niet van het project.
+    Taakhandlers die een uitrol met ``processing_failed`` rapporteren zetten ``error_category: InternalError``,
+    zodat de gebruiker weet dat hij niets kan repareren.
+    """
 
 
 class MailRelayNotConfiguredError(MailRelayError):
@@ -62,26 +79,10 @@ class MailAccount:
 #: when it changes.
 MAIL_SENDER_NAME_PREFIX = "zad.afzender.naam"
 
-#: Settings prefix under which each account's sender ADDRESS is stored, one key per account.
-#:
-#: A second series next to the names, and not a second field on the same key, because the
-#: relay's settings API stores flat strings: one key, one value. The two are read and
-#: written together and rendered into the same generated script.
-#:
-#: This is the exception, not the rule. Every account gets its address DERIVED from its
-#: account name (identity rule 1 in the relay's config.toml) and needs no key here; a key
-#: only exists for an account that has to send under a different address than its name
-#: gives it. Today there is NO such account: the Keycloak account was the one user, and
-#: RC-175 gave its login mail the bare base address back (see ``get_mail_from_address``),
-#: so every caller passes an empty ``sender_address`` and this series stays empty. It is
-#: kept because the relay side of it is live and measured, not because something uses it.
-#:
-#: It changes the ``From:`` header only. The ENVELOPE keeps the derived address (the
-#: ``rewrite`` rule in ``[session.mail]``, which no sieve variable reaches), and that is
-#: deliberate: DMARC alignment compares the two DOMAINS and those stay equal, while the
-#: plus part in the envelope keeps carrying the bounce. Anyone reading the two rules side
-#: by side will take the difference for an oversight, which is why it is written down in
-#: both places.
+#: Settings prefix for each account's sender address override. Normally unused: every
+#: account derives its address from its name; a key here only exists for an account that
+#: needs a different address. A second series (not a second field on the same key) because
+#: relay settings are flat: one key, one value. Both are rendered into the same script.
 MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
 
 #: The domains a configured sender address may live in.
@@ -94,28 +95,14 @@ MAIL_SENDER_ADDRESS_PREFIX = "zad.afzender.adres"
 #: else's identity, it would also bounce at every recipient outside the Rijksoverheid.
 MAIL_SENDER_DOMAIN_ALLOWLIST = frozenset({"rijksoverheid.nl"})
 
-#: The sieve script OPI generates from those keys, and the reason the data cannot simply BE
-#: the script: to change one account you would have to parse the generated code to keep the
-#: others. The script is a projection, the keys are the truth.
-#:
-#: Why a generated script and not a lookup table, which is what this started out as: an
-#: in-memory lookup store built from settings (``lookup.<naam>.<sleutel>``) is only ever
-#: built ONCE. A ``POST /api/reload`` does not refresh it -- measured on 20 August 2026
-#: against v0.11.8: the first account written got its value, every account added afterwards
-#: read as empty until the relay was RESTARTED. A sieve script written through the same API
-#: IS recompiled on every reload (measured in both directions: changing the value of an
-#: existing account took effect on the very next message, without a restart), so this is
-#: the one shape that stays current while the relay keeps running.
-#:
-#: Its NAME is a constant because the other end of the pair is written in sieve, in
-#: ``mail/controller/base/configmap.yaml``, and drift between the two fails SILENTLY:
-#: ``include :optional`` skips a script it cannot find without a word, so every project
-#: would simply start sending without a display name and nothing would report it.
-#: ``test_de_relayconfiguratie_knipt_hetzelfde_voorvoegsel`` pins the two together, the
-#: same way it already pinned the ``project-`` prefix.
+#: The sieve script name. The script is a projection of ``MAIL_SENDER_NAME_PREFIX`` and
+#: ``MAIL_SENDER_ADDRESS_PREFIX`` keys; lookup stores cannot be rewritten via the API,
+#: but sieve scripts are recompiled on ``POST /api/reload``, so they stay current.
 MAIL_SENDER_SCRIPT_NAME = "zad-afzenders"
 
-#: The settings key that script is stored under, which is the only thing OPI writes.
+#: The settings key that script is stored under. A constant because it is hardcoded in
+#: ``mail/controller/base/config.toml``; drift would fail silently (``include :optional``
+#: skips a missing script, so projects would send without a display name).
 MAIL_SENDER_TABLE_KEY = f"sieve.trusted.scripts.{MAIL_SENDER_SCRIPT_NAME}.contents"
 
 #: What an account name may look like before it is written into that generated script.
@@ -178,7 +165,33 @@ class MailConnector:
         payload: Any | None = None,
         allow_missing: bool = False,
     ) -> dict[str, Any] | None:
-        """One management call. ``allow_missing`` turns a 404 into ``None``."""
+        """One management call. ``allow_missing`` turns a 404 into ``None``.
+
+        Een relay die niet antwoordt wordt hier een ``MailRelayUnavailableError``. Zonder
+        die omzetting ontsnapt de transportfout van aiohttp aan elke aanroeper die op
+        ``MailRelayError`` rekent, en komt hij bij de gebruiker uit als een onverklaarde
+        mislukking op zijn eigen project.
+        """
+
+        async def _eenmaal() -> dict[str, Any] | None:
+            return await self._eenmalig_verzoek(method, path, payload, allow_missing)
+
+        try:
+            return await retry_on_connect_error(_eenmaal, RELAY_CONNECT_RETRY_SECONDS, f"{method} {path}")
+        except (aiohttp.ClientError, TimeoutError, OSError) as error:
+            raise MailRelayUnavailableError(
+                "De mailservice van het platform is niet bereikbaar, dit ligt niet aan je project "
+                f"({method} {path}: {error or type(error).__name__})"
+            ) from error
+
+    async def _eenmalig_verzoek(
+        self,
+        method: str,
+        path: str,
+        payload: Any | None,
+        allow_missing: bool,
+    ) -> dict[str, Any] | None:
+        """Een management-aanroep zonder herhaling en zonder omzetting van transportfouten."""
         url = f"{self.base_url}{path}"
         auth = aiohttp.BasicAuth(self._username, self._password)
         connector = aiohttp.TCPConnector(ssl=self._verify_tls)
@@ -211,6 +224,26 @@ class MailConnector:
                 return None
             raise MailRelayError(f"{method} {path} gaf fout {error}: {str(result.get('details') or result)[:200]}")
 
+    async def is_ready(self) -> bool:
+        """Of de relay zijn eigen ``/healthz/ready`` met 200 antwoordt.
+
+        Dezelfde ingang als de readiness-probe van de pod: geen inloggegevens, geen
+        mailsessie, en dus ook geen tik in ``queue.limiter.inbound.platform``. Buiten
+        ``_request`` gehouden omdat het antwoordlichaam geen JSON is en een herhaling
+        hier juist niet hoort: wie meet of de relay er is, wil het antwoord van nu.
+        """
+        connector = aiohttp.TCPConnector(ssl=self._verify_tls)
+        timeout = aiohttp.ClientTimeout(total=RELAY_READY_TIMEOUT_SECONDS)
+        try:
+            async with (
+                aiohttp.ClientSession(connector=connector, timeout=timeout) as session,
+                session.get(f"{self.base_url}/healthz/ready") as response,
+            ):
+                return response.status == 200
+        except (aiohttp.ClientError, TimeoutError, OSError) as error:
+            logger.warning(f"Mailrelay antwoordt niet op /healthz/ready: {error or type(error).__name__}")
+            return False
+
     async def get_principal(self, name: str) -> dict[str, Any] | None:
         """The account as the relay holds it, or ``None`` if it does not exist."""
         result = await self._request("GET", f"/api/principal/{name}", allow_missing=True)
@@ -227,17 +260,8 @@ class MailConnector:
     ) -> None:
         """Create the account. The relay refuses a duplicate; the manager checks first.
 
-        The account carries a name and a secret and nothing else. It used to carry its
-        sender and bounce address as ``emails``, because ``must-match-sender`` refused an
-        account that did not own its own envelope address ("501 5.5.4 You are not allowed
-        to send from this address", measured). That check is off now: an address only
-        exists in a domain the relay holds as LOCAL, and the sender domain became
-        ``rijksoverheid.nl`` -- holding that locally would swallow mail to colleagues
-        there instead of relaying it. The sieve script pins sender and envelope anyway.
-
-        There is deliberately no daily limit here: a principal in Stalwart v0.11 has no
-        such field (the API answers "JSON deserialization failed" on one), so the limit
-        lives in the relay's own configuration, keyed on the authenticated account.
+        The account carries a name and secret only; Stalwart v0.11 has no per-principal
+        limit field, so daily limits live in the relay's config, keyed on the account name.
         """
         await self._request(
             "POST",
@@ -246,17 +270,8 @@ class MailConnector:
                 "type": "individual",
                 "name": name,
                 "secrets": [password],
-                # GEEN "emails". Een adres kan alleen bestaan in een domein dat de relay
-                # als lokaal domein kent, en ons afzenderdomein is rijksoverheid.nl: dat
-                # als lokaal domein registreren zou mail AAN collega's daar lokaal laten
-                # bezorgen in plaats van doorsturen. Het account heeft de adressen ook niet
-                # nodig -- must-match-sender staat uit en het sieve-script zet afzender en
-                # envelope onvoorwaardelijk vast. Zie de configmap van de relay.
-                # Without a role the account authenticates and is then refused with "550
-                # 5.7.1 Your account is not authorized to use this service" (measured):
-                # enabledPermissions alone grants nothing to build on.
+                # No "emails" field: sieve script pins sender and envelope anyway.
                 "roles": ["user"],
-                # Submission only: this account may hand mail in, never read a mailbox.
                 "enabledPermissions": ["email-send"],
                 "description": f"ZAD send-email account voor {name}",
                 "quota": 0,
@@ -287,19 +302,8 @@ class MailConnector:
         logger.info(f"Mailaccount {name} verwijderd van de relay")
         return True
 
-    # --- the display name of an account ------------------------------------------
-    #
-    # The relay works the sender ADDRESS out for itself, by cutting the ``project-`` prefix
-    # off the authenticated account name (identity rule 1 in its configmap). It has to:
-    # v0.11.8 offers nothing that can look a value up per account while a message is being
-    # accepted -- there is no expression function that reads a principal (``principal_get``,
-    # ``directory_query``, ``sql_query`` all do not exist), the lookup store that CAN be read
-    # live cannot be written through the management API, and the one that can be written is
-    # only built at startup. All measured on 20 August 2026.
-    #
-    # The display name cannot be derived from anything, so it is the one value that has to
-    # travel: OPI keeps it per account in the relay's settings and renders those settings
-    # into a small sieve script the identity rules include.
+    # The sender ADDRESS is derived from the account name; the DISPLAY NAME is the one
+    # value OPI keeps per account in relay settings, rendered into a sieve script.
 
     async def get_sender_names(self) -> dict[str, str]:
         """Every account's display name, as the relay currently holds it.

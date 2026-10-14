@@ -1046,4 +1046,12 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
         # mislukking, doorgegeven. Zonder dit stond er wel status "failed" en geen reden,
         # en dan kan een client hem niet toeschrijven.
         **({"error_type": refresh_result.get("error_type", "processing_failed")} if failed else {}),
+        # En de categorie mee, anders leidt _with_error_category hem opnieuw af uit
+        # "processing_failed" en komt een onbereikbare mailrelay hier alsnog als "niet toe
+        # te schrijven" aan.
+        **(
+            {"error_category": refresh_result["error_category"]}
+            if failed and refresh_result.get("error_category")
+            else {}
+        ),
     }

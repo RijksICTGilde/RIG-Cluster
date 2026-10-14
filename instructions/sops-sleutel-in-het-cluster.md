@@ -17,10 +17,10 @@ Er zijn twee soorten houders:
 | soort | namespace | inhoud | wie zet hem neer |
 |---|---|---|---|
 | platform | `rig-prd-operations` (prod), `rig-system` (sandbox) | de platformsleutel | bootstrap |
-| platform, kopie | `rig-prd-ron` (prod), `rig-ron` (sandbox) | dezelfde platformsleutel | met de hand, zie hieronder |
+| platform, tweede plek | `rig-prd-ron` (prod), `rig-ron` (sandbox) | dezelfde platformsleutel | bootstrap, elke clustersoort met zijn eigen taak: `bootstrap-argo-system` en `sandbox:create-sops-age-secret` |
 | project | `rig-prd-<project>` / `rig-<project>` | de EIGEN sleutel van dat project | OPI, `store_project_sops_key_in_namespace` |
 
-De tweede rij is de val. `bootstrap/rig-system/kustomize/overlays/odcn-production/namespace-ron.yaml` zegt het in zijn eigen commentaar: het secret in die namespace "kan niet uit git komen" en wordt gekopieerd uit `rig-prd-operations`. Het staat dus in geen enkel manifest, het komt niet mee met een sync, en het valt alleen op als je ernaar kijkt. De mailrelay rendert `infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn`, en daar staat een `decrypt-sops.yaml`, dus zonder die kopie rendert die applicatie niet.
+De tweede rij is de val, ook nu de bootstrap hem zet. Dit secret staat in geen enkel manifest: het kan niet uit git komen, het komt dus niet mee met een sync, en het valt alleen op als je ernaar kijkt. De mailrelay rendert `infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn`, en daar staat een `decrypt-sops.yaml`, dus zonder dit secret rendert die applicatie niet. `bootstrap-argo-system` laat een bestaand secret staan, dus een productiecluster dat de verkeerde sleutel draagt komt daar niet goed door een nieuwe bootstrap: dat is een rotatie, zie onder. `sandbox:create-sops-age-secret` heeft die guard niet en schrijft de sleutel uit `security/sandbox-key.txt` onvoorwaardelijk over de live waarde, in `rig-system` en in `rig-ron`.
 
 ## Wat dit betekent als je de platformsleutel vervangt
 
@@ -44,5 +44,5 @@ OPI wel. Die krijgt de sleutel via `env.valueFrom.secretKeyRef` binnen (`bootstr
 ## Verder lezen
 
 - `features/sops-sleutel-roteren.md` is het stappenplan voor de vervanging zelf
-- `features/send-email.md` heeft de aanzetstappen voor de ron-namespace, inclusief het kopieercommando
+- `features/send-email.md` heeft de aanzetstappen voor de ron-namespace
 - `bootstrap/rig-system/kustomize/sops-plugin.sh` is de plugin die de sleutel leest

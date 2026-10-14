@@ -468,6 +468,22 @@ tasks:
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+
+            # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
+            # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
+            # de mailrelay er niet. Alleen aanmaken als hij er nog niet is: een apply met
+            # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
+            # platformsleutel draagt een rotatie zijn, en die loopt langs
+            # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
+            if kubectl get secret sops-age-key -n rig-prd-ron >/dev/null 2>&1; then
+              echo "secret sops-age-key staat al in rig-prd-ron, ongemoeid gelaten"
+            else
+              kubectl create secret generic sops-age-key \
+                --from-file=key={{.KEY_FILE}} \
+                -n rig-prd-ron \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "secret sops-age-key aangemaakt in rig-prd-ron"
+            fi
           fi
         fi
 
