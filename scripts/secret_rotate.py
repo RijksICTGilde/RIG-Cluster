@@ -379,6 +379,19 @@ COMPONENTS: list[Component] = [
         "Wordt op termijn vervangen door een ander backup-systeem.",
     ),
     Component(
+        key="argocd-admin",
+        title="ArgoCD admin (via het cluster-secret van de operator)",
+        template="",  # geen generatie-template: het secret is operator-owned en kan niet in git
+        category="bootstrap",
+        rotate_fields=("ARGOCD_PASSWORD",),
+        workloads=(OPI_DEPLOYMENT,),  # ZAD logt met deze waarde in op de ArgoCD-API
+        zad_env=("ARGOCD_PASSWORD",),
+        gen_without_template=("random", 24),
+        note="De operator is hier de schrijver: hij hasht admin.password uit <cr>-cluster naar "
+        "argocd-secret. Drie stappen die alle drie moeten, anders komt de wissel niet aan; de "
+        "stappen leggen uit waarom. Het cluster-secret zelf raakt hij nooit aan.",
+    ),
+    Component(
         key="keycloak-admin",
         title="Keycloak admin (break-glass)",
         template="keycloak-admin-secret.yaml",
@@ -413,6 +426,8 @@ TEMPLATELESS: dict[str, str] = {
     "transip": "de sleutel komt van buiten het cluster; het doelbestand in de overlay staat er wel",
     "grafana": "leeft uitsluitend in het ZAD-envbestand",
     "platform-repo-pat": "leeft uitsluitend in het ZAD-envbestand (image-default is weg sinds 28-09-2026)",
+    "argocd-admin": "leeft in het cluster-secret van de operator, dat met een ownerReference "
+    "aan de ArgoCD-CR hangt en daarom niet in git kan",
 }
 
 
@@ -1120,6 +1135,159 @@ def _mc_check(ctx: Ctx, endpoint: str, user: str, password: str) -> str:
     return "OK" if not ctx.kube.dry_run else "overgeslagen (dry-run)"
 
 
+# De naam van de ArgoCD-CR. Het cluster-secret heet `<cr>-cluster`; `argocd-secret` is een
+# vaste naam in de operator (common.ArgoCDSecretName).
+ARGOCD_CR = "argocd"
+
+
+def argocd_login(kube: Kube, password: str) -> bool:
+    """Of ArgoCD dit wachtwoord accepteert voor de gebruiker admin.
+
+    De CLI zit in de argocd-server-pod; OPI heeft hem niet. Het wachtwoord gaat via een
+    env-variabele en niet via argv, zodat het niet in een proceslijst of foutmelding opduikt.
+    """
+    result = kube.exec(
+        "deploy/argocd-server",
+        [
+            "env",
+            f"W={password}",
+            "sh",
+            "-c",
+            'argocd login localhost:8080 --username admin --password "$W" --plaintext --insecure --grpc-web '
+            ">/dev/null 2>&1 && echo JA || echo NEE",
+        ],
+        check=False,
+    )
+    return "JA" in result.stdout
+
+
+def argocd_admin_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
+    """Het ArgoCD-adminwachtwoord, via het cluster-secret van de operator.
+
+    De operator (argoproj-labs v0.14.0) is hier de schrijver: `reconcileArgoSecret` hasht
+    `admin.password` uit `<cr>-cluster` naar `argocd-secret`. Twee eigenschappen van die code
+    maken dat dit drie stappen zijn in plaats van een:
+
+    - `reconcileExistingArgoSecret` schrijft alleen door als het veld in `argocd-secret`
+      `nil` is. Staat er een hash, dan ziet hij het verschil, logt "admin password has
+      changed", en doet niets. Vandaar stap 2.
+    - de operator watcht de CR, niet het secret. Zonder een aanraking van de CR blijft het
+      veld minutenlang weg. Vandaar stap 3.
+
+    Beide gemeten op de sandbox, 14-10-2026, met dezelfde operator-image als productie. Het
+    cluster-secret zelf raakt hij nooit aan (`reconcileClusterMainSecret`: secret gevonden,
+    niets doen), dus het is veilig om te beheren.
+    """
+    namespace = kube.namespace
+    cluster_secret = f"{ARGOCD_CR}-cluster"
+
+    def _set_cluster_secret(ctx2: Ctx) -> str:
+        new = ctx2.new[ctx2.rotating]
+        require_safe_sql_literal(new)
+        patch = json.dumps(
+            [{"op": "replace", "path": "/data/admin.password", "value": base64.b64encode(new.encode()).decode()}]
+        )
+        # Via stdin, want een patch-body met een geheim hoort niet in argv te staan.
+        ctx2.kube.run(
+            ["patch", "secret", cluster_secret, "-n", namespace, "--type=json", "--patch-file", "/dev/stdin"],
+            input_text=patch,
+        )
+        return f"{cluster_secret}.admin.password gezet"
+
+    def _clear_hash(ctx2: Ctx) -> str:
+        ctx2.kube.run(
+            ["patch", "secret", "argocd-secret", "-n", namespace, "--type=json", "--patch-file", "/dev/stdin"],
+            input_text=json.dumps([{"op": "remove", "path": "/data/admin.password"}]),
+        )
+        return "admin.password uit argocd-secret verwijderd"
+
+    def _trigger(ctx2: Ctx) -> str:
+        ctx2.kube.run(
+            [
+                "annotate",
+                "argocd",
+                ARGOCD_CR,
+                "-n",
+                namespace,
+                f"zad.rig/rotate-trigger={int(time.time())}",
+                "--overwrite",
+            ]
+        )
+        return "CR aangeraakt, de operator reconcilieert"
+
+    def _verify(ctx2: Ctx, timeout: int = 180) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        deadline = time.monotonic() + timeout
+        while True:
+            back = ctx2.kube.run(
+                ["get", "secret", "argocd-secret", "-n", namespace, "-o", "jsonpath={.data.admin\\.password}"],
+                check=False,
+            )
+            if back.returncode == 0 and back.stdout.strip():
+                break
+            if time.monotonic() > deadline:
+                raise EditFailed(
+                    f"de operator heeft admin.password in argocd-secret na {timeout}s niet teruggezet. "
+                    "Zolang dat veld leeg is kan niemand op ArgoCD inloggen; controleer de logs van "
+                    "argocd-operator-controller-manager."
+                )
+            time.sleep(3)
+        if not argocd_login(ctx2.kube, ctx2.new[ctx2.rotating]):
+            _ok("ArgoCD accepteert de nieuwe waarde niet, terwijl de operator de hash wel heeft gezet")
+        stale = _reject_stale(ctx2, lambda: _probe_login(ctx2, ctx2.current[ctx2.rotating]), label="argocd-admin")
+        return f"inloggen met de nieuwe waarde: OK; {stale}"
+
+    def _probe_login(ctx2: Ctx, password: str) -> None:
+        """De auth-proef in de vorm die `_reject_stale` verwacht: een afwijzing is een
+        EditFailed, zodat die helper hem van een geslaagde login kan onderscheiden."""
+        if not argocd_login(ctx2.kube, password):
+            raise EditFailed("ArgoCD wijst deze waarde af")
+
+    def _check(ctx2: Ctx) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        if not argocd_login(ctx2.kube, ctx2.current[ctx2.rotating]):
+            _ok(
+                "inloggen op ArgoCD met de huidige waarde faalde. Het envbestand en het "
+                "cluster-secret lopen dan uiteen, en dan weet deze ronde niet welke waarde de oude is."
+            )
+        return "inloggen met huidige waarde: OK"
+
+    return [
+        Step(
+            "Huidige waarde testen (argocd login als admin)",
+            "check",
+            ["kubectl exec deploy/argocd-server -- argocd login localhost:8080 --username admin --password <HUIDIG>"],
+            _check,
+        ),
+        Step(
+            f"Nieuwe waarde in {cluster_secret} zetten",
+            "apply",
+            [f"kubectl patch secret {cluster_secret} --type=json  (admin.password, via stdin)"],
+            _set_cluster_secret,
+        ),
+        Step(
+            "admin.password uit argocd-secret verwijderen (anders schrijft de operator niet door)",
+            "apply",
+            ["kubectl patch secret argocd-secret --type=json  (remove /data/admin.password)"],
+            _clear_hash,
+        ),
+        Step(
+            "De CR aanraken zodat de operator reconcilieert (hij watcht het secret niet)",
+            "apply",
+            [f"kubectl annotate argocd {ARGOCD_CR} zad.rig/rotate-trigger=<nu> --overwrite"],
+            _trigger,
+        ),
+        Step(
+            "Verifiëren: operator zet de hash terug, nieuwe waarde werkt, oude is afgewezen",
+            "verify",
+            ["poll argocd-secret.admin.password tot hij terug is; daarna login met <NIEUW> en met <HUIDIG>"],
+            _verify,
+        ),
+    ]
+
+
 def bootstrap_component_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
     """De bootstrap-categorie: het secret staat buiten GitOps, dus de tool schrijft het
     bestand én applicet het direct (via stdin op kubectl apply -- secrets nooit via argv),
@@ -1779,9 +1947,18 @@ def steps_for(
             raise EditFailed(f"live-app zonder bouwer: {component.key}")
         steps.append(file_step(component, cluster))
     elif component.category == "bootstrap":
-        steps = bootstrap_component_steps(component, cluster, kube, ctx)
+        # Geen push en geen sync: deze secrets staan buiten GitOps, dus de bouwer past ze zelf
+        # toe. Daarom returnt deze tak vroeg.
+        if component.key == "argocd-admin":
+            steps = argocd_admin_steps(component, cluster, kube, ctx)
+        else:
+            steps = bootstrap_component_steps(component, cluster, kube, ctx)
         if component.zad_env:
             steps.append(env_step(component, cluster))
+        # De consumer herstart ná de env-stap, want die leest de waarde uit het envbestand.
+        restart = None if defer_restarts else restart_step(component, cluster)
+        if restart is not None:
+            steps.append(restart)
         followup = followup_step(component)
         if followup is not None:
             steps.append(followup)
