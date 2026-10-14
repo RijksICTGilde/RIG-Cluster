@@ -12,15 +12,19 @@ Keycloak exposes Prometheus-compatible metrics that provide insights into:
 
 ## Configuration
 
-Keycloak metrics are enabled via the following configuration in the deployment:
+Metrics and health are **build** options, so they are baked into our own Keycloak image, not
+set in the deployment (`images/keycloak-zad/Dockerfile`):
 
-```yaml
-env:
-  - name: KC_METRICS_ENABLED
-    value: "true"
-  - name: KC_HEALTH_ENABLED
-    value: "true"
+```dockerfile
+RUN /opt/keycloak/bin/kc.sh build \
+      --metrics-enabled=true \
+      --health-enabled=true \
+      ...
 ```
+
+The deployment does **not** set `KC_METRICS_ENABLED` or `KC_HEALTH_ENABLED`: the pod starts
+with `--optimized`, and a build option in the environment is then silently ignored. Changing
+either value means building and pinning a new image tag, see `features/keycloak-eigen-image.md`.
 
 **Important**: Keycloak exposes metrics on a separate **management interface** running on **port 9000** (not the main port 8080). This provides security isolation between the main application and observability endpoints.
 
@@ -205,7 +209,9 @@ Once deployed, metrics are available at:
 
 ### Metrics not appearing
 
-1. Verify `KC_METRICS_ENABLED=true` is set in the deployment
+1. Verify the image bakes it in: `kubectl exec -n rig-system deployment/keycloak --
+   /opt/keycloak/bin/kc.sh show-config | grep metrics-enabled` must say `true (Persisted)`.
+   It is not an environment variable in the deployment, see Configuration above
 2. Check pod annotations are present: `kubectl get pod -n rig-system -l app=keycloak -o yaml`
 3. Test metrics endpoint directly on the management port:
    ```bash

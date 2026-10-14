@@ -64,41 +64,18 @@ Always test with Docker first (see above) before integrating with Kind cluster.
 
 ### Option B: Integration with Kind Cluster
 
-For this, you need to:
+The JAR reaches Keycloak through the image the pod runs (`images/keycloak-zad/`), which
+builds it from this source. One task builds it, pushes it to ghcr and pins that tag in the
+sandbox overlay (`docker login ghcr.io` first):
 
-1. **Publish the JAR** to GitHub releases:
-   ```bash
-   task publish-keycloak-custom-mapper
-   ```
+```bash
+task publish-keycloak-image
+task sandbox:sync
+```
 
-2. **Update the deployment** in `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`:
-   ```yaml
-   initContainers:
-     - name: keycloak-theme-puller
-       command:
-         - sh
-         - -c
-         - |
-           cd /tmp
-           # Download theme
-           wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
-           cp keycloak-nl-design-system.jar /opt/keycloak/providers/
-
-           # Download custom mapper
-           wget https://github.com/minbzk/base-images/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar
-           cp keycloak-saml-nameid-mapper-1.0.0.jar /opt/keycloak/providers/
-   ```
-
-3. **Commit and let ArgoCD sync**:
-   ```bash
-   git add infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
-   git commit -m "Add custom mapper to Keycloak"
-   git push
-   ```
-
-4. **Wait for ArgoCD** to detect and apply the change
-
-5. **Verify in Keycloak UI** (same steps as Docker test)
+Then verify in the Keycloak UI (same steps as the Docker test). Building, promoting to
+production and the per-environment pin are described in
+[features/keycloak-eigen-image.md](../features/keycloak-eigen-image.md).
 
 ## Troubleshooting
 
@@ -172,7 +149,7 @@ For this, you need to:
 ## Next Steps After Successful Test
 
 1. Document the mapper configuration for your use case
-2. Publish to GitHub releases: `task publish-keycloak-custom-mapper`
+2. Build the Keycloak image that carries the JAR: `task publish-keycloak-image`
 3. Update production Keycloak deployment
 4. Configure the actual XPath expression for your SAML NameID extraction
 5. Add protocol mapper to override `sub` claim with the extracted attribute
