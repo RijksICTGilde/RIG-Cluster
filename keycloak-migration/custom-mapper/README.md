@@ -36,149 +36,22 @@ mvn clean package
 
 Output: `target/keycloak-saml-nameid-mapper-1.1.0.jar`
 
-## Publishing to GitHub
+## In Keycloak krijgen
 
-### Prerequisites
-- GitHub CLI (`gh`) installed and authenticated
-- Repository must be public for wget downloads to work
-- Push permissions to the repository
+De jar gaat in de image die de Keycloak-pod draait. `images/keycloak-zad/` bouwt hem uit deze
+bron en zet hem in `/opt/keycloak/providers/`, dus de pod haalt bij het starten niets op.
+Bouwen, in de sandbox draaien en promoveren naar productie staat in
+`features/keycloak-eigen-image.md`.
 
-### Quick Publish
+De GitHub-release van deze jar is gestopt nu de image de bron is. De bestaande `v1.1.0`
+blijft staan, zodat een oud manifest of een terugval er niet op stukloopt, maar er worden
+geen nieuwe assets meer op gezet.
 
-Using Taskfile (recommended):
-```bash
-task publish-keycloak-custom-mapper
-```
-
-This will:
-1. Build the JAR (if not already built)
-2. Create or update the GitHub release (currently v1.1.0 — see Taskfile `VERSION=`)
-3. Upload the JAR as a release asset
-4. Verify the download URL
-
-The JAR will be available at:
-`https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar`
-
-### Manual Publishing Steps
-
-If you prefer to publish manually:
-
-1. **Build the JAR**:
-   ```bash
-   task build-keycloak-custom-mapper
-   ```
-
-2. **Create GitHub Release**:
-   ```bash
-   cd keycloak-migration/custom-mapper
-   gh release create v1.1.0 \
-     --repo "RijksICTGilde/RIG-Cluster" \
-     --title "Keycloak SAML NameID Mapper v1.1.0" \
-     --notes "Adds always-clear-session logout endpoint (broker logout shim)" \
-     target/keycloak-saml-nameid-mapper-1.1.0.jar
-   ```
-
-3. **Verify Release**:
-   ```bash
-   curl -sI https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
-   # Should return HTTP 200 or 302
-   ```
-
-## Deployment
-
-The JAR needs to be in `/opt/keycloak/providers/` when Keycloak starts.
-
-### Option 1: Init Container Download (Recommended)
-
-Update your Keycloak deployment's init container to download the custom mapper from the GitHub release:
-
-```yaml
-initContainers:
-  - name: keycloak-theme-puller
-    command:
-      - sh
-      - -c
-      - |
-        cd /tmp
-        # Download theme
-        wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.2.1/keycloak-nl-design-system.jar
-        cp keycloak-nl-design-system.jar /opt/keycloak/providers/
-
-        # Download custom mapper
-        wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
-        cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
-    image: busybox:1.37.0
-    securityContext:
-      runAsUser: 0
-    volumeMounts:
-      - mountPath: /opt/keycloak/providers/
-        name: keycloak-provider
-```
-
-**Apply the change**:
-```bash
-# Update the deployment YAML in your GitOps repo
-# Commit and push the change
-git add infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
-git commit -m "Add custom SAML NameID mapper to Keycloak"
-git push
-
-# If using ArgoCD, sync the application
-# Or manually apply:
-kubectl apply -f infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml
-
-# Restart Keycloak to load the new JAR
-kubectl rollout restart deployment/keycloak-dpl -n keycloak
-```
-
-**Verify the JAR is loaded**:
-```bash
-# Check JAR is in the pod
-kubectl exec deployment/keycloak-dpl -n keycloak -- ls -lh /opt/keycloak/providers/
-
-# Check Keycloak logs for mapper registration
-kubectl logs deployment/keycloak-dpl -n keycloak | grep "saml-unrestricted-xpath-idp-mapper"
-# Should show: "KC-SERVICES0047: saml-unrestricted-xpath-idp-mapper (nl.minbzk.rig.keycloak.mapper.UnrestrictedXPathAttributeMapper) is implementing the internal SPI"
-```
-
-### Option 2: Host JAR in Git Repository
-
-1. Create `custom-providers` directory in your infra repo
-2. Add the JAR file to git (or git LFS)
-3. Use ConfigMap or init container to copy it
-
-Example with ConfigMap:
+Toetsen dat de providers geladen zijn:
 
 ```bash
-# Create ConfigMap from JAR
-kubectl create configmap keycloak-custom-mapper \
-  --from-file=keycloak-saml-nameid-mapper.jar=target/keycloak-saml-nameid-mapper-1.1.0.jar \
-  -n keycloak
-
-# Mount in deployment
-volumeMounts:
-  - name: custom-mapper
-    mountPath: /opt/keycloak/providers/keycloak-saml-nameid-mapper.jar
-    subPath: keycloak-saml-nameid-mapper.jar
-
-volumes:
-  - name: custom-mapper
-    configMap:
-      name: keycloak-custom-mapper
-```
-
-### Option 3: Manual Deployment (Testing)
-
-```bash
-# Build JAR
-mvn clean package
-
-# Copy to running Keycloak pod
-kubectl cp target/keycloak-saml-nameid-mapper-1.1.0.jar \
-  keycloak-dpl-xxx:/opt/keycloak/providers/ -n keycloak
-
-# Restart Keycloak
-kubectl rollout restart deployment/keycloak-dpl -n keycloak
+kubectl exec -n rig-system deployment/keycloak -- ls -lh /opt/keycloak/providers/
+kubectl logs -n rig-system deployment/keycloak | grep saml-unrestricted-xpath-idp-mapper
 ```
 
 ## Configuration in Keycloak UI
@@ -329,5 +202,5 @@ INFO User 'jane.doe' does not have required role 'my-app.allowed-user' - denying
 
 ## Related Documentation
 
-- [Client Access Restriction Feature](/features/client-access-restriction.md)
-- [Keycloak YAML Configuration](/docs/keycloak-yaml-configuration.md)
+- [Client Access Restriction Feature](../../features/client-access-restriction.md)
+- [Keycloak YAML Configuration](../../docs/keycloak-yaml-configuration.md)

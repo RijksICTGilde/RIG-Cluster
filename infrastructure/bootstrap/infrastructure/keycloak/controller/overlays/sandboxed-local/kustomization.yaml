@@ -4,6 +4,19 @@ namespace: rig-system
 resources:
 - ../../base
 
+# DE EIGEN PIN VAN DE SANDBOX. Hij staat hier en niet in de basis, zodat een vers
+# gebouwde image hier kan draaien terwijl de basis en de odcn-overlay op de tag van
+# productie blijven staan.
+#
+# `task publish-keycloak-image` schrijft deze regel, en pas nadat hij de image naar
+# ghcr gepusht en zonder inlog teruggelezen heeft. Met de hand een tag invullen slaat die
+# controle over: de sandbox pullt gewoon uit ghcr, dus een tag die daar niet staat komt niet
+# verder dan ImagePullBackOff. Is er nog nooit gebouwd, dan staat hier daarom het woord
+# bouw-eerst en geen tag.
+images:
+  - name: ghcr.io/rijksictgilde/zad/keycloak-zad
+    newTag: "2026.10.13.1948-72684cb4"
+
 patches:
   - target:
       kind: Deployment
@@ -17,9 +30,6 @@ patches:
         value: 1000
       - op: add
         path: /spec/template/spec/securityContext/fsGroup
-        value: 1000
-      - op: add
-        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
         value: 1000
       - op: add
         path: /spec/template/spec/containers/0/securityContext/runAsUser
@@ -40,10 +50,10 @@ patches:
         path: /spec/template/spec/containers/0/resources/requests/memory
         value: "2Gi"
       - op: test
-        path: /spec/template/spec/containers/0/env/6/name
+        path: /spec/template/spec/containers/0/env/4/name
         value: "KC_HOSTNAME"
       - op: replace
-        path: /spec/template/spec/containers/0/env/6/value
+        path: /spec/template/spec/containers/0/env/4/value
         value: "https://keycloak.sandbox.rijksapp.dev"
   - target:
       kind: Ingress

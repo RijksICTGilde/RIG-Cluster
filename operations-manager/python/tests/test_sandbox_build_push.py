@@ -26,6 +26,7 @@ TASKFILE = REPO_ROOT / "Taskfile.yaml"
 REGISTRY_SCRIPT = REPO_ROOT / "scripts" / "setup-kind-registry.sh"
 OVERLAYS = REPO_ROOT / "bootstrap" / "rig-system" / "kustomize" / "operations-manager" / "overlays"
 OM_PATCH_REL = "bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml"
+BRON_TAG_REL = "scripts/bron-tag.sh"
 SKAFFOLD_FILES = [
     REPO_ROOT / "operations-manager" / "skaffold-sandboxed-local.yaml",
     REPO_ROOT / "operations-manager" / "skaffold-sandboxed-local-debug.yaml",
@@ -86,12 +87,19 @@ def _git(repo: Path, *args: str) -> str:
 
 @pytest.fixture
 def repo(tmp_path: Path, tools: None) -> Path:
-    """Een git-repo met de overlay zoals hij in git staat en een bestand in opi/."""
+    """Een git-repo met de overlay zoals hij in git staat en een bestand in opi/.
+
+    De tagvar roept `scripts/bron-tag.sh` aan vanaf de repowortel, dus zonder dat script
+    in deze boom meet de toets exitcode 127 in plaats van de tag.
+    """
     (tmp_path / "operations-manager/python/opi").mkdir(parents=True)
     (tmp_path / "operations-manager/python/opi/app.py").write_text("x = 1\n")
     patch = tmp_path / OM_PATCH_REL
     patch.parent.mkdir(parents=True)
     patch.write_text((REPO_ROOT / OM_PATCH_REL).read_text())
+    script = tmp_path / BRON_TAG_REL
+    script.parent.mkdir(parents=True)
+    shutil.copy(REPO_ROOT / BRON_TAG_REL, script)
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
     _git(tmp_path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
@@ -211,6 +219,45 @@ class TestImageTag:
 
         assert _git(repo, "status", "--porcelain") != ""
         assert _tag(taskfile, repo) == before
+
+    def test_de_tagmaker_weigert_zonder_paden(self, repo: Path) -> None:
+        """Zonder pad kijkt git naar de HELE boom: elke losse wijziging werd dan een tag.
+
+        De grendel zit bij de maker en niet bij de aanroeper. Deze toets stond bij de
+        Keycloak-image, die de maker vandaag niet meer gebruikt; `SANDBOX_OM_TAG` is nu de
+        enige lezer, dus hij hoort hier.
+        """
+        proc = subprocess.run(
+            ["bash", str(repo / BRON_TAG_REL)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert proc.returncode == 2, proc.stdout + proc.stderr
+        assert proc.stdout == ""
+        assert "pad" in proc.stderr
+
+    @pytest.mark.parametrize("doel", [".", "bestaat-niet"], ids=["naar een map", "kapot"])
+    def test_een_ongetrackte_vindplaats_die_niet_te_lezen_is_breekt_de_tag_niet(self, repo: Path, doel: str) -> None:
+        """De maker draait als globale Taskfile-var, dus valt hij om, dan faalt ELKE taak.
+
+        De klacht blijft ook weg, want die var wordt voor elk commando uitgerekend.
+        """
+        (repo / "operations-manager/python/opi/los").symlink_to(doel)
+
+        proc = subprocess.run(
+            ["bash", str(repo / BRON_TAG_REL), "operations-manager"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert proc.stderr == ""
+        assert re.fullmatch(r"[0-9a-f]+-dirty-[0-9a-f]{7}", proc.stdout.strip()), proc.stdout
 
 
 class TestConfigureOverlay:
