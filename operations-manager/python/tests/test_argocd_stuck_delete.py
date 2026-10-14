@@ -12,17 +12,24 @@ Two things have to be true of the delete route, and both are about ORDER:
 So these tests assert sequences, not just that the calls happened.
 """
 
+import asyncio
+import json
+import logging
+import time
 from inspect import signature
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.argo import ArgoConnector
-from opi.connectors.kubectl import KubectlConnector
+from opi.connectors.kubectl import KubectlConnector, types_named_in_kubectl_error
 from opi.manager.delete_project_manager import (
+    _DELETION_PROGRESS_DEADLINE,
     CASCADE_WAIT_DELAY,
     CASCADE_WAIT_RETRIES,
+    DELETION_PROGRESS_BUDGET_SECONDS,
     DeleteProjectManager,
     ForcedDeletion,
+    deletion_progress_window,
 )
 from opi.utils.argocd_tracking import (
     INSTANCE_LABEL,
@@ -324,6 +331,181 @@ class TestTerminateOperation:
             assert await connector.terminate_argocd_application_operation("app-a") is False
 
 
+class TestTerminateOperationWithoutLogNoise:
+    """RC-238: elke delete opende met een loze ERROR.
+
+    De read-voor-de-patch zelf staat in TestTerminateOperation hierboven (RC-250). Wat deze
+    toetsen eraan vastzetten is de bevinding waar RC-238 om begon: dat er geen ERROR meer
+    in het log komt. De afwijzing van de patch is niet aan haar tekst te herkennen, want
+    kubectl tegen k8s 1.32 schrijft alleen "The request is invalid: the server rejected our
+    request due to an error in our request", zonder het pad en zonder de reden.
+    """
+
+    APISERVER_REJECTION = "The request is invalid: the server rejected our request due to an error in our request"
+
+    @pytest.mark.asyncio
+    async def test_an_application_without_an_operation_is_not_patched_and_logs_no_error(
+        self, connector, caplog
+    ) -> None:
+        """De kern van de bevinding: geen patch, dus ook geen ERROR."""
+        run = AsyncMock(side_effect=[("", "", 0)])
+        with patch.object(connector, "_run_kubectl_command", run), caplog.at_level(logging.DEBUG):
+            assert await connector.terminate_argocd_application_operation("nd-j7s-pr-63", "argocd") is True
+
+        assert run.await_count == 1, "een lege operation hoort niet gepatcht te worden"
+        assert run.await_args_list[0].args[0][0] == "get"
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    @pytest.mark.asyncio
+    async def test_the_contentless_apiserver_rejection_is_benign_when_the_operation_is_gone(
+        self, connector, caplog
+    ) -> None:
+        """De operation verdween tussen de read en de patch: dat is de gewenste uitkomst."""
+        run = AsyncMock(side_effect=[('{"sync":{}}', "", 0), ("", self.APISERVER_REJECTION, 1), ("", "", 0)])
+        with patch.object(connector, "_run_kubectl_command", run), caplog.at_level(logging.DEBUG):
+            assert await connector.terminate_argocd_application_operation("nd-j7s-pr-63", "argocd") is True
+
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+    @pytest.mark.asyncio
+    async def test_the_contentless_apiserver_rejection_stays_an_error_while_the_operation_remains(
+        self, connector, caplog
+    ) -> None:
+        """Dezelfde tekst, andere staat. Op de tekst matchen zou dit groen maken."""
+        run = AsyncMock(side_effect=[('{"sync":{}}', "", 0), ("", self.APISERVER_REJECTION, 1), ('{"sync":{}}', "", 0)])
+        with patch.object(connector, "_run_kubectl_command", run), caplog.at_level(logging.DEBUG):
+            assert await connector.terminate_argocd_application_operation("nd-j7s-pr-63", "argocd") is False
+
+        assert [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR] != []
+
+
+class TestDeletionProgress:
+    """RC-238: traag en vastgelopen zijn alleen te scheiden door te kijken of er iets beweegt.
+
+    Wat beweegt is de INVENTARIS van de doelnamespace, niet de ``status.resources`` van de
+    Application zelf. Gemeten op de sandbox op 1 oktober 2026: die blijft tijdens de hele
+    cascade op zijn oude getal staan (zie de docstring van de connector), en een bevroren
+    getal leest als stilstand.
+    """
+
+    @staticmethod
+    def _application(deleting: bool, destination: str = "rig-nd-j7s") -> str:
+        metadata: dict = {"name": "nd-j7s-pr-63"}
+        if deleting:
+            metadata["deletionTimestamp"] = "2026-09-29T14:37:02Z"
+        return json.dumps(
+            {
+                "metadata": metadata,
+                "spec": {"destination": {"namespace": destination}},
+                # Bevroren op 30 terwijl de cascade loopt: dit veld mag de meting niet zijn.
+                "status": {"resources": [{"kind": "ConfigMap"} for _ in range(30)]},
+            }
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_deleting_application_counts_the_resources_left_in_its_namespace(self, connector) -> None:
+        tracked = [_tracked("nd-j7s-pr-63", f"cm-{i}") for i in range(3)]
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(True), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=(tracked, True))) as inventaris,
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") == (True, 3, True)
+
+        assert inventaris.await_args.args[0] == "rig-nd-j7s", "de inventaris hoort in de DOELnamespace te kijken"
+
+    @pytest.mark.asyncio
+    async def test_the_frozen_status_resources_of_the_application_is_not_the_measurement(self, connector) -> None:
+        """De kern van de meting: 30 in ``status.resources``, 2 echt over.
+
+        Zonder deze toets is de meting weer uit het statusveld te lezen, en dat veld staat
+        tijdens een cascade stil: de stilstandteller loopt dan vol en de wacht stopt op
+        dezelfde 40 polls als voor deze wijziging.
+        """
+        tracked = [_tracked("nd-j7s-pr-63", "cm-1"), _tracked("buur-pr-9", "cm-2")]
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(True), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=(tracked, True))),
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") == (True, 2, True)
+
+    @pytest.mark.asyncio
+    async def test_an_application_that_is_not_being_deleted_says_so(self, connector) -> None:
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(False), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=([], True))),
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") == (False, 0, True)
+
+    @pytest.mark.asyncio
+    async def test_a_partial_inventory_is_reported_as_one(self, connector) -> None:
+        """Een halve inventaris is een getal dat niet met een heel getal te vergelijken is,
+        dus de volledigheid hoort in het antwoord. Juist tijdens het incident gaf de
+        inventaris exit 1 met output, en als dat als None zou gelden verdient de delete nooit
+        meer voortgang."""
+        tracked = [_tracked("nd-j7s-pr-63", "cm-1")]
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(True), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=(tracked, False))),
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") == (True, 1, False)
+
+    @pytest.mark.asyncio
+    async def test_the_discovered_types_are_passed_on_to_the_inventory(self, connector) -> None:
+        """De aanroeper doet de discovery een keer per wacht; geeft hij de types mee, dan
+        mag de inventaris er geen tweede keer om vragen."""
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(True), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=([], True))) as inventaris,
+        ):
+            await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd", ["secrets", "pods"])
+
+        assert inventaris.await_args.args[1] == ["secrets", "pods"]
+
+    @pytest.mark.asyncio
+    async def test_an_application_without_a_destination_namespace_cannot_be_measured(self, connector) -> None:
+        """Zonder doelnamespace is er niets om de cascade in te tellen, en 0 teruggeven zou
+        een stilstand verzinnen."""
+        payload = json.dumps({"metadata": {"deletionTimestamp": "2026-09-29T14:37:02Z"}, "spec": {}})
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(payload, "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=([], True))) as inventaris,
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") is None
+
+        inventaris.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_namespace_that_cannot_be_inventoried_is_none_and_not_zero(self, connector) -> None:
+        """Dezelfde reden als bij een onleesbare Application: 0 is een meting, None niet."""
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._application(True), "", 0))),
+            patch.object(connector, "list_tracked_resources", AsyncMock(return_value=None)),
+        ):
+            assert await connector.argocd_application_deletion_progress("nd-j7s-pr-63", "argocd") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("stdout", "stderr", "code"),
+        [
+            ("", 'Error from server (NotFound): applications.argoproj.io "a" not found', 1),
+            ("", "connection reset", 1),
+            ("", "", 0),
+            ("not json", "", 0),
+            ("[1, 2]", "", 0),
+        ],
+    )
+    async def test_an_unreadable_application_is_none_and_not_zero_progress(
+        self, connector, stdout: str, stderr: str, code: int
+    ) -> None:
+        """None is niet "niets beweegt".
+
+        Een read die mislukte zegt niets over de cascade. De wacht mag er geen stilstand van
+        maken, en er net zo goed geen extra venster op verdienen.
+        """
+        with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(stdout, stderr, code))):
+            assert await connector.argocd_application_deletion_progress("a", "argocd") is None
+
+
 class TestDeleteApplication:
     @pytest.mark.asyncio
     async def test_an_application_that_is_already_gone_is_not_a_failure(self, connector) -> None:
@@ -515,6 +697,146 @@ class TestListTrackedResources:
     async def test_unparsable_output_is_not_read_as_empty_silently(self, connector) -> None:
         with patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=("not json", "", 0))):
             assert await connector.list_tracked_resources("ns", ["secrets"]) is None
+
+
+class TestTypesNamedInKubectlError:
+    """De naamherkenning los, want via ``list_tracked_resources`` is maar een vorm per
+    toets te meten en de randen zitten juist in de tekst."""
+
+    FORBIDDEN = 'Error from server (Forbidden): {t} is forbidden: User "opi" cannot list resource'
+
+    @pytest.mark.parametrize(
+        ("stderr", "types", "verwacht"),
+        [
+            ("", ["secrets"], []),
+            ("Error from server (Forbidden): secrets is forbidden", [], []),
+            ("Error from server (Forbidden): secrets is forbidden", ["secrets"], ["secrets"]),
+            # Twee missers in een antwoord: beide horen in het log, in de volgorde van de query.
+            (
+                "Error from server (Forbidden): secrets is forbidden\n"
+                "Error from server (Forbidden): configmaps is forbidden",
+                ["configmaps", "secrets", "endpoints"],
+                ["configmaps", "secrets"],
+            ),
+            # De naamgrens, beide kanten op.
+            ("cannot list resource externalsecrets.external-secrets.io", ["secrets"], []),
+            ('cannot list resource "secrets" in API group ""', ["secrets"], ["secrets"]),
+            ("deployments.apps is forbidden", ["deployments"], []),
+            # Een waarschuwing noemt een Kind met hoofdletter, nooit de plural.group die
+            # wordt opgevraagd. Zou de match ongevoelig voor kapitalen worden, dan wijst
+            # het log een type aan dat gewoon gelezen is.
+            (
+                "Warning: v1 Endpoints is deprecated in v1.33+\n"
+                "Error from server (Forbidden): deployments.apps is forbidden",
+                ["endpoints", "deployments.apps"],
+                ["deployments.apps"],
+            ),
+        ],
+    )
+    def test_which_types_kubectl_blamed(self, stderr: str, types: list[str], verwacht: list[str]) -> None:
+        assert types_named_in_kubectl_error(stderr, types) == verwacht
+
+    def test_a_type_with_a_regex_character_is_matched_literally(self) -> None:
+        """``.`` in ``deployments.apps`` is een punt en geen joker."""
+        assert types_named_in_kubectl_error(self.FORBIDDEN.format(t="deploymentsxapps"), ["deployments.apps"]) == []
+
+
+class TestPartialInventoryNamesTheFailingType:
+    """RC-238: tijdens het incident gaf de inventaris exit 1 en stond er alleen de ruwe
+    stderr in het log. Welk van de 50 opgevraagde types niet gelezen kon worden was
+    daarmee niet te zien, en juist die types zijn waar een achtergebleven resource zit.
+
+    De vormen hieronder zijn op de sandbox nagemeten (k8s 1.32): kubectl noemt het type
+    precies zoals het is opgevraagd.
+    """
+
+    FORBIDDEN_GROUPED = (
+        'Error from server (Forbidden): deployments.apps is forbidden: User "opi" cannot '
+        'list resource "deployments" in API group "apps" in the namespace "rig-prd-nd-j7s"'
+    )
+    DEPRECATION_WARNING = "Warning: v1 Endpoints is deprecated in v1.33+"
+
+    @staticmethod
+    def _payload() -> str:
+        return json.dumps({"items": [_item("Secret", "v1", "db-creds", "app-a:/Secret:ns/db-creds")]})
+
+    @pytest.mark.asyncio
+    async def test_exactly_one_failing_type_is_named_in_the_log(self, connector, caplog) -> None:
+        """Precies een van de opgevraagde types faalt: complete=False en het log noemt hem."""
+        types = ["secrets", "configmaps", "deployments.apps"]
+        with (
+            patch.object(
+                connector, "_run_kubectl_command", AsyncMock(return_value=(self._payload(), self.FORBIDDEN_GROUPED, 1))
+            ),
+            caplog.at_level(logging.DEBUG),
+        ):
+            tracked, complete = await connector.list_tracked_resources("rig-prd-nd-j7s", types)
+
+        assert [r.name for r in tracked] == ["db-creds"]
+        assert complete is False
+        gemeld = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        # Op de naam EN op de telling, want de ruwe stderr eronder bevat "deployments.apps"
+        # ook: zonder dit stuk is de oude regel die alleen stderr doorgaf al groen.
+        assert any("1 of 3 types could not be listed (deployments.apps)" in m for m in gemeld), gemeld
+
+    @pytest.mark.asyncio
+    async def test_a_type_that_merely_contains_another_name_is_not_blamed(self, connector, caplog) -> None:
+        """``secrets`` zit in ``externalsecrets.external-secrets.io``.
+
+        Zonder naamgrens wijst het log de verkeerde type-naam aan, en dat stuurt de lezer
+        naar de verkeerde plek.
+        """
+        stderr = (
+            "Error from server (Forbidden): externalsecrets.external-secrets.io is forbidden: "
+            'User "opi" cannot list resource "externalsecrets" in API group "external-secrets.io" '
+            'in the namespace "rig-prd-nd-j7s"'
+        )
+        types = ["secrets", "externalsecrets.external-secrets.io"]
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._payload(), stderr, 1))),
+            caplog.at_level(logging.DEBUG),
+        ):
+            await connector.list_tracked_resources("rig-prd-nd-j7s", types)
+
+        assert types_named_in_kubectl_error(stderr, types) == ["externalsecrets.external-secrets.io"]
+
+    @pytest.mark.asyncio
+    async def test_a_deprecation_warning_on_a_successful_query_keeps_the_inventory_complete(
+        self, connector, caplog
+    ) -> None:
+        """Een waarschuwing op stderr met exit 0 is geen misser.
+
+        Dit deed hij al; de toets staat er zodat de diagnostiek-route hem niet stuk maakt.
+        """
+        with (
+            patch.object(
+                connector,
+                "_run_kubectl_command",
+                AsyncMock(return_value=(self._payload(), self.DEPRECATION_WARNING, 0)),
+            ),
+            caplog.at_level(logging.DEBUG),
+        ):
+            tracked, complete = await connector.list_tracked_resources("rig-prd-nd-j7s", ["secrets", "endpoints"])
+
+        assert complete is True
+        assert [r.name for r in tracked] == ["db-creds"]
+
+    @pytest.mark.asyncio
+    async def test_an_unrecognisable_failure_says_so_instead_of_blaming_a_type(self, connector, caplog) -> None:
+        """Noemt kubectl geen enkel opgevraagd type, dan is dat wat het log zegt.
+
+        Een lege lijst mag niet als "niets faalde" lezen, want ``complete`` is wel False.
+        """
+        stderr = "error: unable to retrieve the complete list of server APIs: metrics.k8s.io/v1beta1"
+        with (
+            patch.object(connector, "_run_kubectl_command", AsyncMock(return_value=(self._payload(), stderr, 1))),
+            caplog.at_level(logging.DEBUG),
+        ):
+            _, complete = await connector.list_tracked_resources("rig-prd-nd-j7s", ["secrets", "configmaps"])
+
+        assert complete is False
+        gemeld = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+        assert any("named none of the 2 queried types" in m for m in gemeld), gemeld
 
 
 class TestDeleteTrackedResources:
@@ -1310,6 +1632,293 @@ class TestOperationClearedBeforeTheWait:
 
         cleanup = next(op for op in results["operations"] if op["type"] == "orphaned_argocd_application_cleanup")
         assert (cleanup["target"], cleanup["status"]) == ("mpfm-w3h-pr-310", status)
+
+
+class TestProjectFileFollowsTheCluster:
+    """RC-238: de project file kreeg delete-commits terwijl de resources nog stonden.
+
+    Op 29 september landden de commits om 14:42 terwijl de cascade nog liep. De file is
+    de desired state die elke volgende run leest, dus daarna vroeg niets aan beide kanten
+    nog om de verwijdering: de deployment was weg uit de file en aanwezig op het cluster.
+    """
+
+    @staticmethod
+    def _harness(calls: list[str], *, wait_results: list[bool] | None = None) -> tuple[AsyncMock, AsyncMock, MagicMock]:
+        pm, argo, project_data, deployment = _deployment_harness(calls, wait_results=wait_results)
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+        return pm, argo, project_store
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_delete_still_commits_the_removal(self) -> None:
+        """Het happy path blijft onveranderd, en zonder deze helft meet de toets eronder
+        alleen dat er niet gecommit wordt."""
+        calls: list[str] = []
+        pm, argo, project_store = self._harness(calls, wait_results=[True])
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
+
+        pm.mutate_and_commit_project.assert_awaited_once()
+        bestand = next(op for op in results["operations"] if op["type"] == "project_file_update")
+        assert (bestand["action"], bestand["status"]) == ("removed_from_project_file", "success")
+
+    @pytest.mark.asyncio
+    async def test_an_unconfirmed_delete_does_not_commit_and_fails_red(self) -> None:
+        """De kern: geen commit, de entry blijft staan, en de taak faalt.
+
+        ``force=False`` dus de force-route komt er niet aan te pas: dit is de delete die
+        afliep zonder bevestiging, precies de vorm uit het incident.
+        """
+        calls: list[str] = []
+        pm, argo, project_store = self._harness(calls, wait_results=[False])
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            results = await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
+
+        pm.mutate_and_commit_project.assert_not_awaited()
+        bestand = next(op for op in results["operations"] if op["type"] == "project_file_update")
+        assert (bestand["action"], bestand["status"]) == ("removed_from_project_file", "skipped")
+        assert bestand["reason"].startswith("ArgoCD application not confirmed deleted")
+        assert any("kept in the project file" in error for error in results["errors"])
+        # De taakhandler faalt de taak op een niet-lege errors-lijst, en dat is wat de
+        # delete opnieuw aanvraagbaar houdt.
+        assert results["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_the_yaml_change_route_never_writes_the_file_back(self) -> None:
+        """De andere helft van de eis uit het plan: deze route commit niets.
+
+        Hier heeft de gebruiker de entry zelf uit de file gehaald, dus de file is de
+        INVOER. Dezelfde grendel hier aanbrengen zou een tweede schrijver op hetzelfde
+        veld zetten, en dat is precies wat de twee kanten uit elkaar liet lopen.
+        """
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls, wait_results=[False])
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            results = await DeleteProjectManager(pm).delete_deployment_from_yaml_change(
+                "mpfm-w3h", deployment, project_data
+            )
+
+        pm.mutate_and_commit_project.assert_not_awaited()
+        assert not [op for op in results["operations"] if op["type"] == "project_file_update"]
+
+
+class TestTheProgressWindowReachesTheRoutes:
+    """RC-238: de voortgangsbewuste wacht is opt-in, dus de aanroep is de helft van de fix.
+
+    ``wait_for_application_deletion`` valt zonder ``progress_window_seconds`` terug op het
+    oude gedrag: stoppen op ``max_retries``, voortgang of niet. Dat is precies de stand van
+    29 september. De drie routes die een Application met een workload laten verwijderen
+    moeten het venster dus meegeven, en zonder deze toetsen is elk van die regels los te
+    verwijderen zonder dat er iets rood wordt.
+    """
+
+    @staticmethod
+    def _window_of(argo: AsyncMock, index: int = 0) -> int | None:
+        return argo.wait_for_application_deletion.await_args_list[index].kwargs.get("progress_window_seconds")
+
+    @pytest.mark.asyncio
+    async def test_the_deployment_delete_waits_on_progress(self) -> None:
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls)
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310")
+
+        assert self._window_of(argo) == DELETION_PROGRESS_BUDGET_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_the_yaml_change_delete_waits_on_progress(self) -> None:
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment_from_yaml_change("mpfm-w3h", deployment, project_data)
+
+        assert self._window_of(argo) == DELETION_PROGRESS_BUDGET_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_the_infrastructure_delete_waits_on_progress(self) -> None:
+        """De infra-Application hangt onder zich een CNPG-cluster, en die cascade is de
+        langzaamste van de drie."""
+        calls: list[str] = []
+        pm, argo, project_data, _ = _deployment_harness(calls)
+        results: dict = {"operations": [], "errors": []}
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm)._cleanup_project_infrastructure(
+                "mpfm-w3h",
+                "local",
+                {**project_data, "services": ["namespace-postgresql-database"]},
+                results,
+                force=False,
+            )
+
+        assert self._window_of(argo) == DELETION_PROGRESS_BUDGET_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_the_wait_after_a_forced_finalizer_removal_has_no_progress_window(self) -> None:
+        """De tweede wacht is een andere wacht, en die hoort kort te blijven.
+
+        Daar is de finalizer net weggehaald, dus de Application wordt door de garbage
+        collector opgeruimd en niet meer door een cascade. Het venster daar ook op zetten
+        maakt van een mislukte opruiming een wacht van tien minuten.
+        """
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(
+            calls, wait_results=[False, True], tracked=[_tracked("mpfm-w3h-pr-310", "db-creds")]
+        )
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+            patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+            patch("os.path.exists", return_value=False),
+        ):
+            await DeleteProjectManager(pm).delete_deployment("mpfm-w3h", "pr-310", force=True)
+
+        assert calls.count("wait_for_deletion") == 2
+        assert self._window_of(argo, 0) == DELETION_PROGRESS_BUDGET_SECONDS
+        assert self._window_of(argo, 1) is None
+
+    @pytest.mark.asyncio
+    async def test_the_second_deployment_of_a_task_gets_what_is_left_of_the_budget(self) -> None:
+        """De route moet het budget AANROEPEN en niet de constante meegeven.
+
+        ``delete_project`` verwijdert zijn deployments in een lus, en daar zit het verschil
+        tussen een budget per taak en een venster per wacht. Met de constante op alle drie de
+        aanroepregels bleven de twee toetsbestanden van deze PR groen: de budgetfunctie werd
+        los getoetst, haar aanroep niet.
+        """
+        calls: list[str] = []
+        pm, argo, project_data, deployment = _deployment_harness(calls)
+        pm.get_contents = AsyncMock(return_value=project_data)
+        pm.get_deployment_by_name = AsyncMock(return_value=deployment)
+        project_store = MagicMock()
+        project_store.get = MagicMock(return_value=MagicMock(filename="mpfm-w3h.yaml"))
+
+        async def _twee_deployments_in_een_taak() -> None:
+            with (
+                patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+                patch("opi.manager.delete_project_manager.get_project_store", return_value=project_store),
+                patch("os.path.exists", return_value=False),
+            ):
+                manager = DeleteProjectManager(pm)
+                await manager.delete_deployment("mpfm-w3h", "pr-310")
+                await manager.delete_deployment("mpfm-w3h", "pr-311")
+
+        await asyncio.create_task(_twee_deployments_in_een_taak())
+
+        eerste, tweede = self._window_of(argo, 0), self._window_of(argo, 1)
+        assert eerste == DELETION_PROGRESS_BUDGET_SECONDS
+        assert tweede is not None
+        assert tweede < DELETION_PROGRESS_BUDGET_SECONDS
+
+
+class TestTheProgressBudgetIsPerTask:
+    """RC-238 review r1: een venster per WACHT past niet in de taak die de wachten doet.
+
+    ``TASK_WORKER_MAX_DURATION`` is 1800s en kapt de handler HARD af: geen force-route, geen
+    resultaat, waar een delete voorheen netjes rood afliep. Twee van de drie aanroepers staan
+    in een lus over de deployments, dus het venster hoort een budget van de TAAK te zijn.
+    """
+
+    @staticmethod
+    async def _vensters(aantal: int) -> list[int | None]:
+        """De vensters van opeenvolgende wachten binnen EEN taak."""
+        return [deletion_progress_window() for _ in range(aantal)]
+
+    @pytest.mark.asyncio
+    async def test_the_first_wait_gets_the_whole_budget(self) -> None:
+        assert await asyncio.create_task(self._vensters(1)) == [DELETION_PROGRESS_BUDGET_SECONDS]
+
+    @pytest.mark.asyncio
+    async def test_a_second_wait_in_the_same_task_gets_less_than_the_first(self) -> None:
+        """De kern: het budget wordt OPGEBRUIKT. Zou elke wacht het volle venster krijgen,
+        dan is drie deployments verwijderen 3 x 600s aan puur wachten binnen een taak van
+        1800s, en dat is precies de grens die de handler midden in de delete afkapt."""
+        vensters = await asyncio.create_task(self._vensters(2))
+
+        assert vensters[0] == DELETION_PROGRESS_BUDGET_SECONDS
+        assert vensters[1] is not None
+        assert vensters[1] < DELETION_PROGRESS_BUDGET_SECONDS
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_budget_falls_back_to_the_plain_window(self) -> None:
+        """Budget op: geen venster meer, dus die wacht loopt netjes rood af met de
+        force-route erachter.
+
+        De deadline wordt hier direct gezet. De klok van de module patchen patcht
+        ``time.monotonic`` van de event loop mee, en die heeft hem zelf nodig.
+        """
+
+        async def _na_het_budget() -> int | None:
+            _DELETION_PROGRESS_DEADLINE.set(time.monotonic() - 1)
+            return deletion_progress_window()
+
+        assert await asyncio.create_task(_na_het_budget()) is None
+
+    @pytest.mark.asyncio
+    async def test_every_task_gets_its_own_budget(self) -> None:
+        """Per taak en niet per proces: de volgende delete-taak begint weer met het hele
+        budget, anders zou de eerste taak van de dag het voor alle volgende opmaken."""
+        eerste = await asyncio.create_task(self._vensters(2))
+        tweede = await asyncio.create_task(self._vensters(1))
+
+        assert eerste[1] != DELETION_PROGRESS_BUDGET_SECONDS
+        assert tweede == [DELETION_PROGRESS_BUDGET_SECONDS]
+
+    @pytest.mark.asyncio
+    async def test_the_window_is_what_the_clock_says_is_left(self) -> None:
+        """Niet alleen "minder dan het budget", maar hoeveel minder.
+
+        Hoe groot het venster is, is de hele inhoud van deze grens: te klein en een trage
+        cascade wordt weer op de klok afgekapt, te groot en de taakgrens kapt de handler af.
+        Zonder deze toets is de rekenregel vrij te verschalen zolang de uitkomst nog onder
+        het budget blijft: halveren gaf 0 rood over de twee toetsbestanden van deze PR.
+        """
+
+        async def _met_420_seconden_over() -> int | None:
+            _DELETION_PROGRESS_DEADLINE.set(time.monotonic() + 420)
+            return deletion_progress_window()
+
+        venster = await asyncio.create_task(_met_420_seconden_over())
+
+        assert venster is not None
+        # Afgerond naar beneden, en de meting zelf kost ook iets.
+        assert 418 <= venster <= 420
 
 
 # ---------------------------------------------------------------------------
