@@ -56,7 +56,7 @@ services:
         banner: "Welcome to our application. Please log in with your SSO account."
 ```
 
-De regel hierboven klopt niet: de wall stuurt een sessieloze navigatie **niet** rechtstreeks naar Keycloak door. `--skip-provider-button` staat op `false`, dus er komt altijd eerst een inlogkaart met een knop. Dat is ook de enige plek waar de banner rendert, en vijf projecten gebruiken dat veld. Of dat tussenscherm weg moet is een open afweging; zie `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`.
+De regel hierboven klopt niet: de wall stuurt een sessieloze navigatie **niet** rechtstreeks naar Keycloak door. `--skip-provider-button` staat op `false`, dus er komt altijd eerst een inlogkaart met een knop. Dat is ook de enige plek waar de banner rendert, en er zijn projecten die dat veld zetten. Hoeveel het er zijn verandert, dus tel ze als je het nodig hebt: de `--banner`-vlag staat in de args van de `authorization-wall`-container van elke deployment. Of dat tussenscherm weg moet is een open afweging; zie `features/futures/authorization-wall-rolcontrole-in-de-proxy.md`.
 
 ### What gets generated
 

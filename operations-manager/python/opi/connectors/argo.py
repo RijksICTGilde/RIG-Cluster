@@ -15,6 +15,7 @@ from typing import Any
 import aiohttp
 import requests
 
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.logging_redact import redact_sensitive_headers
 
@@ -667,6 +668,8 @@ class ArgoConnector:
         retry_delay: int = 3,
         kubectl_connector: Any = None,
         namespace: str | None = None,
+        progress_window_seconds: int | None = None,
+        stall_retries: int = 12,
     ) -> bool:
         """
         Wait for an ArgoCD application to be fully deleted.
@@ -687,13 +690,69 @@ class ArgoConnector:
                 API when ArgoCD is ambiguous. Without it, an ambiguous ArgoCD answer
                 cannot be confirmed and deletion is reported as unconfirmed (False).
             namespace: Namespace holding the ArgoCD Application CR; defaults to this instance's cluster
+            progress_window_seconds: How long to keep waiting WHILE the namespace is visibly
+                EMPTYING, beyond the ``max_retries`` window. ``None`` keeps the old
+                behaviour: the wait ends at ``max_retries``, progress or not.
+            stall_retries: How many consecutive polls without a MEASURED DECREASE end the wait
+                once the ``max_retries`` window has passed. A read that failed counts here
+                too: it is not a stall, but it is no proof of progress either, and only a
+                namespace that empties earns the extra window.
 
         Returns:
             True only if the application is confirmed deleted, False otherwise.
         """
         import asyncio
 
-        logger.info(f"Waiting for application deletion: {app_name} (max {max_retries} retries)")
+        # Beyond the plain max_retries window the wait continues while the namespace keeps
+        # EMPTYING, and gives up on a stall instead of on the clock. The window AND the stall
+        # both have to be reached: on the stall alone a brief hiccup in a healthy cascade
+        # would end the wait early. Background: features/argocd-vastgelopen-verwijdering.md.
+        max_progress_retries = 0 if progress_window_seconds is None else progress_window_seconds // max(retry_delay, 1)
+        limit = max(max_retries, max_progress_retries)
+        progress_window = max_progress_retries > max_retries
+        without_progress = 0
+        # The LOWEST count seen, not the previous one. Against the previous count a namespace
+        # that bounces (30, 31, 30, ...) scores a decrease every other poll and so buys the
+        # wider window without ever emptying: measured on a stuck Application, 30/31 ran to
+        # 120 polls instead of 40. A cascade that really works keeps setting a new low.
+        lowest_remaining: int | None = None
+        progress_types: list[str] | None = None
+        types_unavailable = False
+
+        logger.info(
+            f"Waiting for application deletion: {app_name} "
+            f"(max {max_retries} retries, up to {limit} while its namespace keeps emptying)"
+        )
+
+        async def _deletion_progress() -> tuple[bool, int, bool] | None:
+            nonlocal progress_types, types_unavailable
+            if kubectl_connector is None or not progress_window or types_unavailable:
+                return None
+            try:
+                if progress_types is None:
+                    # Discovered once per wait, failure included. The types a cluster has do not
+                    # change while a cascade runs, and asking per poll doubles the calls this wait
+                    # makes. Without types there is nothing to measure, so the poll yields no
+                    # window either, and retrying the discovery would repeat both the
+                    # api-resources call and its ERROR for every poll of the wait.
+                    progress_types = await kubectl_connector.list_namespaced_resource_types()
+                    if progress_types is None:
+                        types_unavailable = True
+                        return None
+                return await kubectl_connector.argocd_application_deletion_progress(app_name, namespace, progress_types)
+            except (KubectlConnectionError, KubectlExecutionError) as e:
+                # A kubectl that throws is a FAILED MEASUREMENT, not a failed wait: the same
+                # None as an unreadable inventory, so no stall and no wider window. kubectl
+                # raises this the moment its connection test flips isConnected to False, which
+                # is exactly the stressed control plane this measurement was built for. Letting
+                # it out skips the force route at the caller, and with force=True the caller's
+                # except marks the Application deleted, so the project file loses the deployment
+                # while the cluster still has it: the divergence this PR removes.
+                logger.warning(f"Could not measure deletion progress for {app_name}: {e}")
+                # Only a failed DISCOVERY is remembered, for the reason above; the inventory is
+                # a per-poll read and may well succeed on the next one.
+                types_unavailable = progress_types is None
+                return None
 
         async def _confirmed_gone_via_k8s() -> bool:
             # Ground-truth fallback. Only a clean NotFound (False) counts as gone;
@@ -702,7 +761,7 @@ class ArgoConnector:
                 return False
             return (await kubectl_connector.argocd_application_exists(app_name, namespace)) is False
 
-        for attempt in range(max_retries):
+        for attempt in range(limit):
             try:
                 exists = await self.application_exists(app_name)
                 # ArgoCD reports the app gone. A clean 404 is fairly reliable, but since
@@ -712,7 +771,7 @@ class ArgoConnector:
                     logger.info(f"Application {app_name} confirmed deleted after {attempt + 1} checks")
                     return True
 
-                logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{max_retries}")
+                logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{limit}")
 
             except PermissionError:
                 # FALLBACK: 'permission denied' is NOT proof the app is gone. The ArgoCD
@@ -734,10 +793,49 @@ class ArgoConnector:
             except Exception as e:
                 logger.error(f"Error checking application deletion status: {_exc_text(e)}")
 
-            if attempt < max_retries - 1:  # Don't sleep on the last attempt
+            # Never raises: a measurement that fails is None, see _deletion_progress.
+            progress = await _deletion_progress()
+            if progress is None:
+                # Only a MEASURED decrease buys the extra window. An Application that could
+                # not be read is not a stall, but it is no proof of progress either, and on
+                # the absence of information the wait keeps its plain max_retries.
+                without_progress += 1
+            else:
+                underway, remaining, complete = progress
+                # Emptying, not merely changing. A count that grows or bounces is movement
+                # without progress, and the ordering of (project, deployment) serialises
+                # deletes per deployment, so a delete of pr-62 and an add of pr-64 share one
+                # namespace: the add's resources must not buy the wider window for the stuck
+                # delete. ``complete`` is logged for the reader and kept out of the
+                # comparison, since a flapping inventory is not progress either.
+                new_low = lowest_remaining is None or remaining < lowest_remaining
+                verdict = (
+                    " - the namespace is still emptying, waiting"
+                    if new_low
+                    else f" - no decrease below {lowest_remaining}"
+                )
+                logger.info(
+                    f"Application {app_name} is still being deleted (deletion underway: {underway}, "
+                    f"{remaining} ArgoCD-owned resources left in its namespace"
+                    f"{'' if complete else ', inventory incomplete'}){verdict}"
+                )
+                if new_low:
+                    lowest_remaining = remaining
+                    without_progress = 0
+                else:
+                    without_progress += 1
+
+            if progress_window and attempt + 1 >= max_retries and without_progress >= stall_retries:
+                logger.warning(
+                    f"Application {app_name} showed no measured decrease of its namespace for {without_progress} "
+                    f"consecutive polls after {attempt + 1} retries - treating it as stuck"
+                )
+                return False
+
+            if attempt < limit - 1:  # Don't sleep on the last attempt
                 await asyncio.sleep(retry_delay)
 
-        logger.warning(f"Application {app_name} NOT confirmed deleted after {max_retries} retries")
+        logger.warning(f"Application {app_name} NOT confirmed deleted after {limit} retries")
         return False
 
 

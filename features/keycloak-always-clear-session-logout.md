@@ -29,7 +29,7 @@ The user lands on the upstream logout page with their Keycloak session already g
   - `AlwaysClearSessionLogoutEndpoint.LogoutResource` — JAX-RS bean carrying `@Provider` (required by RESTEasy in Keycloak Quarkus, see [keycloak#25882](https://github.com/keycloak/keycloak/issues/25882)). Handles `GET` on `/{idpAlias}` — matches SAML HTTP-Redirect binding. (Add `@POST` if an IdP ever switches to HTTP-POST binding for logout.)
 - Registered in `src/main/resources/META-INF/services/org.keycloak.services.resource.RealmResourceProviderFactory`.
 
-The JAR is fetched by the Keycloak init container from GitHub releases (`v1.1.0+`) and dropped into `/opt/keycloak/providers/`.
+The JAR is built into the image the Keycloak pod runs (`images/keycloak-zad/`) and lands in `/opt/keycloak/providers/`.
 
 ### URL pattern
 
@@ -76,13 +76,13 @@ To enable for another IdP: set the two `config:` fields above in the realm's boo
 
 Per-IdP revert: in the IdP's YAML `config:`, point `singleLogoutServiceUrl` back at the original upstream URL and remove `downstreamLogoutUrl`. After re-reconciliation the IdP is back to stock behavior — though the Java code stays loaded in the JAR (dormant; only fires when an IdP's SLO URL points at it).
 
-To remove the JAR contribution entirely: revert the version in `keycloak/controller/base/deployment.yaml`, or delete the factory registration in `META-INF/services/...RealmResourceProviderFactory`.
+To remove the JAR contribution entirely: pin an earlier image tag in `keycloak/controller/base/deployment.yaml`, or delete the factory registration in `META-INF/services/...RealmResourceProviderFactory` and build a new image.
 
 ## Verification
 
 Before flipping the SLO URL on the target IdP:
 
-1. Deploy the new JAR (`v1.1.0+`) to sandbox via the standard Keycloak deployment update.
+1. Deploy the new JAR to sandbox with `task publish-keycloak-image` + `task sandbox:sync`.
 2. From outside the cluster, confirm routing with an alias that does NOT exist in the realm:
 
    ```bash

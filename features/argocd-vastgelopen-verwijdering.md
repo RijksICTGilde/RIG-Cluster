@@ -45,9 +45,18 @@ finalizer draagt.
    kubectl -n <ns> patch application <naam> --type=json -p '[{"op":"remove","path":"/operation"}]'
    ```
 
-   `.operation` wordt eerst gelezen, zodat de patch alleen loopt als er iets te verwijderen
-   is. Mislukt het alsnog, dan wordt `.operation` teruggelezen om te zien of de operatie
-   ondertussen is afgelopen.
+   Hij leest eerst of er wel een operation staat, en patcht alleen dan. Een json-patch
+   `remove` op een pad dat er niet is wordt geweigerd, en dat pad is er meestal niet: geen
+   van de 17 Applications op de sandbox had een `operation`. Elke delete opende daardoor
+   met een ERROR die niets betekende. Aan de tekst is die weigering niet te herkennen:
+   kubectl tegen k8s 1.32 schrijft alleen `The request is invalid: the server rejected our
+   request due to an error in our request`, zonder het pad en zonder de reden. Matchen op
+   die wording zou een echte fout even onschuldig maken, dus leest hij na een mislukte
+   patch opnieuw.
+
+   `operation` staat op het TOPNIVEAU van de Application-CR. Nagemeten op de CRD zijn de
+   properties `[apiVersion, kind, metadata, operation, spec, status]`, en `spec` heeft geen
+   `operation`: `/spec/operation` is een pad dat nooit kan raken.
 
    Dit gebeurt op elke plek waar OPI een Application laat verwijderen die een workload
    onder zich heeft: de wezenopruiming, de infrastructuur-Application, `delete_deployment`
@@ -69,7 +78,82 @@ finalizer draagt.
    eventueel een quay-organisatie. Zonder workload is er niets om op health te wachten, dus
    de blokkade uit dit plan kan daar niet ontstaan.
 
-2. Hangt het daarna nog, en staat `force` aan, dan verwijdert
+2. `wait_for_application_deletion` wacht daarna, en die wacht stopt op de STILSTAND en
+   niet op de klok. Het vaste venster (40 polls x 5s = 200s op de deployment-route) was
+   korter dan de cascade van 29 september 2026: drie Applications met elk 30+ resources.
+   Die delete werd daarom als vastgelopen behandeld: force-route, rode taken, geen echte
+   fout. Traag en vastgelopen zijn alleen te scheiden door te kijken of er iets BEWEEGT.
+
+   Wat beweegt is de inventaris van de doelnamespace, en niet de `status.resources` van de
+   Application zelf. Gemeten op de sandbox op 1 oktober 2026, een Application met 14
+   resources waarvan de ConfigMaps door een finalizer werden vastgehouden: `status.resources`
+   bleef de hele cascade van 78s op 14 staan, terwijl de inventaris 14, 13, 12, 8, 4, 0 gaf.
+   De controller herberekent dat statusveld niet meer zodra het object een
+   `deletionTimestamp` heeft, en een bevroren getal leest als stilstand: op dat signaal doet
+   deze wijziging dus niets voor het incident waarvoor ze geschreven is.
+   `argocd_application_deletion_progress` leest daarom de `deletionTimestamp` (apiserver-
+   staat, geen controller-rekenwerk) en telt met `list_tracked_resources` hoeveel
+   ArgoCD-eigen resources er in de doelnamespace over zijn.
+
+   Dat is de hele namespace en niet alleen deze Application. Filteren op de naam geeft 0 voor
+   een Application met een lange naam op een label-cluster, waar het merkteken de naam
+   AFGEKAPT op 63 tekens is, en een blijvende 0 is een blijvende stilstand. Een namespace die
+   leegloopt is een cascade die werkt; een namespace die niet meer leegloopt terwijl onze
+   Application blijft staan is de stilstand die we zoeken.
+
+   Het oude venster blijft staan voor wat een gezonde delete hoort te kosten. Daarna loopt
+   de wacht door zolang de namespace LEEGLOOPT, en geeft hij op zodra er `stall_retries`
+   polls achter elkaar geen daling meer in zit. Beide voorwaarden moeten gelden: op de
+   stilstand alleen zou een korte hapering in een gezonde cascade de wacht afkappen.
+
+   Voortgang is een DALING en niet elke verandering, want de ordening in de
+   wachtrij serialiseert op (project, deployment): een delete van `nd-j7s/pr-62` en een
+   add van `nd-j7s/pr-64` lopen parallel in EEN namespace, en de resources van de add laten
+   de teller van de vastgelopen delete bewegen. Dat is de samenloop van 29 september. Een
+   vergelijking op verandering gaf daar het volle budget weg aan een delete die stilstond:
+   gemeten met de echte wachtfunctie op een Application die nooit verdwijnt stopte een
+   bevroren telling op 40 polls, maar een groeiende telling, een telling die 30/31 afwisselde
+   en een fladderende `complete`-vlag alle drie pas op 120. De vergelijking loopt daarom
+   tegen de LAAGSTE stand tot nu toe en niet tegen de vorige: tegen de vorige stand scoort
+   een telling die heen en weer gaat elke tweede poll een daling. De `complete`-vlag van de
+   inventaris staat buiten de vergelijking en gaat alleen de log in, want juist die
+   inventaris gaf tijdens het incident exit 1.
+
+   Een Application die niet te lezen is telt niet als stilstand, want een mislukte read zegt
+   niets over de cascade, maar hij verdient er ook geen ruimer venster mee: alleen een
+   GEMETEN daling doet dat. Hetzelfde geldt voor de type-discovery: mislukt die, dan is er
+   niets te meten en krijgt die poll geen venster. De uitkomst wordt per wacht onthouden,
+   mislukking inbegrepen, want anders vraagt elke poll de discovery opnieuw EN doet
+   `list_tracked_resources` hem daarna nog een keer: 80 `api-resources`-aanroepen en 121
+   ERROR-regels in een wacht van 40 polls, op een control plane die het al zwaar heeft.
+
+   Een `kubectl` die GOOIT is net zo'n mislukte meting en niet een mislukte wacht. Dat is
+   geen theorie: `_run_kubectl_command` gooit `KubectlConnectionError` zodra de
+   verbindingstest `isConnected` omzet, precies op het control plane onder druk waar deze
+   meting voor is. Zou de fout uit de wacht komen, dan vangt de aanroeper hem met zijn eigen
+   `except` en slaat hij de force-route over, en bij `force=True` zet die `except` de
+   Application op verwijderd: dan verdwijnt de deployment uit de project file terwijl hij op
+   het cluster nog staat, de divergentie die "De project file volgt het cluster" hieronder
+   weghaalt.
+
+   Een delete die echt stilstaat bereikt de force-route daardoor nog op hetzelfde moment als
+   voorheen.
+
+   Het ruimere venster is een budget van de TAAK, `DELETION_PROGRESS_BUDGET_SECONDS` (10
+   minuten), en niet van elke wacht los. Twee van de drie aanroepers staan in een lus over de
+   deployments, en de task worker kapt een handler na `TASK_WORKER_MAX_DURATION` (1800s) HARD
+   af: dan komt de force-route niet meer aan de beurt en is er geen resultaat, waar de taak
+   voorheen netjes rood afliep. `deletion_progress_window()` geeft elke volgende wacht wat er
+   van het budget over is, en `None` zodra het op is; die wacht houdt dan het gewone venster.
+   Het budget plus de gewone vensters van de overige wachten (200s per deployment, 60s voor
+   de infra-Application) laat ruimte voor de force-route en het gitwerk daarna. Afgerekend
+   wordt op de klok en niet op de uitgedeelde vensters, want een poll kost meer dan zijn
+   `retry_delay`: de inventaris was op de sandbox 1,8s op een namespace met 271 resources.
+
+   Het venster staat aan op de infra-Application, `delete_deployment` en
+   `delete_deployment_from_yaml_change`.
+
+3. Hangt het daarna nog, en staat `force` aan, dan verwijdert
    `_force_delete_stuck_application()` eerst de resources zelf. Pas daarna, en alleen als
    dat helemaal gelukt is, gaat de finalizer weg. Welke resources dat zijn leest
    `opi/utils/argocd_tracking.py`, en dat kijkt naar allebei de merktekens die ArgoCD kan
@@ -86,7 +170,10 @@ resources die blijven staan is precies wat de schade maakte. Drie dingen maken d
   een buur zijn, maar net zo goed van deze Application zelf;
 * een namespace die maar voor een deel van zijn resourcetypes antwoordde: wat wel
   geantwoord heeft wordt netjes verwijderd, en juist de types die zwegen houden hun
-  resources. Zonder die derde uitkomst mee te geven is de melding `success`.
+  resources. Zonder die derde uitkomst mee te geven is de melding `success`. Welke types
+  zwegen staat erbij: kubectl noemt het falende type precies zoals het is opgevraagd
+  (`deployments.apps is forbidden`), en `types_named_in_kubectl_error` zoekt die namen in
+  de stderr.
 
 Bij `partial` komt de reden als fout in `deletion_results["errors"]` terecht en meldt
 `_force_delete_stuck_application()` `finalizer_removed: false` met `swept_partially: true`,
@@ -105,7 +192,35 @@ helemaal niet, dan gaat de finalizer wel weg (een Application die blijft staan b
 parent voor iedereen, en er viel hier langs deze weg toch niets te verwijderen), maar ook
 dat komt als fout binnen, met status `unknown_namespace` of `inventory_failed`. Een mislukte
 inventaris leest anders als een lege namespace, en dan meldt de forcering `deleted: 0`
-zonder fout terwijl de resources gewoon blijven staan.
+zonder fout terwijl de resources blijven staan.
+
+### De project file volgt het cluster
+
+Een delete raakt twee plekken: het cluster en de project file. De file is de desired state
+die elke volgende run leest, dus hij mag niet voorlopen. Op 29 september 2026 landden de
+delete-commits om 14:42 terwijl de cascade nog liep, en daarna vroeg niets aan beide kanten
+nog om de verwijdering: de deployment was weg uit de file en stond nog op het cluster.
+
+`delete_deployment` haalt de deployment daarom pas uit de project file als de delete op het
+cluster BEVESTIGD is. Is hij dat niet, dan blijft de entry staan, komt de reden als fout in
+`deletion_results["errors"]` en faalt de taak. Dat is de derde voorwaarde op die stap: de
+twee andere, het argo-bestand en de manifestmap uit git, komen uit RC-254 en staan in
+`features/verwijderde-deployment-geen-zombie.md`. Alle drie staan op dezelfde `if`, en de
+overgeslagen stap meldt met `status: "skipped"` welke van de drie het was. Dat houdt de delete opnieuw aanvraagbaar: de
+taakhandler faalt op een niet-lege errors-lijst en `delete_deployment` is idempotent. De
+manifesten in de deployments-repo hadden deze grendel al, en om een zwaardere reden: de
+resources-finalizer heeft het source-pad nodig om te weten wat hij moet opruimen, dus ze
+weghalen terwijl hij nog loopt is een blijvende deadlock.
+
+`delete_deployment_from_yaml_change` heeft geen tegenhanger van die stap. Daar haalde de
+gebruiker de entry zelf uit de file, dus de file is de INVOER en er is niets terug te
+schrijven.
+
+Dat deletes van dezelfde deployment niet door elkaar lopen is een andere grendel, en die
+zit in de wachtrij: `affects_deployments` naast `_scopes_overlap` in `claim_next_task`
+(zie `features/taakscope-en-de-uitrolwacht.md`). Die werkt alleen zolang de taak LOOPT, en
+dat is de tweede reden waarom een delete-taak niet groen mag aflopen terwijl de cascade nog
+bezig is.
 
 ### Twee merktekens, niet een
 
@@ -166,7 +281,7 @@ twee lezingen klopt is aan de resource zelf te zien, en dat is mensenwerk.
 Een waarde korter of langer dan 63 tekens is nooit afgekapt en doet niet mee. Een naam uit
 de **annotatie** ook niet: die kent de grens niet. Op `odcn-production`, het enige
 clustertype dat op de annotatie merkt en ook het clustertype waar dit plan over gaat, is
-de vergelijking dus gewoon exact.
+de vergelijking exact.
 
 Dat een merkteken van ArgoCD komt gaat voor de veegactie niet zonder meer op, want het
 label is niet van ArgoCD alleen: Helm zet `app.kubernetes.io/instance` ook, en bedoelt er
@@ -221,7 +336,7 @@ heeft die reden inmiddels gemeten, en het is geen kandidaat meer: zie
 Nagespeeld op 24 september 2026 op het sandboxcluster, met een Application waarvan de
 Deployment een niet-bestaande image trekt (`ErrImagePull`, dus nooit healthy) en een
 ConfigMap in sync-wave 5. Die latere wave is wat de sync op health laat wachten: zonder
-hem meldt ArgoCD gewoon `Succeeded` terwijl de workload nog `Progressing` is. OPI maakt die
+hem meldt ArgoCD `Succeeded` terwijl de workload nog `Progressing` is. OPI maakt die
 vorm zelf ook, want zijn secrets staan op wave -1 en een `postgresql-cluster` op wave 1.
 
 ```
@@ -271,7 +386,7 @@ bekeken is:
 * geen lijst van resourcetypes terug: dan inventariseert elke namespace als leeg;
 * een namespace die niet te inventariseren was: die is niet leeg, hij heeft niet geantwoord;
 * een namespace die maar voor een deel van zijn resourcetypes antwoordde: `kubectl get`
-  eindigt niet-nul zodra EEN type faalt en drukt de rest gewoon af, en precies in het stuk
+  eindigt niet-nul zodra EEN type faalt en drukt de rest af, en precies in het stuk
   dat zweeg staat de wees. De typelijst wordt een keer ontdekt en aan elke namespace
   meegegeven, en die ontdekking kijkt naar de verbs van het CLUSTER, niet naar wat de
   serviceaccount in die namespace mag opvragen, dus de weigering hierboven vangt dit niet;
@@ -389,11 +504,14 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | Bestand | Wat het doet |
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
-| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `delete_tracked_resources`, `list_argocd_applications` |
-| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, en de vier verwijderplekken |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application`, `argocd_application_deletion_progress`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `types_named_in_kubectl_error`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/connectors/argo.py` | `wait_for_application_deletion`: de wacht die op de stilstand stopt en niet op de klok |
+| `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, `DELETION_PROGRESS_BUDGET_SECONDS` met `deletion_progress_window()`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |
 | `scripts/argocd_orphan_sweep.py` | De veegactie |
-| `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, en de merktekens zelf |
+| `tests/test_argocd_stuck_delete.py` | De volgorde in de verwijderroute, de merktekens zelf, en of de project file het cluster volgt |
+| `tests/test_argo_deletion_k8s_fallback.py` | De wacht: de dubbelcheck via de Kubernetes-API, en traag tegenover vastgelopen |
+| `tests/test_taakscope_overlap.py` | Dat een re-add achter de delete van dezelfde deployment wacht |
 | `tests/argocd_sync_options.py` | De syncOptions die ArgoCD leest, gedeeld door beide grendels |
 | `tests/test_argocd_generated_application_syncoptions.py` | De syncOptions van de gegenereerde Application |
 | `tests/test_argocd_handwritten_application_syncoptions.py` | De syncOptions van de handgeschreven platform-Applications |

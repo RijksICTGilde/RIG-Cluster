@@ -331,8 +331,9 @@ KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{el
 ```
 
 Alles wat **niet** `sandboxed-local` is, valt terug op `security/key.txt` — de
-**productiesleutel van ODCN**. Een onbekende clustersoort komt hier niet meer langs: beide
-taken eisen `CLUSTER_TYPE` met een `enum` van `sandboxed-local` en `odcn-production`, dus
+**productiesleutel van ODCN**. Een onbekende clustersoort komt hier niet meer langs:
+`generate-env-secrets-for-operations-manager` en `deploy-operations-manager` eisen beide
+`CLUSTER_TYPE` met een `enum` van `sandboxed-local` en `odcn-production`, dus
 `fundament-production` wordt geweigerd zolang het daar niet in staat. Het punt vuurt op de dag
 dat fundament aan die enum wordt toegevoegd: de ternair kiest dan stil de ODCN-sleutel, en de
 secrets zijn daarmee door iedereen met de ODCN-sleutel te ontsleutelen. Er komt geen
