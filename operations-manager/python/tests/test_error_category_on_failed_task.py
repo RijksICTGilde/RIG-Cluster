@@ -13,6 +13,10 @@ hem krijgt en een nieuw taaktype hem niet kan vergeten.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import aiohttp
 import pytest
 from opi.api.task_models import TASK_RESULT_MODELS, task_response_from_dict
 from opi.api.v2.models import ErrorCategory, error_category_for
@@ -153,3 +157,182 @@ class TestElkeTaakVertelt:
     )
     def test_de_nieuwe_redenen_vallen_waar_ze_horen(self, error_type: str, verwacht: ErrorCategory) -> None:
         assert error_category_for(error_type) == verwacht
+
+
+class TestEenOnbereikbareMailrelayIsEenPlatformfout:
+    """RC-261: een uitrol die strandt op de mailrelay stuurde de gebruiker naar zijn project.
+
+    De storing van 13 oktober 2026 (de relay verbande het node-IP en kwam niet meer ready)
+    liet elke uitrol met send-email falen op "Cannot connect to host rig-mail-relay...", en
+    dat kwam als ``processing_failed`` zonder categorie bij de CLI aan: exit 3, "niet toe te
+    schrijven". Er was niets aan het project te repareren.
+
+    Twee helften, en de eerste pint de tweede niet: de connector moet van de transportfout
+    een eigen uitzondering maken, en de handlers die een uitrol met ``processing_failed``
+    rapporteren moeten die omzetten in een categorie.
+    """
+
+    @pytest.mark.asyncio
+    async def test_de_connector_maakt_van_een_transportfout_een_eigen_uitzondering(self) -> None:
+        from opi.connectors.mail import MailConnector, MailRelayUnavailableError
+
+        connector = MailConnector("http://rig-mail-relay:8080", "admin", "geheim")
+        fout = aiohttp.ClientConnectorError(
+            connection_key=SimpleNamespace(ssl=None, host="rig-mail-relay", port=8080, is_ssl=False),  # type: ignore[arg-type]
+            os_error=OSError("Connection refused"),
+        )
+
+        # Budget op 0: anders slaapt de herhaallus 30 seconden in deze test.
+        with (
+            patch.object(MailConnector, "_eenmalig_verzoek", AsyncMock(side_effect=fout)),
+            patch("opi.connectors.mail.RELAY_CONNECT_RETRY_SECONDS", 0.0),
+            pytest.raises(MailRelayUnavailableError) as gevangen,
+        ):
+            await connector.get_principal("project-demo")
+
+        tekst = str(gevangen.value)
+        assert "mailservice van het platform" in tekst
+        assert "niet aan je project" in tekst
+
+    @pytest.mark.parametrize("error_type", ["processing_failed"])
+    def test_processing_failed_blijft_zonder_categorie_onverklaarbaar(self, error_type: str) -> None:
+        """De tegenproef op de handlers hieronder: de VERTALING verandert niet. Een component
+        dat niet gezond wordt kan nog steeds aan het image van de gebruiker liggen."""
+        assert error_category_for(error_type) == ErrorCategory.Unknown
+
+    def test_de_categorie_van_de_handler_overleeft_het_antwoord(self) -> None:
+        result = _failed("processing_failed", error_category="InternalError")
+        assert result["error_category"] == "InternalError"
+
+
+def _relayfout() -> Exception:
+    from opi.connectors.mail import MailRelayUnavailableError
+
+    return MailRelayUnavailableError(
+        "De mailservice van het platform is niet bereikbaar, dit ligt niet aan je project "
+        "(GET /api/principal/project-demo: Cannot connect to host rig-mail-relay:8080)"
+    )
+
+
+def _gestrande_manager(fout: Exception | None) -> MagicMock:
+    """Een ProjectManager die faalde, met ``fout`` als oorspronkelijke uitzondering."""
+    manager = MagicMock()
+    manager.process_project_from_git = AsyncMock(return_value=False)
+    manager.get_processing_error = MagicMock(return_value=str(fout) if fout else "Een component werd niet gezond")
+    manager.get_processing_exception = MagicMock(return_value=fout)
+    manager.get_component_failures = MagicMock(return_value=None)
+    manager.get_terminated_sync_operations = MagicMock(return_value=[])
+    manager.save_and_commit_project = AsyncMock(return_value=True)
+    manager.close = AsyncMock(return_value=None)
+    return manager
+
+
+def _store() -> MagicMock:
+    store = MagicMock()
+    store.reconcile = AsyncMock(return_value=None)
+    store.get = MagicMock(return_value=SimpleNamespace(filename="demo.yaml"))
+    store.read_path = AsyncMock(return_value=None)
+    store.read_version = AsyncMock(return_value=None)
+    return store
+
+
+async def _refresh_project(fout: Exception | None) -> dict:
+    from opi.core.task_handlers_operations import handle_refresh_project
+
+    manager = _gestrande_manager(fout)
+    with (
+        patch("opi.core.task_handlers_operations.get_project_store", return_value=_store()),
+        patch("opi.manager.project_manager.create_project_manager", return_value=manager),
+    ):
+        return await handle_refresh_project({"project_name": "demo"}, MagicMock())
+
+
+async def _refresh_deployment(fout: Exception | None) -> dict:
+    from opi.core.task_handlers_operations import handle_refresh_deployment
+
+    manager = _gestrande_manager(fout)
+    with (
+        patch("opi.core.task_handlers_operations.get_project_store", return_value=_store()),
+        patch("opi.manager.project_manager.create_project_manager", return_value=manager),
+    ):
+        return await handle_refresh_deployment(
+            {"project_name": "demo", "deployment_name": "prod"},
+            MagicMock(),
+        )
+
+
+async def _create_project(fout: Exception | None) -> dict:
+    from opi.core.task_handlers_project import handle_create_project
+
+    manager = _gestrande_manager(fout)
+    with (
+        patch("opi.services.project_store.get_project_store", return_value=_store()),
+        patch("opi.manager.project_manager.ProjectManager", return_value=manager),
+        patch("opi.utils.project_utils.validate_project_name", return_value=True),
+    ):
+        return await handle_create_project(
+            {
+                "project_name": "demo",
+                "yaml_content": "name: demo\ndeployments:\n  - name: prod\n",
+                "is_new_project": False,
+            },
+            MagicMock(),
+        )
+
+
+async def _delete_component(fout: Exception | None) -> dict:
+    """De component-delete-handler roept `handle_refresh_project` INTERN aan en bouwt zijn
+    eigen antwoord uit het resultaat. Die geeft `error_type` door; zonder de categorie leidt
+    `_with_error_category` hem opnieuw af uit "processing_failed" en is hij weer Unknown."""
+    from opi.core.task_handlers_components import handle_delete_component
+
+    binnen = await _refresh_project(fout)
+    manager = MagicMock()
+    manager.delete_component = AsyncMock(return_value={"success": True, "uncoupled_from": []})
+    manager.close = AsyncMock(return_value=None)
+    with (
+        patch("opi.manager.project_manager.ProjectManager", return_value=manager),
+        patch("opi.core.task_handlers_operations.handle_refresh_project", AsyncMock(return_value=binnen)),
+    ):
+        return await handle_delete_component({"project_name": "demo", "component_name": "api"}, MagicMock())
+
+
+HANDLERS = [
+    ("refresh_project", _refresh_project),
+    ("refresh_deployment", _refresh_deployment),
+    ("create_project", _create_project),
+    ("delete_component", _delete_component),
+]
+
+
+class TestDeHandlersMetProcessingFailedSchrijvenDeMailrelayAanHetPlatformToe:
+    """Elke handler die een uitrol met ``processing_failed`` rapporteert bouwt zijn eigen
+    faal-dict, en HANDLERS somt ze op.
+
+    De overige verwerkingspaden zetten bij een mislukte uitrol geen ``error_type`` en
+    krijgen daarom helemaal geen categorie; dat gat staat als eigen taak op PR #236.
+
+    Een toets op ``platform_failure_fields`` alleen zou nul rood geven op de handler die de
+    aanroep niet doet, want ``processing_failed`` is daar al de uitkomst.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("naam", "handler"), HANDLERS, ids=[h[0] for h in HANDLERS])
+    async def test_een_onbereikbare_relay_wordt_internalerror(self, naam: str, handler: object) -> None:
+        resultaat = await handler(_relayfout())  # type: ignore[operator]
+
+        assert resultaat["error_type"] == "processing_failed"
+        assert resultaat["error_category"] == ErrorCategory.InternalError.value
+        # De reden staat bij de uitrolhandlers in "error" en bij delete_component in
+        # "message": dat is de vorm die die handlers al hadden.
+        assert "niet aan je project" in (resultaat.get("error") or resultaat.get("message") or "")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("naam", "handler"), HANDLERS, ids=[h[0] for h in HANDLERS])
+    async def test_een_gewone_mislukking_blijft_onverklaarbaar(self, naam: str, handler: object) -> None:
+        """De tegenproef: een component dat niet gezond wordt kan aan het image van de
+        gebruiker liggen, dus daar is "niet toe te schrijven" de eerlijke uitkomst."""
+        resultaat = await handler(None)  # type: ignore[operator]
+
+        assert resultaat["error_type"] == "processing_failed"
+        assert "error_category" not in resultaat

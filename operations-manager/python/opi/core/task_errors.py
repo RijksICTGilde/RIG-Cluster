@@ -18,6 +18,14 @@ terwijl het gewoon een typefout in de aanroep was.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from opi.api.v2.models import ErrorCategory
+from opi.connectors.mail import MailRelayUnavailableError
+
+if TYPE_CHECKING:
+    from opi.manager.project_manager import ProjectManager
+
 #: Wat een fout is als de aanroeper niets fout deed en wij het niet nader weten.
 INTERNAL_ERROR_TYPE = "internal_error"
 
@@ -51,3 +59,20 @@ class TaskInputError(Exception):
     def __init__(self, message: str, error_type: str = INVALID_REQUEST_ERROR_TYPE) -> None:
         super().__init__(message)
         self.error_type = error_type
+
+
+def platform_failure_fields(project_manager: ProjectManager) -> dict[str, str]:
+    """``error_category: InternalError`` als deze mislukking van het PLATFORM kwam.
+
+    ``processing_failed`` valt bij een client op "niet toe te schrijven", en dat is eerlijk
+    zolang een component dat niet gezond wordt ook aan het image van de gebruiker kan
+    liggen. Een onbereikbare mailrelay is dat niet: er is dan niets aan het project te
+    repareren, en de melding stuurde de gebruiker daar wel naartoe.
+
+    ``_with_error_category`` laat een categorie die de handler zelf zet staan, dus dit is
+    het enige dat de handler hoeft te doen.
+    """
+    exception = project_manager.get_processing_exception()
+    if isinstance(exception, MailRelayUnavailableError):
+        return {"error_category": ErrorCategory.InternalError.value}
+    return {}

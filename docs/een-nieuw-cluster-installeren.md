@@ -324,7 +324,7 @@ het faalt dicht. De fundament-overlay moet een eigen selector krijgen (namespace
 tenantlabel van wat fundament aan multi-tenancy gebruikt). Opnemen als expliciet punt in de
 checklist, niet als "kopieer de odcn-overlay".
 
-#### p. `Taskfile.yaml:629`, `:715` — de AGE-sleutelkeuze is een tweeweg-ternair
+#### p. `KEY_FILE` in `generate-env-secrets-for-operations-manager` en `deploy-operations-manager` — de AGE-sleutelkeuze is een tweeweg-ternair
 
 ```
 KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
@@ -354,7 +354,7 @@ punt van (p).
 | # | punt | bestand:regel | prioriteit |
 |---|---|---|---|
 | 1 | egress-annotatie op namespace | `manifests/namespace.yaml.jinja:10` | **blokkerend** — kan namespace-creatie laten falen |
-| 2 | AGE-sleutel per cluster | `Taskfile.yaml:629,715` | **blokkerend** — kiest anders de ODCN-sleutel zodra fundament in de `CLUSTER_TYPE`-enum staat |
+| 2 | AGE-sleutel per cluster | `Taskfile.yaml`, `KEY_FILE` | **blokkerend** — kiest anders de ODCN-sleutel zodra fundament in de `CLUSTER_TYPE`-enum staat |
 | 3 | UID/SCC-keuze op eigenschap i.p.v. clusternaam | `manifests/pod-security-context.yaml.jinja:8` | hoog |
 | 4 | snapshotclass uit één bron; vangnet leeg i.p.v. de ODCN-waarde | `opi/core/config.py:438`, `opi/manager/backup/base.py:467` | midden — de terugval op de clusterwaarde bestaat al (`base.py:490`) |
 | 5 | external-dns-image uit de mirror in de base | `infrastructure/.../external-dns/controller/base/deployment.yaml:28` | midden |

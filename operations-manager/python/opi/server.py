@@ -291,6 +291,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         except Exception as e:
             logger.error("Failed to start log watcher scheduler: %s", e)
 
+    # Start the mail relay readiness watch. Zonder relay valt er niets te meten, en zonder
+    # ntfy-topic is er nergens om het te melden.
+    if settings.MAIL_RELAY_API_URL and settings.LOGWATCHER_NTFY_TOPIC:
+        try:
+            from opi.core.mail_relay_watcher import MailRelayWatcher
+
+            _mail_relay_watcher = MailRelayWatcher()
+            await _mail_relay_watcher.start()
+            app.state.mail_relay_watcher = _mail_relay_watcher
+        except Exception as e:
+            logger.error("Failed to start mail relay watcher: %s", e)
+
     # Start the cluster-wide OOM pod watch if this cluster runs it
     from opi.core.cluster_config import watches_pods_for_oom
 
@@ -386,6 +398,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     logwatcher_scheduler = getattr(app.state, "logwatcher_scheduler", None)
     if logwatcher_scheduler is not None:
         await logwatcher_scheduler.stop()
+
+    mail_relay_watcher = getattr(app.state, "mail_relay_watcher", None)
+    if mail_relay_watcher is not None:
+        await mail_relay_watcher.stop()
 
     # Stop task worker: stop claiming new tasks, then wait for active tasks to finish
     if _worker_instance is not None:

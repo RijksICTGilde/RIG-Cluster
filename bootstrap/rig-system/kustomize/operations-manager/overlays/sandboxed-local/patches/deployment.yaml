@@ -107,8 +107,8 @@ spec:
         # daarmee alle accounts aan: die van een project en dat van ZAD zelf. Het geheim is
         # dezelfde gegenereerde bron als die de relay in zijn eigen namespace krijgt, hier
         # gerenderd in de namespace van OPI - zoals bij Keycloak en PostgreSQL.
-        # optional: true, want de relay staat nog niet aan; zonder het geheim boot OPI
-        # gewoon door en blijft de dienst send-email zeggen dat er geen relay is.
+        # optional: true, zodat OPI ook op een cluster zonder relay gewoon doorboot; zonder
+        # het geheim blijft de dienst send-email zeggen dat er geen relay is.
         #
         # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster" en
         # de dienst weigert dan een account aan te maken in plaats van onbruikbare

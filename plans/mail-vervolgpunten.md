@@ -84,28 +84,22 @@ op de relay zelf kan, of dat het per account moet.
 **Waar**: meten tegen een draaiende relay, zoals de expressie-metingen van RC-145
 (gedocumenteerd in `config.toml`).
 
-## 5. Productie aanzetten
+## 5. Productie aanzetten: GEDAAN
 
-**Wat**: de manifesten en geheimen zijn klaar; wat rest zijn afspraken en twee regels
-config. De stappen staan uitgewerkt in `features/send-email.md` ("Wat er bij het
-aanzetten werkelijk moet gebeuren").
+De relay draait op odcn-production (`rig-mail-relay` in `rig-prd-ron`), met
+`MAIL_RELAY_API_URL` aan in de OPI-overlay en de eigen Application `ron-infrastructure`
+in de bootstrap-kustomization. Het `sops-age-key`-secret in `rig-prd-ron` is sinds RC-261
+geen handwerk meer: `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` zet hem er
+zelf in. De lijst voor een VOLGEND cluster staat in `features/send-email.md` ("Wat er bij
+het aanzetten moet gebeuren").
+
+Wat van dit punt open blijft, en het zijn afspraken en geen config:
 
 - De afspraak met het mailteam dat wij als `noreply-rijksapp(+project)@rijksoverheid.nl`
   versturen. Hun SPF autoriseert de upstream al; de afspraak is de poort. Let op: sinds
   RC-145 draagt de From: het plusdeel, neem dat mee in het gesprek.
 - Een bounce-postbus die OPI via IMAP mag legen; zonder die is onbestelbare post
   onzichtbaar.
-- De namespace `rig-prd-ron` komt uit de bootstrap (`namespace-ron.yaml` in de
-  odcn-production bootstrap-overlay, met de RON-annotatie en het managed-by-label;
-  ArgoCD op ODCN is namespaced en kan dat niet zelf): `task bootstrap-argo-system`
-  draaien. Daarna het `sops-age-key`-secret erin kopieren; het commando staat in
-  `features/send-email.md`.
-- De eigen Application `ron-infrastructure` aanzetten
-  (`bootstrap/rig-system/kustomize/overlays/odcn-production/`, regel staat klaar in
-  commentaar) en `MAIL_RELAY_API_URL` aan in de OPI-overlay van odcn. NIET via
-  `clusters/odcn`: de CMP slaat die build plat naar `rig-prd-operations`. De geheimen
-  (`mail-relay-secret`, `mail-db-credentials`) staan sinds 20 augustus versleuteld in
-  git; de database komt declaratief mee via `postgresql/database/base/`.
 
 ## 6. Webadmin, en wat er echt aan de hand was
 

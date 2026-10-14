@@ -10,6 +10,7 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.core.task_errors import platform_failure_fields
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import get_project_store
 
@@ -435,6 +436,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                 "message": error_msg,
                 "error": error_msg,
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
@@ -569,6 +571,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                 "message": error_msg,
                 "error": error_msg,
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",

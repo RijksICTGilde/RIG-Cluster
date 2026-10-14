@@ -19,7 +19,7 @@ resources:
   # hele build, en dat zou de rig-prd-ron-resources van de mail-overlay platslaan tot
   # een ID-conflict - gemeten op de sandbox, 19 augustus 2026. De relay krijgt een
   # eigen Application (argocd-application-ron-infrastructure.yaml in
-  # bootstrap/rig-system/kustomize/overlays/odcn-production, nu nog uitgecommentarieerd)
-  # met destination rig-prd-ron. De aanzetstappen staan in features/send-email.md
-  # ("Wat er bij het aanzetten werkelijk moet gebeuren").
+  # bootstrap/rig-system/kustomize/overlays/odcn-production) met destination
+  # rig-prd-ron. De aanzetstappen staan in features/send-email.md ("Wat er bij het
+  # aanzetten moet gebeuren").
   - ../../infrastructure/external-dns/controller/overlays/odcn

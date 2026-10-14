@@ -29,6 +29,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Script | Wat het doet |
 |---|---|
 | `mail_identity_check.py` | Toetst de identiteitsregels van de mailrelay tegen een draaiende sandbox: is de `From:` overschreven met het vaste adres (met en zonder weergavenaam, en bij een kaal adres), draagt de envelope het account in het plusdeel en blijft die in hetzelfde domein, en zijn de `Received`-keten en de verklikkerheaders eraf. Vraagt twee port-forwards (relay 587 en de sink-API 8025) en de inloggegevens van een send-email-account. Zie `features/send-email.md`. |
+| `mail_autoban_check.py` | Toetst dat de mailrelay een afgebroken verbinding van een intern adres niet als scan verbant (RC-261). Breekt 40 verzoeken op de management-poort af en eist dat `/healthz/live` daarna nog 200 geeft; zonder `[server.allowed-ip]` in de relayconfiguratie faalt hij. Vraagt alleen een port-forward naar poort 8080, geen inloggegevens en geen account. Zie `features/send-email.md`, Storingen. |
 
 ## Grafana / observability
 
