@@ -10,16 +10,14 @@ import json
 import logging
 import ssl
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import aiohttp
 import requests
 
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.logging_redact import redact_sensitive_headers
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -41,8 +39,6 @@ _token_refresh_lock = asyncio.Lock()
 # that with margin. Why it restarts: docs/argocd-server-herstart-elke-40-minuten.md.
 CONNECT_RETRY_SECONDS = 30.0
 
-_CONNECT_RETRY_FIRST_DELAY = 1.0
-
 
 def _exc_text(error: BaseException) -> str:
     """De tekst van een uitzondering, of de klasse als die tekst leeg is.
@@ -55,42 +51,6 @@ def _exc_text(error: BaseException) -> str:
     "Cannot connect to host argocd-server:80" en de repr daarvan is een ConnectionKey vol velden.
     """
     return str(error) or type(error).__name__
-
-
-async def _retry_on_connect_error[T](
-    operation: Callable[[], Awaitable[T]],
-    budget_seconds: float,
-    description: str,
-) -> T:
-    """Repeat an operation while it cannot connect, spending at most budget_seconds asleep.
-
-    Only ClientConnectorError is caught: the TCP connection was never established, so the
-    request never reached the server. Repeating it is therefore safe for any method, POST
-    included. Read timeouts and ServerDisconnectedError are not retried, because there the
-    request may already have been processed.
-
-    A budget of 0 gives exactly one attempt without sleeping. Once the budget is spent the
-    last ClientConnectorError is raised untouched, so a caller sees the same failure as
-    before this retry existed.
-    """
-    slept = 0.0
-    delay = _CONNECT_RETRY_FIRST_DELAY
-    while True:
-        try:
-            return await operation()
-        except aiohttp.ClientConnectorError as e:
-            remaining = budget_seconds - slept
-            if remaining <= 0:
-                logger.error(f"ArgoCD unreachable after {slept:.0f}s of retries, giving up on {description}: {e}")
-                raise
-            # Capped at what is left, so budget_seconds really is the upper bound the
-            # docstring above promises. The backoff on a budget of 30 is therefore
-            # 1, 2, 4, 8, 15.
-            pause = min(delay, remaining)
-            logger.warning(f"ArgoCD connect failed for {description}, retrying in {pause:.0f}s: {e}")
-            await asyncio.sleep(pause)
-            slept += pause
-            delay *= 2
 
 
 class ArgoConnector:
@@ -236,7 +196,7 @@ class ArgoConnector:
             True if login successful, False otherwise
         """
         try:
-            return await _retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
+            return await retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
         except Exception as e:
             logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
@@ -375,7 +335,7 @@ class ArgoConnector:
                 async with session.request(method, url, json=json_data or {}, headers=headers) as response:
                     return response.status, await response.text()
 
-            status, response_text = await _retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
+            status, response_text = await retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
             logger.debug(f"Response status: {status}")
             logger.debug(
                 f"Response text: {response_text[:200]}..."

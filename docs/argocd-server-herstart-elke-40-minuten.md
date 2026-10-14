@@ -28,7 +28,7 @@ Meer replicas van argocd-server helpt niet: ze watchen hetzelfde secret en herst
 
 De statuspolls uit de UI herstellen zichzelf bij de volgende poll, dus daar is de fout cosmetisch. De gevaarlijke route is de wachtlus in `opi/manager/argo_manager.py`. `get_application_status` verpakt elke fout in een `RuntimeError`, en de wachtlus gooit `RuntimeError` juist door, omdat een terminale toestand (degraded, sync failed) er niet van te onderscheiden is. Valt argocd-server tijdens een wachtlus 20 seconden weg, dan sneuvelt de hele deployment-task.
 
-Daarom zit de retry in `_retry_on_connect_error` in `opi/connectors/argo.py`. Budget 30 seconden, backoff 1, 2, 4, 8 en dan het restant van het budget, en alleen op `aiohttp.ClientConnectorError`. Waarom juist op die fout en niet op een read-timeout staat in de docstring van die functie.
+Daarom zit de retry in `retry_on_connect_error` in `opi/utils/connect_retry.py` (tot RC-261 stond hij in `opi/connectors/argo.py`; de mailrelay gebruikt hem sindsdien ook). Budget 30 seconden, backoff 1, 2, 4, 8 en dan het restant van het budget, en alleen op `aiohttp.ClientConnectorError`. Waarom juist op die fout en niet op een read-timeout staat in de docstring van die functie.
 
 Na uitputting gaat de oorspronkelijke fout onaangeroerd door, dus wanneer ArgoCD echt weg is verandert er aan de buitenkant niets.
 
