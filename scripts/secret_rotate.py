@@ -126,9 +126,21 @@ class Kube:
         return self.run(["exec", "-n", namespace or self.namespace, workload, "--", *command], check=check)
 
     def secret_value(self, name: str, key: str) -> str | None:
-        """Eén veld uit een cluster-secret, ontsleuteld. None als het er niet is."""
+        """Eén veld uit een cluster-secret, ontsleuteld. None als het er niet is.
+
+        De punt in een key wordt ge-escaped, anders leest jsonpath hem als padscheiding en
+        komt er stil niets terug: `admin.password` zou dan `.data.admin` -> `password` zoeken.
+        """
         result = self.run(
-            ["get", "secret", name, "-n", self.namespace, "-o", f"jsonpath={{.data.{key}}}"],
+            [
+                "get",
+                "secret",
+                name,
+                "-n",
+                self.namespace,
+                "-o",
+                f"jsonpath={{.data.{key.replace('.', chr(92) + '.')}}}",
+            ],
             check=False,
         )
         if result.returncode != 0 or not result.stdout:
@@ -210,6 +222,10 @@ class Component:
     db_user_fallback: str = ""  # cnpg-secret: als het bestand geen username-veld heeft
     workloads: tuple[str, ...] = ()  # workloads die na de sync-gate herstart worden
     zad_env: tuple[str, ...] = ()  # env-variabelen in .env-<cluster>.secrets die dezelfde waarde dragen
+    # (secret, key) in het cluster waar de HUIDIGE waarde staat, voor componenten zonder
+    # template én zonder envbestand-kopie. Dan is dat cluster-secret de enige bron, en hoeft
+    # er nergens een tweede exemplaar te staan dat stil kan afwijken.
+    current_from_secret: tuple[str, ...] = ()
     gen_without_template: tuple[str, int] = ()  # (kind, lengte) generatie-hint voor rijen zonder template
     note: str = ""
 
@@ -384,8 +400,11 @@ COMPONENTS: list[Component] = [
         template="",  # geen generatie-template: het secret is operator-owned en kan niet in git
         category="bootstrap",
         rotate_fields=("ARGOCD_PASSWORD",),
-        workloads=(OPI_DEPLOYMENT,),  # ZAD logt met deze waarde in op de ArgoCD-API
-        zad_env=("ARGOCD_PASSWORD",),
+        workloads=(OPI_DEPLOYMENT,),  # ZAD leest ARGOCD_PASSWORD via secretKeyRef, dus bij start
+        # Geen zad_env: ZAD leest dit wachtwoord rechtstreeks uit argocd-cluster, hetzelfde
+        # secret dat de operator naar argocd-secret hasht. Daarmee is dat secret de enige
+        # bron en hoeft er geen kopie in het ZAD-envbestand bijgewerkt te worden.
+        current_from_secret=("argocd-cluster", "admin.password"),
         gen_without_template=("random", 24),
         note="De operator is hier de schrijver: hij hasht admin.password uit <cr>-cluster naar "
         "argocd-secret. Drie stappen die alle drie moeten, anders komt de wissel niet aan; de "
@@ -2454,10 +2473,27 @@ def template_fields_of(component: Component) -> dict[str, tuple[str | None, int 
     return {f.name: (f.kind, f.length) for f in fields_of(path.read_text(encoding="utf-8"))}
 
 
+def read_current_from_secret(component: Component, kube: Kube) -> str:
+    """De huidige waarde uit het cluster-secret dat dit component als enige bron heeft."""
+    if len(component.current_from_secret) != 2:
+        raise EditFailed(f"{component.key}: current_from_secret hoort (secret, key) te zijn")
+    name, key = component.current_from_secret
+    value = kube.secret_value(name, key)
+    if not value:
+        raise EditFailed(
+            f"{component.key}: {name}.{key} is niet te lezen in {kube.namespace}. "
+            "Zonder de huidige waarde weet deze ronde niet wat de oude is, en kan ze dus ook "
+            "niet bewijzen dat die na de rotatie dood is."
+        )
+    return value
+
+
 def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_changes: bool) -> Ctx:
     """Lees de huidige waarden en vraag de nieuwe; bouwt nog GEEN stappen."""
     if component.template:
         current = read_current(component, cluster)
+    elif component.current_from_secret:
+        current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
     else:
         values = read_env_file(env_file_for(cluster.name))
         if not values:
@@ -2496,7 +2532,12 @@ def gather_dry_ctx(component: Component, cluster: Cluster, kube: Kube) -> Ctx:
     goed in het plan staan), de nieuwe als placeholder, en nooit een vraag stellen."""
     current: dict[str, str] = {}
     try:
-        current = read_current(component, cluster) if component.template else read_env_file(env_file_for(cluster.name))
+        if component.template:
+            current = read_current(component, cluster)
+        elif component.current_from_secret:
+            current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
+        else:
+            current = read_env_file(env_file_for(cluster.name))
     except EditFailed as failure:
         print(f"(let op: {failure})")
     new = dict.fromkeys(component.rotate_fields, "<NIEUW>")
@@ -2511,6 +2552,11 @@ def check_component(component: Component, cluster: Cluster, kube: Kube) -> list[
     if component.template:
         try:
             ctx.current = read_current(component, cluster)
+        except EditFailed as failure:
+            return [f"  -  {component.key}: overgeslagen ({failure})"]
+    elif component.current_from_secret:
+        try:
+            ctx.current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
         except EditFailed as failure:
             return [f"  -  {component.key}: overgeslagen ({failure})"]
     else:

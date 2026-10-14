@@ -145,6 +145,14 @@ spec:
             secretKeyRef:
               name: keycloak-admin-credentials
               key: KEYCLOAK_ADMIN_PASSWORD
+        # argocd-cluster is het secret waaruit de ArgoCD-operator admin.password naar
+        # argocd-secret hasht. Door het hier te lezen heeft ArgoCD en ZAD dezelfde bron, en
+        # vervalt de kopie die eerder in operations-manager-env-secrets stond.
+        - name: ARGOCD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: argocd-cluster
+              key: admin.password
         envFrom:
         - secretRef:
             name: operations-manager-env-secrets
