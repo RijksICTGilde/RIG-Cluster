@@ -38,6 +38,9 @@ een gewone sandboxrun:
 | `reallife` | `test_sandbox_reallife.py` | vijf projecten, semi-gelijktijdige mutaties via UI en API op hetzelfde projectbestand | ~15 min |
 | `punt14` | `test_sandbox_punt14.py` | gerichte jacht op de intermitterende `deployment_not_found` uit de zad-cli (punt 14) | 9-25 min |
 
+Elk heeft een eigen taak: `task test-e2e-sandbox-reallife` en `task test-e2e-sandbox-punt14`.
+`task test-e2e-sandbox` sluit beide markers uit.
+
 De punt-14-jacht is regelbaar met `PUNT14_RONDES` (rondes met `rollout=false`),
 `PUNT14_RONDES_UITROL` (rondes met uitrol aan, minuten per stuk) en `PUNT14_METINGEN` (een
 bestand waarin hij per ronde een meetregel schrijft -- pytest toont die van een geslaagde

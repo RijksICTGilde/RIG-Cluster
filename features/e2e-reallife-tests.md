@@ -24,7 +24,8 @@ kansen per ronde krijgt om zichtbaar te worden.
 
 Deze suite draait **niet** mee in de standaard testset. Hij duurt lang en heeft een draaiende
 sandbox nodig met jouw build erop. Daarom een eigen marker, `reallife`, en een eigen task. De
-reguliere sandbox-run sluit hem expliciet uit met `-m "e2e and sandbox and not reallife"`.
+reguliere sandbox-run sluit hem expliciet uit met
+`-m "e2e and sandbox and not reallife and not punt14"`.
 
 ## Draaien
 

@@ -2095,13 +2095,14 @@ class KeycloakConnector:
             default: Whether to assign as default scope (True) or optional (False)
 
         Returns:
-            True if scope was assigned successfully as realm default
+            True if the scope IS the realm default afterwards, which includes the case
+            where it already was
         """
+        scope_type = "default" if default else "optional"
         try:
             # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            scope_type = "default" if default else "optional"
             logger.info(f"Assigning client scope '{scope_id}' as realm-level {scope_type} client scope")
 
             if default:
@@ -2116,6 +2117,12 @@ class KeycloakConnector:
             return True
 
         except KeycloakError as e:
+            # Een 409 is hier de gewenste eindtoestand: de scope staat al als realm-default.
+            # Elke herhaalde bootstrap tegen een bestaande Keycloak gaf anders een ERROR-regel.
+            if getattr(e, "response_code", None) == 409:
+                logger.info(f"Client scope '{scope_id}' is already realm-level {scope_type}, skipping")
+                self.admin.change_current_realm("master")
+                return True
             logger.error(f"Failed to assign client scope as realm default: {e}")
             # Switch back to master
             self.admin.change_current_realm("master")

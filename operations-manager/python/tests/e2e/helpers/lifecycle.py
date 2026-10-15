@@ -180,7 +180,7 @@ def _fill_service_config_step(page: Page, *, banner: str) -> None:
 
     Detects the step by the presence of its fields, so it is order-independent:
     - keycloak config: enable restrict-access (auth-wall submit requires it) and
-      leave the template at its default (sso-support).
+      choose the template, which has no default and is required.
     - authorization-wall config: set the banner text.
     """
     # Op het VAKJE en op het EINDE van het pad. Hier stond het oude, niet-virtuele pad
@@ -195,6 +195,10 @@ def _fill_service_config_step(page: Page, *, banner: str) -> None:
     banner_field = wizard_helpers.veldbesturing_eindigend_op(page, "authorization-wall/config/banner")
     if banner_field.count() > 0:
         banner_field.first.fill(banner)
+
+    # De keycloak-template heeft geen default meer en is verplicht, dus zonder een keuze
+    # weigert "Volgende" en blijft de wandeling op deze stap staan.
+    wizard_helpers.kies_verplichte_keuzelijsten(page)
 
 
 def _fill_component_identity(page: Page, component_name: str, image: str) -> None:
