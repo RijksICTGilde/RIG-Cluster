@@ -4,16 +4,12 @@ Deze release gaat vooral over betrouwbaarheid. Uitrollen, verwijderen en wekken 
 
 ##### Een image die niet opgehaald kan worden zet je component niet meer uit
 
-**Dit verandert wat je op je deploymentkaart en in de ArgoCD-status ziet.**
+Tot nu toe zette ZAD een component op nul replicas zodra het leek alsof zijn container image niet op te halen was. De deployment stond dan op `Healthy`, want nul replicas is voor ArgoCD een gezonde deployment. Dat doen we niet meer. Een component dat zijn image niet kan ophalen blijft staan en Kubernetes blijft het proberen. Dat zie je op twee plekken:
 
-Tot nu toe zette ZAD een component op nul replicas zodra het leek alsof zijn container image niet op te halen was. De deployment stond dan op `Healthy`, want nul replicas is voor ArgoCD een gezonde deployment.
+- **Je deployment komt op `Degraded` te staan** in plaats van op `Healthy`. Dat is eerlijker, want er draait niets.
+- **Je deployment toont het component** met de image die niet lukt, wat de registry antwoordde en sinds wanneer. Er staat ook bij of het aan jouw image ligt (tag bestaat niet, geen toegang) of aan het platform (de gedeelde image-cache zit vol, de registry gaf geen antwoord).
 
-Dat doen we niet meer. Een component dat zijn image niet kan ophalen blijft staan en Kubernetes blijft het proberen. Dat zie je op twee plekken:
-
-- **Je deployment komt op `Degraded` te staan** in plaats van op `Healthy`. Dat is eerlijker, want er draait niets. Heb je een eigen alarm op de ArgoCD-status, dan gaat dat nu wel af.
-- **Je deploymentkaart toont het component** met de image die niet lukt, wat de registry antwoordde en sinds wanneer. Er staat ook bij of het aan jouw image ligt (tag bestaat niet, geen toegang) of aan het platform (de gedeelde image-cache zit vol, de registry gaf geen antwoord).
-
-Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw uit te rollen.
+Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw uit te rollen. Ook als de image echt niet bestaat, bijvoorbeeld door een typfout in de tag, blijft je component staan. Je ziet dan op de deploymentkaart dat het aan je image ligt. Pas de tag aan en rol opnieuw uit.
 
 ##### Authorization wall
 
