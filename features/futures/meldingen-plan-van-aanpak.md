@@ -1118,4 +1118,3 @@ voorstel geen permanente toestand meer: beslissing 9 in
 `features/futures/beheer-in-zad-plan-van-aanpak.md` verhuist die lijst naar de database met een handeling
 erachter, en daarmee wordt die regel wél een gebeurtenis. Het is dus geen fout in de
 inventarisatie maar een regel die door dit voorstel van kolom verandert.
-

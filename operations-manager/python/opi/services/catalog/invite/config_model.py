@@ -109,6 +109,13 @@ class InviteEntry(BaseModel):
             "subdomain or domain-format change. Mutually exclusive with 'application-url'."
         ),
     )
+    title: I18nText | None = Field(
+        default=None,
+        description=(
+            "What the invite gives access to, as the invitee knows it (for example 'Docs en Grist'). "
+            "Heading of the invitation pages; empty falls back to the project's display name."
+        ),
+    )
     message: I18nText | None = Field(default=None, description="Text shown on the invitation page.")
     success_title: I18nText | None = Field(
         default=None, alias="success-title", description="Heading shown after a successful redemption."

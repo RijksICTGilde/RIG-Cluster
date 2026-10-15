@@ -1259,6 +1259,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
 
         user = request.session.get("user")
         return templates_lotc.TemplateResponse(
+            request,
             "help_page.html.j2",
             {
                 "request": request,
@@ -1271,6 +1272,7 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
     template_path = template_name if "/" in template_name else f"help/{template_name}"
     try:
         return templates_lotc.TemplateResponse(
+            request,
             template_path,
             {"request": request},
         )

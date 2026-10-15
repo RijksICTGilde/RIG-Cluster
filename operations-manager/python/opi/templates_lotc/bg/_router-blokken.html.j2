@@ -44,7 +44,6 @@
 </c-paragraph>
 {% endmacro %}
 
-
 {% macro het_dns_record(router_host, router_ipv4, router_ipv6) %}
 <c-table columns="1fr 2fr">
     <c-table-head><c-table-row>
@@ -81,7 +80,6 @@
 </ul></c-rich-text>
 {% endmacro %}
 
-
 {% macro de_records_op_een_rij(router_host, router_ipv4, router_ipv6) %}
 <pre class="output-code-block">{% if router_ipv4 %}a       digitaledienst.example.com.   {{ router_ipv4 }}
 aaaa    digitaledienst.example.com.   {{ router_ipv6 }}
@@ -100,7 +98,6 @@ aname   digitaledienst.example.com.   {{ router_host }}.</pre>
 </c-paragraph>
 {% endmacro %}
 
-
 {% macro het_project_in_zad() %}
 <c-paragraph>
     Maak een project aan of wijzig een bestaand project, kies bij het webadres je
@@ -109,7 +106,6 @@ aname   digitaledienst.example.com.   {{ router_host }}.</pre>
     platform verkeer voor die hostnaam.
 </c-paragraph>
 {% endmacro %}
-
 
 {% macro het_certificaat() %}
 <c-paragraph>
@@ -128,7 +124,6 @@ aname   digitaledienst.example.com.   {{ router_host }}.</pre>
     vereist: een Let's Encrypt-certificaat scoort daar volledig.
 </c-paragraph>
 {% endmacro %}
-
 
 {% macro wat_internet_nl_betreft() %}
 <c-paragraph>
