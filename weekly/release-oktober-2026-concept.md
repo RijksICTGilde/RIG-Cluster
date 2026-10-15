@@ -9,7 +9,7 @@ Tot nu toe zette ZAD een component op nul replicas zodra het leek alsof zijn con
 - **Je deployment komt op `Degraded` te staan** in plaats van op `Healthy`. Dat is eerlijker, want er draait niets.
 - **Je deployment toont het component** met de image die niet lukt, wat de registry antwoordde en sinds wanneer. Er staat ook bij of het aan jouw image ligt (tag bestaat niet, geen toegang) of aan het platform (de gedeelde image-cache zit vol, de registry gaf geen antwoord).
 
-Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw uit te rollen. Ook als de image echt niet bestaat, bijvoorbeeld door een typfout in de tag, blijft je component staan. Je ziet dan op de deploymentkaart dat het aan je image ligt. Pas de tag aan en rol opnieuw uit.
+Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw uit te rollen. Ook als de image echt niet bestaat, bijvoorbeeld door een typfout in de tag, blijft je component staan. Je ziet dan op de deploymentkaart dat het aan je image ligt. 
 
 ##### Authorization wall
 
@@ -17,9 +17,7 @@ Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw ui
 
 *Voor ontwikkelaars: verzoeken onder `/api/` en naar statische bestanden krijgen nu een 401 in plaats van de inlogpagina. Met `/oauth2/auth` kun je controleren of de sessie nog geldig is.*
 
-**De sessie wordt vernieuwd voordat hij verloopt** in plaats van erna, en het cookie is niet langer geldig dan de Keycloak-sessie waarop het leunt.
-
-**De foutpagina's van de wall zijn Nederlands** en zeggen wat er aan de hand is.
+De foutpagina's van de wall zijn Nederlands** en zeggen wat er aan de hand is.
 
 ##### Uitrollen die vastlopen
 
@@ -30,8 +28,8 @@ Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw ui
 ##### Verwijderen en opnieuw aanmaken
 
 - **Een verwijderde deployment komt niet meer terug.** Liep er tijdens het verwijderen nog een verwerking van hetzelfde project, dan kon die de deployment terugzetten, en bleef hij gewoon draaien. Een deployment met een openstaande verwijdering wordt nu overgeslagen.
-- **Verwijderen eindigt groen.** In ODCN eindigde een verwijdering vaak als "gedeeltelijk mislukt" en bleef er een map met manifests achter. ZAD wacht nu tot alles echt weg is en ruimt die map mee op.
-- **Een trage verwijdering wordt niet meer afgebroken.** ZAD wachtte een vast aantal seconden en forceerde daarna, met een rode taak als gevolg. Nu wacht ZAD zolang er voortgang is. Opeenvolgende taken voor dezelfde deployment lopen netjes na elkaar.
+- **Volledige verwijdering.** Een verwijdering had soms als resultaat "gedeeltelijk mislukt" en dan bleef er een map met manifests achter. ZAD wacht nu tot alles echt weg is en ruimt die map mee op.
+- **Een trage verwijdering mislukt niet meer.** ZAD wacht nu zolang er nog voortgang is, in plaats van na een vaste tijd af te breken. Verwijder je een deployment en maak je hem meteen opnieuw aan, dan wacht het aanmaken tot het verwijderen klaar is.
 
 ##### Wekken uit de slaapstand
 
