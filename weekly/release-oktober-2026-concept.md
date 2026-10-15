@@ -1,6 +1,6 @@
 #### ZAD release, oktober 2026
 
-Deze release gaat vooral over betrouwbaarheid. Uitrollen, verwijderen en wekken uit de slaapstand lopen niet meer vast op momenten waarop je zelf niets kunt doen. Een image die even niet op te halen is zet je component niet meer uit. De authorization wall faalt netjes en in het Nederlands. Daarnaast draait Keycloak voortaan uit een eigen image, is de mailrelay robuuster geworden, en is de security hardening verder gegaan: de wachtwoorden van alle ZAD-onderdelen zijn nu periodiek te roteren.
+Deze release gaat vooral over betrouwbaarheid. Uitrollen, verwijderen en wekken uit de slaapstand lopen niet meer vast op momenten waarop je zelf niets kunt doen. Een image die even niet op te halen is zet je component niet meer uit. De authorization wall faalt netjes en in het Nederlands. Daarnaast draait Keycloak voortaan uit een eigen image, is de mailrelay robuuster geworden, en is de security hardening verder gegaan: de wachtwoorden van alle ZAD-onderdelen zijn nu geautomatiseerd periodiek te roteren.
 
 ##### Een image die niet opgehaald kan worden zet je component niet meer uit
 
@@ -15,13 +15,9 @@ Dat doen we niet meer. Een component dat zijn image niet kan ophalen blijft staa
 
 Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw uit te rollen.
 
-**Waarom.** Op 30 september las ZAD een vol opslagquotum van de registry als "deze image bestaat niet" en zette daarmee ongeveer 40 componenten in zes projecten uit, terwijl elke image gewoon bestond. Een uitgeschakeld component kwam alleen terug met een nieuwe deploy, dus de storing duurde langer dan de oorzaak.
-
-Uitschakelen bij een container die zijn geheugen opmaakt (OOMKilled) of die blijft crashen, blijft wel bestaan.
-
 ##### Authorization wall
 
-**Een verlopen sessie sloopt je pagina niet meer stil.** Tot nu toe kreeg elk verzoek zonder sessie de inlogpagina terug, ook een stylesheet, een script of een `fetch()`. De pagina bleef dan zonder opmaak achter, met fouten in de console die niets over de oorzaak zeggen. Verzoeken onder `/api/` en verzoeken naar een statisch bestand krijgen nu een kale 401. Je applicatie kan zelf op `/oauth2/auth` toetsen of de sessie weg is (401 zonder sessie, 202 met). Staat je eigen XHR niet onder `/api/`, dan krijgt die nog wel de HTML-pagina. Laat het weten als dat je raakt.
+**Betere afhandeling verlopen sessie** Tot nu toe kreeg elk verzoek zonder sessie de inlogpagina terug, ook een stylesheet, een script of een `fetch()`. De pagina bleef dan zonder opmaak achter, met fouten in de console die niets over de oorzaak zeggen. Verzoeken onder `/api/` en verzoeken naar een statisch bestand krijgen nu een kale 401. Je applicatie kan zelf op `/oauth2/auth` toetsen of de sessie weg is (401 zonder sessie, 202 met). Staat je eigen XHR niet onder `/api/`, dan krijgt die nog wel de HTML-pagina. Laat het weten als dat je raakt.
 
 **De sessie wordt vernieuwd voordat hij verloopt** in plaats van erna, en het cookie is niet langer geldig dan de Keycloak-sessie waarop het leunt.
 
