@@ -2079,7 +2079,11 @@ tasks:
       # Ook firefox: tests/e2e/test_lotc_aanvragenbeheer.py meet daarin een fout die in
       # Chromium NIET te zien is (een tabelcel die alleen daar tot niets krimpt).
       - uv run playwright install chromium firefox --with-deps
-      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+      # Zonder PROJECT_REPO_PASSWORD weigert generate_self_service_project_yaml en leveren
+      # de wizardtests geen projectbestand. Alleen de VORM telt, dus geen secret.
+      - >-
+        PROJECT_REPO_PASSWORD=${PROJECT_REPO_PASSWORD:-plain:repo-secret}
+        uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
   test-e2e-random:
@@ -2097,7 +2101,10 @@ tasks:
       # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
       # -1 and pytest drops the report header -- the line where pytest-randomly prints
       # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
-      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
+      # PROJECT_REPO_PASSWORD: zie test-e2e.
+      - >-
+        PROJECT_REPO_PASSWORD=${PROJECT_REPO_PASSWORD:-plain:repo-secret}
+        uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
     silent: false
 
   test-e2e-sandbox:
@@ -2113,7 +2120,28 @@ tasks:
         FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
         E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
         E2E_TRACE=${E2E_TRACE:-1}
-        uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" -v --timeout=300
+        uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife and not punt14" -v --timeout=300
+    silent: false
+
+  test-e2e-sandbox-punt14:
+    desc: "Run the punt14 load suite (26 deployments in one project) against a running sandbox"
+    dir: operations-manager/python
+    summary: |
+      Bedoeld om te draaien TERWIJL de reallife-suite loopt, zodat er werkelijk belasting
+      op de store staat. Daarom een eigen taak en niet in `test-e2e-sandbox`: die ene
+      module maakt tot 26 deployments in een project en vult daarmee de node van de
+      sandbox, waardoor de rest van de suite op `Insufficient cpu` blijft staan.
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
+        E2E_TRACE=${E2E_TRACE:-1}
+        uv run pytest tests/e2e/test_sandbox_punt14.py -m "e2e and sandbox and punt14" -v --timeout=7200
     silent: false
 
   sandbox:verwijder-weesproject:
@@ -3095,7 +3123,11 @@ tasks:
         }
 
         # Sync infrastructure directory content (strip infrastructure/ prefix)
-        rsync -av --delete --exclude='.git' infrastructure/ "$TEMP_DIR/"
+        # De sandbox-secrets staan niet in git (.gitignore:41): deze protect-regel laat ze aan
+        # de kant van het cluster staan bij --delete, en vanaf een setup gaan ze wel mee.
+        rsync -av --delete --exclude='.git' \
+          --filter='P /bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/***' \
+          infrastructure/ "$TEMP_DIR/"
 
         # Commit and push
         cd "$TEMP_DIR"

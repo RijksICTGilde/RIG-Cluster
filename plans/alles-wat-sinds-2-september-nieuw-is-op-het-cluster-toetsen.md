@@ -19,8 +19,9 @@ Let op bij het meten van buitenaf: `*.sandbox.rijksapp.dev` resolveert naar `127
 Er is een werkende vorm voor precies dit soort toetsen, en die hoeft niet uitgevonden te worden:
 
 - **26 sandbox-toetsen** in `operations-manager/python/tests/e2e/test_sandbox_*.py`, gemarkeerd met `@pytest.mark.sandbox`, gedreven door Playwright (de UI) plus de `sandbox_api`-helper.
-- **`task test-e2e-sandbox`** draait ze: `pytest tests/e2e/ -m "e2e and sandbox and not reallife"`.
+- **`task test-e2e-sandbox`** draait ze: `pytest tests/e2e/ -m "e2e and sandbox and not reallife and not punt14"`.
 - **`task test-e2e-sandbox-reallife`** draait de lange variant met vijf projecten en gelijktijdige mutaties.
+- **`task test-e2e-sandbox-punt14`** draait de belastingvariant: tot 26 deployments in een project, bedoeld om naast de reallife-suite te lopen. Een eigen taak omdat die ene module de node van de sandbox vult.
 - **99 e2e-bestanden in totaal**, waarvan het merendeel tegen een losse testserver draait en geen cluster nodig heeft.
 
 De gaten zitten niet in de vorm maar in de dekking, en op twee plekken:
