@@ -110,6 +110,9 @@ patches:
           requests:
             cpu: 100m
             memory: 512Mi
+  # The sops-plugin component replaces /spec/repo wholesale, so the repo resources in
+  # argocd-deployment.yaml never reach the cluster: this patch is the one that counts.
+  # 2Gi because the repo-server was OOMKilled at 1Gi on a cold cache (13 October 2026).
   - target:
       kind: ArgoCD
       name: argocd
@@ -118,11 +121,11 @@ patches:
         path: /spec/repo/resources
         value:
           limits:
-            cpu: "1"
-            memory: 1Gi
+            cpu: "2"
+            memory: 2Gi
           requests:
             cpu: 250m
-            memory: 128Mi
+            memory: 256Mi
   # Scale repo-server to 2 replicas for better CMP throughput
   - target:
       kind: ArgoCD
