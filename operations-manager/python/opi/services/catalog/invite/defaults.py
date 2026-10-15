@@ -51,11 +51,11 @@ def default_contact_email(yaml_data: dict[str, Any]) -> str | None:
 
 
 def default_message_nl(yaml_data: dict[str, Any]) -> str:
-    return f"Je bent uitgenodigd voor {_project_label(yaml_data)}. Maak hieronder je account aan om toegang te krijgen."
+    return f"Welkom bij {_project_label(yaml_data)}."
 
 
 def default_message_en(yaml_data: dict[str, Any]) -> str:
-    return f"You have been invited to {_project_label(yaml_data)}. Create your account below to get access."
+    return f"Welcome to {_project_label(yaml_data)}."
 
 
 def default_success_title_nl(yaml_data: dict[str, Any]) -> str:

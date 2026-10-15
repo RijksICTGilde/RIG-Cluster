@@ -1,48 +1,53 @@
 {#
   Uitnodiging: kies hoe je wilt inloggen.
 
-  Een OVERNAME van opi/templates/invite-landing.html.j2. Dezelfde blokken in dezelfde
-  volgorde: de projectnaam, de boodschap van de uitnodiging, de vraag hoe je wilt
-  inloggen, de aanmeldkeuzes (SSO, lokaal account, of de melding dat er niets is), en
-  onderaan het hulpblok met het contactadres.
+  Wie hier landt heeft een link gekregen voor een applicatie (Docs, Grist, ...) en wil
+  alleen weten welke knop hij moet nemen. De pagina legt daarom de keuze uit in termen van
+  de bezoeker ("heb je een werkaccount?") en niet in termen van de techniek ("Single
+  Sign-On", "lokaal account"). Met een enkele aanmeldmogelijkheid valt de keuze weg en
+  staat er alleen wat je moet doen.
 
   DIT IS EEN PUBLIEKE PAGINA en heeft dus GEEN navigatie en geen ingelogde gebruiker. Hij
   breidt daarom base_lotc.html.j2 niet uit maar bouwt zijn eigen <c-page> met alleen een
-  header, precies zoals de bestaande pagina dat doet. Er is hier niets om naartoe te
-  navigeren: wie hier is heeft nog geen account.
+  header.
 
   De tweetaligheid blijft zoals hij was: alle teksten worden bovenaan als variabele
   klaargezet. Dat moet hier ook wel - een voorwaarde binnen de aanhalingstekens van een
   attribuut kan in dit systeem niet, want de voorbewerker leest de tag zelf.
 
-  TWEE VORMWIJZIGINGEN, allebei omdat de vorm van deze bouwlijn dat zo doet:
-
-  - De kaart die de hele pagina omsloot is weg; de blokken erbinnen waren zelf al kaarten
-    en een kaart in een kaart leest niet. De keuzes en het hulpblok zijn nu panel() uit
-    bg/_patterns.html.j2, dezelfde vorm als op alle andere pagina's.
-  - De knoppen zijn links geworden (href in plaats van een klik die window.location zet),
-    want dat is wat ze deden en zo werken ze ook zonder JavaScript.
+  De knoppen zijn links (href), zodat ze ook zonder JavaScript werken.
 #}
-{% from "bg/_patterns.html.j2" import panel, page_head %}
+{% from "bg/_patterns.html.j2" import panel %}
 
-{% set title_nl = "Uitnodiging - " ~ display_name %}
-{% set title_en = "Invitation - " ~ display_name %}
-{% set page_title = title_nl if language == 'nl' else title_en %}
+{% set is_nl = language == 'nl' %}
+{% set has_sso = allow_sso and identity_providers %}
+{% set has_choice = has_sso and allow_local %}
 
-{% set heading_text = "Kies hoe je wilt inloggen" if language == 'nl' else "Choose how to sign in" %}
-{% set intro_text = "Selecteer een van de onderstaande opties om toegang te krijgen tot " ~ display_name ~ "." if language == 'nl' else "Select one of the options below to get access to " ~ display_name ~ "." %}
-{% set sso_heading = "Single Sign-On" %}
-{% set sso_description = "Log in met je organisatieaccount." if language == 'nl' else "Sign in with your organization account." %}
-{% set local_heading = "Lokaal Account" if language == 'nl' else "Local Account" %}
-{% set local_description = "Maak een nieuw account aan met een e-mailadres en wachtwoord." if language == 'nl' else "Create a new account with an email address and password." %}
-{% set local_button_label = "Account aanmaken" if language == 'nl' else "Create Account" %}
+{% set page_title = ("Uitnodiging - " if is_nl else "Invitation - ") ~ display_name %}
+{% set eyebrow = "Je bent uitgenodigd voor" if is_nl else "You have been invited to" %}
+
+{# With a choice the panel headings ask the question, so no intro line is needed. #}
+{% if has_choice %}
+    {% set intro_text = "" %}
+    {% set sso_heading = "Heb je een werkaccount?" if is_nl else "Do you have a work account?" %}
+    {% set local_heading = "Geen werkaccount?" if is_nl else "No work account?" %}
+{% else %}
+    {% set intro_text = "Log in om de uitnodiging te accepteren." if is_nl else "Sign in to accept the invitation." %}
+    {% set sso_heading = "Inloggen met je werkaccount" if is_nl else "Sign in with your work account" %}
+    {% set local_heading = "Account aanmaken" if is_nl else "Create an account" %}
+{% endif %}
+
+{% set sso_description = "Log in met het account van je organisatie, met dezelfde gegevens als op je werkplek. Je hoeft geen nieuw account aan te maken." if is_nl else "Sign in with your organization's account, using the same details as at work. You do not need to create a new account." %}
+{% set sign_in_with = "Inloggen met " if is_nl else "Sign in with " %}
+{% set local_description = "Maak een account aan met je e-mailadres en een zelfgekozen wachtwoord. Met dat account log je voortaan in." if is_nl else "Create an account with your email address and a password of your choice. You will use it to sign in from now on." %}
+{% set local_button_label = "Account aanmaken" if is_nl else "Create account" %}
 {% set register_url = "/invite/" ~ invite_key ~ "/register" %}
-{% set help_heading = "Hulp nodig?" if language == 'nl' else "Need help?" %}
-{% set help_before = "Neem contact op via " if language == 'nl' else "Contact " %}
-{% set help_after = " als je problemen hebt." if language == 'nl' else " if you experience any issues." %}
-{% set no_auth_heading = "Geen authenticatiemethoden beschikbaar" if language == 'nl' else "No authentication methods available" %}
-{% set no_auth_content = "Er zijn geen authenticatiemethoden geconfigureerd voor deze uitnodiging." if language == 'nl' else "No authentication methods are configured for this invitation." %}
-{% set sign_in_with = "Inloggen met " if language == 'nl' else "Sign in with " %}
+
+{% set help_before = "Mail naar " if is_nl else "Email " %}
+{% set help_after = " als het inloggen niet lukt." if is_nl else " if you cannot sign in." %}
+
+{% set no_auth_heading = "Inloggen is nu niet mogelijk" if is_nl else "Signing in is not possible right now" %}
+{% set no_auth_content = "Voor deze uitnodiging is nog geen manier om in te loggen ingesteld. Neem contact op met degene die je heeft uitgenodigd." if is_nl else "No sign-in method has been set up for this invitation yet. Please contact the person who invited you." %}
 
 <c-page title="{{ page_title }}" lang="{{ language }}">
     <c-header
@@ -52,17 +57,21 @@
 
     <c-center max="46rem">
         <c-stack gap="lg">
-            {{ page_head(display_name, message) }}
-
             <c-stack gap="xs">
-                <c-heading type="h2" size="4" label="{{ heading_text }}" />
-                <c-paragraph>{{ intro_text }}</c-paragraph>
+                <c-paragraph size="sm">{{ eyebrow }}</c-paragraph>
+                <c-heading type="h1" size="3" label="{{ display_name }}" />
+                {% if message %}
+                    <c-paragraph>{{ message }}</c-paragraph>
+                {% endif %}
+                {% if intro_text %}
+                    <c-paragraph>{{ intro_text }}</c-paragraph>
+                {% endif %}
             </c-stack>
 
-            {% if allow_sso and identity_providers %}
+            {% if has_sso %}
                 {% call panel(sso_heading, "person") %}
                     <c-paragraph>{{ sso_description }}</c-paragraph>
-                    <c-stack gap="sm">
+                    <c-action-group align="start">
                         {% for idp in identity_providers %}
                             <c-button
                                 type="primary"
@@ -71,7 +80,7 @@
                                 show-icon="after"
                                 href="/invite/{{ invite_key }}/idp/{{ idp.alias }}" />
                         {% endfor %}
-                    </c-stack>
+                    </c-action-group>
                 {% endcall %}
             {% endif %}
 
@@ -80,7 +89,7 @@
                     <c-paragraph>{{ local_description }}</c-paragraph>
                     <c-action-group align="start">
                         <c-button
-                            type="secondary"
+                            type="{{ 'secondary' if has_sso else 'primary' }}"
                             label="{{ local_button_label }}"
                             icon="chevron-right"
                             show-icon="after"
@@ -89,16 +98,14 @@
                 {% endcall %}
             {% endif %}
 
-            {% if not allow_sso and not allow_local %}
+            {% if not has_sso and not allow_local %}
                 <c-alert type="warning" heading="{{ no_auth_heading }}">{{ no_auth_content }}</c-alert>
             {% endif %}
 
             {% if contact_email %}
-                {% call panel(help_heading, "lifebuoy") %}
-                    <c-paragraph>
-                        {{ help_before }}<c-link href="mailto:{{ contact_email }}" label="{{ contact_email }}" />{{ help_after }}
-                    </c-paragraph>
-                {% endcall %}
+                <c-paragraph size="sm">
+                    {{ help_before }}<c-link href="mailto:{{ contact_email }}" label="{{ contact_email }}" />{{ help_after }}
+                </c-paragraph>
             {% endif %}
         </c-stack>
     </c-center>

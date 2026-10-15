@@ -43,7 +43,7 @@ kubectl apply -f security/sops-secret.yaml
 ```
 
 Elk ZAD project heeft een eigen sops-secret. De platformsleutel zit alleen in de platform
-namespaces. Wissel je de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`. 
+namespaces. Wissel je de platformsleutel, gebruik dan `scripts/set-sops-key-secret.py`.
 Zie `features/sops-sleutel-roteren.md`.
 
 ## 3. Een geheim versleutelen
