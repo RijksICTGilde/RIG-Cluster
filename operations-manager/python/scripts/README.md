@@ -29,6 +29,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Script | Wat het doet |
 |---|---|
 | `mail_identity_check.py` | Toetst de identiteitsregels van de mailrelay tegen een draaiende sandbox: is de `From:` overschreven met het vaste adres (met en zonder weergavenaam, en bij een kaal adres), draagt de envelope het account in het plusdeel en blijft die in hetzelfde domein, en zijn de `Received`-keten en de verklikkerheaders eraf. Vraagt twee port-forwards (relay 587 en de sink-API 8025) en de inloggegevens van een send-email-account. Zie `features/send-email.md`. |
+| `mail_autoban_check.py` | Toetst dat de mailrelay een afgebroken verbinding van een intern adres niet als scan verbant (RC-261). Breekt 40 verzoeken op de management-poort af en eist dat `/healthz/live` daarna nog 200 geeft; zonder `[server.allowed-ip]` in de relayconfiguratie faalt hij. Vraagt alleen een port-forward naar poort 8080, geen inloggegevens en geen account. Zie `features/send-email.md`, Storingen. |
 
 ## Grafana / observability
 
@@ -44,7 +45,7 @@ Most tools talk to live infrastructure and read credentials/config from environm
 | Tool | What it does |
 |---|---|
 | `argo_diagnostics.py` | ArgoCD diagnostics. |
-| `argocd_orphan_sweep.py` | Find what a deleted ArgoCD Application left behind: cluster resources ArgoCD marked as its own whose Application no longer exists, and deployments-repo paths no Application points at. Reports (`SCHOON` when there is nothing), deletes only with `--delete`. Exit 0 clean, 1 orphans, 2 refused. Also as `task argocd-orphan-sweep`; see `features/argocd-vastgelopen-verwijdering.md`. |
+| `argocd_orphan_sweep.py` | Find what a deleted ArgoCD Application left behind: cluster resources ArgoCD marked as its own whose Application no longer exists, and deployments-repo paths no Application points at, and with `--projects-repo`/`--argo-repo` the Applications git still keeps for a deployment the projects repo no longer has. Helmfile projects are left alone. In a Capsule tenant `--deployments-repo` is required: completeness is then judged by the kinds that repo renders. Reports (`SCHOON` when there is nothing), deletes only with `--delete`, and `--delete` together with `--deployments-repo` refuses without `--projects-repo`, `--argo-repo` and `--cluster`: short of them the directory of a deployment whose Application is momentarily absent reads as an orphan. Exit 0 clean, 1 orphans, 2 refused. Also as `task argocd-orphan-sweep`; see `features/argocd-vastgelopen-verwijdering.md`. |
 | `diagnose_oom.py` | OOM-kill diagnostics for tuning/analysis. |
 | `oom_growth_report.py` | Read-only report: per project, which deployment components sit above the auto-tune growth ceiling (current memory limit vs the limit declared on the catalog component), with the `oom-watcher` history entries that got them there. Left behind by the unbounded escalation RC-157 fixed. Also as `PROJECTS=... task oom-growth-report`. |
 

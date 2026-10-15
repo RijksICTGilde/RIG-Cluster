@@ -240,3 +240,49 @@ def test_no_element_carries_two_class_attributes() -> None:
     ]
 
     assert not offenders, "Voeg de klassen samen tot een class-attribuut:\n" + "\n".join(offenders)
+
+
+#: De formulieren waarvan de velden op de SERVER gevalideerd worden. Zij moeten
+#: ``novalidate`` dragen, anders valideert de browser ze ook en wint hij.
+#:
+#: Sinds NLDD 0.8.92 melden de veldcomponenten hun ``required`` via ElementInternals aan
+#: het formulier. ``requestSubmit()`` weigert dan te versturen en de browser toont zijn
+#: eigen tekstballon, in de taal van de BROWSER ("Please fill out this field."), zonder
+#: onze veldspecifieke regels en zonder dat het verzoek ooit de server haalt. Met 0.8.80
+#: gaf ``checkValidity()`` op een leeg verplicht veld nog ``true``, dus dit is geen
+#: bestaand gat maar een omslag.
+#:
+#: Als opsomming en niet als "elk formulier": een zoekformulier of een GET-filter heeft
+#: geen server-gevalideerde velden en gaat dit niet aan. De waarde is een stuk tekst dat in
+#: de openingstag hoort te staan, zodat deze test merkt dat hij de verkeerde <form> leest.
+FORMULIEREN_MET_SERVERVALIDATIE = {
+    "bg/_wizard-step.html.j2": "wizard-step-form",
+    "wizard/wizard_step.html.j2": "wizard-step-form",
+    "bg/_modal-wizard-step.html.j2": "modal-wizard-form",
+    "wizard/modal_wizard_step.html.j2": "modal-wizard-form",
+    "widgets/form_start.html.j2": "{{ form_id|e }}",
+    "admin/user-form.html.j2": "{{ form_action }}",
+    "bg/admin-user-form.html.j2": "{{ form_action }}",
+    "invite-register.html.j2": "/invite/{{ invite_key }}/register",
+    "bg/invite-register.html.j2": "/invite/{{ invite_key }}/register",
+    "project-form-demo/_formulier.html.j2": "/projects/form-demo",
+}
+
+
+def test_server_gevalideerde_formulieren_staan_op_novalidate() -> None:
+    """Een browser die zelf valideert houdt onze Nederlandse meldingen tegen."""
+    zonder = []
+    for pad, kenmerk in FORMULIEREN_MET_SERVERVALIDATIE.items():
+        tekst = (TEMPLATES_DIR / pad).read_text()
+        # De openingstag MET dit kenmerk erin, en niet de eerste de beste: een paar van deze
+        # bestanden noemen <form> ook in hun toelichting bovenaan.
+        tags = [tag for tag in re.findall(r"<form\b[^>]*>", tekst, re.DOTALL) if kenmerk in tag]
+        assert len(tags) == 1, f"{pad}: verwacht een <form> met {kenmerk} erin, gevonden: {len(tags)}"
+        if "novalidate" not in tags[0]:
+            zonder.append(pad)
+
+    assert zonder == [], (
+        "Deze formulieren laten de browser meevalideren. Die weigert dan te versturen bij "
+        "een leeg verplicht veld en toont een tekstballon in zijn eigen taal, zodat onze "
+        "eigen melding nooit verschijnt:\n  " + "\n  ".join(zonder)
+    )

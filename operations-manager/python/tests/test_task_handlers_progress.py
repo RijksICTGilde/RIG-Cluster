@@ -428,6 +428,7 @@ class TestHandleRefreshDeployment:
             deployment_name="dev",
             force_clone=False,
             force_reenable=True,
+            reset_running_sync=False,
         )
 
         assert progress.add_task.call_count == 2

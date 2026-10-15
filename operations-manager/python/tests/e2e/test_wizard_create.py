@@ -32,8 +32,8 @@ def test_wizard_create_verified_in_forgejo(
 
     Forgejo (zad-projects) is the authoritative "did it work?" source -- the wizard's
     HTTP response is never trusted on its own. The technical project id is server-
-    generated (a random slug, not the display name), so it is resolved by diffing the
-    repo listing before/after (create_project_via_wizard). Cleaned up via the API.
+    generated (a random slug, not the display name); create_project_via_wizard reads it
+    off the progress page, which also carries the task's outcome. Cleaned up via the API.
     """
     display = unique_project_name()
     project = create_project_via_wizard(

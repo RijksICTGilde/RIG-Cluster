@@ -1,8 +1,14 @@
 """Na een afgekeurde inzending staat de cursor in het eerste foute veld.
 
-Gemeld op de componentenstap: het veld kreeg netjes ``aria-invalid="true"`` en de pagina
-scrolde ernaartoe, maar de focus bleef onderaan staan op de knop waarmee je verzond. Je
-moest er daarna alsnog met de muis heen.
+Gemeld op de componentenstap: het veld was netjes gemerkt als fout en de pagina scrolde
+ernaartoe, maar de focus bleef onderaan staan op de knop waarmee je verzond. Je moest er
+daarna alsnog met de muis heen.
+
+WAT HET MERKTEKEN IS, HANGT VAN DE BESTURING AF. Een themaveld draagt sinds NLDD 0.8.84
+``invalid`` in de light DOM en zet zijn ``aria-invalid`` op het invoerelement BINNEN zijn
+schaduwboom; een kale ``<select>`` of ``<input>`` draagt alleen ``aria-invalid``. Deze test
+zoekt daarom op allebei, net als static/js/htmx-formgedrag.js. Met alleen ``aria-invalid``
+bleef de cursor op ``<body>`` staan op elke stap zonder keuzelijst.
 
 EN DE ANDERE KANT OP. Er is nog iets dat na een swap de focus zet: static/js/htmx-formgedrag.js
 zet hem terug waar hij was, geschreven voor zoeken-tijdens-typen. Die twee zaten elkaar in
@@ -23,6 +29,9 @@ if TYPE_CHECKING:
 
 pytestmark = [pytest.mark.e2e]
 
+#: Hoe een foute besturing zich in de light DOM kenbaar maakt. Zie de kop.
+FOUT_VELD = '[invalid], [aria-invalid="true"]'
+
 
 def _actief(page: Page) -> dict[str, str]:
     """Wat er focus heeft, van buiten af gezien.
@@ -36,7 +45,7 @@ def _actief(page: Page) -> dict[str, str]:
             return {
                 tag: el ? el.localName : '(niets)',
                 naam: el ? (el.getAttribute('name') || '') : '',
-                ongeldig: el ? String(el.getAttribute('aria-invalid')) : '',
+                ongeldig: el ? String(el.hasAttribute('invalid') || el.getAttribute('aria-invalid') === 'true') : '',
             };
         }"""
     )
@@ -55,7 +64,7 @@ def test_de_cursor_landt_in_het_eerste_foute_veld(app_server: str, auth_page: Pa
 
     # De componentenstap leeg laten en toch doorklikken: dat levert een verplicht veld op.
     wizard.click_next()
-    auth_page.locator('[aria-invalid="true"]').first.wait_for(state="visible", timeout=10000)
+    auth_page.locator(FOUT_VELD).first.wait_for(state="visible", timeout=10000)
     auth_page.wait_for_timeout(400)
 
     actief = _actief(auth_page)
@@ -64,7 +73,7 @@ def test_de_cursor_landt_in_het_eerste_foute_veld(app_server: str, auth_page: Pa
         "na een afkeuring hoort de cursor in het eerste veld dat fout is"
     )
 
-    eerste = auth_page.locator('[aria-invalid="true"]').first
+    eerste = auth_page.locator(FOUT_VELD).first
     assert actief["naam"] == (eerste.get_attribute("name") or ""), (
         "de focus staat op een fout veld, maar niet op het EERSTE"
     )
@@ -87,11 +96,11 @@ def test_wie_ergens_staat_te_typen_wordt_niet_weggetrokken(app_server: str, auth
     wizard.click_next()
     auth_page.wait_for_load_state("networkidle")
     wizard.click_next()
-    auth_page.locator('[aria-invalid="true"]').first.wait_for(state="visible", timeout=10000)
+    auth_page.locator(FOUT_VELD).first.wait_for(state="visible", timeout=10000)
     auth_page.wait_for_timeout(400)
 
     # De gebruiker gaat in het beschrijvingsveld staan; dat is NIET het foute veld.
-    ander = auth_page.locator('nldd-text-field:not([aria-invalid="true"]), nldd-textarea-field').first
+    ander = auth_page.locator("nldd-text-field:not([invalid]), nldd-multi-line-text-field:not([invalid])").first
     ander.click()
     naam_voor = _actief(auth_page)["naam"]
     assert naam_voor, "de proef begint pas als de cursor ergens staat"
@@ -134,13 +143,13 @@ def test_het_beeld_blijft_bij_de_fout_staan(app_server: str, auth_page: Page) ->
     auth_page.wait_for_timeout(200)
 
     wizard.click_next()
-    auth_page.locator('[aria-invalid="true"]').first.wait_for(state="visible", timeout=10000)
+    auth_page.locator(FOUT_VELD).first.wait_for(state="visible", timeout=10000)
     # Het scrollen is smooth, en de hersteller slaat in de volgende frame toe; ruim wachten.
     auth_page.wait_for_timeout(1500)
 
     plek = auth_page.evaluate(
         """() => {
-            const veld = document.querySelector('[aria-invalid="true"]');
+            const veld = document.querySelector('[invalid], [aria-invalid="true"]');
             const r = veld.getBoundingClientRect();
             return {top: Math.round(r.top), hoogte: window.innerHeight};
         }"""

@@ -13,7 +13,7 @@ Je project krijgt een eigen afgeschermde omgeving (een realm) in Keycloak waarin
 
 Er wordt een realm aangemaakt met een client voor je applicatie. Je component krijgt de OIDC-gegevens als variabelen: **OIDC_DISCOVERY_URL**, **OIDC_CLIENT_ID**, **OIDC_CLIENT_SECRET**, **OIDC_URL** en **OIDC_REALM**. Je applicatie praat daarmee zelf met Keycloak.
 
-In de configuratie kies je een template (welke inlogmanieren aanstaan), extra redirect-URI's, eigen realm-rollen en of toegang beperkt wordt tot gebruikers met een bepaalde rol.
+In de configuratie kies je een template (welke inlogmanieren aanstaan), extra redirect-URI's, eigen realm-rollen, of toegang beperkt wordt tot gebruikers met een bepaalde rol, en een logout-pad voor je applicatie.
 
 **Let op:** deze service vereist **Publiceren op het web**, dat automatisch wordt meegeselecteerd. Wil je niet zelf het inloggen in je applicatie bouwen, kijk dan naar de **Authorization Wall**.
 
@@ -23,6 +23,7 @@ In de configuratie kies je een template (welke inlogmanieren aanstaan), extra re
 - **Extra redirect URI's** -- adressen waar je applicatie na het inloggen op terugkomt, naast de deployment-URL's zelf
 - **Toegangsbeperking** -- alleen gebruikers met een realm-rol of clientrol mogen de applicatie openen, met de foutmelding die de rest te zien krijgt
 - **Account koppelen** -- wat er gebeurt als iemand via SSO Rijk inlogt terwijl er al een account met hetzelfde e-mailadres in de realm bestaat
+- **Logout-pad** -- het pad waarmee je applicatie haar eigen sessie beëindigt, zodat Keycloak het bij uitloggen kan aanroepen
 - **Extra Keycloak clients** -- voor externe applicaties of microservices die dezelfde realm delen
 
 ## Wat bewust niet in het scherm staat

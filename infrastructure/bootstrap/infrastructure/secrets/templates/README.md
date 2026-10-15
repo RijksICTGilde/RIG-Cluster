@@ -1,12 +1,12 @@
 # Secret Templates
 
-This directory contains Kubernetes Secret templates that are processed by the `generate-secrets-for-cluster` task to create SOPS-encrypted secrets for different cluster environments.
+This directory contains Kubernetes Secret templates that are processed by the `generate-infrastructure-secrets-for-cluster` task to create SOPS-encrypted secrets for different cluster environments.
 
 ## How It Works
 
 1. **Templates** - YAML files in this directory serve as templates for generating secrets
 2. **Annotations** - Fields requiring password generation are marked with `@secret-gen` annotations
-3. **Processing** - The `task generate-secrets-for-cluster <cluster-name>` command processes these templates
+3. **Processing** - The `task generate-infrastructure-secrets-for-cluster` command processes these templates for the cluster selected with `task select-cluster`
 4. **Encryption** - Secrets are encrypted using SOPS with the AGE key from `security/key.txt`
 5. **Output** - Generates SOPS-encrypted `.sops` files in `../config/overlays/<cluster-name>/`
 
@@ -35,8 +35,8 @@ stringData:
 
 3. **Run the generator**:
 ```bash
-task generate-secrets-for-cluster local
-task generate-secrets-for-cluster odcn-production
+task select-cluster
+task generate-infrastructure-secrets-for-cluster
 ```
 
 ## Supported Password Types
@@ -54,10 +54,10 @@ task generate-secrets-for-cluster odcn-production
 
 ## Generated Structure
 
-After running `task generate-secrets-for-cluster local`:
+After running it with `sandboxed-local` selected:
 
 ```
-../config/overlays/local/
+../config/overlays/sandboxed-local/
 ├── kustomization.yaml          # References decrypt-sops.yaml
 ├── decrypt-sops.yaml          # Lists all encrypted files
 ├── my-service-secret.yaml.sops # Your encrypted secret

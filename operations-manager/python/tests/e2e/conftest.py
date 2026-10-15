@@ -87,7 +87,10 @@ def _quiet_faulthandler_for_e2e() -> None:
     like a failure ("Timeout (0:01:00)!"). pytest arms the timer once for the whole
     test protocol; cancelling it here (during setup) leaves it disarmed through the
     long call phase, for E2E only, leaving the stricter unit-test setting untouched.
-    Per-test timeouts still come from the helpers' own bounded waits."""
+
+    Wat de grens dan nog wel trekt: pytest-timeout (``--timeout`` op de taak) voor de test
+    als geheel, de eigen begrensde wachtlussen van de helpers, en voor de browserkant het
+    budget uit ``SANDBOX_ACTIE_BUDGET_MS`` op de sandbox-context."""
     faulthandler.cancel_dump_traceback_later()
 
 
@@ -317,6 +320,13 @@ def sandbox_url() -> str:
     return E2E_BASE_URL
 
 
+#: Bovengrens voor een losse Playwright-handeling op de sandbox-context, zodat een
+#: browserhandeling die niet terugkomt een rode test wordt en niet een vastgelopen suite.
+#: Expliciet en met een naam in plaats van de impliciete 30s van Playwright; de ruimte
+#: erboven is er omdat een live cluster langzamer antwoordt dan het lokale harnas.
+SANDBOX_ACTIE_BUDGET_MS = 60_000
+
+
 @pytest.fixture(scope="session")
 def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[BrowserContext]:
     """Authenticated browser context for sandbox cluster tests.
@@ -325,6 +335,9 @@ def sandbox_context(browser: BrowserContext, sandbox_url: str) -> Generator[Brow
     trace chunks are produced by the sandbox_page fixture.
     """
     context = browser.new_context(ignore_https_errors=True)
+    # Beide: set_default_timeout geldt voor handelingen, navigeren heeft zijn eigen grens.
+    context.set_default_timeout(SANDBOX_ACTIE_BUDGET_MS)
+    context.set_default_navigation_timeout(SANDBOX_ACTIE_BUDGET_MS)
     signed = _sign_session({"user": SANDBOX_TEST_USER}, secret=E2E_SECRET_KEY)
     parsed = urlparse(sandbox_url)
     context.add_cookies(

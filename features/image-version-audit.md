@@ -67,9 +67,9 @@ Audit of all container images used across the repository, performed February 202
 
 ### BusyBox - 1.28 (extremely outdated)
 
-- **Current**: `1.28` (Taskfile), `1.36` (bootstrap-job, tests), `1.37.0` (Keycloak init)
+- **Current**: `1.28` (Taskfile), `1.36` (bootstrap-job, tests)
 - **Latest**: 1.37.0
-- **Files**: `Taskfile.yaml` (line 556), `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, `operations-manager/python/tests/fixtures/test-workloads.yaml`, `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`
+- **Files**: `Taskfile.yaml` (line 556), `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, `operations-manager/python/tests/fixtures/test-workloads.yaml`
 - **Impact**: `1.28` is from ~2018.
 
 **Upgrade notes**:
@@ -78,11 +78,11 @@ Audit of all container images used across the repository, performed February 202
 
 ## Medium Priority
 
-### Keycloak - 25.0.1
+### Keycloak - 25.0.6
 
-- **Current**: `quay.io/keycloak/keycloak:25.0.1`
+- **Current**: `quay.io/keycloak/keycloak:25.0.6`, the base of our own image
 - **Latest**: 26.5.3
-- **Files**: `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`
+- **Files**: `images/keycloak-zad/Dockerfile` (base version); the deployment pins an image tag
 
 **Upgrade notes**:
 - Not a traditional major version break (continuous release model since Quarkus migration).
@@ -127,7 +127,7 @@ Audit of all container images used across the repository, performed February 202
 
 - **Current**: `kindest/node:v1.32.0`
 - **Latest**: v1.32.11 (same K8s version, patched) / v1.35.0 (latest Kind default)
-- **Files**: `kind-config.yaml`, `sandboxed-local/kind-config.yaml`
+- **Files**: `sandboxed-local/kind-config.yaml`
 
 **Upgrade notes**:
 - K8s 1.32 nearing end-of-life (~Feb 2026). 11 patch releases behind at minimum.

@@ -10,6 +10,7 @@ from opi.services.catalog.keycloak.editables import (
     KEYCLOAK_CLIENT_NAME_EDITABLE,
     KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE,
     KEYCLOAK_CLIENT_REDIRECT_URIS_EDITABLE,
+    KEYCLOAK_LOGOUT_PATH_EDITABLE,
     KEYCLOAK_REALM_ROLES_EDITABLE,
     KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE,
     KEYCLOAK_REDIRECT_URIS_EDITABLE,
@@ -107,6 +108,18 @@ KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG = EditableVisualizer(
         "Bericht dat wordt getoond wanneer een gebruiker geen toegang heeft. "
         "De standaardwaarde gebruikt een vertaalbaar template. "
         "Bij twijfel: gebruik de standaardwaarde."
+    ),
+)
+
+KEYCLOAK_LOGOUT_PATH = EditableVisualizer(
+    editable=KEYCLOAK_LOGOUT_PATH_EDITABLE,
+    widget=WidgetType.TEXT,
+    label="Logout-pad",
+    placeholder="/api/v1.0/logout/",
+    help_text=(
+        "Alleen het pad, zonder hostname: het platform zet de URL van de deployment ervoor. "
+        "Laat leeg als de applicatie haar sessie al zelf wist voordat ze de browser naar "
+        "Keycloak stuurt."
     ),
 )
 

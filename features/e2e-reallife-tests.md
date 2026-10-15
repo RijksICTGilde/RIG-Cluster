@@ -24,7 +24,8 @@ kansen per ronde krijgt om zichtbaar te worden.
 
 Deze suite draait **niet** mee in de standaard testset. Hij duurt lang en heeft een draaiende
 sandbox nodig met jouw build erop. Daarom een eigen marker, `reallife`, en een eigen task. De
-reguliere sandbox-run sluit hem expliciet uit met `-m "e2e and sandbox and not reallife"`.
+reguliere sandbox-run sluit hem expliciet uit met
+`-m "e2e and sandbox and not reallife and not punt14"`.
 
 ## Draaien
 
@@ -106,7 +107,8 @@ de xfail dan weg moet. De slotronde verwacht `beta` daarom nog.
 
 - `tests/e2e/helpers/lifecycle.py` - `create_project_via_wizard()` doorloopt de wizard en levert de
   technische projectnaam, de API-key en de eerste deployment op. Die naam heeft een willekeurig
-  achtervoegsel en wordt gevonden door de repo-listing voor/na te vergelijken.
+  achtervoegsel en wordt van de voortgangspagina gelezen. Valt de aanmaak daarna om, dan ruimt de
+  helper het project zelf op; zie `features/e2e-sandbox-tests.md`.
 - `ForgejoClient.wait_for_condition()` - pollt de geparste YAML tot een predicaat klopt. Bij falen
   komt de volledige file in de foutmelding, want bij gelijktijdig schrijven is juist wát er wél in
   staat de diagnose.

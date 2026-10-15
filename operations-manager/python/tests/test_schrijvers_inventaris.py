@@ -51,10 +51,6 @@ INVENTARIS: dict[str, Schrijver] = {
         "resources en resources/history op de deploymentcomponent (limits EN requests), plus compactie",
         "test_de_tuner_laat_een_geldig_projectbestand_achter",
     ),
-    "opi/services/oom_watcher.py": Schrijver(
-        "disabled/disabled-reason op de deploymentcomponent na image-pull-fouten",
-        "test_het_uitzetten_van_een_deploymentcomponent_blijft_geldig",
-    ),
     "opi/services/deployment_observation.py": Schrijver(
         "commit-punt voor de after-sync haken; de structuur komt van de tuner en de diensten",
         "test_de_tuner_laat_een_geldig_projectbestand_achter",

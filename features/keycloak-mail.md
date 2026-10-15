@@ -119,7 +119,7 @@ niet, en het weglaten doet iets nuttigs: dan slaat die ene authenticator zichzel
 en krijgt een gebrokerde gebruiker het scherm "authenticate to link your account" in plaats
 van een mislukte verzending.
 
-## De startvlag, en waarom de jar in git staat
+## De startvlag, en waarom de jar in de image zit
 
 De verzender wordt aangewezen met een startvlag op de Keycloak-pod:
 
@@ -137,29 +137,17 @@ De vlag is dus wat een stille terugval onmogelijk maakt.
    op het cluster. De vorm is daarom aan twee kanten gepind: aan de Java-kant uit
    `EmailSenderSpi.getName()`, en aan de OPI-kant met een toets die het manifest naast de
    Java-bron legt (`tests/test_keycloak_relay_email_sender.py`).
-2. Een provider-id dat **niet bestaat** laat Keycloak **weigeren te starten**. Een pod die
-   opkomt heeft zijn provider dus aantoonbaar gevonden.
+2. Een provider-id dat **niet bestaat** laat Keycloak **weigeren** het image te bouwen:
+   `kc.sh build` geeft exit 1 met "Failed to find provider ... for emailSender".
 
-Uit die tweede eigenschap volgt de rest: Keycloak start niet als de jar er niet is. De twee
-andere jars in die pod (het thema en de SAML-mapper) worden bij elke podstart van github.com
-gehaald; dat risico bestaat al, maar deze jar mag er niet bij - dan zou een hapering bij
-GitHub het inloggen van het hele platform platleggen.
+Die weigering geldt bij het bouwen, niet bij het starten: de pod start sinds RC-212 met
+`--optimized` en komt op een provider-id dat niet bestaat gewoon op (gemeten). De canarie uit
+RC-158 staat daarom in `images/keycloak-zad/Dockerfile` en zingt voor de uitrol. De jar zelf
+zit in de image die de pod draait, gebouwd uit de bron in deze repo. Zie
+`features/keycloak-eigen-image.md`.
 
-De jar komt daarom uit een **ConfigMap** naast het manifest:
-
-```
-infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers/keycloak-relay-email-sender-1.0.0.jar
-```
-
-Alle afhankelijkheden staan op `provided` (ook `jakarta.mail`, want Keycloak gebruikt die
-zelf al), dus het zijn drie klassen plus het registratiebestand: een handvol kilobytes, ruim
-binnen de 1 MiB van een ConfigMap. De generator zet een hash van de inhoud in de naam, dus
-een nieuwe jar is vanzelf een rollout.
-
-**Bron en jar horen in dezelfde commit.** Dat is afgedekt met de strenge van de twee opties
-uit het plan: de bouw is reproduceerbaar gemaakt (`project.build.outputTimestamp`) en de
-CI-job `keycloak-relay-email-sender` bouwt hem opnieuw en vergelijkt **byte voor byte**.
-Lokaal: `task check-keycloak-relay-email-sender`.
+**Bron en jar horen bij elkaar**, en dat gaat nu vanzelf: de imagebouw bouwt de jar uit de
+bron ernaast, dus er is geen gebouwd artefact meer dat ervan kan afwijken.
 
 ## STARTTLS: platte AUTH binnen het cluster, en dat is een besluit
 
@@ -358,6 +346,11 @@ prijs van de verhuizing en hij is bewust betaald. Clustertype
 hebben er een. Wie een lokale invite-gebruiker moet binnenlaten op een cluster zonder post,
 zet `emailVerified` met de hand in de beheerconsole.
 
+**Ook met een relay kan dat account buiten blijven.** Een authorization wall weigert een
+onbevestigd adres, dus zolang niemand de bevestiging aanklikt komt die gebruiker er niet in, en
+op de `users:`-weg van een keycloak-template gaat er geen bevestigingsmail uit. Welke wegen
+zo'n account aanmaken en hoe je het repareert: `docs/KNOWN-ISSUES.md`.
+
 ### De grendel: `verifyEmail` mag nooit voor de post uit lopen
 
 Een realm die verifieert en niet kan mailen **sluit gebruikers die hun adres wijzigen buiten**:
@@ -446,7 +439,7 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Onderdeel | Pad |
 |---|---|
 | De verzender (Java) | `keycloak-migration/relay-email-sender/` |
-| De jar in de pod | `infrastructure/.../keycloak/controller/base/providers/` + `configMapGenerator` |
+| De jar in de pod | `images/keycloak-zad/`, gebouwd uit de bron hierboven |
 | De vlag en de omgevingsvariabelen | `infrastructure/.../keycloak/controller/base/deployment.yaml` |
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |

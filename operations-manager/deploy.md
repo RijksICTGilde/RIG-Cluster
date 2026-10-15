@@ -24,24 +24,23 @@ docker buildx build --platform linux/amd64,linux/arm64 -f operations-manager/Doc
 
 ## Local Development
 
-For local development and testing, use the `update-operations-manager` task:
+For local development and testing, use the `sandbox:update-operations-manager` task:
 
 ```bash
-task update-operations-manager
+task sandbox:update-operations-manager
 ```
 
 This task:
-1. Generates SOPS-encrypted secrets from `.env.secrets`
-2. Builds the image locally as `operations-manager:latest`
-3. Loads the image into the local kind cluster
-4. Deploys the updated image
+1. Builds the image and pushes it to the registry next to the kind cluster
+2. Points the sandbox overlay at that commit's tag
+3. Applies the overlay and waits for the rollout
 
 ## Image Usage Patterns
 
 ### Local Development
-- **Image**: `operations-manager:latest` (local build)
-- **Used in**: Local kind cluster deployments
-- **Configuration**: `bootstrap/rig-system/kustomize/operations-manager/base/deployment.yaml`
+- **Image**: `localhost:5001/operations-manager:<commit>` (local build, see `docs/sandbox-kind-registry.md`)
+- **Used in**: Sandbox kind cluster deployments
+- **Configuration**: `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml`
 
 ### Production (ODCN)
 - **Image**: `ghcr.io/minbzk/base-images/operations-manager:latest`
@@ -51,6 +50,6 @@ This task:
 ## Deployment Workflow
 
 1. **Development**: Make changes to operations-manager code
-2. **Local Testing**: Run `task update-operations-manager` to test locally
+2. **Local Testing**: Run `task sandbox:update-operations-manager` to test locally
 3. **Publishing**: When ready for production, run the buildx command to publish to GHCR
 4. **Production Deployment**: ArgoCD automatically picks up the latest image for production overlays

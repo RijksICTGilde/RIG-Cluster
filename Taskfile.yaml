@@ -5,8 +5,7 @@ dotenv: ['.env', '.env-taskfile-current']
 vars:
   KIND_VERSION: 1.32.0
   # Cluster configuration - can be overridden by .env-taskfile-current or environment variables
-  KIND_CLUSTER_NAME: '{{default "gitops-fluxcd" .KIND_CLUSTER_NAME}}'
-  CLUSTER_TYPE: '{{default "local" .CLUSTER_TYPE}}'
+  KIND_CLUSTER_NAME: '{{default "rig-sandbox" .KIND_CLUSTER_NAME}}'
   RIG_NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
   # Sandbox-builds draaien vaak op een gedeelde server naast andere sessies en het
   # kind-cluster. Een aparte builder met een geheugengrens houdt de build binnen zijn
@@ -24,19 +23,8 @@ vars:
   SANDBOX_OM_REPO: '{{default "localhost:5001/operations-manager" .SANDBOX_OM_REPO}}'
   # Tag per commit, zie docs/sandbox-kind-registry.md. Alleen operations-manager/ telt
   # voor de dirty-hash: configure-operations-manager-image schrijft zelf in bootstrap/.
-  # Ongetrackte bestanden tellen mee, want docker neemt ze op in de build-context.
   SANDBOX_OM_TAG:
-    sh: |
-      tag="$(git rev-parse --short HEAD)"
-      if [ -n "$(git status --porcelain -- operations-manager)" ]; then
-        tag="$tag-dirty-$( {
-          git diff HEAD -- operations-manager
-          git -c core.quotePath=false ls-files -o --exclude-standard -- operations-manager | while IFS= read -r f; do
-            echo "$f"; cat "$f"
-          done
-        } | sha1sum | cut -c1-7)"
-      fi
-      echo "$tag"
+    sh: scripts/bron-tag.sh operations-manager
   SANDBOX_OM_IMAGE: '{{.SANDBOX_OM_REPO}}:{{.SANDBOX_OM_TAG}}'
 
 #set: ['e', 'x']  # equivalent to set -ex
@@ -56,30 +44,24 @@ tasks:
         echo "=================="
         echo ""
         echo "Available clusters:"
-        echo "1) local (kind cluster)"
-        echo "2) odcn-production"
-        echo "3) sandboxed-local (self-contained sandbox with Forgejo)"
+        echo "1) odcn-production"
+        echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
         echo ""
-        printf "Select cluster [1-3]: "
+        printf "Select cluster [1-2]: "
         read -r CLUSTER_CHOICE
 
         case $CLUSTER_CHOICE in
           1)
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
-            ;;
-          2)
             ENV_FILE=".env-taskfile-odcn-production"
             CLUSTER_NAME="odcn-production"
             ;;
-          3)
+          2)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
             ;;
           *)
-            echo "❌ Invalid selection. Defaulting to local cluster."
-            ENV_FILE=".env-taskfile-local"
-            CLUSTER_NAME="local"
+            echo "❌ Invalid selection: '$CLUSTER_CHOICE'. Nothing changed."
+            exit 1
             ;;
         esac
 
@@ -449,198 +431,14 @@ tasks:
     cmds:
       - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
 
-  generate-local-ca:
-    desc: "Generate root CA for local development HTTPS (one-time)"
-    cmds:
-      - |
-        mkdir -p security/tls
-
-        if [ -f security/tls/ca.crt ]; then
-          echo "CA already exists at security/tls/ca.crt"
-          echo "To regenerate, first remove security/tls/ca.crt and security/tls/ca.key"
-          exit 0
-        fi
-
-        echo "Generating root CA for local development..."
-        openssl genrsa -out security/tls/ca.key 4096
-
-        # Create CA with proper key usage extensions for modern OpenSSL/Python
-        openssl req -x509 -new -nodes -key security/tls/ca.key \
-          -sha256 -days 3650 -out security/tls/ca.crt \
-          -subj "/CN=Kind Local Development CA/O=RIG" \
-          -addext "basicConstraints=critical,CA:TRUE" \
-          -addext "keyUsage=critical,keyCertSign,cRLSign"
-
-        echo ""
-        echo "CA generated successfully:"
-        echo "  Certificate: security/tls/ca.crt"
-        echo "  Private key: security/tls/ca.key"
-        echo ""
-        echo "Next steps:"
-        echo "  1. Install CA in OS trust store: task install-local-ca"
-        echo "  2. (Re)create Kind cluster: task create-local-kind-cluster"
-        echo "  3. Import CA to cert-manager: task import-ca-to-cluster"
-    silent: false
-
-  install-local-ca:
-    desc: "Install CA in local OS trust store (browsers will trust it)"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ]; then
-          echo "CA certificate not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "This will install the CA in your OS trust store."
-        echo "CA file: security/tls/ca.crt"
-        echo ""
-        printf "Continue? [y/N] "
-        read -r confirm
-        if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
-          echo "Cancelled."
-          exit 1
-        fi
-
-        if [ "$(uname)" = "Darwin" ]; then
-          echo "Installing CA in macOS Keychain..."
-          sudo security add-trusted-cert -d -r trustRoot \
-            -k /Library/Keychains/System.keychain security/tls/ca.crt
-          echo "CA installed in macOS Keychain"
-        elif [ -d /usr/local/share/ca-certificates ]; then
-          echo "Installing CA in Linux trust store..."
-          sudo cp security/tls/ca.crt /usr/local/share/ca-certificates/kind-local-ca.crt
-          sudo update-ca-certificates
-          echo "CA installed in Linux trust store"
-        else
-          echo "Unsupported OS. Please manually install security/tls/ca.crt in your trust store."
-          exit 1
-        fi
-    silent: false
-
-  import-ca-to-cluster:
-    desc: "Import CA into Kubernetes for cert-manager to use"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ] || [ ! -f "security/tls/ca.key" ]; then
-          echo "CA files not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "Importing CA into cert-manager namespace..."
-        kubectl create secret tls kind-ca-secret \
-          --cert=security/tls/ca.crt \
-          --key=security/tls/ca.key \
-          -n cert-manager \
-          --dry-run=client -o yaml | kubectl apply -f -
-
-        echo "CA imported to cluster as kind-ca-secret in cert-manager namespace"
-    silent: false
-
-  inject-ca-to-running-cluster:
-    desc: "Inject CA into all running Kind cluster nodes (alternative to recreating cluster)"
-    cmds:
-      - |
-        if [ ! -f "security/tls/ca.crt" ]; then
-          echo "CA certificate not found. Please run 'task generate-local-ca' first."
-          exit 1
-        fi
-
-        echo "Injecting CA into all Kind cluster nodes..."
-        echo ""
-
-        # Get all nodes in the Kind cluster
-        NODES=$(docker ps --filter "name={{.KIND_CLUSTER_NAME}}" --format "{{`{{.Names}}`}}")
-
-        if [ -z "$NODES" ]; then
-          echo "No running nodes found for cluster '{{.KIND_CLUSTER_NAME}}'"
-          exit 1
-        fi
-
-        for NODE_NAME in $NODES; do
-          echo "Injecting CA into node: $NODE_NAME"
-
-          # Copy CA certificate into the node's trust store
-          docker cp security/tls/ca.crt "$NODE_NAME:/etc/ssl/certs/kind-local-ca.crt"
-
-          # Update the CA certificates bundle inside the node
-          docker exec "$NODE_NAME" update-ca-certificates
-
-          echo "  Done: $NODE_NAME"
-        done
-
-        echo ""
-        echo "CA injected into all nodes."
-        echo "Note: Existing pods may need to be restarted to pick up the new CA."
-        echo "New pods will automatically trust the CA."
-    silent: false
-
-  configure-coredns-kind-domains:
-    desc: "Configure CoreDNS to resolve *.kind domains to ingress controller (re-runnable)"
-    cmds:
-      - |
-        echo "🔧 Configuring CoreDNS to resolve *.kind domains..."
-        echo ""
-
-        # Get current CoreDNS Corefile
-        CURRENT_COREFILE=$(kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}')
-
-        # Check if rewrite rule already exists
-        if echo "$CURRENT_COREFILE" | grep -q "name regex.*\.kind"; then
-          echo "✅ CoreDNS rewrite rule for *.kind already exists"
-          echo "   No changes needed"
-          exit 0
-        fi
-
-        echo "📝 Adding rewrite rule for *.kind domains..."
-        echo "   All *.kind domains will resolve to: ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-        echo ""
-
-        # Create new Corefile with rewrite rule inserted after 'ready' line
-        NEW_COREFILE=$(echo "$CURRENT_COREFILE" | awk '
-          /ready/ {
-            print
-            print "    rewrite stop {"
-            print "        name regex (.+)\\.kind ingress-nginx-controller.ingress-nginx.svc.cluster.local"
-            print "        answer auto"
-            print "    }"
-            next
-          }
-          {print}
-        ')
-
-        # Create a temporary file with the patch
-        TEMP_FILE=$(mktemp)
-        cat > "$TEMP_FILE" <<EOF
-        {
-          "data": {
-            "Corefile": $(echo "$NEW_COREFILE" | jq -Rs .)
-          }
-        }
-        EOF
-
-        # Apply the patch
-        echo "🔄 Patching CoreDNS ConfigMap..."
-        kubectl patch configmap coredns -n kube-system --type merge --patch-file "$TEMP_FILE"
-
-        # Clean up temp file
-        rm "$TEMP_FILE"
-
-        # Restart CoreDNS to apply changes
-        echo "🔄 Restarting CoreDNS deployment..."
-        kubectl rollout restart deployment coredns -n kube-system
-
-        echo ""
-        echo "✅ CoreDNS configured successfully!"
-        echo "   All *.kind domains now resolve to ingress-nginx-controller"
-        echo ""
-        echo "💡 You can verify by running:"
-        echo "   kubectl run -it --rm --restart=Never --image=busybox:1.28 dnstest -- nslookup keycloak.kind"
-    silent: false
-
   bootstrap-argo-system:
     desc: "Apply minimal bootstrap (namespace + ArgoCD) to start the GitOps process"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
       KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
     cmds:
@@ -670,6 +468,22 @@ tasks:
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+
+            # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
+            # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
+            # de mailrelay er niet. Alleen aanmaken als hij er nog niet is: een apply met
+            # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
+            # platformsleutel draagt een rotatie zijn, en die loopt langs
+            # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
+            if kubectl get secret sops-age-key -n rig-prd-ron >/dev/null 2>&1; then
+              echo "secret sops-age-key staat al in rig-prd-ron, ongemoeid gelaten"
+            else
+              kubectl create secret generic sops-age-key \
+                --from-file=key={{.KEY_FILE}} \
+                -n rig-prd-ron \
+                --dry-run=client -o yaml | kubectl apply -f -
+              echo "secret sops-age-key aangemaakt in rig-prd-ron"
+            fi
           fi
         fi
 
@@ -705,7 +519,7 @@ tasks:
   bootstrap-backup-destination:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
-      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn | local
+      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn
       KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
     cmds:
@@ -737,40 +551,6 @@ tasks:
     dir: operations-manager/python
     cmds:
       - uv run python scripts/log_watch/watch.py --loop
-
-  uninstall-local-kind-cluster:
-    desc: "Uninstall local set-up by deleting the Kind cluster."
-    cmds:
-      - kind delete cluster --name {{.KIND_CLUSTER_NAME}}
-      - echo -e "✅ Kind cluster '{{.KIND_CLUSTER_NAME}}' successfully uninstalled\n"
-    silent: true
-
-  create-local-kind-cluster:
-    desc: "Create a local Kind cluster with ingress support"
-    cmds:
-      - |
-        echo "========================================="
-        echo "Creating Kind cluster: {{.KIND_CLUSTER_NAME}}"
-        echo "========================================="
-        echo ""
-
-        # Check if cluster already exists
-        if kind get clusters | grep -q "^{{.KIND_CLUSTER_NAME}}$"; then
-          echo "⚠️  Cluster '{{.KIND_CLUSTER_NAME}}' already exists"
-          echo "To recreate, first run: task uninstall-local-kind-cluster"
-          exit 1
-        fi
-
-        # Create cluster from config
-        echo "📦 Creating cluster from kind-config.yaml..."
-        kind create cluster --name {{.KIND_CLUSTER_NAME}} --config kind-config.yaml
-
-        echo ""
-        echo "✅ Kind cluster created successfully!"
-        echo ""
-        echo "Cluster details:"
-        kubectl cluster-info --context kind-{{.KIND_CLUSTER_NAME}}
-    silent: false
 
   install-cnpg-operator:
     desc: "Install CloudNativePG operator for PostgreSQL"
@@ -843,59 +623,15 @@ tasks:
         echo "Verify with: kubectl get pods -n ingress-nginx -o wide"
     silent: true
 
-  setup-local-cluster:
-    desc: "Complete setup: create cluster, install operators, and bootstrap infrastructure"
-    cmds:
-      # Generate keys and certificates first (before cluster creation)
-      - task: generate-age-key
-      - task: generate-local-ca
-      # Create cluster (mounts CA via extraMounts)
-      - task: create-local-kind-cluster
-      # Install cluster components
-      - task: install-ingress-nginx
-      - task: install-cnpg-operator
-      - task: configure-coredns-kind-domains
-      - task: prepare-argocd-operator
-      - task: update-cmp-kustomize-sops
-      # Generate secrets
-      - task: generate-bootstrap-secrets-for-cluster
-      - task: generate-infrastructure-secrets-for-cluster
-      # Deploy operations manager
-      - task: update-operations-manager
-      # Import CA to cert-manager (after cluster is ready)
-      - task: import-ca-to-cluster
-      - |
-        echo ""
-        echo "========================================="
-        echo "Local cluster setup complete!"
-        echo "========================================="
-        echo ""
-        echo "Next steps:"
-        echo ""
-        echo "1. Install CA in your OS trust store (one-time, for browser HTTPS):"
-        echo "   task install-local-ca"
-        echo ""
-        echo "2. Start git daemon (for infrastructure repo):"
-        echo "   git daemon --base-path=. --export-all --reuseaddr --informative-errors --verbose --enable=upload-pack --port=9090 --listen=0.0.0.0 --log-destination=stderr"
-        echo ""
-        echo "3. Bootstrap ArgoCD:"
-        echo "   task bootstrap-argo-system"
-        echo ""
-        echo "4. Add to /etc/hosts:"
-        echo "   127.0.0.1 argo.kind keycloak.kind minio.kind operations-manager.kind forgejo.kind"
-        echo ""
-        echo "5. Access services:"
-        echo "   - ArgoCD: https://argo.kind (admin/admin)"
-        echo "   - Forgejo: https://forgejo.kind (rig-admin/admin1234)"
-        echo "   - Keycloak: https://keycloak.kind"
-        echo "   - Operations Manager: https://operations-manager.kind"
-    silent: false
-
   generate-env-secrets-for-operations-manager:
     desc: "Generate SOPS-encrypted secret from cluster-specific env file for operations-manager"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
@@ -973,68 +709,15 @@ tasks:
         echo "Namespace: {{.NAMESPACE}}"
     silent: true
 
-  update-operations-manager:
-    desc: "Build and deploy the operations-manager to the current cluster"
-    vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-    cmds:
-      # Na sandbox:setup leest deze taak de sandbox-env, waarvan de overlay naar de
-      # registry wijst: kind load zou stil de vorige build uitrollen. Eerste stap, want
-      # deps draaien al vóór een precondition.
-      - |
-        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
-          echo "Dit is een sandbox: gebruik task sandbox:update-operations-manager." >&2
-          exit 1
-        fi
-      - task: generate-env-secrets-for-operations-manager
-      # Zie sandbox:build-operations-manager-image: zonder dit bakt de build de
-      # version.json in die er toevallig lag, en meldt de pod een andere commit.
-      - task: version:generate
-      - |
-        echo "Building operations-manager Docker image with BuildKit optimizations..."
-        docker buildx build \
-          --target application \
-          --cache-from operations-manager:latest \
-          --cache-from operations-manager:cache-base-system \
-          --cache-from operations-manager:cache-dependencies \
-          --load \
-          -t operations-manager \
-          -f operations-manager/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image operations-manager:latest --name {{.KIND_CLUSTER_NAME}}
-      - |
-        echo "Updating operations-manager deployment..."
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
-      - echo -e "✅ Operations manager updated successfully!"
-    silent: true
-
-  skaffold-dev:
-    desc: "Start Skaffold with hot-reload mode for fast development iteration"
-    cmds:
-      - echo "Starting Skaffold in hot-reload mode..."
-      - echo "Files will sync automatically and uvicorn will auto-reload"
-      - SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" skaffold dev --kube-context kind-{{.KIND_CLUSTER_NAME}} --port-forward -f operations-manager/skaffold.yaml
-
-  skaffold-debug:
-    desc: "Instructions for running Skaffold in debug mode"
-    cmds:
-      - echo 'To enable debug mode'
-      - echo '1. Edit bootstrap/rig-system/kustomize/operations-manager/overlays/local/kustomization.yaml'
-      - echo '2. Comment out enable-hot-reload.yaml patch'
-      - echo '3. Uncomment enable-debug.yaml patch'
-      - echo '4. Run kubectl apply -k bootstrap/rig-system/kustomize/operations-manager/overlays/local'
-      - echo '5. Wait for pod restart with kubectl rollout status deployment/operations-manager -n rig-system'
-      - echo '6. Start Skaffold with task skaffold-dev'
-      - echo '7. In IntelliJ Run → Debug Remote Debug - Operations Manager'
-      - echo '8. Debugger will attach to localhost 5678'
-
   deploy-operations-manager:
     desc: "Deploy the operations-manager to the current cluster"
+    requires:
+      vars:
+        - name: CLUSTER_TYPE
+          enum: [sandboxed-local, odcn-production]
     vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      CLUSTER: '{{.CLUSTER_TYPE}}'
+      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
     deps: [generate-env-secrets-for-operations-manager]
     cmds:
       - |
@@ -1043,9 +726,8 @@ tasks:
         # On odcn-production the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
-        # briefly see three pods. Only restart where apply may see nothing new: local loads
-        # the image into kind under a fixed `:latest`, and the sandbox overlay keeps the
-        # tag of its last configure.
+        # briefly see three pods. Only restart where apply may see nothing new: the sandbox
+        # overlay keeps the tag of its last configure.
         if [ "{{.CLUSTER}}" = "odcn-production" ]; then
           echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         else
@@ -1332,23 +1014,6 @@ tasks:
         echo "  task deploy-operations-manager CLUSTER_TYPE=odcn-production"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
-    silent: true
-
-  update-cmp-kustomize-sops:
-    desc: "Build and deploy the cmp-kustomize-sops image to the local kind cluster"
-    vars:
-      CLUSTER: '{{default "local" .CLUSTER_TYPE}}'
-    cmds:
-      - |
-        echo "Building cmp-kustomize-sops Docker image..."
-        docker buildx build --no-cache --progress=plain --load -t rig-cmp-argo-kustomize-sops:latest -f images/cmp-kustomize-sops/Dockerfile .
-      - |
-        echo "Loading image into kind cluster..."
-        kind load docker-image rig-cmp-argo-kustomize-sops:latest --name {{.KIND_CLUSTER_NAME}}
-      - |
-        echo "Restarting ArgoCD repo-server to pick up new CMP image..."
-        kubectl rollout restart deployment argocd-repo-server -n {{.RIG_NAMESPACE}}
-      - echo -e "✅ CMP kustomize-sops image updated successfully!"
     silent: true
 
   publish-cmp-kustomize-sops:
@@ -1800,21 +1465,241 @@ tasks:
     silent: false
 
   build-keycloak-relay-email-sender:
-    desc: "Bouw de relay-emailSender-jar en zet hem naast het Keycloak-manifest"
-    vars:
-      JAR: keycloak-relay-email-sender-1.0.0.jar
-      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
+    desc: "Bouw de relay-emailSender-jar"
     cmds:
       - |
         echo "🔨 Bouwen van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn clean package
-        cd ../..
-        cp "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"
-        echo "✅ JAR gebouwd en gekopieerd naar {{.DOEL}}/{{.JAR}}"
-        echo "   Commit de jar SAMEN met de broncode: de pod krijgt hem uit een ConfigMap,"
-        echo "   niet uit een build. Zie keycloak-migration/relay-email-sender/README.md."
+        echo "✅ JAR gebouwd: keycloak-migration/relay-email-sender/target/keycloak-relay-email-sender-1.0.0.jar"
     silent: false
+
+  publish-keycloak-image:
+    desc: "Bouw de Keycloak-image, push hem naar GHCR (CalVer + latest) en pin de sandbox-overlay"
+    summary: |
+      Vraagt een inlog: `docker login ghcr.io` met een token dat write:packages heeft.
+
+      Dezelfde vorm als publish-operations-manager, met een verschil dat er met opzet is: het
+      pinnen gaat naar de SANDBOX-overlay. De basis en de odcn-overlay blijven staan, dus dit
+      is geen uitrol naar ODCN. Rol uit met `task sandbox:sync`, toets het op de sandbox, en
+      breng die tag daarna met `task pin-keycloak-image TARGET=base` naar de basis.
+
+      Er is geen controle of er wel iets te bouwen valt. "Geen release zonder aanleiding" is
+      hier net als bij de operations-manager een beslissing van de mens.
+    # sandbox:build-builder en niet een eigen buildernaam zoals publish-operations-manager
+    # die heeft: die builder draagt de geheugengrens van de gedeelde server EN het
+    # host-netwerk dat deze bouw nodig heeft. Zonder host-netwerk komt de builder niet bij de
+    # DNS van de server en strandt de eerste regel van de Dockerfile al op "no route to host"
+    # (gemeten, hier en bij sandbox:build-operations-manager-image).
+    deps: [requirements-check, sandbox:build-builder]
+    vars:
+      IMAGE_VERSION:
+        sh: |
+          DIRTY=""
+          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
+          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+    preconditions:
+      # Een inlog met een credential-helper laat een LEGE auths-regel achter, dus de sleutel
+      # is het signaal en niet de inhoud. Hier en niet na de bouw: de validatiebouw staat uit,
+      # dus een vergeten inlog zou pas na de volledige Maven- en kc.sh-ronde stranden.
+      - sh: 'grep -q ''"ghcr\.io"'' "${DOCKER_CONFIG:-$HOME/.docker}/config.json"'
+        msg: |
+          Geen inlog bij ghcr.io gevonden. Draai eerst:
+            docker login ghcr.io   (token met write:packages)
+    cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
+        case "{{.IMAGE_VERSION}}" in
+          *-dirty)
+            echo "LET OP: de werkboom heeft ongecommitte wijzigingen, dus de commit in deze tag"
+            echo "        beschrijft niet wat je publiceert. Commit eerst voor een tag die terug"
+            echo "        te zoeken is."
+            ;;
+        esac
+      - task: docker-build-and-push
+        vars:
+          BUILD_CONTEXT: .
+          DOCKERFILE_PATH: images/keycloak-zad/Dockerfile
+          IMAGE_NAME: keycloak-zad
+          REGISTRY_IMAGE: ghcr.io/rijksictgilde/zad
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
+          BUILDER_NAME: '{{.SANDBOX_BUILDER_NAME}}'
+          # Dezelfde platforms als de job in docker-images.yml: wat hier ontstaat is wat na
+          # een promotie op ODCN draait.
+          PLATFORMS: linux/amd64,linux/arm64
+          # De validatiebouw zou de hele Maven- en kc.sh-ronde een tweede keer draaien, met
+          # --load en dus voor een architectuur. De multi-arch bouw eronder is de bouw.
+          SKIP_VALIDATION: "true"
+      - task: pin-keycloak-image
+        vars:
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+
+  pin-keycloak-image:
+    desc: "Zet een gepushte keycloak-zad-tag in de sandbox-overlay (TARGET=base: in de basis)"
+    summary: |
+      publish-keycloak-image roept dit aan met de tag die hij net gepusht heeft. Los aanroepen
+      kan ook, bijvoorbeeld om een tag van CI op de sandbox te zetten.
+
+      TARGET=sandbox (de standaard) pint de sandboxed-local overlay. De basis en de
+      odcn-overlay blijven staan, dus dit is geen uitrol naar ODCN. Rol uit met
+      `task sandbox:sync` en toets het daar.
+
+      TARGET=base is de promotie: dezelfde handeling, maar op de basis, waar ODCN zijn tag uit
+      erft. Promoveren is het VERPLAATSEN van precies de tag die op de sandbox heeft gedraaid,
+      dus daar hoort geen eigen IMAGE_TAG bij: die komt uit de sandbox-overlay. Geef je er
+      toch een mee, dan moet het die tag zijn. Deze taak bouwt en pusht nooit: een herbouw
+      levert een ander artefact op, en dan is het bewijs van de sandbox niets waard.
+    vars:
+      TARGET: '{{.TARGET | default "sandbox"}}'
+      IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
+      REPO: ghcr.io/rijksictgilde/zad/keycloak-zad
+      KEYCLOAK: infrastructure/bootstrap/infrastructure/keycloak/controller
+    preconditions:
+      - sh: 'case "{{.TARGET}}" in sandbox|base) exit 0 ;; esac; exit 1'
+        msg: |
+          TARGET is sandbox (de sandboxed-local overlay) of base (de basis, die ODCN erft).
+      # Niet voor base: daar IS de tag die van de sandbox, en die wordt gelezen.
+      - sh: '[ -n "{{.IMAGE_TAG}}" ] || [ "{{.TARGET}}" = "base" ]'
+        msg: |
+          IMAGE_TAG is verplicht, bijvoorbeeld:
+            task pin-keycloak-image IMAGE_TAG=2026.09.26.1432-7ccad61d
+    cmds:
+      - |
+        REPO="{{.REPO}}"
+        TARGET="{{.TARGET}}"
+        TAG="{{.IMAGE_TAG}}"
+        OVERLAY="{{.KEYCLOAK}}/overlays/sandboxed-local/kustomization.yaml"
+        BASIS="{{.KEYCLOAK}}/base/deployment.yaml"
+        PAD="${REPO#ghcr.io/}"
+
+        if [ "$TARGET" = "base" ]; then
+          # De newTag onder DEZE naam, niet de eerste die voorbijkomt; dezelfde grens die het
+          # schrijven verderop heeft.
+          SANDBOXTAG="$(awk -v repo="$REPO" '
+              $0 ~ "- name: " repo "$" { gevonden = 1; next }
+              gevonden && /^ *newTag: / { sub(/^ *newTag: /, ""); gsub(/["\x27]/, ""); print; exit }
+              gevonden && /^ *- name: / { exit }
+          ' "$OVERLAY")"
+
+          # De tag komt uit de sandbox-overlay en nergens anders: de basis mag alleen een tag
+          # dragen die aantoonbaar op de sandbox heeft gedraaid. Een tag die hier met de hand
+          # in te vullen valt, maakt de weg sandbox-eerst leeg; meegeven mag wel, maar dan
+          # alleen als bevestiging van wat er staat.
+          if [ -z "$SANDBOXTAG" ]; then
+            echo "$OVERLAY pint geen tag voor $REPO." >&2
+            echo "Draai eerst: task publish-keycloak-image." >&2
+            exit 1
+          fi
+          if [ -n "$TAG" ] && [ "$TAG" != "$SANDBOXTAG" ]; then
+            echo "$TAG heeft niet op de sandbox gedraaid: die draait $SANDBOXTAG." >&2
+            echo "Promoveren verplaatst de tag van de sandbox; laat IMAGE_TAG weg." >&2
+            exit 1
+          fi
+          TAG="$SANDBOXTAG"
+
+          # Een -dirty-tag hoort bij bron die niet in git staat. Draait die op productie, dan
+          # kan niemand nagaan wat er draait, en is hij ook niet opnieuw te maken.
+          case "$TAG" in
+            *-dirty)
+              echo "$TAG komt van ongecommitte bron en hoort niet op productie." >&2
+              echo "Commit de wijziging, bouw opnieuw, en toets dat op de sandbox." >&2
+              exit 1
+              ;;
+          esac
+
+          # De commit is een losse handeling, dus deze taak wordt ook twee keer gedraaid.
+          HUIDIG="$(sed -n "s|^ *image: $REPO:||p" "$BASIS")"
+          if [ "$HUIDIG" = "$TAG" ]; then
+            echo "De basis draagt $TAG al."
+            exit 0
+          fi
+        fi
+
+        # DEZELFDE handdruk als de node doet: eerst een anoniem token, dan het manifest van
+        # die tag. Een pakket dat op ghcr privaat staat geeft hier 403, en dat is precies waar
+        # de kind-node op strandt ("failed to fetch anonymous token ... 403 Forbidden"). Zonder
+        # deze controle zou er een tag gepind worden die de omgeving niet kan halen, en dat
+        # blijkt pas bij de eerste podstart. Ook voor de basis: ODCN haalt hetzelfde artefact,
+        # alleen via de rcr-proxy, die ghcr spiegelt.
+        echo "Nagaan of $REPO:$TAG zonder inlog te halen is..."
+        TOKEN="$(curl -fsS "https://ghcr.io/token?scope=repository:$PAD:pull&service=ghcr.io" 2>/dev/null |
+            sed -n 's/.*"token":"\([^"]*\)".*/\1/p')" || true
+        MANIFEST=""
+        if [ -n "$TOKEN" ]; then
+          MANIFEST="$(curl -fsS -o /dev/null -w "ok" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json" \
+            "https://ghcr.io/v2/$PAD/manifests/$TAG" 2>/dev/null)" || true
+        fi
+        if [ "$MANIFEST" != "ok" ]; then
+          echo "$REPO:$TAG is niet zonder inlog te halen." >&2
+          echo "Zet het pakket op ghcr op publiek (Package settings > Change visibility)," >&2
+          echo "of geef de omgeving een pull-secret zoals de odcn-overlay dat heeft." >&2
+          echo "Er is NIETS gepind: deze tag zou niet te pullen zijn." >&2
+          exit 1
+        fi
+
+        if [ "$TARGET" = "base" ]; then
+          # Alleen het stuk achter de dubbele punt: de inspringing van de regel blijft zoals
+          # hij is.
+          awk -v repo="$REPO" -v tag="$TAG" '
+              $0 ~ "^ *image: " repo ":" { sub(/:[^:]*$/, ":" tag) }
+              { print }
+          ' "$BASIS" > "$BASIS.nieuw"
+          mv "$BASIS.nieuw" "$BASIS"
+
+          grep -q "image: $REPO:$TAG$" "$BASIS" || {
+            echo "$BASIS draagt $TAG niet: staat de image-regel voor $REPO er nog?" >&2
+            exit 1
+          }
+
+          echo ""
+          echo "De basis draagt nu $TAG (was ${HUIDIG:-onbekend})."
+          grep -n "image: $REPO:" "$BASIS"
+          echo ""
+          echo "Commit dit; ODCN erft de tag uit de basis en ArgoCD rolt hem uit:"
+          echo "  git add $BASIS && git commit -m 'deploy: keycloak-zad $TAG naar productie'"
+          echo ""
+          echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
+          exit 0
+        fi
+
+        # Alleen de newTag die onder DEZE naam staat: een tweede image in dezelfde lijst hoort
+        # hier niet door geraakt te worden. awk en geen sed zoals pin-operations-manager-image,
+        # want dat pint een image op EEN regel; hier staan naam en tag op twee regels, en een
+        # adres als `/x/,+1` bestaat alleen in GNU sed.
+        #
+        # Aangehaald, want kustomize weigert de HELE overlay op een newTag die als yaml-getal
+        # leest (gemeten: "cannot unmarshal number into Go struct field Image.images.newTag of
+        # type string"). De CalVer-vorm maakt dat vandaag onmogelijk; de aanhalingstekens
+        # houden het waar als de tagvorm ooit verandert.
+        awk -v repo="$REPO" -v tag="$TAG" '
+            $0 ~ "- name: " repo "$" { gevonden = 1; print; next }
+            gevonden && /^ *- name: / { gevonden = 0 }
+            gevonden && /^ *newTag: / { sub(/newTag: .*/, "newTag: \"" tag "\""); gevonden = 0 }
+            { print }
+        ' "$OVERLAY" > "$OVERLAY.nieuw"
+        mv "$OVERLAY.nieuw" "$OVERLAY"
+
+        # Leest de aanhalingstekens mee terug: vallen die ooit weg, dan valt het hier om en
+        # niet pas bij `task sandbox:sync`.
+        grep -q "newTag: \"$TAG\"" "$OVERLAY" || {
+          echo "$OVERLAY pint $TAG niet: staat de images-regel voor $REPO er nog?" >&2
+          exit 1
+        }
+
+        echo ""
+        echo "De sandbox draait $REPO:$TAG."
+        grep -n 'newTag:' "$OVERLAY"
+        echo ""
+        echo "Commit deze pin en rol daarna uit:"
+        echo "  git add $OVERLAY && git commit -m 'deploy: keycloak-zad $TAG op de sandbox'"
+        echo "  task sandbox:sync"
+        echo ""
+        echo "Terugrollen: pin een eerdere tag uit de git-historie van dat bestand."
+        echo "Promoveren naar productie na de proef: task pin-keycloak-image TARGET=base."
+    silent: true
 
   test-keycloak-relay-email-sender:
     desc: "Draai de tests van de relay-emailSender"
@@ -1823,74 +1708,6 @@ tasks:
         echo "🧪 Tests van de relay-emailSender..."
         cd keycloak-migration/relay-email-sender
         mvn test
-    silent: false
-
-  check-keycloak-relay-email-sender:
-    desc: "Toets dat de ingecheckte relay-emailSender-jar bij de broncode ernaast hoort"
-    vars:
-      JAR: keycloak-relay-email-sender-1.0.0.jar
-      DOEL: infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers
-    cmds:
-      - |
-        # De jar staat in git omdat de pod hem uit een ConfigMap krijgt en niet van het
-        # netwerk (zie de initContainer). Een gebouwd artefact in git kan gaan afwijken van
-        # de bron ernaast, en dan draait er iets anders dan er te lezen valt. Deze taak
-        # bouwt opnieuw en vergelijkt byte voor byte; CI draait hem bij elke PR.
-        #
-        # Dat kan alleen omdat de bouw reproduceerbaar is (project.build.outputTimestamp in
-        # de pom) EN met dezelfde JDK-major draait: de manifest van de jar noemt
-        # Build-Jdk-Spec. CI pint daarom Temurin 21.
-        set -e
-        echo "🔁 Herbouwen van de relay-emailSender..."
-        cd keycloak-migration/relay-email-sender
-        mvn -q -B clean package
-        cd ../..
-        if cmp -s "keycloak-migration/relay-email-sender/target/{{.JAR}}" "{{.DOEL}}/{{.JAR}}"; then
-          echo "✅ De ingecheckte jar is de bron ernaast."
-        else
-          echo "❌ {{.DOEL}}/{{.JAR}} wijkt af van een verse bouw van de bron."
-          echo "   Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
-          echo "   Bouw je met een andere JDK-major dan 21, dan verschilt alleen het"
-          echo "   manifest (Build-Jdk-Spec); gebruik dan Temurin 21."
-          exit 1
-        fi
-    silent: false
-
-  publish-keycloak-custom-mapper:
-    desc: "Build and publish the Keycloak custom mapper JAR to GitHub Releases"
-    deps: [build-keycloak-custom-mapper]
-    cmds:
-      - |
-        echo "📦 Publishing Keycloak custom mapper to GitHub Releases..."
-        echo ""
-        echo "Prerequisites:"
-        echo "- GitHub CLI (gh) installed and authenticated"
-        echo "- Repository must be public for wget downloads"
-        echo ""
-
-        cd keycloak-migration/custom-mapper
-
-        VERSION="v1.1.0"
-        REPO="RijksICTGilde/RIG-Cluster"
-
-        # Check if release already exists
-        if gh release view "$VERSION" --repo "$REPO" 2>/dev/null; then
-          echo "⚠️  Release $VERSION already exists. Deleting and recreating..."
-          gh release delete "$VERSION" --repo "$REPO" --yes
-        fi
-
-        echo "Creating release $VERSION..."
-        gh release create "$VERSION" \
-          --repo "$REPO" \
-          --title "Keycloak SAML NameID Mapper $VERSION" \
-          --notes "Custom Keycloak mapper for extracting SAML NameID to user attributes using unrestricted XPath" \
-          target/keycloak-saml-nameid-mapper-1.1.0.jar
-
-        echo ""
-        echo "✅ Keycloak custom mapper published successfully!"
-        echo "📥 Download URL: https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
-        echo ""
-        echo "Verify with: curl -sI https://github.com/$REPO/releases/download/$VERSION/keycloak-saml-nameid-mapper-1.1.0.jar"
     silent: false
 
   export-keycloak-users:
@@ -2085,6 +1902,35 @@ tasks:
       - docker rm -f zad-test-postgres
       - uv run pytest tests/test_user_admin_service.py -q
 
+  test-authwall:
+    desc: "Meet de authorization wall tegen een echte Keycloak + oauth2-proxy"
+    summary: |
+      Draait tests/integration/test_authorization_wall_proxy.py: twee containers, geen
+      cluster. Per storing een controlemeting zonder de vlag naast de meting met de vlag.
+      Vraagt werkende Docker; de Keycloak blijft daarna staan voor de volgende run.
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest tests/integration/test_authorization_wall_proxy.py -m requires_infra -v
+    silent: false
+
+  test-authwall-stop:
+    desc: "Stop en verwijder de vaste test-Keycloak (zad-test-keycloak)"
+    summary: |
+      De Keycloak blijft tussen runs met opzet staan. Dit haalt hem weg; de volgende run
+      maakt hem opnieuw. Veilig zolang er geen suite draait.
+    cmds:
+      - docker rm -f zad-test-keycloak zad-test-authwall-proxy
+
+  test-authwall-reset:
+    desc: "Bouw de test-Keycloak van de authorization wall opnieuw op"
+    summary: |
+      Verwijdert de containers en laat de fixture ze opnieuw maken, door de tests te
+      draaien.
+    dir: operations-manager/python
+    cmds:
+      - docker rm -f zad-test-keycloak zad-test-authwall-proxy
+      - task: test-authwall
+
   test-upgrade-safety:
     desc: "RC-19 Layer 1: replay every project file through migrate + validate (offline, no cluster/key)"
     summary: |
@@ -2128,19 +1974,41 @@ tasks:
       waar geen enkele Application naar verwijst. Meldt alleen; met DELETE=1 verwijdert hij
       wat hij vond. Meldt hij SCHOON, dan is er niets achtergebleven.
 
+      Het cluster komt uit `task select-cluster`; zonder die keuze weigert hij.
+
         task argocd-orphan-sweep                                  # het hele cluster
         NAMESPACE=rig-prd-mpfm-w3h task argocd-orphan-sweep       # een namespace, veel sneller
         REPO=/path/to/zad-deployments task argocd-orphan-sweep    # ook de git-kant
+        GITOPS=~/IdeaProjects/rig-cluster-test-git-repositories task argocd-orphan-sweep
+                                                                  # alle drie de lagen, vanuit git
         NAMESPACE=... DELETE=1 task argocd-orphan-sweep           # echt verwijderen
+
+      In een Capsule-tenant (odcn-production) is GITOPS of REPO nodig: het account mag niet
+      elk type lijsten, en dan beslist wat de deployments-repo rendert of een namespace
+      volledig gemeten is.
+
+      DELETE=1 samen met REPO weigert: een map in de deployments-repo wordt dan beoordeeld
+      op de Applications die het cluster op dit moment heeft. Gebruik GITOPS, dan beschermt
+      ook wat het projectbestand nog vraagt.
+    requires:
+      vars: [CLUSTER_TYPE]
     dir: operations-manager/python
     # Vergelijkt op de waarde, anders dan de buren hier: een kale if-test is waar voor elke
     # niet-lege waarde, dus DELETE=0 zou ook verwijderen. Bij een destructieve vlag hoort
     # een typefout niets te doen.
+    #
+    # Cluster en ArgoCD-namespace gaan expliciet mee: het script leest anders de .env van
+    # operations-manager/python, en die wijst naar de sandbox (rig-system) ook als
+    # select-cluster op productie staat.
     cmds:
+      - echo "kube-context $(kubectl config current-context)" >&2
       - >-
+        ARGOCD_MANAGER={{.RIG_NAMESPACE}} CLUSTER_MANAGER={{.CLUSTER_TYPE}}
         uv run python scripts/argocd_orphan_sweep.py
         {{if .NAMESPACE}}--namespace {{.NAMESPACE}}{{end}}
-        {{if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
+        {{if .GITOPS}}--projects-repo "{{.GITOPS}}/rig-cluster-projects-github"
+        --argo-repo "{{.GITOPS}}/argo-applications-github"
+        --deployments-repo "{{.GITOPS}}/rig-cluster-application-test-github"{{else if .REPO}}--deployments-repo "{{.REPO}}"{{end}}
         {{if eq (default "0" .DELETE) "1"}}--delete{{end}}
     silent: true
 
@@ -2211,7 +2079,11 @@ tasks:
       # Ook firefox: tests/e2e/test_lotc_aanvragenbeheer.py meet daarin een fout die in
       # Chromium NIET te zien is (een tabelcel die alleen daar tot niets krimpt).
       - uv run playwright install chromium firefox --with-deps
-      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+      # Zonder PROJECT_REPO_PASSWORD weigert generate_self_service_project_yaml en leveren
+      # de wizardtests geen projectbestand. Alleen de VORM telt, dus geen secret.
+      - >-
+        PROJECT_REPO_PASSWORD=${PROJECT_REPO_PASSWORD:-plain:repo-secret}
+        uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
     silent: false
 
   test-e2e-random:
@@ -2229,7 +2101,10 @@ tasks:
       # No -q: the addopts are already at verbosity 0 (-v -q), so an extra -q lands on
       # -1 and pytest drops the report header -- the line where pytest-randomly prints
       # `Using --randomly-seed=<n>`. Without it the shuffle cannot be replayed.
-      - uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
+      # PROJECT_REPO_PASSWORD: zie test-e2e.
+      - >-
+        PROJECT_REPO_PASSWORD=${PROJECT_REPO_PASSWORD:-plain:repo-secret}
+        uv run pytest tests/e2e/ -m "e2e and not sandbox" -p randomly {{if .SEED}}--randomly-seed={{.SEED}}{{end}} --timeout=300
     silent: false
 
   test-e2e-sandbox:
@@ -2245,8 +2120,56 @@ tasks:
         FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
         E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
         E2E_TRACE=${E2E_TRACE:-1}
-        uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" -v --timeout=300
+        uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife and not punt14" -v --timeout=300
     silent: false
+
+  test-e2e-sandbox-punt14:
+    desc: "Run the punt14 load suite (26 deployments in one project) against a running sandbox"
+    dir: operations-manager/python
+    summary: |
+      Bedoeld om te draaien TERWIJL de reallife-suite loopt, zodat er werkelijk belasting
+      op de store staat. Daarom een eigen taak en niet in `test-e2e-sandbox`: die ene
+      module maakt tot 26 deployments in een project en vult daarmee de node van de
+      sandbox, waardoor de rest van de suite op `Insufficient cpu` blijft staan.
+    cmds:
+      - uv run playwright install chromium --with-deps
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        E2E_ARTIFACT_DIR=${E2E_ARTIFACT_DIR:-tests/e2e/artifacts}
+        E2E_TRACE=${E2E_TRACE:-1}
+        uv run pytest tests/e2e/test_sandbox_punt14.py -m "e2e and sandbox and punt14" -v --timeout=7200
+    silent: false
+
+  sandbox:verwijder-weesproject:
+    desc: "Verwijder een achtergebleven testproject van de sandbox, inclusief zijn projectbestand"
+    dir: operations-manager/python
+    summary: |
+      Een aanmaak die halverwege omviel liet zijn projectbestand in zad-projects staan.
+      Dat bestand is de bron: de app-of-apps maakt de ArgoCD-applicaties er steeds
+      opnieuw uit aan, dus wat je op het cluster weghaalt staat er seconden later weer.
+
+      Meerdere namen mogen, gescheiden door spaties.
+
+        task sandbox:verwijder-weesproject NAAM=test-ej1
+        task sandbox:verwijder-weesproject NAAM="test-ej1 test-vim"
+    vars:
+      NAAM: '{{.NAAM}}'
+    preconditions:
+      - sh: '[ -n "{{.NAAM}}" ]'
+        msg: 'Geef de technische projectnaam mee: task sandbox:verwijder-weesproject NAAM=test-ej1'
+    cmds:
+      - >-
+        E2E_BASE_URL=${E2E_BASE_URL:-https://zad.sandbox.rijksapp.dev}
+        E2E_SECRET_KEY=${E2E_SECRET_KEY:-sandbox-dev-secret-key-fixed-for-stable-sessions-32min}
+        FORGEJO_URL=${FORGEJO_URL:-https://forgejo.sandbox.rijksapp.dev}
+        FORGEJO_USER=${FORGEJO_USER:-rig-admin}
+        FORGEJO_PASSWORD=${FORGEJO_PASSWORD:-admin1234}
+        uv run python -m tests.e2e.helpers.weesprojecten {{.NAAM}}
+    silent: true
 
   test-e2e-sandbox-reallife:
     desc: "Run the long real-life E2E suite (5 projects, semi-concurrent UI+API mutations) against a running sandbox"
@@ -2401,6 +2324,7 @@ tasks:
       - task: prepare-argocd-operator
       - task: bootstrap-argo-system
         vars:
+          CLUSTER_TYPE: sandboxed-local
           KEY_FILE: security/sandbox-key.txt
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready
@@ -3199,7 +3123,11 @@ tasks:
         }
 
         # Sync infrastructure directory content (strip infrastructure/ prefix)
-        rsync -av --delete --exclude='.git' infrastructure/ "$TEMP_DIR/"
+        # De sandbox-secrets staan niet in git (.gitignore:41): deze protect-regel laat ze aan
+        # de kant van het cluster staan bij --delete, en vanaf een setup gaan ze wel mee.
+        rsync -av --delete --exclude='.git' \
+          --filter='P /bootstrap/infrastructure/secrets/config/overlays/sandboxed-local/***' \
+          infrastructure/ "$TEMP_DIR/"
 
         # Commit and push
         cd "$TEMP_DIR"

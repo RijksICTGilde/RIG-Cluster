@@ -75,6 +75,10 @@ jobs:
             dockerfile: images/postgresql-with-dictionaries/Dockerfile
             context: images/postgresql-with-dictionaries
             target: ""
+          - name: keycloak-zad
+            dockerfile: images/keycloak-zad/Dockerfile
+            context: .
+            target: ""
     steps:
       - uses: actions/checkout@v4
 

@@ -43,6 +43,7 @@ from opi.connectors.subdomain import (
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
+from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
@@ -98,6 +99,7 @@ from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
 from opi.services import ServiceAdapter, ServiceType, ServiceValidationError, VariableDefinition
 from opi.services.approvals import collect_deployment_approval_notices, ensure_approval_requests
+from opi.services.argocd_operation import STUCK_OPERATION_THRESHOLD_SECONDS, terminate_stuck_operation
 from opi.services.catalog.base import (
     ConfigLayer,
     DeploymentManifestContext,
@@ -111,6 +113,7 @@ from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_d
 from opi.services.catalog.image_registries.resolution import (
     build_rules,
     resolve_deployment_component_image,
+    resolve_project_image,
     set_deployment_component_registry,
 )
 from opi.services.catalog.publish_on_web.domain_config import (
@@ -295,6 +298,19 @@ def _resolve_deployment_filter(deployment_name: str | None, deployment_names: li
     if deployment_name is not None:
         return [deployment_name]
     return None
+
+
+async def _deployments_being_deleted(project_name: str) -> dict[str, str]:
+    """Deployments with an open delete task, mapped to that task's id (RC-254).
+
+    Een mislukte opvraging levert niets op: dan regenereert de ronde zoals voor deze
+    grendel, wat beter is dan een project niet verwerken omdat de takentabel stilstaat.
+    """
+    try:
+        return await AsyncTaskService(cluster=settings.CLUSTER_MANAGER).find_open_delete_deployments(project_name)
+    except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:
+        logger.warning("Kon de open delete-taken van project %s niet opvragen: %s", project_name, e)
+        return {}
 
 
 # Filename extensions used for generated per-component manifests. A file is only
@@ -640,6 +656,8 @@ class ProjectManager:
         # Per-component failure details (set when DeploymentHealthError is caught)
         self._component_failures: list[dict[str, Any]] | None = None
 
+        self._terminated_sync_operations: list[str] = []
+
         # Change context from YAML diff (populated by process_project_changes)
         # Structure: {"previous_yaml": {...}, "current_yaml": {...}, "changes": {"added": {}, "changed": {}, "deleted": {}}}
         self._project_changes: dict[str, Any] | None = None
@@ -871,6 +889,10 @@ class ProjectManager:
     def get_component_failures(self) -> list[dict[str, Any]] | None:
         """Get per-component failure details from the most recent deployment sync."""
         return self._component_failures
+
+    def get_terminated_sync_operations(self) -> list[str]:
+        """De deployments waarvan deze run een lopende sync-operation heeft beëindigd."""
+        return self._terminated_sync_operations
 
     async def _queue_refresh_task(self, task_service: Any, project_name: str, deployment_name: str) -> None:
         """Queue a refresh_deployment task via the task queue."""
@@ -2542,6 +2564,21 @@ class ProjectManager:
                 # Map the database image to its registry secret
                 image_pull_secrets_map[database_image] = registry_secret_name
 
+            # De clusterrewrite geldt ook voor de database-image. Zonder dit staat het kale
+            # ghcr-pad in git terwijl de admission van ODCN de pod naar rcr.rijksapps.nl
+            # herschrijft, en dan is de infrastructure-applicatie permanent OutOfSync. Dat is
+            # niet alleen ruis: de verwerking wacht op een Synced infrastructuur voordat ze
+            # verdergaat, dus een refresh van zo'n project loopt vast. Dezelfde regels als elke
+            # andere image, dus een projectregistry wint nog steeds van de gedeelde proxy.
+            resolved_db = resolve_project_image(
+                database_config.get("image", ""), project_data, cluster_name, registry_name
+            )
+            if resolved_db.image != database_config.get("image"):
+                logger.info(f"PostgreSQL-image '{database_config.get('image')}' opgelost naar '{resolved_db.image}'")
+                database_config = {**database_config, "image": resolved_db.image}
+            if resolved_db.secret and resolved_db.image not in image_pull_secrets_map:
+                image_pull_secrets_map[resolved_db.image] = resolved_db.secret
+
             cluster_manifest = render_template(
                 "postgresql-cluster.yaml.jinja",
                 {
@@ -3052,6 +3089,8 @@ class ProjectManager:
         argocd_resources_changed: bool = True,
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
+        wait_for_healthy: bool = True,
+        reset_running_sync: bool = False,
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -3069,6 +3108,8 @@ class ProjectManager:
             task_progress_manager: Optional progress manager for tracking operation status
             deployment_name: Optional single deployment to process
             force_clone: Force clone even if target resources exist (runtime parameter)
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
             deployment_names: Optional explicit set of deployments to process (takes
                 precedence over ``deployment_name``). Use this to scope a redeploy to
                 the deployment(s) actually affected by a change (e.g. domain approval),
@@ -3079,6 +3120,11 @@ class ProjectManager:
                 Application CR is not yet present), so this flag no longer controls
                 it. Redeploys of existing apps skip the expensive umbrella refresh
                 regardless of this value.
+            wait_for_healthy: Wait for each application to become Synced + Healthy.
+                Pass False when the deployment this run produces cannot become Healthy
+                by design (sleep-mode's waking state), so the wait would only ever end
+                on the 300s time-out. The manifest push, the ArgoCD refresh and the
+                render check still run, so a broken kustomization still fails fast.
 
         Returns:
             True if all operations were successful, False otherwise
@@ -3278,7 +3324,10 @@ class ProjectManager:
             process_step = self._begin_step("Diensten en manifesten bijwerken")
             try:
                 process_success = await self.process_project(
-                    force_clone=force_clone, deployment_names=targets, force_reenable=force_reenable
+                    force_clone=force_clone,
+                    deployment_names=targets,
+                    force_reenable=force_reenable,
+                    reset_running_sync=reset_running_sync,
                 )
             except Exception as e:
                 self._end_step(process_step, str(e))
@@ -3321,6 +3370,11 @@ class ProjectManager:
 
             project_name = await self.get_name()
             deployments = await self.get_deployments(cluster_filter=True, deployment_names=targets)
+            # process_project heeft deze deployments overgeslagen (RC-254), dus er is geen
+            # Application om op te wachten; wachten zou aflopen op de aanmaaktimeout.
+            being_deleted = await _deployments_being_deleted(project_name)
+            if being_deleted:
+                deployments = [dep for dep in deployments if dep.get("name") not in being_deleted]
             # The project as it stands, for asking the services what they know about a
             # deployment (RC-28). Same contents the deployments above came from.
             sync_project_data = await self.get_contents(record_base=False)
@@ -3342,16 +3396,15 @@ class ProjectManager:
             synced_deployment_count = 0
 
             if deployments and project_name:
-                from opi.services.catalog.base import ComponentHealth
                 from opi.services.deployment_observation import run_after_sync_observation
                 from opi.services.deployment_state import collect_deployment_state
                 from opi.services.oom_watcher import (
                     MAIN_CONTAINER_NAME,
                     STALL_NOTICE_SECONDS,
                     DeploymentHealthError,
+                    component_health_from_oom_failures,
                     create_health_check_callback,
                     describe_components_waiting,
-                    disable_components_for_image_pull,
                 )
                 from opi.utils.naming import generate_unique_name
 
@@ -3552,6 +3605,15 @@ class ProjectManager:
                                 render_detail,
                             )
 
+                        if not wait_for_healthy:
+                            logger.info(
+                                "Application '%s' refreshed and rendered; not waiting for Synced/Healthy", app_name
+                            )
+                            if app_subtask:
+                                progress_manager.update_task(app_subtask, dep_name, subject="uitgerold")
+                                progress_manager.complete_subtask(app_subtask)
+                            return {"app_name": app_name, "dep_name": dep_name, "status": "ok"}
+
                         await self._argo_manager.wait_for_application_synced(
                             app_name=app_name,
                             timeout=300,
@@ -3586,6 +3648,7 @@ class ProjectManager:
                             f"Timed out after 300s waiting for '{app_name}' ({dep_name}) to sync; "
                             f"last observed state: {last_state}"
                         )
+                        await self._terminate_operation_we_waited_on(app_name, cluster)
                         if app_subtask:
                             progress_manager.fail_subtask(app_subtask, "time-out na 300s")
                         return {"app_name": app_name, "dep_name": dep_name, "status": "timeout"}
@@ -3676,17 +3739,11 @@ class ProjectManager:
                     oom_failures = [f for f in e.failures if f.failure_type == "oom"]
                     crash_loop_failures = [f for f in e.failures if f.failure_type == "crash_loop"]
 
-                    # Split the image-pull failures on what the registry actually told
-                    # us. Only an explicit "absent" disables; anything we could not
-                    # diagnose leaves the component alone, because disabling scales it
-                    # to 0, which removes the very pod that would have retried, so an
-                    # outage becomes permanent and no refresh undoes it. Kubelet retries
-                    # the pull with its own backoff and recovers once the registry does.
-                    all_image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
-                    image_pull_failures = [f for f in all_image_pull_failures if image_is_confirmed_absent(f.message)]
-                    registry_down_failures = [
-                        f for f in all_image_pull_failures if not image_is_confirmed_absent(f.message)
-                    ]
+                    # One list, one destination: reporting (RC-243). There used to be a
+                    # split here on what the registry said, and the "absent" half was
+                    # scaled to 0 replicas. The wording below still distinguishes the two;
+                    # nothing else does.
+                    image_pull_failures = [f for f in e.failures if f.failure_type == "image_pull"]
 
                     task_service = (
                         progress_manager._task_service
@@ -3705,10 +3762,7 @@ class ProjectManager:
                                 argo_task,
                                 f"Te weinig geheugen voor {oom_names} in {app_name}, geheugenlimiet bijstellen...",
                             )
-                        component_health = {
-                            (f.component_reference or f.component_name): ComponentHealth(oom_detected=True)
-                            for f in oom_failures
-                        }
+                        component_health = component_health_from_oom_failures(oom_failures)
                         try:
                             observation = await run_after_sync_observation(project_name, dep_name, component_health)
                             if observation.requeue_refresh:
@@ -3732,64 +3786,48 @@ class ProjectManager:
                                 f"{app_name}: OOM detected for {oom_names}, auto-tune failed: {tune_err}"
                             )
 
-                    # Handle ImagePullBackOff: disable component, queue refresh. A pod
-                    # never becomes ready while any of its containers (main OR sidecar)
-                    # is stuck pulling, so a sidecar failure disables the component too.
+                    # A pod never becomes ready while any of its containers (main OR
+                    # sidecar) is stuck pulling, so a sidecar failure is the component's
+                    # problem too, and the message names the exact container and image: a
+                    # bad platform sidecar once sent us down the wrong path for hours
+                    # because it did not.
                     #
-                    # Use component_reference (the user-facing YAML reference), not
-                    # component_name (the unique deployment-scoped name): disabling looks
-                    # the component up by `reference`, so passing the unique name silently
-                    # fails to match and the component is never scaled to 0.
-                    if image_pull_failures:
-                        disabled_components = [(f.component_reference, f.message) for f in image_pull_failures]
-                        try:
-                            await disable_components_for_image_pull(project_name, dep_name, disabled_components)
-                            await self._queue_refresh_task(task_service, project_name, dep_name)
-                        except Exception as img_err:
-                            logger.error(
-                                "ImagePull remediation failed for %s/%s: %s",
-                                project_name,
-                                dep_name,
-                                img_err,
-                            )
-                        # Name the exact container and image, so a sidecar's pull error is
-                        # never mistaken for the component's own image (the reason a bad
-                        # platform sidecar sent us down the wrong path for hours).
-                        for f in image_pull_failures:
-                            if f.container_name and f.container_name != MAIN_CONTAINER_NAME:
-                                target = f"sidecar '{f.container_name}' in component '{f.component_name}'"
-                            else:
-                                target = f"component '{f.component_name}'"
-                            image = f" [image {f.image}]" if f.image else ""
-                            reason = " ".join(f.message.split()) if f.message else ""
-                            detail = f"{target}{image}"
-                            if reason:
-                                detail = f"{detail}: {reason}"
-                            msg = f"{app_name}: ImagePullBackOff for {detail}"
-                            # Only a registry auth/permission failure is a real error
-                            # worth failing the task + alerting. A not-found / not-yet-
-                            # built image is expected churn (CI/CD, PR builds) -> warn.
-                            if _is_image_pull_auth_error(f.message):
-                                sync_failures.append(msg)
-                            else:
-                                health_warnings.append(msg)
-                                if dep_name not in unhealthy_deployments:
-                                    unhealthy_deployments.append(dep_name)
-
-                    # Registry outage: nothing to remediate and nothing the tenant did
-                    # wrong, so only report it -- named as a registry problem, so the
-                    # user does not go looking for a broken image that is fine.
-                    for f in registry_down_failures:
-                        registry_outage_seen = True
+                    # Which sentence the reader gets: an answer about this image is the
+                    # tenant's to act on, anything else is the platform's and must not
+                    # send them looking for an image that is fine.
+                    for f in image_pull_failures:
                         image = f" [image {f.image}]" if f.image else ""
                         reason = " ".join(f.message.split()) if f.message else ""
-                        health_warnings.append(
-                            f"{app_name}: de registry kon het image voor component "
-                            f"'{f.component_name}'{image} niet leveren: {reason}. "
-                            "Het component blijft aan staan en probeert het opnieuw."
-                        )
-                        if dep_name not in unhealthy_deployments:
-                            unhealthy_deployments.append(dep_name)
+                        if not image_is_confirmed_absent(f.message):
+                            registry_outage_seen = True
+                            health_warnings.append(
+                                f"{app_name}: de registry kon het image voor component "
+                                f"'{f.component_name}'{image} niet leveren: {reason}. "
+                                "Het component blijft aan staan en probeert het opnieuw."
+                            )
+                            if dep_name not in unhealthy_deployments:
+                                unhealthy_deployments.append(dep_name)
+                            continue
+                        if f.container_name and f.container_name != MAIN_CONTAINER_NAME:
+                            target = f"sidecar '{f.container_name}' in component '{f.component_name}'"
+                        else:
+                            target = f"component '{f.component_name}'"
+                        detail = f"{target}{image}"
+                        if reason:
+                            detail = f"{detail}: {reason}"
+                        msg = f"{app_name}: ImagePullBackOff for {detail}"
+                        # Only a registry auth/permission failure is a real error worth
+                        # failing the task + alerting. A not-found / not-yet-built image is
+                        # expected churn (CI/CD, PR builds) -> warn. Deliberately asked
+                        # only of a message the registry answered: the auth markers include
+                        # bare "401"/"403", which an image tag can carry, and a transport
+                        # outage must never fail a deploy on the spelling of a tag.
+                        if _is_image_pull_auth_error(f.message):
+                            sync_failures.append(msg)
+                        else:
+                            health_warnings.append(msg)
+                            if dep_name not in unhealthy_deployments:
+                                unhealthy_deployments.append(dep_name)
 
                     # CrashLoopBackOff is the user's app crashing at runtime, not a
                     # deploy/sync failure - report it as a warning, don't fail the task.
@@ -3857,7 +3895,10 @@ class ProjectManager:
                     progress_manager.complete_task(notice)
                 return True
             else:
-                logger.info("All ArgoCD applications are synced and healthy")
+                if wait_for_healthy:
+                    logger.info("All ArgoCD applications are synced and healthy")
+                else:
+                    logger.info("All ArgoCD applications are refreshed and rendered; health was not awaited")
                 if progress_manager and argo_task:
                     progress_manager.complete_task(argo_task)
                 return True
@@ -3883,7 +3924,10 @@ class ProjectManager:
         return project_data  # For now, treat everything as "added"
 
     async def _process_application_manifests(
-        self, deployment_name: str | None = None, deployment_names: list[str] | None = None
+        self,
+        deployment_name: str | None = None,
+        deployment_names: list[str] | None = None,
+        reset_running_sync: bool = False,
     ) -> None:
         """
         Process application manifests for the in-scope deployments.
@@ -3896,6 +3940,8 @@ class ProjectManager:
                 every deployment's manifest folder -- which would otherwise
                 rewrite unrelated deployments and collide with a concurrent
                 delete.
+            reset_running_sync: Break off a sync that is still running, however
+                young. Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns: None
         """
@@ -3931,7 +3977,7 @@ class ProjectManager:
             if not repo_info:
                 raise Exception(f"Repository configuration not found: {repo_name}")
 
-            await self._process_repository_manifests(repo_info, repo_deployments)
+            await self._process_repository_manifests(repo_info, repo_deployments, reset_running_sync=reset_running_sync)
 
         logger.info(f"Successfully processed all application manifests for {project_name}")
 
@@ -3939,6 +3985,7 @@ class ProjectManager:
         self,
         repo_config: dict[str, Any],
         deployments: list[dict[str, Any]],
+        reset_running_sync: bool = False,
     ) -> None:
         """
         Process manifests for a specific repository.
@@ -3946,6 +3993,8 @@ class ProjectManager:
         Args:
             repo_config: Repository configuration
             deployments: List of deployments for this repository
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns:
             None
@@ -3972,9 +4021,79 @@ class ProjectManager:
             )
             await project_repo_connector.commit_changes(f"Update project manifests for {project_name}")
 
+        # Vlak VOOR de push, en niet erna: ArgoCD probeert een revisie die al eens faalde niet
+        # opnieuw, dus beëindigen na de push laat de blokkade staan voor precies de commit die
+        # hem moet oplossen. Een storing hierin houdt de push niet tegen: dit staat tussen de
+        # commits en de push, dus stranden zou de manifests gecommit en ongepusht achterlaten
+        # (``terminate_stuck_operation`` vangt een omgevallen kubectl zelf af).
+        await self._clear_blocking_sync_operations(deployments, reset_running_sync=reset_running_sync)
+
         await project_repo_connector.push_changes()
 
         logger.info(f"Successfully processed repository: {repo_config['name']}")
+
+    async def _terminate_operation_we_waited_on(self, app_name: str, cluster: str | None) -> None:
+        """Beëindig de operation waarop OPI's eigen wacht net is afgelopen.
+
+        Zonder drempel, anders dan bij de ronde voor de push: die operation is per constructie
+        JONGER dan de drempel, want ``wait_for_application_synced`` start zijn teller pas na de
+        refresh en de render, en ArgoCD begint de operation daarna. Met de standaarddrempel
+        bleef precies de blokkade staan die deze tak moet opruimen (gemeten: 299s oud gaf nul
+        patch-aanroepen). En "nog gewoon bezig" is hier geen mogelijkheid meer: OPI heeft net
+        300s op deze operation gewacht en opgegeven. Dat hij nog aanhangt en nog loopt
+        (``blocks_next_sync``) is daarmee de enige vraag die overblijft.
+
+        Laat staan maakt van een mislukte uitrol ook een blokkade op elke volgende: op 5
+        oktober 2026 kostte dat na de time-out nog 21 minuten zonder enige sync.
+
+        Lukt het beëindigen niet, dan blijft de time-out wel gerapporteerd: de aanroep staat
+        voor ``fail_subtask`` en voor de ``timeout``-uitkomst, en een omgevallen kubectl mag
+        daar geen ``KubectlConnectionError`` van maken. ``terminate_stuck_operation`` vangt die
+        daarom zelf af.
+        """
+        await terminate_stuck_operation(
+            self._kubectl_connector,
+            app_name,
+            get_argo_namespace(cluster or settings.CLUSTER_MANAGER),
+            threshold_seconds=0,
+        )
+
+    async def _clear_blocking_sync_operations(
+        self, deployments: list[dict[str, Any]], reset_running_sync: bool = False
+    ) -> None:
+        """Beëindig de sync-operations die een volgende sync op deze deployments blokkeren.
+
+        Normaal WEL met de drempel: deze ronde loopt voor elke push en kijkt naar operations
+        die een andere taak of een sweep heeft achtergelaten, dus een uitrol die nog gewoon
+        bezig is blijft staan.
+
+        ``reset_running_sync`` zet de drempel op 0: bij een refresh drukt iemand op reset, en
+        dan is "nog gewoon bezig" geen reden meer om te wachten. Dezelfde afweging als op de
+        time-out-tak (``_terminate_operation_we_waited_on``). De vlag staat bij het endpoint,
+        zodat een interne aanroeper hem niet stilzwijgend erft.
+        """
+        project_name = await self.get_name()
+        if not project_name:
+            return
+        threshold = 0 if reset_running_sync else STUCK_OPERATION_THRESHOLD_SECONDS
+        terminated: list[str] = []
+        for deployment in deployments:
+            dep_name = deployment.get("name")
+            cluster = deployment.get("cluster")
+            if not dep_name or not cluster:
+                continue
+            if await terminate_stuck_operation(
+                self._kubectl_connector,
+                generate_argocd_application_name(project_name, str(dep_name)),
+                get_argo_namespace(str(cluster)),
+                threshold_seconds=threshold,
+            ):
+                terminated.append(str(dep_name))
+        if not terminated:
+            return
+        self._terminated_sync_operations.extend(terminated)
+        # De stap begint en eindigt in een keer, want het werk is al gedaan.
+        self._end_step(self._begin_step("Lopende sync afgebroken: " + ", ".join(terminated)))
 
     # TODO: maybe this should be moved to project_file manager
     async def get_repository_path(self, repository_name: str) -> str | None:
@@ -5374,6 +5493,7 @@ class ProjectManager:
         force_clone: bool = False,
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
+        reset_running_sync: bool = False,
     ) -> bool:
         """
         Process the project file and create all required resources.
@@ -5383,6 +5503,8 @@ class ProjectManager:
             force_clone: Force clone even if target resources exist (runtime parameter)
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``; empty list = none)
+            reset_running_sync: Break off a sync that is still running, however young.
+                Komt van een refresh; zie ``_clear_blocking_sync_operations``.
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -5391,14 +5513,39 @@ class ProjectManager:
 
         # Store force_clone override for nested calls (e.g., PVC manager)
         self._force_clone_override = force_clone
+        self._terminated_sync_operations = []
 
         targets = _resolve_deployment_filter(deployment_name, deployment_names)
+        # De scope zoals de AANROEPER hem gaf. De grendel hieronder mag een projectbrede
+        # ronde versmallen, maar dat maakt hem niet tot een gerichte ronde.
+        project_wide = targets is None
 
         try:
             # The snapshot this run works from; its moment is what the reconciliation rows store.
             read_started = time.monotonic()
             project_data = await self.get_contents()
             project_name = await self.get_name()
+
+            # Slaa deployments met een open delete-taak over (RC-254).
+            # Hun Application is minuten eerder uit git dan de deployment zelf.
+            being_deleted = await _deployments_being_deleted(project_name)
+            if being_deleted:
+                in_scope = (
+                    [name for dep in project_data.get("deployments", []) or [] if (name := dep.get("name"))]
+                    if targets is None
+                    else targets
+                )
+                skipped = [name for name in in_scope if name in being_deleted]
+                for name in skipped:
+                    logger.info(
+                        "Deployment '%s' van project '%s' wordt overgeslagen: delete-taak %s staat nog open",
+                        name,
+                        project_name,
+                        being_deleted[name],
+                    )
+                if skipped:
+                    targets = [name for name in in_scope if name not in being_deleted]
+
             logger.info(
                 f"Processing project: {project_name} and deployment {targets if targets is not None else 'all'}"
             )
@@ -5415,7 +5562,7 @@ class ProjectManager:
                     f"Project '{project_name}' has no deployments targeting cluster '{settings.CLUSTER_MANAGER}' - this operations manager only handles deployments for this cluster"
                 )
                 # Zonder rij blijft een uitgestelde wijziging aan zo'n project eeuwig wachten.
-                await self._record_reconciliation(project_name, [], targets, read_started)
+                await self._record_reconciliation(project_name, [], project_wide, read_started)
                 self._processing_error = None
                 self._component_failures = None
                 return True
@@ -5537,7 +5684,7 @@ class ProjectManager:
 
             # Generate application manifests (including PVC) BEFORE setting clone status.
             # PVC clone relies on clone-from.status.completed being false to include dataSource.
-            await self._process_application_manifests(deployment_names=targets)
+            await self._process_application_manifests(deployment_names=targets, reset_running_sync=reset_running_sync)
 
             # Now update clone-from status for all deployments that had clones performed
             # (covers DB, MinIO, and PVC clones reported during manifest generation)
@@ -5596,7 +5743,7 @@ class ProjectManager:
 
             await self._argo_manager.create_argocd_resources(deployment_names=targets)
 
-            await self._record_reconciliation(project_name, deployments, targets, read_started)
+            await self._record_reconciliation(project_name, deployments, project_wide, read_started)
 
             # Execute bootstrap actions for deployments
             for deployment in deployments:
@@ -5632,7 +5779,7 @@ class ProjectManager:
         self,
         project_name: str,
         deployments: list[dict[str, Any]],
-        targets: list[str] | None,
+        project_wide: bool,
         read_started: float,
     ) -> None:
         """Write what this run reconciled (RC-188).
@@ -5650,7 +5797,7 @@ class ProjectManager:
             await record_reconciliation(
                 project_name,
                 [name for name in processed if name not in failed],
-                project_wide=targets is None and not failed,
+                project_wide=project_wide and not failed,
                 read_seconds_ago=time.monotonic() - read_started,
             )
         except (SQLAlchemyError, OSError, asyncpg.exceptions.PostgresError, asyncpg.exceptions.InterfaceError) as e:

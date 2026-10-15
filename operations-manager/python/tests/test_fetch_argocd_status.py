@@ -8,6 +8,7 @@ must surface that render error instead of filtering it out behind the old health
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from opi.core.cluster_config import get_prefixed_namespace
 from opi.web.router import _fetch_argocd_deployment_status
 
 
@@ -200,3 +201,149 @@ async def test_a_deployment_that_is_meant_to_have_no_pods_is_not_asked():
 
     kubectl.get_application_pods.assert_not_called()
     assert result["pods"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_running_sync_reports_how_long_it_runs_and_that_it_blocks(monkeypatch):
+    """RC-250: "Operatie: Running" stond 45 minuten lang onveranderd op de kaart. Zonder de
+    duur en zonder "dit houdt elke volgende sync tegen" is dat niet te beoordelen."""
+    status_data = {
+        "operation": {"sync": {"revision": "6a0295a671"}},
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {
+                "phase": "Running",
+                "startedAt": "2026-10-05T14:54:30Z",
+                "message": "waiting for healthy state of apps/Deployment/pr-68-website",
+                "syncResult": {"revision": "6a0295a671"},
+            },
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_phase"] == "Running"
+    # Een echte duur en niet None: de startedAt staat ver in het verleden.
+    duur = result["operation_duration"]
+    assert duur is not None
+    assert duur.endswith(("uur", "minuten", "minuut"))
+    assert result["operation_is_stuck"] is True
+    # De terugval op reconciledAt hoort hier niet te slaan: er rondde niets af.
+    assert result["last_sync"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_detached_running_state_blocks_nothing(monkeypatch):
+    """Dezelfde stand zonder ``.operation``: wat achterblijft na een beeindiging. Rapporteren
+    ja, maar niet als blokkade, want auto-sync is dan vrij."""
+    status_data = {
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {"phase": "Running", "startedAt": "2026-10-05T14:54:30Z"},
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_phase"] == "Running"
+    assert result["operation_is_stuck"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_blocking_sync_without_a_start_reports_no_duration():
+    """RC-250: zonder leesbare ``startedAt`` is er geen duur, en "loopt al onbekend lang" op
+    de kaart zetten antwoordt de vraag niet waarvoor die regel er staat. De blokkade zelf
+    blijft wel staan: aan een aangehechte operation zonder begin verandert niets meer."""
+    status_data = {
+        "operation": {"sync": {"revision": "6a0295a671"}},
+        "status": {
+            "health": {"status": "Progressing"},
+            "sync": {"status": "OutOfSync", "revision": "d65d2e8eaf"},
+            "resources": [],
+            "operationState": {"phase": "Running"},
+        },
+    }
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    argo.get_application_events = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+    kubectl.get_application_pods = AsyncMock(return_value=[])
+
+    deployment = {"name": "pr-68", "namespace": "dd-mco", "cluster": "local", "components": [{"reference": "website"}]}
+    result = await _fetch_argocd_deployment_status("dd-mco", deployment, argo, kubectl)
+
+    assert result["operation_duration"] is None
+    assert result["operation_is_stuck"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_component_that_cannot_pull_reaches_the_card():
+    """The card's block is fed from here, and nothing else fills that key.
+
+    Without this the card renders correctly in its own tests and shows nothing in the
+    product: the key is absent, ``status.get('image_pull_failures', [])`` is empty, and
+    the component that cannot pull is invisible. That is the state RC-243 replaced the
+    auto-disable with, so the wiring is the deliverable, not a detail.
+
+    Read on the HEALTHY branch deliberately: a pod in ImagePullBackOff keeps the
+    application Degraded, but if ArgoCD ever says otherwise the card still has to say
+    what is wrong.
+    """
+    from opi.services import image_pull_report
+    from opi.services.image_pull_report import read_image_pull_failure
+
+    status_data = {"status": {"health": {"status": "Healthy"}, "sync": {"status": "Synced"}}}
+    argo = MagicMock()
+    argo.get_application_status = AsyncMock(return_value=status_data)
+    argo.get_application_resource_tree = AsyncMock(return_value=[])
+    kubectl = MagicMock()
+
+    deployment = {
+        "name": "deploy-1",
+        "namespace": "ns",
+        "cluster": "local",
+        "components": [{"reference": "web", "image": "ghcr.io/org/app:bad-tag"}],
+    }
+    pod = {
+        "metadata": {
+            "name": "deploy-1-web-abc-1",
+            "namespace": get_prefixed_namespace("local", "ns"),
+            "labels": {"app": "deploy-1-web", "component": "application"},
+            "creationTimestamp": "2026-10-03T08:00:00Z",
+        },
+        "status": {
+            "containerStatuses": [
+                {
+                    "name": "app",
+                    "image": "ghcr.io/org/app:bad-tag",
+                    "state": {"waiting": {"reason": "ImagePullBackOff", "message": "manifest unknown"}},
+                }
+            ]
+        },
+    }
+    image_pull_report._snapshot = (read_image_pull_failure(pod),)
+    try:
+        result = await _fetch_argocd_deployment_status("proj", deployment, argo, kubectl)
+    finally:
+        image_pull_report._snapshot = ()
+
+    assert [f.reference for f in result["image_pull_failures"]] == ["web"]

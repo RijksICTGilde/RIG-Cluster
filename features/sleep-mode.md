@@ -125,6 +125,27 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
   `/openapi.json`, zodat een gegenereerde client ze kan vinden. Het endpoint accepteert
   alleen `sleeping -> waking`; al het andere is een no-op.
 
+### Hoe een wekactie eindigt
+
+OPI rondt een wekactie zelf af. Na de commit van `waking` wacht `flow.finish_wake` tot de
+app een ready pod heeft (elke 5 seconden gevraagd, tot de `waking`-deadline), zet dan
+`awake`, commit dat, en de reprocess daarna ruimt de wekker op. De knop in de UI doet dat
+in dezelfde taak, zodat je op het scherm ziet waar op gewacht wordt; het wek-endpoint plant
+het na zijn antwoord in met `BackgroundTasks`, zodat de wekkerpod niet langer wacht dan
+eerst.
+
+De eerste reprocess (die van `waking`) wacht niet op de ArgoCD-health
+(`wait_for_healthy=False`): in die toestand kan de applicatie nooit Healthy worden, want
+voor de app terug is, is de app niet ready, en daarna de wekker niet. Dat wachten liep dus
+altijd af op de 300s-time-out en meldde een sync-fout voor een uitrol waar niets mis mee
+was. Het pushen, de ArgoCD-refresh en de render-controle blijven staan, dus een kapotte
+kustomization faalt nog steeds direct. De tweede reprocess wacht wel: de wekker is dan weg,
+en dat wachten is de bevestiging dat de app weer draait.
+
+Komt de app niet voor de deadline terug (`SLEEP_MODE_WAKING_TIMEOUT_MINUTES`, standaard
+10), dan wijzigt de afronding niets en faalt de taak met die melding; de sweeper zet de
+deployment daarna terug op `awake`.
+
 ### Wat de twee endpoints antwoorden
 
 Beide antwoorden hebben sinds RC-119 een responsemodel, dus de velden en hun toegestane
@@ -194,7 +215,11 @@ de twee `zadctl service sleep-mode`-commando's waren onbruikbaar.
 De sweeper (`SLEEP_MODE_SWEEP_MINUTES`, standaard 30 min) doet per ronde: een matchende
 `awake` deployment zonder deadline krijgt er een (`sleep-after-deploy`); een `awake` met
 verlopen deadline gaat `sleeping`; een deployment die te lang (`SLEEP_MODE_WAKING_TIMEOUT_MINUTES`,
-standaard 10) in `waking` staat gaat terug naar `awake` (kapot image dat nooit terugkwam).
+standaard 10) in `waking` staat gaat terug naar `awake` (kapot image dat nooit terugkwam);
+en een deployment die nog binnen die tijd in `waking` staat wordt afgerond zodra de app
+terug is. Dat laatste is het vangnet, niet de normale weg: een wekactie rondt zichzelf af
+(zie "Hoe een wekactie eindigt"). De sweeper, de afronding en de statusroute vragen de
+gereedheid alle drie via dezelfde functie (`flow.app_is_ready`).
 
 ## Hoe vaak de wekker het vraagt (twee snelheden)
 
@@ -338,6 +363,6 @@ manifests, state, token, router en sweeper):
 | `service.py` | De pure, idempotente toestandsovergangen |
 | `manifests.py` | Wekker-componentselectie + values-dicts |
 | `actions.py` | De wekknop (`DeploymentAction`) |
-| `flow.py` | Wake/status-orchestratie (git) die beide ingangen delen |
+| `flow.py` | Wake/finish-wake/status-orchestratie (git) die beide ingangen delen |
 | `router.py` | De API-router |
 | `scheduler.py` | De sweeper |

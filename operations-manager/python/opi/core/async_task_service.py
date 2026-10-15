@@ -633,6 +633,26 @@ class AsyncTaskService:
                 row = (await session.execute(eerder)).scalar_one_or_none()
             return row.to_dict() if row else None
 
+    async def find_open_delete_deployments(self, project_name: str) -> dict[str, str]:
+        """Deployments of this project whose delete task has not finished yet, by task id.
+
+        Een delete haalt de ArgoCD Application minuten voor de deployment zelf uit git, en
+        een verwerkingsronde in dat venster zet hem terug (RC-254). Daarom slaat
+        ``process_project`` deze deployments over.
+        """
+        async with session_scope() as session:
+            rows = (
+                await session.execute(
+                    select(AsyncTask.deployment_name, AsyncTask.id).where(
+                        AsyncTask.task_type == TaskType.DELETE_DEPLOYMENT,
+                        AsyncTask.project_name == project_name,
+                        AsyncTask.status.in_(_OPEN_STATES),
+                        AsyncTask.deployment_name.is_not(None),
+                    )
+                )
+            ).all()
+            return {str(name): str(task_id) for name, task_id in rows}
+
     async def find_newer_active_tasks(
         self,
         task_id: str,

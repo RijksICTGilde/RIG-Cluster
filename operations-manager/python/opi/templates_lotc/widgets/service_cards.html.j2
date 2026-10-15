@@ -166,7 +166,7 @@
                     icon="exclamation-triangle"
                     accessible-label="Deze dienst is vereist"
                     :attrs="{'id': melding_id}">
-        <c-button slot="actions" type="primary" label="Begrepen" :attrs="{'onclick': melding_sluiten}" />
+        <c-button slot="actions" type="primary" label="Begrepen" @click="{{ melding_sluiten }}" />
     </c-modal-dialog>
     {{ render_errors(field.errors) }}
 </div>

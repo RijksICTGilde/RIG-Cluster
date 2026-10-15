@@ -36,8 +36,7 @@
    zegt dat je de pagina opnieuw laadt voor een verse code. Een code die stilletjes
    verlopen is, is erger dan een code die zegt dat hij oud is.
 
-   De aanroepen gaan via :attrs; <c-button> laat geen onclick als los attribuut toe. De
-   knop houdt zijn window.open() met data-url in plaats van een href. #}
+   De knop houdt zijn window.open() met data-url in plaats van een href. #}
 {% set console_openen = "window.open(this.dataset.url, '_blank')" %}
 <c-card outline padding="lg">
     <c-stack gap="md">
@@ -52,10 +51,9 @@
                     <c-heading type="h4" size="6" label="Admin Console" />
                     <c-secret-field value="{{ kc_config.host }}" revealed show-copy />
                     {% set console_url = kc_config.host ~ '/admin/master/console/#/' ~ kc_config.realm %}
-                    {% set console_attrs = {'data-url': console_url, 'onclick': console_openen} %}
                     <c-action-group align="start">
                         <c-button type="secondary" size="sm" label="Open Admin Console" show-icon="after" icon="link"
-                                  :attrs="console_attrs" />
+                                  @click="{{ console_openen }}" :attrs="{'data-url': console_url}" />
                     </c-action-group>
                 </c-stack>
 

@@ -54,7 +54,7 @@
         <c-button type="tertiary" size="sm"
                   label="{{ add_label|e }}"
                   show-icon="before" icon="plus"
-                  :attrs="{'onclick': toevoegen_js}"
+                  @click="{{ toevoegen_js }}"
                   :disabled="add_disabled" />
     </div>
     {% endif %}

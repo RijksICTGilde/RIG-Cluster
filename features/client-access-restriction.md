@@ -224,7 +224,8 @@ In the [keycloak-theme](https://github.com/MinBZK/keycloak-theme) repository:
 
 3. Build and release a new version of the theme
 
-4. Update the theme version in `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`
+4. Update the theme version and its sha256 in `images/keycloak-zad/Dockerfile`, then build and pin a
+   new image tag (see [Een eigen Keycloak-image](./keycloak-eigen-image.md))
 
 ## Complete Example
 

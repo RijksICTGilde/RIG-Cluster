@@ -222,9 +222,10 @@ class WizardHelper:
         ".lotc-action-group button[type='submit']"
     )
 
-    #: Foutmeldingen bij een veld, in beide vormgevingen. De LOTC-weergave zet ze in een
-    #: <nldd-form-field-error-text>; de roos-weergave in een eigen klasse.
-    FIELD_ERRORS = ".rvo-form-field__error, .field-error, [role='alert'], nldd-form-field-error-text"
+    #: Foutmeldingen bij een veld, in beide vormgevingen. De LOTC-weergave zet ze sinds
+    #: NLDD 0.8.84 in een <nldd-validation-item> (daarvoor <nldd-form-field-error-text>);
+    #: de roos-weergave in een eigen klasse.
+    FIELD_ERRORS = ".rvo-form-field__error, .field-error, [role='alert'], nldd-validation-item"
 
     #: Zie :func:`veldbesturing` voor waarom dit op het id gaat en niet op de naam.
     FIELD_TAGS = FIELD_TAGS

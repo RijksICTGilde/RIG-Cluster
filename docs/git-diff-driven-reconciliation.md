@@ -37,9 +37,11 @@ footprint should disappear too. Today that invariant holds for create/update but
   `process_project`), not from a git diff.
 - Deletion happens **only** via the explicit API/UI path
   (`opi/manager/delete_project_manager.py`). That path waits for the ArgoCD
-  `Application` object to disappear (`wait_for_application_deletion`, ~20 × 3 s) and
-  returns **HTTP 207 (partial)** when the app is not confirmed gone in time — the
-  "flaky delete" symptom is this wait timing out.
+  `Application` object to disappear (`wait_for_application_deletion`: 20 × 3 s, and longer
+  while the namespace is visibly emptying, see
+  `features/argocd-vastgelopen-verwijdering.md`) and returns **HTTP 207 (partial)** when
+  the app is not confirmed gone in time — the "flaky delete" symptom is this wait timing
+  out.
 
 ### 2.3 The reconcile GC deliberately does not auto-detect orphans
 `opi/jobs/reconciliation.py` is a **mark-driven** garbage collector. It has purge
@@ -117,8 +119,10 @@ carry strong guardrails or it becomes a foot-gun.
 
 - Do the `orphans/report` / `orphans/confirm` endpoints exist, or must they be built?
   (§2.3 — could not be found.)
-- How to make the ArgoCD `Application` deletion wait deterministic rather than a fixed
-  60 s timeout.
+- How to make the ArgoCD `Application` deletion wait deterministic. The fixed 60 s window
+  is gone: the wait runs on while the namespace keeps emptying and gives up on a stall
+  (`features/argocd-vastgelopen-verwijdering.md`). A delete that still ends unconfirmed
+  falls back on the 207 of §2.2.
 - How to bound a "catastrophic diff" safely (threshold values; what counts as an
   override; alerting).
 - Single-file vs directory-of-projects monitoring: the current monitor watches one

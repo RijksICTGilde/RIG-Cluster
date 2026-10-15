@@ -248,6 +248,16 @@ class TestV1AsyncRefreshDeployment:
 
         _assert_accepted(response, "refresh_deployment")
 
+    def test_the_task_resets_a_running_sync(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Een refresh is een resetknop, dus ook een sync die net begonnen is hoort af te
+        breken. Zie features/vastgelopen-sync-breekt-af.md en
+        tests/test_refresh_reset_lopende_sync.py."""
+        mock_task_service.create_task.return_value = _make_task(task_type="refresh_deployment")
+
+        client.get("/api/projects/test-project/deployments/main/:refresh", headers={"X-API-Key": API_KEY})
+
+        assert mock_task_service.create_task.await_args.kwargs["payload"]["reset_running_sync"] is True
+
 
 class TestV1AsyncCloneDatabase:
     """V1 clone database with async mode (default)."""
@@ -321,6 +331,7 @@ def _create_mock_project_manager(
     mock_instance.get_deployment_results.return_value = {
         "main": MagicMock(cluster="local", urls={"web": "https://web-main-test.example.com"})
     }
+    mock_instance.get_terminated_sync_operations.return_value = []
 
     if update_result is None:
         update_result = {
@@ -457,6 +468,145 @@ class TestV1SyncRefreshDeployment:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "success"
+
+    def test_the_inline_path_resets_a_running_sync(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        """Deze tak draait niet als taak, dus hij geeft de vlag rechtstreeks mee."""
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            client.get(
+                "/api/projects/test-project/deployments/main/:refresh?sync=true",
+                headers={"X-API-Key": API_KEY},
+            )
+
+        assert mock_pm.process_project_from_git.await_args.kwargs["reset_running_sync"] is True
+
+    def test_een_afgebroken_sync_staat_in_het_antwoord(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        """Geen taak, dus geen voortgang: het antwoord is hier het enige meldkanaal."""
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+        mock_pm.get_terminated_sync_operations.return_value = ["main"]
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get(
+                "/api/projects/test-project/deployments/main/:refresh?sync=true",
+                headers={"X-API-Key": API_KEY},
+            )
+
+        assert response.json()["processing"]["terminated_syncs"] == ["main"]
+
+    def test_liep_er_niets_dan_staat_er_niets(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get(
+                "/api/projects/test-project/deployments/main/:refresh?sync=true",
+                headers={"X-API-Key": API_KEY},
+            )
+
+        assert "terminated_syncs" not in response.json()["processing"]
+
+    def test_ook_op_de_mislukte_tak(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=False)
+        mock_pm.get_terminated_sync_operations.return_value = ["main"]
+        mock_pm.get_processing_error.return_value = "kapot"
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get(
+                "/api/projects/test-project/deployments/main/:refresh?sync=true",
+                headers={"X-API-Key": API_KEY},
+            )
+
+        assert response.status_code == 500
+        assert response.json()["processing"]["terminated_syncs"] == ["main"]
+
+
+class TestV1RefreshProject:
+    """V1 project refresh: inline only, geen taak, en dus ook geen async-tak."""
+
+    def test_the_inline_path_resets_a_running_sync(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get("/api/projects/test-project/:refresh", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 200, response.text
+        assert mock_pm.process_project_from_git.await_args.kwargs["reset_running_sync"] is True
+
+    def test_een_afgebroken_sync_staat_in_het_antwoord(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+        mock_pm.get_terminated_sync_operations.return_value = ["main", "staging"]
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get("/api/projects/test-project/:refresh", headers={"X-API-Key": API_KEY})
+
+        assert response.json()["processing"]["terminated_syncs"] == ["main", "staging"]
+
+    def test_liep_er_niets_dan_staat_er_niets(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=True)
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get("/api/projects/test-project/:refresh", headers={"X-API-Key": API_KEY})
+
+        assert "terminated_syncs" not in response.json()["processing"]
+
+    def test_ook_op_de_mislukte_tak(
+        self,
+        client: TestClient,
+        mock_auth_project_service: Any,
+        mock_router_project_service: Any,
+    ) -> None:
+        mock_pm = _create_mock_project_manager()
+        mock_pm.process_project_from_git = AsyncMock(return_value=False)
+        mock_pm.get_terminated_sync_operations.return_value = ["main"]
+        mock_pm.get_processing_error.return_value = "kapot"
+
+        with patch("opi.api.router.create_project_manager", return_value=mock_pm):
+            response = client.get("/api/projects/test-project/:refresh", headers={"X-API-Key": API_KEY})
+
+        assert response.status_code == 500
+        assert response.json()["processing"]["terminated_syncs"] == ["main"]
 
 
 class TestV1SyncDeleteDeployment:

@@ -854,7 +854,8 @@ async def invite_register_submit(request: Request, key: str) -> Response:
 
         # Store success info in session. ``verify_email`` staat alleen op deze tak: de
         # SSO-weg levert via ``trustEmail`` een al geverifieerde gebruiker en mag de tekst
-        # over bevestigen niet tonen.
+        # over bevestigen niet tonen. Landt die weg op een account dat hier onbevestigd is
+        # achtergebleven, dan zwijgt de pagina erover: zie docs/KNOWN-ISSUES.md.
         request.session["invite_success"] = {
             "email": result_data["email"],
             "created": result_data["created"],

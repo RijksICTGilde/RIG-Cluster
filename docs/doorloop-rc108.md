@@ -207,8 +207,8 @@ Het faalt stil. De lookup geeft `None` en de watcher valt terug op "alle pods be
 waardoor een pod van een **vervangen** ReplicaSet als OOM-kill kan meetellen. Dat voedt het
 auto-tunen van het geheugen, dus het is geen cosmetische logregel.
 
-Aangepast in alle drie de overlays (`local`, `sandboxed-local`, en het
-`_blueprint`-bestand voor `odcn-production`). Nagemeten op de sandbox: `kubectl auth can-i
+Aangepast in twee overlays: `sandboxed-local` en het
+`_blueprint`-bestand voor `odcn-production`. Nagemeten op de sandbox: `kubectl auth can-i
 list replicasets.apps` gaat van nee naar ja en de meldingen stoppen.
 
 **Voor productie is dit een verzoek en geen wijziging.** De serviceaccounts op

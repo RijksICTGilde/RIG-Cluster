@@ -500,7 +500,7 @@ class PostgresConnector:
             user_exists = await conn.fetchval("SELECT 1 FROM pg_user WHERE usename = $1", validated_username)
 
             if user_exists:
-                logger.warning(f"User {validated_username} already exists on {self._host}")
+                logger.debug(f"User {validated_username} already exists on {self._host}")
                 return {"status": "exists", "message": f"User {validated_username} already exists"}
 
             # Create user with password using safe identifier quoting
@@ -763,7 +763,7 @@ class PostgresConnector:
             )
 
             if database_exists:
-                logger.warning(f"Database {validated_database_name} already exists on {self._host}")
+                logger.debug(f"Database {validated_database_name} already exists on {self._host}")
                 return {"status": "exists", "message": f"Database {validated_database_name} already exists"}
 
             # Create database with safe identifier quoting
@@ -971,7 +971,7 @@ class PostgresConnector:
             )
 
             if schema_exists:
-                logger.warning(f"Schema {validated_schema_name} already exists in database {validated_database}")
+                logger.debug(f"Schema {validated_schema_name} already exists in database {validated_database}")
                 return {"status": "exists", "message": f"Schema {validated_schema_name} already exists"}
 
             # Create schema with safe identifier quoting

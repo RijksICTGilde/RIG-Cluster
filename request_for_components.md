@@ -9,48 +9,89 @@ doen staat er per punt bij, en dat is met opzet zo klein mogelijk gehouden.
 
 ---
 
-## 1. De foutmelding bij een formulierveld is onzichtbaar (lotc-forms)
+## 1. De foutmelding bij een formulierveld is onzichtbaar bij drie veldsoorten (lotc-forms)
 
-**Wat er gebeurt.** Een `<c-text-input-field error="...">` rendert een
-`<nldd-form-field-error-text ... invalid>` met de juiste tekst, en die is in de browser
-`display: none` met hoogte 0. Op elk soort veld. De gebruiker ziet een rood kader en
-niet wat er mis is; `aria-invalid` staat alleen binnen de schaduwboom, dus voor een
-schermlezer is er ook niets.
+**Opgelost voor vier veldsoorten.** Dit punt ging over `nldd-form-field-error-text`, dat
+alleen foutregels toonde waarvan het id in `error-message` OP HET INVOERVELD stond terwijl
+`lotc-forms` daar `error-message-ids` schreef. NLDD 0.8.84 heeft dat element vervangen
+door `nldd-validation-list`, en de veldsjablonen van tekst, tekstvlak, datum en bestand
+schrijven nu zelf `invalid unmet="<id>-error"` op de besturing. Daar werkt het.
 
-**Waar het misgaat.** `nldd-form-field._syncErrorText()` bepaalt zelf welke foutregels
-zichtbaar zijn:
+**Wat er nog gebeurt.** Bij drie veldsoorten komt de melding er nog steeds op hoogte 0
+uit. `nldd-validation-list` vraagt de BESTURING welke eisen onvervuld zijn: een item is
+zichtbaar als de besturing `invalid` draagt EN het id van het item in haar `unmet` staat.
+`nldd-form-field` knoopt een lijst zonder `for` aan wat `_findInput()` oplevert.
 
-    const i = veld.hasAttribute("invalid")
-    const o = (veld.getAttribute("error-message") ?? "").split(" ")
-    regel.toggleAttribute("invalid", i && o.includes(regel.id))
+| veldsoort | wat er mist |
+|---|---|
+| `select-field`, NLDD-tak | de `<nldd-combo-box>` krijgt `invalid` maar geen `unmet` |
+| `select-field`, `native`-tak | de `<select>` krijgt alleen `aria-invalid`, geen `invalid` en geen `unmet` |
+| `checkbox-field`, losse tak | besturing is goed bedraad, maar staat als enige veldsoort NIET in een `<nldd-form-field>`, dus knoopt niemand de lijst eraan |
+| `checkbox-field`, groepstak | `_findInput()` levert het eerste aankruisvakje BINNEN de omhulling, en dat draagt niets |
+| `radio-button-field` | idem: de `<div role="radiogroup">` draagt niets en de lijst kijkt naar het eerste radioknopje erin |
 
-Het leest dus `error-message` OP HET INVOERVELD, en het overschrijft de `invalid` die het
-sjabloon op de foutregel zet. `lotc-forms` schrijft daarentegen
-`error-message-ids="<id>-error"` op het veld - en dat is de ANDERE richting: die
-eigenschap zet `nldd-form-field` zelf, om `aria-describedby` te bedraden. Er komt dus
-nooit een id in de lijst die de zichtbaarheid bepaalt.
+**Gemeten in chromium met NLDD 0.8.92**, op de markup die lotc-forms zelf oplevert,
+hoogte van de foutregel:
 
-**Gemeten in chromium, op dezelfde markup met alleen een ander attribuut:**
-
-| markup op het invoerveld | display | hoogte | aria-describedby |
-|---|---|---|---|
-| `invalid error-message-ids="a-error"` (wat lotc-forms doet) | none | 0 | (leeg) |
-| `invalid error-message="b-error"` | block | 18 | b-error |
+| markup | hoogte |
+|---|---|
+| `<nldd-text-field ... invalid unmet="a-error">` (wat lotc-forms doet) | 20 |
+| `<nldd-combo-box ... invalid>` (wat lotc-forms doet) | 0 |
+| `<nldd-combo-box ... invalid unmet="b-error">` | 20 |
+| `<select ... aria-invalid="true">` (wat lotc-forms doet) | 0 |
+| `<select ... aria-invalid="true" invalid unmet="c-error">` | 20 |
+| losse `<nldd-checkbox-field ... invalid unmet="d-error">` + lijst zonder `for` (wat lotc-forms doet) | 0 |
+| dezelfde markup met `<nldd-validation-list for="d">` | 20 |
+| groepsomhulling met `invalid unmet` + lijst zonder `for` | 0 |
+| groepsomhulling met `id` + `invalid unmet` + lijst met `for` | 20 |
 
 **Waarom dat pijn doet.** Alles ziet er goed uit: het element staat er, met de goede
-tekst, in de goede slot, met `invalid` erop in de bron. Alleen op het scherm staat het
-niet. Elke assertie op de HTML is groen.
+tekst, met een id, in de goede lijst. Alleen op het scherm staat het niet. Elke assertie
+op de HTML is groen. Daarom meet `tests/e2e/test_lotc_veldfout_zichtbaar.py` de HOOGTE per
+veldsoort en niet de markup.
 
-**Wat wij intussen doen.** Een eigen kopie van `components/_forms.j2` op de searchpath,
-waarin `nldd_field` de besturing bedraadt: `error-message-ids` eraf, `invalid`,
-`aria-invalid="true"` en `error-message="<id>-error"` erop. Zie
-`opi/forms/lotc_attrs.py` (`bedraad_foutmelding`) en
-`tests/test_lotc_foutmelding_veld.py`, dat onze kopie naast de geinstalleerde legt zodat
+**Wat wij intussen doen.** Eigen kopieën van `components/select-field.html.j2` en
+`components/checkbox-field.html.j2` op de searchpath: de eerste zet `invalid unmet` op de
+besturing in beide NLDD-takken, de tweede geeft de lijst van de losse tak `for="<id>"`. De
+groepstak en radio zijn NIET gerepareerd - daar zit de reparatie in `_findInput()` en dus
+bij jullie. Geen veld van dit portaal met die twee widgets is `required` of heeft een
+validator, dus er is vandaag geen weg naar een serverfout op zo'n veld.
+`tests/test_lotc_foutmelding_veld.py` legt beide kopieën naast de geinstalleerde, zodat
 een nieuwe versie van lotc-forms opvalt.
 
-**Voorstel.** In `lotc-forms` `error-message` schrijven in plaats van
-`error-message-ids`, en `aria-invalid` op de groepsvelden (radio, aankruisvakjes) zetten
-- die hebben geen invoerelement met een schaduwboom die het voor ze doet.
+**Voorstel.** `unmet` schrijven in beide takken van `select-field`, `invalid` erbij op de
+native `<select>`, en de losse aankruisvakje-tak de lijst een `for` geven. Voor de
+groepsvelden: `nldd-form-field._adoptValidationLists()` de OMHULLING laten aanwijzen als
+die zelf `invalid` draagt, in plaats van altijd het eerste invoerelement erbinnen.
+
+---
+
+## 1b. Een leeg verplicht veld wordt door de BROWSER geweigerd, in zijn eigen taal
+
+**Wat er gebeurt.** Sinds 0.8.92 melden de veldcomponenten hun `required` via
+`ElementInternals` aan het formulier. `form.checkValidity()` is daardoor `false` zodra een
+verplicht veld leeg is, `requestSubmit()` weigert te versturen, en de browser toont zijn
+eigen tekstballon. Op een Nederlandstalig portaal staat er dan "Please fill out this
+field." - de taal van de BROWSER, niet die van de pagina.
+
+**Gemeten**, op dezelfde pagina en hetzelfde lege formulier:
+
+| versie | `form.checkValidity()` | wat de gebruiker ziet |
+|---|---|---|
+| NLDD 0.8.80 | `true` | onze eigen melding onder het veld, uit de server |
+| NLDD 0.8.92 | `false` | "Please fill out this field." in een tekstballon |
+
+**Waarom dat pijn doet.** Het verzoek haalt de server niet eens, dus geen van onze
+veldspecifieke regels draait en geen van onze meldingen verschijnt. En de tekstballon is
+niet te vertalen en niet te stijlen.
+
+**Wat wij intussen doen.** `novalidate` op de formulieren waarvan de velden op de server
+gevalideerd worden, zodat de validatie één eigenaar houdt.
+`tests/test_template_structure.py` bewaakt dat.
+
+**Voorstel.** Een manier om de melding te vertalen (de `translations`-eigenschap die
+andere componenten al kennen), of een stand waarin het veld zijn `required` wel voor
+`aria-required` gebruikt maar niet als constraint aan het formulier meldt.
 
 ---
 
@@ -135,17 +176,31 @@ het staat hier zodat de volgende niet opnieuw gaat zoeken.
 
 ## 7. Iconen: de lijst en de bundel lopen uiteen
 
-**Wat er gebeurt.** `icons.json` van `lord_of_the_components` noemt 327 namen; de
-`nldd.js` die de browser laadt bevat er 271. De 56 namen ertussen bestaan op papier en
-renderen als niets, zonder foutmelding. `media-pause` en `square-arrow-down` zijn er twee
-van, en die stonden allebei in onze interface.
+**Wat er gebeurt.** `icons.json` van `lord_of_the_components` noemt onder de set `nldd`
+677 namen; de `dist/*.js` die de browser laadt tekent er 358 en verwijst er 328 door, dus
+686 namen renderen werkelijk. De namen die alleen in de lijst staan renderen als niets,
+zonder foutmelding.
+
+Gemeten op NLDD 0.8.92 (pin 172300a) zijn dat er nog 2: `stack-code` en
+`rectangle-stack-chevron-left-forward-slash-chevron-right`. Op 0.8.80 waren het er 56, en
+`media-pause` was er een van terwijl hij in onze interface stond. Het gat is dus vrijwel
+dicht, maar de mechaniek is niet veranderd.
+
+**En welke naam de goede is, wisselt per versie.** Met NLDD 0.8.80 zat
+`square-and-arrow-down` in de bundel en `square-arrow-down` alleen in de lijst; met
+0.8.92 tekent `square-arrow-down` en bestaat `square-and-arrow-down` helemaal niet meer,
+in de lijst noch in de bundel. Wie de ene naam kiest omdat hij ooit gemeten is, heeft na
+een bump de verkeerde - en ziet dat niet, want het blijft een leeg `<svg>` zonder een
+enkele tekening erin.
 
 **Waarom dat pijn doet.** Een naam die niet bestaat is stil. Wij hadden een test die
 precies hierop moest bewaken, en die las de LIJST in plaats van de BUNDEL: hij was
-jarenlang groen terwijl er 37 lege plekken in de interface stonden.
+jarenlang groen terwijl er op 0.8.80 37 lege plekken in de interface stonden.
 
 **Wat wij intussen doen.** `opi/web/nldd_iconen.py` leest de namen uit de geleverde
-bestanden, en `tests/test_lotc_icon_mapping.py` gebruikt die als poort.
+bestanden, en `tests/test_lotc_icon_mapping.py` gebruikt die als poort. `LOTC_STRICT=1`
+in CI vangt hem inmiddels ook: die maakt een onbekende iconnaam een `ComponentError` in
+plaats van een leeg vierkantje.
 
 **Voorstel.** Of de lijst gelijktrekken met wat er geleverd wordt, of `<nldd-icon>` laten
 klagen (console-waarschuwing) bij een naam die hij niet kent.

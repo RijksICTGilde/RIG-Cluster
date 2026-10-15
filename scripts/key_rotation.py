@@ -653,8 +653,8 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 #: without conversion that stops working the moment A goes away.
 #:
 #: The last two read like examples and are not. ``PROJECT_REPO_PASSWORD`` is the default
-#: ``odcn-production`` and ``local`` fall back to (only ``sandboxed-local`` overrides it), and the
-#: migration script carries a copy of that same value. Both open with the platform key.
+#: ``odcn-production`` falls back to (``sandboxed-local`` overrides it), and the migration script
+#: carries a copy of that same value. Both open with the platform key.
 #:
 #: ``projects/age-secret-github.txt`` stood here too, a whole file that was one armored block.
 #: It was removed from the tree: nothing read it and the token in it was withdrawn.
@@ -664,7 +664,6 @@ def write_loose_value(field_: LooseValue, new_value: str) -> None:
 #: GitHub token, and skips the git-server passwords next to them -- see ``is_github_token``.
 LOOSE_VALUE_FILES = (
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml",
-    "bootstrap/rig-system/kustomize/operations-manager/overlays/local/configmap.yaml",
     "operations-manager/python/.env",
     "operations-manager/python/scripts/migrate_project_to_production.py",
 )
@@ -688,8 +687,8 @@ def all_loose_values(paths: list[Path]) -> list[LooseValue]:
 def is_github_token(plaintext: str) -> bool:
     """Whether a decrypted value is a GitHub token, by the shapes the secret scanner knows.
 
-    This is what tells the three PAT carriers from the six loose values next to them. The two
-    configmaps and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
+    This is what tells the PAT carriers from the other loose values next to them. The
+    ``odcn-production`` configmap and ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and
     ``GIT_ARGO_APPLICATIONS_PASSWORD``, which are the platform's OWN git-server credentials on
     the same platform key; writing a GitHub PAT over those would take OPI's access to its three
     repositories away. Measured on the plaintext rather than settled by a list of file names,

@@ -29,7 +29,7 @@ from opi.core.template_helpers import (
     static_url,
 )
 from opi.core.version import get_version_info
-from opi.forms.lotc_attrs import attr_escape, bedraad_foutmelding, field_attrs
+from opi.forms.lotc_attrs import attr_escape, field_attrs
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
@@ -118,11 +118,6 @@ templates_lotc.env.globals["field_attrs"] = field_attrs
 # staan. Zonder valt de formulierlaag om op elk veld dat de macro's gebruikt.
 
 templates_lotc.env.filters["attr_escape"] = attr_escape
-
-# De foutmelding bij een formulierveld zichtbaar maken. Onze kopie van
-# templates_lotc/components/_forms.j2 roept dit filter aan op de besturing; zie
-# bedraad_foutmelding voor de meting waarom dat nodig is en wanneer het weg kan.
-templates_lotc.env.filters["foutbedrading"] = bedraad_foutmelding
 
 # Onze eigen iconnamen (de woordenschat van het oude design system, die nog in de
 # dienstdefinities staat) naar de NLDD-woordenschat. Als FILTER en niet vooraf in de data,

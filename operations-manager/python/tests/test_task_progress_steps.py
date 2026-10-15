@@ -200,10 +200,15 @@ async def test_sleep_task_names_every_step_it_takes(monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.asyncio
 async def test_wake_task_names_its_own_commit_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    from opi.services.catalog.sleep_mode import flow
     from opi.services.catalog.sleep_mode.task import handle_sleep_transition
 
     _sleep_mode_mocks(monkeypatch, transition_applies=True)
     progress = _progress()
+
+    # De tweede helft van een wek (wachten op de app, awake vastleggen) heeft zijn eigen
+    # stappen en zijn eigen testbestand; deze test gaat over de stappen van ``flow.wake``.
+    monkeypatch.setattr(flow, "finish_wake", AsyncMock(return_value=flow.WakeResult(changed=True, state="awake")))
 
     await handle_sleep_transition(
         {"project_name": "test-project", "deployment_name": "dev", "direction": "wake"}, progress

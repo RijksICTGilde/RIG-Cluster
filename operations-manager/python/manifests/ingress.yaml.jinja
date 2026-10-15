@@ -62,7 +62,7 @@ metadata:
     nginx.ingress.kubernetes.io/configuration-snippet: |
 {% if rewrite %}
 {% set rewrite_base = '' if rewrite == '/' else rewrite %}
-      # path/rewrite_base zijn aan de bron charset-gevalideerd (_SAFE_PATH_PATTERN).
+      # path/rewrite_base zijn aan de bron charset-gevalideerd (SAFE_PATH_PATTERN in opi/utils/url_paths.py).
       rewrite "^{{ path }}/?(.*)$" "{{ rewrite_base }}/$1" break;
 {% endif %}
       more_set_headers "X-Content-Type-Options: nosniff";

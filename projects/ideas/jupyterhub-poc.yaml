@@ -1,0 +1,92 @@
+# JupyterHub met KubeSpawner als ZAD-component (RC-258), op de sandbox.
+#
+# Twee images uit images/jupyterhub-hub en images/jupyterhub-user, rechtstreeks naar de
+# in-cluster registry (docs/sandbox-image-deploy-via-registry.md) en niet via de push-API
+# van ZAD: die weg is gemeten en werkt hier niet. De Role en RoleBinding die KubeSpawner
+# nodig heeft staan in features/jupyterhub-poc/hub-role.yaml en worden in deze POC met de
+# hand toegepast: ZAD kan ze nog niet genereren.
+#
+# DIT BESTAND IS EEN REFERENTIE, GEEN BESTAND DAT JE UITROLT. ZAD leidt de technische naam
+# af van de weergavenaam en plakt er een willekeurig achtervoegsel aan, dus `name` hieronder
+# kan het nooit worden; op de sandbox werd het `jp-574`, met namespace `rig-jp-574`. Die
+# naam zit ook in de twee image-adressen hieronder, waar de README's `<projectnaam>` schrijven.
+#
+# De deployment heet `productie`, de naam die de wizard geeft (default van
+# `WIZARD_DEPLOYMENT_NAME_EDITABLE`), en dat is ook de naam op de sandbox. De twee
+# variabelen die van die naam afhangen staan daarop: noem je de deployment anders, dan
+# passen die twee mee. Zie docs/jupyterhub-poc-verslag.md.
+schema-version: 2.9
+name: jupyterhub-poc
+display-name: JupyterHub POC
+description: JupyterLab met VS Code per gebruiker, achter de Keycloak van het project
+
+clusters:
+  - sandboxed-local
+
+users:
+  - email: robbertuittenbroek@gmail.com
+    role: admin
+
+services:
+  - publish-on-web
+  - name: keycloak
+    config:
+      # sso-support en niet sso-only: op de sandbox is er geen SSO Rijk, dus de drie
+      # testgebruikers zijn lokale accounts in de realm van het project.
+      template: sso-support
+      realm-roles:
+        - name: jupyterhub-user
+          description: Toegang tot de JupyterHub van dit project
+      restrict-access:
+        enabled: true
+        realm-role: jupyterhub-user
+  - persistent-storage
+  - minio-storage
+
+components:
+  - name: hub
+    type: single
+    # 8000 is de proxy en gaat als EERSTE poort naar de ingress (application_port =
+    # inbound_ports[0], project_manager.py:5943); 8081 is de hub-API en wordt alleen een
+    # extra poort op de ClusterIP-Service, waar de user-pods op terugpraten.
+    ports:
+      inbound: [8000, 8081]
+      outbound: [443, 80]
+    path:
+      - match: /
+    uses-components: []
+    resources:
+      requests:
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+    user-env-vars:
+      # De ClusterIP-Service van dit component: generate_unique_name(deployment, component).
+      JUPYTERHUB_POC_HUB_SERVICE: productie-hub
+      # Het podlabel waarop de tenant-baseline NetworkPolicy selecteert. Gelijk aan de
+      # deploymentnaam hieronder.
+      JUPYTERHUB_POC_DEPLOYMENT_LABEL: productie
+      JUPYTERHUB_POC_USER_IMAGE: registry.sandbox.rijksapp.dev/rig:jupyterhub-poc_user-rc258
+      JUPYTERHUB_POC_USER_STORAGE: 1Gi
+      JUPYTERHUB_POC_USER_CPU_LIMIT: "1"
+      JUPYTERHUB_POC_USER_MEM_LIMIT: 2G
+      JUPYTERHUB_POC_CULL_TIMEOUT: "3600"
+      JUPYTERHUB_POC_ADMINS: poc-a
+    services:
+      - publish-on-web
+      - keycloak
+      - reference: persistent-storage
+        config:
+          - name: hub-db
+            size: 100Mi
+            mount-path: /data
+      - minio-storage
+
+deployments:
+  - name: productie
+    cluster: sandboxed-local
+    namespace: jupyterhub-poc
+    components:
+      - reference: hub
+        image: registry.sandbox.rijksapp.dev/rig:jupyterhub-poc_hub-rc258
+        imagePullPolicy: IfNotPresent

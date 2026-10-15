@@ -26,6 +26,11 @@ ervan op de plekken waar mensen zitten te wachten.
 
 Stappen tussen haakjes verschijnen alleen als dat werk echt gebeurt.
 
+Elke actie die het project herverwerkt kan daar "Lopende sync afgebroken: \<deployment\>"
+tussen hebben staan, tussen de manifesten en de ArgoCD-stap: die verschijnt alleen als de
+ronde vlak voor de push werkelijk een sync beëindigde die de volgende blokkeerde
+(`features/vastgelopen-sync-breekt-af.md`).
+
 ## De regel: een stap mag niet liegen
 
 Dit is de kern van de functie, niet een detail.

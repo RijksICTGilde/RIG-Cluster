@@ -4,7 +4,7 @@ A fully self-contained local development environment using Kind and in-cluster F
 
 ## What It Is
 
-The sandboxed-local environment is a **new cluster type** alongside `local` and `odcn-production`. It runs everything inside a single Kind cluster:
+The sandboxed-local environment is a cluster type alongside `odcn-production`. It runs everything inside a single Kind cluster:
 
 ```
 Kind Cluster (rig-sandbox)
@@ -18,7 +18,7 @@ Kind Cluster (rig-sandbox)
 └── Operations Manager
 ```
 
-Key differences from the `local` cluster type:
+Key properties:
 - **No external git**: Forgejo runs in-cluster; ArgoCD reads from Forgejo
 - **No self-signed CA**: Uses a real wildcard TLS cert for `*.sandbox.rijksapp.dev`
 - **No git daemon**: Infrastructure changes are synced to Forgejo via `task sandbox:sync`
@@ -114,11 +114,11 @@ task sandbox:destroy
 
 ### Cluster Selection
 
-The sandboxed-local environment is available as option 3 in cluster selection:
+The sandboxed-local environment is available as option 2 in cluster selection:
 
 ```bash
 task select-cluster
-# Select option 3: sandboxed-local
+# Select option 2: sandboxed-local
 ```
 
 ## Forgejo Repositories

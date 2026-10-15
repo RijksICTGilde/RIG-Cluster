@@ -93,6 +93,7 @@ def create_mock_project_manager(
     mock_instance.get_deployment_results.return_value = {
         "main": MagicMock(cluster="local", urls={"web": "https://web-main-test.example.com"})
     }
+    mock_instance.get_terminated_sync_operations.return_value = []
 
     # Processing error (returned when process_project_from_git returns False)
     mock_instance.get_processing_error.return_value = "Mock processing error"

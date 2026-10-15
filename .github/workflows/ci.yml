@@ -55,41 +55,42 @@ jobs:
           chmod +x /tmp/sops
           sudo mv /tmp/sops /usr/local/bin/sops
           sops --version --disable-version-check
+      # test_keycloak_eigen_image en test_sandbox_build_push renderen overlays met een
+      # echte kustomize; zonder de binary slaan die toetsen stil over. Dezelfde versie als
+      # images/cmp-kustomize-sops/Dockerfile.
+      - name: Install kustomize
+        run: |
+          curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v5.8.1/kustomize_v5.8.1_linux_amd64.tar.gz" | tar xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/kustomize" /usr/local/bin/kustomize
+          kustomize version
+      # LOTC_STRICT=1 laat de componentlaag een onbekende ATTRIBUUTWAARDE weigeren (een
+      # iconnaam die nergens op uitkomt, een literal buiten een enum) in plaats van hem
+      # stil te renderen. Hier en niet in de productie-image: in CI hoort zo'n aanroep
+      # rood te zijn, in productie mag hij geen 500 opleveren.
       - name: Run tests with coverage
+        env:
+          LOTC_STRICT: "1"
         run: uv run coverage run --source=opi -m pytest tests/ -v -m "not slow and not e2e and not requires_infra and not sandbox" --tb=short
       - name: Coverage report
         run: uv run coverage report --fail-under=21
 
-  # De jar van de Keycloak-emailSender staat in git (de pod krijgt hem uit een ConfigMap en
-  # niet van het netwerk, want aan die jar hangt een startvlag waarzonder Keycloak weigert
-  # te starten). Een gebouwd artefact in git kan gaan afwijken van de bron ernaast, en dan
-  # draait er iets anders dan er te lezen valt. Deze job bouwt hem opnieuw en vergelijkt
-  # byte voor byte.
-  #
-  # Dat kan omdat de bouw reproduceerbaar is (project.build.outputTimestamp in de pom). De
-  # JDK-MAJOR moet wel gelijk zijn aan die waarmee de ingecheckte jar is gebouwd: het
-  # manifest noemt Build-Jdk-Spec. Vandaar Temurin 21, hier gepind.
-  keycloak-relay-email-sender:
+  # De twee Java-pakketten die images/keycloak-zad/ tot een Keycloak-image bundelt. Die
+  # imagebouw draait alleen op workflow_dispatch, dus zonder deze job draaien hun toetsen
+  # bij een pull request nergens. Temurin 21: dezelfde JDK-major als de bouwfase.
+  keycloak-providers:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [relay-email-sender, custom-mapper]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
-      - name: Tests van de provider
-        working-directory: keycloak-migration/relay-email-sender
+      - name: Tests van ${{ matrix.module }}
+        working-directory: keycloak-migration/${{ matrix.module }}
         run: mvn -B test
-      - name: De ingecheckte jar is de bron ernaast
-        run: |
-          set -e
-          JAR=keycloak-relay-email-sender-1.0.0.jar
-          DOEL=infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers/$JAR
-          (cd keycloak-migration/relay-email-sender && mvn -q -B clean package)
-          if ! cmp -s "keycloak-migration/relay-email-sender/target/$JAR" "$DOEL"; then
-            echo "::error file=$DOEL::De ingecheckte jar wijkt af van een verse bouw van de bron. Draai 'task build-keycloak-relay-email-sender' en commit de jar mee."
-            exit 1
-          fi
 
   license-check:
     runs-on: ubuntu-latest

@@ -14,7 +14,11 @@ Naast fouten (`errors`) kent de deploymentstatus nu afwijkingen (`deviations`): 
 - `is verwijderd, maar het cluster maakt de verwijdering niet af`: de laatste geslaagde sync heeft de resource al als Pruned gemeld maar hij bestaat nog (bijv. een vastgelopen finalizer); opnieuw syncen lost dit niet op.
 - `staat niet meer in git en wordt bij de volgende sync opgeruimd`: prune moet nog gebeuren.
 - `wijkt af van git en wordt bij de volgende sync bijgewerkt` / `wijkt af van git; auto-sync staat uit`: een gewone diff.
+- `staat niet meer in git, maar de sync die hem moet opruimen loopt al <duur> vast`: prune moet nog gebeuren, maar de sync die dat moet doen loopt vast.
+- `wijkt af van git, maar de sync die hem moet bijwerken loopt al <duur> vast`: een gewone diff, met diezelfde vastgelopen sync ervoor.
 - `nog bezig`: resource met health Progressing zonder message (mét message staat hij al bij de fouten).
+
+De twee `loopt al <duur> vast`-redenen vervangen hun "bij de volgende sync"-variant zodra er een sync blokkeert die al 300s of langer loopt, of die geen leesbaar begin heeft en daarmee juist niet meer verandert. Die belofte lost dan niemand in: zolang die sync staat slaat ArgoCD elke volgende over, en hij eindigt niet uit zichzelf. Zie `features/vastgelopen-sync-breekt-af.md` voor wat hem wel afbreekt.
 
 ## Implementatie
 

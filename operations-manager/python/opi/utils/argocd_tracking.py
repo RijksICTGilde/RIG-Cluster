@@ -77,6 +77,12 @@ def tracked_resource_from_item(item: dict[str, Any]) -> TrackedResource | None:
     name = metadata.get("name")
     if not name:
         return None
+    if metadata.get("ownerReferences"):
+        # It belongs to its owner and goes when that goes. Operators copy the instance
+        # label onto what they create: on odcn-production, 9 October 2026, the pod and
+        # services of the live CNPG database algor-odc-db read as an orphan of a
+        # nonexistent Application "algor-odc-db".
+        return None
 
     tracking_id = (metadata.get("annotations") or {}).get(TRACKING_ID_ANNOTATION)
     from_label = not tracking_id

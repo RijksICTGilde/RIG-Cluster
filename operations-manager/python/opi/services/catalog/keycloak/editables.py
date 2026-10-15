@@ -6,9 +6,9 @@ stay hand-written rather than derived from the config model (the hard 10%).
 
 from __future__ import annotations
 
-from opi.forms.editables.converters import EmptyToNoneConverter
+from opi.forms.editables.converters import EmptyToNoneConverter, LogoutPathConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import RealmRoleValidator, UrlValidator
+from opi.forms.editables.validators import LogoutPathValidator, RealmRoleValidator, UrlValidator
 
 #: GEEN default, en dat is de hele reparatie.
 #:
@@ -79,6 +79,14 @@ KEYCLOAK_RESTRICT_ACCESS_ERROR_MSG_EDITABLE = Editable(
     yaml_path="services/keycloak/config/restrict-access/error-message",
     default="${accessDeniedNoPermission}",
     depends_on="services/keycloak/config/restrict-access/enabled",
+    virtualize=SERVICE_VIRTUALIZE,
+)
+
+KEYCLOAK_LOGOUT_PATH_EDITABLE = Editable(
+    yaml_path="services/keycloak/config/logout-path",
+    validator=LogoutPathValidator(),
+    converter=LogoutPathConverter(),
+    remove_when_none=True,
     virtualize=SERVICE_VIRTUALIZE,
 )
 

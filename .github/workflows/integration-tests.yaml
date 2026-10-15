@@ -60,11 +60,14 @@ jobs:
         working-directory: operations-manager/python
         run: uv run ruff check opi/ tests/
 
-      # NOTE: Only check formatting on new integration test files.
-      # Pre-existing code has formatting issues that will be fixed in a separate PR.
-      - name: Run ruff formatter check (integration tests only)
+      # Dezelfde scope als het commando dat CLAUDE.md voorschrijft (`uv run ruff format .`).
+      # Was eerder beperkt tot tests/integration/ omdat er elders nog ongeformatteerde code
+      # stond; die schuld was uiteindelijk een enkel bestand en is opgeruimd. Een smallere
+      # scope hier dan wat een ontwikkelaar draait levert een bestand op dat eindeloos heen
+      # en weer geformatteerd en teruggedraaid wordt, want geen enkele poort houdt hem tegen.
+      - name: Run ruff formatter check
         working-directory: operations-manager/python
-        run: uv run ruff format --check tests/integration/
+        run: uv run ruff format --check .
 
       - name: Run pyright type checker
         working-directory: operations-manager/python

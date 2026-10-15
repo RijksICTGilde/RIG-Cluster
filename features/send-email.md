@@ -172,8 +172,8 @@ projectnaamruimte zet.
 
 ## Het netwerkbeleid komt uit de dienst
 
-De relay draait in een eigen namespace (`rig-prd-ron` op productie, `rig-ron` op local en
-sandbox: ODCN eist dat een namespace daar met de clusterprefix begint) en niet in de
+De relay draait in een eigen namespace (`rig-prd-ron` op productie, `rig-ron` op de sandbox:
+ODCN eist dat een namespace daar met de clusterprefix begint) en niet in de
 operations-namespace, want de Calico-annotatie `egress.projectcalico.org/egressGatewayPolicy`
 neemt exact één waarde: RON aanzetten op `rig-prd-operations` kost daar het internet, en
 daarmee ArgoCD, de registry en Keycloak.
@@ -291,14 +291,21 @@ staat in **`features/keycloak-mail.md`**.
 
 ### Als de relay er bij het opstarten nog niet is
 
-De taak is non-critical en vangt ook de transportfouten (een onbereikbare relay geeft geen
-HTTP-antwoord om een `MailRelayError` van te maken, maar de fout van aiohttp) en een
-mislukte kubectl-schrijfactie. OPI boot dus door; er is alleen nog geen platformmail.
+De taak is non-critical en vangt ook de transportfouten (een onbereikbare relay komt sinds
+RC-261 als `MailRelayUnavailableError` uit de connector, maar de kubectl-aanroep en het
+ontsleutelen eromheen gooien nog steeds hun eigen fout) en een mislukte
+kubectl-schrijfactie. OPI boot dus door; er is alleen nog geen platformmail.
 
-Er is met opzet geen achtergrondlus die erop blijft wachten: het account wordt bij elke
-opstart opnieuw ingericht en is idempotent, en de relay aanzetten vraagt sowieso een
-herstart van OPI (het krijgt dan pas `MAIL_RELAY_API_URL` en het beheerdersgeheim in zijn
-omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
+**En hij blijft het proberen** (RC-261). Beide accounts zitten in de bestaande
+opstart-herhaallus van OPI (`_startup_retry_loop`, elke 60 seconden), naast database,
+projects, keycloak en oauth. Dat was er niet, en bij een verse uitrol is de relay er
+meestal nog niet als OPI opstart: `zad-platform` en `zad-keycloak` ontstonden dan pas bij
+de VOLGENDE herstart van OPI, en tot die tijd ging er geen platformmail en geen inlogmail
+uit. Een cluster zonder relay, of zonder het Keycloak-geheim, heeft niets in te richten en
+laat de lus met rust.
+
+De accounts staan met opzet NIET in `ReadinessState`: dat bepaalt of het portaal zijn
+onderhoudspagina toont, en zonder platformmail hoort het portaal gewoon te werken.
 
 ## Instellingen
 
@@ -315,6 +322,8 @@ omgeving). Dat herstartmoment is precies wanneer het account ontstaat.
 | `MAIL_KEYCLOAK_SECRET_KEY` | de sleutel in dat Secret, en de naam die het bootstraptemplate, de `secretKeyRef` van de Keycloak-deployment en de leesweg van OPI gemeen hebben |
 | `MAIL_KEYCLOAK_MESSAGES_PER_DAY` | het budget van dat account, gedeeld door alle realms |
 | `MAIL_KEYCLOAK_FROM_NAME` | de weergavenaam van dat account. Er is geen eigen ADRES meer: inlogpost vertrekt onder het kale basisadres van het cluster, net als de post van de portal, en onderscheidt zich alleen nog door deze naam |
+| `MAIL_RELAY_CHECK_INTERVAL_SECONDS` | hoe vaak de watcher `GET /healthz/ready` op de relay doet (60) |
+| `MAIL_RELAY_DOWN_ALERT_SECONDS` | hoe lang de relay niet ready mag zijn voor het ntfy-bericht volgt (300) |
 
 Per cluster staan de relay-hostnaam, de poort, de namespace en het BASISadres in
 `opi/core/cluster_config.py` (`get_mail_from_address`). Het adres dat een project
@@ -333,7 +342,7 @@ Een upstream is niet meer dan **host, poort, TLS, en eventueel inloggegevens**. 
 | Waar | Wat het werkelijk is |
 |---|---|
 | Productie | `rmrmail.rijksweb.nl:25` over RON, geen auth (hun toelating staat op ons uitgaande IP) |
-| Sandbox en local | de SMTP-sink `rig-mail-sink:25` in dezelfde namespace, geen auth |
+| Sandbox | de SMTP-sink `rig-mail-sink:25` in dezelfde namespace, geen auth |
 | Een tweede cluster, later | het chisel-eindpunt naar de relay op het hoofdcluster, **wél** auth, want onze eigen submissiepoort eist die |
 
 Vandaag varieert daarvan alleen de host, en die staat per cluster in `MAIL_UPSTREAM_HOST` in het geheim. De poort staat vast op 25 en dat is geen toeval: de Service van de sink vertaalt 25 naar 1025, zodat de sink als niet-root kan draaien zonder dat de poort een instelling per cluster hoeft te worden. Een numerieke instelling via een omgevingsvariabele is hier precies de knop die je niet wilt, want bij een verkeerd type valt Stalwart stil terug op zijn standaard 25 en dan werkt productie per ongeluk wel en de sandbox stil niet.
@@ -352,7 +361,7 @@ Tot die tweede upstream er is, kiest het cluster en niet de service. Elk scenari
 
 ## De sandbox: een sink in plaats van een echte mailserver
 
-`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlays `local` en `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar. Ingeladen wordt hij via de component `sink/as-upstream` en niet via `sink/base` rechtstreeks: die component levert de sink samen met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS: "true"`, want de sink draagt een zelfondertekend certificaat en zonder die schakelaar blijft elke bezorging steken op `invalid peer certificate`. Zo kan een cluster de sink niet krijgen zonder de schakelaar.
+`infrastructure/bootstrap/infrastructure/mail/sink/` bevat Mailpit, ingeladen door alleen de overlay `sandboxed-local`. Op ODCN staat hij er niet, dus dat image hoeft niet langs de registry en het signature-beleid daar. Ingeladen wordt hij via de component `sink/as-upstream` en niet via `sink/base` rechtstreeks: die component levert de sink samen met `MAIL_UPSTREAM_ALLOW_INVALID_CERTS: "true"`, want de sink draagt een zelfondertekend certificaat en zonder die schakelaar blijft elke bezorging steken op `invalid peer certificate`. Zo kan een cluster de sink niet krijgen zonder de schakelaar.
 
 Hij doet precies twee dingen: hij neemt SMTP aan en bezorgt niets, en hij geeft elk bericht integraal terug via een HTTP-API (`/api/v1/messages`, `/api/v1/message/{id}` met `From` en `ReturnPath`, en `/api/v1/message/{id}/headers`). Niets wordt bewaard, want er is geen `MP_DATABASE` gezet: een herstart is de manier om schoon te beginnen.
 
@@ -383,8 +392,9 @@ Het netwerkbeleid van de relay staat in de dev-overlays op precies deze sink dic
 
 ## Wat er nog niet af is
 
-**De relay draait op de sandbox, en op productie nog niet.** Op 19 augustus 2026 liep er een
-bericht doorheen en eindigde `scripts/mail_identity_check.py` met exitcode 0: alle vier de
+**De relay draait op de sandbox en op productie** (`rig-mail-relay` in `rig-prd-ron`). Op
+19 augustus 2026 liep er een bericht doorheen en eindigde `scripts/mail_identity_check.py`
+met exitcode 0: alle vier de
 identiteitsregels doen wat ze beloven. De weg naar de upstream is los daarvan bewezen. Op 17 augustus
 2026 gemeten vanuit een pod met `rig-ron`-egress: `rmrmail.rijksweb.nl` antwoordt op poort 25
 met een banner en neemt een testbericht aan. De eerdere meting, waarin alle drie de poorten
@@ -394,14 +404,19 @@ toestaat; die pakketten hadden de pod nooit verlaten. Zie `docs/ron-koppeling.md
 Wat dat opleverde en wat hier verwerkt is: poort 25 en niet 587, geen authenticatie maar een
 toelating op ons uitgaande IP, STARTTLS, en 30 MB als grens aan hun kant.
 
-De overlay in `infrastructure/bootstrap/clusters/*/kustomization.yaml` staat nog
-uitgecommentarieerd tot de geheimen zijn aangemaakt (zie hieronder).
+De relay draait op elk cluster via zijn EIGEN Application (`ron-infrastructure`) en niet
+via `infrastructure/bootstrap/clusters/*/kustomization.yaml`; de reden staat bij stap 2b
+hieronder.
 
-### Wat er bij het aanzetten werkelijk moet gebeuren
+### Wat er bij het aanzetten moet gebeuren
 
-Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen.
+Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi te zeggen. Op
+sandbox en odcn-production is dit gedaan; dit is de lijst voor een volgend cluster, en de
+plek om te kijken als de dienst niets doet.
 
-1. **De geheimen genereren**: `task generate-secrets-for-cluster <cluster>`. Er zijn er
+1. **De geheimen genereren**: `task select-cluster` en dan
+   `task generate-infrastructure-secrets-for-cluster` (die leest de keuze uit
+   `CLUSTER_TYPE`). Er zijn er
    twee (`mail-relay-secret.yaml` en `mail-db-credentials-secret.yaml` in
    `infrastructure/bootstrap/infrastructure/secrets/templates/`) en er is niets met de
    hand in te vullen: de sjablonen zijn cluster-agnostisch. De per-cluster-waarden
@@ -422,19 +437,20 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    daarom als `namespace-ron.yaml` in de bootstrap-overlay
    (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
    (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
-   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system` past hem met
-   kubectl toe, buiten ArgoCD om. Wat daarna nog een handeling is (de sleutel staat niet
-   in git): het sleutelsecret in de namespace zetten, dezelfde inhoud als in
-   `rig-prd-operations`:
+   `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` past hem met
+   kubectl toe, buiten ArgoCD om.
 
-   ```bash
-   kubectl get secret sops-age-key -n rig-prd-operations -o yaml \
-     | sed 's/namespace: rig-prd-operations/namespace: rig-prd-ron/' | kubectl apply -f -
-   ```
+   **Diezelfde taak zet sinds RC-261 ook het sleutelsecret in die namespace**: de CMP
+   leest `sops-age-key` in de namespace van de app, dus zonder hem rendert
+   `ron-infrastructure` niet en komt de relay er niet. Dat was handwerk en ontbrak dus op
+   elk cluster waar niemand die stap deed. De taak heeft de sleutel al in de hand
+   (`KEY_FILE`) en maakt het secret alleen aan als het er nog NIET is: een apply met de
+   lokale sleutel zou op een cluster met een andere platformsleutel een rotatie zijn, en
+   die loopt langs `scripts/set-sops-key-secret.py` (zie
+   `instructions/sops-sleutel-in-het-cluster.md`).
 
-2b. **De eigen Application aanzetten**: de regel
-   `- argocd-application-ron-infrastructure.yaml` uit het commentaar halen in
-   `bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml` en de
+2b. **De eigen Application**: `- argocd-application-ron-infrastructure.yaml` in
+   `bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml`, en dan de
    bootstrap toepassen. NIET de mail-regel in
    `infrastructure/bootstrap/clusters/odcn/kustomization.yaml`: de CMP injecteert de
    destination-namespace over die hele build, en dat slaat de rig-prd-ron-resources plat
@@ -443,14 +459,18 @@ Het is niet één regel, en dat is belangrijker om op te schrijven dan om mooi t
    het gegenereerde geheim in de namespace van de relay te staan (de tweede rendering
    hierboven).
 3. **OPI de schakelaar geven.** Dit is de stap die je vergeet en die zich uit als "de dienst
-   doet niets": `MAIL_RELAY_API_URL` staat uitgecommentarieerd in
-   `bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/patches/deployment.yaml`
-   en moet aan. Het beheerdersgeheim staat er al bij (`optional: true` uit
-   `mail-relay-credentials`), dus daar hoeft niets meer te gebeuren zodra stap 1 gedraaid is.
-4. **Herstarten en de log lezen.** `ensure_platform_mail_account` draait bij het opstarten
-   en zegt of het platformaccount klaarstaat; het maakt dan ook de Secret met zijn
-   wachtwoord aan. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat het die stap stil over —
-   geen fout, maar ook geen mail.
+   doet niets": `MAIL_RELAY_API_URL` in
+   `bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/patches/deployment.yaml`.
+   Op sandboxed-local en odcn-production staat hij AAN en wijst hij naar
+   `rig-mail-relay.<ron-namespace>.svc.cluster.local:8080`. Het beheerdersgeheim staat er
+   al bij (`optional: true` uit `mail-relay-credentials`), dus daar hoeft niets meer te
+   gebeuren zodra stap 1 gedraaid is.
+4. **De log lezen.** `ensure_platform_mail_account` draait bij het opstarten en zegt of
+   het platformaccount klaarstaat; het maakt dan ook de Secret met zijn wachtwoord aan. Is
+   de relay er nog niet, dan probeert de opstart-herhaallus het elke 60 seconden opnieuw
+   (zie "Als de relay er bij het opstarten nog niet is"), dus een herstart van OPI is
+   hiervoor niet meer nodig. Blijft `MAIL_RELAY_API_URL` leeg, dan slaat het die stap stil
+   over: geen fout, maar ook geen mail.
 5. **DNS**: niets. Dit was de langste post op deze lijst en hij is vervallen. Het
    afzenderdomein is `rijksoverheid.nl`, en dat autoriseert de uitgaande IP's van de
    upstream al via `v=spf1 redirect=spf-a.ssonet.nl` — de upstream ís hun eigen
@@ -496,6 +516,82 @@ Verder nog niet gebouwd, en bewust:
 - **Echte bounces.** Die zijn inkomende post; het plan kiest daarvoor een mailbox bij het
   mailteam die OPI over IMAP leegtrekt. Fase 2.
 
+## Storingen
+
+### De relay staat in CrashLoopBackOff en de log zegt `security.ip-blocked`
+
+**Wat je ziet.** De pod `rig-mail-relay` komt niet ready, elke probe krijgt een reset, en
+elke uitrol van een project met send-email faalt op
+`Cannot connect to host rig-mail-relay.rig-prd-ron.svc.cluster.local:8080`. In de log van
+de relay staat `Banned due to scan (security.scan-ban)` met een `remoteIp` dat een
+NODE-adres is, en daarna `Blocked IP address (security.ip-blocked)`.
+
+**Wat er aan de hand is.** Stalwart v0.11.8 telt een HTTP-verbinding die sluit voordat het
+verzoek compleet is als scan (`reason = "connection closed before message completed"`), en
+na 30 per dag (`server.auto-ban.scan.rate`, standaard `30/1d`) verbant hij het IP. De
+probes van de kubelet komen van het node-adres en hebben de default `timeoutSeconds: 1`,
+dus een trage relay laat ze afbreken: op 13 oktober 2026 verbande de relay op productie
+daarmee de kubelet, en lag hij twee uur plat.
+
+Sinds RC-261 staat `[server.allowed-ip]` met `10.0.0.0/8`, `172.16.0.0/12` en
+`192.168.0.0/16` in de relayconfiguratie, en al het verkeer naar de relay is intern. Een
+nieuwe ban kan dus niet meer ontstaan. `scripts/mail_autoban_check.py` toetst dat tegen een
+draaiende relay.
+
+**Een BESTAANDE ban heft die regel niet op.** Gemeten tegen v0.11.8, en het is ook wat de
+accept-lus in `listener/listen.rs` doet: die kijkt alleen naar de blocked-lijst. Die lijst
+staat in de configopslag (tabel `s` in de database `mailrelay` op `rig-db`) en overleeft
+een herstart, dus de relay herstelt zich niet zelf.
+
+**Herstel met de hand.** Het IP uit de logregel, de eigen rol `mailrelay` (niet `postgres`), en dit patroon: wachtwoord via stdin (niet argv, want dat staat in het auditlog van de API-server en van elke proxy ertussen), en TCP (niet socket, want de pod UID faalt in peer-auth).
+
+```bash
+# Het verbannen adres opzoeken
+kubectl -n rig-prd-ron get secret mail-db-credentials -o jsonpath='{.data.password}' | base64 -d \
+  | kubectl -n rig-prd-operations exec -i rig-db-1 -c postgres -- sh -c \
+    'PGPASSWORD=$(cat) exec psql -h localhost -U mailrelay -d mailrelay -c "SELECT convert_from(k, '\''UTF8'\'') FROM s WHERE convert_from(k, '\''UTF8'\'') LIKE '\''server.blocked-ip%'\'';"'
+
+# En weghalen
+kubectl -n rig-prd-ron get secret mail-db-credentials -o jsonpath='{.data.password}' | base64 -d \
+  | kubectl -n rig-prd-operations exec -i rig-db-1 -c postgres -- sh -c \
+    'PGPASSWORD=$(cat) exec psql -h localhost -U mailrelay -d mailrelay -c "DELETE FROM s WHERE k = '\''server.blocked-ip.<ip>'\''::bytea;"'
+
+# De relay leest de lijst bij het starten, dus de pod moet eraf
+kubectl -n rig-prd-ron delete pod -l app=rig-mail-relay
+```
+
+`PGPASSWORD=$(cat)` en geen `read`: `base64 -d` levert het wachtwoord zonder newline, en `read` geeft dan exitcode 1 en breekt een `&&`-keten.
+
+### Een uitrol faalt op de mailrelay
+
+Sinds RC-261 zegt de melding dat zelf: `De mailservice van het platform is niet
+bereikbaar, dit ligt niet aan je project (...)`. Op vier taaksoorten staat daarnaast
+`error_category: InternalError` op de gefaalde taak (`Fault.PLATFORM`, exit 2 in de
+zad-cli): `create_project`, `refresh_project`, `refresh_deployment` en `delete_component`.
+Daarvoor kwam dit aan als `processing_failed` zonder categorie, en dus als "niet toe te
+schrijven" op een moment waarop er niets aan het project te repareren was.
+
+Op de overige schrijfpaden gebeurt dat niet, met `upsert_deployment` vooraan: die melden
+een mislukte uitrol zonder `error_type` en krijgen daarom helemaal geen categorie, ook niet
+`Unknown`, want `_with_error_category` slaat een resultaat zonder `error_type` over. Dat
+gat is breder dan mail en staat als eigen taak op PR #236.
+
+Een podwissel van de relay kost geen uitrol meer: de connector herhaalt een connectfout
+30 seconden lang (`opi/utils/connect_retry.py`, dezelfde lus als de ArgoCD-connector).
+
+### Niemand merkt het als de relay plat ligt
+
+Dat was de werkelijke les van 13 oktober 2026, en OPI meet het sinds RC-261 zelf: elke
+`MAIL_RELAY_CHECK_INTERVAL_SECONDS` (60) een `GET /healthz/ready` op de relay, en is die
+langer dan `MAIL_RELAY_DOWN_ALERT_SECONDS` (300) niet ready, dan gaat er EEN bericht naar
+het ntfy-topic van de log_watcher, en EEN bij herstel. Geen melding per tik: een kanaal dat
+elke minuut afgaat is na een uur onbruikbaar.
+
+Er is in deze repo geen Alertmanager-routering, dus een PrometheusRule zou mogelijk in het
+niets vuren; ntfy is het enige kanaal waarvan bewezen is dat het aankomt
+(`features/log-watcher.md`). Zonder `MAIL_RELAY_API_URL` of zonder `LOGWATCHER_NTFY_TOPIC`
+doet de check niets.
+
 ## Bestanden
 
 | Wat | Waar |
@@ -507,4 +603,6 @@ Verder nog niet gebouwd, en bewust:
 | De relay | `infrastructure/bootstrap/infrastructure/mail/` |
 | De geheimen | `infrastructure/bootstrap/infrastructure/secrets/templates/mail-relay-secret.yaml` en `mail-db-credentials-secret.yaml` |
 | De database (rol + Database, declaratief) | `infrastructure/bootstrap/infrastructure/postgresql/database/base/` |
-| Tests | `tests/test_send_email_service.py` |
+| De readiness-wacht + melding | `opi/core/mail_relay_watcher.py` |
+| De proef op de auto-ban | `scripts/mail_autoban_check.py` |
+| Tests | `tests/test_send_email_service.py`, `tests/test_mail_relay_watcher.py` |

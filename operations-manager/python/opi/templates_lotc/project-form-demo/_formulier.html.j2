@@ -4,7 +4,9 @@
    padding, een hoekstraal en een schaduw meebracht. Dat is een kaart, en daar is
    <c-card> voor. #}
 <c-card padding="lg" background-color="wit" outline="true">
-    <form method="post" action="/projects/form-demo" autocomplete="off">
+    {# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+       in tests/test_template_structure.py voor het waarom. #}
+    <form method="post" action="/projects/form-demo" autocomplete="off" novalidate>
         {{ form_html | process_components }}
     </form>
 </c-card>

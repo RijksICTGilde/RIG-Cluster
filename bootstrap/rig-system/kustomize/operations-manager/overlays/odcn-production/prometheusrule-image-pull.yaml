@@ -1,0 +1,87 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: operations-manager-image-pull
+  labels:
+    app: operations-manager
+spec:
+  groups:
+    # NOG NIET VASTGESTELD: dat deze twee alarmen ergens geevalueerd worden, en daarmee of
+    # ze ooit kunnen vuren. Ze staan op opi_*-reeksen, en die bestaan alleen in RIG's eigen
+    # Prometheus (prometheus.rig-prd-operations:9090), die geen regels evalueert; een
+    # PrometheusRule wordt alleen gelezen door een operator-beheerde Prometheus, en niets in
+    # deze repo geeft die de opi_*-reeksen. Dat is een blokkerend punt voor de release, met
+    # de onderbouwing en de twee wegen om het te sluiten in
+    # features/image-pull-backoff-detection.md. Meet het van binnenuit:
+    #
+    #   kubectl -n rig-prd-operations exec deployment/operations-manager -- \
+    #     wget -qO- http://prometheus.rig-prd-operations:9090/api/v1/rules
+    #
+    # Staan de twee alarmnamen hieronder daar niet in, dan evalueert deze Prometheus ze niet.
+    #
+    # Een component dat zijn image niet kan ophalen blijft staan en blijft het proberen
+    # (RC-243, zie features/image-pull-backoff-detection.md). Deze twee alarmen horen bij de
+    # zichtbaarheid die in de plaats komt van het uitschakelen dat die taak weghaalde; de
+    # deploymentkaart, de gauges zelf en de WARNING's in de log zijn de delen daarvan die
+    # vandaag al werken.
+    #
+    # De telling komt uit OPI zelf (opi/services/image_pull_report.py), niet uit
+    # kube-state-metrics: de reden-klasse hieronder bestaat alleen omdat OPI de
+    # kubelet-melding leest, en juist die klasse scheidt een lege proxy-cache van een
+    # tag die niet bestaat. De kale telling staat er altijd, ook op nul, zodat "niets
+    # aan de hand" te onderscheiden is van "deze metriek wordt niet geleverd".
+    - name: rig-image-pull.rules
+      rules:
+        - alert: ZadComponentKanImageNietOphalen
+          # Een kwartier, want een PR-image die net gebouwd wordt en een node die een
+          # pull aan het doen is zitten binnen die tijd. Wat erna nog staat is iets dat
+          # niet vanzelf overgaat.
+          expr: opi_image_pull_failing_pods > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} pod(s) kunnen hun container image niet ophalen"
+            description: >-
+              Deze pods staan in ImagePullBackOff en komen niet omhoog. Welke namespaces
+              en wat de registry antwoordde staat in
+              opi_image_pull_failing_pods_by_reason: reason=absent is een image of tag
+              die er niet is (het team zelf), reason=capacity is de gedeelde
+              proxy-cache die vol zit (platform), reason=undiagnosed is een registry
+              die geen antwoord gaf (platform, tenzij het blijft staan).
+              De betrokken deployments staan op Degraded en noemen het component op hun
+              deploymentkaart in ZAD.
+        # De telling hierboven kan ook nul zijn omdat er niemand gekeken heeft: de
+        # momentopname begint leeg, dus een cluster waar de cluster-brede pod-lezing
+        # geweigerd wordt meldt een schone nul en dat leest als "niets aan de hand".
+        # Of zo'n lezing op dit cluster doorkomt is niet nagemeten (Capsule Proxy onder
+        # een RoleBinding per namespace, zie features/oom-pod-watch.md), dus juist hier
+        # moet dat te zien zijn.
+        - alert: ZadImagePullObservatieOntbreekt
+          # Een leeftijd dekt beide gevallen, want een tijdstempel die nog nooit gezet is
+          # staat op 0 en de epoch is ruim langer dan tien minuten geleden. Een aparte
+          # `== 0`-tak ernaast zou dus niets toevoegen en wel dubbel vuren: die tak houdt
+          # het label __name__ en de aftrekking hierboven niet, dus `or` ziet twee
+          # verschillende reeksen en geeft ze allebei terug.
+          #
+          # Tien minuten is tien rondes op rij mislukt. Is de reeks er helemaal niet omdat
+          # OPI niet gescrapet wordt, dan geeft deze expressie niets en blijft dit alarm
+          # stil; dat geval meldt `up`. Of die scrape er is, staat in de kop hierboven.
+          expr: time() - opi_image_pull_observed_timestamp > 600
+          # Een herstart van OPI hoort hem niet te laten vuren: de eerste ronde gaat
+          # meteen, dus binnen vijf minuten staat de tijd er.
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "ZAD kijkt niet meer of componenten hun image kunnen ophalen"
+            description: >-
+              opi_image_pull_failing_pods staat hierdoor op nul omdat er niemand kijkt,
+              niet omdat er niets aan de hand is, en
+              ZadComponentKanImageNietOphalen kan dus niet meer vuren. Kijk in de log van
+              operations-manager op "Image-pull observation failed"; is de waarde van
+              opi_image_pull_observed_timestamp 0, dan is er nog nooit een ronde gelukt en
+              is de eerste vraag of de cluster-brede pod-lezing hier mag. Meet dat IN de
+              pod, want alleen daar loopt kubectl over Capsule Proxy:
+              kubectl -n rig-prd-operations exec deployment/operations-manager --
+              kubectl auth can-i list pods --all-namespaces

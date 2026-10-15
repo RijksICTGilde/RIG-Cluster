@@ -422,7 +422,7 @@ wat die rol vervult, met 113 taken.
 | Wat | Waar het vandaag zit | Vorm | Wie mag |
 |---|---|---|---|
 | Een cluster opzetten, bijwerken, afbreken | `Taskfile.yaml` (113 taken) | Taskfile | wie de repository en de AGE-sleutel heeft |
-| Het OPI-image bouwen en uitrollen | `Taskfile.yaml`, `update-operations-manager`, `publish-operations-manager` | Taskfile | idem |
+| Het OPI-image bouwen en uitrollen | `Taskfile.yaml`, `sandbox:update-operations-manager`, `publish-operations-manager` | Taskfile | idem |
 | Iemand platformbeheerder maken | ConfigMap `ADMIN_EMAILS` plus een herstart | Git + ArgoCD + herstart | wie de repository heeft |
 | Wezen opsporen | `opi/jobs/service_orphan_sweep.py` via `GET /api/v2/admin/orphans/report` | API | `ADMIN_API_KEY`, **op productie 501** |
 | Wezen bevestigen als te verwijderen | `POST /api/v2/admin/orphans/confirm` (`opi/api/admin_router.py:208`) | API | idem |

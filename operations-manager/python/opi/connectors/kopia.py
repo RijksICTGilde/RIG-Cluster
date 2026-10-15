@@ -19,6 +19,17 @@ from opi.manager.backup.base import ResourceType
 
 logger = logging.getLogger(__name__)
 
+# Kopia's wordings for "this storage holds no repository yet". That is the normal state of
+# a project that has never been backed up, so it must not log as a failure: the nightly
+# retention sweep walks every project and would otherwise warn once per project per night.
+_NO_REPOSITORY_MARKERS = ("repository not found", "no repository", "repository not initialized")
+
+
+def _is_missing_repository(stderr: str) -> bool:
+    """True when a failed connect only means this storage has no repository yet."""
+    lowered = stderr.lower()
+    return any(marker in lowered for marker in _NO_REPOSITORY_MARKERS)
+
 
 class KopiaConnectionError(Exception):
     """Exception raised when Kopia connection is not available."""
@@ -373,7 +384,7 @@ class KopiaConnector:
             )
 
             if code != 0:
-                if "repository not found" in stderr.lower() or "no repository" in stderr.lower():
+                if _is_missing_repository(stderr):
                     logger.debug(f"No repository found at {config.s3_prefix}")
                     return []
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
@@ -459,6 +470,9 @@ class KopiaConnector:
             )
 
             if code != 0:
+                if _is_missing_repository(stderr):
+                    logger.debug(f"No Kopia repository yet: {stderr}")
+                    return False
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
                 return False
 
@@ -538,6 +552,9 @@ class KopiaConnector:
             )
 
             if code != 0:
+                if _is_missing_repository(stderr):
+                    logger.debug(f"No Kopia repository yet: {stderr}")
+                    return dict.fromkeys(snapshot_ids, False)
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
                 return dict.fromkeys(snapshot_ids, False)
 
@@ -609,6 +626,9 @@ class KopiaConnector:
             )
 
             if code != 0:
+                if _is_missing_repository(stderr):
+                    logger.debug(f"No Kopia repository yet: {stderr}")
+                    return None
                 logger.warning(f"Failed to connect to Kopia repository: {stderr}")
                 return None
 

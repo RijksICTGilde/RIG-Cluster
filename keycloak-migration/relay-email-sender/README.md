@@ -56,43 +56,32 @@ is een eigen taak; zie `plans/mail-vervolgpunten.md`.
 ## Bouwen en testen
 
 ```bash
-task build-keycloak-relay-email-sender   # mvn clean package + de jar naast het manifest zetten
+task build-keycloak-relay-email-sender   # mvn clean package
 task test-keycloak-relay-email-sender    # mvn test
-task check-keycloak-relay-email-sender   # herbouwen en byte voor byte vergelijken
 ```
 
-### De jar staat in git, en waarom
+De image die deze provider in Keycloak zet bundelt hem, hij vervangt hem niet: wie aan deze
+provider werkt bouwt en toetst deze provider, geen Keycloak.
 
-De pod krijgt deze jar uit een **ConfigMap**, niet van het netwerk:
+### De jar zit in de image, en waarom
 
-```
-infrastructure/bootstrap/infrastructure/keycloak/controller/base/providers/keycloak-relay-email-sender-1.0.0.jar
-```
+De pod krijgt deze jar uit de image die hij draait (`images/keycloak-zad/`), niet van het
+netwerk. Kwam hij van GitHub, dan zou een hapering daar het inloggen van het hele platform
+platleggen: de startvlag `--spi-email-sender-provider` maakt een stille terugval op de
+standaardprovider onmogelijk, en de provider moet er dus zijn.
 
-De twee andere jars in die pod (het thema en de SAML-mapper) worden bij elke podstart van
-github.com gehaald. Voor deze mag dat niet: de startvlag `--spi-email-sender-provider`
-zorgt dat Keycloak WEIGERT TE STARTEN als de provider er niet is - dat is precies wat een
-stille terugval op de standaardprovider onmogelijk maakt - en dan zou een hapering bij
-GitHub het inloggen van het hele platform platleggen.
+Die image bouwt de jar uit deze bron, dus bron en artefact kunnen niet uit elkaar lopen. De
+imagebouw draait bovendien `kc.sh build --spi-email-sender-provider=zad-relay`, en die faalt
+op een provider-id dat niet oplost (exit 1). Daar zit de canarie, niet bij de podstart: die
+draait met `--optimized` en komt op een onbekend id juist gewoon op (gemeten in RC-212). Zie
+`features/keycloak-eigen-image.md`.
 
-De prijs is een gebouwd artefact in git, dat kan gaan afwijken van de bron ernaast. Dat is
-afgedekt met **een CI-stap die de jar herbouwt en byte voor byte vergelijkt**
-(`task check-keycloak-relay-email-sender`, job `keycloak-relay-email-sender` in
-`.github/workflows/ci.yml`). Dat kan omdat de bouw reproduceerbaar is
-(`project.build.outputTimestamp` in de `pom.xml`) en met dezelfde JDK-major draait; CI pint
-Temurin 21, want het manifest van de jar noemt `Build-Jdk-Spec`.
-
-**Bron en jar horen in dezelfde commit.**
-
-### Een versiesprong raakt vier plekken
-
-De versie zit in de bestandsnaam van de jar, dus hij staat op meer dan één plek:
+### Een versiesprong raakt twee plekken
 
 1. `<version>` in `pom.xml`;
-2. `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk);
-3. de bestandsnaam onder `.../keycloak/controller/base/providers/`, en de
-   `configMapGenerator` die hem noemt;
-4. het `cp`-commando in de initContainer van de Keycloak-deployment.
+2. `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk).
+
+De Dockerfile noemt de versie niet: hij kopieert met een jokerteken uit `target/`.
 
 ## Aanwijzen op Keycloak
 
@@ -107,8 +96,8 @@ Keycloak start, en de provider moet als standaardprovider worden aangewezen:
 **Let op de vorm.** `--spi-emailSender-provider=` (camelCase) wordt STIL genegeerd en dan
 verstuurt de standaardprovider - geen waarschuwing, geen enkel signaal. `RelayEmailSenderProviderFactoryTest`
 pint de vorm daarom op `EmailSenderSpi.getName()` uit Keycloak zelf. Tegenover die val staat
-een cadeau: een provider-id dat niet bestaat laat Keycloak **weigeren te starten**, dus een
-pod die opkomt heeft zijn provider aantoonbaar gevonden.
+een cadeau, maar bij het bouwen en niet bij het starten: `kc.sh build` weigert op een
+provider-id dat niet bestaat, zie hierboven.
 
 `order()` wordt bewust NIET overschreven, zodat alleen die vlag de fabriek kan aanwijzen en
 niet een volgorde die toevallig wint.

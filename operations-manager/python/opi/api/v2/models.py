@@ -460,6 +460,42 @@ APPROVALS_DESCRIPTION = (
 )
 
 
+class RunningSync(BaseModel):
+    """De sync die ArgoCD op dit moment uitvoert, of als laatste uitvoerde zonder af te ronden.
+
+    Dit is ArgoCD's eigen uitrol en NIET ZAD's wachtrij: die staat in
+    ``pending_rollout.rollout_in_progress`` en gaat over taken die nog naar git moeten
+    schrijven. Hier is de commit al in git en past de cluster hem toe. De twee kunnen los van
+    elkaar aanstaan.
+    """
+
+    phase: str = Field(..., description="ArgoCD's operation phase: Running of Terminating.")
+    started_at: str | None = Field(
+        default=None,
+        description="ISO timestamp waarop ArgoCD deze sync begon. Null als ArgoCD hem niet meldt.",
+    )
+    revision: str | None = Field(
+        default=None,
+        description=(
+            "De git-revisie die deze sync UITROLT. Kan een andere zijn dan 'sync_revision': een "
+            "lopende operation zit vast aan de revisie waarmee hij begon en ziet nieuwere "
+            "commits niet, terwijl 'sync_revision' de revisie is waartegen vergeleken wordt."
+        ),
+    )
+    message: str | None = Field(
+        default=None,
+        description="Waar ArgoCD op wacht, bijvoorbeeld 'waiting for healthy state of apps/Deployment/x'.",
+    )
+    blocks_next_sync: bool = Field(
+        ...,
+        description=(
+            "True wanneer deze sync elke volgende sync op deze deployment tegenhoudt: een "
+            "nieuwe commit rolt dan niet uit. False betekent dat de stand alleen nog "
+            "gerapporteerd wordt."
+        ),
+    )
+
+
 class DeploymentDetail(BaseModel):
     """Full deployment state as returned by the GET endpoints."""
 
@@ -484,11 +520,24 @@ class DeploymentDetail(BaseModel):
     last_synced_at: str | None = Field(
         default=None,
         description=(
-            "ISO timestamp of the last reconciliation attempt against git, regardless of outcome. "
-            "Combine with status to know whether that attempt succeeded; for a Degraded "
-            "deployment this can be the time of a failed sync, not a healthy one. "
-            "Null if no reconciliation has ever happened."
+            "ISO timestamp waarop de laatste sync AFRONDDE, wat de uitkomst ook was. Combineer "
+            "met status om te weten of die poging lukte; bij een Degraded deployment kan dit het "
+            "moment van een mislukte sync zijn. Null wanneer er nooit een sync afrondde, en ook "
+            "zolang er een loopt die nog niet klaar is: kijk dan naar 'running_sync'."
         ),
+    )
+    rolled_out_revision: str | None = Field(
+        default=None,
+        description=(
+            "De git-revisie die de laatste sync werkelijk heeft UITGEROLD, uit "
+            "'operationState.syncResult.revision'. Niet hetzelfde als 'sync_revision', dat de "
+            "revisie is waartegen de cluster vergelijkt. Lopen die twee uiteen, dan is er een "
+            "commit die nog niet is toegepast."
+        ),
+    )
+    running_sync: RunningSync | None = Field(
+        default=None,
+        description="De sync die ArgoCD op dit moment uitvoert, of null als er geen loopt.",
     )
     errors: list[StatusError] = Field(
         default_factory=list,

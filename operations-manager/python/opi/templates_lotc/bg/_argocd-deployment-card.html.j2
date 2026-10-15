@@ -289,7 +289,7 @@
                                     size="sm"
                                     label="Logs"
                                     icon="file-text"
-                                    :attrs="{'onclick': pod_logs_js, 'title': 'Bekijk de logs van deze pod'}" />
+                                    @click="{{ pod_logs_js }}" :attrs="{'title': 'Bekijk de logs van deze pod'}" />
                             </c-cluster>
                             {% if pod.runs_configured_image is false %}
                                 <c-paragraph size="sm">Dat is niet de image die in je projectbestand staat: daar staat {{ pod.configured_image | korte_digest }}. De uitrol van die versie is dus niet doorgekomen.</c-paragraph>
@@ -304,6 +304,59 @@
                         {% endif %}
                     {% endfor %}
                 </c-stack>
+            {% endif %}
+
+            {# WAT ZIJN IMAGE NIET KAN OPHALEN, EN WAAROM DAT NIET BIJ "UITGESCHAKELD" STAAT
+
+               Sinds RC-243 zet OPI zo'n component niet meer op nul replicas, dus hij staat
+               niet in de lijst hierboven. Hij staat AAN en blijft het proberen: een andere
+               toestand dan uitgeschakeld, met een ander antwoord op "en wat doe ik eraan",
+               dus een eigen melding en geen regel in die lijst.
+
+               Gegroepeerd op WIE kan handelen, want dat is het enige wat per component
+               verschilt. De reden-klasse komt uit OPI zelf (classify_image_pull_failure),
+               dezelfde die de metriek telt waar het alarm op hangt, dus de kaart en het
+               alarm kunnen niet uiteenlopen.
+
+               De verbatim tekst van de registry zit in de uitklapper, niet in de melding:
+               een image-pull-message van CRI-O is op productie 762 tekens, omdat dezelfde
+               fout er twee keer in staat. De kop zegt al wat die tekst zegt. #}
+            {% set pull_failures = status.get('image_pull_failures', []) %}
+            {% if pull_failures %}
+                {% set pull_groups = [
+                    ('absent', 'error', 'de registry zegt dat de image er niet is',
+                     'Push een geldige image of deploy opnieuw met een bestaande tag. Staat de image in een private registry, controleer dan je inloggegevens. Het component blijft aan staan: zodra de image er is wordt hij vanzelf opgehaald, zonder nieuwe deploy.'),
+                    ('capacity', 'warning', 'de gedeelde image-cache van het platform zit vol',
+                     'Hier hoef je zelf niets voor te doen. Het component blijft aan staan en herstelt zodra het platformteam ruimte heeft vrijgemaakt.'),
+                    ('undiagnosed', 'warning', 'de registry gaf geen antwoord',
+                     'Dat zegt niets over je image: die kan prima bestaan. Het component blijft aan staan en probeert het opnieuw. Houdt het langer dan een paar minuten aan en je hebt geen storingsmelding gehad, meld het dan bij het platformteam.')
+                ] %}
+                {% for klasse, soort, antwoord, advies in pull_groups %}
+                    {% set in_klasse = pull_failures | selectattr('reason_class', 'equalto', klasse) | list %}
+                    {% if in_klasse %}
+                        {% set kop = (in_klasse | length | string)
+                                     ~ (' component kan zijn image niet ophalen: ' if in_klasse | length == 1
+                                        else ' componenten kunnen hun image niet ophalen: ')
+                                     ~ antwoord %}
+                        <c-alert type="{{ soort }}" heading="{{ kop }}">
+                            <c-stack gap="xs">
+                                {% for fout in in_klasse %}
+                                    <c-paragraph size="sm">{{ fout.reference }}{% if fout.image %} - {{ fout.image }}{% endif %}{% if fout.since %} - lukt niet sinds {{ fout.since | dutch_date }}{% endif %}</c-paragraph>
+                                {% endfor %}
+                                <c-paragraph size="sm">{{ advies }}</c-paragraph>
+                                <c-accordion>
+                                    <c-accordion-item title="Wat de registry antwoordde">
+                                        <c-stack gap="xs">
+                                            {% for fout in in_klasse %}
+                                                <c-paragraph size="sm">{{ fout.reference }}: {{ fout.registry_message }}</c-paragraph>
+                                            {% endfor %}
+                                        </c-stack>
+                                    </c-accordion-item>
+                                </c-accordion>
+                            </c-stack>
+                        </c-alert>
+                    {% endif %}
+                {% endfor %}
             {% endif %}
 
             {# De knop "View Logs", en alleen zolang er iets draait: een slapende of
@@ -349,16 +402,29 @@
                         size="sm"
                         label="Logs bekijken"
                         icon="file-text"
-                        :attrs="{'onclick': logs_js, 'title': 'Bekijk live logs voor deze deployment'}" />
+                        @click="{{ logs_js }}" :attrs="{'title': 'Bekijk live logs voor deze deployment'}" />
                 </c-action-group>
             {% endif %}
 
+            {# "Sync van ArgoCD" en niet "Operatie": dit is de cluster die een commit toepast,
+               niet ZAD's eigen wachtrij, en die twee stonden met hetzelfde woord op het
+               scherm. #}
             {% if status.get('operation_phase') and status.operation_phase not in ['Succeeded', None] %}
-                {% set operation_line = 'Operatie: ' ~ status.operation_phase %}
+                {% set operation_line = 'Sync van ArgoCD: ' ~ status.operation_phase %}
+                {% if status.get('operation_duration') %}
+                    {% set operation_line = operation_line ~ ', loopt al ' ~ status.operation_duration %}
+                {% endif %}
                 <c-alert type="{{ 'warning' if status.operation_phase == 'Running' else 'error' }}" heading="{{ operation_line }}">
-                    {% if status.get('operation_message') %}
-                        {{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}
-                    {% endif %}
+                    <c-stack gap="xs">
+                        {% if status.get('operation_message') %}
+                            <c-span>{{ status.operation_message[:100] }}{% if status.operation_message|length > 100 %}...{% endif %}</c-span>
+                        {% endif %}
+                        {% if status.get('operation_is_stuck') %}
+                            <c-span>Zolang deze sync loopt, slaat ArgoCD elke volgende over en komt een
+                                nieuwe versie niet op het cluster. Herverwerk de deployment om hem af te
+                                breken; je hoeft hem niet weg te gooien.</c-span>
+                        {% endif %}
+                    </c-stack>
                 </c-alert>
             {% endif %}
 

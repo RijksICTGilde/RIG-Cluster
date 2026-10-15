@@ -4,7 +4,7 @@
 
 Prometheus is deployed as part of the RIG cluster infrastructure to collect and query metrics from applications and cluster components. It provides:
 
-- Automatic pod discovery via Kubernetes service discovery (local/sandbox) or static targets (ODCN)
+- Automatic pod discovery via Kubernetes service discovery (sandbox) or static targets (ODCN)
 - CPU, memory, and request metrics per component
 - Operations Manager internal state tracking (memory, caches, connections, background tasks)
 - Optional deep Python memory profiling via tracemalloc
@@ -14,21 +14,11 @@ Prometheus is deployed as part of the RIG cluster infrastructure to collect and 
 
 ### Prerequisites
 
-- A running RIG cluster (local, sandboxed-local, or ODCN production)
+- A running RIG cluster (sandboxed-local or ODCN production)
 - `kubectl` access to the cluster
 - For ODCN: access to the secure LAN (`147.181.0.0/16`)
 
 ### Deployment per Environment
-
-#### Local (Kind)
-
-Prometheus is included in the local cluster bootstrap. Deploy infrastructure:
-
-```bash
-task deploy-infrastructure CLUSTER=local
-```
-
-Access the UI at `https://prometheus.kind` (add `127.0.0.1 prometheus.kind` to `/etc/hosts`).
 
 #### Sandboxed-local
 
@@ -254,7 +244,7 @@ opi_database_pool_active_connections
 topk(10, opi_tracemalloc_alloc_bytes)
 ```
 
-### Container-Level Metrics (local/sandbox only)
+### Container-Level Metrics (sandbox only)
 
 These come from cAdvisor and are available when Kubernetes service discovery is active (not on ODCN static config).
 
@@ -284,9 +274,6 @@ infrastructure/bootstrap/infrastructure/prometheus/
 │   │   ├── kube-state-metrics-deployment.yaml
 │   │   └── kube-state-metrics-service.yaml
 │   └── overlays/
-│       ├── local/
-│       │   ├── kustomization.yaml
-│       │   └── ingress.yaml           # prometheus.kind with cert-manager
 │       ├── sandboxed-local/
 │       │   ├── kustomization.yaml
 │       │   └── ingress.yaml           # prometheus.sandbox.rijksapp.dev
@@ -298,9 +285,9 @@ infrastructure/bootstrap/infrastructure/prometheus/
 │           └── rolebinding.yaml
 ```
 
-### ODCN vs Local/Sandbox Differences
+### ODCN vs Sandbox Differences
 
-| Aspect | Local / Sandbox | ODCN Production |
+| Aspect | Sandbox | ODCN Production |
 |--------|----------------|-----------------|
 | Scrape method | Kubernetes service discovery | Kubernetes service discovery via Capsule Proxy |
 | K8s API access | Yes (namespace-manager SA) | Yes, via Capsule Proxy (namespace-manager SA) |
@@ -342,9 +329,9 @@ yield my_gauge
 ## Dependencies
 
 - `prometheus_client` Python library (in Operations Manager)
-- `namespace-manager` ServiceAccount with pod/service/endpoint read access (local/sandbox)
+- `namespace-manager` ServiceAccount with pod/service/endpoint read access (sandbox)
 - Persistent volume for Prometheus data storage (7-day retention, 10Gi)
-- nginx ingress controller (local/sandbox) or HAProxy (ODCN) for external access
+- nginx ingress controller (sandbox) or HAProxy (ODCN) for external access
 
 ## Troubleshooting
 

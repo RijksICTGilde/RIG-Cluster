@@ -1,18 +1,18 @@
-"""Tests for the PAT round's loose-value pass: the three files that HOLD the shared token.
+"""Tests for the PAT round's loose-value pass: the files that HOLD the shared token.
 
-``LOOSE_VALUE_FILES`` has six entries and the key round re-encrypts all of them. The PAT round
-asks a narrower question about the same list, and getting it wrong goes both ways:
+The key round re-encrypts every entry of ``LOOSE_VALUE_FILES``. The PAT round asks a narrower
+question about the same list, and getting it wrong goes both ways:
 
 * skip a carrier and every EXISTING project is right while the next NEW one gets the withdrawn
   token -- ``PROJECT_REPO_PASSWORD`` in ``opi/core/config.py`` is the default that reaches
   ``repositories[].password`` of every new project through ``project-template.yaml``. That
   failure surfaces at the next project creation, by which time the old token is long revoked;
-* replace one too many and OPI loses its own git access -- the two configmaps and ``.env`` hold
-  ``GIT_PROJECTS_SERVER_PASSWORD`` and ``GIT_ARGO_APPLICATIONS_PASSWORD``, the platform's
+* replace one too many and OPI loses its own git access -- the ``odcn-production`` configmap and
+  ``.env`` hold ``GIT_PROJECTS_SERVER_PASSWORD`` and ``GIT_ARGO_APPLICATIONS_PASSWORD``, the platform's
   credentials for its own three repositories, on that same platform key.
 
 So the decision is measured on the decrypted value, with the GitHub shapes ``secret_scan``
-already knows, instead of being settled by a hand-written list of three file names.
+already knows, instead of being settled by a hand-written list of file names.
 """
 
 from __future__ import annotations

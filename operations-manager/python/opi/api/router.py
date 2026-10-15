@@ -24,6 +24,7 @@ from opi.connectors.subdomain import (
     SubdomainValidationError,
 )
 from opi.core.config import settings
+from opi.core.task_handlers_operations import terminated_sync_fields
 from opi.core.task_helpers import build_accepted_response, create_async_task
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -516,6 +517,9 @@ class ProcessingStatus(BaseModel):
     status: str = Field(..., description="Processing status", examples=["completed"])
     message: str | None = Field(None, description="Status message")
     result: Any | None = Field(None, description="Processing result details")
+    terminated_syncs: list[str] | None = Field(
+        None, description="Deployments whose running ArgoCD sync this run terminated"
+    )
 
 
 class UpsertDeploymentResponse(BaseModel):
@@ -2168,7 +2172,9 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
         project_file_path = f"projects/{project.filename}"
 
         # Process the project file from Git (this will handle all the steps)
-        processing_result = await project_manager.process_project_from_git(project_file_path, force_clone=force_clone)
+        processing_result = await project_manager.process_project_from_git(
+            project_file_path, force_clone=force_clone, reset_running_sync=True
+        )
 
         if processing_result:
             logger.info(f"Project refresh completed successfully: {project_name}")
@@ -2191,6 +2197,9 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
                     "status": "completed",
                     "message": "All project resources processed successfully",
                     "result": processing_result,
+                    # Deze tak draait inline en heeft dus geen taakvoortgang: het antwoord is
+                    # het enige kanaal waarin staat wiens uitrol deze reset afbrak.
+                    **terminated_sync_fields(project_manager),
                 },
             }
             return JSONResponse(content=content, status_code=200)
@@ -2206,6 +2215,7 @@ async def refresh_project(request: Request, project_name: str, force_clone: bool
                     "status": "failed",
                     "message": processing_error or "Failed to process project resources",
                     "result": processing_result,
+                    **terminated_sync_fields(project_manager),
                 },
             }
             return JSONResponse(content=content, status_code=500)
@@ -2266,6 +2276,7 @@ async def refresh_deployment(
                 "project_name": project_name,
                 "deployment_name": deployment_name,
                 "force_clone": force_clone,
+                "reset_running_sync": True,
             },
         )
         task_id = str(task["task_id"])
@@ -2287,7 +2298,7 @@ async def refresh_deployment(
         project_file_path = f"projects/{project.filename}"
 
         processing_result = await project_manager.process_project_from_git(
-            project_file_path, deployment_name=deployment_name, force_clone=force_clone
+            project_file_path, deployment_name=deployment_name, force_clone=force_clone, reset_running_sync=True
         )
 
         if processing_result:
@@ -2310,6 +2321,7 @@ async def refresh_deployment(
                     "status": "completed",
                     "message": f"Deployment '{deployment_name}' processed successfully",
                     "result": processing_result,
+                    **terminated_sync_fields(project_manager),
                 },
             }
             return JSONResponse(content=content, status_code=200)
@@ -2325,6 +2337,7 @@ async def refresh_deployment(
                     "status": "failed",
                     "message": processing_error or f"Failed to process deployment '{deployment_name}'",
                     "result": processing_result,
+                    **terminated_sync_fields(project_manager),
                 },
             }
             return JSONResponse(content=content, status_code=500)

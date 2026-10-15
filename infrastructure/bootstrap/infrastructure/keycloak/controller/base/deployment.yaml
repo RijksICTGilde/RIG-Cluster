@@ -22,49 +22,21 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
-      initContainers:
-        - name: keycloak-theme-puller
-          # DRIE jars, en de derde komt NIET van het netwerk. Het thema en de SAML-mapper
-          # worden bij elke podstart van github.com gehaald; dat risico bestaat al. De
-          # relay-emailSender mag er niet bij, want aan die jar hangt de startvlag
-          # --spi-email-sender-provider: Keycloak WEIGERT TE STARTEN als de provider er niet
-          # is (gemeten, RC-158), en dat is precies wat een stille terugval op de
-          # standaardprovider onmogelijk maakt. Zou hij van GitHub komen, dan legt een
-          # hapering daar het inloggen van het hele platform plat.
-          #
-          # Hij komt daarom uit een ConfigMap (zie de volumes onderaan). De generator zet
-          # een hash van de inhoud in de naam, dus een nieuwe jar is vanzelf een rollout.
-          command:
-            - sh
-            - -c
-            - |
-              cd /tmp
-              wget https://github.com/MinBZK/keycloak-theme/releases/download/v1.4.2/keycloak-nl-design-system.jar
-              wget https://github.com/RijksICTGilde/RIG-Cluster/releases/download/v1.1.0/keycloak-saml-nameid-mapper-1.1.0.jar
-              cp keycloak-nl-design-system.jar /opt/keycloak/providers/
-              cp keycloak-saml-nameid-mapper-1.1.0.jar /opt/keycloak/providers/
-              cp /zad-providers/keycloak-relay-email-sender-1.0.0.jar /opt/keycloak/providers/
-          image: busybox:1.37.0
-          securityContext:
-            runAsNonRoot: true
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            capabilities:
-              drop:
-                - ALL
-            seccompProfile:
-              type: RuntimeDefault
-          volumeMounts:
-            - mountPath: /opt/keycloak/providers/
-              name: keycloak-provider
-            - mountPath: /tmp
-              name: tmp-volume
-            - mountPath: /zad-providers
-              name: zad-providers
-              readOnly: true
       containers:
         - name: keycloak
-          image: quay.io/keycloak/keycloak:25.0.6
+          # Onze eigen image (images/keycloak-zad/): de providers zitten erin, de pod haalt
+          # bij het starten niets meer op.
+          #
+          # DEZE TAG IS DE TAG DIE PRODUCTIE DRAAIT. De sandbox-overlay pint zijn eigen tag,
+          # dus een proef daar raakt deze regel niet. Promoveren is het overzetten van
+          # precies de tag die op de sandbox heeft gedraaid, niet opnieuw bouwen.
+          #
+          # HIJ WORDT NIET MET DE HAND GESCHREVEN. `task pin-keycloak-image TARGET=base` zet hem
+          # hier neer, gelezen uit de sandbox-overlay, die alleen een gepushte tag draagt.
+          #
+          # Is er nog nooit gepromoveerd, dan staat hier het woord promoveer-eerst en geen
+          # tag: een verzonnen versienummer zou eruitzien als een image die te halen valt.
+          image: ghcr.io/rijksictgilde/zad/keycloak-zad:2026.10.13.1948-72684cb4
           # DE VLAG DIE DE EIGEN VERZENDER AANWIJST. Zonder hem verstuurt de
           # standaardprovider, en die leest de smtpServer van de realm - de weg waarlangs
           # een projectbeheerder de post naar een eigen luisteraar kan sturen.
@@ -75,11 +47,21 @@ spec:
           # waarschuwing en geen enkel signaal. Gemeten in RC-158, en gepind door
           # RelayEmailSenderProviderFactoryTest en test_keycloak_relay_email_sender.py.
           #
-          # Tegenover die val staat een cadeau: een provider-id dat niet bestaat laat
-          # Keycloak WEIGEREN TE STARTEN. Een pod die opkomt heeft zijn provider dus
-          # aantoonbaar gevonden.
+          # DIE VAL WORDT IN DE IMAGEBOUW GEVANGEN, niet hier: `kc.sh build` faalt op een
+          # provider-id dat niet oplost, een pod met --optimized komt er juist gewoon op
+          # (allebei gemeten in RC-212). De canarie uit RC-158 zit dus in
+          # images/keycloak-zad/Dockerfile, en noemt dezelfde id als de regel hieronder.
+          #
+          # --optimized: START ZONDER EEN EIGEN AUGMENTATIE. Zonder die vlag leest elke
+          # spi-optie hieronder als een verschil met de image (spi-opties staan niet in de
+          # persisted-lijst, gemeten), dus bouwde de pod het image bij ELKE start om: ruim
+          # negen seconden, precies wat de bouw in de Dockerfile moest voorkomen. Met de vlag
+          # weigert Keycloak bovendien luid te starten als hier ooit een BOUWoptie bij komt,
+          # in plaats van er stil een andere image van te maken.
+          #
+          # --hostname-strict staat hier niet meer: KC_HOSTNAME_STRICT hieronder zegt hetzelfde.
           args:
-            ["start", "--proxy-headers=forwarded", "--hostname-strict=false", "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender-provider=zad-relay" ]
+            ["start", "--optimized", "--spi-theme-welcome-theme=nl-design-system", "--spi-email-sender-provider=zad-relay" ]
           env:
             - name: KEYCLOAK_ADMIN
               valueFrom:
@@ -91,12 +73,13 @@ spec:
                 secretKeyRef:
                   name: keycloak-admin-credentials
                   key: KEYCLOAK_ADMIN_PASSWORD
+            # DE ENIGE PLEK DIE proxy-headers ZET. Tot RC-212 stond er ook een
+            # --proxy-headers=forwarded bij de args, en die won: een startargument gaat bij
+            # Keycloak voor een omgevingsvariabele. De ingress zet X-Forwarded-*, geen
+            # Forwarded, dus de pod zag als client-ip de ingress in plaats van de bezoeker.
+            # `xforwarded` is de waarde die 48c2dbbb bedoelde.
             - name: KC_PROXY_HEADERS
               value: "xforwarded"
-            - name: KC_HEALTH_ENABLED
-              value: "true"
-            - name: KC_METRICS_ENABLED
-              value: "true"
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_HOSTNAME
@@ -107,8 +90,6 @@ spec:
               value: "-1"
             - name: KC_PROXY_ADDRESS_FORWARDING
               value: "true"
-            - name: KC_DB
-              value: "postgres"
             - name: KC_DB_URL
               value: "jdbc:postgresql://rig-db-rw:5432/keycloak"
             - name: KC_DB_USERNAME
@@ -125,8 +106,6 @@ spec:
               value: "RIG Cluster"
             - name: KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED
               value: "true"
-            - name: KC_FEATURES
-              value: "admin-api"
             - name: KEYCLOAK_ADMIN_IMPORT_ENABLED
               value: "true"
             - name: KEYCLOAK_ADMIN_EXPORT_ENABLED
@@ -136,7 +115,7 @@ spec:
             # een veld dat een projectbeheerder kan omzetten. Zie
             # keycloak-migration/relay-email-sender/ en features/keycloak-mail.md.
             #
-            # De basis is het cluster met de relay in rig-ron (local en sandboxed-local);
+            # De basis is het cluster met de relay in rig-ron (sandboxed-local);
             # de odcn-overlay zet de host om naar rig-prd-ron.
             - name: ZAD_MAIL_RELAY_HOST
               value: "rig-mail-relay.rig-ron.svc.cluster.local"
@@ -197,17 +176,8 @@ spec:
             seccompProfile:
               type: RuntimeDefault
           volumeMounts:
-            - name: keycloak-provider
-              mountPath: /opt/keycloak/providers/
             - name: tmp-volume
               mountPath: /opt/keycloak/data/tmp
       volumes:
-        - name: keycloak-provider
-          emptyDir: {}
         - name: tmp-volume
           emptyDir: {}
-        # De jar van de eigen verzender, uit git. De naam hier is de NAAM VAN DE GENERATOR;
-        # kustomize hangt er een hash van de inhoud aan en werkt deze verwijzing mee bij.
-        - name: zad-providers
-          configMap:
-            name: keycloak-zad-providers

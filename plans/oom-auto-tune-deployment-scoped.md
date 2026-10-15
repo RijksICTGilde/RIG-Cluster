@@ -527,7 +527,7 @@ ongewijzigd root-component.
 - **De projectpagina-geheugencheck blijft los.** Na taak 8 en 9 lopen de inline-detectie en de
   fire-and-forget watcher via hetzelfde hookpunt, maar de passieve check op de projectpagina
   niet. Die draait op een paginabezoek, niet op een deploy, en heeft dus een eigen aanleiding.
-  De bredere samentrekking staat in `features/futures/system-wide-oom-watcher.md`.
+  De bredere samentrekking staat in `features/oom-pod-watch.md`.
 - **Interactie met sleep-mode nagaan.** Een slapende deployment is niet `Available`, en taak 1
   haalt juist die guard weg voor het OOM-pad. Waarschijnlijk onschadelijk, want zonder pods is
   er ook geen OOM-signaal, maar dat is het verifiëren waard voordat taak 1 landt.
@@ -536,8 +536,9 @@ ongewijzigd root-component.
   met minstens 135Mi, of de root terug naar 75Mi. Dat is een aparte, bewuste actie.
 - **Silent failure.** Dit past in het bekende patroon dat mislukte reprocessing en validatie
   alleen in het log landen. Alarmering hierop is een eigen traject.
-- **Systeembrede watcher.** `features/futures/system-wide-oom-watcher.md` beschrijft OOM's die
-  ná een geslaagde deploy ontstaan. Andere scope, geen overlap met dit plan.
+- **Systeembrede watcher.** OOM's die ná een geslaagde deploy ontstaan zijn sinds RC-237
+  gebouwd als een cluster-brede pod-watch, `features/oom-pod-watch.md`. Andere scope, geen
+  overlap met dit plan.
 
 ## Veldgeval 2026-07-30: headscale op 25Mi, vier OOMKills in twee minuten
 

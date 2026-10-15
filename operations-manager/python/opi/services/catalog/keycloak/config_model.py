@@ -29,6 +29,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.url_paths import normalize_logout_path
 
 
 class AccountLink(StrEnum):
@@ -187,6 +188,16 @@ class KeycloakConfig(BaseModel):
     realm_roles: list[KeycloakRealmRoleEntry] = Field(
         default_factory=list, alias="realm-roles", description="Realm roles to create."
     )
+    logout_path: str | None = Field(
+        default=None,
+        alias="logout-path",
+        description=(
+            "Path on the component that ends its own session, relative to the deployment's own host "
+            "(e.g. /api/v1.0/logout/). Keycloak calls it as this client's front-channel logout URL. "
+            "Leave it out when the application already clears its session before it sends the browser "
+            "to the end-session endpoint."
+        ),
+    )
     account_link: AccountLink | None = Field(
         default=None,
         alias="account-link",
@@ -195,6 +206,12 @@ class KeycloakConfig(BaseModel):
             "automatic or confirm. Leave it out for Keycloak's own flow (verification by email)."
         ),
     )
+
+    @field_validator("logout_path", mode="before")
+    @classmethod
+    def _normaliseer_logout_pad(cls, waarde: Any) -> Any:
+        """Eén normalisatie voor dit veld; ``KeycloakManager`` leest hem via dezelfde functie."""
+        return normalize_logout_path(waarde)
 
     @field_validator("account_link", mode="before")
     @classmethod

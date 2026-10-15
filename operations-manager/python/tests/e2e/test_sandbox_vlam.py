@@ -33,6 +33,7 @@ import logging
 from typing import TYPE_CHECKING
 
 import pytest
+from opi.core.cluster_config import get_vlam_config
 from opi.services.catalog.vlam.endpoint import vlam_endpoint
 from opi.services.services_enums import ServiceType
 from tests.e2e.conftest import FORGEJO_VERIFY_SSL, SANDBOX_TEST_USER
@@ -44,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from opi.services.catalog.vlam.endpoint import VlamEndpoint
-    from playwright.sync_api import BrowserContext
+    from playwright.sync_api import BrowserContext, Page
     from tests.e2e.helpers.forgejo import ForgejoClient
 
 logger = logging.getLogger(__name__)
@@ -159,7 +160,12 @@ def test_the_egress_policy_opens_only_the_proxy(vlam_project: CreatedProject) ->
     peer = spec["egress"][0]["to"][0]
     assert peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] == endpoint.namespace
     assert peer["podSelector"]["matchLabels"] == endpoint.pod_labels
-    assert [port["port"] for port in spec["egress"][0]["ports"]] == [endpoint.port]
+    # Uit de clusterconfig en niet uit endpoint.ports: die property bouwt de policy zelf
+    # (vlam/__init__.py:242), dus daartegen kan de poortenkeuze niet meer falsifieren.
+    vlam_config = get_vlam_config(_CLUSTER)
+    assert vlam_config is not None, f"cluster '{_CLUSTER}' kent geen VLAM-configuratie"
+    verwachte_poorten = [vlam_config["port"], vlam_config["passthrough_port"]]
+    assert [port["port"] for port in spec["egress"][0]["ports"]] == verwachte_poorten
 
 
 @pytest.fixture(scope="module")
@@ -307,6 +313,21 @@ def test_a_project_without_the_service_does_not_get_through(
 _NEP_TOKEN = "nep-token-rc147"
 
 
+def _vul_het_modelveld(page: Page, model: str) -> None:
+    """Zet het model op de testpagina, in de vorm die er staat.
+
+    ``renderModelField`` (images/e2e-allservices/server.go) geeft een ``<select>`` zodra de
+    probe modellen kende en anders een tekstveld. Kaal ``fill`` of kaal ``select_option``
+    ruilt de ene rode in voor de andere zodra de andere tak aan de beurt is.
+    """
+    veld = page.locator("#vlam-model")
+    veld.wait_for(state="visible", timeout=15000)
+    if (veld.evaluate("el => el.tagName") or "").upper() == "SELECT":
+        veld.select_option(model)
+    else:
+        veld.fill(model)
+
+
 @pytest.mark.timeout(900)
 def test_the_test_vlam_button_gets_an_answer(
     sandbox_context: BrowserContext, vlam_project: CreatedProject, stub_endpoint: VlamEndpoint
@@ -328,7 +349,7 @@ def test_the_test_vlam_button_gets_an_answer(
         with cluster.port_forward(namespace, pod, 8080) as base_url:
             page.goto(f"{base_url}/", wait_until="load")
             page.fill("#vlam-token", _NEP_TOKEN)
-            page.fill("#vlam-model", vlam_stub.STUB_MODEL_ID)
+            _vul_het_modelveld(page, vlam_stub.STUB_MODEL_ID)
             page.fill("#vlam-question", "werkt deze verbinding?")
             page.click("form[action='/vlam-chat'] button[type=submit]")
             page.wait_for_load_state()

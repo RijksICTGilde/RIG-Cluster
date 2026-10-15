@@ -64,7 +64,6 @@ def test_the_deployments_tab_renders_one_deployment(app_server: str, auth_page: 
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "deployments")
-    auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
     aanwezig = auth_page.evaluate(
         '() => [...document.querySelectorAll(\'#tab-deployments [id^="deployment-"], '

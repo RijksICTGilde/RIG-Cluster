@@ -65,7 +65,6 @@ def _open_confirmation(page: Page, app_server: str, trigger: str, *, tab: str | 
     page.wait_for_load_state("networkidle")
     if tab:
         open_tab(page, tab)
-        page.locator(f"#tab-{tab}").wait_for(state="visible", timeout=5000)
 
     page.locator(f"button:has-text('{trigger}')").first.click()
     page.locator("#edit-section-modal.is-open").wait_for(state="visible", timeout=10000)
@@ -126,7 +125,6 @@ def test_deployment_delete_posts_the_right_deployment(app_server: str, auth_page
     auth_page.goto(f"{app_server}{DETAIL_URL}")
     auth_page.wait_for_load_state("networkidle")
     open_tab(auth_page, "deployments")
-    auth_page.locator("#tab-deployments").wait_for(state="visible", timeout=5000)
 
     # De knop staat sinds vandaag in de Acties-kaart en niet meer los in het
     # deploymentpaneel: het is een actie, dus hij hoort bij de acties. Het label zegt nu ook
