@@ -17,20 +17,19 @@ Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw ui
 
 ##### Authorization wall
 
-**Betere afhandeling verlopen sessie** Tot nu toe kreeg elk verzoek zonder sessie de inlogpagina terug, ook een stylesheet, een script of een `fetch()`. De pagina bleef dan zonder opmaak achter, met fouten in de console die niets over de oorzaak zeggen. Verzoeken onder `/api/` en verzoeken naar een statisch bestand krijgen nu een kale 401. Je applicatie kan zelf op `/oauth2/auth` toetsen of de sessie weg is (401 zonder sessie, 202 met). Staat je eigen XHR niet onder `/api/`, dan krijgt die nog wel de HTML-pagina. Laat het weten als dat je raakt.
+**Betere afhandeling van een verlopen sessie** Als je inlogsessie verlopen was, kon je pagina er ineens kaal en kapot uitzien: geen opmaak meer, en knoppen die niets deden. Je zag niet waarom. Dat komt doordat niet alleen de pagina zelf, maar ook alle onderdelen ervan (zoals de opmaak en de scripts) het inlogscherm terugkregen. Nu krijgen die onderdelen een duidelijke melding dat je niet meer ingelogd bent. Je applicatie kan daarop reageren, bijvoorbeeld door je opnieuw te laten inloggen.
+
+*Voor ontwikkelaars: verzoeken onder `/api/` en naar statische bestanden krijgen nu een 401 in plaats van de inlogpagina. Met `/oauth2/auth` kun je controleren of de sessie nog geldig is.*
 
 **De sessie wordt vernieuwd voordat hij verloopt** in plaats van erna, en het cookie is niet langer geldig dan de Keycloak-sessie waarop het leunt.
 
-**De foutpagina's van de wall zijn Nederlands** en zeggen wat er aan de hand is, met een code die je aan de beheerder kunt doorgeven. De meest voorkomende is een inlog die halverwege afbreekt omdat het e-mailadres in die omgeving nog niet bevestigd is. Maak je zelf vooraf een account aan voor iemand die via SSO Rijk binnenkomt, zet dan "Email verified" op aan.
-
-**Wat nog niet is opgelost.** In sommige gevallen laadt een pagina nog steeds zonder opmaak, omdat voor een deel van de verzoeken geen sessiecookie meekomt. Waarom dat gebeurt weten we nog niet. Het faalt nu wel leesbaar. Loop je hier tegenaan, stuur ons een voorbeeld uit je eigen browser.
+**De foutpagina's van de wall zijn Nederlands** en zeggen wat er aan de hand is.
 
 ##### Uitrollen die vastlopen
 
 - **Eén refresh trekt een vastgelopen uitrol los.** Herverwerken in het portaal, via de API of met `zadctl deployment refresh` breekt nu een lopende ArgoCD-sync af die blijft hangen. Je ziet dat als stap "Lopende sync afgebroken" in de voortgang.
 - **Een sync die niet afrondt blokkeert de volgende niet meer.** Wachtte een sync op een onderdeel dat nooit gezond werd, dan kon je je kapotte configuratie niet meer repareren, want elke nieuwe sync stond erachter. Een sync breekt nu na tien minuten af en begint opnieuw op de nieuwste versie. De deploymentkaart en de API tonen een lopende of vastgelopen sync.
-- **Minder mislukte taken door een korte hapering van ArgoCD.** ArgoCD is in productie af en toe een paar seconden onbereikbaar. Een taak die daar precies op viel, mislukte. ZAD probeert het nu tot 30 seconden opnieuw.
-- **Een database op de standaardimage blijft niet meer eeuwig OutOfSync.** Bij die projecten liep een refresh na vier minuten vast. Na de uitrol is een refresh van zo'n project genoeg.
+- **Een taak mislukt niet meer zodra ArgoCD even onbereikbaar is.** Is ArgoCD kort niet bereikbaar, om welke reden ook, dan probeert ZAD het tot 30 seconden lang opnieuw voordat de taak mislukt. Een korte storing gaat zo ongemerkt voorbij. Duurt de storing langer, dan mislukt de taak nog steeds.
 
 ##### Verwijderen en opnieuw aanmaken
 
@@ -42,9 +41,12 @@ Zodra de image er wel is, wordt hij vanzelf opgehaald. Je hoeft niets opnieuw ui
 
 Wekken wacht nu tot je applicatie echt klaar is en rondt zichzelf daarna af. Eerder wachtte de eerste stap altijd vijf minuten op een status die nooit kwam, en meldde dan een onterechte fout. Komt je applicatie niet binnen tien minuten terug, dan faalt de taak met een duidelijke melding.
 
-##### Automatisch bijstellen van geheugen
+##### Automatisch afstemmen van geheugen en CPU
 
-De automatische bijsteller verhoogde bij een tweede geheugenfout het al verhoogde getal opnieuw, waardoor een limiet in korte tijd veel te hoog werd. Dat gebeurt niet meer. Hij rolt ook niet meer elke nacht uit voor een verschil van een paar megabyte.
+ZAD past het geheugen en de CPU van je componenten automatisch aan op wat ze echt gebruiken. Wordt een component gestopt omdat zijn geheugen op is (een OOMKill), dan krijgt hij er meer bij. Daar zaten twee fouten in:
+
+- Ging het een tweede keer mis, dan werd het geheugen bovenop de vorige verhoging nog eens verhoogd. Zo liep de limiet in korte tijd veel te hoog op. Dat is opgelost.
+- Elke nacht werd je component opnieuw gestart voor een verschil van een paar megabyte. Kleine verschillen worden nu genegeerd.
 
 ##### Uitnodigingen
 
@@ -54,24 +56,25 @@ De uitnodigingspagina is geschreven voor wie de uitnodiging krijgt: "Je bent uit
 
 In de Keycloak-configuratie staat een nieuw optioneel veld `logout-path`, onder "Uitloggen". Daar vul je het pad in waarop je applicatie haar sessie beëindigt. Let op: binnen de federatie met SSO Rijk roept Keycloak dat pad bij uitloggen elders niet aan. Je applicatie moet zelf haar sessie wissen voordat ze doorstuurt naar het uitloggen. Hoe je dat doet staat in `instructions/uitloggen-in-een-applicatie.md`.
 
-##### Keycloak start uit onze eigen image
+##### Keycloak uit één eigen image
 
-Je merkt hier bij het inloggen niets van, en dat is het punt. Keycloak haalde bij elke start het inlogthema en onze SAML-mapper van github.com. Op 13 oktober liep die download bij een herstart in een timeout, en zag iedereen het standaard inlogscherm van Keycloak, op alle realms. Keycloak draait nu een image die wij zelf bouwen, met die uitbreidingen erin. Het inloggen hangt daardoor niet meer af van github.com, en Keycloak is na een herstart sneller terug.
+Keycloak bevat steeds meer eigen onderdelen: het inlogthema, onze SAML-mapper en sinds kort de koppeling met de mailrelay. Die werden bij elke start los opgehaald en ingeladen. Dat maakte het geheel onoverzichtelijk en kwetsbaar.
+
+We bouwen daarom nu zelf een Keycloak-image, op basis van de officiële image, met al onze onderdelen erin. Dat is duidelijker, Keycloak start sneller op en is niet meer afhankelijk van downloads van buitenaf. Het is ook toekomstbestendiger: bij elke versie-upgrade van Keycloak (LCM) bouwen we onze aanpassingen gewoon mee, in plaats van ze apart te moeten beheren.
 
 ##### Mailrelay
 
-Op 13 oktober lag de mailrelay van het platform twee uur plat: hij had de gezondheidscontroles van Kubernetes zelf verbannen. Interne adressen staan nu op de lijst van toegestane adressen, en de relay komt in één keer goed op. Is de relay onbereikbaar, dan meldt ZAD dat als platformfout en wijst niet langer naar jouw project, en probeert het kort daarna opnieuw.
+De healthchecks van de mailrelay zijn nu goed afgesteld, en de relay komt in één keer goed op. Is de relay toch onbereikbaar, dan meldt ZAD dat als platformfout in plaats van naar jouw project te wijzen, en probeert het kort daarna opnieuw.
 
 ##### Verder
 
-- De image-registries-service faalde in ODCN bij het aanmaken van een nieuwe registry. Opgelost.
+- **Eigen container registries werken nu ook in productie.** Sinds de vorige release kun je images draaien uit je eigen private registry (de service `image-registries`). In productie (ODCN) maakt ZAD daarvoor per project een eigen omgeving aan in de registry van het cluster (`rcr.rijksapps.nl`). Het cluster weigerde die aan te maken, omdat ZAD geen opslaglimiet meegaf. Wie de service in productie aanzette, kon zijn images daardoor niet ophalen. ZAD geeft die limiet nu mee.
 - De uitleg bij MinIO zegt nu dat er één bucket en één set sleutels per deployment is, gedeeld door alle componenten.
-- Het portaal draait op een nieuwere versie van de componentenbibliotheek (NLDD 0.8.92). Formulieren tonen weer onze eigen Nederlandse foutmeldingen in plaats van die van de browser, en een mislukte taak heeft weer een rode voortgangsbalk met percentage.
+- Het portaal draait op een nieuwere versie van de componentenbibliotheek (NLDD 0.8.92).
 
 ##### Achter de schermen
 
 - Security hardening: we kunnen de wachtwoorden van alle ZAD-onderdelen nu periodiek roteren. Per onderdeel wordt gecontroleerd dat het oude wachtwoord daarna niet meer werkt.
-- Een aantal Python-pakketten is bijgewerkt na een beveiligingsscan.
+- Onze wekelijkse beveiligingsscan op de gebruikte softwarepakketten vond bekende kwetsbaarheden in vier Python-pakketten. Die zijn bijgewerkt naar een veilige versie.
 - Het beheerscript dat verweesde ArgoCD-applicaties opspoort, werkt nu ook in de ODCN-tenant.
 - Het oude `local`-clustertype is verwijderd; lokaal ontwikkelen gaat via de sandbox.
-- Voor deze release is een volledige controle gedraaid: unittests, de browsertests en een proefuitrol op de sandbox.
