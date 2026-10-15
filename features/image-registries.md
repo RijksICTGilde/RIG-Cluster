@@ -334,6 +334,19 @@ cluster. Wijkt hij af, dan is dat één regel clusterconfig in plaats van een sj
 Een derde platform is een derde backend plus een tabel in de clusterconfig, en geen
 wijziging aan de dienst.
 
+### De opslagquota staat op de organisatie
+
+De `Organization` draagt `spec.quota.limitGiB`, en daar rekent de admission-webhook
+`calculation.custom-quotas.validating.projectcapsule.dev` mee. Zonder dat veld weigert de
+API-server de CR met `quantity path did not resolve to any value`. De CRD heeft er een default
+van 10 op staan, maar een structural-schema-default wordt alleen gezet als het bovenliggende
+`quota` aanwezig is, dus het sjabloon schrijft hem altijd expliciet.
+
+De waarde is 3 GiB per private registry: clusterconfig (`quota_limit_gib`) met een terugval in
+`backends.py`. Bewust niet de CRD-default van 10, want tien per registry telt in het
+clustertotaal te snel op. Hele gibibytes, want `limitGiB` is een integer. Nog niet per project
+instelbaar; wordt het dat, dan blijft dit de default waar een project niets zegt.
+
 ## Het projectniveau in de deployments-repo
 
 De deployments-repo heeft een laag boven de deployments gekregen:
