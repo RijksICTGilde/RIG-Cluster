@@ -8,11 +8,11 @@ Twee gemeten eigenschappen dragen dit bestand (``docs/rc158-emailsender-spi-meti
 1. ``--spi-emailSender-provider=`` (camelCase) wordt door Keycloak STIL genegeerd. Er komt
    geen waarschuwing, de pod start gewoon door, en de STANDAARDprovider verstuurt - die de
    ``smtpServer`` van de realm leest, dus precies de weg die deze hele feature dichtzet.
-2. Een provider-id dat NIET bestaat laat Keycloak weigeren te starten. Dat is de canarie:
-   een pod die opkomt heeft zijn provider aantoonbaar gevonden. Maar die canarie zingt pas
-   bij een rollout, en dan ligt het inloggen plat. De toetsen hieronder halen dat naar
-   voren: als de vlag, het provider-id in de Java-bron en de bestandsnaam van de jar uit de
-   pas lopen, is dat hier rood in plaats van daar.
+2. Een provider-id dat NIET bestaat laat ``kc.sh build`` falen. Dat is de canarie, en die
+   zingt sinds RC-212 tijdens de imagebouw: de pod start met ``--optimized`` en komt op zo'n
+   id juist gewoon op (gemeten). De toetsen hieronder halen het nog verder naar voren: als de
+   vlag, het provider-id in de Java-bron en de bestandsnaam van de jar uit de pas lopen, is
+   dat hier rood in plaats van in een bouw.
 """
 
 import re
@@ -26,6 +26,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 KEYCLOAK_BASE = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller/base"
 KEYCLOAK_OVERLAYS = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller/overlays"
 PROVIDER_SRC = REPO_ROOT / "keycloak-migration/relay-email-sender/src/main/java/nl/minbzk/rig/keycloak/email"
+DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 
 #: De vorm die Keycloak WEL leest. Zie ``RelayEmailSenderProviderFactoryTest`` aan de
 #: Java-kant, die hem uit ``EmailSenderSpi.getName()`` afleidt in plaats van hem te typen.
@@ -77,7 +78,7 @@ class TestDeVlag:
 
     @pytest.mark.parametrize(
         "pad",
-        sorted([KEYCLOAK_BASE / "deployment.yaml", *KEYCLOAK_OVERLAYS.rglob("*.yaml")]),
+        sorted([KEYCLOAK_BASE / "deployment.yaml", DOCKERFILE, *KEYCLOAK_OVERLAYS.rglob("*.yaml")]),
         ids=lambda p: str(p.relative_to(REPO_ROOT)),
     )
     def test_de_camelcase_vorm_staat_nergens(self, pad: Path) -> None:
@@ -96,57 +97,54 @@ class TestDeVlag:
         assert CAMELCASE_VLAG not in zonder_commentaar
 
 
-class TestDeJarInDePod:
-    """De jar komt uit een ConfigMap, en overal moet dezelfde bestandsnaam staan."""
+class TestDeJarInDeImage:
+    """De jar komt uit de bron in deze repo en niet van het netwerk."""
 
-    def _jar_uit_de_generator(self) -> str:
-        kustomization = yaml.safe_load((KEYCLOAK_BASE / "kustomization.yaml").read_text())
-        generatoren = kustomization["configMapGenerator"]
-        bestanden = [f for g in generatoren for f in g["files"]]
-        jars = [f for f in bestanden if f.endswith(".jar")]
-        assert len(jars) == 1, f"verwacht precies een jar in de generator, gevonden: {jars}"
-        return jars[0]
+    def _dockerfile(self) -> str:
+        return DOCKERFILE.read_text()
 
-    def test_de_jar_ligt_er_ook_echt(self) -> None:
-        """Ontbreekt hij, dan rendert kustomize niet eens - maar dan pas bij de uitrol."""
-        jar = KEYCLOAK_BASE / self._jar_uit_de_generator()
-        assert jar.is_file(), f"{jar} ontbreekt"
-        assert jar.stat().st_size > 0
+    def test_de_image_bouwt_de_jar_uit_de_bron_ernaast(self) -> None:
+        """Bouwt de image ergens anders, dan kan de jar van de bron gaan afwijken."""
+        module = next(p for p in PROVIDER_SRC.parents if (p / "pom.xml").is_file())
+        naam = module.name
 
-    def test_de_jar_past_ruim_in_een_configmap(self) -> None:
-        """De grens is 1 MiB. Alles staat op ``provided``, dus er is niets geschaduwd."""
-        jar = KEYCLOAK_BASE / self._jar_uit_de_generator()
-        assert jar.stat().st_size < 1024 * 1024
+        assert f"COPY keycloak-migration/{naam} " in self._dockerfile()
+        assert f"/bouw/{naam}/target/keycloak-relay-email-sender-" in self._dockerfile()
 
-    def test_de_initcontainer_kopieert_precies_die_jar(self) -> None:
-        naam = Path(self._jar_uit_de_generator()).name
-        init = _deployment()["spec"]["template"]["spec"]["initContainers"][0]
-        commando = "\n".join(init["command"])
-        assert f"cp /zad-providers/{naam} /opt/keycloak/providers/" in commando
+    def test_de_imagebouw_wijst_hetzelfde_provider_id_aan(self) -> None:
+        """De canarie uit RC-158, verplaatst naar de imagebouw.
 
-    def test_de_local_overlay_kopieert_hem_ook(self) -> None:
-        """Die overlay VERVANGT het hele commando van de initContainer.
-
-        Vergeet je de regel daar, dan mist de jar precies op het clustertype waar niemand
-        het merkt tot Keycloak weigert te starten.
+        Staat er in de Dockerfile een ander id dan de jar registreert, dan faalt de BOUW op
+        "Failed to find provider ... for emailSender", en niet een pod op productie.
         """
-        naam = Path(self._jar_uit_de_generator()).name
-        overlay = (KEYCLOAK_OVERLAYS / "local/kustomization.yaml").read_text()
-        assert f"cp /zad-providers/{naam} /opt/keycloak/providers/" in overlay
+        vlaggen = [
+            regel.strip() for regel in self._dockerfile().splitlines() if regel.strip().startswith(VLAG_VOORVOEGSEL)
+        ]
+        assert len(vlaggen) == 1, "zonder deze vlag bewijst de imagebouw niets over de provider"
+        id_in_de_bouw = vlaggen[0][len(VLAG_VOORVOEGSEL) :]
 
-    def test_de_jar_komt_niet_van_het_netwerk(self) -> None:
-        """Aan deze jar hangt een startvlag waarzonder Keycloak weigert te starten.
+        assert id_in_de_bouw == _java_constante("RelayMailConfig.java", "PROVIDER_ID")
 
-        Zou hij van github.com komen zoals het thema en de SAML-mapper, dan legt een
-        hapering daar het inloggen van het hele platform plat.
+    def test_er_staat_geen_gebouwde_jar_meer_in_git(self) -> None:
+        """Een gebouwd artefact in git kan gaan afwijken van de bron ernaast."""
+        jars = sorted(KEYCLOAK_BASE.parent.rglob("*.jar"))
+        assert jars == []
+
+    def test_de_pod_haalt_zijn_provider_niet_op(self) -> None:
+        """Aan deze jar hangt een startvlag die een stille terugval onmogelijk maakt.
+
+        Kwam hij bij het starten van het netwerk, dan legt een hapering daar het inloggen
+        van het hele platform plat.
         """
-        naam = Path(self._jar_uit_de_generator()).name
-        init = _deployment()["spec"]["template"]["spec"]["initContainers"][0]
-        commando = "\n".join(init["command"])
-        for regel in commando.splitlines():
-            if naam in regel:
-                assert "wget" not in regel
-                assert "curl" not in regel
+        pod = _deployment()["spec"]["template"]["spec"]
+        assert "initContainers" not in pod
+
+        for pad in [KEYCLOAK_BASE / "deployment.yaml", *KEYCLOAK_OVERLAYS.rglob("*.yaml")]:
+            zonder_commentaar = "\n".join(
+                regel for regel in pad.read_text().splitlines() if not regel.lstrip().startswith("#")
+            )
+            assert "wget" not in zonder_commentaar, pad
+            assert "curl" not in zonder_commentaar, pad
 
 
 class TestDeRelayInDeOmgeving:

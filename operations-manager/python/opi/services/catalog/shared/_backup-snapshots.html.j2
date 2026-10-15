@@ -22,12 +22,11 @@
     {% include "shared/_backup-snapshots-one.html.j2" %}
 </div>
 {% if backups %}
-{# De aanroep staat BOVEN de tag: binnen een componenttag kan geen Jinja staan, en
-   <c-button> laat onclick alleen via de :attrs-spread door. #}
+
 {% set herstellen = "openEditModal('modal-restore', 'Backup herstellen', {deployment: '" ~ deployment.name ~ "'})" %}
 <span id="restore-btn-{{ deployment.name }}" hx-swap-oob="true">
     <c-button type="secondary" size="sm" show-icon="before" icon="arrow-u-turn-backward"
-              label="Herstellen" :attrs="{'onclick': herstellen}" />
+              label="Herstellen" @click="{{ herstellen }}" />
 </span>
 {% endif %}
 {% endfor %}

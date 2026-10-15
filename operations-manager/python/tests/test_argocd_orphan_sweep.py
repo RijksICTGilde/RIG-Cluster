@@ -16,6 +16,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -25,13 +26,19 @@ from opi.utils.argocd_tracking import LABEL_VALUE_MAX, TrackedResource
 from scripts.argocd_orphan_sweep import (
     CLEAN,
     SweepRefused,
+    expected_render_roots,
     format_report,
+    helmfile_namespaces,
+    helmfile_projects,
     inventory,
     main,
+    orphaned_applications,
     orphaned_paths,
     orphaned_resources,
     remove,
     render_roots,
+    rendered_kinds,
+    rendered_types,
     undecidable_resources,
 )
 
@@ -232,6 +239,7 @@ def _kubectl(
         return_value=namespace_labels if namespace_labels is not None else dict.fromkeys(tracked, "operations-manager")
     )
     kubectl.list_namespaced_resource_types = AsyncMock(return_value=["secrets"])
+    kubectl.list_namespaced_kinds = AsyncMock(return_value={"Secret": "secrets"})
     kubectl.list_tracked_resources = AsyncMock(side_effect=lambda ns, _types: (tracked.get(ns, []), True))
     kubectl.delete_tracked_resources = AsyncMock(return_value=[])
     return kubectl
@@ -554,7 +562,11 @@ class TestTheCommandLine:
         (tmp_path / "odcn-production/mpfm-w3h/pr-9").mkdir(parents=True)
         kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfm-w3h": []})
         with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
-            assert main(["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path)]) == 1
+            code = main(
+                ["--namespace", "rig-prd-mpfm-w3h", "--deployments-repo", str(tmp_path), "--cluster", "odcn-production"]
+            )
+
+        assert code == 1
 
     def test_a_deletion_that_took_everything_exits_clean(self) -> None:
         kubectl = self._cluster_with_one_orphan()
@@ -676,6 +688,461 @@ class TestRemove:
         assert (tmp_path / "odcn-production/mpfm-w3h/pr-310").exists()
 
 
+CLUSTER = "odcn-production"
+
+
+def _project(repo: Path, name: str, deployments: list[dict], schema_version: float = 2.9) -> None:
+    (repo / "projects").mkdir(parents=True, exist_ok=True)
+    data = {"schema-version": schema_version, "name": name, "deployments": deployments}
+    (repo / "projects" / f"{name}.yaml").write_text(yaml.safe_dump(data))
+
+
+def _application(repo: Path, project: str, name: str, source: dict | None) -> None:
+    folder = repo / CLUSTER / project
+    folder.mkdir(parents=True, exist_ok=True)
+    doc = {"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": name}, "spec": {}}
+    if source is not None:
+        doc["spec"]["source"] = source
+    (folder / f"{name}-argocd-application.yaml").write_text(yaml.safe_dump(doc))
+
+
+class TestOrphanedApplications:
+    """The argo-repo layer, measured on odcn-production on 9 October 2026: three
+    Applications (dd-mco-pr-41, pm-5sj-pr139, toets-hn7-pr-32) kept running deployments
+    the projects repo no longer had. ArgoCD was right to keep them: they stand in git."""
+
+    def test_an_application_for_a_removed_deployment_is_reported(self, tmp_path: Path) -> None:
+        _project(tmp_path / "p", "dd-mco", [{"name": "productie", "cluster": CLUSTER}])
+        _application(tmp_path / "a", "dd-mco", "dd-mco-productie", {"path": f"./{CLUSTER}/dd-mco/productie"})
+        _application(tmp_path / "a", "dd-mco", "dd-mco-pr-41", {"path": f"./{CLUSTER}/dd-mco/pr-41"})
+
+        orphans = orphaned_applications(tmp_path / "a", CLUSTER, expected_render_roots(tmp_path / "p", CLUSTER))
+
+        assert orphans == [("dd-mco-pr-41", f"{CLUSTER}/dd-mco/pr-41")]
+
+    def test_the_project_level_and_infrastructure_roots_are_expected(self, tmp_path: Path) -> None:
+        """Measured: algor-odc and mb-docs-helmfile point an Application at ``infrastructure``,
+        every project at ``_project``. Neither is a deployment, both are the platform's own."""
+        _project(tmp_path / "p", "algor-odc", [])
+        _application(tmp_path / "a", "algor-odc", "algor-odc-project", {"path": f"./{CLUSTER}/algor-odc/_project"})
+        _application(
+            tmp_path / "a", "algor-odc", "algor-odc-infrastructure", {"path": f"{CLUSTER}/algor-odc/infrastructure"}
+        )
+
+        assert orphaned_applications(tmp_path / "a", CLUSTER, expected_render_roots(tmp_path / "p", CLUSTER)) == []
+
+    def test_a_deployment_on_another_cluster_does_not_protect_this_one(self, tmp_path: Path) -> None:
+        _project(tmp_path / "p", "wies", [{"name": "pr-9", "cluster": "local"}])
+        _application(tmp_path / "a", "wies", "wies-pr-9", {"path": f"{CLUSTER}/wies/pr-9"})
+
+        orphans = orphaned_applications(tmp_path / "a", CLUSTER, expected_render_roots(tmp_path / "p", CLUSTER))
+
+        assert [name for name, _ in orphans] == ["wies-pr-9"]
+
+    def test_an_older_schema_is_read_after_migration(self, tmp_path: Path) -> None:
+        """The repo holds every version from 2 to the latest."""
+        _project(tmp_path / "p", "wies", [{"name": "pr-9", "cluster": CLUSTER}], schema_version=2)
+
+        assert f"{CLUSTER}/wies/pr-9" in expected_render_roots(tmp_path / "p", CLUSTER)
+
+    def test_an_application_with_several_sources_is_not_judged(self, tmp_path: Path) -> None:
+        _project(tmp_path / "p", "wies", [])
+        _application(tmp_path / "a", "wies", "wies-multi", None)
+
+        assert orphaned_applications(tmp_path / "a", CLUSTER, expected_render_roots(tmp_path / "p", CLUSTER)) == []
+
+    def test_without_project_files_it_refuses(self, tmp_path: Path) -> None:
+        """An empty projects checkout expects nothing, so every Application would be reported."""
+        (tmp_path / "p" / "projects").mkdir(parents=True)
+        with pytest.raises(SweepRefused, match="no project files"):
+            expected_render_roots(tmp_path / "p", CLUSTER)
+
+    def test_a_project_file_that_does_not_parse_refuses(self, tmp_path: Path) -> None:
+        (tmp_path / "p" / "projects").mkdir(parents=True)
+        (tmp_path / "p" / "projects" / "kapot.yaml").write_text("name: [unclosed\n")
+        with pytest.raises(SweepRefused, match="does not parse"):
+            expected_render_roots(tmp_path / "p", CLUSTER)
+
+
+class TestRenderedKinds:
+    @staticmethod
+    def _write(tmp_path: Path, text: str, name: str = "a.yaml") -> Path:
+        folder = tmp_path / CLUSTER / "wies" / "pr-9"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text(text)
+        return tmp_path
+
+    def test_reads_kind_and_group_from_every_document(self, tmp_path: Path) -> None:
+        self._write(
+            tmp_path,
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: a}\n---\napiVersion: v1\nkind: Service\n",
+        )
+
+        assert rendered_kinds(tmp_path, CLUSTER) == ({"Deployment.apps", "Service"}, [])
+
+    def test_a_nested_kind_is_not_a_rendered_one(self, tmp_path: Path) -> None:
+        """The ``kind:`` of a roleRef names what is referred to, not what is created."""
+        self._write(
+            tmp_path,
+            "apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nroleRef:\n  kind: ClusterRole\n",
+        )
+
+        assert rendered_kinds(tmp_path, CLUSTER) == ({"RoleBinding.rbac.authorization.k8s.io"}, [])
+
+    def test_an_encrypted_kind_counts_as_a_secret(self, tmp_path: Path) -> None:
+        self._write(
+            tmp_path,
+            "apiVersion: ENC[AES256_GCM,data:L4w=,type:str]\nkind: ENC[AES256_GCM,data:fOOjCCXY,type:str]\n",
+            name="x-secret.sops.yaml",
+        )
+
+        assert rendered_kinds(tmp_path, CLUSTER) == ({"Secret"}, [])
+
+    def test_a_helm_template_is_read_without_being_parsed(self, tmp_path: Path) -> None:
+        """Measured: 1401 files in the helmfile projects are chart templates, not YAML,
+        and ~600 of them template their apiVersion. The kind is still literal there."""
+        self._write(
+            tmp_path,
+            "{{- if .Values.enabled }}\n"
+            'apiVersion: {{ include "common.capabilities.ingress.apiVersion" . }}\n'
+            "kind: Ingress\n{{- end }}\n",
+        )
+
+        assert rendered_kinds(tmp_path, CLUSTER) == ({"Ingress.*"}, [])
+
+    def test_a_templated_kind_is_reported_not_guessed(self, tmp_path: Path) -> None:
+        self._write(tmp_path, "apiVersion: apps/v1\nkind: {{ .Values.master.kind }}\n", name="master.yaml")
+
+        assert rendered_kinds(tmp_path, CLUSTER) == (set(), [f"{CLUSTER}/wies/pr-9/master.yaml"])
+
+    def test_only_this_clusters_folder_is_read(self, tmp_path: Path) -> None:
+        (tmp_path / "local" / "wies" / "pr-9").mkdir(parents=True)
+        (tmp_path / "local" / "wies" / "pr-9" / "a.yaml").write_text("apiVersion: v1\nkind: ConfigMap\n")
+        (tmp_path / CLUSTER).mkdir()
+
+        assert rendered_kinds(tmp_path, CLUSTER) == (set(), [])
+
+
+class TestRenderedTypes:
+    SERVED: ClassVar[dict[str, str]] = {
+        "Ingress.networking.k8s.io": "ingresses.networking.k8s.io",
+        "Ingress.extensions": "ingresses.extensions",
+        "Secret": "secrets",
+    }
+
+    def test_a_wildcard_group_takes_every_group_serving_the_kind(self) -> None:
+        assert rendered_types({"Ingress.*"}, self.SERVED) == ["ingresses.extensions", "ingresses.networking.k8s.io"]
+
+    def test_a_kind_the_cluster_does_not_serve_is_left_out(self) -> None:
+        """It cannot have been created there; asking for it would only fail the query."""
+        assert rendered_types({"Secret", "PodSecurityPolicy.policy"}, self.SERVED) == ["secrets"]
+
+
+class TestCompletenessInATenant:
+    """Measured on odcn-production, 9 October 2026: the tenant account may not list ~90
+    of the types the cluster serves, so every namespace answered for part of its types
+    and the sweep refused the whole cluster on the first one. What decides there is
+    whether every kind the deployments repo renders answered."""
+
+    @staticmethod
+    def _repo(tmp_path: Path) -> Path:
+        folder = tmp_path / CLUSTER / "mpfb-8wh" / "pr-303"
+        folder.mkdir(parents=True)
+        (folder / "a.yaml").write_text("apiVersion: apps/v1\nkind: Deployment\nmetadata: {name: a}\n")
+        return tmp_path
+
+    @staticmethod
+    def _tenant(rendered_answer: tuple[list[TrackedResource], bool] | None) -> AsyncMock:
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mpfb-8wh": []})
+        kubectl.list_namespaced_kinds = AsyncMock(
+            return_value={"Deployment.apps": "deployments.apps", "Prometheus.monitoring.coreos.com": "prometheuses"}
+        )
+        partial = ([_resource("mpfb-8wh-pr-303", "creds", namespace="rig-prd-mpfb-8wh")], False)
+
+        async def answer(_ns: str, types: list[str]) -> tuple[list[TrackedResource], bool] | None:
+            # An empty type list is None at the connector, not an answer (kubectl.py).
+            if not types:
+                return None
+            return rendered_answer if types == ["deployments.apps"] else partial
+
+        kubectl.list_tracked_resources = AsyncMock(side_effect=answer)
+        return kubectl
+
+    @pytest.mark.asyncio
+    async def test_a_partial_answer_counts_when_every_rendered_kind_answered(self, tmp_path: Path) -> None:
+        deployment = _resource("mpfb-8wh-pr-303", "uitvraag", kind="Deployment", namespace="rig-prd-mpfb-8wh")
+        kubectl = self._tenant(([deployment], True))
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            resources, _, _ = await inventory(["rig-prd-mpfb-8wh"], self._repo(tmp_path), CLUSTER)
+
+        assert sorted(r.name for r in resources) == ["creds", "uitvraag"]
+        assert kubectl.list_tracked_resources.await_args_list[1].args == ("rig-prd-mpfb-8wh", ["deployments.apps"])
+
+    @pytest.mark.asyncio
+    async def test_a_rendered_kind_that_does_not_answer_refuses(self, tmp_path: Path) -> None:
+        kubectl = self._tenant(([], False))
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="every kind the deployments repo renders"),
+        ):
+            await inventory(["rig-prd-mpfb-8wh"], self._repo(tmp_path), CLUSTER)
+
+    @pytest.mark.asyncio
+    async def test_without_the_repo_a_partial_answer_still_refuses(self) -> None:
+        kubectl = self._tenant(([], True))
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="pass --deployments-repo"),
+        ):
+            await inventory(["rig-prd-mpfb-8wh"], None, CLUSTER)
+
+    @pytest.mark.asyncio
+    async def test_a_repo_that_renders_nothing_for_this_cluster_refuses(self, tmp_path: Path) -> None:
+        """A stale checkout, or the wrong --cluster, renders no kinds at all. Judging a
+        partial namespace over an empty set would call every one of them measured."""
+        (tmp_path / "local" / "wies" / "pr-9").mkdir(parents=True)
+        kubectl = self._tenant(([], True))
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="every kind the deployments repo renders"),
+        ):
+            await inventory(["rig-prd-mpfb-8wh"], tmp_path, CLUSTER)
+
+    @pytest.mark.asyncio
+    async def test_a_failed_kind_discovery_refuses(self, tmp_path: Path) -> None:
+        kubectl = self._tenant(([], True))
+        kubectl.list_namespaced_kinds = AsyncMock(return_value=None)
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="which kinds it serves"),
+        ):
+            await inventory(["rig-prd-mpfb-8wh"], self._repo(tmp_path), CLUSTER)
+
+
+class TestHelmfileProjectsAreLeftAlone:
+    """mb-docs-helmfile and mb-grist-helmfile render their manifests from charts OPI passes
+    through. What is theirs is not this tool's to judge, in none of the three layers."""
+
+    HELMFILE: ClassVar[list[dict]] = [{"name": "production", "cluster": CLUSTER, "helmfile": [{"name": "docs"}]}]
+
+    def test_a_project_with_a_helmfile_deployment_is_one(self, tmp_path: Path) -> None:
+        _project(tmp_path, "mb-docs-helmfile", self.HELMFILE)
+        _project(tmp_path, "wies", [{"name": "main", "cluster": CLUSTER}])
+
+        assert helmfile_projects(tmp_path) == {"mb-docs-helmfile"}
+
+    def test_its_namespaces_include_the_infrastructure_one(self, tmp_path: Path) -> None:
+        _project(tmp_path, "mb-docs-helmfile", self.HELMFILE)
+
+        assert helmfile_namespaces(tmp_path, CLUSTER) == {
+            "rig-prd-mb-docs-helmfile",
+            "rig-prd-mb-docs-helmfile-infrastructure",
+        }
+
+    def test_its_applications_are_not_judged(self, tmp_path: Path) -> None:
+        _project(tmp_path / "p", "mb-docs-helmfile", self.HELMFILE)
+        _application(
+            tmp_path / "a", "mb-docs-helmfile", "mb-docs-helmfile-x", {"path": f"{CLUSTER}/mb-docs-helmfile/x"}
+        )
+
+        expected = expected_render_roots(tmp_path / "p", CLUSTER)
+        assert orphaned_applications(tmp_path / "a", CLUSTER, expected, frozenset({"mb-docs-helmfile"})) == []
+
+    def test_its_manifests_are_not_read_for_kinds(self, tmp_path: Path) -> None:
+        folder = tmp_path / CLUSTER / "mb-docs-helmfile" / "production"
+        folder.mkdir(parents=True)
+        (folder / "a.yaml").write_text("apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\n")
+
+        assert rendered_kinds(tmp_path, CLUSTER, frozenset({"mb-docs-helmfile"})) == (set(), [])
+
+    @pytest.mark.asyncio
+    async def test_its_namespaces_and_paths_are_not_swept(self, tmp_path: Path) -> None:
+        (tmp_path / CLUSTER / "mb-docs-helmfile" / "old").mkdir(parents=True)
+        kubectl = _kubectl(
+            _LIVE_APPLICATIONS,
+            {
+                "rig-prd-mb-docs-helmfile": [_resource("gone", "x", namespace="rig-prd-mb-docs-helmfile")],
+                "rig-prd-wies": [],
+            },
+        )
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            resources, _, paths = await inventory(
+                None,
+                tmp_path,
+                None,
+                frozenset({"mb-docs-helmfile"}),
+                frozenset({"rig-prd-mb-docs-helmfile"}),
+            )
+
+        assert resources == []
+        assert paths == []
+        assert [call.args[0] for call in kubectl.list_tracked_resources.await_args_list] == ["rig-prd-wies"]
+
+    @pytest.mark.asyncio
+    async def test_naming_its_namespace_is_refused(self) -> None:
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-mb-docs-helmfile": []})
+        with (
+            patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl),
+            pytest.raises(SweepRefused, match="helmfile"),
+        ):
+            await inventory(
+                ["rig-prd-mb-docs-helmfile"], None, None, frozenset(), frozenset({"rig-prd-mb-docs-helmfile"})
+            )
+
+
+class TestOtherClustersPaths:
+    @pytest.mark.asyncio
+    async def test_another_clusters_folder_is_not_this_ones_orphan(self, tmp_path: Path) -> None:
+        """The Applications are read from ONE cluster, so another cluster's render roots
+        have nothing pointing at them here. ``--delete`` would remove the local/ tree."""
+        (tmp_path / "local/wies/staging").mkdir(parents=True)
+        (tmp_path / f"{CLUSTER}/wies/pr-9").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-wies": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(["rig-prd-wies"], tmp_path, CLUSTER)
+
+        assert paths == [f"{CLUSTER}/wies/pr-9"]
+
+
+class TestWhatTheProjectsRepoAsksFor:
+    """A directory is not an orphan just because no Application points at it RIGHT NOW.
+
+    An Application the cluster has not got yet, or one a force just removed, leaves its
+    deployment standing in the projects repo. The argo layer then calls that Application
+    legitimate while this layer called its directory an orphan, and ``--delete`` removed it
+    and exited 0: measured on this branch before the roots protected it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_root_the_projects_repo_asks_for_is_not_an_orphan(self, tmp_path: Path) -> None:
+        (tmp_path / CLUSTER / "dd-mco" / "productie").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(
+                None, tmp_path, CLUSTER, expected_roots=frozenset({f"{CLUSTER}/dd-mco/productie"})
+            )
+
+        assert paths == []
+
+    @pytest.mark.asyncio
+    async def test_a_root_it_does_not_ask_for_is_still_an_orphan(self, tmp_path: Path) -> None:
+        (tmp_path / CLUSTER / "dd-mco" / "pr-41").mkdir(parents=True)
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            *_, paths = await inventory(
+                None, tmp_path, CLUSTER, expected_roots=frozenset({f"{CLUSTER}/dd-mco/productie"})
+            )
+
+        assert paths == [f"{CLUSTER}/dd-mco/pr-41"]
+
+    def test_delete_leaves_the_directory_of_a_live_deployment_standing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The whole chain: projects repo, argo repo, --delete. The Application is NOT on
+        the cluster, which is exactly the state a forced deletion leaves behind."""
+        _project(tmp_path / "p", "dd-mco", [{"name": "productie", "cluster": CLUSTER}])
+        _application(tmp_path / "a", "dd-mco", "dd-mco-productie", {"path": f"{CLUSTER}/dd-mco/productie"})
+        directory = tmp_path / "d" / CLUSTER / "dd-mco" / "productie"
+        directory.mkdir(parents=True)
+        (directory / "s.yaml").write_text("apiVersion: v1\nkind: Secret\nmetadata: {name: s}\n")
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            code = main(
+                [
+                    "--cluster",
+                    CLUSTER,
+                    "--projects-repo",
+                    str(tmp_path / "p"),
+                    "--argo-repo",
+                    str(tmp_path / "a"),
+                    "--deployments-repo",
+                    str(tmp_path / "d"),
+                    "--delete",
+                ]
+            )
+
+        assert (code, directory.exists()) == (0, True)
+        assert capsys.readouterr().out.strip() == CLEAN
+
+
+class TestTheArgoLayerOnTheCommandLine:
+    def test_an_application_git_still_keeps_is_reported_and_exits_one(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        _project(tmp_path / "p", "dd-mco", [])
+        _application(tmp_path / "a", "dd-mco", "dd-mco-pr-41", {"path": f"{CLUSTER}/dd-mco/pr-41"})
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            code = main(
+                ["--cluster", CLUSTER, "--projects-repo", str(tmp_path / "p"), "--argo-repo", str(tmp_path / "a")]
+            )
+
+        assert code == 1
+        assert "dd-mco-pr-41" in capsys.readouterr().out
+
+    def test_delete_leaves_the_argo_repo_alone(self, tmp_path: Path) -> None:
+        """Removing an Application is a commit, and the argo repo is OPI's to write."""
+        _project(tmp_path / "p", "dd-mco", [])
+        _application(tmp_path / "a", "dd-mco", "dd-mco-pr-41", {"path": f"{CLUSTER}/dd-mco/pr-41"})
+        kubectl = _kubectl(_LIVE_APPLICATIONS, {"rig-prd-dd-mco": []})
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector", return_value=kubectl):
+            main(
+                [
+                    "--cluster",
+                    CLUSTER,
+                    "--projects-repo",
+                    str(tmp_path / "p"),
+                    "--argo-repo",
+                    str(tmp_path / "a"),
+                    "--delete",
+                ]
+            )
+
+        assert (tmp_path / "a" / CLUSTER / "dd-mco" / "dd-mco-pr-41-argocd-application.yaml").exists()
+
+    def test_deleting_directories_without_the_projects_repo_is_refused(self, tmp_path: Path) -> None:
+        """Exit 2 alone does not pin this: main() answers 2 for an unreachable cluster too,
+        so without the factory patched the refusal reads as green on a runner without one."""
+        (tmp_path / "d").mkdir()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert main(["--deployments-repo", str(tmp_path / "d"), "--delete"]) == 2
+
+        factory.assert_not_called()
+
+    def test_deleting_directories_without_a_cluster_is_refused(self, tmp_path: Path) -> None:
+        """The protection is computed only when the cluster is named too, so all three repos
+        with an empty --cluster deleted the directory of a live deployment and said SCHOON.
+        An empty CLUSTER_MANAGER in the environment is enough to get here without typing it."""
+        for name in ("d", "p", "a"):
+            (tmp_path / name).mkdir()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert (
+                main(
+                    [
+                        "--deployments-repo",
+                        str(tmp_path / "d"),
+                        "--projects-repo",
+                        str(tmp_path / "p"),
+                        "--argo-repo",
+                        str(tmp_path / "a"),
+                        "--cluster",
+                        "",
+                        "--delete",
+                    ]
+                )
+                == 2
+            )
+
+        factory.assert_not_called()
+
+    def test_one_repo_without_the_other_is_refused(self, tmp_path: Path) -> None:
+        (tmp_path / "p").mkdir()
+        with patch("scripts.argocd_orphan_sweep.create_kubectl_connector") as factory:
+            assert main(["--projects-repo", str(tmp_path / "p")]) == 2
+
+        factory.assert_not_called()
+
+
 class TestTheTask:
     """``task argocd-orphan-sweep`` is the documented way in (scripts/README.md and
     features/argocd-vastgelopen-verwijdering.md), so the flags it hands the script are
@@ -712,18 +1179,28 @@ class TestTheTaskAsRendered:
 
     @staticmethod
     def _rendered(**env: str) -> str:
+        # CLUSTER_TYPE staat in de standaard-env: de taak eist hem, want zonder gekozen
+        # cluster gaf hij CLUSTER_MANAGER leeg mee. Een test over DELETE of de repo-paden
+        # zegt niets over welk cluster het is.
         proc = subprocess.run(
             ["task", "--dry", "-v", SWEEP_TASK],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
             timeout=120,
-            env={"PATH": os.environ["PATH"], "HOME": os.environ.get("HOME", ""), **env},
+            env={
+                "PATH": os.environ["PATH"],
+                "HOME": os.environ.get("HOME", ""),
+                "CLUSTER_TYPE": "sandboxed-local",
+                **env,
+            },
         )
         assert proc.returncode == 0, proc.stderr
         # go-task writes the command it would run to stderr, not to stdout.
         prefix = f"task: [{SWEEP_TASK}]"
-        line = next(line for line in proc.stderr.splitlines() if line.startswith(prefix))
+        line = next(
+            line for line in proc.stderr.splitlines() if line.startswith(prefix) and "argocd_orphan_sweep.py" in line
+        )
         return line[len(prefix) :].strip()
 
     def test_without_delete_it_only_reports(self) -> None:
@@ -750,3 +1227,18 @@ class TestTheTaskAsRendered:
 
         assert "--namespace" not in rendered
         assert "--deployments-repo" not in rendered
+
+    def test_gitops_hands_over_all_three_repos(self) -> None:
+        rendered = self._rendered(GITOPS="/checkouts")
+
+        assert '--projects-repo "/checkouts/rig-cluster-projects-github"' in rendered
+        assert '--argo-repo "/checkouts/argo-applications-github"' in rendered
+        assert '--deployments-repo "/checkouts/rig-cluster-application-test-github"' in rendered
+
+    def test_the_selected_cluster_reaches_the_script(self) -> None:
+        """Measured 9 October 2026: with select-cluster on production the script still read
+        ``ARGOCD_MANAGER=rig-system`` from the .env of operations-manager/python, looked
+        for Applications in the sandbox's namespace, and refused."""
+        rendered = self._rendered(CLUSTER_TYPE="odcn-production", RIG_NAMESPACE="rig-prd-operations")
+
+        assert rendered.startswith("ARGOCD_MANAGER=rig-prd-operations CLUSTER_MANAGER=odcn-production ")

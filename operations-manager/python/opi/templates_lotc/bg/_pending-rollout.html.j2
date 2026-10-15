@@ -33,11 +33,10 @@
     {% if pending_rollout.since %}<br />De oudste wacht sinds {{ pending_rollout.since | dutch_date }}.{% endif %}
     {% if user_role in ["admin", "owner"] %}
     <br />
-    {# De aanroep wordt hierboven opgebouwd en via :attrs meegegeven: c-button laat geen
-       onclick als los attribuut toe. Zelfde vorm als de andere knoppen op deze pagina. #}
+    {# Zelfde vorm als de andere knoppen op deze pagina. #}
     {% set herverwerken = "openServiceModal('/projects/" ~ project.name ~ "/actions/refresh-project/confirm', 'Project herverwerken')" %}
     <c-button size="sm" label="Nu verwerken" icon="refresh" show-icon="before"
-              :attrs="{'onclick': herverwerken}" />
+              @click="{{ herverwerken }}" />
     {% endif %}
 </c-alert>
 {% endif %}

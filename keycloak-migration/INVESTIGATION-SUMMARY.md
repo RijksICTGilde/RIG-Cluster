@@ -148,17 +148,11 @@ Since no built-in mapper can extract NameID to a user attribute, we created a **
 task build-keycloak-custom-mapper
 ```
 
-**Publishing**:
-```bash
-task publish-keycloak-custom-mapper
-```
+**Publishing**: no longer applies. The JAR used to be uploaded to a GitHub release at
+`https://github.com/minbzk/base-images/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar`;
+it is now built into the Keycloak image, see `features/keycloak-eigen-image.md`.
 
-This uploads the JAR to GitHub releases at:
-`https://github.com/minbzk/base-images/releases/download/v1.0.0/keycloak-saml-nameid-mapper-1.0.0.jar`
-
-**Deployment**:
-
-Update Keycloak deployment's init container:
+**Deployment**: this is how it went at the time; the init container is gone.
 
 ```yaml
 initContainers:
@@ -279,7 +273,7 @@ NameID is stored in the `baseID` field and must be cast to `NameIDType`.
 ## Next Steps
 
 1. ✅ Build custom mapper: `task build-keycloak-custom-mapper`
-2. ✅ Publish to GitHub: `task publish-keycloak-custom-mapper`
+2. ✅ Publish to GitHub
 3. ⏳ Update Keycloak deployment init container to download mapper
 4. ⏳ Restart Keycloak
 5. ⏳ Configure mapper in Keycloak UI

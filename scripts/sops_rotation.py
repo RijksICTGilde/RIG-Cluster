@@ -103,12 +103,6 @@ REPO = Path(__file__).resolve().parents[1]
 COVERAGE_EXCEPTIONS = {
     "docs/doorloop-rc108/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
     "docs/doorloop-rc110/projectbestand.yaml": "a walkthrough's copy of a sandbox project file",
-    "operations-manager/python/tests/e2e/fixtures/projects/test-project.yaml": "an e2e fixture on a test key",
-    "operations-manager/python/tests/e2e/fixtures/projects/test-project-detail.yaml": "an e2e fixture on a test key",
-    "operations-manager/python/tests/e2e/fixtures/projects/test-project-with-services.yaml": (
-        "an e2e fixture on a test key"
-    ),
-    "operations-manager/python/tests/e2e/test_lotc_niet_goedgekeurd_domein.py": "an e2e fixture on a test key",
 }
 
 #: This repo carries a project file of its own, and it holds a repository password on the platform

@@ -10,8 +10,9 @@ import logging
 import time
 from typing import Any
 
-from opi.core.task_errors import CLIENT_ERROR_TYPES
+from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
+from opi.services.oom_watcher import reset_oom_tune_attempts
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +235,14 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
             "processing": skipped_processing(),
         }
 
+    # Clear OOM state for each deployment at start, before the rollout (not after).
+    # Outside the OOM_WATCHER_ENABLED guard: the inline health-check callback charges the
+    # budget without reading that setting, so its counter must be cleared here regardless.
+    if isinstance(project_data_dict, dict):
+        for dep in project_data_dict.get("deployments", []):
+            if dep_name := dep.get("name", ""):
+                reset_oom_tune_attempts(project_name, dep_name)
+
     deploy_task = progress.add_task("Project uitrollen")
     progress.update_current_step("Project uitrollen")
 
@@ -290,18 +299,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
             # Schedule fire-and-forget OOM watcher for each deployment
             from opi.core.config import settings as app_settings
-            from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
+            from opi.services.oom_watcher import schedule_oom_check
 
-            if isinstance(project_data_dict, dict):
+            if app_settings.OOM_WATCHER_ENABLED and isinstance(project_data_dict, dict):
                 for dep in project_data_dict.get("deployments", []):
-                    dep_name = dep.get("name", "")
-                    if not dep_name:
-                        continue
-                    # A user-initiated deploy is a fresh start for the OOM tune budget.
-                    # Outside the ENABLED guard on purpose: the inline callback counts
-                    # regardless of that setting, so its counter must be cleared here too.
-                    reset_oom_tune_attempts(project_name, dep_name)
-                    if app_settings.OOM_WATCHER_ENABLED:
+                    if dep_name := dep.get("name", ""):
                         schedule_oom_check(project_name, dep_name)
 
             progress.update_current_step(f"Project {project_name} succesvol geimplementeerd")
@@ -344,6 +346,7 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
                 # component_failures. Dit type valt daarom bij de client op "niet toe te
                 # schrijven", wat hier de eerlijke uitkomst is.
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "processing": {
                     "status": "failed",
                     "error": error_msg,
@@ -375,6 +378,10 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     domain_format: str | None = payload.get("domain_format")
     subdomain: str | None = payload.get("subdomain")
     base_domain: str | None = payload.get("base_domain")
+
+    # Clear OOM state at start, and outside the OOM_WATCHER_ENABLED guard: see
+    # handle_create_project.
+    reset_oom_tune_attempts(project_name, deployment_name)
 
     project_manager: ProjectManager | None = None
 
@@ -498,10 +505,7 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
 
                 # Schedule fire-and-forget OOM watcher
                 from opi.core.config import settings
-                from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
-
-                # An upsert is a user action on this deployment: fresh OOM tune budget.
-                reset_oom_tune_attempts(project_name, deployment_name)
+                from opi.services.oom_watcher import schedule_oom_check
 
                 if settings.OOM_WATCHER_ENABLED:
                     oom_attempt = payload.get("oom_watch_attempt", 1)

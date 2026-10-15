@@ -221,7 +221,7 @@ afwijkingen). Documentatie: `features/image-pull-backoff-detection.md`,
 |---|---|---|---|---|---|
 | Een container is door de OOM-killer geraakt | `oom_watcher.py:199` (`check_pod_health`), detectie op `lastState.terminated.reason == "OOMKilled"` (`:293`) | component | projectbeheerder, projectlid | actie nodig | postvak + mail |
 | Een image kan niet worden opgehaald | `oom_watcher.py:199`, reden uit `IMAGE_PULL_REASONS` | component | projectbeheerder, actor van de laatste image-wijziging | storing | postvak + mail |
-| Een component is daarop op `replicas: 0` gezet | `oom_watcher.py:478` (`disable_components_for_image_pull`) | component | projectbeheerder | storing | postvak + mail |
+| Een component is daarop op `replicas: 0` gezet | **gebeurt niet meer** bij een image-pull (RC-243). De sanitize (`opi/api/resource_router.py`) zet nog wel uit op een herstartstorm en op geen enkele ready pod | component | projectbeheerder | storing | postvak + mail |
 | Een component crasht herhaaldelijk | `oom_watcher.py:199`, `CrashLoopBackOff`; duiding in `event_interpreter.py` (`_CRASH_TITLE`) | component | projectbeheerder, projectlid | actie nodig | postvak |
 | Een container is gedood door een falende probe | `event_interpreter.py:311` (`_probe_kill_translation`) | component | projectbeheerder | actie nodig | postvak |
 | ArgoCD kan de manifesten niet renderen | `event_interpreter.py:562` (`interpret_argocd_errors`), `:324` (`condense_render_error`) | deployment | projectbeheerder | storing | postvak + mail |
@@ -481,7 +481,7 @@ De acht bronnen uit de opdracht zijn een startpunt en geen afbakening. Dit kwam 
 | Een bijlage is toegevoegd, gewijzigd of verwijderd | de taken `configure_attachment` en `delete_attachment`; dienst `opi/services/catalog/attachments/` | deployment | projectbeheerder | ter informatie | postvak |
 | Een geheim of sleutel is geroteerd | **bestaat nog niet als gebeurtenis**: rotatie gebeurt bij het opnieuw verwerken van een project | project | projectbeheerder | ter informatie | postvak |
 | Een dienst is aan een project toegevoegd of eruit gehaald | de taken `add_service` en de dienstverwijdering (`handle_service_removal` per dienst) | project | projectbeheerder | ter informatie | postvak |
-| De bootstrap in git wijkt af van wat er draait | **bestaat nog niet**: punt 11 van `plans/mail-vervolgpunten.md` beschrijft het probleem (een commit in `bootstrap/rig-system/.../odcn-production` is pas een wijziging als iemand `task bootstrap-argo-system` draait) en stelt een detectie voor | platform | platformbeheerder | storing | ntfy |
+| De bootstrap in git wijkt af van wat er draait | **bestaat nog niet**: punt 11 van `plans/mail-vervolgpunten.md` beschrijft het probleem (een commit in `bootstrap/rig-system/.../odcn-production` is pas een wijziging als iemand `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` draait) en stelt een detectie voor | platform | platformbeheerder | storing | ntfy |
 | Een clonebewerking heeft een nieuwe generatie gemaakt | `opi/manager/revision_manager.py`, via `opi/services/catalog/shared/revisions.py` | deployment | projectbeheerder | ter informatie | geen |
 
 **`cross-domain-access` verdient de aandacht die het niet krijgt in de opdracht.** Het is de

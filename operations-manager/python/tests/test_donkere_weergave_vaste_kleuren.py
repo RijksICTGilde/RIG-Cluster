@@ -83,7 +83,19 @@ def _onze_bestanden() -> list[Path]:
 
 
 def _componentbestanden() -> list[Path]:
-    """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css."""
+    """De handgeschreven componenten: hun opmaak staat in het sjabloon of in een .css.
+
+    De lijst hieronder is de kern plus de design systems die dit portaal aanzet
+    (``DESIGN_SYSTEMS`` in opi/core/templates_lotc.py). ``lotc_rvo`` is wel geinstalleerd
+    maar staat daar niet bij, dus geen pagina haalt zijn stijlbladen op en een terugval
+    daarin kan hier niets onleesbaar maken. Neem het niet alsnog mee: gemeten levert dat
+    alleen ``--utrecht-focus-inverse-outline-color`` en
+    ``--utrecht-focus-box-shadow-color`` op, namen die je elke release opnieuw om dezelfde
+    reden moet uitzonderen.
+
+    ``get_static_roots()`` is hier geen bruikbare bron: die geeft de wortels van alle
+    geinstalleerde pakketten, lotc_rvo inbegrepen, niet die van de aangezette.
+    """
     paden: list[Path] = []
     for pakket in ("lord_of_the_components", "lotc_nldd", "lotc_forms", "lotc_layout"):
         wortel = SITE_PACKAGES / pakket
@@ -139,22 +151,19 @@ def test_onze_eigen_opmaak_valt_niet_terug_op_een_onbekende_kleurvariabele() -> 
 
 
 #: De namen die de componentenlaag opvraagt zonder dat iemand ze zet, en die wij BEWUST
-#: niet invullen - met de reden erbij. Ze staan alle drie op een vlak dat het component
-#: ZELF ook vastzet, dus voorgrond en achtergrond horen bij elkaar en zijn in beide standen
-#: even leesbaar; er alsnog een themawaarde achter zetten zou een van de twee kanten laten
-#: meebewegen en juist het contrast slopen.
+#: niet invullen - met de reden erbij. Nu leeg: elke naam die de gescande pakketten
+#: opvragen, vullen wij in.
 #:
-#:   --semantics-action-primary-background-color   .lotc-avatar: wit op een vast #154273
-#:   --semantics-feedback-warning-color            .lotc-unimplemented (vaste donkere tekst
-#:                                                 op een vast gestreept lichtvlak) en de
-#:                                                 border-left van .lotc-action--warning
-#:   --semantics-feedback-error-color              border-left van .lotc-action--critical:
-#:                                                 een randkleur, geen tekst op een vlak
-BEWUST_NIET_INGEVULD = {
-    "--semantics-action-primary-background-color",
-    "--semantics-feedback-warning-color",
-    "--semantics-feedback-error-color",
-}
+#: Hier stonden drie ``--semantics-*``-namen uit app-components.css. Die vraagt geen enkel
+#: component meer op sinds NLDD 0.8.92, dus zijn ze weg (de laatste test in dit bestand
+#: wees ze aan). Daarna stonden hier twee ``--utrecht-focus-*``-namen uit ``lotc_rvo``, dat
+#: hier niet gescand wordt (zie ``_componentbestanden``): een uitzondering voor iets buiten
+#: de scan dekt niets af.
+#:
+#: Komt er een naam bij, zet hem hier neer met de meting die zegt waarom hij zo mag
+#: blijven: dat het component ook de andere kant van het contrast vastzet, of dat de
+#: terugval geen vaste lichte kleur is.
+BEWUST_NIET_INGEVULD: set[str] = set()
 
 
 def test_de_componentenlaag_vraagt_geen_kleurnaam_die_wij_niet_invullen() -> None:

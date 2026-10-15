@@ -75,7 +75,7 @@ spec:
             # zonder gebruikersnaam en wachtwoord - gemeten op 17 augustus 2026 adverteert
             # die server geen AUTH en vertrouwt hij op ons uitgaande adres 145.21.227.140.
             # Zie docs/ron-koppeling.md. De component mail/sink/as-upstream zet hem om naar
-            # de SMTP-sink, dus local en sandboxed-local krijgen de sink vanzelf mee.
+            # de SMTP-sink, dus sandboxed-local krijgt de sink vanzelf mee.
             - name: MAIL_UPSTREAM_HOST
               value: rmrmail.rijksweb.nl
             # Strikte certificaatcontrole op de sprong naar de upstream. Staat hier op
@@ -96,8 +96,8 @@ spec:
                   name: mail-relay-credentials
                   key: MAIL_RELAY_ADMIN_PASSWORD
             # De gedeelde PostgreSQL. De host is geen geheim: de basis draagt de
-            # productiewaarde, en de overlays van local en sandboxed-local zetten hem om
-            # naar rig-system, want daar draait de database op die clusters.
+            # productiewaarde, en de overlay van sandboxed-local zet hem om naar
+            # rig-system, want daar draait de database op dat cluster.
             - name: MAIL_DB_HOST
               value: rig-db-rw.rig-prd-operations.svc.cluster.local
             - name: MAIL_DB_NAME

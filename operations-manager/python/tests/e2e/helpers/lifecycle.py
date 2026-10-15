@@ -9,6 +9,9 @@ the logic lives here instead of in one test module.
 
 from __future__ import annotations
 
+import contextlib
+import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -20,8 +23,16 @@ from tests.e2e.helpers import wizard as wizard_helpers
 from tests.e2e.helpers.wizard import WizardHelper
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from playwright.sync_api import Page
     from tests.e2e.helpers.forgejo import ForgejoClient
+
+logger = logging.getLogger(__name__)
+
+#: Dezelfde omgevingsvariabele die de sandboxmodules voor hun eigen opruiming lezen, zodat
+#: een cluster met een eigen certificaat niet juist in het foutpad onbereikbaar wordt.
+API_VERIFY_SSL = os.environ.get("E2E_API_VERIFY_SSL", "false").lower() in ("1", "true", "yes")
 
 # The E2E test workload image. The platform forces a hard non-root securityContext on
 # every component pod: runAsUser: 1001, runAsNonRoot, drop ALL capabilities, and the
@@ -169,7 +180,7 @@ def _fill_service_config_step(page: Page, *, banner: str) -> None:
 
     Detects the step by the presence of its fields, so it is order-independent:
     - keycloak config: enable restrict-access (auth-wall submit requires it) and
-      leave the template at its default (sso-support).
+      choose the template, which has no default and is required.
     - authorization-wall config: set the banner text.
     """
     # Op het VAKJE en op het EINDE van het pad. Hier stond het oude, niet-virtuele pad
@@ -184,6 +195,10 @@ def _fill_service_config_step(page: Page, *, banner: str) -> None:
     banner_field = wizard_helpers.veldbesturing_eindigend_op(page, "authorization-wall/config/banner")
     if banner_field.count() > 0:
         banner_field.first.fill(banner)
+
+    # De keycloak-template heeft geen default meer en is verplicht, dus zonder een keuze
+    # weigert "Volgende" en blijft de wandeling op deze stap staan.
+    wizard_helpers.kies_verplichte_keuzelijsten(page)
 
 
 def _fill_component_identity(page: Page, component_name: str, image: str) -> None:
@@ -302,24 +317,10 @@ def create_project_with_services(
         component_name=component_name,
         image=image,
     )
-    # De naam komt van de voortgangspagina en niet uit een diff van de git-listing: de taak
-    # weet hem, en weet ook of het gelukt is. Zie project_name_from_progress.
-    name = project_name_from_progress(page, timeout=create_timeout)
-    # Het BESTAND blijft een aparte controle: dat de wizard iets aanmaakte zegt nog niet dat
-    # het in zad-projects staat, en dat is wat deze suite bewaakt.
-    assert name in forgejo.list_project_names(), f"'{name}' staat niet in zad-projects"
-    deployment_name = forgejo.get_first_deployment_name(name)
-    api_key = read_api_key_with_retry(page, base_url, name)
-    # The project file appears early in the create_project task, but the task then
-    # keeps running (app-of-apps refresh, waiting for the app to go Healthy). Wait
-    # for that to finish before handing the project to the test: otherwise a fast
-    # test that adds/deletes and tears down would delete the app mid-provision,
-    # leaving create_project hung on a now-missing app and jamming the worker.
-    cluster.wait_for_project_apps_healthy(name, timeout=create_timeout)
-    return CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
+    return _project_na_de_wizard(page, base_url, forgejo, display_name, create_timeout=create_timeout)
 
 
-def project_name_from_progress(page: Page, *, timeout: float = 600.0) -> str:
+def naam_van_de_voortgangspagina(page: Page, *, timeout: float = 600.0) -> str:
     """Wacht tot de aanmaaktaak KLAAR is en lees de projectnaam waar de app hem zet.
 
     DIT VERVANGT HET AFVISSEN VAN DE GIT-LISTING. De wizard leverde een taak op die zowel
@@ -337,15 +338,24 @@ def project_name_from_progress(page: Page, *, timeout: float = 600.0) -> str:
     naam. De ``timeout`` hier is dus een vangnet ("er is iets mis als het zo lang duurt")
     en geen wachtmechanisme.
 
-    Faalt de taak, dan zegt deze functie DAT, in plaats van het als een uitgelopen klok te
-    presenteren.
+    Het OORDEEL over de uitkomst staat los in ``assert_aanmaak_geslaagd``: de naam is juist
+    bij een mislukte aanmaak nodig, want het projectbestand staat er dan al.
     """
     knop = page.locator("a[href*='/details'], [onclick*='/details']").first
     knop.wait_for(state="attached", timeout=timeout * 1000)
     doel = knop.get_attribute("href") or knop.get_attribute("onclick") or ""
     treffer = re.search(r"/projects/([^/'\"]+)/details", doel)
     assert treffer, f"de voortgangspagina wijst niet naar een project: {doel!r}"
-    naam = treffer.group(1)
+    return treffer.group(1)
+
+
+def assert_aanmaak_geslaagd(page: Page, naam: str) -> None:
+    """Valt om als de aanmaaktaak van 'naam' niet als geslaagd op de pagina staat.
+
+    Publiek en niet ``_``-privé omdat ``scripts/doorloop_rc108.py`` precies deze twee
+    stappen los nodig heeft: die meetbank wil het oordeel wel, maar de opruiming die
+    ``naam_en_sleutel_na_de_wizard`` eraan hangt juist niet.
+    """
     # De uitkomst staat in een ATTRIBUUT en niet in de tekst van de pagina. Het sjabloon zet
     # bij status "completed" een success-alert en bij "failed" een error-alert, maar LOTC
     # rendert dat als <nldd-banner variant="..." text="...">: de melding staat in de
@@ -359,7 +369,93 @@ def project_name_from_progress(page: Page, *, timeout: float = 600.0) -> str:
     variant = (alert.get_attribute("variant") or "") if alert.count() else ""
     melding = (alert.get_attribute("text") or "") if alert.count() else ""
     assert variant == "success", f"het aanmaken van '{naam}' is niet geslaagd (variant={variant!r}): {melding}"
-    return naam
+
+
+def _project_na_de_wizard(
+    page: Page,
+    base_url: str,
+    forgejo: ForgejoClient,
+    display_name: str,
+    *,
+    create_timeout: float,
+) -> CreatedProject:
+    """De gedeelde afronding van beide wizardhelpers: naam, sleutel, deployment, gezondheid."""
+    naam, api_key = naam_en_sleutel_na_de_wizard(page, base_url, forgejo, timeout=create_timeout)
+    with opruimen_als_het_misgaat(page, base_url, naam):
+        deployment_name = forgejo.get_first_deployment_name(naam)
+        # The project file appears early in the create_project task, but the task then
+        # keeps running (app-of-apps refresh, waiting for the app to go Healthy). Wait
+        # for that to finish before handing the project to the test: otherwise a fast
+        # test that adds/deletes and tears down would delete the app mid-provision,
+        # leaving create_project hung on a now-missing app and jamming the worker.
+        cluster.wait_for_project_apps_healthy(naam, timeout=create_timeout)
+        return CreatedProject(name=naam, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
+
+
+def naam_en_sleutel_na_de_wizard(
+    page: Page,
+    base_url: str,
+    forgejo: ForgejoClient,
+    *,
+    timeout: float = 600.0,
+) -> tuple[str, str]:
+    """De naam en de API-sleutel van het zojuist aangemaakte project, of ruim het op.
+
+    Ook voor de modules die hun eigen wizardgang lopen en geen ``CreatedProject`` nodig
+    hebben: die deden deze drie stappen zelf, en liepen daarmee tegen hetzelfde op.
+    """
+    naam = naam_van_de_voortgangspagina(page, timeout=timeout)
+    with opruimen_als_het_misgaat(page, base_url, naam):
+        assert_aanmaak_geslaagd(page, naam)
+        # Het BESTAND blijft een aparte controle: dat de wizard iets aanmaakte zegt nog niet
+        # dat het in zad-projects staat, en dat is wat deze suite bewaakt.
+        assert naam in forgejo.list_project_names(), f"'{naam}' staat niet in zad-projects"
+        return naam, read_api_key_with_retry(page, base_url, naam)
+
+
+@contextlib.contextmanager
+def opruimen_als_het_misgaat(page: Page, base_url: str, naam: str) -> Generator[None]:
+    """Valt er binnen dit blok iets om, verwijder dan project ``naam``.
+
+    WAAROM DE AANROEPER DIT NIET ZELF KAN. Een sandboxmodule maakt zijn project aan in een
+    fixture en ruimt het op in de ``finally`` daarvan, met de naam die de wizardhelper
+    alleen bij SUCCES teruggeeft. Valt de aanmaak halverwege om, dan krijgt die ``finally``
+    niets terwijl het projectbestand er al staat: de aanmaaktaak schrijft het vroeg en valt
+    pas later om, op zijn eigen wacht tot de applicaties gezond zijn.
+
+    Opruimen op het CLUSTER helpt niet, ook ``cluster.force_cleanup_project`` niet (zie daar):
+    alles wat na het schrijven van het bestand komt hoort dus hierbinnen.
+    """
+    gelukt = False
+    try:
+        yield
+        gelukt = True
+    finally:
+        if not gelukt:
+            ruim_mislukte_aanmaak_op(page, base_url, naam)
+
+
+def ruim_mislukte_aanmaak_op(page: Page, base_url: str, naam: str) -> None:
+    """Verwijder een project waarvan de aanmaak omviel nadat het bestand geschreven was.
+
+    Best-effort en gooit zelf niets: dit loopt tijdens de afhandeling van een andere fout,
+    en die fout hoort de toets te bereiken. Lukt het opruimen niet, dan zegt het logboek
+    welk project blijft staan en hoe je het alsnog weghaalt.
+    """
+    logger.warning("De aanmaak van '%s' is omgevallen; het project wordt opgeruimd", naam)
+    try:
+        # Minder pogingen dan de gewone lezing: dit is een opruiming in een foutpad.
+        api_key = read_api_key_with_retry(page, base_url, naam, attempts=3)
+    except AssertionError as fout:
+        logger.error(
+            "Geen API-sleutel voor '%s' (%s): het projectbestand blijft in zad-projects staan. "
+            "Haal het weg met `task sandbox:verwijder-weesproject NAAM=%s`.",
+            naam,
+            fout,
+            naam,
+        )
+        return
+    sandbox_api.delete_project_via_api(base_url, naam, api_key, verify_ssl=API_VERIFY_SSL)
 
 
 def read_api_key_with_retry(page: Page, base_url: str, project_name: str, *, attempts: int = 20) -> str:
@@ -385,24 +481,7 @@ def create_project_via_wizard(
     image: str = RUNNABLE_IMAGE,
     create_timeout: float = 240.0,
 ) -> CreatedProject:
-    """Create one project through the real wizard and resolve its identity.
-
-    The technical name has a random postfix, so it is discovered by diffing the
-    Forgejo repo listing before/after. Returns the project with its API key and
-    first deployment name.
-    """
+    """Create one project through the real wizard; returns it with API key and deployment name."""
     walk_create_wizard(page, base_url, display_name, user_email=user_email, component_name=component_name, image=image)
 
-    # Zie project_name_from_progress: de taak weet de naam en de uitkomst, dus die vragen we
-    # in plaats van de git-listing af te vissen op een klok.
-    name = project_name_from_progress(page, timeout=create_timeout)
-    assert name in forgejo.list_project_names(), f"'{name}' staat niet in zad-projects"
-
-    deployment_name = forgejo.get_first_deployment_name(name)
-    api_key = read_api_key_with_retry(page, base_url, name)
-    # Wait out the rest of the create_project task (app-of-apps refresh, app going
-    # Healthy) before handing the project over, so a fast add/delete + teardown does
-    # not race the still-running create and delete the app from under it. See
-    # create_project_with_services for the full rationale.
-    cluster.wait_for_project_apps_healthy(name, timeout=create_timeout)
-    return CreatedProject(name=name, display_name=display_name, api_key=api_key, deployment_name=deployment_name)
+    return _project_na_de_wizard(page, base_url, forgejo, display_name, create_timeout=create_timeout)

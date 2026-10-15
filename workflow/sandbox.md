@@ -33,7 +33,7 @@ There is **no remote server and no shared state**. If a colleague also runs the 
 
 ## What runs in it
 
-`sandboxed-local` is one of three cluster types (alongside `local` and `odcn-production`). Unlike `local` (external GitHub + git daemon), the sandbox runs an **in-cluster Forgejo** that is the GitOps source of truth. `task sandbox:setup` (~5-10 min) brings up: ingress-nginx, PostgreSQL (CNPG), Forgejo, Keycloak, MinIO, a container registry, Prometheus, ArgoCD, and the Operations Manager.
+`sandboxed-local` is a cluster type alongside `odcn-production`. The sandbox runs an **in-cluster Forgejo** that is the GitOps source of truth. `task sandbox:setup` (~5-10 min) brings up: ingress-nginx, PostgreSQL (CNPG), Forgejo, Keycloak, MinIO, a container registry, Prometheus, ArgoCD, and the Operations Manager.
 
 ZAD drives three Forgejo repos, exactly as in production: `zad-projects` (one YAML per project, source of truth), `zad-argo-user-applications`, and `zad-deployments`.
 
@@ -134,10 +134,13 @@ E2E_SECRET_KEY=sandbox-dev-secret-key-fixed-for-stable-sessions-32min \
 FORGEJO_URL=https://forgejo.sandbox.rijksapp.dev \
 FORGEJO_USER=rig-admin FORGEJO_PASSWORD=admin1234 \
 E2E_ARTIFACT_DIR=tests/e2e/artifacts E2E_TRACE=1 \
-uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife" -v --timeout=300
+uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife and not punt14" -v --timeout=300
 ```
 
-The long `reallife` suite (5 projects, semi-concurrent UI+API mutations) is deliberately excluded from the default sandbox run. Run it separately with `task test-e2e-sandbox-reallife`.
+Two long suites are deliberately excluded from the default sandbox run, each with its own
+task: the `reallife` suite (5 projects, semi-concurrent UI+API mutations) via
+`task test-e2e-sandbox-reallife`, and the `punt14` load suite (up to 26 deployments in one
+project, which fills the sandbox node) via `task test-e2e-sandbox-punt14`.
 
 If `E2E_BASE_URL` is unset, every sandbox test skips (the `sandbox_url` fixture). Details and rationale are in `features/e2e-sandbox-tests.md`.
 

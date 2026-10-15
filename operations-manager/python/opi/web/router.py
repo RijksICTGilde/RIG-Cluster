@@ -17,6 +17,13 @@ from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
 from opi.core.templates_lotc import templates_lotc
+from opi.services.argocd_operation import (
+    STUCK_OPERATION_THRESHOLD_SECONDS,
+    format_duration,
+    is_stuck,
+    operation_age_seconds,
+    read_sync_operation,
+)
 from opi.services.argocd_overview import get_project_argocd_statuses
 from opi.services.catalog.deployment_health.disabled import deployment_disabled_state
 from opi.services.component_values import ComponentValuesError
@@ -522,7 +529,7 @@ async def refresh_project_web(request: Request, project_name: str) -> HTMLRespon
         request=request,
         project_name=project_name,
         task_type="refresh_project",
-        payload={"project_name": project_name, "force_clone": False},
+        payload={"project_name": project_name, "force_clone": False, "reset_running_sync": True},
         current_step="Project herverwerken gestart...",
         success_message="Project succesvol herverwerkt!",
     )
@@ -561,6 +568,7 @@ async def refresh_deployment_web(request: Request, project_name: str, deployment
             "project_name": project_name,
             "deployment_name": deployment_name,
             "force_clone": False,
+            "reset_running_sync": True,
         },
         deployment_name=deployment_name,
         current_step=f"Deployment '{deployment_name}' herverwerken gestart...",
@@ -1289,7 +1297,11 @@ async def dashboard(request: Request):
             from opi.connectors.argo import create_argo_connector
             from opi.utils.naming import generate_argocd_application_name
 
-            argo_connector = create_argo_connector()
+            # Fail fast: het standaardbudget van 30 seconden zou hier PER deployment
+            # gelden, sequentieel in een enkel verzoek, waar deze pagina eerder in
+            # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
+            # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
+            argo_connector = create_argo_connector(connect_retry_seconds=0)
             argocd_available = argo_connector.auth_token is not None
 
             if argocd_available:
@@ -1313,11 +1325,12 @@ async def dashboard(request: Request):
                                 if inactivity and argo_status == "Healthy":
                                     argo_status = inactivity
                                 deployment_statuses.append(argo_status)
-                                # Extract last deployed timestamp
-                                operation_state = status_data.get("status", {}).get("operationState", {})
-                                finished_at = operation_state.get("finishedAt") or status_data.get("status", {}).get(
-                                    "reconciledAt"
-                                )
+                                # Wanneer er voor het laatst werkelijk iets is UITGEROLD, zonder
+                                # terugval op ``reconciledAt``. Die terugval meldde bij een
+                                # vastgelopen sync de tijd van de laatste VERGELIJKING als het
+                                # moment van uitrollen, en dat staat hier als "3 uur geleden" op
+                                # het scherm (RC-250). Geen uitrol betekent geen regel.
+                                finished_at = read_sync_operation(status_data).finished_at
                                 if finished_at and (not latest_deploy or finished_at > latest_deploy):
                                     latest_deploy = finished_at
                             else:
@@ -2016,6 +2029,7 @@ async def _fetch_argocd_deployment_status(
     """
     from opi.services.deployment_diagnostics import (
         conditions_to_errors,
+        describe_image_pull_failures,
         gather_deployment_errors,
         gather_sync_deviations,
         summarize_component_pods,
@@ -2100,6 +2114,14 @@ async def _fetch_argocd_deployment_status(
         if not last_sync and sync.get("status") == "Synced":
             last_sync = status.get("reconciledAt")
 
+        # Sinds wanneer de lopende sync loopt, en of hij daarmee vastligt. Zonder die twee is
+        # een phase `Running` niet te beoordelen: op 5 oktober 2026 stond die 45 minuten
+        # onveranderd (RC-250).
+        operation = read_sync_operation(status_data)
+        operation_duration = (
+            format_duration(operation_age_seconds(operation)) if operation.ongoing and operation.started_at else None
+        )
+
         return {
             "app_name": app_name,
             "available": True,
@@ -2110,9 +2132,16 @@ async def _fetch_argocd_deployment_status(
             "last_sync": last_sync,
             "operation_phase": operation_state.get("phase"),
             "operation_message": operation_state.get("message"),
+            "operation_duration": operation_duration,
+            "operation_is_stuck": is_stuck(operation, threshold_seconds=STUCK_OPERATION_THRESHOLD_SECONDS),
             "errors": errors,
             "deviations": deviations,
             "pods": pod_summaries,
+            # Costs no cluster call: the observer counted this cluster at most a minute
+            # ago. Read on the healthy branch too, deliberately -- a component that
+            # cannot pull keeps the application Degraded, but if ArgoCD ever says
+            # otherwise the card still has to say what is wrong.
+            "image_pull_failures": describe_image_pull_failures(deployment, project_data),
         }
     except Exception:
         # De melding komt in ``errors`` en die tekent de kaart uit; wat ArgoCD hier
@@ -2333,7 +2362,10 @@ async def argocd_status_fragment(
     # -- it decides whether asking the cluster which pod is serving makes sense at all.
     deployment_state = collect_deployment_state(project.data or {}, deployment_name)
 
-    argo = create_argo_connector()
+    # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
+    # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
+    # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    argo = create_argo_connector(connect_retry_seconds=0)
     if argo.auth_token is None:
         status = _argocd_unavailable_result(
             generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"

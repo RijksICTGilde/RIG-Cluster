@@ -24,6 +24,18 @@ component is die keuze weggevallen, want het component schrijft zijn eigen attri
 ``| forceescape`` escapet ook markup en is daarmee de juiste afsluiting van elke waarde
 die in een attribuut belandt.
 
+EEN KEER, NIET TWEE KEER
+
+NLDD 0.8.92 escapet strenger dan 0.8.80. De vraag die daarbij hoort is of onze eigen laag
+er dan bovenop komt en er ``&amp;amp;`` van maakt. Gemeten, en nee: ``forceescape``
+levert ``Markup`` op, en LOTC's ``| e`` laat markup met rust, dus met of zonder ons filter
+staat er precies een keer ``&amp;b&#34;c&lt;d``.
+
+``attr_escape`` uit opi/forms/lotc_attrs.py geeft wel een gewone ``str`` terug en zou in
+een ``:attrs``-spread WEL dubbel escapen. Dat gebeurt nergens: dat filter staat alleen in
+``optional_attr`` in widgets/_macros.html.j2, en die schrijft op een kale ``<input>`` waar
+LOTC niets mee doet. De test hieronder houdt die twee kanten uit elkaar.
+
 WAAROM DIT EEN EIGEN TEST HEEFT
 
 Geen van de bestaande lagen ving dit. De compilatiecontrole ziet een geldig component
@@ -42,7 +54,7 @@ from opi.core.templates_lotc import templates_lotc
 GEVALLEN = [
     pytest.param(
         '{% set js = ("openLogViewer(" ~ (naam | tojson) ~ ", " ~ (comps | tojson) ~ ")") | forceescape %}'
-        '<c-button label="Logs bekijken" :attrs="{\'onclick\': js}" />',
+        '<c-button label="Logs bekijken" @click="{{ js }}" />',
         {"naam": 'pro"ject', "comps": [{"reference": "web"}]},
         id="js-aanroep-via-attrs",
     ),
@@ -76,7 +88,7 @@ def test_zonder_forceescape_gaat_het_wel_mis() -> None:
     geen aanhalingstekens bevat, en dan bewaakt hij niets.
     """
     kapot = templates_lotc.env.from_string(
-        '{% set js = "f(" ~ (naam | tojson) ~ ")" %}<c-button label="x" :attrs="{\'onclick\': js}" />'
+        '{% set js = "f(" ~ (naam | tojson) ~ ")" %}<c-button label="x" @click="{{ js }}" />'
     ).render(naam="project")
 
     knop = re.search(r"<nldd-button[^>]*>", kapot)
@@ -117,3 +129,32 @@ def test_de_knop_logs_bekijken_draagt_een_hele_aanroep() -> None:
     tag = knop.group(0)
     assert tag.count('"') % 2 == 0, f"het onclick-attribuut sluit voortijdig: {tag[:200]}"
     assert "openLogViewer(&#34;amt-odc-prd&#34;" in tag, f"de aanroep is niet compleet: {tag[:200]}"
+
+
+def test_forceescape_escapet_precies_een_keer() -> None:
+    """Onze laag komt niet bovenop die van LOTC.
+
+    Een waarde met ``&``, ``"`` en ``<`` hoort er een keer geescapet uit te komen. Twee
+    keer zou hem op het scherm als ``&amp;`` laten LEZEN in plaats van als ``&``, en dat is
+    net zo stil kapot als helemaal niet escapen.
+    """
+    ruw = 'a&b"c<d'
+    met = templates_lotc.env.from_string('<c-button label="x" :attrs="{\'title\': w | forceescape}" />').render(w=ruw)
+    zonder = templates_lotc.env.from_string('<c-button label="x" :attrs="{\'title\': w}" />').render(w=ruw)
+
+    assert 'title="a&amp;b&#34;c&lt;d"' in met, met
+    assert met == zonder, "forceescape verandert de uitkomst; dan escapet er ergens iets dubbel"
+    assert "&amp;amp;" not in met
+
+
+def test_attr_escape_hoort_niet_in_een_attrs_spread() -> None:
+    """De keerzijde, en waarom dat filter alleen op kale HTML staat.
+
+    ``attr_escape`` geeft een gewone ``str``, dus LOTC's ``| e`` gaat er nog een keer
+    overheen. Dit is de meting die zegt waarom het filter blijft waar het staat.
+    """
+    dubbel = templates_lotc.env.from_string('<c-button label="x" :attrs="{\'title\': w | attr_escape}" />').render(
+        w='a&b"c<d'
+    )
+
+    assert "&amp;amp;" in dubbel, "attr_escape escapet niet meer dubbel in een spread; werk de uitleg hierboven bij"

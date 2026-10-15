@@ -1,6 +1,6 @@
 # De web-UI van de SMTP-sink (Mailpit): alles wat de relay "bezorgd" heeft, in de
 # browser in plaats van via een port-forward. Alleen op dit clustertype: de sink
-# bestaat uitsluitend in local en sandboxed-local, op ODCN is de upstream de echte
+# bestaat uitsluitend in sandboxed-local, op ODCN is de upstream de echte
 # mailserver en is er niets te tonen.
 #
 # Geen secretName in het tls-blok: het wildcard-certificaat staat als

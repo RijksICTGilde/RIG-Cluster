@@ -15,6 +15,8 @@ from typing import Any
 import aiohttp
 import requests
 
+from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+from opi.utils.connect_retry import retry_on_connect_error
 from opi.utils.logging_redact import redact_sensitive_headers
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,24 @@ _token_cache: dict[tuple[str, str], str] = {}
 _token_cache_lock = threading.Lock()
 _token_refresh_lock = asyncio.Lock()
 
+# While argocd-server restarts its API server in-process, the service can be without an
+# endpoint for as long as its 20 second graceful-shutdown deadline. 30 seconds covers
+# that with margin. Why it restarts: docs/argocd-server-herstart-elke-40-minuten.md.
+CONNECT_RETRY_SECONDS = 30.0
+
+
+def _exc_text(error: BaseException) -> str:
+    """De tekst van een uitzondering, of de klasse als die tekst leeg is.
+
+    ``asyncio.TimeoutError`` heeft een lege ``str()``, en juist een read timeout is de meest
+    voorkomende fout op deze paden. Een kale interpolatie van de uitzondering logde daar dus
+    niets: op 6 oktober 2026 stond er twee keer "Error getting application status:" met niets
+    erachter, en dat liet een taak sneuvelen zonder spoor. De repr is geen alternatief, want
+    de uitzonderingen die WEL een tekst hebben worden daarmee slechter leesbaar: aiohttp zegt
+    "Cannot connect to host argocd-server:80" en de repr daarvan is een ConnectionKey vol velden.
+    """
+    return str(error) or type(error).__name__
+
 
 class ArgoConnector:
     """Connector for interacting with ArgoCD server."""
@@ -44,6 +64,7 @@ class ArgoConnector:
         password: str = "admin",  # noqa: S107
         use_tls: bool = False,
         verify_ssl: bool = False,
+        connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
     ):
         """
         Initialize the ArgoCD connector and perform login.
@@ -55,6 +76,7 @@ class ArgoConnector:
             password: Password for authentication
             use_tls: Whether to use TLS/HTTPS
             verify_ssl: Whether to verify SSL certificates
+            connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
         """
         self.server_host = server_host
         self.server_port = server_port
@@ -62,6 +84,7 @@ class ArgoConnector:
         self.password = password
         self.use_tls = use_tls
         self.verify_ssl = verify_ssl
+        self.connect_retry_seconds = connect_retry_seconds
 
         # Build base URL
         protocol = "https" if use_tls else "http"
@@ -88,7 +111,7 @@ class ArgoConnector:
             try:
                 self._perform_login()
             except Exception as e:
-                logger.warning(f"Initial login failed during initialization: {e}")
+                logger.warning(f"Initial login failed during initialization: {_exc_text(e)}")
                 logger.info("Will attempt async login when methods are called")
 
     def _cache_key(self) -> tuple[str, str]:
@@ -162,7 +185,7 @@ class ArgoConnector:
                 return False
 
         except Exception as e:
-            logger.error(f"Error during ArgoCD login: {e}")
+            logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
             return False
 
     async def login(self) -> bool:
@@ -172,53 +195,56 @@ class ArgoConnector:
         Returns:
             True if login successful, False otherwise
         """
+        try:
+            return await retry_on_connect_error(self._login_once, self.connect_retry_seconds, "login")
+        except Exception as e:
+            logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
+            return False
+
+    async def _login_once(self) -> bool:
+        """One login attempt. A connect failure propagates so login() can retry it."""
         logger.info(f"Logging in to ArgoCD server: {self.base_url}")
 
         login_url = f"{self.base_url}/api/v1/session"
         login_data = {"username": self.username, "password": self.password}
 
-        try:
-            # Create SSL context
-            ssl_context = ssl.create_default_context()
-            if not self.verify_ssl:
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+        # Create SSL context
+        ssl_context = ssl.create_default_context()
+        if not self.verify_ssl:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
 
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
-            request_timeout = aiohttp.ClientTimeout(total=30)
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        request_timeout = aiohttp.ClientTimeout(total=30)
 
-            async with (
-                aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
-                session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
-            ):
-                # Check if we got redirected to HTTPS
-                if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
-                    logger.info(f"Detected redirect to HTTPS: {response.url}")
-                    # Update base URL to use HTTPS
-                    old_base = self.base_url
-                    self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                    self._actual_base_url = self.base_url
-                    logger.info(f"Updated base URL from {old_base} to {self.base_url}")
+        async with (
+            aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
+            session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
+        ):
+            # Check if we got redirected to HTTPS
+            if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
+                logger.info(f"Detected redirect to HTTPS: {response.url}")
+                # Update base URL to use HTTPS
+                old_base = self.base_url
+                self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
+                self._actual_base_url = self.base_url
+                logger.info(f"Updated base URL from {old_base} to {self.base_url}")
 
-                if response.status == 200:
-                    response_data = await response.json()
-                    logger.debug(f"Login response data: {response_data}")
-                    self.auth_token = response_data.get("token")
-                    if self.auth_token:
-                        self._store_token(self.auth_token)
-                        logger.info("Successfully logged in to ArgoCD - token received")
-                        return True
-                    else:
-                        logger.error("Login response missing token")
-                        return False
+            if response.status == 200:
+                response_data = await response.json()
+                logger.debug(f"Login response data: {response_data}")
+                self.auth_token = response_data.get("token")
+                if self.auth_token:
+                    self._store_token(self.auth_token)
+                    logger.info("Successfully logged in to ArgoCD - token received")
+                    return True
                 else:
-                    error_text = await response.text()
-                    logger.error(f"Login failed with status {response.status}: {error_text}")
+                    logger.error("Login response missing token")
                     return False
-
-        except Exception as e:
-            logger.error(f"Error during ArgoCD login: {e}")
-            return False
+            else:
+                error_text = await response.text()
+                logger.error(f"Login failed with status {response.status}: {error_text}")
+                return False
 
     async def _create_ssl_context(self) -> ssl.SSLContext:
         """Create SSL context based on configuration."""
@@ -243,13 +269,34 @@ class ArgoConnector:
             self.auth_token = cached
             return True
 
-        async with _token_refresh_lock:
+        # The login behind this lock retries connect failures, so holding it can cost the
+        # holder's whole budget. Only a caller that asked to fail fast refuses to queue up
+        # behind that; it degrades exactly as it does on a login that failed. A free lock
+        # is still taken straight away, so this refuses to wait, never to log in.
+        #
+        # A caller that did ask to ride out a restart waits for the holder. Bounding that
+        # wait on its OWN budget cut it off just before the holder succeeded: on budget 30
+        # with argocd 20 seconds away the holder's attempts land on t=0, 1, 3, 7, 15 and 30,
+        # and the login that lands costs another ~700ms of bcrypt, so the waiter gave up at
+        # t=30 and killed the very deployment task this retry exists for. The wait is
+        # bounded in practice, because the holder is off the lock within its own budget
+        # plus one login.
+        wait_seconds = None if self.connect_retry_seconds > 0 else 0
+        try:
+            async with asyncio.timeout(wait_seconds):
+                await _token_refresh_lock.acquire()
+        except TimeoutError:
+            logger.warning("Not waiting for an ArgoCD login in flight elsewhere: this caller asked to fail fast")
+            return False
+        try:
             cached = self._cached_token()
             if cached:
                 self.auth_token = cached
                 return True
             logger.info("No authentication token available. Performing async login.")
             return await self.login()
+        finally:
+            _token_refresh_lock.release()
 
     async def _make_authenticated_request(
         self,
@@ -284,33 +331,36 @@ class ArgoConnector:
             logger.debug(f"Request headers: {redact_sensitive_headers(headers)}")
             logger.debug(f"Making {method} request to: {url}")
 
-            async with session.request(method, url, json=json_data or {}, headers=headers) as response:
-                response_text = await response.text()
-                logger.debug(f"Response status: {response.status}")
-                logger.debug(
-                    f"Response text: {response_text[:200]}..."
-                    if len(response_text) > 200
-                    else f"Response text: {response_text}"
-                )
+            async def _send() -> tuple[int, str]:
+                async with session.request(method, url, json=json_data or {}, headers=headers) as response:
+                    return response.status, await response.text()
 
-                if response.status == 401 and retry_count == 0:
-                    logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
-                    # Invalidate only the token this request actually used, then
-                    # re-authenticate through the shared path so concurrent 401s
-                    # collapse into a single login.
-                    self._invalidate_token(self.auth_token)
-                    self.auth_token = None
-                    if await self._ensure_authenticated():
-                        logger.info("Re-authentication successful, retrying request")
-                        return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
-                    else:
-                        logger.error("Re-authentication failed")
-                        return 401, "Re-authentication failed"
-                elif response.status == 401:
-                    logger.error("Still receiving 401 after re-authentication attempt")
-                    return 401, "Authentication failed after retry"
+            status, response_text = await retry_on_connect_error(_send, self.connect_retry_seconds, f"{method} {url}")
+            logger.debug(f"Response status: {status}")
+            logger.debug(
+                f"Response text: {response_text[:200]}..."
+                if len(response_text) > 200
+                else f"Response text: {response_text}"
+            )
 
-                return response.status, response_text
+            if status == 401 and retry_count == 0:
+                logger.warning("Received 401 Unauthorized. Attempting to re-login and retry.")
+                # Invalidate only the token this request actually used, then
+                # re-authenticate through the shared path so concurrent 401s
+                # collapse into a single login.
+                self._invalidate_token(self.auth_token)
+                self.auth_token = None
+                if await self._ensure_authenticated():
+                    logger.info("Re-authentication successful, retrying request")
+                    return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
+                else:
+                    logger.error("Re-authentication failed")
+                    return 401, "Re-authentication failed"
+            elif status == 401:
+                logger.error("Still receiving 401 after re-authentication attempt")
+                return 401, "Authentication failed after retry"
+
+            return status, response_text
 
     async def sync_application(self, app_name: str | None = None) -> bool:
         """
@@ -391,8 +441,8 @@ class ArgoConnector:
         except RuntimeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting application status: {e}")
-            raise RuntimeError(f"Error getting application status: {e}")
+            logger.error(f"Error getting application status: {_exc_text(e)}")
+            raise RuntimeError(f"Error getting application status: {_exc_text(e)}")
 
     async def get_application_manifests(
         self, app_name: str | None = None, revision: str | None = None
@@ -470,7 +520,7 @@ class ArgoConnector:
                 return []
 
         except Exception as e:
-            logger.error(f"Error getting resource tree for {app_name}: {e}")
+            logger.error(f"Error getting resource tree for {app_name}: {_exc_text(e)}")
             return []
 
     async def list_applications(self) -> list[dict[str, Any]]:
@@ -494,7 +544,7 @@ class ArgoConnector:
                 logger.error(f"List applications request failed with status {status_code}: {response_text}")
                 return []
         except Exception as e:
-            logger.error(f"Error listing applications: {e}")
+            logger.error(f"Error listing applications: {_exc_text(e)}")
             return []
 
     async def login_and_sync(self, app_name: str | None = None) -> str | None:
@@ -618,6 +668,8 @@ class ArgoConnector:
         retry_delay: int = 3,
         kubectl_connector: Any = None,
         namespace: str | None = None,
+        progress_window_seconds: int | None = None,
+        stall_retries: int = 12,
     ) -> bool:
         """
         Wait for an ArgoCD application to be fully deleted.
@@ -638,13 +690,69 @@ class ArgoConnector:
                 API when ArgoCD is ambiguous. Without it, an ambiguous ArgoCD answer
                 cannot be confirmed and deletion is reported as unconfirmed (False).
             namespace: Namespace holding the ArgoCD Application CR; defaults to this instance's cluster
+            progress_window_seconds: How long to keep waiting WHILE the namespace is visibly
+                EMPTYING, beyond the ``max_retries`` window. ``None`` keeps the old
+                behaviour: the wait ends at ``max_retries``, progress or not.
+            stall_retries: How many consecutive polls without a MEASURED DECREASE end the wait
+                once the ``max_retries`` window has passed. A read that failed counts here
+                too: it is not a stall, but it is no proof of progress either, and only a
+                namespace that empties earns the extra window.
 
         Returns:
             True only if the application is confirmed deleted, False otherwise.
         """
         import asyncio
 
-        logger.info(f"Waiting for application deletion: {app_name} (max {max_retries} retries)")
+        # Beyond the plain max_retries window the wait continues while the namespace keeps
+        # EMPTYING, and gives up on a stall instead of on the clock. The window AND the stall
+        # both have to be reached: on the stall alone a brief hiccup in a healthy cascade
+        # would end the wait early. Background: features/argocd-vastgelopen-verwijdering.md.
+        max_progress_retries = 0 if progress_window_seconds is None else progress_window_seconds // max(retry_delay, 1)
+        limit = max(max_retries, max_progress_retries)
+        progress_window = max_progress_retries > max_retries
+        without_progress = 0
+        # The LOWEST count seen, not the previous one. Against the previous count a namespace
+        # that bounces (30, 31, 30, ...) scores a decrease every other poll and so buys the
+        # wider window without ever emptying: measured on a stuck Application, 30/31 ran to
+        # 120 polls instead of 40. A cascade that really works keeps setting a new low.
+        lowest_remaining: int | None = None
+        progress_types: list[str] | None = None
+        types_unavailable = False
+
+        logger.info(
+            f"Waiting for application deletion: {app_name} "
+            f"(max {max_retries} retries, up to {limit} while its namespace keeps emptying)"
+        )
+
+        async def _deletion_progress() -> tuple[bool, int, bool] | None:
+            nonlocal progress_types, types_unavailable
+            if kubectl_connector is None or not progress_window or types_unavailable:
+                return None
+            try:
+                if progress_types is None:
+                    # Discovered once per wait, failure included. The types a cluster has do not
+                    # change while a cascade runs, and asking per poll doubles the calls this wait
+                    # makes. Without types there is nothing to measure, so the poll yields no
+                    # window either, and retrying the discovery would repeat both the
+                    # api-resources call and its ERROR for every poll of the wait.
+                    progress_types = await kubectl_connector.list_namespaced_resource_types()
+                    if progress_types is None:
+                        types_unavailable = True
+                        return None
+                return await kubectl_connector.argocd_application_deletion_progress(app_name, namespace, progress_types)
+            except (KubectlConnectionError, KubectlExecutionError) as e:
+                # A kubectl that throws is a FAILED MEASUREMENT, not a failed wait: the same
+                # None as an unreadable inventory, so no stall and no wider window. kubectl
+                # raises this the moment its connection test flips isConnected to False, which
+                # is exactly the stressed control plane this measurement was built for. Letting
+                # it out skips the force route at the caller, and with force=True the caller's
+                # except marks the Application deleted, so the project file loses the deployment
+                # while the cluster still has it: the divergence this PR removes.
+                logger.warning(f"Could not measure deletion progress for {app_name}: {e}")
+                # Only a failed DISCOVERY is remembered, for the reason above; the inventory is
+                # a per-poll read and may well succeed on the next one.
+                types_unavailable = progress_types is None
+                return None
 
         async def _confirmed_gone_via_k8s() -> bool:
             # Ground-truth fallback. Only a clean NotFound (False) counts as gone;
@@ -653,7 +761,7 @@ class ArgoConnector:
                 return False
             return (await kubectl_connector.argocd_application_exists(app_name, namespace)) is False
 
-        for attempt in range(max_retries):
+        for attempt in range(limit):
             try:
                 exists = await self.application_exists(app_name)
                 # ArgoCD reports the app gone. A clean 404 is fairly reliable, but since
@@ -663,7 +771,7 @@ class ArgoConnector:
                     logger.info(f"Application {app_name} confirmed deleted after {attempt + 1} checks")
                     return True
 
-                logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{max_retries}")
+                logger.debug(f"Application {app_name} still exists, retry {attempt + 1}/{limit}")
 
             except PermissionError:
                 # FALLBACK: 'permission denied' is NOT proof the app is gone. The ArgoCD
@@ -683,12 +791,51 @@ class ArgoConnector:
                 )
 
             except Exception as e:
-                logger.error(f"Error checking application deletion status: {e}")
+                logger.error(f"Error checking application deletion status: {_exc_text(e)}")
 
-            if attempt < max_retries - 1:  # Don't sleep on the last attempt
+            # Never raises: a measurement that fails is None, see _deletion_progress.
+            progress = await _deletion_progress()
+            if progress is None:
+                # Only a MEASURED decrease buys the extra window. An Application that could
+                # not be read is not a stall, but it is no proof of progress either, and on
+                # the absence of information the wait keeps its plain max_retries.
+                without_progress += 1
+            else:
+                underway, remaining, complete = progress
+                # Emptying, not merely changing. A count that grows or bounces is movement
+                # without progress, and the ordering of (project, deployment) serialises
+                # deletes per deployment, so a delete of pr-62 and an add of pr-64 share one
+                # namespace: the add's resources must not buy the wider window for the stuck
+                # delete. ``complete`` is logged for the reader and kept out of the
+                # comparison, since a flapping inventory is not progress either.
+                new_low = lowest_remaining is None or remaining < lowest_remaining
+                verdict = (
+                    " - the namespace is still emptying, waiting"
+                    if new_low
+                    else f" - no decrease below {lowest_remaining}"
+                )
+                logger.info(
+                    f"Application {app_name} is still being deleted (deletion underway: {underway}, "
+                    f"{remaining} ArgoCD-owned resources left in its namespace"
+                    f"{'' if complete else ', inventory incomplete'}){verdict}"
+                )
+                if new_low:
+                    lowest_remaining = remaining
+                    without_progress = 0
+                else:
+                    without_progress += 1
+
+            if progress_window and attempt + 1 >= max_retries and without_progress >= stall_retries:
+                logger.warning(
+                    f"Application {app_name} showed no measured decrease of its namespace for {without_progress} "
+                    f"consecutive polls after {attempt + 1} retries - treating it as stuck"
+                )
+                return False
+
+            if attempt < limit - 1:  # Don't sleep on the last attempt
                 await asyncio.sleep(retry_delay)
 
-        logger.warning(f"Application {app_name} NOT confirmed deleted after {max_retries} retries")
+        logger.warning(f"Application {app_name} NOT confirmed deleted after {limit} retries")
         return False
 
 
@@ -699,6 +846,7 @@ def create_argo_connector(
     password: str | None = None,
     use_tls: bool | None = None,
     verify_ssl: bool | None = None,
+    connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
 ) -> ArgoConnector:
     """
     Create and return an ArgoConnector instance.
@@ -712,6 +860,7 @@ def create_argo_connector(
         password: Password for authentication (defaults to config)
         use_tls: Whether to use TLS/HTTPS (defaults to config)
         verify_ssl: Whether to verify SSL certificates (defaults to config)
+        connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
 
     Returns:
         ArgoConnector instance
@@ -734,4 +883,5 @@ def create_argo_connector(
         password=final_password,
         use_tls=final_use_tls,
         verify_ssl=final_verify_ssl,
+        connect_retry_seconds=connect_retry_seconds,
     )

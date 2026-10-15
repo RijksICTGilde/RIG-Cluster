@@ -88,7 +88,7 @@ gepubliceerde image, niet met een build uit de bron. Dat lost zichzelf op zodra 
 een pin krijgt van na de reparatie hierboven; tot die tijd is het al gepubliceerde image het
 enige exemplaar dat er is.
 
-**Blijft staan 2: local en sandboxed-local wijzen nog naar het dode adres.** Alleen de
+**Blijft staan 2: sandboxed-local wijst nog naar het dode adres.** Alleen de
 odcn-overlays vervangen `quay.io/minio/minio` door de eigen build. De base-deployments
 eronder, en `bootstrap/rig-system/kustomize/backup-destination/base/deployment.yaml` die
 helemaal geen odcn-overlay heeft, houden de kale quay-referentie. Wat er draait, draait op
@@ -138,3 +138,117 @@ kubectl patch argocd argocd -n rig-system --type=json -p='[{"op": "remove", "pat
 ```
 
 The setup will then continue automatically.
+
+## Een vooraf aangemaakte gebruiker komt niet door de authorization wall (niet gerepareerd)
+
+Genoteerd 30-09-2026, gemeten op odcn-production in realm `no-ks4-odcn-production` met
+Keycloak 25.0.6.
+
+Twee features spreken elkaar tegen. `features/keycloak-auto-link.md` beschrijft de bedoelde
+weg: maak de gebruiker vooraf aan in het projectrealm op e-mailadres, geef hem de rol
+`allowed-user` voor de authorization wall, en "no invite link, email verification, or password
+step is required". De wall eist tegelijk het omgekeerde: de sidecar draait met
+`--insecure-oidc-allow-unverified-email=false` en weigert een id_token waarvan
+`email_verified` niet true is. Elk project dat beide gebruikt, en dat is precies het
+gedocumenteerde gebruik, blokkeert dus zijn vooraf aangemaakte gebruikers. Zij krijgen op
+`/oauth2/callback` een HTTP 500 en in de sidecar staat:
+
+```
+[oauthproxy.go:895] Error redeeming code during OAuth2 callback:
+    email in id_token (<adres>) isn't verified
+```
+
+De keten, uit Keycloak 25.0.6 gelezen. `create_user` in de connector zet `emailVerified` op
+false en hangt er `requiredActions: ["VERIFY_EMAIL"]` aan zolang de aanroeper geen
+`skip_email_verification` meegeeft (`opi/connectors/keycloak.py:3650`). Logt die gebruiker
+daarna via SSO in, dan vindt `idp-create-user-if-unique` een duplicaat op het adres en valt de
+flow naar de auto-link-subflow. `IdpAutoLinkAuthenticator` doet alleen
+`context.setUser(existingUser); context.success();` en zet geen `BROKER_REGISTERED_NEW_USER`.
+In `IdentityBrokerService` zit de tak die `emailVerified` op true zet (regel 738, op grond van
+`trustEmail`) **binnen** `if (BROKER_REGISTERED_NEW_USER)`. Een gekoppeld account valt in de
+`else` en krijgt alleen `updateFederatedIdentity`, en die roept `setBasicUserAttributes`
+uitsluitend bij `syncMode: FORCE` aan terwijl onze IdP op `IMPORT` staat. De vlag blijft dus
+false, voor altijd.
+
+Dit is dezelfde fout die `features/keycloak-auto-link.md` onder "Attribute sync on linked
+accounts" al eens heeft geraakt en opgelost: "a pre-created account is never created by the
+IdP, so with the mappers' original `syncMode: IMPORT` its attributes were never populated".
+Daar zijn de mappers op `FORCE` gezet. `emailVerified` is daarbij overgeslagen, want dat is
+geen mapper maar een tak in `IdentityBrokerService`.
+
+Wie wel binnenkomt: iedereen die inlogt **zonder** dat er een account voor hem klaarstond.
+Die wordt door `idp-create-user-if-unique` echt aangemaakt, dus `BROKER_REGISTERED_NEW_USER`
+staat, en `trustEmail` zet de vlag. Vandaar dat het probleem per gebruiker lijkt te wisselen.
+
+Het is niet alleen de handmatige weg. De **lokale** tak van de uitnodigingsdienst zet zo'n
+account vanuit het portaal, zonder dat er iemand in de Keycloak-console komt. De rolkiezer van
+een uitnodiging biedt de rol van de authorization wall aan (standaard `allowed-user`, zie
+`features/invites.md`), en `complete_local_invite` (`opi/manager/invite_manager.py:427`) maakt
+het account in het projectrealm aan met een `create_user` zonder `skip_email_verification`. Het
+adres staat daarmee op onbevestigd en draagt `VERIFY_EMAIL`. Die tak stuurt wel een
+bevestigingsmail (`:443`, `send_verify_email`), en in deze weg is die mail het enige dat de vlag
+omzet. Blijft de bevestiging uit, door een dode mailrelay of omdat de uitgenodigde in een
+SSO-only realm nooit rechtstreeks bij Keycloak inlogt, dan staat daar precies het vooraf
+aangemaakte account waar de keten hierboven op begint. Een uitnodiging heeft geen veld om dat
+te omzeilen: `Email verified` op On bestaat alleen in de console.
+
+De **SSO**-tak van een uitnodiging maakt dat account niet. `invite_sso_start` stuurt de
+uitgenodigde naar het projectrealm zelf (`_build_realm_auth_url`), dus Keycloak heeft zijn
+first-broker-login al gedaan voordat `complete_sso_invite` draait: stond er nog geen account,
+dan maakt `idp-create-user-if-unique` het aan en zet `trustEmail` (hard gezet in
+`add_identity_provider`, `opi/connectors/keycloak.py:1202`) de vlag; stond het er al, dan
+koppelt `idp-auto-link`. Het token komt uit datzelfde realm, dus `get_user_by_email` vindt die
+gebruiker en de `create_user`-tak wordt overgeslagen.
+
+Daar hangt wel een eigen gat aan. Die SSO-uitgenodigde kan landen op een al bestaand onbevestigd
+account, bijvoorbeeld uit een eerdere lokale uitnodiging waarvan de bevestiging nooit kwam.
+`complete_sso_invite` kent dat account dan al, laat de vlag staan, kent alleen de rollen toe en
+meldt `created: False`. De succespagina zegt daarop "Je hebt nu toegang", terwijl de wall hem
+even hard weigert: de uitnodiging ziet er geslaagd uit en is het niet. De code kan het ook niet
+repareren: de connector zet `emailVerified` alleen bij het aanmaken
+(`opi/connectors/keycloak.py:3650`) en heeft geen weg om de vlag op een bestaand account om te
+zetten.
+
+Buiten de uitnodigingen om bestaat nog een portaalweg, en die stuurt niet eens een
+bevestigingsmail. Een keycloak-template mag een `users:`-sectie hebben, en `_process_users` maakt
+die gebruikers met `create_user` zonder `skip_email_verification` in het projectrealm aan, met
+het adres en de realm-rollen uit de template (`opi/handlers/keycloak_yaml_handler.py:1352`, zie
+`opi/configs/keycloak/algoritmeregister.yaml:240`). Het account staat daarmee op onbevestigd en
+draagt `VERIFY_EMAIL`, en `send_verify_email` staat in heel `opi/` alleen op de uitnodigingsweg
+(`opi/manager/invite_manager.py:443`), dus hier zet niets de vlag ooit om. Welke template draait
+komt uit het projectbestand (`services/keycloak/config/template`, alleen op path-traversal
+gekeurd, `opi/manager/keycloak_manager.py:583-588`) en wordt voor het projectrealm uitgevoerd
+(`:1969`); ook de gebruikerslijst zelf kan daaruit komen, want een `variables:`-blok in het
+projectbestand vult elke naam die het platform niet zelf berekent (`merge_user_variables`) en de
+lijst is zo'n naam. Dit is dus de API-weg: krijgt zo'n gebruiker de rol van de wall, dan is dat
+account vanaf het aanmaken buitengesloten.
+
+Repareren, per getroffen account: zet in Keycloak `Email verified` op On in het projectrealm en
+haal de `VERIFY_EMAIL` required action weg. Verwijderen en opnieuw laten inloggen werkt ook,
+maar dan verliest de gebruiker zijn rollen, dus dat is hier de slechtere weg.
+
+De structurele oplossing is een vooraf aangemaakt account in een SSO-only realm aanmaken met
+`skip_email_verification=True`, de parameter die `create_user` al heeft en die
+`opi/manager/keycloak_manager.py:1998` en `:2114` elders al gebruiken. Het adres dient in zo'n
+realm alleen om de federated identity te matchen, en die IdP is met `trustEmail: True` al
+vertrouwd. Dat is niet gebouwd: het verandert een beveiligingsrelevante default voor alle
+projectrealms en hoort een eigen besluit te zijn.
+
+Dat besluit staat niet op zichzelf, want de lokale uitnodigingsweg en de template-weg hierboven
+lopen tegen hetzelfde aan. Op de uitnodigingstak is de afweging een andere en een zwaardere: de
+bevestigingsmail is daar de enige controle dat de uitgenodigde het adres dat hij invult ook echt
+heeft, terwijl een vooraf aangemaakt SSO-account zijn adres van de vertrouwde IdP krijgt. Op de
+template-weg is er geen bevestigingsmail om af te wegen: daar is de keuze tussen de vlag zetten
+en er een sturen, en beide zijn een voorstel en geen stille aanpassing. Welke aanroepers de
+verificatie overslaan is gegrendeld in
+`tests/test_keycloak_master_admins_slaan_verificatie_over.py`, dus die toets gaat rood zodra
+iemand dit besluit neemt.
+
+Wat wel gerepareerd is: de wall levert nu een eigen `error.html` mee, zodat de gebruiker geen
+kale Engelse 500 ziet maar een Nederlandse pagina met een `RequestID` om aan de beheerder te
+geven. Dat maakt de storing leesbaar, niet weg.
+
+Wat niet uitgezocht is: waarom `roos.groot` en `anne.schuth` in dit realm wel binnenkwamen is
+afgeleid uit bovenstaande keten, niet gemeten. Keycloak-auditevents staan in productie uit, dus
+per gebruiker is niet terug te zien of hij vooraf was aangemaakt of bij de eerste login is
+ontstaan. Zet die events aan voordat je dit nog eens onderzoekt.

@@ -603,6 +603,7 @@ Existing building blocks, so nobody writes a fifth name validator:
 | Component name (incl. uniqueness) | `ComponentNameValidator` | `validators.py` |
 | Keycloak realm-role name | `RealmRoleValidator` | `validators.py` |
 | URL | `UrlValidator` | `validators.py` |
+| Relative path on the deployment's own host | `LogoutPathValidator` | `validators.py` |
 | Email | `EmailValidator` | `validators.py` |
 | Closed value set | `AllowedValuesValidator` | `validators.py` |
 | Required field | `required=True` + `RequiredValidator` | `validators.py` |

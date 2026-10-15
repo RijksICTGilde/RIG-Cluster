@@ -666,6 +666,7 @@ class KeycloakConnector:
         realm_name: str,
         support_http: bool = False,
         additional_redirect_uris: list[str] | None = None,
+        logout_path: str | None = None,
     ) -> dict[str, Any]:
         """
         Create a client for a specific deployment in the specified realm.
@@ -677,6 +678,8 @@ class KeycloakConnector:
             realm_name: Realm name (required, must be explicitly provided)
             support_http: Whether to generate both HTTP and HTTPS redirect URIs (default: False, HTTPS only)
             additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
+            logout_path: Optional path on the application that ends its own session; becomes this
+                client's front-channel logout URL on the first ingress host.
 
         Returns:
             Dictionary containing client information and OIDC configuration
@@ -723,6 +726,20 @@ class KeycloakConnector:
         logger.info(f"Final redirect_uris: {redirect_uris}")
         logger.info(f"Final web_origins: {web_origins}")
 
+        # Keycloak accepts one front-channel logout URL per client, so with several ingress
+        # hosts one has to be picked: the first. The application clears its session
+        # server-side, so which of its own hostnames gets called makes no difference.
+        frontchannel_logout_url = f"https://{ingress_hosts[0]}{logout_path}" if logout_path and ingress_hosts else ""
+
+        # The front-channel key is ALWAYS stated, empty when there is no path: otherwise the 409
+        # comparison below cannot see the field being taken out and the client keeps a stale URL.
+        expected_attributes: dict[str, str] = {
+            "post.logout.redirect.uris": "+",
+            "frontchannel.logout.url": frontchannel_logout_url,
+        }
+        if frontchannel_logout_url:
+            logger.info(f"Front-channel logout URL for '{client_id}': {frontchannel_logout_url}")
+
         client_data = {
             "clientId": client_id,
             "name": f"{project_name} - {deployment_name}",
@@ -737,10 +754,12 @@ class KeycloakConnector:
             "implicitFlowEnabled": False,
             "directAccessGrantsEnabled": True,
             "serviceAccountsEnabled": True,
+            # Voorwaarde voor frontchannel.logout.url, en binnen de federatie de reden dat de
+            # realm-sessie een uitlog overleeft. _ensure_public_client zet hem ook, en omzetten
+            # telt pas als beide mee gaan: zie de vork in
+            # features/keycloak-always-clear-session-logout.md.
             "frontchannelLogout": True,
-            "attributes": {
-                "post.logout.redirect.uris": "+",
-            },
+            "attributes": expected_attributes,
         }
 
         try:
@@ -771,26 +790,31 @@ class KeycloakConnector:
 
                         uris_differ = existing_redirect_uris != expected_redirect_uris
                         origins_differ = existing_web_origins != expected_web_origins
-                        post_logout_differ = existing_attrs.get("post.logout.redirect.uris") != "+"
+                        # Every attribute this method owns, not just post.logout.redirect.uris:
+                        # a client created before an attribute existed would otherwise never
+                        # pick it up.
+                        attrs_differ = any(
+                            existing_attrs.get(key) != value for key, value in expected_attributes.items()
+                        )
 
-                        if uris_differ or origins_differ or post_logout_differ:
+                        if uris_differ or origins_differ or attrs_differ:
                             logger.info(
-                                f"Client '{client_id}' redirect URIs need updating. "
-                                f"Current: {existing_redirect_uris}, Expected: {expected_redirect_uris}"
+                                f"Client '{client_id}' needs updating. "
+                                f"Redirect URIs current: {existing_redirect_uris}, expected: {expected_redirect_uris}"
                             )
                             # Switch back to target realm for update
                             self.admin.change_current_realm(realm_name)
-                            merged_attrs = {**existing_attrs, "post.logout.redirect.uris": "+"}
+                            merged_attrs = {**existing_attrs, **expected_attributes}
                             update_data = {
                                 "redirectUris": redirect_uris,
                                 "webOrigins": web_origins,
                                 "attributes": merged_attrs,
                             }
                             self.admin.update_client(client_id=existing_client["id"], payload=update_data)
-                            logger.info(f"Successfully updated redirect URIs for client '{client_id}'")
+                            logger.info(f"Successfully updated client '{client_id}'")
                             updated = True
                         else:
-                            logger.info(f"Client '{client_id}' redirect URIs are already correct")
+                            logger.info(f"Client '{client_id}' redirect URIs and attributes are already correct")
 
                     created = False
                 else:
@@ -862,6 +886,8 @@ class KeycloakConnector:
             "implicitFlowEnabled": False,
             "directAccessGrantsEnabled": False,
             "serviceAccountsEnabled": False,
+            # De tweede drager van de vlag, naast create_deployment_client. Omzetten telt pas
+            # als beide mee gaan: zie de vork in features/keycloak-always-clear-session-logout.md.
             "frontchannelLogout": True,
             "attributes": {
                 "pkce.code.challenge.method": "S256",
@@ -2069,13 +2095,14 @@ class KeycloakConnector:
             default: Whether to assign as default scope (True) or optional (False)
 
         Returns:
-            True if scope was assigned successfully as realm default
+            True if the scope IS the realm default afterwards, which includes the case
+            where it already was
         """
+        scope_type = "default" if default else "optional"
         try:
             # Switch to target realm
             self.admin.change_current_realm(realm_name)
 
-            scope_type = "default" if default else "optional"
             logger.info(f"Assigning client scope '{scope_id}' as realm-level {scope_type} client scope")
 
             if default:
@@ -2090,6 +2117,12 @@ class KeycloakConnector:
             return True
 
         except KeycloakError as e:
+            # Een 409 is hier de gewenste eindtoestand: de scope staat al als realm-default.
+            # Elke herhaalde bootstrap tegen een bestaande Keycloak gaf anders een ERROR-regel.
+            if getattr(e, "response_code", None) == 409:
+                logger.info(f"Client scope '{scope_id}' is already realm-level {scope_type}, skipping")
+                self.admin.change_current_realm("master")
+                return True
             logger.error(f"Failed to assign client scope as realm default: {e}")
             # Switch back to master
             self.admin.change_current_realm("master")

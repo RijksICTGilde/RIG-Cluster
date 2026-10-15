@@ -19,9 +19,6 @@
   de VOORTGANGSPAGINA staat dat paneel niet, en daar zet de aanroeper `show_log_links` op
   false: een link die niets doet is erger dan geen link. Hier zou weglaten functionaliteit
   weghalen.
-
-  <c-link> laat geen onclick toe; de aanroep gaat via :attrs, opgebouwd met {% raw %}{% set %}{% endraw %}
-  boven de tag. Jinja binnen een componenttag leest de voorbewerker als een attribuut.
 #}
 {% set _severity_type = {"actionable": "error", "informational": "info", "noise": "info"} %}
 {# De groepering gebeurt HIER en niet bij de insluiter: dit bestand wordt vanuit vier
@@ -46,7 +43,7 @@
                     {% for failure in group.members %}
                         {% if failure.deployment %}
                             {% set logboek_js %}event.preventDefault(); if(typeof openLogViewer==='function'){openLogViewer('{{ project_name }}','{{ failure.deployment }}','{{ failure.component }}',[{reference:'{{ failure.component }}'}])}{% endset %}
-                            <c-link href="#" :attrs="{'onclick': logboek_js}">Bekijk logs voor '{% if group.deployments | length > 1 %}{{ failure.deployment }} / {% endif %}{{ failure.component }}'</c-link>
+                            <c-link href="#" @click="{{ logboek_js }}">Bekijk logs voor '{% if group.deployments | length > 1 %}{{ failure.deployment }} / {% endif %}{{ failure.component }}'</c-link>
                         {% endif %}
                     {% endfor %}
                 {% endif %}

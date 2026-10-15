@@ -343,7 +343,7 @@
                 <div class="rvo-alert__content">
                     <p><strong>Bootstrap Creates Two Key Projects:</strong></p>
                     <ul class="lotc-bullets">
-                        <li><strong>local-infrastructure</strong> - Manages the platform services themselves (ArgoCD, Keycloak, PostgreSQL, MinIO, Operations Manager)</li>
+                        <li><strong>infrastructure</strong> (<code>sandbox-infrastructure</code> on the sandbox, <code>production-infrastructure</code> on production) - Manages the platform services themselves (ArgoCD, Keycloak, PostgreSQL, MinIO, Operations Manager)</li>
                         <li><strong>user-applications</strong> - Contains all user-created projects and their configurations</li>
                     </ul>
                 </div>
@@ -1668,9 +1668,9 @@
                 style projects fill:#fff3e0,stroke:#f57c00,stroke-width:3px,stroke-dasharray:none
                 direction TB
 
-                %% Local Infrastructure Project
-                subgraph local ["local-infrastructure project"]
-                    style local fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,stroke-dasharray:none
+                %% Infrastructure Project
+                subgraph infra ["infrastructure project"]
+                    style infra fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,stroke-dasharray:none
                     direction LR
                     subgraph services1 [" "]
                         style services1 fill:transparent,stroke:none
@@ -1704,7 +1704,7 @@
             bootstrap ==> |"Creates & Manages"| projects
 
             %% ArgoCD creates both projects
-            ARGO ==> |"Deploys"| local
+            ARGO ==> |"Deploys"| infra
             ARGO ==> |"Deploys"| users
 
             %% External integrations (dotted)

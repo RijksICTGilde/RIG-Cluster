@@ -47,7 +47,7 @@
     <c-section-head title="{{ item_titel|e }}">
         <c-button label="{{ remove_label|e }}" type="warning-subtle" size="sm"
                   show-icon="before" icon="trash"
-                  :attrs="{'onclick': verwijder_js, 'title': verwijder_titel}"
+                  @click="{{ verwijder_js }}" :attrs="{'title': verwijder_titel}"
                   :disabled="remove_disabled" />
     </c-section-head>
     {% endif %}

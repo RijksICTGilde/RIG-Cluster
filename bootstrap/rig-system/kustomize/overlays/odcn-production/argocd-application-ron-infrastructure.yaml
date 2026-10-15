@@ -16,7 +16,7 @@
 #      bootstrap-overlay en wordt door task bootstrap-argo-system met kubectl
 #      aangebracht, met de RON-annotatie en het managed-by-label erop;
 #   2. het secret sops-age-key staat in rig-prd-ron (de CMP leest de AGE-sleutel in de
-#      namespace van de app); het kopieercommando staat in features/send-email.md.
+#      namespace van de app); task bootstrap-argo-system zet het er sinds RC-261 zelf in.
 # CreateNamespace staat bewust uit: zie punt 1.
 apiVersion: argoproj.io/v1alpha1
 kind: Application

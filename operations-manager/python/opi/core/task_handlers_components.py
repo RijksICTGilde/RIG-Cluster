@@ -1020,7 +1020,11 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
 
     # delete_component already refreshed the read cache via save_and_commit_project;
     # reprocess from Git to apply the deletion.
-    refresh_result = await handle_refresh_project({"project_name": project_name, "force_clone": True}, progress)
+    # reset_running_sync met opzet AAN: een verwijdering moet landen, en een sync op de oude
+    # staat hoort dat niet te vertragen.
+    refresh_result = await handle_refresh_project(
+        {"project_name": project_name, "force_clone": True, "reset_running_sync": True}, progress
+    )
 
     # A reprocess that failed must stay visible: it reports failure by returning, not by
     # raising, so wrapping it in a fixed "completed" would swallow it.
@@ -1042,4 +1046,12 @@ async def handle_delete_component(payload: dict, progress: Any) -> dict:
         # mislukking, doorgegeven. Zonder dit stond er wel status "failed" en geen reden,
         # en dan kan een client hem niet toeschrijven.
         **({"error_type": refresh_result.get("error_type", "processing_failed")} if failed else {}),
+        # En de categorie mee, anders leidt _with_error_category hem opnieuw af uit
+        # "processing_failed" en komt een onbereikbare mailrelay hier alsnog als "niet toe
+        # te schrijven" aan.
+        **(
+            {"error_category": refresh_result["error_category"]}
+            if failed and refresh_result.get("error_category")
+            else {}
+        ),
     }

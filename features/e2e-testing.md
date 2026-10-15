@@ -37,12 +37,14 @@ uv sync
 uv run playwright install chromium firefox --with-deps
 
 # Layer 1: Local tests (no sandbox needed, ~15s)
-uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
+# PROJECT_REPO_PASSWORD: de wizardtests schrijven een projectbestand en vallen zonder deze
+# variabele om, zie workflow/prepare.md. `task test-e2e` zet zelf een default.
+PROJECT_REPO_PASSWORD=plain:repo-secret uv run pytest tests/e2e/ -m "e2e and not sandbox" -v
 task test-e2e
 
 # Layer 2: Sandbox tests (requires running sandbox cluster)
 E2E_BASE_URL=https://zad.sandbox.rijksapp.dev \
-  uv run pytest tests/e2e/ -m "e2e and sandbox" -v --timeout=300
+  uv run pytest tests/e2e/ -m "e2e and sandbox and not reallife and not punt14" -v --timeout=300
 task test-e2e-sandbox
 ```
 

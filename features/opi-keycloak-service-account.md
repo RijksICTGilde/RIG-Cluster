@@ -114,5 +114,5 @@ break-glass:
 
 ## Follow-ups (out of scope here)
 
-- Prod/local overlay env injection + rollout (deliberate second step, via Git -> ArgoCD).
+- Prod overlay env injection + rollout (deliberate second step, via Git -> ArgoCD).
 - Once converged, remove `KEYCLOAK_ADMIN_PASSWORD` from OPI env in prod and OTP-enforce/lock the `admin` account.

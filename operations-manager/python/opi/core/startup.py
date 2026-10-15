@@ -420,8 +420,13 @@ ontsnapte fout neemt fase 4 en 5 mee. De vormen staan uitgelegd in
 """
 
 
-async def ensure_platform_mail_account() -> bool:
+async def ensure_platform_mail_account() -> bool | None:
     """Make sure ZAD's own account exists on the mail relay.
+
+    Drie uitkomsten, en het verschil tussen de laatste twee is wat de herhaallus nodig
+    heeft: ``True`` als het account staat, ``False`` als dit nog kan lukken (de relay is er
+    nog niet, het Secret was even onleesbaar), en ``None`` als er niets in te richten valt.
+    Dezelfde drie als ``MailManager.ensure_platform_account`` eronder.
 
     Here and not in a project run, because ZAD is not a project: it has no project file to
     hang an account on and no processing cycle that would create one. Setting up the relay
@@ -435,11 +440,11 @@ async def ensure_platform_mail_account() -> bool:
     "Non-critical" only holds if every way this can fail is caught HERE: ``server.py`` awaits
     ``run_startup_tasks`` without a guard, so an exception escaping this function takes the
     boot down and phases 4 and 5 (Keycloak, OAuth) never run. A relay that is configured but
-    unreachable does not raise ``MailRelayError`` -- aiohttp raises its own
-    ``ClientConnectorError`` before there is any HTTP answer to turn into one. So catch what
-    ``check_minio_availability`` right below catches too: the transport errors as well, and
-    the kubectl failure from writing the account's Secret (a cluster where that is refused
-    must still boot).
+    unreachable arrives as ``MailRelayUnavailableError`` since RC-261 (the connector turns
+    aiohttp's own transport error into one), but the raw transport errors stay in the list:
+    they still reach here from the kubectl call and the decryption around it, which is what
+    ``check_minio_availability`` right below catches too. Same for the kubectl failure from
+    writing the account's Secret (a cluster where that is refused must still boot).
 
     That last one has two shapes, and both are normal on a fresh cluster: kubectl raises
     ``KubectlConnectionError`` -- NOT a subclass of ``KubectlExecutionError`` -- when the
@@ -456,13 +461,16 @@ async def ensure_platform_mail_account() -> bool:
         logger.error(f"Platform-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
-        return False
+        return None
     logger.info(f"Platform-mailaccount {account.username} staat klaar ({account.from_address})")
     return True
 
 
-async def ensure_keycloak_mail_account() -> bool:
+async def ensure_keycloak_mail_account() -> bool | None:
     """Make sure KEYCLOAK's account exists on the mail relay.
+
+    Dezelfde drie uitkomsten als ``ensure_platform_mail_account``: ``None`` betekent dat er
+    op dit cluster niets in te richten valt, en dat is geen mislukking om op te herhalen.
 
     Next to ``ensure_platform_mail_account`` and not inside it: the two accounts differ in
     where the password comes from (OPI generates the one, the bootstrap makes the other),
@@ -475,7 +483,7 @@ async def ensure_keycloak_mail_account() -> bool:
     exception escaping here takes ``run_startup_tasks`` and therefore phases 4 and 5 with
     it.
 
-    Two shapes are NOT errors and answer ``False`` without a word of alarm: no relay on
+    Two shapes are NOT errors and answer ``None`` without a word of alarm: no relay on
     this cluster, and no Secret yet. Both are logged by the manager.
     """
     from opi.manager.mail_manager import MailManager
@@ -486,7 +494,7 @@ async def ensure_keycloak_mail_account() -> bool:
         logger.error(f"Keycloak-mailaccount kon niet worden ingericht: {error}")
         return False
     if account is None:
-        return False
+        return None
     logger.info(f"Keycloak-mailaccount {account.username} staat klaar ({account.from_address})")
     return True
 
@@ -698,15 +706,41 @@ async def _setup_oauth(readiness: ReadinessState, app: FastAPI) -> bool:
 
 STARTUP_RETRY_INTERVAL = 60
 
+#: Hoe de mailaccounts in de herhaallijst heten. Ze staan niet in ``ReadinessState``: dat
+#: bepaalt of het portaal zijn onderhoudspagina toont, en zonder platformmail hoort het
+#: portaal gewoon te werken.
+MAIL_ACCOUNTS_NAME = "Platform mail accounts"
 
-async def _startup_retry_loop(app: FastAPI, skip_checks: bool) -> None:
+
+async def _setup_mail_accounts(skip_checks: bool) -> bool:
+    """De twee platform-mailaccounts inrichten. Antwoordt of ze afgehandeld zijn.
+
+    ``False`` betekent "nog niet klaar, en een volgende poging kan het wel worden": bij een
+    verse uitrol is de relay er meestal nog niet als OPI opstart, en dan ontstonden
+    ``zad-platform`` en ``zad-keycloak`` pas bij de volgende herstart van OPI - zonder die
+    accounts gaat er geen platformmail en geen inlogmail uit.
+
+    Een cluster zonder relay of zonder Keycloak-geheim is afgehandeld (``True``): daar valt
+    niets in te richten, en een lus die daarop blijft tikken schrijft elke minuut een regel
+    zonder ooit te eindigen.
+    """
+    if skip_checks:
+        return True
+    platform = await ensure_platform_mail_account()
+    keycloak = await ensure_keycloak_mail_account()
+    return platform is not False and keycloak is not False
+
+
+async def _startup_retry_loop(app: FastAPI, skip_checks: bool, mail_accounts_done: bool = True) -> None:
     """Background loop that retries failed startup phases every 60 seconds."""
     from opi.core.readiness import get_readiness_state
 
     readiness = get_readiness_state()
 
-    while not readiness.is_ready:
+    while not readiness.is_ready or not mail_accounts_done:
         unavailable = [s.display_name for s in readiness.get_unavailable_services()]
+        if not mail_accounts_done:
+            unavailable.append(MAIL_ACCOUNTS_NAME)
         logger.info(
             f"Startup retry: waiting {STARTUP_RETRY_INTERVAL}s before retrying "
             f"unavailable services: {', '.join(unavailable)}"
@@ -724,6 +758,9 @@ async def _startup_retry_loop(app: FastAPI, skip_checks: bool) -> None:
 
         if not readiness.oauth.ready and readiness.keycloak.ready:
             await _setup_oauth(readiness, app)
+
+        if not mail_accounts_done:
+            mail_accounts_done = await _setup_mail_accounts(skip_checks)
 
     logger.info("All services are now ready - startup retry loop complete")
 
@@ -803,10 +840,8 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     if not skip_checks:
         await check_minio_availability()
 
-    # Phase 3b: the platform's SMTP accounts (non-critical, no retry)
-    if not skip_checks:
-        await ensure_platform_mail_account()
-        await ensure_keycloak_mail_account()
+    # Phase 3b: the platform's SMTP accounts (non-critical; retried by the loop below)
+    mail_accounts_done = await _setup_mail_accounts(skip_checks)
 
     # Phase 4: Keycloak
     await _setup_keycloak(readiness, skip_checks)
@@ -827,15 +862,17 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     except Exception as e:  # non-critical: DNS hygiene must never block boot
         logger.error(f"No-mail reconciliation failed: {e}")
 
-    if readiness.is_ready:
+    if readiness.is_ready and mail_accounts_done:
         logger.info("All startup tasks completed successfully")
         return True
 
     # Start background retry loop for failed services
     unavailable = [s.display_name for s in readiness.get_unavailable_services()]
+    if not mail_accounts_done:
+        unavailable.append(MAIL_ACCOUNTS_NAME)
     logger.warning(
         f"Some services are unavailable: {', '.join(unavailable)}. "
         f"Starting background retry loop (every {STARTUP_RETRY_INTERVAL}s)."
     )
-    app.state.startup_retry_task = asyncio.create_task(_startup_retry_loop(app, skip_checks))
+    app.state.startup_retry_task = asyncio.create_task(_startup_retry_loop(app, skip_checks, mail_accounts_done))
     return False

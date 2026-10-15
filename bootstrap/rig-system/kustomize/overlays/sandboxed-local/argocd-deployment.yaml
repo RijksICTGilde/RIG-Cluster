@@ -14,6 +14,9 @@ spec:
   # publiceert (bouw dan met IMAGE_TAG=<iets anders> en pin die tag hier tijdelijk).
   image: ghcr.io/minbzk/base-images/argocd-rig
   version: v3.5.1-rig2
+  # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
+  # cmd-params-keys die hier stonden kwamen nooit bij een component aan (RC-250);
+  # tests/test_argocd_extra_config_keys.py houdt dit blok daarvan vrij.
   extraConfig:
     resource.customizations.health.cert-manager.io_Issuer: |
       hs = {}
@@ -22,13 +25,6 @@ spec:
       return hs
     timeout.reconciliation: "6m"
     timeout.hard.reconciliation: "0s"
-    server.repo.server.timeout.seconds: "180"
-    controller.status.processors: "60"
-    controller.operation.processors: "30"
-    controller.repo.server.timeout.seconds: "180"
-    controller.kubectl.parallelism.limit: "20"
-    controller.sharding.algorithm: "round-robin"
-    reposerver.parallelism.limit: "20"
   server:
     logLevel: debug
     insecure: true
@@ -48,6 +44,11 @@ spec:
     route:
       enabled: false
   controller:
+    extraCommandArgs:
+      # De bovengrens op een sync-operation; de default 0 is nooit. Als flag en niet als
+      # extraConfig-key, want geen enkele cmd-params-key bereikt onder deze operator de
+      # controller. Waarom dit nodig is en waarom 600: features/vastgelopen-sync-breekt-af.md.
+      - --sync-timeout=600
     env:
       - name: ARGOCD_K8S_CLIENT_QPS
         value: "150"

@@ -10,8 +10,10 @@
   <c-stack> zou geven. Zou het opdelen in start en eind ooit verdwijnen, dan kan hier
   gewoon weer een component staan.
 #}
+{# novalidate: de server valideert deze velden. Zie FORMULIEREN_MET_SERVERVALIDATIE
+   in tests/test_template_structure.py voor het waarom. #}
 <form id="{{ form_id|e }}" method="{{ method|e }}" action="{{ action|e }}"
       {% if enctype %}enctype="{{ enctype|e }}"{% endif %}
       {% for key, value in (htmx_attrs or {}).items() %}{{ key|e }}="{{ value|e }}" {% endfor %}
-      autocomplete="off">
+      autocomplete="off" novalidate>
     <div class="lotc-stack" style="--lotc-stack-gap: 2rem;">

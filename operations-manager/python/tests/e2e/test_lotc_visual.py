@@ -184,7 +184,12 @@ def test_form_layer_screenshot(app_server: str, page: Page) -> None:
     # gekoppeld worden. Dat is de toegankelijkheidswinst van deze omzetting: onze
     # roos-velden koppelen ze niet, dus een schermlezer las ze niet voor.
     assert page.locator("nldd-form-field-help-text").count() > 0
-    assert page.locator("nldd-form-field-error-text").count() > 0
+    # De foutregel is sinds NLDD 0.8.84 een <nldd-validation-item> in een
+    # <nldd-validation-list>. De vorige versie hiervan telde nldd-form-field-error-text,
+    # en die stond op deze pagina alleen in de SCHADUWBOOM van het thema: de galerij zelf
+    # gaf geen enkel veld een fout mee, dus de assertie mat het thema en niet ons. De
+    # velden die text-error, radio-error en checkbox-error heten dragen er nu een.
+    assert page.locator("nldd-validation-item").count() > 0
 
     # Twee dingen die alleen in een BROWSER opvielen, en allebei kwamen ze hier boven:
     # een keuzelijst zonder opties, en een aanvinkvakje dat een leeg <div> was. Beide

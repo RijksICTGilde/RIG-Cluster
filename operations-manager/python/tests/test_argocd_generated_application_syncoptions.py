@@ -57,8 +57,13 @@ def test_delete_true_is_gone() -> None:
 
 
 def test_the_options_that_do_work_are_untouched() -> None:
-    """PruneLast stays: it arrived with the initial commit and no reason for it was ever
-    recorded, so RC-226 leaves it in place (points 1 and 2 solve the case with it on)."""
+    """PruneLast stays, and RC-250 measured the reason RC-226 could not find. Without it, a
+    PVC generation swap prunes the previous generation while the new pod is still starting:
+    measured on the sandbox, that generation was ``Terminating`` fourteen seconds after the
+    push and within forty seconds the PVC, its PV and the data on it were gone, while the new
+    pod never left ``ErrImagePull`` and the Application read ``Synced``. ``strategy: Recreate``
+    does not save that, it is what releases the last mount. See
+    ``features/vastgelopen-sync-breekt-af.md``."""
     assert _sync_options() == [
         "CreateNamespace=false",
         "PrunePropagationPolicy=foreground",

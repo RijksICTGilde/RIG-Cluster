@@ -27,7 +27,7 @@ Automated build on push to main and PRs.
 Manual trigger via GitHub Actions UI.
 
 - **Workflow**: `.github/workflows/docker-images.yml`
-- **Images**: rig-backup, cmp-kustomize-sops, postgresql-with-dictionaries
+- **Images**: rig-backup, cmp-kustomize-sops, postgresql-with-dictionaries, keycloak-zad
 - **Versioning**: CalVer on dispatch
 
 ## Security Scanning
@@ -37,7 +37,7 @@ Manual trigger via GitHub Actions UI.
 | Job | Tool | What | When |
 |-----|------|------|------|
 | `dependency-audit` | pip-audit | Python deps against PyPI/OSV | Push, PR, weekly |
-| `container-scan` | Trivy | All 4 Docker images (HIGH/CRITICAL) | Push, PR, weekly |
+| `container-scan` | Trivy | Every image CI publishes (HIGH/CRITICAL) | Push, PR, weekly |
 | `sbom` | Trivy | CycloneDX SBOM | Main only |
 
 Results appear in the **GitHub Security tab** (SARIF upload).

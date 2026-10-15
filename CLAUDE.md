@@ -72,7 +72,7 @@ RIG-Cluster/
 |
 |-- infrastructure/         # Infrastructure-as-Code (Kustomize)
 |   +-- bootstrap/          #   Component configs (ArgoCD, PostgreSQL, Keycloak, MinIO, etc.)
-|       +-- infrastructure/ #     Each component: base/ + overlays/ (local, sandboxed-local, odcn)
+|       +-- infrastructure/ #     Each component: base/ + overlays/ (sandboxed-local, odcn)
 |
 |-- bootstrap/              # Bootstrap Kustomize for rig-system namespace
 |   +-- rig-system/         #   OPI deployment, secrets, overlays per cluster type
@@ -88,7 +88,6 @@ RIG-Cluster/
 |-- weekly/                 # Release notes / weekly updates
 |-- archive/                # Outdated documentation kept for reference
 |-- Taskfile.yaml           # All operations (100+ tasks)
-|-- kind-config.yaml        # Local Kind cluster config
 +-- docker-compose.dev.yaml # Local dev (PostgreSQL + OPI)
 ```
 

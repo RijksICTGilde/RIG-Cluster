@@ -63,6 +63,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        "oom_pod_watch": False,
         # Geen supports_custom_domain_certificates hier: dit cluster draait een eigen CA
         # (cluster_issuer kind-ca-issuer) en of die ook een eigen domein tekent is niet
         # nagemeten. Afwezig betekent zwijgen, en dat is het eerlijke antwoord bij een
@@ -139,6 +140,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": False,
+        "oom_pod_watch": False,
         # The sandbox serves *.sandbox.rijksapp.dev from a pre-installed wildcard
         # certificate and runs a fake cert-manager CRD with no controller, so nothing is
         # ever issued here. See supports_custom_domain_certificates().
@@ -239,6 +241,7 @@ CLUSTER_CONFIG = {
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
         "supports_vpa": True,
+        "oom_pod_watch": False,
         # Reachable from the internet and running a real cert-manager, so an ACME HTTP-01
         # challenge for a domain of the user's own can complete here.
         "supports_custom_domain_certificates": True,
@@ -337,7 +340,10 @@ CLUSTER_CONFIG = {
             # features/image-registries.md, "De provisioning-backend".
             "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
             "rotation_days": 90,
-            "quota_limit_gib": 10,
+            # 3 en niet de CRD-default van 10: tien gibibytes per private registry telt in
+            # het clustertotaal te snel op. De norm is 2,5 GiB, naar boven afgerond omdat
+            # limitGiB een integer is.
+            "quota_limit_gib": 3,
             "rules": [
                 {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
                 {
@@ -1082,6 +1088,23 @@ def supports_vpa(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("supports_vpa", False)
+
+
+def watches_pods_for_oom(cluster_name: str) -> bool:
+    """Whether this cluster runs the cluster-wide pod watch that catches runtime OOM kills.
+
+    Off everywhere until the watch has proven itself on one cluster: it opens a long-lived
+    stream over every application pod and remediates on what it sees, so it is switched on
+    per cluster rather than by being merged.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        True when the pod watch (and the metric sweep behind it) may run here
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return cluster_config.get("oom_pod_watch", False)
 
 
 def supports_custom_domain_certificates(cluster_name: str) -> bool:

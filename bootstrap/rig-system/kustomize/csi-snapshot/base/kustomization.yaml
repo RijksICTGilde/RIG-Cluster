@@ -35,9 +35,9 @@ resources:
   # deploy/kubernetes-1.30/ en gaven deze drie URLs een 404 — kustomize probeert zo'n URL
   # dan als git-repo te klonen en faalt met een misleidende 'repository not found'.
   # v1.17.1 is de laatste release waar dit pad bestaat. De kind-node draait v1.32.0
-  # (kind-config.yaml); manifests voor een oudere Kubernetes draaien daar prima op, andersom
-  # niet, dus bij het ophogen van de node-versie kan dit blijven staan. Verplaats je naar
-  # een nieuwere driver, kies dan een deploy-map <= de node-versie.
+  # (sandboxed-local/kind-config.yaml); manifests voor een oudere Kubernetes draaien daar
+  # prima op, andersom niet, dus bij het ophogen van de node-versie kan dit blijven staan.
+  # Verplaats je naar een nieuwere driver, kies dan een deploy-map <= de node-versie.
   - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-driverinfo.yaml
   - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-plugin.yaml
   - https://raw.githubusercontent.com/kubernetes-csi/csi-driver-host-path/v1.17.1/deploy/kubernetes-1.30/hostpath/csi-hostpath-snapshotclass.yaml

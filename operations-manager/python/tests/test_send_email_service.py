@@ -20,7 +20,7 @@ import inspect
 from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
@@ -35,6 +35,7 @@ from opi.connectors.mail import (
     MAIL_SENDER_TABLE_KEY,
     MailAccount,
     MailConnector,
+    MailRelayError,
     MailRelayNotConfiguredError,
     MailSenderNameError,
     create_mail_connector,
@@ -787,8 +788,9 @@ class TestDeStartuptaakTrektDeBootNietOm:
 
     ``server.py`` doet ``await run_startup_tasks(app)`` zonder ``try``, dus een uitzondering
     die uit deze taak ontsnapt haalt fase 4 (Keycloak) en 5 (OAuth) onderuit. Een ingestelde
-    maar onbereikbare relay geeft geen ``MailRelayError`` maar de transportfout van aiohttp,
-    en die is er eerder dan er een HTTP-antwoord is om er een van te maken.
+    maar onbereikbare relay komt sinds RC-261 als ``MailRelayUnavailableError`` uit de
+    connector, maar de kale transportfouten blijven nodig: de kubectl-aanroep en het
+    ontsleutelen eromheen gooien ze nog steeds zelf, en daarom worden ze hier geworpen.
     """
 
     @pytest.mark.asyncio
@@ -1264,6 +1266,27 @@ class TestDeRelayAntwoordtGeen404:
         # vereisen, en dan bezorgt de relay mail AAN dat domein bij zichzelf.
         assert "emails" not in payload
         assert "limits" not in payload
+
+
+class TestEenPodwisselKostGeenUitrol:
+    """RC-261 punt 4: een korte onderbreking van de relay mag een aanroep niet meteen
+    laten stranden, zolang de volgende poging het al weer doet."""
+
+    @pytest.mark.asyncio
+    async def test_een_eenmalige_transportfout_wordt_overleefd(self, monkeypatch) -> None:
+        connector = MailConnector("http://rig-mail-relay:8080", "admin", "geheim")
+        fout = aiohttp.ClientConnectorError(
+            connection_key=SimpleNamespace(ssl=None, host="rig-mail-relay", port=8080, is_ssl=False),  # type: ignore[arg-type]
+            os_error=OSError("Connection refused"),
+        )
+        pogingen = AsyncMock(side_effect=[fout, {"data": {"id": 1, "name": "project-demo"}}])
+        monkeypatch.setattr(MailConnector, "_eenmalig_verzoek", pogingen)
+        monkeypatch.setattr("opi.utils.connect_retry.asyncio.sleep", AsyncMock())
+
+        resultaat = await connector.get_principal("project-demo")
+
+        assert resultaat == {"id": 1, "name": "project-demo"}
+        assert pogingen.await_count == 2, "de tweede poging had de eerste transportfout moeten overleven"
 
 
 class TestDeWeergavenaamStaatOpDeRelay:
@@ -2016,10 +2039,10 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     meenemen, want dan ligt bij een onbereikbare relay ook het inloggen zelf plat.
 
     Vijf uitzonderingsvormen, en het zijn niet de exotische: de transportfout van aiohttp
-    (een relay die is ingesteld maar niet antwoordt geeft die EERDER dan er een HTTP-antwoord
-    is om er een ``MailRelayError`` van te maken), de DNS-fout, de twee kubectl-vormen van
-    het lezen van het Secret, en de kale ``ValueError`` uit het ontsleutelen van het
-    relay-wachtwoord.
+    (sinds RC-261 maakt de connector er een ``MailRelayUnavailableError`` van, maar de
+    kubectl-aanroep en het ontsleutelen eromheen gooien hem nog kaal), de DNS-fout, de twee
+    kubectl-vormen van het lezen van het Secret, en de kale ``ValueError`` uit het
+    ontsleutelen van het relay-wachtwoord.
     """
 
     @pytest.mark.asyncio
@@ -2098,13 +2121,16 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
         assert await startup.ensure_keycloak_mail_account() is False
 
     @pytest.mark.asyncio
-    async def test_geen_relay_of_geen_geheim_is_false_zonder_uitzondering(self, monkeypatch) -> None:
+    async def test_geen_relay_of_geen_geheim_is_none_zonder_uitzondering(self, monkeypatch) -> None:
         """De twee toestanden die GEEN storing zijn. ``ensure_keycloak_account`` antwoordt dan
-        ``None``, en de taak hoort dat als "niets ingericht" door te geven, niet als fout."""
+        ``None``, en de taak geeft dat als ``None`` door en niet als ``False``.
+
+        RC-261 maakte dat verschil dragend: de opstart-herhaallus probeert een ``False``
+        opnieuw en zou op een cluster zonder relay anders eeuwig blijven tikken."""
         from opi.core import startup
 
         monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=None))
-        assert await startup.ensure_keycloak_mail_account() is False
+        assert await startup.ensure_keycloak_mail_account() is None
 
     @pytest.mark.asyncio
     async def test_een_ingericht_account_meldt_true(self, monkeypatch) -> None:
@@ -2124,8 +2150,144 @@ class TestDeKeycloakStartuptaakTrektDeBootNietOm:
     async def test_de_boot_roept_deze_taak_ook_echt_aan(self, monkeypatch) -> None:
         """Zonder deze schakel is alle dekking hierboven dood: de relay zou het account nooit
         krijgen, en elke realm zou een verwijzing dragen naar een wachtwoord dat aan de
-        andere kant niet bestaat."""
+        andere kant niet bestaat.
+
+        Twee hops sinds RC-261: de boot roept ``_setup_mail_accounts`` aan en die roept beide
+        accounts aan. Een toets op alleen de laatste zou een losgeraakte boot niet zien."""
         from opi.core import startup
 
-        bron = inspect.getsource(startup.run_startup_tasks)
+        assert "_setup_mail_accounts(" in inspect.getsource(startup.run_startup_tasks)
+        bron = inspect.getsource(startup._setup_mail_accounts)
         assert "ensure_keycloak_mail_account()" in bron
+        assert "ensure_platform_mail_account()" in bron
+
+
+class TestDeOpstartlusProbeertDeMailaccountsOpnieuw:
+    """RC-261: bij een verse uitrol is de relay er nog niet als OPI opstart.
+
+    Fase 3b was "non-critical, no retry", dus ``zad-platform`` en ``zad-keycloak``
+    ontstonden dan pas bij de VOLGENDE herstart van OPI, en tot die tijd ging er geen
+    platformmail en geen inlogmail uit. De bestaande herhaallus doet dit al voor database,
+    projects, keycloak en oauth; de accounts horen daarin en niet in een tweede lus
+    ernaast.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _snel(self, monkeypatch):
+        """Zonder wachttijd, anders duurt elke ronde van de lus een minuut."""
+        from opi.core import startup
+
+        monkeypatch.setattr(startup, "STARTUP_RETRY_INTERVAL", 0)
+
+    @staticmethod
+    def _account() -> MailAccount:
+        return MailAccount(
+            username=settings.MAIL_PLATFORM_ACCOUNT,
+            from_address="noreply-rijksapp@rijksoverheid.nl",
+            bounce_address="noreply-rijksapp@rijksoverheid.nl",
+            messages_per_day=settings.MAIL_PLATFORM_MESSAGES_PER_DAY,
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_onbereikbare_relay_wordt_opnieuw_geprobeerd_en_de_lus_stopt_na_succes(self, monkeypatch) -> None:
+        from opi.core import startup
+
+        pogingen: list[int] = []
+
+        async def _platform() -> MailAccount:
+            pogingen.append(1)
+            if len(pogingen) == 1:
+                raise aiohttp.ClientConnectorError(
+                    connection_key=SimpleNamespace(ssl=None, host="relay", port=8080, is_ssl=False),  # type: ignore[arg-type]
+                    os_error=OSError("Connection refused"),
+                )
+            return self._account()
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", _platform)
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", AsyncMock(return_value=self._account()))
+
+        await asyncio.wait_for(
+            startup._startup_retry_loop(MagicMock(), skip_checks=False, mail_accounts_done=False), timeout=10
+        )
+
+        assert len(pogingen) == 2, "de lus hoort het account na de transportfout nog een keer te proberen"
+
+    @pytest.mark.asyncio
+    async def test_een_cluster_zonder_relay_laat_de_lus_meteen_eindigen(self, monkeypatch) -> None:
+        """De tegenproef, en de reden dat ``None`` iets anders moet betekenen dan ``False``:
+        zonder dat verschil zou deze lus op zo'n cluster eeuwig elke minuut een regel
+        schrijven."""
+        from opi.core import startup
+
+        platform = AsyncMock(return_value=None)
+        keycloak = AsyncMock(return_value=None)
+        monkeypatch.setattr(MailManager, "ensure_platform_account", platform)
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", keycloak)
+
+        await asyncio.wait_for(
+            startup._startup_retry_loop(MagicMock(), skip_checks=False, mail_accounts_done=False), timeout=10
+        )
+
+        assert platform.await_count == 1
+        assert keycloak.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_de_lus_blijft_proberen_zolang_een_van_de_twee_faalt(self, monkeypatch) -> None:
+        """Keycloak faalt en het platformaccount staat al: dat is nog niet afgehandeld. Zonder
+        deze eis zou inlogmail stil wegblijven terwijl de portalmail werkt."""
+        from opi.core import startup
+
+        monkeypatch.setattr(MailManager, "ensure_platform_account", AsyncMock(return_value=self._account()))
+        pogingen: list[int] = []
+
+        async def _keycloak() -> MailAccount:
+            pogingen.append(1)
+            if len(pogingen) < 3:
+                raise MailRelayError("POST /api/principal gaf 500")
+            return self._account()
+
+        monkeypatch.setattr(MailManager, "ensure_keycloak_account", _keycloak)
+
+        await asyncio.wait_for(
+            startup._startup_retry_loop(MagicMock(), skip_checks=False, mail_accounts_done=False), timeout=10
+        )
+
+        assert len(pogingen) == 3
+
+    @pytest.mark.asyncio
+    async def test_de_boot_geeft_de_uitkomst_aan_de_lus_door(self, monkeypatch) -> None:
+        """De schakel die het geheel pas laat werken: zonder doorgeven start de lus met
+        ``mail_accounts_done=True`` (de standaard) en probeert hij de accounts nooit."""
+        from fastapi import FastAPI
+        from opi.core import startup
+        from opi.core.readiness import get_readiness_state
+
+        for dienst in get_readiness_state().get_all_services():
+            dienst.mark_ready()
+
+        monkeypatch.setattr(startup, "check_schema_versions", lambda *a, **k: None)
+        monkeypatch.setattr(
+            startup, "get_metrics_connector", AsyncMock(return_value=SimpleNamespace(is_connected=True))
+        )
+        monkeypatch.setattr(startup, "_setup_database", AsyncMock(return_value=True))
+        monkeypatch.setattr(startup, "_setup_projects", AsyncMock(return_value=True))
+        monkeypatch.setattr(startup, "_resolve_running_image", AsyncMock(return_value=None))
+        monkeypatch.setattr(startup, "check_minio_availability", AsyncMock(return_value=True))
+        monkeypatch.setattr(startup, "_setup_keycloak", AsyncMock(return_value=True))
+        monkeypatch.setattr(startup, "_setup_oauth", AsyncMock(return_value=True))
+        monkeypatch.setattr(startup, "reconcile_caa_records", AsyncMock(return_value=None))
+        monkeypatch.setattr(startup, "reconcile_no_mail_records", AsyncMock(return_value=None))
+        monkeypatch.setattr(startup, "_setup_mail_accounts", AsyncMock(return_value=False))
+
+        meegegeven: list[object] = []
+
+        async def _lus(app, skip_checks, mail_accounts_done=True) -> None:
+            meegegeven.append(mail_accounts_done)
+
+        monkeypatch.setattr(startup, "_startup_retry_loop", _lus)
+
+        app = FastAPI()
+        assert await startup.run_startup_tasks(app) is False
+        await app.state.startup_retry_task
+
+        assert meegegeven == [False]

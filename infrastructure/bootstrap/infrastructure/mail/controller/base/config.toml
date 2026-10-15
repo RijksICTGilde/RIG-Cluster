@@ -42,6 +42,23 @@ protocol = "smtp"
 bind = ["[::]:8080"]
 protocol = "http"
 
+# Interne adressen vallen buiten auto-ban. Al het verkeer naar de relay is intern, en
+# auto-ban bant zonder deze regel de KUBELET: een probe die na zijn timeoutSeconds
+# afbreekt telt als "scan" ("connection closed before message completed"), en na 30
+# per dag (server.auto-ban.scan.rate, standaard 30/1d) wordt het node-IP verbannen.
+# Gebeurd op productie 13 oktober 2026: elke probe kreeg een reset, de pod kwam nooit
+# meer ready en elke uitrol met send-email faalde op poort 8080.
+#
+# LET OP, gelezen in v0.11.8: dit voorkomt een NIEUWE ban maar heft een bestaande NIET
+# op. De accept-lus (listener/listen.rs) kijkt alleen naar de blocked-lijst, en die
+# staat in de configopslag (PostgreSQL) en overleeft dus een herstart. Een bestaande
+# ban gaat eruit met: DELETE FROM s WHERE k = 'server.blocked-ip.<ip>'::bytea in de
+# database mailrelay, en daarna een herstart van de relay.
+[server.allowed-ip]
+"10.0.0.0/8" = ""
+"172.16.0.0/12" = ""
+"192.168.0.0/16" = ""
+
 # Let op: de waarden hier zijn EXPRESSIES, geen TOML-waarden. Een lijst hoort in een
 # string ("[plain, login]") en een letterlijke naam tussen enkele quotes ("'internal'").
 # Schrijf je ["PLAIN", "LOGIN"], dan weigert Stalwart de instelling bij het opstarten
@@ -334,8 +351,8 @@ protocol = "smtp"
 # webpki-validatie komen. Hij hoort dus op false te staan en doet dat ook overal waar
 # de sink niet meekomt: de waarde komt uit de omgeving en de basis van het Deployment
 # zet hem op "false". Omgezet wordt hij door de component mail/sink/as-upstream, die de
-# sink en deze schakelaar samen levert - een cluster dat de sink inlaadt (local en
-# sandboxed-local) kan de schakelaar dus niet vergeten, en odcn, dat de sink niet
+# sink en deze schakelaar samen levert - een cluster dat de sink inlaadt
+# (sandboxed-local) kan de schakelaar dus niet vergeten, en odcn, dat de sink niet
 # inlaadt, blijft strikt.
 [remote.upstream.tls]
 implicit = false

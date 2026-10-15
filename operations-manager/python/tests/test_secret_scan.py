@@ -862,7 +862,7 @@ _UNSAFE_FLAG_ASSIGNMENT = re.compile(rf"{_FLAG_NAME}\s*(?::\s*bool\s*)?=\s*[\"']
 #: The second form, and the one this repo actually uses to turn a boolean setting on per overlay: a
 #: container env entry, where the name and the value are two lines and there is no ``=`` anywhere.
 #: ``operations-manager/overlays/odcn-production/patches/deployment.yaml:119`` sets
-#: ``LOG_ERRORS_TO_FILE`` that way and ``overlays/local/patches/deployment.yaml:30`` sets
+#: ``LOG_ERRORS_TO_FILE`` that way and ``overlays/sandboxed-local/patches/deployment.yaml:42`` sets
 #: ``LOCAL_DEVELOPMENT``. Such an entry overrides the ``.env`` that comes from the configmap, so a
 #: fourth overlay would switch the flag on in precisely the shape a ``KEY=value`` pattern misses.
 _UNSAFE_FLAG_ENV_NAME = re.compile(rf"-\s*name:\s*[\"']?{_FLAG_NAME}[\"']?\s*$")
@@ -951,11 +951,10 @@ def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> Non
     still true about its three while the platform runs on the fourth. So this asks the tree.
 
     Both forms of setting it count, which is what makes the promise above hold. Markdown is left
-    out on purpose, and beyond those two forms that is the whole filter: ``features/futures/`` and
-    ``archive/`` each carry a line that sets the flag to ``true``, and both are prose about a
-    situation rather than a machine in one. Failing on those
-    would put a permanent red on a healthy tree -- the alarm people learn to walk around that this
-    whole guard exists to avoid.
+    out on purpose, and beyond those two forms that is the whole filter: ``archive/`` carries two
+    lines that set the flag to ``true``, and both are prose about a situation rather than a machine
+    in one. Failing on those would put a permanent red on a healthy tree -- the alarm people learn
+    to walk around that this whole guard exists to avoid.
     """
     grep = subprocess.run(
         ["git", "-C", str(_REPO_ROOT), "grep", "-n", "-A1", _FLAG_NAME],
@@ -991,7 +990,7 @@ def test_both_shapes_that_configure_the_flag_are_read_including_a_numeric_value(
         "--",
         f"bootstrap/rig-system/kustomize/o-m/overlays/fourth/configmap.yaml:63:    {_FLAG_NAME}=1",
         "--",
-        f"features/futures/lightweight-kind-cluster.md:272:{_FLAG_NAME}=true",
+        f"archive/futures/lightweight-kind-cluster.md:272:{_FLAG_NAME}=true",
         "--",
         f"operations-manager/python/opi/utils/api_keys.py:37:    if settings.{_FLAG_NAME}:",
     ]

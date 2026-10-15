@@ -1,6 +1,0 @@
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata:
-  name: rig-db
-spec:
-  imageName: postgresql-with-dictionaries:17

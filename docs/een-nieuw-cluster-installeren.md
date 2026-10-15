@@ -43,18 +43,18 @@ Twee bomen, allebei met een map per cluster:
 
 | boom | mappen vandaag | wat erin zit |
 |---|---|---|
-| `bootstrap/rig-system/kustomize/overlays/` | `local`, `odcn-production`, `sandboxed-local` | ArgoCD-deployment, namespace, repo-secrets, netwerkbeleid |
-| `bootstrap/rig-system/kustomize/operations-manager/overlays/` | `local`, `odcn-production`, `sandboxed-local`, `sandboxed-local-debug`, `sandboxed-local-dev` | OPI zelf: ingress, configmap, networkpolicy, letsencrypt-issuer, billing-prometheusrule, image-pin |
-| `infrastructure/bootstrap/clusters/` | `local`, `odcn`, `sandboxed-local` | de lijst van infracomponenten die op dat cluster meegaan |
+| `bootstrap/rig-system/kustomize/overlays/` | `odcn-production`, `sandboxed-local` | ArgoCD-deployment, namespace, repo-secrets, netwerkbeleid |
+| `bootstrap/rig-system/kustomize/operations-manager/overlays/` | `odcn-production`, `sandboxed-local`, `sandboxed-local-debug`, `sandboxed-local-dev` | OPI zelf: ingress, configmap, networkpolicy, letsencrypt-issuer, billing-prometheusrule, image-pull-prometheusrule, image-pin |
+| `infrastructure/bootstrap/clusters/` | `odcn`, `sandboxed-local` | de lijst van infracomponenten die op dat cluster meegaan |
 
-Onder `infrastructure/bootstrap/infrastructure/` staan **20 `overlays/`-mappen met samen 40
-clusteroverlays**: 15 voor `local`, 16 voor `odcn`, 9 voor `sandboxed-local`.
+Onder `infrastructure/bootstrap/infrastructure/` staan **20 `overlays/`-mappen met samen 27
+clusteroverlays**: 17 voor `odcn`, 10 voor `sandboxed-local`.
 
-> Correctie op het uitzoekplan: dat sprak van "80 overlaymappen". Gemeten zijn het er 40
+> Correctie op het uitzoekplan: dat sprak van "80 overlaymappen". Gemeten zijn het er 27
 > (`find infrastructure/bootstrap/infrastructure -type d -name overlays` geeft 20 `overlays/`-
-> mappen, met samen 40 kinderen).
+> mappen, met samen 27 kinderen).
 
-De odcn-overlaymappen (16) zijn niet allemaal in gebruik:
+De odcn-overlaymappen (17) zijn niet allemaal in gebruik:
 `infrastructure/bootstrap/clusters/odcn/kustomization.yaml` heeft **vault** (regels 7-8) en
 **pgadmin** (regels 11-12) uitgecommentarieerd. Daadwerkelijk uitgerold op ODCN zijn **9**
 componenten: secrets/config, postgresql/database, keycloak (controller+config), minio
@@ -68,18 +68,18 @@ mappenlijst.
 
 ### Laag 3 — de taakketen (`Taskfile.yaml` en `.env-taskfile-*`)
 
-- `.env-taskfile-local`, `.env-taskfile-odcn-production`, `.env-taskfile-sandboxed-local`.
+- `.env-taskfile-odcn-production` en `.env-taskfile-sandboxed-local`.
   Elk zet `CLUSTER_TYPE`, `KIND_CLUSTER_NAME`, `RIG_NAMESPACE`,
   `INFRASTRUCTURE_CLUSTER_FOLDER` en `BOOTSTRAP_CLUSTER_FOLDER`.
   **Valkuil:** ODCN gebruikt twee verschillende mapnamen — `INFRASTRUCTURE_CLUSTER_FOLDER=odcn`
   maar `BOOTSTRAP_CLUSTER_FOLDER=odcn-production`. Wie voor fundament één naam aanneemt, krijgt
   een kustomize-build die naar een niet-bestaande map wijst.
-- `Taskfile.yaml:33` `select-cluster`: de drie clusters staan als hardgecodeerde `case`-takken
-  (regels 49-61) met een hardgecodeerde menutekst (regels 41-43) en prompt `[1-3]` (regel 45).
-  Een vierde erbij is handwerk op vier plaatsen in dezelfde taak.
+- `Taskfile.yaml` `select-cluster`: de twee clusters staan als hardgecodeerde `case`-takken,
+  met een hardgecodeerde menutekst en prompt `[1-2]`. Een derde erbij is handwerk op vier
+  plaatsen in dezelfde taak.
 - De AGE-sleutels, zie 2.3.
-- `Taskfile.yaml:1209` `publish-operations-manager` en `Taskfile.yaml:1249`
-  `pin-operations-manager-image` kennen alleen het odcn-pad.
+- `Taskfile.yaml` `publish-operations-manager` en `pin-operations-manager-image` kennen
+  alleen het odcn-pad.
 
 ---
 
@@ -324,16 +324,20 @@ het faalt dicht. De fundament-overlay moet een eigen selector krijgen (namespace
 tenantlabel van wat fundament aan multi-tenancy gebruikt). Opnemen als expliciet punt in de
 checklist, niet als "kopieer de odcn-overlay".
 
-#### p. `Taskfile.yaml:842`, `:924`, `:974` — de AGE-sleutelkeuze is een tweeweg-ternair
+#### p. `KEY_FILE` in `generate-env-secrets-for-operations-manager` en `deploy-operations-manager` — de AGE-sleutelkeuze is een tweeweg-ternair
 
 ```
-KEY_FILE: '{{if eq (default "local" .CLUSTER_TYPE) "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
 ```
 
 Alles wat **niet** `sandboxed-local` is, valt terug op `security/key.txt` — de
-**productiesleutel van ODCN**. Een nieuw `CLUSTER_TYPE=fundament-production` versleutelt dus
-stilzwijgend met de ODCN-sleutel, en is daarmee door iedereen met de ODCN-sleutel te
-ontsleutelen. Er komt geen waarschuwing.
+**productiesleutel van ODCN**. Een onbekende clustersoort komt hier niet meer langs:
+`generate-env-secrets-for-operations-manager` en `deploy-operations-manager` eisen beide
+`CLUSTER_TYPE` met een `enum` van `sandboxed-local` en `odcn-production`, dus
+`fundament-production` wordt geweigerd zolang het daar niet in staat. Het punt vuurt op de dag
+dat fundament aan die enum wordt toegevoegd: de ternair kiest dan stil de ODCN-sleutel, en de
+secrets zijn daarmee door iedereen met de ODCN-sleutel te ontsleutelen. Er komt geen
+waarschuwing.
 
 **Oordeel: naar configuratie.** De sleutelkeuze hoort uit `.env-taskfile-<cluster>` te komen
 (bijvoorbeeld een `AGE_KEY_FILE=`-regel), niet uit een ternair op één clusternaam.
@@ -351,12 +355,12 @@ punt van (p).
 | # | punt | bestand:regel | prioriteit |
 |---|---|---|---|
 | 1 | egress-annotatie op namespace | `manifests/namespace.yaml.jinja:10` | **blokkerend** — kan namespace-creatie laten falen |
-| 2 | AGE-sleutel per cluster | `Taskfile.yaml:842,924,974` | **blokkerend** — versleutelt anders met de ODCN-sleutel |
+| 2 | AGE-sleutel per cluster | `Taskfile.yaml`, `KEY_FILE` | **blokkerend** — kiest anders de ODCN-sleutel zodra fundament in de `CLUSTER_TYPE`-enum staat |
 | 3 | UID/SCC-keuze op eigenschap i.p.v. clusternaam | `manifests/pod-security-context.yaml.jinja:8` | hoog |
 | 4 | snapshotclass uit één bron; vangnet leeg i.p.v. de ODCN-waarde | `opi/core/config.py:438`, `opi/manager/backup/base.py:467` | midden — de terugval op de clusterwaarde bestaat al (`base.py:490`) |
 | 5 | external-dns-image uit de mirror in de base | `infrastructure/.../external-dns/controller/base/deployment.yaml:28` | midden |
-| 6 | `select-cluster` niet met hardgecodeerde cases | `Taskfile.yaml:33` (menu `:41-45`, cases `:49-61`) | laag — handwerk, maar zichtbaar |
-| 7 | `publish`/`pin-operations-manager-image` clusteronafhankelijk | `Taskfile.yaml:1209`, `:1249` | laag — pas nodig als fundament eigen images pint |
+| 6 | `select-cluster` niet met hardgecodeerde cases | `Taskfile.yaml` `select-cluster` | laag — handwerk, maar zichtbaar |
+| 7 | `publish`/`pin-operations-manager-image` clusteronafhankelijk | `Taskfile.yaml` `publish-operations-manager`, `pin-operations-manager-image` | laag — pas nodig als fundament eigen images pint |
 | 8 | `ip_whitelist` zonder nginx-equivalent | `manifests/ingress.yaml.jinja:15` | voorwaardelijk — alleen als fundament op IP wil afschermen |
 | 9 | dode verwijzing `docs/knowledge/odcn-ingress-controller.md` | `opi/core/cluster_config.py:627` | opruimen |
 
@@ -526,7 +530,7 @@ te voorkomen.
 | 10 | Clustersleutel + naamgeving vaststellen (`fundament-production`? prefix?) | 3.2-7 |
 | 11 | Het `CLUSTER_CONFIG`-blok invullen (`cluster_config.py`) | 3.1 t/m 3.7, vrijwel alles |
 | 12 | `.env-taskfile-fundament-*` aanmaken; let op de twee mapnamen (`INFRASTRUCTURE_CLUSTER_FOLDER` vs `BOOTSTRAP_CLUSTER_FOLDER`) | 10 |
-| 13 | `select-cluster` uitbreiden (`Taskfile.yaml:33`) | 10 |
+| 13 | `select-cluster` uitbreiden (`Taskfile.yaml`) | 10 |
 | 14 | Eigen AGE-sleutel genereren, `generate-infrastructure-secrets-for-cluster` en `generate-bootstrap-secrets-for-cluster` draaien, het `secrets-overview-*-fundament.yaml` verwerken en verwijderen | 2 en 10 |
 | 15 | `bootstrap/rig-system/kustomize/overlays/fundament/` invullen (ArgoCD, namespace, repo-secrets, netwerkbeleid) | 3.2, 3.8 |
 | 16 | `bootstrap/.../operations-manager/overlays/fundament/` invullen (configmap-checklist uit 2.2l) | 3.3, 3.4, 3.6, 3.7 |

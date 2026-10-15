@@ -51,26 +51,20 @@ WEBCONFIG: dict[str, Any] = {
     "domain-format": "component.subdomain",
 }
 
-#: Het sleutelpaar uit ``tests/e2e/fixtures/projects/test-project-detail.yaml``. De
-#: detailpagina ontsleutelt ``config`` voordat ze iets rendert, dus een project zonder deze
-#: twee sleutels geeft een 500 en meet niets.
-AGE_PUBLIC_KEY = "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
-AGE_PRIVATE_KEY = """-----BEGIN AGE ENCRYPTED FILE-----
-YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSB0ZkhrWGhCVEdIT1B5SFEz
-SVRJSG5zK1RHWFFBTmUvL040RU9LakdqeDE4Cld6c3MwWlJPWDgwYmlETjdEYnFC
-SUN3U3NMdEFYSEhZZG5veHd3U09Dd2MKLS0tIDg3ZDlMNGZNdWo4WEVRcWRpbE4w
-Z0x5bi9TT0hOazloWFFUOTJNL1BNYkUKHphHJ9YjoFAsm7M2ylEIRskosRJ4yjDz
-FHvB2sekCLIoHuLGt0jLowrALzEcAsE0b+rkc1tt7YVswg+t0HvJx0kDdmTSL0X4
-cXwv+GpqbnY5WLURIHtH8Fq3FubUc91kw532d8NnvC6KwA==
------END AGE ENCRYPTED FILE-----
-"""
+#: Geen echte sleutel. Hier stond een vooraf versleuteld AGE-blok; dat gaat niet meer open
+#: sinds de platformsleutel per run gemunt wordt, en de projectpagina ontsleutelt ``config``
+#: voordat ze iets rendert, dus elke toets in deze module kreeg een 500. Een gewone waarde
+#: kan omdat geen enkele toets hier een projectgeheim leest: ``decrypt_password_smart`` laat
+#: een waarde zonder AGE-markering ongemoeid door. Een fixture op schijf krijgt er wel een
+#: gemunt paar (``_munt_projectsleutelpaar`` in tests/e2e/testserver.py).
+GEEN_ECHTE_SLEUTEL = "geen-echte-sleutel"
 
 PROJECT_DATA: dict[str, Any] = {
     "name": PROJECT,
     "config": {
         "api-key": "domein-adres-e2e-key",
-        "age-public-key": AGE_PUBLIC_KEY,
-        "age-private-key": AGE_PRIVATE_KEY,
+        "age-public-key": GEEN_ECHTE_SLEUTEL,
+        "age-private-key": GEEN_ECHTE_SLEUTEL,
     },
     "clusters": ["local"],
     "components": [

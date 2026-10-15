@@ -132,7 +132,7 @@ Er is een derde weg die beide bovenstaande knoppen in één klap overbodig maakt
 
 Dat de API daarachter echt afgeschermd wordt, is zichtbaar in de code: `AccountRestService.credentials()` begint met `checkAccountApiEnabled()`. Zonder die feature is er dus geen account-REST-API, en zonder console is er geen UI die hem aanroept. Geen koppelbeheer, geen wachtwoordknop, niets.
 
-In onze deployment gaat dat via een env-var, en dat patroon staat er al: `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml` zet nu `KC_FEATURES: "admin-api"`. Daar komt `KC_FEATURES_DISABLED: "account,account-api"` naast.
+Bij ons is dat een BOUWoptie in de image, niet een env-var: `images/keycloak-zad/Dockerfile` draait `kc.sh build --features=admin-api`. Daar komt `--features-disabled=account,account-api` naast, en daarna een nieuwe image-tag (zie `features/keycloak-eigen-image.md`). Hem als env-var in de deployment zetten doet niets: de pod start met `--optimized` en meldt zo'n afwijking alleen in een waarschuwing.
 
 Voordelen ten opzichte van knop 1 en 2:
 
@@ -144,7 +144,7 @@ Nadelen en dingen om te verifiëren:
 
 - **Serverbreed, niet per realm.** Het geldt voor elk realm op die Keycloak, inclusief `rig-platform`. Voor ZAD lijkt dat geen bezwaar: er is niets in de portal dat naar de Keycloak account console verwijst. Het menu heeft wel een link `/account`, maar dat is een ZAD-pad zonder route in `web/` of `api/`, dus een dode link en een los dingetje.
 - **De AIA-route blijft waarschijnlijk open.** "Wachtwoord instellen" werkt via `kc_action=UPDATE_PASSWORD` op de login-endpoint, en die endpoint hoort niet bij de account-feature. Een handmatig samengestelde URL met een geldige client zou dus alsnog een wachtwoord kunnen zetten. Dat is precies waarom knop 2 er als aanvulling bij hoort. **Te verifiëren in de sandbox**, want dit is de scharnierende aanname.
-- **Features zijn build-opties.** Ze bij het opstarten meegeven zorgt voor re-augmentatie en dus een tragere start, tenzij het image al voorgebouwd is. We doen dit al met `KC_FEATURES`, dus het patroon is niet nieuw, maar de opstarttijd is het checken waard.
+- **Features zijn build-opties.** Bij ons zitten ze in de imagebouw en de pod start met `--optimized`, dus er is geen augmentatie bij een podstart.
 - Het raakt ook andere account-functies, zoals het overzicht van eigen sessies en apparaten. Voor deze doelgroep vermoedelijk geen verlies, maar het is wel een keuze.
 
 ## De prijs, en dat is een productbeslissing

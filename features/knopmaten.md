@@ -51,12 +51,13 @@ formulier niet in. Geen van beide gaf een melding.
 ## Een knop is een `<c-button>`
 
 Niet een kale `<button>`. Die krijgt geen enkele klasse van het thema en staat er
-onopgemaakt bij. Een `onclick` is geen reden om er een te schrijven: die gaat mee via
-`:attrs`.
+onopgemaakt bij. Een klikafhandeling is geen reden om er een te schrijven: die gaat mee
+als `@click` op de componenttag. Wat daar wel en niet in mag staat in
+`features/lotc-bouwlijn.md`, onder "Wat de omzetter met klikken deed".
 
 ```jinja
 {% set annuleren = "closeEditModal()" %}
-<c-button type="secondary" label="Annuleren" :attrs="{'onclick': annuleren}" />
+<c-button type="secondary" label="Annuleren" @click="{{ annuleren }}" />
 ```
 
 Twee uitzonderingen staan in de bewaker, met hun reden: het kopieerknopje IN een

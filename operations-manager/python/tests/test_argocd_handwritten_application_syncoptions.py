@@ -10,20 +10,35 @@ version reads no such option: its only ``SyncTimeout`` is ``informerSyncTimeout`
 internal wait on an informer cache in the API server.
 
 Neither removal takes a bound away -- ``Timeout=300`` no more than these two -- because
-a sync option was never what set one. The bound that does exist is a controller
-setting, and on odcn-production it is already on: ``argocd-deployment.yaml`` there sets
-``controller.sync.timeout.seconds: "300"`` in the ``extraConfig`` the operator renders
-into ``argocd-cm`` (measured in that ConfigMap on rig-prd-operations). It is a setting
-on the ArgoCD instance, so it covers every Application on that cluster, the generated
-ones as much as these two handwritten ones. The local and sandboxed-local overlays leave
-it unset; if a bound is wanted there, that ``extraConfig`` is where it goes, not
-``syncOptions``.
+a sync option was never what set one. The bound that does exist is a controller setting,
+and RC-250 found that on odcn-production it was NOT on. This module used to say it was,
+on the strength of ``controller.sync.timeout.seconds: "300"`` sitting in the
+``extraConfig`` of ``argocd-deployment.yaml``. That block is rendered into ``argocd-cm``,
+and this is a cmd-params key, which nothing reads there: the running controller carried
+no ``--sync-timeout``, and in 2,5 hours of controller log there was not one
+``Terminating in-progress operation due to timeout`` while a sync ran 45 minutes. So the
+bound was dead for nine months, and the paragraph that leaned on it was reasoning, not a
+measurement.
 
-That setting is no way out of a sync that hangs. The deletion in
-``features/argocd-vastgelopen-verwijdering.md`` ran fourteen days on ``Running`` with the
-300s in place, and the controller logged ``sync/terminate complete`` on every reconcile:
-the bound fired every round. What it fires is a request to terminate, and the operation
-stays until ``.operation`` itself is cleared, which is the removal RC-226 makes.
+It is now set the only way that reaches this operator's controller, as
+``--sync-timeout=600`` in ``spec.controller.extraCommandArgs``, in both overlays.
+It remains a setting on the ArgoCD instance, so it covers every Application on that
+cluster, the generated ones as much as these two handwritten ones.
+``test_argocd_extra_config_keys.py`` guards both halves: no cmd-params key back in
+``extraConfig``, and the flag present.
+
+Once set, it does end a hanging sync, measured on the sandbox: at exactly 600 seconds the
+controller logged ``Terminating in-progress operation due to timeout``, moved the phase
+``Terminating -> Failed`` with message ``Operation terminated``, and started a sync on the
+newest revision in the same second. It is still not the whole answer: it only fires on the
+Application a sync is stuck on, and the deletion in
+``features/argocd-vastgelopen-verwijdering.md`` needs ``.operation`` itself cleared, which
+is the removal RC-226 makes and RC-250 extends to the deploy path.
+
+One thing that document reads as the bound firing is not: the ``sync/terminate complete``
+line on every reconcile. RC-250 measured those lines on an instance with the bound set AND
+saw the same lines before it was set; they belong to the per-reconcile teardown of the sync
+context that follows ``Resuming in-progress operation``, not to any bound.
 
 Nothing but a test keeps these out. The Application CRD types ``syncOptions`` as a plain
 array of strings, so ArgoCD accepts an option it has never heard of without complaint.
@@ -76,10 +91,10 @@ def test_the_walk_finds_the_applications_and_reads_their_sync_options() -> None:
     would report success over nothing at all -- which is what a moved ``_OVERLAYS`` or a
     wrong ``parents`` index leaves behind.
 
-    The two files are named because the ``SyncTimeout`` lines came off them. The three
+    The two files are named because the ``SyncTimeout`` lines came off them. The two
     cluster overlays are named next to them because naming only those two files leaves the
     other direction open: a walk that narrows to odcn-production keeps both of them and
-    drops the five Applications in the other overlays without failing anything.
+    drops the three Applications in the other overlay without failing anything.
 
     Finding the files is not enough, because ``_handwritten_applications`` falls back to
     an empty list for anything it cannot read: rename the ``syncOptions`` key or lose
@@ -91,7 +106,7 @@ def test_the_walk_finds_the_applications_and_reads_their_sync_options() -> None:
     assert _RON_INFRA in _IDS
 
     covered = {Path(path).relative_to(_OVERLAYS_FROM_REPO_ROOT).parts[0] for path in _IDS}
-    assert covered == {"local", "odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
+    assert covered == {"odcn-production", "sandboxed-local"}, f"overlays covered: {sorted(covered)}"
 
     for named in (_PRODUCTION_INFRA, _RON_INFRA):
         read = [options for path, options in _APPLICATIONS if path == named]
@@ -109,10 +124,14 @@ def test_every_sync_option_on_a_handwritten_application_is_one_argocd_knows(path
 
 def test_the_controller_level_sync_timeout_is_still_set() -> None:
     """The docstring above argues the two ``SyncTimeout=60s`` lines can go because the
-    bound they read as is already set one level up. That argument holds only while this
-    setting is here, so it goes red with it rather than quietly becoming untrue."""
-    extra_config = yaml.safe_load(_ODCN_ARGOCD.read_text())["spec"]["extraConfig"]
-    assert extra_config.get("controller.sync.timeout.seconds") == "300"
+    bound they read as is set one level up. That argument holds only while that setting is
+    here, so it goes red with it rather than quietly becoming untrue.
+
+    It reads the flag and no longer the ``extraConfig`` key: the key was there and did
+    nothing, so a green on it was the untrue half this check was meant to prevent."""
+    spec = yaml.safe_load(_ODCN_ARGOCD.read_text())["spec"]
+    assert "--sync-timeout=600" in spec["controller"]["extraCommandArgs"]
+    assert "controller.sync.timeout.seconds" not in spec["extraConfig"]
 
 
 @pytest.mark.parametrize(("path", "sync_options"), _APPLICATIONS, ids=_IDS)

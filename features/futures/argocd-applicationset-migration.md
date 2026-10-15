@@ -70,8 +70,8 @@ live workloads).
 - **Config stays in Git** (params files in `argo-applications.git`).
 - **Worktree isolation (HARD):** all implementation in a separate `git worktree`
   on a new branch; the shared checkout is never branch-switched/edited/deleted.
-- **Sandbox first:** validate the whole cutover on `sandboxed-local` (3-env
-  bootstrap) before `local`/`odcn-production`.
+- **Sandbox first:** validate the whole cutover on `sandboxed-local` before
+  `odcn-production`.
 
 ## Open sub-decision — trigger / "drop-in" webhook (decide before implementing)
 
@@ -97,7 +97,7 @@ live workloads).
 - **AppProjects → dedicated lightweight ArgoCD Application** rendering only
   `odcn-production/_appprojects/` (fast, low-churn; keeps the isolation boundary
   GitOps-managed). ApplicationSet can't emit AppProjects.
-- **Repo creds → one `repo-creds` template** in bootstrap (3 overlays),
+- **Repo creds → one `repo-creds` template** in bootstrap (all overlays),
   replacing 36 per-project secrets. **Caveat:** `repo-creds` prefix-match does
   NOT tolerate `{project}@` userinfo → ApplicationSet must emit a **normalized
   repoURL (no userinfo)**, and the cred template MUST exist/reconcile **before**
@@ -107,9 +107,9 @@ live workloads).
 
 1. **Snapshot** all app/AppProject specs + tracking-ids (out-of-band). Baseline:
    95 apps.
-2. **Disarm umbrella `prune`+`selfHeal`** (live patch + bootstrap, 3 overlays).
+2. **Disarm umbrella `prune`+`selfHeal`** (live patch + bootstrap, all overlays).
    Nothing can prune a child after this. *Rollback: revert.*
-3. **Create org `repo-creds` template** (bootstrap, 3 overlays); verify ArgoCD
+3. **Create org `repo-creds` template** (bootstrap, all overlays); verify ArgoCD
    resolves creds for the bare URL. 36 per-project secrets stay, coexist.
    *Rollback: delete secret.*
 4. **Stand up dedicated AppProject Application**; populate `_appprojects/`
@@ -123,7 +123,7 @@ live workloads).
    *Rollback: `kubectl delete applicationset user-applications --cascade=orphan`
    — leaves all apps live.*
 6. **Widen** params to all; re-run gate across 95.
-7. **Retire umbrella LAST:** remove from 3 overlays, then `kubectl delete
+7. **Retire umbrella LAST:** remove from all overlays, then `kubectl delete
    application user-applications --cascade=orphan` (**mandatory** — plain delete
    triggers the finalizer cascade on 93 children → destroys workloads). Verify
    umbrella gone, 95 Synced/Healthy, appset sole owner, 3 workloads unchanged.
@@ -174,14 +174,14 @@ live workloads).
 3. Build the ApplicationSet + `repo-creds` + AppProject-app manifests for
    `sandboxed-local`; dry-run adoption against a live child spec diff.
 4. Run the full cutover on sandbox; validate the 7 verification points.
-5. Replicate to `local` + `odcn-production` overlays; canary `asses-k2n`; widen.
+5. Replicate to the `odcn-production` overlay; canary `asses-k2n`; widen.
 6. Commit the OPI code changes; rebuild + roll out OPI; retire the umbrella.
 
 ## Source material
 
 Full planning detail (incl. the verified kubectl evidence and the ApplicationSet
 template skeleton) was captured during the 2026-06-22/23 session. Key files:
-`bootstrap/rig-system/kustomize/overlays/{odcn-production,sandboxed-local,local}/argocd-application-user-applications.yaml`,
+`bootstrap/rig-system/kustomize/overlays/{odcn-production,sandboxed-local}/argocd-application-user-applications.yaml`,
 `bootstrap/rig-system/kustomize/secrets/templates/argocd-repo-*-secret.yaml`,
 `bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`,
 `operations-manager/python/opi/manager/argo_manager.py`,

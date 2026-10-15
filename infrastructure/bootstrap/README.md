@@ -32,8 +32,7 @@ implementation/bootstrap/
 ├── BOOTSTRAP.md         # Detailed bootstrap documentation
 ├── README.md            # This overview document
 ├── clusters/            # Cluster-specific configurations
-│   ├── local/           # Local development cluster
-│   ├── minimal/         # Minimal production setup
+│   ├── sandboxed-local/ # Kind development cluster with in-cluster Forgejo
 │   └── odcn/            # ODCN environment with network policies
 ├── infrastructure/      # Core infrastructure components
     ├── argocd/          # ArgoCD deployment and configuration

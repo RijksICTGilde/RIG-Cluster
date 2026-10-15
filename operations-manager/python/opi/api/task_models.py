@@ -102,6 +102,8 @@ class ProcessingStatus(BaseModel):
     error: str | None = None
     result: Any | None = None
     component_failures: list[ComponentFailureInfo] | None = None
+    # De deployments waarvan deze run een lopende ArgoCD-sync afbrak.
+    terminated_syncs: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -83,19 +83,22 @@ def _nldd_vocabulary() -> set[str]:
 
     Hier stond ``_BUTTON_ICONS_MAP`` uit de NLDD-renderers, en dat was de verkeerde
     lijst: die tabel bevat de zestig iconen die op een KNOP mogen staan, niet de
-    woordenschat. De echte set staat in ``icons.json`` van lord_of_the_components en
-    telt er 271. Het verschil was niet onschuldig - het maakte van elf iconen die NLDD
-    gewoon levert (trash, question-mark-circle, heart) "bekende gaten", waarna ze in
-    KNOWN_GAPS belandden en niemand ze meer legde.
+    woordenschat. De echte set is een veelvoud daarvan, en stond toen in ``icons.json``
+    van lord_of_the_components. Het verschil was niet onschuldig - het maakte van elf
+    iconen die NLDD gewoon levert (trash, question-mark-circle, heart) "bekende gaten",
+    waarna ze in KNOWN_GAPS belandden en niemand ze meer legde.
 
     Uit het pakket gelezen en niet overgeschreven: een handgeschreven kopie zou
     stilzwijgend verouderen bij een versiebump, en juist daarvoor is deze test bedoeld.
 
     HIER STOND DE VERKEERDE BRON, EN DAAR KWAM DE HELE ELLENDE VANDAAN.
 
-    Deze functie las ``icons.json`` van lord_of_the_components: de BEDOELDE woordenschat,
-    327 namen. De bundel die de browser laadt bevat er 271. De 56 namen ertussen bestaan
-    dus op papier en renderen als niets, en deze test keurde ze goed.
+    Deze functie las ``icons.json`` van lord_of_the_components: de BEDOELDE woordenschat.
+    Die lijst en de bundel die de browser laadt lopen uiteen, op 0.8.80 met 327 namen
+    tegen 271 in de bundel. De 56 namen ertussen bestonden dus op papier en renderden als
+    niets, en deze test keurde ze goed. Hoeveel het per versie scheelt en welke kant het
+    op loopt is een meting, en die staat in ``opi/web/nldd_iconen.py``: op 0.8.92 zijn het
+    nog 2 namen die op papier bestaan en niets tekenen.
 
     Gemeten in een browser, met een echte <nldd-icon> en <nldd-button> per naam en de
     vraag of er een pad in het SVG zat: van de 79 iconnamen in de sjablonen renderden er

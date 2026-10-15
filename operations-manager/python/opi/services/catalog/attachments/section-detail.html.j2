@@ -28,7 +28,7 @@
             {% set bijlagen_bewerken = "openEditModal('modal-edit-attachments', 'Bijlagen')" %}
             <c-section-head title="Bijlagen">
                 <c-button type="secondary" size="sm" label="Toevoegen" show-icon="before" icon="plus"
-                          :attrs="{'onclick': bijlagen_bewerken}" />
+                          @click="{{ bijlagen_bewerken }}" />
             </c-section-head>
         {% else %}
             <c-section-head title="Bijlagen" icon="paperclip" />
@@ -48,10 +48,10 @@
                                 <c-cluster gap="sm" align="center">
                                     {% set bijlage_vervangen = "openEditModal('modal-edit-attachments', 'Bijlage vervangen', {replace: '" ~ att.id ~ "'})" %}
                                     <c-button type="secondary" size="sm" label="Vervangen"
-                                              :attrs="{'onclick': bijlage_vervangen}" />
+                                              @click="{{ bijlage_vervangen }}" />
                                     {% set bijlage_verwijderen = "openServiceModal('/projects/" ~ ctx.project_name ~ "/actions/delete-attachment/confirm?target=" ~ (att.id | urlencode) ~ "', 'Bijlage verwijderen')" %}
                                     <c-button type="secondary" size="sm" label="Verwijderen"
-                                              :attrs="{'onclick': bijlage_verwijderen}" />
+                                              @click="{{ bijlage_verwijderen }}" />
                                 </c-cluster>
                             {% endif %}
                         </c-cluster>

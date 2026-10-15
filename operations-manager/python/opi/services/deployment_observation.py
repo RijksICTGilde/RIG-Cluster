@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.services.catalog.base import ComponentHealth, DeploymentObservationContext
+from opi.services.oom_watcher import record_oom_tune_generation
 from opi.services.registry import listeners
 from opi.services.services_enums import ActionEvent
 
@@ -79,6 +80,7 @@ async def run_after_sync_observation(
 
     result = AfterSyncObservation()
     changed = False
+    oom_tune_generations: dict[str, str | None] = {}
     for service in services:
         if not service.applies_to(project_data, deployment_name):
             continue
@@ -87,6 +89,7 @@ async def run_after_sync_observation(
             result.requeue_refresh = result.requeue_refresh or outcome.requeue_refresh
             result.failures.extend(outcome.failures)
             result.notices.extend(outcome.notices)
+            oom_tune_generations.update(outcome.oom_tune_generations)
 
     if changed:
         # One commit for every outcome of the scan; no connector is threaded in, so no caller
@@ -95,5 +98,9 @@ async def run_after_sync_observation(
         commit_msg = f"auto-tune: after-sync resource changes for {deployment_name} in {project_name}"
         await project_manager.save_and_commit_project(project_data, commit_msg, enforce_validation=False)
         result.committed = True
+        # Only after the commit: a failed save would otherwise leave the pod generation
+        # marked answered while the increase was lost, and the lock refuses the next tune.
+        for component_name, pod_template_hash in oom_tune_generations.items():
+            record_oom_tune_generation(project_name, deployment_name, component_name, pod_template_hash)
 
     return result

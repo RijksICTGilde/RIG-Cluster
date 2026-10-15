@@ -18,10 +18,10 @@ fixes, 25.0 has been out of support since October 2024).
 
 | Piece | Where | Now |
 |---|---|---|
-| Image pin (all environments) | `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml` | `quay.io/keycloak/keycloak:25.0.6` |
-| Custom provider JAR | built from `keycloak-migration/custom-mapper/`, fetched by init container from GitHub release | `keycloak-saml-nameid-mapper-1.1.0.jar`, pom pins `keycloak.version` 25.0.6 |
-| Relay email sender JAR | built from `keycloak-migration/relay-email-sender/`, delivered by a `configMapGenerator` (no network) | `keycloak-relay-email-sender-1.0.0.jar`, pom pins `keycloak.version` 25.0.6 |
-| Login theme | init container, MinBZK release | `keycloak-nl-design-system.jar` v1.4.2 |
+| Image pin (per environment) | `images/keycloak-zad/Dockerfile` (base version) + `controller/base/deployment.yaml` (tag) | `quay.io/keycloak/keycloak:25.0.6` in de Dockerfile |
+| Custom provider JAR | built from `keycloak-migration/custom-mapper/` into `images/keycloak-zad/` | `keycloak-saml-nameid-mapper-1.1.0.jar`, pom pins `keycloak.version` 25.0.6 |
+| Relay email sender JAR | built from `keycloak-migration/relay-email-sender/` into `images/keycloak-zad/` | `keycloak-relay-email-sender-1.0.0.jar`, pom pins `keycloak.version` 25.0.6 |
+| Login theme | MinBZK release, opgehaald tijdens de imagebouw | `keycloak-nl-design-system.jar` v1.4.2 |
 | OPI admin client | `operations-manager/python` | `python-keycloak>=5.3.0`, compatible with 26.x, no change needed |
 | Database | CNPG `rig-db`, database `keycloak` | no backups configured (relevant for rollback) |
 
@@ -69,78 +69,40 @@ paragraaf heeft en geen regel in een checklist.
 ## Phase 0: retarget the extensions
 
 0. In `keycloak-migration/relay-email-sender/pom.xml` set `keycloak.version` to `26.7.0` and
-   bump the artifact version. Die versie zit in de BESTANDSNAAM van de jar, dus hij staat op
-   vier plekken: de pom, `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk),
-   de bestandsnaam onder `.../keycloak/controller/base/providers/` plus de
-   `configMapGenerator` die hem noemt, en het `cp`-commando in de initContainer (in de basis
-   EN in de local-overlay, die het hele commando vervangt). Bouwen en meecommitten met
-   `task build-keycloak-relay-email-sender`; `task check-keycloak-relay-email-sender` en CI
-   vergelijken de ingecheckte jar byte voor byte met een verse bouw. Deze jar wordt NIET als
-   release gepubliceerd - hij komt uit git.
+   bump the artifact version. Die versie staat op twee plekken: de pom en
+   `RelayMailConfig.VERSION` (`RelayVersieTest` houdt die twee gelijk). Bouwen en toetsen met
+   `task build-keycloak-relay-email-sender` / `task test-keycloak-relay-email-sender`.
 1. In `keycloak-migration/custom-mapper/pom.xml` set `keycloak.version` to `26.7.0`, bump the
    artifact version to `1.2.0`, build via `task build-keycloak-custom-mapper` (plus
    `task test-keycloak-custom-mapper` / `test-keycloak-custom-mapper-docker`) and fix what
    breaks. Highest risk: the metrics code (JPA user counts) and the logout endpoint. The
    build task echoes the versioned JAR path, so bump the version there too.
-2. Publish `keycloak-saml-nameid-mapper-1.2.0.jar` manually as a GitHub release on
-   `RijksICTGilde/RIG-Cluster` (there is no release task in the Taskfile; v1.1.0 was
-   published by hand; the init container downloads by release URL).
+2. Zet de basisversie in `images/keycloak-zad/Dockerfile` op dezelfde `26.7.0`. Een toets
+   pint die gelijk aan `keycloak.version` in allebei de poms, dus dit kan niet vergeten
+   worden. Er wordt geen jar meer als release gepubliceerd: de image bouwt ze uit de bron
+   (`features/keycloak-eigen-image.md`).
 3. Validate the MinBZK theme v1.4.2 against 26.7 in the sandbox. It dates from January 2026
    so it is probably built against 26.x, but its release notes state no compatibility. If it
    breaks, raise an issue at MinBZK/keycloak-theme.
 
-## Overweging bij deze upgrade: één jar, en misschien een eigen image
+## Die overweging is beslist: een eigen image
 
-Fase 0 laat zien hoeveel handwerk er aan de huidige opzet hangt: twee pom's naar 26.7, twee
-artefactversies omhoog, een versienummer dat in een BESTANDSNAAM staat en daardoor op vier
-plekken herhaald wordt, en een jar die met de hand als GitHub release gepubliceerd moet worden
-omdat de initContainer hem via een release-URL ophaalt. Dat komt bij elke volgende upgrade terug.
+Dit doc stelde de vraag of de providers anders geleverd moesten worden, met drie opties. Het
+is de derde geworden: `images/keycloak-zad/` bundelt beide jars plus het thema, en de
+initContainer is weg. De afweging en de gevolgen staan in
+`features/keycloak-eigen-image.md`.
 
-Er staan bovendien twee leverwegen naast elkaar, en niemand heeft die combinatie gekozen. De
-relay-emailSender mag niet van het netwerk komen, want aan die jar hangt de startvlag
-`--spi-email-sender-provider` en Keycloak weigert te starten als de provider ontbreekt; een
-hapering bij GitHub zou het inloggen platleggen. De andere jar is ouder dan die eis en wordt nog
-bij elke podstart van github.com gehaald.
-
-Dat laatste is de zwakkere helft, en niet alleen voor het gemak. De providers in die jar dragen
-GEEN startvlag, dus als GitHub hapert komt Keycloak gewoon op, zonder
-`RequireClientRoleAuthenticator` (de rolcontrole van `restrict-access`) en zonder de SAML
-NameID-mapper. Stil verdergaan zonder die twee is een slechtere uitkomst dan niet opkomen.
-
-**Onze eigen providers passen in één jar.** Dat is geen nieuwe constructie: de custom-mapper-jar
-draagt vandaag al vijf providers over vier SPI's, en er `org.keycloak.email.EmailSenderProviderFactory`
-bij zetten is een regel in `META-INF/services/`. Gemeten op 28 augustus 2026:
-
-| | grootte | als base64 in een ConfigMap | van de 1 MiB-limiet |
-|---|---|---|---|
-| `keycloak-relay-email-sender-1.0.0.jar` | 9.583 bytes | ~13 KB | ~1% |
-| `keycloak-saml-nameid-mapper-1.1.0.jar` | 37.473 bytes | ~50 KB | ~5% |
-| allebei samengevoegd | ~47 KB | ~63 KB | ~6% |
-| `keycloak-nl-design-system.jar` (MinBZK) | 2.110.641 bytes | ~2,8 MB | **past niet** |
-
-Onze jars zijn klein omdat het een handvol klassen zonder afhankelijkheden zijn. Het externe thema
-past niet in een ConfigMap en blijft dus een eigen vraag, ook als de rest samengaat.
-
-Wat er dan te kiezen valt, en waarom het HIER thuishoort en niet als los project:
-
-- **Samenvoegen tot één jar, geleverd uit git.** Haalt de netwerkafhankelijkheid weg voor de
-  security-relevante providers, laat de handmatige releasestap vervallen en halveert het
-  versiewerk uit fase 0. Prijs: één versie voor alles, dus een reparatie aan de mailer rolt de
-  mapper mee uit.
-- **Een eigen klein Keycloak-image met alle drie de jars erin.** Lost ook het thema op en haalt
-  de initContainer helemaal weg. Prijs: een bouwpijplijn, een registry en een pin per cluster,
-  en op ODCN komt daar de image-rewrite naar `rcr` bij.
-- **Laten zoals het is.** Verdedigbaar, want het draait en het is gemeten. Dan is dit de plek
-  waar staat dat het een bewuste keuze was en niet een vergeten opruiming.
-
-Beslis dit vóór fase 0, want in fase 0 raak je beide jars, beide versies en de initContainer toch
-al aan. Los uitgevoerd is het dezelfde verbouwing een tweede keer.
+Wat dat voor deze upgrade betekent: de basisversie staat op één plek (de Dockerfile), een
+toets houdt hem gelijk aan `keycloak.version` in beide poms, en er hoeft geen jar meer met de
+hand als release gepubliceerd te worden. Het versiewerk uit fase 0 is daarmee twee poms en
+een regel in de Dockerfile.
 
 ## Phase 1: modernize the deployment manifest
 
 All changes in `infrastructure/bootstrap/infrastructure/keycloak/controller/base/deployment.yaml`:
 
-4. Image to `quay.io/keycloak/keycloak:26.7.0`; init container URL to the 1.2.0 JAR.
+4. Base image to `quay.io/keycloak/keycloak:26.7.0` in `images/keycloak-zad/Dockerfile`,
+   then build and pin a new tag (see `features/keycloak-eigen-image.md`).
 5. Rename bootstrap admin variables (old names are deprecated in 26):
    `KEYCLOAK_ADMIN` to `KC_BOOTSTRAP_ADMIN_USERNAME`,
    `KEYCLOAK_ADMIN_PASSWORD` to `KC_BOOTSTRAP_ADMIN_PASSWORD`.
@@ -148,15 +110,15 @@ All changes in `infrastructure/bootstrap/infrastructure/keycloak/controller/base
    - `KC_HOSTNAME_PORT` (hostname v1 option, gone in 26; hostname v2 is already active,
      the odcn overlay sets `KC_HOSTNAME` to a full URL which is the v2 style)
    - `KC_PROXY_ADDRESS_FORWARDING` (legacy Wildfly-era variable, already inert)
-7. Resolve the conflicting proxy config: the args pass `--proxy-headers=forwarded` while the
-   env sets `KC_PROXY_HEADERS=xforwarded`. Keep one; `xforwarded` matches our HAProxy and
-   nginx ingress setup.
+7. Done in RC-212: `KC_PROXY_HEADERS=xforwarded` in the env is the only proxy config left; the
+   `--proxy-headers=forwarded` argument that won over it is gone.
 8. SPI option format: `--spi-theme-welcome-theme` becomes `--spi-theme--welcome-theme`
    (single-dash format is deprecated in 26). Same for
-   `KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED` if kept.
+   `KC_SPI_ADMIN_REALM_RESTAPI_EXTENSION_ENABLED` if kept. Both must stay where they are: a
+   `spi-` option is not baked into the image, so it only takes effect at start.
 9. Optional: move the readiness probe from `/realms/master:8080` to `/health/ready:9000`
-   (`KC_HEALTH_ENABLED` is already true; 9000 is the management interface and the intended
-   path in 26).
+   (health is baked into the image as a build option; 9000 is the management interface and the
+   intended path in 26).
 
 ## Phase 2: sandbox validation
 

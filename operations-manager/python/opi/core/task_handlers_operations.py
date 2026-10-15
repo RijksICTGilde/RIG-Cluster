@@ -10,9 +10,17 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.core.task_errors import platform_failure_fields
+from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import get_project_store
 
 logger = logging.getLogger(__name__)
+
+
+def terminated_sync_fields(project_manager: Any) -> dict[str, list[str]]:
+    """De deployments waarvan deze run een lopende sync afbrak, als die er zijn."""
+    terminated = project_manager.get_terminated_sync_operations()
+    return {"terminated_syncs": terminated} if terminated else {}
 
 
 async def handle_clone_database(payload: dict, progress: Any) -> dict:
@@ -294,6 +302,9 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             - project_name: Project name
             - deployment_name: Deployment to refresh
             - force_clone: Whether to force clone even if target resources exist
+            - reset_running_sync: Whether a sync that is still running must be broken
+              off, however young. The refresh endpoints set this; an automated caller (the
+              OOM watcher queues a refresh for itself) leaves it out.
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
@@ -307,10 +318,16 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     project_name: str = payload["project_name"]
     deployment_name: str = payload["deployment_name"]
     force_clone: bool = payload.get("force_clone", False)
+    reset_running_sync: bool = payload.get("reset_running_sync", False)
     # The automated refresh queued right after an auto-disable must NOT retry
     # moving-tag (e.g. :latest) disables, or a still-broken component would flap.
     # User-initiated refreshes (no flag) are an explicit retry request.
     automated_remediation: bool = payload.get("automated_remediation", False)
+
+    # Clear OOM tune state at start (not end): the sync wait records what it answered,
+    # and clearing after would wipe that. Automated refreshes skip this entirely.
+    if not automated_remediation:
+        reset_oom_tune_attempts(project_name, deployment_name)
 
     if not validate_project_name(project_name):
         error_msg = (
@@ -352,6 +369,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             deployment_name=deployment_name,
             force_clone=force_clone,
             force_reenable=not automated_remediation,
+            reset_running_sync=reset_running_sync,
         )
 
         if processing_result:
@@ -373,14 +391,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
 
             # Schedule fire-and-forget OOM watcher
             from opi.core.config import settings
-            from opi.services.oom_watcher import reset_oom_tune_attempts, schedule_oom_check
-
-            # A user-initiated refresh is a fresh start, so its OOM tune budget is
-            # cleared. The automated refresh a tune queues for itself carries
-            # ``automated_remediation`` and must NOT clear it -- doing so reset the
-            # brake once per escalation round (asses-k2n/pr-494).
-            if not automated_remediation:
-                reset_oom_tune_attempts(project_name, deployment_name)
+            from opi.services.oom_watcher import schedule_oom_check
 
             if settings.OOM_WATCHER_ENABLED:
                 oom_attempt = payload.get("oom_watch_attempt", 1)
@@ -407,6 +418,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                         if (component_failures := project_manager.get_component_failures())
                         else {}
                     ),
+                    **terminated_sync_fields(project_manager),
                 },
             }
         else:
@@ -424,11 +436,13 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
                 "message": error_msg,
                 "error": error_msg,
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
                     "error": error_msg,
                     **({"component_failures": component_failures} if component_failures else {}),
+                    **terminated_sync_fields(project_manager),
                 },
             }
 
@@ -451,6 +465,9 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
         payload: Task payload containing:
             - project_name: Project name
             - force_clone: Whether to force clone even if target resources exist
+            - reset_running_sync: Whether a sync that is still running must be broken
+              off, however young. The refresh endpoints set this; the internal caller in
+              the component-delete path decides for itself.
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
@@ -462,6 +479,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
 
     project_name: str = payload["project_name"]
     force_clone: bool = payload.get("force_clone", False)
+    reset_running_sync: bool = payload.get("reset_running_sync", False)
 
     if not validate_project_name(project_name):
         error_msg = (
@@ -501,6 +519,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
             project_file_path,
             task_progress_manager=progress,
             force_clone=force_clone,
+            reset_running_sync=reset_running_sync,
         )
 
         if processing_result:
@@ -536,6 +555,7 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                         if (component_failures := project_manager.get_component_failures())
                         else {}
                     ),
+                    **terminated_sync_fields(project_manager),
                 },
             }
         else:
@@ -551,11 +571,13 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
                 "message": error_msg,
                 "error": error_msg,
                 "error_type": "processing_failed",
+                **platform_failure_fields(project_manager),
                 "project": {"name": project_name, "file_path": project_file_path},
                 "processing": {
                     "status": "failed",
                     "error": error_msg,
                     **({"component_failures": component_failures} if component_failures else {}),
+                    **terminated_sync_fields(project_manager),
                 },
             }
 

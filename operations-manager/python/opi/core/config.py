@@ -398,6 +398,11 @@ class Settings(BaseSettings):
     MAIL_RELAY_ADMIN_PASSWORD: str = ""  # supports age:/base64+age:/plain: prefixes
     MAIL_RELAY_VERIFY_TLS: bool = True
 
+    # De readiness-wacht op de relay (RC-261). OPI mag poort 8080 al bereiken, dus de
+    # meting kost niets; de melding gaat naar het ntfy-topic van de log_watcher.
+    MAIL_RELAY_CHECK_INTERVAL_SECONDS: int = 60
+    MAIL_RELAY_DOWN_ALERT_SECONDS: int = 300  # pas melden na vijf minuten, een rollout mag duren
+
     # ZAD's own account on the relay. It is an ORDINARY account on the relay, made by the
     # same connector call a project account is made by; only the caller differs (the boot
     # instead of a project run). So there is no password setting here: the password does
@@ -508,6 +513,15 @@ class Settings(BaseSettings):
     OOM_WATCHER_ENABLED: bool = True
     OOM_WATCHER_DELAY_SECONDS: int = 120  # Wait before checking for OOM kills
     OOM_WATCHER_MAX_ATTEMPTS: int = 3  # Max tune cycles per deploy
+
+    # Cluster-wide pod watch (OOM kills outside the deploy window). Whether it runs at
+    # all is the cluster's call (``watches_pods_for_oom``); this only paces the sweep.
+    OOM_METRIC_SWEEP_INTERVAL_SECONDS: int = 3600  # Safety-net query interval
+
+    # How often the cluster is counted for pods that cannot pull their image. One kubectl
+    # LIST per pass, and the alert on it only fires after 15 minutes, so a shorter
+    # interval buys nothing.
+    IMAGE_PULL_OBSERVE_INTERVAL_SECONDS: int = 60
 
     # Federation settings
     FEDERATION_ROLE: str = "standalone"  # standalone | master | slave

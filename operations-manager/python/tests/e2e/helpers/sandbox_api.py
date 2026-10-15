@@ -34,8 +34,10 @@ def read_api_key(page: Page, base_url: str, project_name: str) -> str:
     """Scrape the decrypted project API key from the project-details page.
 
     The details page renders the key in a LOTC secret-field: the element TEXT is a row
-    of bullets and the plaintext sits in its `data-value` attribute, so the attribute is
-    what we read.
+    of bullets and the plaintext sits in the `value` attribute of the
+    `<lotc-secret-field>` host, so the attribute is what we read. Until NLDD 0.8.83 that
+    was `data-value` on an inner `.lotc-secret__value`; the component became a custom
+    element and moved the value to the host.
 
     HET VELD MOET PRECIES AANGEWEZEN WORDEN. Hier stond
     ``.lotc-stack:has(h3:text-is("API Key")) .lotc-secret__value`` met ``.first``. De kop
@@ -53,9 +55,9 @@ def read_api_key(page: Page, base_url: str, project_name: str) -> str:
         "xpath=(//h3[normalize-space(text())='API Key']"
         "/ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' lotc-stack ')])[last()]"
     )
-    value = page.locator(stack).locator(".lotc-secret__value").first
+    value = page.locator(stack).locator("lotc-secret-field").first
     value.wait_for(state="attached", timeout=10000)
-    api_key = (value.get_attribute("data-value") or "").strip()
+    api_key = (value.get_attribute("value") or "").strip()
     if not api_key:
         raise AssertionError(f"Could not read API key for project '{project_name}' from details page")
     if not _API_KEY_VORM.fullmatch(api_key):

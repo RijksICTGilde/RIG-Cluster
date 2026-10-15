@@ -38,6 +38,9 @@ een gewone sandboxrun:
 | `reallife` | `test_sandbox_reallife.py` | vijf projecten, semi-gelijktijdige mutaties via UI en API op hetzelfde projectbestand | ~15 min |
 | `punt14` | `test_sandbox_punt14.py` | gerichte jacht op de intermitterende `deployment_not_found` uit de zad-cli (punt 14) | 9-25 min |
 
+Elk heeft een eigen taak: `task test-e2e-sandbox-reallife` en `task test-e2e-sandbox-punt14`.
+`task test-e2e-sandbox` sluit beide markers uit.
+
 De punt-14-jacht is regelbaar met `PUNT14_RONDES` (rondes met `rollout=false`),
 `PUNT14_RONDES_UITROL` (rondes met uitrol aan, minuten per stuk) en `PUNT14_METINGEN` (een
 bestand waarin hij per ronde een meetregel schrijft -- pytest toont die van een geslaagde
@@ -73,12 +76,14 @@ All in `tests/e2e/conftest.py` (fixtures) and `tests/e2e/helpers/` (page objects
   `_unique_project_name()` for collision-free names.
 - `edit_modal.py::EditModalHelper` - drives detail-page modal edits.
 - `project_actions.py::delete_project_via_ui` - drives the danger-zone delete modal.
-- `forgejo.py::ForgejoClient` - `project_file_exists`, `get_project_yaml`, `wait_for_new_project`
-  (discovers the random-postfix technical name by diffing the repo), `wait_for_component`,
+- `forgejo.py::ForgejoClient` - `project_file_exists`, `get_project_yaml`, `wait_for_component`,
   `wait_for_project_gone`.
 - `sandbox_api.py` - `read_api_key` (scrapes the per-project key from the details page),
   `add_component` (calls the v2 endpoint + polls the task, surfacing real failures),
   `delete_project_via_api` (force teardown / cleanup safety net).
+- `weesprojecten.py` - haalt een achtergebleven testproject weg zonder browser, over de
+  webroute. Ook als `task sandbox:verwijder-weesproject NAAM=...`; zie "Een aanmaak die
+  halverwege omvalt" hieronder.
 - `cluster.py` - kubectl-wrappers om te meten wat er ECHT in het cluster staat
   (`secret_values`, `get_json_strict`, `resource_names`, `probe_in_pod`, ...) plus
   `run_psql` voor SQL tegen een databaseserver op het cluster, in een eigen pod. Het
@@ -97,6 +102,55 @@ There is deliberately no separate cleanup registry: a suite that creates project
 their teardown in a module fixture's `finally`, calling `delete_project_via_api`. That
 keeps the cleanup next to the thing that created it, and it runs even when the test
 fails halfway.
+
+### Een aanmaak die halverwege omvalt
+
+Die `finally` heeft alleen de `CreatedProject` die de wizardhelper teruggeeft, en die komt
+er pas bij SUCCES. Valt de aanmaak halverwege om, dan krijgt hij niets, terwijl het
+PROJECTBESTAND er dan al staat: de aanmaaktaak schrijft het vroeg en valt pas later om, op
+zijn eigen wacht tot de applicaties gezond zijn.
+
+Dat bestand is de bron. De app-of-apps leest het en maakt de ArgoCD-applicaties er steeds
+opnieuw uit aan, dus wat je op het CLUSTER weghaalt komt terug, `cluster.force_cleanup_project`
+inbegrepen: die ruimt het cluster op en niet het bestand. Zo bleven er achterblijvers uit
+augustus en september staan.
+
+`lifecycle.py` ruimt dit nu zelf op. De naam wordt van de voortgangspagina gelezen VOORDAT
+de uitkomst wordt beoordeeld (`naam_van_de_voortgangspagina` naast `assert_aanmaak_geslaagd`),
+en valt er daarna iets om, dan verwijdert `ruim_mislukte_aanmaak_op` het project alsnog. Die
+opruiming gooit zelf niets: ze loopt in een `finally` en mag de fout die de toets moet lezen
+niet vervangen. Lukt ze niet (geen API-sleutel op de detailpagina), dan zegt het logboek welk
+project blijft staan.
+
+De vijf modules die hun eigen wizardgang lopen (`test_sandbox_invite_ui.py` en zijn
+zusters) hadden hetzelfde gat en gaan nu door `naam_en_sleutel_na_de_wizard`, dezelfde
+opruiming zonder het `CreatedProject` eromheen. Een toets in `tests/test_e2e_helpers.py`
+grendelt dat: roept een e2e-module de losse stappen weer zelf aan, dan is het gat terug. De
+meetbank `scripts/doorloop_rc108.py` doet dat wel, en met opzet: die wil het oordeel over de
+uitkomst, maar laat een mislukt project juist STAAN om het te kunnen bekijken.
+
+Eén venster blijft over: valt de aanmaak om voordat de voortgangspagina de naam toont (de
+taak komt niet tot een eindstand binnen `create_timeout`), dan weet de helper niet wat hij
+moet opruimen. Daarvoor, en voor de wezen die er al stonden:
+
+```bash
+task sandbox:verwijder-weesproject NAAM=test-ej1
+task sandbox:verwijder-weesproject NAAM="test-ej1 test-vim"
+```
+
+Dat haalt het projectbestand weg en wacht tot het echt uit `zad-projects` verdwenen is: dat
+bestand is de maat, niet het antwoord op de POST. Het volgt daarvoor de TAAK (het
+voortgangsfragment ververst zichzelf alleen zolang die loopt), dus een weigering komt eruit
+als de melding van OPI en niet als een wachttijd die afliep. Dat is hoe `rest4-dqp` zich
+liet zien: zijn verwijdering strandde op een MinIO-gebruiker die niet meer bestond
+("Policy detachment failed ... The specified user does not exist"), waarna een tweede gang
+hem wel weghaalde.
+
+Het gaat over de WEBroute `POST /projects/delete/{naam}` en niet over
+`DELETE /api/projects/{naam}`: die laatste wil de EIGEN API-sleutel van het project en die
+staat alleen op de detailpagina, dus zonder browser is er geen sleutel. Wat die webroute
+tegelijk eist (sessiecookie, csrf-header uit de cookie, `Origin` op de host) staat in
+`weesprojecten.py`.
 
 ## Do / Don't
 

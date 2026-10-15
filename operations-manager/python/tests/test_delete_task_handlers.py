@@ -96,7 +96,13 @@ async def test_component_delete_also_reprocesses_the_project() -> None:
 
     pm.delete_component.assert_awaited_once_with("web", confirm_in_use=False)
     pm.close.assert_awaited_once()
-    assert refresh.await_args.args[0] == {"project_name": "demo", "force_clone": True}
+    assert refresh.await_args.args[0] == {
+        "project_name": "demo",
+        "force_clone": True,
+        # Met opzet: een verwijdering moet landen, dus een sync op de oude staat hoort hem niet
+        # te vertragen. tests/test_refresh_reset_lopende_sync.py legt die keuze vast.
+        "reset_running_sync": True,
+    }
     assert result["status"] == "completed"
 
 

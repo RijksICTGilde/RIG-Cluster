@@ -194,7 +194,7 @@ func renderHTML(cache *resultCache, query url.Values, chat *chatOutcome) string 
 			// bericht naar een extern adres werd hier als succes gemeld en 131 seconden
 			// later door de upstream geweigerd met "550 #5.1.0 Address rejected", zonder
 			// dat iemand dat te zien kreeg (zie plans/mail-vervolgpunten.md, punt 8 en 10).
-			// De sink werd hier onvoorwaardelijk genoemd terwijl die alleen op local en
+			// De sink werd hier onvoorwaardelijk genoemd terwijl die alleen op
 			// sandboxed-local bestaat; op productie gaat post naar de echte upstream.
 			outcome = fmt.Sprintf(`<p style="color:#137333">Aangenomen door de relay: <code>%s</code> &mdash; een ontvangstbevestiging, geen bezorgbewijs. Zoek het onderwerp bij de ontvanger.</p>`, html.EscapeString(s))
 		} else if e := query.Get("testmailerr"); e != "" {

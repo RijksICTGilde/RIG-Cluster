@@ -1,5 +1,6 @@
-"""De CI-testjob installeert sops, op de versie van de Dockerfile, voor de testrun.
+"""De CI-testjob installeert zijn binaries voor de testrun, op de versie die de repo elders pint.
 
+Sops (op de versie van de Dockerfile) en kustomize (op die van images/cmp-kustomize-sops).
 Plus de andere kant van diezelfde afspraak: welke crypto-binaries de image meelevert.
 """
 
@@ -12,6 +13,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
+KUSTOMIZE_DOCKERFILE = REPO_ROOT / "images" / "cmp-kustomize-sops" / "Dockerfile"
 
 
 @pytest.fixture(scope="module")
@@ -20,6 +22,7 @@ def ci_test_steps() -> list[dict]:
 
 
 INSTALL_STAP = "Install sops"
+KUSTOMIZE_STAP = "Install kustomize"
 
 
 def _index_of(steps: list[dict], pattern: str) -> int:
@@ -74,3 +77,23 @@ def test_de_image_installeert_het_age_binary_nog() -> None:
     """
     pakketten = _apt_pakketten(DOCKERFILE.read_text())
     assert "age" in pakketten, f"de Dockerfile installeert age niet meer, wel {sorted(pakketten)}"
+
+
+def test_kustomize_is_installed_before_the_tests_run(ci_test_steps: list[dict]) -> None:
+    """Zonder kustomize op het PATH slaan test_keycloak_eigen_image en test_sandbox_build_push
+    stil over, waaronder de acceptatie van RC-212 (de sandbox rendert de verse tag, odcn de oude).
+    """
+    install = _index_of_name(ci_test_steps, KUSTOMIZE_STAP)
+    pytest_run = _index_of(ci_test_steps, r"\bpytest\b")
+    assert install < pytest_run, "kustomize wordt pas na de testrun geinstalleerd, die toetsen slaan dan over"
+
+
+def test_kustomize_version_matches_the_cmp_image(ci_test_steps: list[dict]) -> None:
+    image_version = re.search(r'^\s*RUN KUSTOMIZE_VERSION="(\S+)"', KUSTOMIZE_DOCKERFILE.read_text(), re.MULTILINE)
+    assert image_version, "KUSTOMIZE_VERSION ontbreekt in images/cmp-kustomize-sops/Dockerfile"
+    script = ci_test_steps[_index_of_name(ci_test_steps, KUSTOMIZE_STAP)]["run"]
+    ci_versions = set(re.findall(r"/kustomize/(v[\d.]+)/kustomize_(v[\d.]+)_", script))
+    verwacht = f"v{image_version[1]}"
+    assert ci_versions == {(verwacht, verwacht)}, (
+        f"CI haalt kustomize {sorted(ci_versions)}, images/cmp-kustomize-sops/Dockerfile pint {verwacht}"
+    )

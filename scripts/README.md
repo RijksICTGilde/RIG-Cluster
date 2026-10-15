@@ -176,6 +176,7 @@ hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 | `generate_probe_spec.py` | genereert de probe-spec die `test_probe_spec_drift.py` vastpint |
 | `orphan_deployments.py` | vindt deployments zonder project |
 | `build-preflight.sh` | weigert een bouw te starten met te weinig vrij geheugen |
+| `bron-tag.sh` | de image-tag voor gegeven paden: de korte commit, met `-dirty-<hash>` bij ongecommit werk. Vult `SANDBOX_OM_TAG` in `Taskfile.yaml` |
 | `pod-resources.sh`, `resourcequota-compare.sh` | resourceoverzichten uit het cluster |
 | `renew-sandbox-cert.sh`, `certbot/` | het wildcard-certificaat voor de sandbox vernieuwen |
 | `sandbox-forward.sh`, `traffic-generator.sh` | hulpjes rond een lopende sandbox |

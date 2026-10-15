@@ -21,15 +21,24 @@ from pathlib import Path
 
 import httpx
 from playwright.sync_api import Page, sync_playwright
-from tests.e2e.helpers import cluster
-from tests.e2e.helpers.forgejo import ForgejoClient
-from tests.e2e.helpers.lifecycle import (
+
+# Python zet bij een aanroep met een BESTANDSNAAM de map van het SCRIPT op ``sys.path`` en
+# niet de projectwortel. Zonder deze regels valt de aanroep uit de docstring hierboven om op
+# ``ModuleNotFoundError: No module named 'tests'``, al voor het eerste argument gelezen is.
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from tests.e2e.helpers import cluster  # noqa: E402
+from tests.e2e.helpers.forgejo import ForgejoClient  # noqa: E402
+from tests.e2e.helpers.lifecycle import (  # noqa: E402
     RUNNABLE_IMAGE,
-    project_name_from_progress,
+    assert_aanmaak_geslaagd,
+    naam_van_de_voortgangspagina,
     walk_create_wizard_with_services,
 )
-from tests.e2e.helpers.sandbox_api import delete_project_via_api, read_api_key
-from tests.e2e.helpers.wizard import unique_project_name
+from tests.e2e.helpers.sandbox_api import delete_project_via_api, read_api_key  # noqa: E402
+from tests.e2e.helpers.wizard import unique_project_name  # noqa: E402
 
 BASIS = os.environ.get("ZAD_SANDBOX_URL", "https://zad.sandbox.rijksapp.dev")
 GEBRUIKER = os.environ.get("ZAD_SANDBOX_USER", "admin")
@@ -129,7 +138,13 @@ def main() -> int:
                 component_name="web",
                 image=RUNNABLE_IMAGE,
             )
-            naam = project_name_from_progress(page)
+            # De twee LOSSE stappen, en niet ``naam_en_sleutel_na_de_wizard`` dat ze
+            # bundelt: die ruimt een mislukte aanmaak op, en dit script belooft in zijn
+            # docstring juist het tegenovergestelde. Het oordeel hoort er wel bij te
+            # blijven, anders loopt een mislukte aanmaak door naar de wacht hieronder en
+            # meldt zich pas na vijf minuten, zonder de reden van de taak.
+            naam = naam_van_de_voortgangspagina(page)
+            assert_aanmaak_geslaagd(page, naam)
             print(f"[doorloop] aangemaakt: {naam}")
 
         print("[doorloop] wachten tot ArgoCD Healthy meldt")

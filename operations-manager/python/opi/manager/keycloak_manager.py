@@ -49,6 +49,7 @@ from opi.utils.naming import (
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import KeycloakSecret
 from opi.utils.totp import build_otpauth_uri, generate_totp_secret
+from opi.utils.url_paths import normalize_logout_path
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -136,6 +137,24 @@ def merge_user_variables(context: dict[str, Any], config: dict[str, Any]) -> dic
             "door het platform bepaald en mogen niet door een project worden overschreven."
         )
     return {**user_variables, **context}
+
+
+def platform_client_logout_attributes(keycloak_url: str, project_realm_name: str) -> dict[str, str]:
+    """The logout attributes a platform client in ``rig-platform`` has to carry.
+
+    A newly created client gets them from ``platformClients[].attributes`` in the realm
+    blueprints (``opi/configs/keycloak/sso-only.yaml`` and ``sso-support.yaml``). The
+    reconcile has no rendered blueprint at hand, so the values are built here as well,
+    exactly like ``expected_redirect_uri`` is built next to the blueprint's
+    ``redirectUris``. ``test_keycloak_logout_path.py`` locks the two against each other.
+    """
+    return {
+        "backchannel.logout.url": (
+            f"{keycloak_url}/realms/{project_realm_name}/protocol/openid-connect/logout/backchannel-logout"
+        ),
+        "backchannel.logout.session.required": "true",
+        "post.logout.redirect.uris": "+",
+    }
 
 
 def find_realm_entry_for_admin(project_data: dict[str, Any], admin_username: str) -> dict[str, Any] | None:
@@ -491,6 +510,7 @@ class KeycloakManager:
                     realm-roles:  # Optional: create realm-level roles
                       - name: mijnbureau-user
                         description: Access to MijnBureau applications
+                    logout-path: /api/v1.0/logout/  # Optional: front-channel logout path
 
         Args:
             project_data: The project configuration data
@@ -504,6 +524,7 @@ class KeycloakManager:
                 "additional_redirect_uris": [...]  # Optional additional redirect URIs
                 "additional_clients": [...]  # Optional additional clients to create
                 "realm_roles": [...]  # Optional realm roles to create
+                "logout_path": "/api/v1.0/logout/"  # Optional front-channel logout path (YAML: logout-path)
                 "restrict_access": {       # Optional access restriction config (YAML: restrict-access)
                     "enabled": True,
                     "role": "allowed-user",  # Client role
@@ -526,6 +547,7 @@ class KeycloakManager:
             "realm_roles": [],
             "restrict_access": None,
             "account_link": None,  # None = keep Keycloak's stock first-broker-login flow (opt-in)
+            "logout_path": None,  # None = the application clears its own session (opt-in)
         }
 
         project_services = project_data.get("services", [])
@@ -689,6 +711,13 @@ class KeycloakManager:
                 raise ValueError(f"account-link must be 'automatic' or 'confirm', got {account_link!r}")
             merged_config["account_link"] = account_link
             logger.info(f"Account-link mode configured: {account_link}")
+
+        # Both spellings are read, because an alias that validates in KeycloakConfig but is
+        # not read here makes the other spelling a silent no-op.
+        logout_path_key = next((key for key in ("logout-path", "logout_path") if key in user_config), None)
+        if logout_path_key is not None:
+            merged_config["logout_path"] = normalize_logout_path(user_config[logout_path_key])
+            logger.info(f"Logout path configured: {merged_config['logout_path']}")
 
         # For external keycloak, copy the external config fields and skip template validation
         if merged_config["type"] == "external":
@@ -1126,6 +1155,7 @@ class KeycloakManager:
                 realm_name=realm_name,
                 support_http=support_http,
                 additional_redirect_uris=additional_redirect_uris or None,
+                logout_path=config.get("logout_path"),
             )
 
             # Apply access restriction if configured
@@ -1757,36 +1787,50 @@ class KeycloakManager:
 
         # 2. Check and update platform client redirect URI in rig-platform realm
         expected_redirect_uri = f"{expected_keycloak_url}/realms/{realm_name}/broker/{idp_alias}/endpoint/*"
+        expected_attributes = platform_client_logout_attributes(expected_keycloak_url, realm_name)
 
         # Find the platform client in rig-platform realm
         client = await keycloak.find_client_by_client_id(platform_client_id, platform_realm)
 
         if client:
             current_redirect_uris = client.get("redirectUris", [])
+            current_attributes = client.get("attributes", {}) or {}
+
+            payload: dict[str, Any] = {}
 
             # Check if expected redirect URI is present
             if expected_redirect_uri not in current_redirect_uris:
                 # Build new redirect URIs list - replace any old broker endpoint URIs
                 new_redirect_uris = [uri for uri in current_redirect_uris if f"/broker/{idp_alias}/endpoint" not in uri]
                 new_redirect_uris.append(expected_redirect_uri)
+                payload["redirectUris"] = new_redirect_uris
 
+            # Attributes too, not just redirect URIs. A platform client created before a
+            # key was added to the blueprint never picked it up: seven clients in
+            # rig-platform still had no backchannel.logout.url long after the blueprint got
+            # one, so cross-realm logout never reached their project realm.
+            stale_attributes = sorted(
+                key for key, value in expected_attributes.items() if current_attributes.get(key) != value
+            )
+            if stale_attributes:
+                payload["attributes"] = {**current_attributes, **expected_attributes}
+
+            if payload:
                 logger.info(
-                    f"Updating platform client '{platform_client_id}' redirect URIs in realm '{platform_realm}'"
+                    f"Updating platform client '{platform_client_id}' in realm '{platform_realm}': "
+                    f"fields {sorted(payload)}, stale attributes {stale_attributes}"
                 )
 
                 # Update the client using admin API
                 keycloak.admin.change_current_realm(platform_realm)
                 try:
-                    keycloak.admin.update_client(
-                        client_id=client["id"],
-                        payload={"redirectUris": new_redirect_uris},
-                    )
+                    keycloak.admin.update_client(client_id=client["id"], payload=payload)
                 finally:
                     keycloak.admin.change_current_realm("master")
 
-                logger.info(f"Successfully updated platform client redirect URI to: {expected_redirect_uri}")
+                logger.info(f"Successfully updated platform client '{platform_client_id}'")
             else:
-                logger.debug(f"Platform client '{platform_client_id}' redirect URIs are already correct")
+                logger.debug(f"Platform client '{platform_client_id}' redirect URIs and attributes are already correct")
         else:
             logger.warning(f"Platform client '{platform_client_id}' not found in realm '{platform_realm}'")
 

@@ -34,7 +34,14 @@ from pathlib import Path
 import uvicorn
 from itsdangerous import TimestampSigner
 from playwright.sync_api import sync_playwright
-from tests.e2e.testserver import SECRET_KEY, create_test_app
+
+# De map van het SCRIPT komt op ``sys.path`` en niet de projectwortel, dus zonder deze
+# regels valt de aanroep uit de docstring hierboven om op ``No module named 'tests'``.
+PYTHON_ROOT = Path(__file__).resolve().parents[1]
+if str(PYTHON_ROOT) not in sys.path:
+    sys.path.insert(0, str(PYTHON_ROOT))
+
+from tests.e2e.testserver import SECRET_KEY, create_test_app  # noqa: E402
 
 # Elke pagina die een template met een eigen content-blok rendert. De naam is de
 # bestandsnaam van de afdruk.
