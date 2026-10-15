@@ -1,6 +1,6 @@
 #### ZAD release, oktober 2026
 
-Deze release gaat vooral over betrouwbaarheid. Uitrollen, verwijderen en wekken uit de slaapstand lopen niet meer vast op momenten waarop je zelf niets kunt doen. Een image die even niet op te halen is zet je component niet meer uit. De authorization wall faalt netjes en in het Nederlands. Daarnaast draait Keycloak voortaan uit een eigen image, is de mailrelay robuuster geworden, en zijn achter de schermen alle wachtwoorden van het platform in productie geroteerd.
+Deze release gaat vooral over betrouwbaarheid. Uitrollen, verwijderen en wekken uit de slaapstand lopen niet meer vast op momenten waarop je zelf niets kunt doen. Een image die even niet op te halen is zet je component niet meer uit. De authorization wall faalt netjes en in het Nederlands. Daarnaast draait Keycloak voortaan uit een eigen image, is de mailrelay robuuster geworden, en is de security hardening verder gegaan: de wachtwoorden van alle ZAD-onderdelen zijn nu periodiek te roteren.
 
 ##### Een image die niet opgehaald kan worden zet je component niet meer uit
 
@@ -74,7 +74,7 @@ Op 13 oktober lag de mailrelay van het platform twee uur plat: hij had de gezond
 
 ##### Achter de schermen
 
-- Alle wachtwoorden van het platform in productie zijn geroteerd: databases, Redis, MinIO, mailrelay, Keycloak-mail, Prometheus en pgAdmin. Het rotatiescript controleert nu per onderdeel dat de oude waarde niet meer werkt.
+- Security hardening: we kunnen de wachtwoorden van alle ZAD-onderdelen nu periodiek roteren. Per onderdeel wordt gecontroleerd dat het oude wachtwoord daarna niet meer werkt.
 - Een aantal Python-pakketten is bijgewerkt na een beveiligingsscan.
 - Het beheerscript dat verweesde ArgoCD-applicaties opspoort, werkt nu ook in de ODCN-tenant.
 - Het oude `local`-clustertype is verwijderd; lokaal ontwikkelen gaat via de sandbox.
