@@ -970,6 +970,36 @@ class KubectlConnector:
             kinds[f"{kind}.{group}" if group else kind] = f"{plural}.{group}" if group else plural
         return kinds
 
+    async def argocd_application_resource_types(self, app_name: str, namespace: str | None = None) -> list[str] | None:
+        """Kubectl type names of the kinds an Application owns, or None to fall back to full discovery."""
+        application = await self.get_argocd_application(app_name, namespace)
+        if application is None:
+            return None
+
+        resources = (application.get("status") or {}).get("resources") or []
+        kinds = set()
+        for resource in resources:
+            kind = resource.get("kind")
+            if not kind:
+                continue
+            group = resource.get("group") or ""
+            kinds.add(f"{kind}.{group}" if group else kind)
+        if not kinds:
+            logger.info(f"ArgoCD Application '{app_name}' names no resources; querying every namespaced type")
+            return None
+
+        served = await self.list_namespaced_kinds()
+        if served is None:
+            return None
+        unknown = sorted(kinds - served.keys())
+        if unknown:
+            logger.info(
+                f"ArgoCD Application '{app_name}' owns {', '.join(unknown)}, which this cluster does not serve as a "
+                f"namespaced kind; querying every namespaced type"
+            )
+            return None
+        return sorted({served[kind] for kind in kinds})
+
     async def list_tracked_resources(
         self, namespace: str, resource_types: list[str] | None = None
     ) -> tuple[list[TrackedResource], bool] | None:

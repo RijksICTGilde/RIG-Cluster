@@ -177,6 +177,7 @@ hoort juist wel in git: BIO2 8.24.01 vraagt om die registratie.
 | `orphan_deployments.py` | vindt deployments zonder project |
 | `build-preflight.sh` | weigert een bouw te starten met te weinig vrij geheugen |
 | `bron-tag.sh` | de image-tag voor gegeven paden: de korte commit, met `-dirty-<hash>` bij ongecommit werk. Vult `SANDBOX_OM_TAG` in `Taskfile.yaml` |
+| `calver-tag.sh` | de CalVer-tag voor gegeven paden: `{YYYY}.{MM}.{DD}.{HHMM}-{commit}` met `-dirty` bij ongecommit werk in die paden. Vult `IMAGE_VERSION` van `image-version`, `publish-operations-manager` en `publish-keycloak-image` |
 | `pod-resources.sh`, `resourcequota-compare.sh` | resourceoverzichten uit het cluster |
 | `renew-sandbox-cert.sh`, `certbot/` | het wildcard-certificaat voor de sandbox vernieuwen |
 | `sandbox-forward.sh`, `traffic-generator.sh` | hulpjes rond een lopende sandbox |

@@ -1282,6 +1282,19 @@ class TestForceDeleteStuckApplication:
         assert any("left standing with its finalizer" in error for error in results["errors"])
 
 
+def _gitops_dubbel() -> AsyncMock:
+    """Een git-connector die ``mutate_and_push`` doet wat de echte doet: de mutatie
+    uitvoeren en dan committen. Een kale AsyncMock zou de mutatie nooit aanroepen."""
+    connector = AsyncMock()
+    connector.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+
+    async def _mutate_and_push(message, mutate):
+        return await mutate()
+
+    connector.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
+    return connector
+
+
 def _deployment_harness(
     calls: list[str],
     *,
@@ -1307,9 +1320,7 @@ def _deployment_harness(
     )
 
     for factory in ("get_git_connector_for_argocd", "get_git_connector_for_deployment"):
-        connector = AsyncMock()
-        connector.get_working_dir = AsyncMock(return_value="/tmp/gitops")
-        setattr(pm, factory, AsyncMock(return_value=connector))
+        setattr(pm, factory, AsyncMock(return_value=_gitops_dubbel()))
 
     answers = list(wait_results or [])
 
@@ -1347,8 +1358,7 @@ class TestOperationClearedBeforeTheWait:
         pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
         pm._manifest_generator = MagicMock()
 
-        gitops = AsyncMock()
-        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        gitops = _gitops_dubbel()
         pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
 
         async def _wait(*args, **kwargs):
@@ -1396,8 +1406,7 @@ class TestOperationClearedBeforeTheWait:
         pm._kubectl_connector = _recording_kubectl(calls, destination="ns", tracked=[])
         pm._manifest_generator = MagicMock()
 
-        gitops = AsyncMock()
-        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        gitops = _gitops_dubbel()
         pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
 
         argo = AsyncMock()
@@ -1432,8 +1441,7 @@ class TestOperationClearedBeforeTheWait:
         )
         pm._manifest_generator = MagicMock()
 
-        gitops = AsyncMock()
-        gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+        gitops = _gitops_dubbel()
         pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
 
         answers = [False, True]

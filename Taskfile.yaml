@@ -940,15 +940,12 @@ tasks:
     #   BUILDER_NAME     - Buildx builder name (default: "buildx-builder")
 
   image-version:
-    desc: "Print the CalVer image tag for the current checkout ({YYYY}.{MM}.{DD}.{HHMM}-{short sha})"
+    desc: "Print the CalVer image tag of the operations-manager source ({YYYY}.{MM}.{DD}.{HHMM}-{short sha})"
     cmds:
       - echo "{{.IMAGE_VERSION}}"
     vars:
       IMAGE_VERSION:
-        sh: |
-          DIRTY=""
-          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
-          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+        sh: scripts/calver-tag.sh operations-manager
     silent: true
 
   publish-operations-manager:
@@ -956,10 +953,7 @@ tasks:
     deps: [requirements-check, generate-env-secrets-for-operations-manager]
     vars:
       IMAGE_VERSION:
-        sh: |
-          DIRTY=""
-          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
-          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+        sh: scripts/calver-tag.sh operations-manager
     cmds:
       - |
         echo "Image version: {{.IMAGE_VERSION}}"
@@ -1494,10 +1488,7 @@ tasks:
     deps: [requirements-check, sandbox:build-builder]
     vars:
       IMAGE_VERSION:
-        sh: |
-          DIRTY=""
-          [ -n "$(git status --porcelain)" ] && DIRTY="-dirty"
-          printf '%s-%s%s' "$(date +%Y.%m.%d.%H%M)" "$(git rev-parse --short=8 HEAD)" "$DIRTY"
+        sh: scripts/calver-tag.sh keycloak-migration/relay-email-sender keycloak-migration/custom-mapper images/keycloak-zad
     preconditions:
       # Een inlog met een credential-helper laat een LEGE auths-regel achter, dus de sleutel
       # is het signaal en niet de inhoud. Hier en niet na de bouw: de validatiebouw staat uit,

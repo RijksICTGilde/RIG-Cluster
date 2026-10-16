@@ -97,7 +97,16 @@ uit, waar het eerst een waarschuwing in het log was.
 
 Dat is met opzet. Mist de ServiceAccount, dan haalt de Deployment die hem noemt zijn eigen
 sync-timeout van 300s toch niet, en dan is degraded doorlopen een mislukking die zich als
-succes voordoet: precies het beeld waarmee deze melding binnenkwam. De schade blijft bij dit ene
+succes voordoet: precies het beeld waarmee deze melding binnenkwam.
+
+Streng op de uitkomst, niet op de eerste poging (RC-265). De login en de refresh in
+`wait_for_project_level_application` deden elk EEN poging, en een leeg antwoord was meteen
+die `RuntimeError`. Na de uitrol van 15 oktober 2026 had de application-controller 6,5
+minuut nodig om zijn cluster-cache op te bouwen, en in dat venster bleef elke
+`refresh=normal` hangen tot zijn eigen timeout van 120s en gaf hij niets terug: zes taken
+faalden hard zonder tweede poging, waarvan een al op de login. Beide worden nu herhaald
+binnen `ARGOCD_HERSTEL_BUDGET_SECONDEN` (10 minuten, afgerekend op de wandklok); alleen het
+verstrijken van dat budget eindigt in de fout, en die noemt het budget. De schade blijft bij dit ene
 project, terwijl de hierboven afgewezen health-override hetzelfde clusterbreed deed. Het
 onderscheid is de blast radius, niet de strengheid.
 
