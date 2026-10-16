@@ -6,6 +6,10 @@ Restrict access to Keycloak clients based on client roles. This feature allows y
 
 This feature separates **authentication** (verifying identity via SSO) from **authorization** (granting access to specific applications). Users authenticate through SSO Rijk, but only users with a specific client role can access the application. Users without the role see a customizable error message.
 
+### Why it lives in Keycloak
+
+Authorization normally belongs to the application, or to whatever stands in front of it. This gate exists for applications that cannot do it themselves: software that does its own OIDC login but has no way to refuse a user who lacks a role, and that we do not put behind the [authorization wall](authorization-wall.md). For those applications the gate is the only role check there is. The authorization wall does not check roles itself yet and relies on this gate too; moving that check into the proxy is described in [futures/authorization-wall-rolcontrole-in-de-proxy.md](futures/authorization-wall-rolcontrole-in-de-proxy.md).
+
 ## How It Works
 
 When enabled, the system:
