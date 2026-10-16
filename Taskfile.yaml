@@ -2682,14 +2682,16 @@ tasks:
         echo "Public key: $PUBLIC_KEY"
     silent: true
 
-  # CLUSTER_TYPE/CLUSTER_FOLDER staan hier letterlijk en komen bewust NIET uit
+  # CLUSTER_TYPE/CLUSTER_FOLDER/RIG_NAMESPACE staan hier letterlijk en komen bewust NIET uit
   # .env-taskfile-current. Dat bestand wordt via `dotenv:` ingelezen bij het *parsen* van
   # de Taskfile, terwijl sandbox:setup het pas in zijn eigen eerste stap aanmaakt. Op een
   # verse checkout draaide de hele run daardoor met lege waarden: de secrets belandden in
   # de bovenliggende overlays/-map, de "bestaat al"-check zag daar de .sops.yaml van een
   # andere cluster, sloeg het genereren over, en setup struikelde later over een
   # ontbrekend postgres-admin-secret. Deze taken zijn per definitie sandboxed-local, dus
-  # hoeven ze dat niet uit de omgeving te halen.
+  # hoeven ze dat niet uit de omgeving te halen. Staat select-cluster nog op een ander
+  # cluster, dan leest de run diens waarden: zo kregen alle sandbox-secrets
+  # rig-prd-operations als namespace.
   sandbox:generate-infrastructure-secrets:
     desc: "Generate SOPS-encrypted infrastructure secrets for sandboxed-local cluster"
     cmds:
@@ -2700,6 +2702,7 @@ tasks:
           OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
           CLUSTER_TYPE: "sandboxed-local"
           CLUSTER_FOLDER: "sandboxed-local"
+          RIG_NAMESPACE: "rig-system"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
@@ -2713,6 +2716,7 @@ tasks:
           OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
           CLUSTER_TYPE: "sandboxed-local"
           CLUSTER_FOLDER: "sandboxed-local"
+          RIG_NAMESPACE: "rig-system"
           KEY_FILE: "security/sandbox-key.txt"
           FIXED_PASSWORD: "admin1234"
 
