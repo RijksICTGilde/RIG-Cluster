@@ -385,8 +385,8 @@ async def _connect_status_backend() -> tuple[ArgoConnector, KubectlConnector]:
         logger.warning("ArgoCD connector init failed: %s", exc)
         raise HTTPException(status_code=503, detail="Deployment status backend is unreachable") from exc
 
-    if argo.auth_token is None:
-        logger.warning("ArgoCD login failed (no auth token after init)")
+    if not await argo.ensure_authenticated():
+        logger.warning("ArgoCD login failed")
         raise HTTPException(status_code=503, detail="Deployment status backend is unreachable")
 
     return argo, create_kubectl_connector()

@@ -6,11 +6,12 @@ _encrypt_with_age_and_base64encode_as_prefixed_string, and edge cases.
 """
 
 import base64
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from opi.utils.age import (
     _encrypt_with_age_and_base64encode_as_prefixed_string,
+    decrypt_age_content,
     decrypt_if_encrypted,
     encrypt_age_content,
     get_project_public_key,
@@ -22,18 +23,14 @@ class TestEncryptAgeContent:
     """Tests for encrypt_age_content."""
 
     @pytest.mark.asyncio
-    async def test_encrypt_success(self):
+    async def test_encrypt_success(self, age_keypair):
         """Should encrypt content and return armored output."""
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(
-            return_value=(b"-----BEGIN AGE ENCRYPTED FILE-----\nencrypted\n-----END AGE ENCRYPTED FILE-----", b"")
-        )
-        mock_process.returncode = 0
+        private_key, public_key = age_keypair
 
-        with patch("opi.utils.age.asyncio.create_subprocess_exec", return_value=mock_process):
-            result = await encrypt_age_content("secret", "age1publickey")
+        result = await encrypt_age_content("secret", public_key)
 
         assert "BEGIN AGE ENCRYPTED FILE" in result
+        assert await decrypt_age_content(result, private_key) == "secret"
 
     @pytest.mark.asyncio
     async def test_encrypt_missing_public_key(self):
@@ -55,15 +52,8 @@ class TestEncryptAgeContent:
 
     @pytest.mark.asyncio
     async def test_encrypt_process_failure(self):
-        """Should raise Exception when age process fails."""
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(return_value=(b"", b"age: error: bad key"))
-        mock_process.returncode = 1
-
-        with (
-            patch("opi.utils.age.asyncio.create_subprocess_exec", return_value=mock_process),
-            pytest.raises(Exception, match="Age encryption failed"),
-        ):
+        """Should raise Exception when the recipient key is not a key."""
+        with pytest.raises(Exception, match="Age encryption failed"):
             await encrypt_age_content("secret", "age1publickey")
 
 

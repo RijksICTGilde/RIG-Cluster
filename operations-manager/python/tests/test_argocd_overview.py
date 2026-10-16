@@ -26,9 +26,12 @@ class _ArgoDubbel:
     """Een ArgoCD-connector die telt hoe vaak de lijst is opgehaald."""
 
     def __init__(self, applications: list[dict[str, Any]], *, verbonden: bool = True) -> None:
-        self.auth_token = "voorbeeld-token" if verbonden else None
+        self._verbonden = verbonden
         self._applications = applications
         self.aanroepen = 0
+
+    async def ensure_authenticated(self) -> bool:
+        return self._verbonden
 
     async def list_applications(self) -> list[dict[str, Any]]:
         self.aanroepen += 1
@@ -53,11 +56,21 @@ def _schone_cache():
     argocd_overview.clear_cache()
 
 
+def _bouwer(dubbel: Any):
+    """Vervangt ``create_argo_connector`` en onthoudt het budget waarmee hij gebouwd is."""
+
+    def _bouw(connect_retry_seconds: float = 30.0) -> Any:
+        dubbel.connect_retry_seconds = connect_retry_seconds
+        return dubbel
+
+    return _bouw
+
+
 @pytest.fixture
 def argo(monkeypatch):
     """Een dubbel dat elke deployment van het project kent."""
     dubbel = _ArgoDubbel([_applicatie(f"demo-dep-{nummer}") for nummer in range(20)])
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
     return dubbel
 
 
@@ -73,7 +86,7 @@ async def test_twintig_deployments_kosten_een_bevraging(argo) -> None:
 
 async def test_de_stand_leest_gezondheid_sync_en_laatste_sync(monkeypatch) -> None:
     dubbel = _ArgoDubbel([_applicatie("demo-productie", health="Degraded", sync="OutOfSync")])
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
 
     standen = await argocd_overview.get_project_argocd_statuses("demo", ["productie"])
 
@@ -87,7 +100,7 @@ async def test_een_deployment_die_argocd_niet_kent_is_niet_beschikbaar(monkeypat
     """Anders zou de tabel "nog niets uitgerold" niet van "we weten het niet" kunnen
     onderscheiden - of erger, omvallen op een ontbrekende sleutel."""
     dubbel = _ArgoDubbel([])
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
 
     standen = await argocd_overview.get_project_argocd_statuses("demo", ["productie"])
 
@@ -98,7 +111,7 @@ async def test_zonder_verbinding_komt_er_niets_terug(monkeypatch) -> None:
     """De pagina zegt zelf al dat ArgoCD niet verbonden is; hier een verzonnen "Unknown"
     per rij van maken zou dat overschreeuwen."""
     dubbel = _ArgoDubbel([], verbonden=False)
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
 
     assert await argocd_overview.get_project_argocd_statuses("demo", ["productie"]) == {}
     assert dubbel.aanroepen == 0
@@ -119,7 +132,7 @@ async def test_een_trage_argocd_sleept_de_pagina_niet_mee(monkeypatch) -> None:
             return []
 
     dubbel = _TraagDubbel([])
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
     monkeypatch.setattr(argocd_overview, "BEVRAGING_TIMEOUT_SECONDS", 0.05)
 
     assert await argocd_overview.get_project_argocd_statuses("demo", ["productie"]) == {}
@@ -167,10 +180,24 @@ async def test_een_nieuwe_deployment_wordt_niet_uit_de_cache_beantwoord(argo) ->
 
 async def test_twee_projecten_delen_hun_stand_niet(monkeypatch) -> None:
     dubbel = _ArgoDubbel([_applicatie("een-productie"), _applicatie("twee-productie", health="Degraded")])
-    monkeypatch.setattr(argocd_overview, "create_argo_connector", lambda: dubbel)
+    monkeypatch.setattr(argocd_overview, "create_argo_connector", _bouwer(dubbel))
 
     een = await argocd_overview.get_project_argocd_statuses("een", ["productie"])
     twee = await argocd_overview.get_project_argocd_statuses("twee", ["productie"])
 
     assert een["productie"]["health"] == "Healthy"
     assert twee["productie"]["health"] == "Degraded"
+
+
+@pytest.mark.asyncio
+async def test_de_bevraging_bouwt_een_connector_die_snel_faalt(argo) -> None:
+    """Deze module staat op een renderpad, dus geldt de regel uit
+    docs/argocd-server-herstart-elke-40-minuten.md: budget 0.
+
+    Op het standaardbudget wacht de login hier 30 seconden met de projectpagina erachter.
+    ``BEVRAGING_TIMEOUT_SECONDS`` dekt dat niet af: die grens staat alleen om de
+    lijst-aanroep.
+    """
+    await argocd_overview.get_project_argocd_statuses("demo", ["demo-dep-0"])
+
+    assert argo.connect_retry_seconds == 0

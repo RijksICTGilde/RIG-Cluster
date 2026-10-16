@@ -1194,9 +1194,10 @@ class GitConnector:
         """
         working_dir = self.__working_dir
         leftover: list[str] = []
-        for root, _dirs, files in os.walk(working_dir):
-            if ".git" in root.split(os.sep):
-                continue
+        for root, dirs, files in os.walk(working_dir):
+            # Snoeien, niet overslaan: zonder dit daalde os.walk af in .git en las het
+            # elke objectmap uit, op de event loop, voor elke commit.
+            dirs[:] = [d for d in dirs if d != ".git"]
             leftover.extend(
                 os.path.relpath(os.path.join(root, name), working_dir)
                 for name in files

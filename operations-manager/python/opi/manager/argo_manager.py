@@ -1,9 +1,11 @@
 """ArgoCD manager for handling ArgoCD resources and repository secrets."""
 
+import asyncio
 import logging
 import os
 from typing import TYPE_CHECKING, Any, cast
 
+from opi.connectors.argo import ArgoTransportError
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.task_supersede import raise_if_superseded
@@ -102,6 +104,16 @@ APPLICATIE_AANMAAK_TIMEOUT_SECONDEN = 360
 #: automatisch een gebruikerszichtbare fout. Zelf om een refresh vragen trekt die ene
 #: applicatie los, zonder de clusterbrede knop lager te zetten.
 HERVERVERS_ELKE_SECONDEN = 60
+
+
+def _verstreken_sinds(start: float) -> float:
+    """Verstreken wandkloktijd sinds ``start``, afgerond op 0,1 s.
+
+    De wacht-lussen telden met ``elapsed_time += poll_interval``. Bij een trage loop of
+    een poll die op zijn timeout afloopt duurt een ronde veel langer dan dat, en dan
+    liegt de teller over de echte wachttijd en loopt de lus over zijn budget heen.
+    """
+    return round(asyncio.get_running_loop().time() - start, 1)
 
 
 class ApplicationGone(RuntimeError):
@@ -338,7 +350,8 @@ class ArgoManager:
             created_files.append(manifest_path)
             logger.info(f"Successfully created repository manifest: {os.path.basename(manifest_path)}")
 
-        encrypt_to_sops_files_or_fail(
+        await asyncio.to_thread(
+            encrypt_to_sops_files_or_fail,
             project_dir,
             cast("str", settings.SOPS_AGE_PUBLIC_KEY),
             f"ArgoCD repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
@@ -909,7 +922,8 @@ class ArgoManager:
             logger.info(f"Created repository secret: {os.path.basename(repo_secret_path)}")
 
             # SOPS encrypt the repository secret
-            encrypt_to_sops_files_or_fail(
+            await asyncio.to_thread(
+                encrypt_to_sops_files_or_fail,
                 infra_argo_dir,
                 cast("str", settings.SOPS_AGE_PUBLIC_KEY),
                 f"ArgoCD infrastructuur repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
@@ -1012,8 +1026,6 @@ class ArgoManager:
         if not await argo_connector.login():
             raise RuntimeError("Failed to login to ArgoCD")
 
-        import asyncio
-
         elapsed_time = 0
         while elapsed_time < timeout:
             # A newer task whose scope covers this project will reprocess from the
@@ -1101,9 +1113,8 @@ class ArgoManager:
         if not await argo_connector.login():
             raise RuntimeError(f"Failed to login to ArgoCD for cluster {cluster_name}")
 
-        import asyncio
-
-        elapsed_time = 0
+        start = asyncio.get_running_loop().time()
+        elapsed_time = 0.0
         while elapsed_time < timeout:
             try:
                 # Get application status
@@ -1112,7 +1123,7 @@ class ArgoManager:
                 if not status_data:
                     logger.warning(f"Could not get status for application {app_name}, retrying...")
                     await asyncio.sleep(poll_interval)
-                    elapsed_time += poll_interval
+                    elapsed_time = _verstreken_sinds(start)
                     continue
 
                 # Check sync status
@@ -1201,15 +1212,20 @@ class ArgoManager:
                         f"waiting {poll_interval}s... (elapsed: {elapsed_time}s)"
                     )
                 await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                elapsed_time = _verstreken_sinds(start)
 
+            except ArgoTransportError as e:
+                # Vervoerstout, niet applicatiestatus. Doorpollen binnen het budget.
+                logger.warning(f"Infrastructure status of '{app_name}' unreachable: {e}, retrying...")
+                await asyncio.sleep(poll_interval)
+                elapsed_time = _verstreken_sinds(start)
             except RuntimeError:
                 # Re-raise RuntimeError (failure states)
                 raise
             except Exception as e:
                 logger.warning(f"Error checking infrastructure status: {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                elapsed_time = _verstreken_sinds(start)
 
         # Timeout reached
         error_msg = f"Timeout waiting for infrastructure application '{app_name}' to be ready after {timeout}s"
@@ -1270,9 +1286,11 @@ class ArgoManager:
         if not await argo_connector.login():
             raise RuntimeError("Failed to login to ArgoCD")
 
-        import asyncio
-
-        elapsed_time = 0
+        start = asyncio.get_running_loop().time()
+        elapsed_time = 0.0
+        # Tijdstip van de laatste zelf gevraagde refresh, op de wandklok. Dat kan niet meer
+        # met elapsed_time % HERVERVERS_ELKE_SECONDEN: een wandklok raakt dat punt niet exact.
+        laatste_herverversing = 0.0
         # Is de applicatie in DEZE wacht ooit met succes uitgelezen? Zolang dat niet zo is,
         # is een leeg antwoord "hij moet nog verschijnen" en polt de lus door. Daarna is
         # hetzelfde lege antwoord "hij is weg", en dat is geen leesfout maar een einde.
@@ -1290,7 +1308,7 @@ class ArgoManager:
                         )
                     logger.debug(f"Could not get status for '{app_name}', retrying...")
                     await asyncio.sleep(poll_interval)
-                    elapsed_time += poll_interval
+                    elapsed_time = _verstreken_sinds(start)
                     continue
                 seen = True
 
@@ -1306,7 +1324,8 @@ class ArgoManager:
                 # een gemist watch-event laat de health anders bevroren staan tot onze
                 # time-out. Alleen op Progressing - Degraded heeft verderop zijn eigen
                 # afhandeling en die moet niet uitgesteld worden.
-                if elapsed_time and elapsed_time % HERVERVERS_ELKE_SECONDEN == 0 and health_status == "Progressing":
+                if elapsed_time - laatste_herverversing >= HERVERVERS_ELKE_SECONDEN and health_status == "Progressing":
+                    laatste_herverversing = elapsed_time
                     logger.info(
                         "Application '%s' staat %ds op Progressing; opnieuw een refresh gevraagd "
                         "(ArgoCD hertoetst zelf pas na timeout.reconciliation)",
@@ -1387,8 +1406,14 @@ class ArgoManager:
                 )
 
                 await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                elapsed_time = _verstreken_sinds(start)
 
+            except ArgoTransportError as e:
+                # Vervoerstout, niet applicatiestatus. Een timeout zou hier de hele wacht afbreken.
+                logger.warning(f"Status of '{app_name}' unreachable: {e}, retrying...")
+                await asyncio.sleep(poll_interval)
+                elapsed_time = _verstreken_sinds(start)
+                continue
             except RuntimeError, TimeoutError:
                 raise
             except PermissionError:
@@ -1397,17 +1422,17 @@ class ArgoManager:
                     f"Permission denied for '{app_name}', waiting for AppProject sync... (elapsed: {elapsed_time}s)"
                 )
                 await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                elapsed_time = _verstreken_sinds(start)
                 continue
             except Exception as e:
                 logger.warning(f"Error checking status of '{app_name}': {e}, retrying...")
                 await asyncio.sleep(poll_interval)
-                elapsed_time += poll_interval
+                elapsed_time = _verstreken_sinds(start)
                 continue
 
             # Invoke on_progressing callback outside try/except so its
             # exceptions propagate directly to the caller.
             if call_on_progressing:
-                await on_progressing(elapsed_time)  # type: ignore[misc]
+                await on_progressing(int(elapsed_time))  # type: ignore[misc]
 
         raise TimeoutError(f"Timeout waiting for application '{app_name}' to be synced and healthy after {timeout}s")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -519,7 +520,7 @@ class DeleteProjectManager:
             project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
 
             if os.path.exists(project_argocd_folder):
-                shutil.rmtree(project_argocd_folder)
+                await asyncio.to_thread(shutil.rmtree, project_argocd_folder)
                 deletion_results["operations"].append(
                     {
                         "type": "project_argocd_folder_deletion",
@@ -764,7 +765,7 @@ class DeleteProjectManager:
             infra_argocd_folder = os.path.join(working_dir, infra_argocd_folder_rel)
 
             if os.path.exists(infra_argocd_folder):
-                shutil.rmtree(infra_argocd_folder)
+                await asyncio.to_thread(shutil.rmtree, infra_argocd_folder)
                 deletion_results["operations"].append(
                     {
                         "type": "infrastructure_argocd_folder_deletion",
@@ -931,7 +932,7 @@ class DeleteProjectManager:
                 infra_folder_full_path = os.path.join(await manifest_connector.get_working_dir(), infra_manifest_path)
 
                 if os.path.exists(infra_folder_full_path):
-                    shutil.rmtree(infra_folder_full_path)
+                    await asyncio.to_thread(shutil.rmtree, infra_folder_full_path)
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_manifest_deletion",
@@ -1005,7 +1006,7 @@ class DeleteProjectManager:
                     {"type": "project_level_folder_deletion", "target": folder, "status": "not_found"}
                 )
                 return
-            shutil.rmtree(full_path)
+            await asyncio.to_thread(shutil.rmtree, full_path)
             await connector.commit_and_push_changes(f"Delete project level of project '{project_name}'")
             deletion_results["operations"].append(
                 {"type": "project_level_folder_deletion", "target": folder, "status": "success"}
@@ -1970,7 +1971,7 @@ class DeleteProjectManager:
                         folder_exists = os.path.exists(folder_full_path)
 
                         if folder_exists:
-                            shutil.rmtree(folder_full_path)
+                            await asyncio.to_thread(shutil.rmtree, folder_full_path)
                             deletion_results["operations"].append(
                                 {
                                     "type": "deployment_folder_deletion",
@@ -2663,7 +2664,7 @@ class DeleteProjectManager:
                     folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
 
                     if os.path.exists(folder_full_path):
-                        shutil.rmtree(folder_full_path)
+                        await asyncio.to_thread(shutil.rmtree, folder_full_path)
                         commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
                         await manifest_connector.commit_and_push_changes(commit_message)
                         deletion_results["operations"].append(

@@ -332,7 +332,7 @@ def _dashboard_context(status_data: dict[str, Any] | None) -> dict[str, Any]:
         return HTMLResponse("ok")
 
     connector = MagicMock()
-    connector.auth_token = "token"
+    connector.ensure_authenticated = AsyncMock(return_value=True)
     connector.get_application_status = AsyncMock(return_value=status_data)
 
     with (

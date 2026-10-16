@@ -47,8 +47,8 @@ CACHE_TTL_SECONDS = 15
 #:
 #: Deze bevraging staat op het renderpad: hij houdt de projectpagina op. Vijf seconden is
 #: ruim voor een enkele lijst-aanroep en kort genoeg om geen pagina op te offeren aan een
-#: ArgoCD die niet antwoordt. De connector zelf wacht tot dertig seconden, en dat is voor
-#: een pagina te lang.
+#: ArgoCD die niet antwoordt. Een connect-fout kost hier niets, want de connector draait
+#: op budget 0; deze grens is er voor een ArgoCD die verbindt en dan niet antwoordt.
 BEVRAGING_TIMEOUT_SECONDS = 5
 
 #: De opgehaalde stand per project: naam -> (tijdstip, stand per deployment).
@@ -119,12 +119,13 @@ async def get_project_argocd_statuses(project_name: str, deployment_names: list[
         if gevraagd <= set(bewaard[1]):
             return {naam: bewaard[1][naam] for naam in deployment_names}
 
-    argo = create_argo_connector()
+    # Fail fast, zoals elke aanroeper op een renderpad: het standaardbudget wacht hier 30
+    # seconden met de pagina erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
+    argo = create_argo_connector(connect_retry_seconds=0)
     # Dezelfde toets als de pagina zelf doet voor ``argocd_available``, zodat die twee
     # niet uiteen kunnen lopen: de pagina die zegt dat ArgoCD verbonden is hoort ook
-    # standen te krijgen, en andersom. Inloggen gebeurt hier niet met de hand - dat doet
-    # de connector zelf bij het verzoek hieronder.
-    if argo.auth_token is None:
+    # standen te krijgen, en andersom.
+    if not await argo.ensure_authenticated():
         logger.debug("ArgoCD niet verbonden; geen gebundelde status voor %s", project_name)
         return {}
 
@@ -132,8 +133,7 @@ async def get_project_argocd_statuses(project_name: str, deployment_names: list[
     # tot hij antwoord heeft. Dat is de prijs van de status meteen in de tabel hebben, en
     # daarom staat er een grens omheen. Een trage of hangende ArgoCD kost een halve
     # seconde extra en levert een tabel zonder statuskolom op - hij mag de pagina niet
-    # meeslepen. De connector zelf wacht tot 30 seconden, en dat is voor een pagina te
-    # lang.
+    # meeslepen.
     try:
         async with asyncio.timeout(BEVRAGING_TIMEOUT_SECONDS):
             applications = await argo.list_applications()

@@ -417,7 +417,7 @@ def client(mock_settings: Any, mock_project_service: Any) -> TestClient:
 
     app: FastAPI = create_app()
     argo = MagicMock()
-    argo.auth_token = "fake-token"
+    argo.ensure_authenticated = AsyncMock(return_value=True)
     argo.get_application_status = AsyncMock(return_value=None)
     argo.get_application_resource_tree = AsyncMock(return_value=[])
     kubectl = MagicMock()
