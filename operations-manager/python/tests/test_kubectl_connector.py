@@ -124,3 +124,23 @@ async def test_a_namespace_without_the_label_is_present_with_an_empty_value(conn
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_template_manifest_renders_generic_secret(connector):
+    """The generic secret template uses ``| yaml_scalar``; a bare Template has no such filter."""
+    with open("manifests/generic-secret.yaml.to-sops.jinja") as f:
+        manifest_content = f.read()
+
+    result = connector.template_manifest(
+        manifest_content,
+        {
+            "name": "mail-platform",
+            "namespace": "rig-system",
+            "secret_type": "mail",
+            "secret_k8s_type": "Opaque",
+            "secret_pairs": {"username": "zad", "password": 'p\\a"s'},
+        },
+    )
+
+    assert 'username: "zad"' in result
+    assert 'password: "p\\\\a\\"s"' in result
