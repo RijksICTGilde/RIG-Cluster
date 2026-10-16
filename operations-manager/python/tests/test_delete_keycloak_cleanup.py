@@ -10,6 +10,7 @@ users survived a project delete.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ def _manager() -> tuple[DeleteProjectManager, MagicMock]:
     keycloak = MagicMock()
     keycloak.delete_realm = AsyncMock(return_value=True)
     keycloak.delete_user_by_username = AsyncMock(return_value=True)
-    keycloak.delete_deployment_client = AsyncMock(return_value=True)
+    keycloak.delete_client_by_client_id = AsyncMock(return_value=True)
     keycloak.realm_exists = AsyncMock(return_value=True)
     return mgr, keycloak
 
@@ -47,15 +48,22 @@ async def _run(keycloak: MagicMock, *, only_if_present: bool) -> dict:
     return results
 
 
+def _operation(results: dict, operation_type: str) -> dict | None:
+    return next((op for op in results["operations"] if op["type"] == operation_type), None)
+
+
 async def test_the_master_realm_admin_user_is_deleted() -> None:
     """The account carries the shared OTP credential, so leaving it behind matters."""
     _, keycloak = _manager()
-    await _run(keycloak, only_if_present=False)
+    results = await _run(keycloak, only_if_present=False)
 
     keycloak.delete_user_by_username.assert_awaited_once()
     realm, username = keycloak.delete_user_by_username.await_args.args[:2]
     assert realm == "master"
     assert username == "demo_odcn_production_admin"
+    operation = _operation(results, "keycloak_user_deletion")
+    assert operation is not None
+    assert operation["status"] == "success"
 
 
 async def test_the_realm_is_deleted() -> None:
@@ -101,3 +109,52 @@ async def test_one_failing_step_does_not_stop_the_others(failing: str) -> None:
 
     keycloak.delete_realm.assert_awaited()
     keycloak.delete_user_by_username.assert_awaited()
+
+
+async def test_the_platform_client_is_deleted_under_its_real_name() -> None:
+    """The client ID uses the correct {project}-{cluster}-platform format in rig-platform."""
+    _, keycloak = _manager()
+    results = await _run(keycloak, only_if_present=False)
+
+    keycloak.delete_client_by_client_id.assert_awaited_once_with("rig-platform", "demo-odcn-production-platform")
+    assert not keycloak.delete_client_by_client_id.await_args.args[1].startswith("-")
+    operation = _operation(results, "keycloak_platform_client_deletion")
+    assert operation is not None
+    assert operation["status"] == "success"
+
+
+async def test_an_absent_platform_client_is_reported_as_not_found(caplog: pytest.LogCaptureFixture) -> None:
+    _, keycloak = _manager()
+    keycloak.delete_client_by_client_id = AsyncMock(return_value=False)
+
+    with caplog.at_level(logging.INFO):
+        results = await _run(keycloak, only_if_present=False)
+
+    operation = _operation(results, "keycloak_platform_client_deletion")
+    assert operation is not None
+    assert operation["status"] == "not_found"
+    assert results["errors"] == []
+    assert "Deleted platform client" not in caplog.text
+
+
+async def test_a_failing_platform_client_deletion_lands_in_errors() -> None:
+    _, keycloak = _manager()
+    keycloak.delete_client_by_client_id = AsyncMock(side_effect=RuntimeError("keycloak down"))
+
+    results = await _run(keycloak, only_if_present=False)
+
+    assert any("Platform client deletion" in error for error in results["errors"])
+    assert _operation(results, "keycloak_platform_client_deletion") is None
+
+
+async def test_an_absent_project_admin_is_reported_as_not_found() -> None:
+    """Same flaw as the platform client: a False return was logged as a deletion."""
+    _, keycloak = _manager()
+    keycloak.delete_user_by_username = AsyncMock(return_value=False)
+
+    results = await _run(keycloak, only_if_present=False)
+
+    operation = _operation(results, "keycloak_user_deletion")
+    assert operation is not None
+    assert operation["status"] == "not_found"
+    assert results["errors"] == []
