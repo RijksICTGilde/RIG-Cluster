@@ -1302,7 +1302,7 @@ async def dashboard(request: Request):
             # milliseconden faalde en "Unknown" in de kolom zette. Zelfde regel als in
             # opi/api/v2/router.py; zie docs/argocd-server-herstart-elke-40-minuten.md.
             argo_connector = create_argo_connector(connect_retry_seconds=0)
-            argocd_available = argo_connector.auth_token is not None
+            argocd_available = await argo_connector.ensure_authenticated()
 
             if argocd_available:
                 for project in user_projects:
@@ -1728,11 +1728,13 @@ async def render_project_page(request: Request, project_name: str, deployment_na
 
         # ArgoCD status is loaded lazily per deployment via /argocd-status/{deployment} so it
         # does not block the page render; only the cheap availability check stays here.
+        # Fail fast: op het standaardbudget wacht deze toets 30 seconden met de pagina
+        # erachter. Zie docs/argocd-server-herstart-elke-40-minuten.md.
         argocd_available = False
         try:
             from opi.connectors.argo import create_argo_connector
 
-            argocd_available = create_argo_connector().auth_token is not None
+            argocd_available = await create_argo_connector(connect_retry_seconds=0).ensure_authenticated()
         except Exception as argo_error:
             logger.warning(f"Failed to connect to ArgoCD: {argo_error}")
 
@@ -2366,7 +2368,7 @@ async def argocd_status_fragment(
     # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
     # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
     argo = create_argo_connector(connect_retry_seconds=0)
-    if argo.auth_token is None:
+    if not await argo.ensure_authenticated():
         status = _argocd_unavailable_result(
             generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"
         )

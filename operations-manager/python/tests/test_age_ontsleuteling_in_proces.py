@@ -11,9 +11,12 @@ import pyrage
 import pytest
 from opi.core.metrics import _connector_subprocess_calls
 from opi.utils.age import (
+    decrypt_age_block_to_bytes_sync,
     decrypt_age_content,
     decrypt_age_content_sync,
     encrypt_age_content,
+    encrypt_age_content_sync,
+    encrypt_file_to_age_block_sync,
     is_age_encrypted,
 )
 
@@ -66,7 +69,9 @@ class TestUitwisselbaarMetHetBinary:
 
     @pytest.mark.asyncio
     async def test_blok_van_opi_blijft_leesbaar_voor_het_binary(self, age_keypair: tuple[str, str]) -> None:
-        """OPI schrijft nog met het binary; de heenweg en de terugweg blijven op elkaar passen."""
+        """Sinds RC-263 schrijft OPI ook in-process; de bytes verschillen (age is niet
+        deterministisch) maar het binary moet het resultaat gewoon kunnen openen.
+        """
         prive, publiek = age_keypair
         blok = await encrypt_age_content(KLARE_TEKST, publiek)
 
@@ -75,6 +80,26 @@ class TestUitwisselbaarMetHetBinary:
         assert gelezen.returncode == 0, gelezen.stderr.decode()
         assert gelezen.stdout.decode() == KLARE_TEKST
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
+
+    def test_het_synchrone_blok_blijft_ook_leesbaar_voor_het_binary(self, age_keypair: tuple[str, str]) -> None:
+        """Hetzelfde voor het synchrone pad, dat het binary op de event loop startte."""
+        prive, publiek = age_keypair
+        blok = encrypt_age_content_sync(KLARE_TEKST, publiek)
+
+        assert is_age_encrypted(blok)
+        gelezen = _binary_ontsleutelt(blok.encode(), prive)
+        assert gelezen.returncode == 0, gelezen.stderr.decode()
+        assert gelezen.stdout.decode() == KLARE_TEKST
+        assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
+
+    def test_een_bijlage_overleeft_de_heen_en_terugweg_byte_voor_byte(self, age_keypair: tuple[str, str]) -> None:
+        """``encrypt_file_to_age_block_sync`` doet base64 door dezelfde versleuteling heen."""
+        prive, publiek = age_keypair
+        rauw = bytes(range(256)) * 8
+
+        blok = encrypt_file_to_age_block_sync(rauw, publiek)
+
+        assert decrypt_age_block_to_bytes_sync(blok, prive) == rauw
 
     @pytest.mark.asyncio
     async def test_env_var_blok_met_niet_ascii_komt_teken_voor_teken_terug(self, age_keypair: tuple[str, str]) -> None:
@@ -96,6 +121,24 @@ class TestUitwisselbaarMetHetBinary:
         gelezen = _binary_ontsleutelt(blok, prive)
         assert gelezen.returncode == 0, gelezen.stderr.decode()
         assert gelezen.stdout.decode() == KLARE_TEKST
+
+
+class TestGeenSubprocessOpHetSchrijfpad:
+    @pytest.mark.asyncio
+    async def test_versleutelen_start_geen_proces(self, age_keypair: tuple[str, str]) -> None:
+        """Het synchrone pad startte het age-binary midden op de event loop."""
+        _prive, publiek = age_keypair
+
+        def ontploft(*args: object, **kwargs: object) -> None:
+            raise AssertionError("versleutelen mag geen subprocess starten")
+
+        with (
+            patch("subprocess.run", ontploft),
+            patch("subprocess.Popen", ontploft),
+            patch("asyncio.create_subprocess_exec", ontploft),
+        ):
+            assert is_age_encrypted(await encrypt_age_content(KLARE_TEKST, publiek))
+            assert is_age_encrypted(encrypt_age_content_sync(KLARE_TEKST, publiek))
 
 
 class TestGeenSubprocessOpHetLeespad:
@@ -254,25 +297,25 @@ class TestGeenGeheimInDeUitvoer:
 
 
 class TestDeProcesteller:
-    """``opi_connector_subprocess_calls_total{connector="age"}`` blijft op het versleutelen staan
-    en is tegelijk het bewijs voor deze wijziging: hij hoort niet meer op te lopen terwijl iemand
-    detailpagina's opent. ``_connector_subprocess_calls`` is de dict waaruit die gauge wordt
+    """``opi_connector_subprocess_calls_total{connector="age"}`` loopt niet meer op.
+
+    Ontsleutelen ging al in-process (RC-218); sinds RC-263 doet versleutelen dat ook, want
+    het synchrone pad startte het binary op de event loop. De teller blijft bestaan voor de
+    andere connectors; ``_connector_subprocess_calls`` is de dict waaruit die gauge wordt
     gevuld (``opi/core/metrics.py``).
     """
 
     @pytest.mark.asyncio
-    async def test_versleutelen_telt_nog_mee_en_ontsleutelen_niet_meer(self, age_keypair: tuple[str, str]) -> None:
+    async def test_age_start_geen_processen_meer(self, age_keypair: tuple[str, str]) -> None:
         prive, publiek = age_keypair
 
         voor = _connector_subprocess_calls.get("age", 0)
         blok = await encrypt_age_content(KLARE_TEKST, publiek)
-        na_versleutelen = _connector_subprocess_calls.get("age", 0)
-        assert na_versleutelen == voor + 1, "versleutelen start een proces en hoort geteld te blijven"
 
         assert await decrypt_age_content(blok, prive) == KLARE_TEKST
         assert decrypt_age_content_sync(blok, prive) == KLARE_TEKST
-        assert _connector_subprocess_calls.get("age", 0) == na_versleutelen, (
-            "ontsleutelen start geen proces en hoort de procesteller niet te laten oplopen"
+        assert _connector_subprocess_calls.get("age", 0) == voor, (
+            "age hoort geen proces meer te starten en de procesteller niet te laten oplopen"
         )
 
 

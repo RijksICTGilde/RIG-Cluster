@@ -22,7 +22,7 @@ import os
 import time
 import tracemalloc
 
-from prometheus_client.core import GaugeMetricFamily
+from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
@@ -244,6 +244,35 @@ class OPICollector(Collector):
         )
         peak_ts.add_metric([], _peak_memory_timestamp)
         yield peak_ts
+
+        # --- Event-loop lag ---
+        #
+        # Een counter plus een momentopname, geen maximum-sinds-de-vorige-scrape: /metrics
+        # is open, dus een waarde die bij het lezen wegvalt zou door elke andere lezer voor
+        # Prometheus weggenomen worden. increase() over de counter geeft de piek terug.
+        lag_totaal = CounterMetricFamily(
+            "opi_event_loop_lag_seconds_total",
+            "Cumulative asyncio event loop lag in seconds",
+        )
+        lag_nu = GaugeMetricFamily(
+            "opi_event_loop_lag_current_seconds",
+            "Asyncio event loop lag at scrape time, for a stall still in progress",
+        )
+        stilstanden = CounterMetricFamily(
+            "opi_event_loop_stalls_total",
+            "Number of event loop stalls above EVENT_LOOP_LAG_WARNING_SECONDS",
+        )
+        try:
+            from opi.core import loop_watchdog
+
+            lag_totaal.add_metric([], loop_watchdog.totale_lag())
+            lag_nu.add_metric([], loop_watchdog.huidige_lag())
+            stilstanden.add_metric([], loop_watchdog.aantal_stilstanden())
+        except Exception:
+            logger.debug("Failed to collect event loop lag", exc_info=True)
+        yield lag_totaal
+        yield lag_nu
+        yield stilstanden
 
         # --- Per-connector subprocess memory deltas ---
         connector_delta = GaugeMetricFamily(

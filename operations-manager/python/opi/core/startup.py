@@ -792,6 +792,30 @@ async def _resolve_running_image() -> None:
         set_running_image(image)
 
 
+async def warm_connector_singletons() -> None:
+    """Bouw de CLI-connector-singletons alvast, in een thread.
+
+    Alle vier doen in hun constructor een eenmalige ``subprocess.run(..., timeout=10)``
+    om te kijken of hun binary er is. Die constructie viel anders midden in de eerste
+    taak die de connector nodig had, synchroon op de event loop.
+    """
+    from opi.connectors.kopia import create_kopia_connector
+    from opi.connectors.kubectl import create_kubectl_connector
+    from opi.connectors.minio_mc import create_minio_connector
+    from opi.connectors.skopeo import SkopeoConnector
+
+    def _bouw() -> None:
+        for maak in (create_kubectl_connector, create_minio_connector, create_kopia_connector, SkopeoConnector):
+            try:
+                maak()
+            except Exception as e:
+                # Een ontbrekend binary is geen reden om de opstart te staken: de
+                # connectors zetten zelf hun beschikbaarheidsvlag en vallen terug.
+                logger.warning(f"Kon {maak.__name__} niet vooraf bouwen: {e}")
+
+    await asyncio.to_thread(_bouw)
+
+
 async def run_startup_tasks(app: FastAPI) -> bool:
     """
     Run all startup tasks for the application.

@@ -60,12 +60,14 @@ merged", en om 16:48:00 haalde stap 8 de deployment toch weg. De taak eindigde a
 ### Wat er nu gebeurt
 
 Stap 8 draait alleen als git echt leeg is voor deze deployment: het argo-bestand weg en
-gepusht (stap 2), en de manifestmap weg en gecommit (stap 7). Anders blijft de deployment
-in het projectbestand staan, faalt de taak met de fout van stap 2 of 7, en kan een retry
-het opnieuw proberen. De overgeslagen stap komt als operatie terug met
+gepusht (stap 2), en de manifestmap weg en gecommit (stap 7). Voor het argo-bestand doet
+stap 2 dat sinds RC-265 zelf: lukt zijn commit niet, dan gooit hij de fout door en eindigt
+de taak daar, dus stap 8 wordt niet bereikt. Blijft de manifestmap achter, dan blijft de
+deployment in het projectbestand staan, faalt de taak met de fout van stap 7, en kan een
+retry het opnieuw proberen. De overgeslagen stap komt als operatie terug met
 `status: "skipped"` en de reden erbij.
 
-RC-238 heeft daar een derde voorwaarde bij gezet, om een eigen reden: ook een cluster-delete
+RC-238 heeft daar nog een voorwaarde bij gezet, om een eigen reden: ook een cluster-delete
 die niet BEVESTIGD is houdt stap 8 tegen (zie "De project file volgt het cluster" in
 `features/argocd-vastgelopen-verwijdering.md`). Dat raakt de uitgestelde opruiming, die de
 manifestmap bewust laat staan omdat de Application nog niet verifieerbaar weg is: die liep

@@ -12,8 +12,10 @@ Deletion ordering:
 5. Namespaces (only when all conditions are met)
 """
 
+import asyncio
 import logging
 import os
+import shutil
 from typing import TYPE_CHECKING, Any
 
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
@@ -912,9 +914,7 @@ async def _purge_deployment_manifests(
             folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
 
             if os.path.exists(folder_full_path):
-                import shutil
-
-                shutil.rmtree(folder_full_path)
+                await asyncio.to_thread(shutil.rmtree, folder_full_path)
                 commit_message = (
                     f"Deferred cleanup: delete deployment '{deployment_name}' manifests from project '{project_name}'"
                 )

@@ -2,11 +2,9 @@
 Age encryption/decryption utilities.
 """
 
-import asyncio
 import base64
 import contextlib
 import logging
-import subprocess
 from typing import Any, cast
 
 import pyrage
@@ -18,6 +16,12 @@ logger = logging.getLogger(__name__)
 # TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
     return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
+
+
+def _encrypt_in_process(plain_content: str, public_key: str) -> str:
+    """Niet byte-gelijk aan age binary (niet deterministisch) maar wel leesbaar."""
+    recipient = pyrage.x25519.Recipient.from_str(public_key.strip())
+    return pyrage.encrypt(plain_content.encode(), [recipient], armored=True).decode("utf-8").strip()
 
 
 def _decrypt_in_process(encrypted_content: str, private_key: str) -> str:
@@ -83,26 +87,11 @@ async def encrypt_age_content(plain_content: str, public_key: str | None) -> str
     if not plain_content:
         raise ValueError("Missing plain content for encryption")
 
-    from opi.core.metrics import track_subprocess_memory
-
-    encrypt_process = await asyncio.create_subprocess_exec(
-        "age",
-        "--armor",
-        "-r",
-        public_key,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    async with track_subprocess_memory("age"):
-        stdout, stderr = await encrypt_process.communicate(input=plain_content.encode())
-
-    if encrypt_process.returncode != 0:
-        logger.error(f"age encryption failed: {stderr.decode('utf-8', errors='replace')}")
-        raise Exception("Age encryption failed")
-
-    # AGE produces ASCII-armored output, but handle encoding issues gracefully
-    return stdout.decode("utf-8").strip()
+    try:
+        return _encrypt_in_process(plain_content, public_key)
+    except (pyrage.EncryptError, pyrage.RecipientError) as e:
+        logger.error(f"Age encryption failed: {e}")
+        raise Exception(f"Age encryption failed: {e}") from e
 
 
 def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
@@ -125,20 +114,11 @@ def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
     if not plain_content:
         raise ValueError("Missing plain content for encryption")
 
-    process = subprocess.run(
-        ["age", "--armor", "-r", public_key],
-        input=plain_content,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-
-    if process.returncode != 0:
-        error_msg = process.stderr.strip()
-        logger.error(f"age encryption failed (sync): {error_msg}")
-        raise Exception(f"Age encryption failed: {error_msg}")
-
-    return process.stdout.strip()
+    try:
+        return _encrypt_in_process(plain_content, public_key)
+    except (pyrage.EncryptError, pyrage.RecipientError) as e:
+        logger.error(f"Age encryption failed (sync): {e}")
+        raise Exception(f"Age encryption failed: {e}") from e
 
 
 def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | None:

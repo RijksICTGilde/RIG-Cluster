@@ -7,6 +7,12 @@ import pytest
 from opi.connectors.argo import ArgoConnector
 from opi.manager.argo_manager import ApplicationGone, ArgoManager
 
+#: De wacht-lus telt de verstreken tijd op de wandklok, dus een budget van seconden kost
+#: ook echt seconden. Tests die de time-out moeten halen krijgen een kort budget en een
+#: echte pauze; een gemockte sleep zou er een hete lus van maken.
+_KORT_BUDGET = 0.3
+_KORTE_POLL = 0.01
+
 
 def _make_status(
     sync: str,
@@ -185,10 +191,9 @@ class TestWaitForApplicationSynced:
 
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
-            patch("asyncio.sleep", new_callable=AsyncMock),
             pytest.raises(TimeoutError, match="Timeout waiting for application"),
         ):
-            await argo_manager.wait_for_application_synced("my-app", timeout=5, poll_interval=2)
+            await argo_manager.wait_for_application_synced("my-app", timeout=_KORT_BUDGET, poll_interval=_KORTE_POLL)
 
     @pytest.mark.asyncio
     async def test_permission_error_retried_then_succeeds(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
@@ -250,7 +255,10 @@ class TestWaitForApplicationSynced:
             )
 
         assert result is True
-        callback.assert_called_once_with(2)  # elapsed_time after first poll_interval
+        # De waarde is de verstreken wandkloktijd, niet een optelling van poll_interval,
+        # dus met een gemockte sleep is hij 0. Dat de callback precies een keer vuurt is
+        # wat deze test bewaakt.
+        callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_progressing_called_even_when_stale(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
@@ -282,7 +290,7 @@ class TestWaitForApplicationSynced:
             )
 
         assert result is True
-        callback.assert_called_once_with(2)
+        callback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_progressing_exception_propagates(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
@@ -682,31 +690,31 @@ class TestFrozenProgressingIsRefreshed:
         refresh binnenkomt draagt een oude ``reconciledAt`` en mag dus niet als fout
         gelden - zonder het bijwerken van ``refreshed_after`` zou hij dat wel doen.
         """
-        polls = {"n": 0}
+        mock_connector.refresh_application = AsyncMock(return_value="2026-08-30T21:12:00Z")
 
         def _status(_app_name: str) -> dict:
-            polls["n"] += 1
-            # De 32e poll (elapsed 62s) is de eerste na de refresh op 60s.
-            if polls["n"] >= 32:
+            # De eerste poll na de refresh meldt Degraded met een OUDE reconciledAt.
+            if mock_connector.refresh_application.await_count:
                 return _make_status("Synced", "Degraded", reconciled_at="2026-08-30T21:07:00Z")
             return _make_status("Synced", "Progressing", reconciled_at="2026-08-30T21:07:00Z")
 
         mock_connector.get_application_status = AsyncMock(side_effect=_status)
-        mock_connector.refresh_application = AsyncMock(return_value="2026-08-30T21:12:00Z")
 
+        # De lus telt de verstreken tijd op de wandklok, dus de drempel wordt verkleind in
+        # plaats van pollen te tellen.
         with (
             patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
-            patch("asyncio.sleep", new_callable=AsyncMock),
+            patch("opi.manager.argo_manager.HERVERVERS_ELKE_SECONDEN", _KORTE_POLL),
             pytest.raises(TimeoutError),
         ):
             await argo_manager.wait_for_application_synced(
                 "my-app",
-                timeout=80,
-                poll_interval=2,
+                timeout=_KORT_BUDGET,
+                poll_interval=_KORTE_POLL,
                 refreshed_after="2026-08-30T21:00:00Z",
             )
 
-        mock_connector.refresh_application.assert_awaited_once_with("my-app")
+        mock_connector.refresh_application.assert_awaited_with("my-app")
 
     @pytest.mark.asyncio
     async def test_no_refresh_while_degraded(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
@@ -726,3 +734,34 @@ class TestFrozenProgressingIsRefreshed:
             )
 
         mock_connector.refresh_application.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_de_refresh_volgt_niet_elke_poll(self, argo_manager: ArgoManager, mock_connector: AsyncMock):
+        """Een refresh per ``HERVERVERS_ELKE_SECONDEN``, niet een per poll.
+
+        De drempel zat in ``elapsed_time % HERVERVERS_ELKE_SECONDEN == 0`` en is sinds de
+        wandklok eigen toestand (``laatste_herverversing``). Zonder die toestand vraagt de
+        lus een refresh bij elke poll zolang de status Progressing blijft, en dat is een
+        aanroep naar ArgoCD per poll-interval per wachtende deployment.
+        """
+        mock_connector.get_application_status = AsyncMock(
+            return_value=_make_status("Synced", "Progressing", reconciled_at="2026-08-30T21:07:00Z")
+        )
+        mock_connector.refresh_application = AsyncMock(return_value="2026-08-30T21:07:00Z")
+        drempel = 0.1
+
+        with (
+            patch("opi.connectors.argo.create_argo_connector", return_value=mock_connector),
+            patch("opi.manager.argo_manager.HERVERVERS_ELKE_SECONDEN", drempel),
+            pytest.raises(TimeoutError),
+        ):
+            await argo_manager.wait_for_application_synced(
+                "my-app", timeout=_KORT_BUDGET, poll_interval=0.001, refreshed_after="2026-08-30T21:00:00Z"
+            )
+
+        pollen = mock_connector.get_application_status.call_count
+        herverversingen = mock_connector.refresh_application.await_count
+        assert pollen >= 10, f"de lus polde maar {pollen} keer, te weinig om een smoring aan te tonen"
+        assert 1 <= herverversingen <= 1 + _KORT_BUDGET / drempel, (
+            f"{herverversingen} refreshes op {pollen} pollen; vraagt de lus er weer een per poll?"
+        )

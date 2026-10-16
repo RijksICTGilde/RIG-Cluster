@@ -53,6 +53,34 @@ compare-and-swap; de push-lock is daar orthogonaal aan en verandert die semantie
 toekomstige **aanpak B** zou `zad-deployments`/argo hun eigen store-achtige object geven (warme
 working copy + CAS-commit-uit-git-objecten), waarmee ook het laatste text-merge-risico verdwijnt.
 
+## Per project, op de nieuwste stand (RC-265)
+
+De push-lock neemt de botsing op de ref weg, maar niet die op de INHOUD. Elke delete- en
+create-taak herschrijft `odcn-production/<project>/kustomization.yaml` in
+`zad-argo-user-applications`, en elke taak werkt in een kloon van bij de start van die taak.
+De mutatie en de herbouw van die kustomization gingen dus uit van een stand die een andere
+taak intussen kan hebben gewijzigd. Op 15 oktober 2026 strandden drie van acht
+gelijktijdige deletes in `nd-j7s` op `GitPushConflictError` (`pr-66`, `pr-69`, `pr-75`), en
+om 18:45 ook een create: de rebase kon de twee versies van die ene herschreven file niet
+samenvoegen.
+
+`GitConnector.mutate_and_push(message, mutate)` neemt de mutatie daarom als FUNCTIE aan en
+past hem toe binnen een lock per `(repo, project)`:
+
+1. `reset_to_remote()`, zodat de beslissing en de herbouw op de laatste stand vallen;
+2. `mutate()`, de semantische wijziging (bestand weg of erbij, kustomization herbouwd);
+3. `commit_and_push()`.
+
+Dat kan omdat een OPI-instantie de enige schrijver is voor zijn eigen clustermap (het
+Distributed Model). Wat NA de push hoort (een ArgoCD-refresh, een wacht) staat buiten de
+mutatie, anders houdt de lock andere taken op voor iets dat niets meer schrijft. De
+rebase-herhaling in `push_changes` blijft voor botsingen tussen verschillende projecten;
+beide locks gebruiken dezelfde credential-vrije sleutelvorm (`_repo_lock_key`).
+
+Dit is dus aanpak B voor de argo-repo, en de goedkope helft ervan: geen warme working copy,
+maar wel een commit die aantoonbaar op de laatste stand is gebouwd. `zad-deployments` loopt
+nog op aanpak A.
+
 ## Uitzondering
 
 De eenmalige bootstrap-push voor een lege repo (`push -u origin <branch>` bij initiële setup) loopt
@@ -63,6 +91,12 @@ niet via `push_changes` en is geen concurrency-pad; die blijft ongewijzigd.
 `tests/test_git_push_lock.py`: de lock-sleutel is credential-vrij en stabiel; vier gelijktijdige
 pushes naar dezelfde ref lopen niet-overlappend (piek-concurrency 1); pushes naar verschillende
 repos lopen wel parallel.
+
+`tests/test_argo_applications_gelijktijdig_schrijven.py`: tegen een echte bare repo op schijf,
+want het bewijs zit in git. Acht gelijktijdige deletes in een project landen alle acht, de
+kustomization noemt precies de overgebleven bestanden, een create en een delete tegelijk gaan
+beide door, en elke taak ziet de verwijdering van de vorige. Zonder `mutate_and_push` falen
+alle drie op `GitPushConflictError`.
 
 ## Zie ook
 

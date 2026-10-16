@@ -26,7 +26,9 @@ import asyncio
 import inspect
 import os
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -206,6 +208,34 @@ def test_precommit_guard_finds_nested_to_sops(git_repo) -> None:
         connector._abort_if_plaintext_secrets_present()
 
     assert os.path.join("odcn", "demo", "db.to-sops.yaml") in str(exc.value)
+
+
+def test_precommit_guard_daalt_niet_af_in_dot_git(git_repo) -> None:
+    """``.git`` werd uitgelopen en daarna per pad overgeslagen.
+
+    Dat is per commit een wandeling door de hele objectmap, synchroon op de event loop.
+    Hij wordt nu gesnoeid, dus os.walk komt er niet eens in. Een bestand dat de guard zou
+    laten afgaan bewijst dat de inhoud ongelezen blijft.
+    """
+    connector, work = git_repo
+    binnen_git = os.path.join(work, ".git", "zou-afgaan.to-sops.yaml")
+    with open(binnen_git, "w") as f:
+        f.write("password: secret")
+
+    bezochte_mappen = []
+    echte_walk = os.walk
+
+    def tellende_walk(top, *args, **kwargs):
+        for root, dirs, files in echte_walk(top, *args, **kwargs):
+            bezochte_mappen.append(root)
+            yield root, dirs, files
+
+    with patch("opi.connectors.git.os.walk", tellende_walk):
+        connector._abort_if_plaintext_secrets_present()
+
+    assert not any(".git" in Path(m).parts for m in bezochte_mappen), (
+        f"os.walk daalde alsnog af in .git: {[m for m in bezochte_mappen if '.git' in m]}"
+    )
 
 
 def test_precommit_guard_passes_when_only_encrypted_present(git_repo) -> None:

@@ -1,5 +1,7 @@
 """Real-Postgres tests for the ORM-backed AsyncTaskService (RC-5 persistence)."""
 
+import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta
 
@@ -9,7 +11,7 @@ from opi.core.db import session_scope
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
 from opi.services.project_reconciliation_service import record_reconciliation
-from sqlalchemy import func, update
+from sqlalchemy import func, select, text, update
 
 
 def _svc(cluster: str = "c1") -> AsyncTaskService:
@@ -169,6 +171,87 @@ async def test_fail_permanent(orm_db):
     task = await svc.get_task(created["task_id"])
     assert task["status"] == "failed"
     assert task["completed_at"]
+
+
+async def test_een_definitieve_fout_geeft_precies_een_regel(orm_db, caplog):
+    """Een mislukte taak kwam twee keer langs ``fail_task``: eerst via ``fail_project``
+    (persistent_task_progress, max_attempts=1), dan via de worker (max_attempts=0). Dat gaf
+    twee regels, "after 1 attempts" en "after 0 attempts", want de regel toonde
+    ``max_attempts`` in plaats van de poging. Beide schrijfacties blijven, en het
+    ``result`` van de worker moet landen."""
+    svc = _svc()
+    created = await _create(svc)
+
+    with caplog.at_level(logging.INFO, logger="opi.core.async_task_service"):
+        await svc.fail_task(created["task_id"], error_message="stuk", attempt_count=1, max_attempts=1)
+        await svc.fail_task(
+            created["task_id"],
+            error_message="stuk",
+            attempt_count=1,
+            max_attempts=0,
+            result={"error_type": "internal_error"},
+        )
+
+    regels = [r for r in caplog.messages if "permanently failed" in r]
+    assert len(regels) == 1, regels
+    assert "after 1 attempt(s)" in regels[0]
+
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "failed"
+    assert task["result"] == {"error_type": "internal_error"}
+
+
+async def _wacht_tot_geblokkeerd(aantal: int) -> None:
+    """Wacht tot ``aantal`` backends in deze database op een lock staan te wachten."""
+    for _ in range(200):
+        async with session_scope() as session:
+            wachtend = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                    )
+                )
+            ).scalar_one()
+        if wachtend >= aantal:
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"geen {aantal} wachtende schrijvers; de samenloop is niet afgedwongen")
+
+
+async def test_twee_gelijktijdige_definitieve_fouten_geven_precies_een_regel(orm_db, caplog):
+    """De twee aanroepers lopen echt tegelijk: ``fail_project`` zet ``_fail_in_db``
+    fire-and-forget op de loop en ``close()`` wacht die niet af, waarna de worker zelf
+    aanroept. Een rijvergrendeling dwingt die samenloop hier af; zonder de voorwaardelijke
+    UPDATE zagen beide schrijvers onder READ COMMITTED een niet-mislukte taak en stond de
+    regel er twee keer."""
+    svc = _svc()
+    created = await _create(svc)
+
+    with caplog.at_level(logging.INFO, logger="opi.core.async_task_service"):
+        async with session_scope() as blokkade:
+            await blokkade.execute(
+                select(AsyncTask).where(AsyncTask.id == uuid.UUID(created["task_id"])).with_for_update()
+            )
+            schrijvers = asyncio.gather(
+                svc.fail_task(created["task_id"], error_message="stuk", attempt_count=1, max_attempts=1),
+                svc.fail_task(
+                    created["task_id"],
+                    error_message="stuk",
+                    attempt_count=1,
+                    max_attempts=0,
+                    result={"error_type": "internal_error"},
+                ),
+            )
+            await _wacht_tot_geblokkeerd(2)
+        await schrijvers
+
+    regels = [r for r in caplog.messages if "permanently failed" in r]
+    assert len(regels) == 1, regels
+
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "failed"
+    assert task["result"] == {"error_type": "internal_error"}
 
 
 async def test_een_gewone_foutzin_blijft_heel(orm_db):

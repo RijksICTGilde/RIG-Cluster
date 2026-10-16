@@ -48,13 +48,23 @@ Het foutgedrag is hetzelfde gebleven:
 - mislukte ontsleuteling: `Exception("Age decryption failed: ...")` uit de async-variant,
   `None` uit de sync-variant.
 
+## De versleutelkant is sinds RC-263 ook in-process
+
+`encrypt_age_content` en `encrypt_age_content_sync` gebruiken `pyrage.encrypt(...,
+armored=True)`. De aanleiding was niet de snelheid maar de event loop: de synchrone
+variant startte het binary midden op de loop, en die loop deelt OPI met FastAPI, de
+TaskWorker en alle schedulers.
+
+De uitvoer is niet byte-gelijk aan die van het binary, want age is niet deterministisch.
+Wel uitwisselbaar, en dat is wat telt: `tests/test_age_ontsleuteling_in_proces.py` toetst
+beide richtingen tegen het echte binary, voor de async- en de sync-variant en voor een
+bijlage die via base64 door dezelfde versleuteling gaat.
+
 ## Wat niet is omgezet
 
-**De versleutelkant.** `encrypt_age_content` en `encrypt_age_content_sync` starten nog
-steeds het binary, met `--armor`. De winst is daar kleiner: versleutelen gebeurt bij het
-opslaan, niet bij elke render. `pyrage.encrypt` kent een `armored`-vlag, dus die stap is
-te doen; hij viel buiten deze wijziging. Dat beide richtingen uitwisselbaar zijn is
-gemeten en vastgelegd in `tests/test_age_ontsleuteling_in_proces.py`.
+**De sleutelgeneratie.** `generate_sops_key_pair` in `opi/utils/sops.py` start nog
+`age-keygen` en schrijft de private sleutel naar een tijdelijk bestand. Dat gebeurt een
+keer per projectaanmaak, niet op het refreshpad.
 
 **Geen cache.** Issue #145 stelde caching voor als alternatief. Ontsleutelde geheimen in
 een cache leggen is een risico dat je terugkrijgt voor tijdwinst die de omzetting
@@ -62,18 +72,18 @@ hierboven al geeft.
 
 ## De metriek
 
-`track_subprocess_memory("age")` meet de geheugenpiek rond een subprocess en staat nu
-alleen nog rond het versleutelen, want op het leespad is er geen subprocess meer.
+`track_subprocess_memory("age")` meet de geheugenpiek rond een subprocess. Sinds RC-263
+start `opi/utils/age.py` er geen meer, dus `opi_connector_subprocess_calls_total
+{connector="age"}` loopt niet meer op. Dat is tegelijk het bewijs voor beide
+wijzigingen, en het is wat `TestDeProcesteller` toetst.
 
-Er is geen vervangende teller voor het aantal ontsleutelingen gekomen:
-`opi_connector_subprocess_calls_total{connector="age"}` bestond om uitwaaiering van
-processen te zien, en een aanroep die geen proces start draagt dat risico niet.
-Diezelfde teller is het bewijs voor deze wijziging: hij hoort niet meer op te lopen
-terwijl je detailpagina's opent.
+Er is geen vervangende teller voor het aantal ontsleutelingen gekomen: die teller bestond
+om uitwaaiering van processen te zien, en een aanroep die geen proces start draagt dat
+risico niet.
 
 ## Afhankelijkheden
 
 - `pyrage>=1.4.0` (runtime-dependency in `operations-manager/python/pyproject.toml`).
   De wheel draagt geen license-metadata, dus staat er een `authorized_packages`-regel
   voor in de liccheck-configuratie; de repo zelf is MIT.
-- Het `age`-binary blijft nodig in de image, voor versleutelen en voor SOPS.
+- Het `age`-binary blijft nodig in de image, voor `age-keygen` en voor SOPS.

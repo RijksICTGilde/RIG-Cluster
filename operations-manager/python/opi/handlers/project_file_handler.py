@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from deepdiff import DeepDiff
-from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 
 from opi.connectors.vpa import parse_k8s_cpu_to_m
@@ -29,7 +28,7 @@ from opi.utils.age import decrypt_age_block_to_bytes, decrypt_password_smart_syn
 from opi.utils.env_vars import validate_and_parse_env_vars
 from opi.utils.project_utils import apply_resource_limits
 from opi.utils.url_paths import sanitize_path_value
-from opi.utils.yaml_util import load_yaml_from_string, save_yaml_to_path
+from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_string, save_yaml_to_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -875,7 +874,7 @@ class ProjectFileHandler:
             - For single match queries (e.g., [0] or specific filters): The extracted value
             - If no matches: default value
         """
-        jsonpath_expr = jsonpath_parse(path)
+        jsonpath_expr = compiled_jsonpath(path)
         matches = jsonpath_expr.find(data)
 
         if not matches:
@@ -1111,6 +1110,15 @@ class ProjectFileHandler:
         hand-rolled scan.
         """
         return Project(project_data).find("components", name=component_name)
+
+    def _find_deployment(self, project_data: dict[str, Any], deployment_name: str) -> dict[str, Any] | None:
+        """Find a deployment dict by name in project data.
+
+        Not jsonpath: the path would embed the deployment name, so every deployment
+        costs its own parse (7 ms) and the compiler cache cannot help. The refresh of
+        a 25-deployment project spent seconds on exactly that.
+        """
+        return Project(project_data).find("deployments", name=deployment_name)
 
     def _decrypt_and_clean_env_vars(self, env_vars: dict[str, Any], private_key: str | None) -> dict[str, str]:
         """Decrypt individual env var values.
@@ -3161,8 +3169,8 @@ class ProjectFileHandler:
         Returns:
             Cluster string if found, None otherwise
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].cluster"
-        cluster = self.extract_value_by_path(project_data, path, None)
+        deployment = self._find_deployment(project_data, deployment_name)
+        cluster = deployment.get("cluster") if deployment else None
 
         if cluster:
             logger.debug(f"Found cluster '{cluster}' for deployment '{deployment_name}'")
@@ -3182,8 +3190,8 @@ class ProjectFileHandler:
         Returns:
             List of component references with their deployment-specific config
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].components"
-        components = self.extract_value_by_path(project_data, path, [])
+        deployment = self._find_deployment(project_data, deployment_name)
+        components = deployment.get("components", []) if deployment else []
 
         first_extraction = deployment_name not in self._component_extraction_logged
         if first_extraction:
@@ -3211,8 +3219,8 @@ class ProjectFileHandler:
         Returns:
             List of helm-chart references with their deployment-specific config
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].helm-charts"
-        helm_charts = self.extract_value_by_path(project_data, path, [])
+        deployment = self._find_deployment(project_data, deployment_name)
+        helm_charts = deployment.get("helm-charts", []) if deployment else []
 
         if helm_charts:
             logger.info(f"Found {len(helm_charts)} helm chart reference(s) in deployment '{deployment_name}'")
@@ -3382,8 +3390,8 @@ class ProjectFileHandler:
         Returns:
             List of helmfile references with their deployment-specific config
         """
-        path = f"$.deployments[?(@.name=='{deployment_name}')].helmfile"
-        helmfiles = self.extract_value_by_path(project_data, path, [])
+        deployment = self._find_deployment(project_data, deployment_name)
+        helmfiles = deployment.get("helmfile", []) if deployment else []
 
         if helmfiles:
             logger.info(f"Found {len(helmfiles)} helmfile reference(s) in deployment '{deployment_name}'")

@@ -18,35 +18,32 @@ from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.sops import TO_SOPS_SUFFIX
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+    from collections.abc import Awaitable, Callable, Coroutine
 
 logger = logging.getLogger(__name__)
 
-# One push-lock per (repo, branch), process-wide. Concurrent tasks that process the
-# same project each build their own manifests and push them to the SHARED repos
-# (zad-deployments, zad-argo-user-applications). Those pushes are not otherwise
-# serialized -- unlike zad-projects, which the ProjectStore serializes -- so under
-# load they collided on the ref update and exhausted the rebase-retry loop
-# ("remote rejected ... non-fast-forward ... after N attempts"). Serializing the
-# whole push attempt (fetch+rebase+push) per ref means a waiter rebases onto the
-# winner and pushes without a concurrent competitor invalidating it again.
-#
-# Intra-process only, consistent with the ProjectStore's own asyncio.Lock and the
-# single-replica-per-cluster model. Keyed on a credential-stripped URL so the key
-# is stable across a repo's per-operation connectors and never holds a secret.
+#: Shared process-wide, one per (repo, branch). See features/git-push-serialization.md.
 _push_locks: dict[str, asyncio.Lock] = {}
+
+
+#: Lock per (repo, project) to serialize writes to the project directory in argo-applications.
+_project_write_locks: dict[str, asyncio.Lock] = {}
+
+
+def _repo_lock_key(repo_url: str) -> str:
+    """Return repo URL without credentials."""
+    sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
+    return re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
 
 
 def _push_lock_for(repo_url: str, branch: str) -> asyncio.Lock:
     """Return the shared push lock for a (repo, branch), creating it once."""
-    sanitized = re.sub(r"//[^/@]*@", "//", repo_url)  # https://user:pass@host -> https://host
-    sanitized = re.sub(r"^[^@/]+@", "", sanitized)  # git@host:path -> host:path
-    key = f"{sanitized}#{branch}"
-    lock = _push_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _push_locks[key] = lock
-    return lock
+    return _push_locks.setdefault(f"{_repo_lock_key(repo_url)}#{branch}", asyncio.Lock())
+
+
+def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock:
+    """De lock die schrijfacties op de projectmap van deze repo serialiseert."""
+    return _project_write_locks.setdefault(f"{_repo_lock_key(repo_url)}#{project_name or ''}", asyncio.Lock())
 
 
 # Identity used for every commit this connector creates. Kept as constants so the
@@ -1194,9 +1191,10 @@ class GitConnector:
         """
         working_dir = self.__working_dir
         leftover: list[str] = []
-        for root, _dirs, files in os.walk(working_dir):
-            if ".git" in root.split(os.sep):
-                continue
+        for root, dirs, files in os.walk(working_dir):
+            # Snoeien, niet overslaan: zonder dit daalde os.walk af in .git en las het
+            # elke objectmap uit, op de event loop, voor elke commit.
+            dirs[:] = [d for d in dirs if d != ".git"]
             leftover.extend(
                 os.path.relpath(os.path.join(root, name), working_dir)
                 for name in files
@@ -1240,6 +1238,14 @@ class GitConnector:
         await self.push_changes()
 
         logger.info(f"Successfully committed and pushed all changes: {message}")
+
+    async def mutate_and_push[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
+        """Apply mutation on latest state, serially: reset, mutate, commit, push."""
+        async with _project_write_lock(self.repo_url, self.project_name):
+            await self.reset_to_remote()
+            uitkomst = await mutate()
+            await self.commit_and_push(message)
+            return uitkomst
 
     async def write_file_without_commit(self, file_path: str, content: str) -> None:
         """

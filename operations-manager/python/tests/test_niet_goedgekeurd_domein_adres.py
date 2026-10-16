@@ -223,7 +223,7 @@ def api(mock_settings: Any, request: pytest.FixtureRequest) -> Iterator[TestClie
     store.get = lambda name: summary if name == PROJECT else None
 
     argo = MagicMock()
-    argo.auth_token = "fake-token"
+    argo.ensure_authenticated = AsyncMock(return_value=True)
     argo.get_application_status = AsyncMock(return_value=None)
     argo.get_application_resource_tree = AsyncMock(return_value=[])
     kubectl = MagicMock()

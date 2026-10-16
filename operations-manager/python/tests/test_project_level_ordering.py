@@ -22,18 +22,39 @@ import asyncio
 import contextlib
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.generation.manifests import ManifestGenerator
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    ARGOCD_HERSTEL_BUDGET_SECONDEN,
     PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     ArgoManager,
 )
 from opi.utils.naming import generate_argocd_project_application_name
 
 PROJECT_APP = "demo-project"
+
+
+@contextlib.contextmanager
+def _klok_die_doorloopt(stap: float = 60.0) -> Any:
+    """Laat de wandklok per sleep doorlopen, zodat een budget van tien minuten verstrijkt
+    zonder tien minuten te duren. Het budget wordt op ``loop.time()`` afgerekend."""
+    klok = {"nu": 0.0}
+
+    class _Loop:
+        def time(self) -> float:
+            return klok["nu"]
+
+    async def _sleep(seconden: float = 0.0, *_args: Any, **_kwargs: Any) -> None:
+        klok["nu"] += max(seconden, stap)
+
+    with (
+        patch("asyncio.get_running_loop", return_value=_Loop()),
+        patch("asyncio.sleep", AsyncMock(side_effect=_sleep)),
+    ):
+        yield
 
 
 def _argo_manager(sporen: list[str]) -> ArgoManager:
@@ -53,10 +74,13 @@ def _argo_manager(sporen: list[str]) -> ArgoManager:
 
     git_connector = MagicMock()
 
-    async def _push(message: str) -> None:
+    async def _push(message: str, mutate: Any) -> Any:
+        # Dezelfde vorm als GitConnector.mutate_and_push: eerst de mutatie, dan de push.
+        uitkomst = await mutate()
         sporen.append("push:projectniveau" if "project-level" in message else "push:deployments")
+        return uitkomst
 
-    git_connector.commit_and_push = AsyncMock(side_effect=_push)
+    git_connector.mutate_and_push = AsyncMock(side_effect=_push)
     git_connector.get_local_commit_hash = AsyncMock(return_value="cafebabe")
     project_manager.get_git_connector_for_argocd = AsyncMock(return_value=git_connector)
 
@@ -328,18 +352,56 @@ class TestDeGrendelZelf:
         ]
 
     @pytest.mark.asyncio
-    async def test_een_refresh_die_niets_oplevert_stopt_de_aanmaak(self, monkeypatch: Any) -> None:
+    async def test_een_refresh_die_het_hele_budget_niets_oplevert_stopt_de_aanmaak(self, monkeypatch: Any) -> None:
         """Mislukken mag hier geen logger.warning zijn: een Deployment die zijn
-        ServiceAccount mist haalt de 300s van de aanmaaktaak niet."""
+        ServiceAccount mist haalt de 300s van de aanmaaktaak niet. Pas het VERSTRIJKEN van
+        het budget eindigt in die fout, en de melding noemt het budget."""
         connector = AsyncMock()
         connector.login = AsyncMock(return_value=True)
         connector.refresh_application = AsyncMock(return_value=None)
         manager = _project_manager(monkeypatch, connector, bestaat_al=False)
 
-        with pytest.raises(RuntimeError, match="refresh"):
+        with (
+            _klok_die_doorloopt(),
+            pytest.raises(RuntimeError, match=f"refresh.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+        ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
         manager._argo_manager.wait_for_application_synced.assert_not_awaited()
+        assert connector.refresh_application.await_count > 1, (
+            "een ArgoCD die net herstart antwoordt minuten niet; een poging is te weinig"
+        )
+
+    @pytest.mark.asyncio
+    async def test_een_refresh_die_pas_bij_de_derde_poging_antwoordt_slaagt(self, monkeypatch: Any) -> None:
+        """Het gemeten geval van 15 oktober: de application-controller bouwde 6,5 minuut aan
+        zijn cluster-cache, en in dat venster bleef elke refresh-GET hangen tot zijn timeout
+        van 120s en gaf hij niets terug. Daar hoort doorproberen bij, geen harde fout."""
+        connector = AsyncMock()
+        connector.login = AsyncMock(return_value=True)
+        connector.refresh_application = AsyncMock(side_effect=[None, None, "2026-10-15T15:13:31Z"])
+        manager = _project_manager(monkeypatch, connector, bestaat_al=False)
+
+        with _klok_die_doorloopt():
+            await manager.wait_for_project_level_application(PROJECT_APP)
+
+        assert connector.refresh_application.await_count == 3
+        kwargs = manager._argo_manager.wait_for_application_synced.await_args.kwargs
+        assert kwargs["refreshed_after"] == "2026-10-15T15:13:31Z"
+
+    @pytest.mark.asyncio
+    async def test_een_login_die_eerst_faalt_wordt_opnieuw_geprobeerd(self, monkeypatch: Any) -> None:
+        """Een van de zes gefaalde taken strandde al op de login (TimeoutError)."""
+        connector = AsyncMock()
+        connector.login = AsyncMock(side_effect=[False, False, True])
+        connector.refresh_application = AsyncMock(return_value="2026-10-15T15:13:31Z")
+        manager = _project_manager(monkeypatch, connector, bestaat_al=False)
+
+        with _klok_die_doorloopt():
+            await manager.wait_for_project_level_application(PROJECT_APP)
+
+        assert connector.login.await_count == 3
+        manager._argo_manager.wait_for_application_synced.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_een_bestaande_applicatie_kost_geen_umbrella_refresh(self, monkeypatch: Any) -> None:
@@ -395,18 +457,22 @@ class TestDeGrendelZelf:
         assert kwargs["timeout"] == PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN
 
     @pytest.mark.asyncio
-    async def test_een_mislukte_login_stopt_voor_de_wacht(self, monkeypatch: Any) -> None:
+    async def test_een_login_die_het_hele_budget_faalt_stopt_voor_de_wacht(self, monkeypatch: Any) -> None:
         """Zonder login geeft `refresh_application` niets zinnigs terug en wacht de grendel
-        op een sync die niemand meer bewijst. Dan liever meteen stoppen, en zeker niet
-        alsnog gaan wachten."""
+        op een sync die niemand meer bewijst. Dan stoppen, en zeker niet alsnog gaan
+        wachten. Pas het verstrijken van het budget eindigt zo, en de melding noemt het."""
         connector = AsyncMock()
         connector.login = AsyncMock(return_value=False)
         connector.refresh_application = AsyncMock(return_value="2026-09-25T09:32:17Z")
         manager = _project_manager(monkeypatch, connector, bestaat_al=True)
 
-        with pytest.raises(RuntimeError, match="login"):
+        with (
+            _klok_die_doorloopt(),
+            pytest.raises(RuntimeError, match=f"login.*{ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget"),
+        ):
             await manager.wait_for_project_level_application(PROJECT_APP)
 
+        assert connector.login.await_count > 1
         connector.refresh_application.assert_not_awaited()
         manager._argo_manager.wait_for_application_synced.assert_not_awaited()
 

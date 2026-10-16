@@ -20,6 +20,7 @@ DOCKERFILE = REPO_ROOT / "images/keycloak-zad/Dockerfile"
 KEYCLOAK = REPO_ROOT / "infrastructure/bootstrap/infrastructure/keycloak/controller"
 MODULES = REPO_ROOT / "keycloak-migration"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
+CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yml"
 DOCKER_IMAGES = REPO_ROOT / ".github/workflows/docker-images.yml"
@@ -617,14 +618,33 @@ class TestDePublicatietaakHeeftDeVormVanDeOperationsManager:
         assert meegegeven["EXTRA_TAG"] == "latest"
 
     def test_de_tag_wordt_op_dezelfde_manier_uitgerekend_als_die_van_de_operations_manager(self) -> None:
-        """Dezelfde vorm, dus letterlijk hetzelfde blok: een eigen variant zou stil afwijken.
+        """Dezelfde berekening, dus hetzelfde script: een eigen variant zou stil afwijken.
 
-        Daarmee is dit tegelijk de toets op de vorm zelf; hoe die eruitziet staat in
-        GEPUSHTE_TAG en wordt lager gemeten.
+        Niet meer letterlijk hetzelfde blok: `-dirty` gaat over de BRONPADEN van het image
+        (RC-265), en die zijn per image anders. Wat gelijk moet blijven is de berekening, en
+        die staat in `scripts/calver-tag.sh`. Daarmee is dit tegelijk de toets op de vorm
+        zelf; hoe die eruitziet staat in GEPUSHTE_TAG en wordt lager gemeten.
         """
-        eigen = _taak(PUBLICEER)["vars"]["IMAGE_VERSION"]["sh"]
-        van_opi = _taak("publish-operations-manager")["vars"]["IMAGE_VERSION"]["sh"]
-        assert eigen == van_opi, (eigen, van_opi)
+        eigen = _taak(PUBLICEER)["vars"]["IMAGE_VERSION"]["sh"].split()
+        van_opi = _taak("publish-operations-manager")["vars"]["IMAGE_VERSION"]["sh"].split()
+
+        assert eigen[0] == van_opi[0] == "scripts/calver-tag.sh", (eigen, van_opi)
+        assert eigen[1:], "zonder bronpaden meet het script niets"
+        assert eigen[1:] != van_opi[1:], "elk image draagt zijn eigen bronpaden"
+
+    def test_de_bronpaden_zijn_de_paden_waar_de_dockerfile_uit_kopieert(self) -> None:
+        """Mist een pad, dan leest een vuile bron als schoon; staat er een te veel bij, dan
+        is elke tag weer -dirty om een wijziging die niet in de image zit."""
+        dockerfile = (REPO_ROOT / "images/keycloak-zad/Dockerfile").read_text()
+        gekopieerd = {
+            "/".join(r.split()[1].split("/")[:2])
+            for r in dockerfile.splitlines()
+            if r.startswith("COPY ") and not r.startswith("COPY --from")
+        }
+
+        paden = set(_bronpaden(PUBLICEER))
+        assert gekopieerd <= paden, (gekopieerd, paden)
+        assert "images/keycloak-zad" in paden, "de Dockerfile en kc.sh-opties horen er ook bij"
 
     def test_precies_de_gebouwde_tag_wordt_gepind(self) -> None:
         """Een tweede berekening ertussen zou een tag pinnen die niet gepusht is."""
@@ -681,7 +701,11 @@ class TestDePublicatietaakHeeftDeVormVanDeOperationsManager:
         sh = _taak(PUBLICEER)["vars"]["IMAGE_VERSION"]["sh"]
 
         schoon = _bash(sh, repo)
+        # Buiten de bronpaden telt niet mee: dat is precies de wijziging van RC-265.
         (repo / "los.txt").write_text("iets ongecommit\n")
+        assert _bash(sh, repo) == schoon, "een wijziging buiten de bron van dit image maakt de tag niet vuil"
+
+        (repo / _bronpaden(PUBLICEER)[0] / "los.txt").write_text("iets ongecommit\n")
         vuil = _bash(sh, repo)
 
         assert GEPUSHTE_TAG.fullmatch(schoon), schoon
@@ -818,6 +842,11 @@ def _ci_bouwstap() -> dict:
     return next(s for s in _docker_images_job()["steps"] if s.get("uses", "").startswith("docker/build-push-action"))
 
 
+def _bronpaden(taak: str) -> list[str]:
+    """De paden die de tagvar van deze taak aan calver-tag.sh meegeeft."""
+    return _taak(taak)["vars"]["IMAGE_VERSION"]["sh"].split()[1:]
+
+
 def _bash(script: str, cwd: Path) -> str:
     return subprocess.run(["bash", "-c", script], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
@@ -826,14 +855,19 @@ def _kopie(tmp_path: Path) -> Path:
     """Een git-repo met de echte Taskfile en de echte Keycloak-manifesten erin.
 
     De taken pinnen een bestand in hun eigen repo, dus het meten gebeurt op een kopie.
-    `scripts/bron-tag.sh` gaat mee omdat een globale var van de Taskfile hem uitrekent
-    (SANDBOX_OM_TAG, voor de operations-manager); zonder dat script valt elke taak om.
+    `scripts/bron-tag.sh` en `scripts/calver-tag.sh` gaan mee omdat de Taskfile er zijn
+    tags mee uitrekent (SANDBOX_OM_TAG en IMAGE_VERSION); zonder die scripts valt elke taak
+    om. De bronpaden van dit image gaan mee omdat de tagvar ze opvraagt.
     """
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(BRON_TAG, repo / "scripts" / BRON_TAG.name)
+    shutil.copy(CALVER_TAG, repo / "scripts" / CALVER_TAG.name)
     shutil.copy(TASKFILE, repo / TASKFILE.name)
     shutil.copytree(KEYCLOAK, repo / KEYCLOAK.relative_to(REPO_ROOT))
+    for bronpad in _bronpaden(PUBLICEER):
+        (repo / bronpad).mkdir(parents=True, exist_ok=True)
+        (repo / bronpad / "bron.txt").write_text("bron\n")
 
     for cmd in (["init", "-q"], ["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "bron"]):
         subprocess.run(["git", *cmd], cwd=repo, check=True, capture_output=True)

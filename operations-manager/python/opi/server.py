@@ -44,7 +44,7 @@ from opi.core.errors import (
     statusomschrijving,
 )
 from opi.core.git_monitor import start_git_monitoring, stop_git_monitoring
-from opi.core.startup import run_startup_tasks
+from opi.core.startup import run_startup_tasks, warm_connector_singletons
 from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
@@ -82,6 +82,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     setup_metrics()
     start_peak_memory_tracking()
+
+    # De watchdog vroeg: een stilstand tijdens de opstart telt ook mee.
+    from opi.core.loop_watchdog import start_loop_watchdog, stop_loop_watchdog
+
+    start_loop_watchdog()
     if settings.ENABLE_TRACEMALLOC:
         setup_tracemalloc()
 
@@ -93,6 +98,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     # Logging is already initialized via early_logging import
     logger.info(f"Starting {PROJECT_NAME} version {VERSION}")
     # logger.info(f"Settings: {mask.secrets(get_settings().model_dump())}")
+
+    # De CLI-connector-singletons alvast bouwen: hun eenmalige binary-check viel anders
+    # midden in de eerste taak die ze nodig had.
+    await warm_connector_singletons()
 
     # Run startup tasks (non-fatal: failed services retry in background)
     await run_startup_tasks(app)
@@ -451,6 +460,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         logger.error("Timed out disposing ORM async engine after 10s; continuing shutdown")
     except Exception as e:
         logger.error(f"Error disposing ORM async engine: {e}")
+
+    stop_loop_watchdog()
 
     # Shut down OpenTelemetry tracing (flush pending spans)
     from opi.core.tracing import shutdown_tracing

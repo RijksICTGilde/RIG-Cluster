@@ -123,7 +123,7 @@ def mock_project_service() -> Any:
 def _make_argo_mock(
     status_by_app: dict[str, dict[str, Any] | None] | None = None,
     tree_by_app: dict[str, list[dict[str, Any]]] | None = None,
-    auth_token: str | None = "fake-token",  # noqa: S107
+    verbonden: bool = True,
 ) -> MagicMock:
     """Build a mock ArgoConnector that returns canned per-app payloads.
 
@@ -133,7 +133,7 @@ def _make_argo_mock(
     status_map = status_by_app or {}
     tree_map = tree_by_app or {}
     mock = MagicMock()
-    mock.auth_token = auth_token
+    mock.ensure_authenticated = AsyncMock(return_value=verbonden)
 
     async def _status(app_name: str | None = None) -> dict[str, Any] | None:
         return status_map.get(app_name or "")
@@ -310,7 +310,7 @@ class TestListDeployments:
             return ARGO_STATUS_PRODUCTION if app_name == prod_app else None
 
         argo_mock = MagicMock()
-        argo_mock.auth_token = "fake-token"
+        argo_mock.ensure_authenticated = AsyncMock(return_value=True)
         argo_mock.get_application_status = AsyncMock(side_effect=_flaky_status)
         argo_mock.get_application_resource_tree = AsyncMock(return_value=[])
 
@@ -406,11 +406,11 @@ class TestGetDeployment:
         assert data["errors"] == []
 
     def test_status_backend_unreachable_returns_503(self, mock_settings: Any, mock_project_service: Any) -> None:
-        """If the status backend login fails (no auth_token), endpoint returns 503."""
+        """If the status backend login fails, endpoint returns 503."""
         from opi.server import create_app
 
         app: FastAPI = create_app()
-        argo_mock = _make_argo_mock({}, auth_token=None)
+        argo_mock = _make_argo_mock({}, verbonden=False)
         with (
             patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
             patch("opi.services.catalog.publish_on_web.urls.get_ingress_tls_enabled", return_value=False),
@@ -429,7 +429,7 @@ class TestGetDeployment:
 
         app: FastAPI = create_app()
         argo_mock = MagicMock()
-        argo_mock.auth_token = "fake-token"
+        argo_mock.ensure_authenticated = AsyncMock(return_value=True)
         argo_mock.get_application_status = AsyncMock(side_effect=RuntimeError("connection reset"))
         with (
             patch("opi.services.catalog.publish_on_web.urls.get_ingress_postfix", return_value=".local.test"),
