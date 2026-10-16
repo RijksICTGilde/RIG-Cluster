@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 # Exact paths that skip authorization checks. These MUST be exact matches and not
 # prefixes, otherwise they would also match longer authenticated routes (e.g. the
 # "/metrics" Prometheus scrape endpoint must not match the "/metrics-explorer" page).
+# Prometheus heeft geen SSO-sessie, dus /metrics wordt in de route zelf afgeschermd met
+# PROMETHEUS_METRICS_AUTH_TOKEN (validate_metrics_scrape_token).
 SKIP_AUTH_EXACT = ("/metrics",)
 
 # URL prefixes that skip authorization checks and logging (health checks, static assets).
