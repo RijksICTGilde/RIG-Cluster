@@ -131,6 +131,32 @@ class TestValidateApiToken:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_non_ascii_api_key(self):
+        """Een niet-ASCII teken in de header is een foute sleutel, geen TypeError."""
+
+        @validate_api_token
+        async def dummy_route(request: Request, project_name: str = ""):
+            return {"ok": True}
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"X-API-Key": "caf\xe9"}
+
+        mock_project = MagicMock()
+        mock_project.api_key = "correct-key"
+        mock_project.name = "test-project"
+
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+
+        with (
+            patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await dummy_route(request=mock_request, project_name="test-project")
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_valid_api_key(self):
         """Should call through when API key matches project."""
 
