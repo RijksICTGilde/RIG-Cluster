@@ -1164,6 +1164,13 @@ def argocd_login(kube: Kube, password: str) -> bool:
 
     De CLI zit in de argocd-server-pod; OPI heeft hem niet. Het wachtwoord gaat via een
     env-variabele en niet via argv, zodat het niet in een proceslijst of foutmelding opduikt.
+
+    De uitslag staat in de TEKST en niet in de exitcode. Op odcn is het rootfs van die pod
+    read-only, en dan meldt de CLI eerst "logged in successfully" en valt daarna alsnog
+    fataal om op `mkdir /.config`, met exitcode 20. Een toets op de returncode las een
+    geslaagde login dus als afgewezen (gemeten 16-10-2026, en op de sandbox viel het niet op
+    omdat het rootfs daar schrijfbaar is). De eigen config-dir in /tmp houdt die fout weg en
+    wordt daarna opgeruimd, zodat er geen sessietoken in de pod achterblijft.
     """
     result = kube.exec(
         "deploy/argocd-server",
@@ -1172,12 +1179,13 @@ def argocd_login(kube: Kube, password: str) -> bool:
             f"W={password}",
             "sh",
             "-c",
-            'argocd login localhost:8080 --username admin --password "$W" --plaintext --insecure --grpc-web '
-            ">/dev/null 2>&1 && echo JA || echo NEE",
+            'argocd login localhost:8080 --username admin --password "$W" '
+            "--plaintext --insecure --grpc-web --config /tmp/argocd-rot.config 2>&1; "
+            "rm -f /tmp/argocd-rot.config",
         ],
         check=False,
     )
-    return "JA" in result.stdout
+    return "logged in successfully" in (result.stdout + result.stderr)
 
 
 def argocd_admin_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
