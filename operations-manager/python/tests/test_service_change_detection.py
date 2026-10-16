@@ -8,11 +8,29 @@ Covers:
 - Multiple services removed simultaneously
 """
 
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from opi.handlers.project_file_handler import ProjectFileHandler
+from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.services_enums import CleanupStrategy
+from opi.utils.yaml_util import load_yaml_from_string
+from tests.loop_meeloper import meeloper
+
+_GROOT_PROJECT = Path(__file__).parent / "fixtures" / "projects" / "groot-project-25-deployments.yaml"
+
+
+@lru_cache(maxsize=1)
+def _groot_project() -> dict[str, Any]:
+    """Het grootste productieproject, geanonimiseerd: 25 deployments."""
+    data = load_yaml_from_string(_GROOT_PROJECT.read_text())
+    assert data is not None
+    return data
+
 
 # ---------------------------------------------------------------------------
 # ServiceDefinition.cleanup_strategy tests
@@ -539,3 +557,41 @@ class TestCleanupRemovedServicesOrchestrator:
         )
         # Only dep-a is surviving, dep-deleted is not checked
         assert result["deployments_checked"] == 1
+
+
+# ---------------------------------------------------------------------------
+# De opruimcheck houdt de event loop niet vast
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupHoudtDeLoopNietVast:
+    """``cleanup_removed_services_from_yaml_change`` op een groot project.
+
+    Gemeten in productie (15 oktober 2026): de refresh van een project met 25
+    deployments liet de loop 14 s stilstaan, waarop een ArgoCD-poll van een ANDERE taak
+    op zijn timeout van 10 s afliep en die taak faalde. De oorzaak zat hier: per
+    deployment werd voor elk cleanable service type twee keer een jsonpath met de
+    deploymentnaam erin gecompileerd (7 ms per compile, honderden per project).
+
+    Zonder de fix duurt dit blok ongeveer 15 s en faalt deze toets.
+    """
+
+    @pytest.mark.asyncio
+    async def test_een_project_met_25_deployments_blokkeert_de_loop_niet(self) -> None:
+        project_data = _groot_project()
+
+        pm = MagicMock()
+        pm._project_file_handler = ProjectFileHandler()
+        pm._ensure_database_manager = AsyncMock()
+        orchestrator = DeleteProjectManager(pm)
+
+        async with meeloper() as meting:
+            result = await orchestrator.cleanup_removed_services_from_yaml_change(
+                project_name="groot-project",
+                previous_yaml=project_data,
+                current_yaml=project_data,
+            )
+
+        assert result["deployments_checked"] == 25
+        assert result["services_removed"] == 0
+        meting.eis_onder(0.2, "cleanup_removed_services_from_yaml_change op 25 deployments")

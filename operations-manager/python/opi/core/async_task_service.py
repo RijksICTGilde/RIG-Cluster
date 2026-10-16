@@ -448,13 +448,22 @@ class AsyncTaskService:
                 }
                 if result is not None:
                     values["result"] = result
-                await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
-                logger.info(
-                    "Task %s permanently failed after %d attempts: %s",
-                    task_id,
-                    max_attempts,
-                    error_message,
+                # Prevent duplicate log entry: only first write logs.
+                overgang = await session.execute(
+                    update(AsyncTask)
+                    .where(AsyncTask.id == uuid.UUID(task_id), AsyncTask.status != "failed")
+                    .values(**values)
                 )
+                if overgang.rowcount:
+                    logger.info(
+                        "Task %s permanently failed after %d attempt(s): %s",
+                        task_id,
+                        attempt_count,
+                        error_message,
+                    )
+                else:
+                    # Second write: preserve result field.
+                    await session.execute(update(AsyncTask).where(AsyncTask.id == uuid.UUID(task_id)).values(**values))
 
     async def get_task(self, task_id: str) -> dict | None:
         """Retrieve a single task by ID."""

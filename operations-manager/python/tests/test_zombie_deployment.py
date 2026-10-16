@@ -7,24 +7,36 @@ oorzaken, en dit bestand dekt ze beide.
 A. ``delete_deployment`` haalt het argo-bestand weg in stap 2 en de deployment pas in
    stap 8, minuten later. Een ``process_project`` in dat venster leest het
    projectbestand nog met de deployment erin en schrijft de Application opnieuw.
-B. Stap 2 vangt elke fout af en stap 8 liep door, dus na een mislukte push verdween de
-   deployment alsnog uit het projectbestand, waarna een retry 404 krijgt.
+B. Stap 2 vong elke fout af en stap 8 liep door, dus na een mislukte push verdween de
+   deployment alsnog uit het projectbestand, waarna een retry 404 krijgt. De grendel van
+   stap 8 blijft, en sinds RC-265 gooit stap 2 die fout door in plaats van hem af te
+   vangen: dan eindigt de taak meteen en probeert de worker het opnieuw.
 """
 
 from __future__ import annotations
 
 import copy
+import os
+import time
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+from opi.connectors.git import GitPushConflictError
 from opi.core.async_task_service import AsyncTaskService
 from opi.core.config import settings
 from opi.manager.argo_manager import ApplicationGone
 from opi.manager.delete_project_manager import DeleteProjectManager
 from opi.manager.project_manager import ProjectManager
+from opi.utils.naming import (
+    generate_argocd_appproject_prefix,
+    generate_gitops_argocd_application_path,
+    get_output_filename_from_template,
+)
 
 if TYPE_CHECKING:
-    import pytest
+    from pathlib import Path
 
 HERE = settings.CLUSTER_MANAGER
 
@@ -310,6 +322,11 @@ def _delete_manager() -> tuple[DeleteProjectManager, MagicMock, MagicMock]:
 
     gitops = AsyncMock()
     gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
+
+    async def _mutate_and_push(message: str, mutate: Any) -> Any:
+        return await mutate()
+
+    gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
     pm.get_git_connector_for_argocd = AsyncMock(return_value=gitops)
 
     manifests = AsyncMock()
@@ -367,20 +384,60 @@ def _project_file_ops(result: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def test_een_mislukte_push_van_stap_2_laat_de_deployment_staan() -> None:
+    """De fout van stap 2 gaat DOOR (RC-265). Voorheen werd hij afgevangen en liep de
+    delete toch naar stap 4, waar hij 30 minuten wachtte tot ArgoCD een Application
+    opruimde die nog gewoon in git stond. Een doorgegooide fout krijgt de herhaling van de
+    worker; een fout die de handler als resultaat meldt krijgt die niet."""
     manager, gitops, _ = _delete_manager()
-    gitops.commit_and_push = AsyncMock(side_effect=RuntimeError("Cannot push to main: Remote has conflicting changes"))
+    gitops.mutate_and_push = AsyncMock(side_effect=GitPushConflictError("Remote has conflicting changes"))
 
-    result = await _delete(manager)
+    with pytest.raises(HTTPException) as fout:
+        await _delete(manager)
 
+    assert "conflicting changes" in str(fout.value.detail)
+    # 5xx en niet 4xx: de worker gooit een 5xx door naar zijn algemene tak, die de taak op
+    # zijn eigen max_attempts opnieuw aanbiedt. Een 4xx zou hij als blijvend afdoen.
+    assert fout.value.status_code >= 500, fout.value.status_code
     manager.project_manager.mutate_and_commit_project.assert_not_awaited()
-    assert result["success"] is False
-    assert any("conflicting changes" in error for error in result["errors"]), result["errors"]
-    assert [op["status"] for op in _project_file_ops(result)] == ["skipped"]
+
+
+async def test_een_mislukte_commit_in_stap_2_wacht_niet_op_argocd() -> None:
+    """Stap 1 leest alleen, dus er is dan nog niets weggegooid. De taak hoort binnen
+    seconden te eindigen zonder de wachtlus, de namespace, de database of de bucket aan te
+    raken: de drie taken van 15 oktober liepen zo tot de maximale taakduur van 1800s."""
+    manager, gitops, _ = _delete_manager()
+    gitops.mutate_and_push = AsyncMock(side_effect=GitPushConflictError("Remote has moved"))
+
+    argo = AsyncMock()
+    argo.application_exists = AsyncMock(return_value=True)
+    store = MagicMock()
+    store.get.return_value = MagicMock(filename="test-project.yaml")
+    subdomain = MagicMock()
+    subdomain.return_value.delete_by_deployment = AsyncMock(return_value=0)
+
+    begonnen = time.monotonic()
+    with (
+        patch("opi.manager.delete_project_manager.create_argo_connector", return_value=argo),
+        patch("opi.manager.delete_project_manager.get_project_store", return_value=store),
+        patch("os.path.exists", side_effect=_niets_bestaat),
+        patch("shutil.rmtree", MagicMock()),
+        patch("opi.manager.delete_project_manager.SubdomainConnector", subdomain),
+        pytest.raises(HTTPException),
+    ):
+        await manager.delete_deployment("test-project", "pr-42")
+
+    assert time.monotonic() - begonnen < 1, "de delete heeft ergens op gewacht"
+    argo.wait_for_application_deletion.assert_not_awaited()
+    pm = manager.project_manager
+    pm._kubectl_connector.delete_namespace.assert_not_awaited()
+    pm._keycloak_manager.delete_resources_for_deployment.assert_not_awaited()
+    pm._minio_manager.delete_resources_for_deployment.assert_not_awaited()
+    pm._ensure_database_manager.return_value.delete_resources_for_deployment.assert_not_awaited()
+    pm.mutate_and_commit_project.assert_not_awaited()
 
 
 async def test_een_mislukte_commit_van_de_manifestmap_laat_de_deployment_staan() -> None:
-    manager, gitops, manifests = _delete_manager()
-    gitops.commit_and_push = AsyncMock()
+    manager, _gitops, manifests = _delete_manager()
     manifests.commit_and_push_changes = AsyncMock(return_value=False)
 
     result = await _delete(manager, exists=_alleen_de_manifestmap)
@@ -391,8 +448,7 @@ async def test_een_mislukte_commit_van_de_manifestmap_laat_de_deployment_staan()
 
 
 async def test_een_fout_bij_het_weghalen_van_de_manifestmap_laat_de_deployment_staan() -> None:
-    manager, gitops, manifests = _delete_manager()
-    gitops.commit_and_push = AsyncMock()
+    manager, _gitops, manifests = _delete_manager()
     manifests.commit_and_push_changes = AsyncMock(side_effect=RuntimeError("git push weigerde"))
 
     result = await _delete(manager, exists=_alleen_de_manifestmap)
@@ -403,11 +459,51 @@ async def test_een_fout_bij_het_weghalen_van_de_manifestmap_laat_de_deployment_s
 
 
 async def test_een_delete_die_slaagt_haalt_de_deployment_nog_steeds_weg() -> None:
-    manager, gitops, _ = _delete_manager()
-    gitops.commit_and_push = AsyncMock()
+    manager, _gitops, _ = _delete_manager()
 
     result = await _delete(manager)
 
     manager.project_manager.mutate_and_commit_project.assert_awaited_once()
     assert result["success"] is True, result["errors"]
     assert [op["status"] for op in _project_file_ops(result)] == ["success"]
+
+
+async def test_de_appproject_en_repo_bestanden_zijn_weg_voor_de_kustomization_herbouw(tmp_path: Path) -> None:
+    """De AppProject en de repository-secretbestanden stonden NA de commit van stap 2,
+    dus hun verwijdering bleef ongecommit in de werkboom staan en de kustomization die er
+    net voor herbouwd was noemde ze nog. Ze gaan sinds RC-265 mee in dezelfde mutatie, voor
+    de herbouw: deze toets bewijst dat op een echte werkmap, niet alleen op een gestubde."""
+    manager, gitops, manifests = _delete_manager()
+
+    werkmap = tmp_path / "argo-applications"
+    project_dir = werkmap / "local" / "test-project"
+    project_dir.mkdir(parents=True)
+    gitops.get_working_dir = AsyncMock(return_value=str(werkmap))
+    manifests.get_working_dir = AsyncMock(return_value=str(tmp_path / "deploy-repo"))
+
+    argocd_app_path = werkmap / generate_gitops_argocd_application_path("local", "test-project", "pr-42")
+    appproject_name = generate_argocd_appproject_prefix("test-project", "test-project")
+    appproject_path = project_dir / get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
+    repo_paths = [
+        project_dir / get_output_filename_from_template(template, "test-project-main-repo")
+        for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]
+    ]
+    for pad in [argocd_app_path, appproject_path, *repo_paths]:
+        pad.write_text("kind: Placeholder\n")
+
+    nog_aanwezig_bij_herbouw: list[bool] = []
+
+    def _herbouw(output_dir: str, **kwargs: Any) -> bool:
+        nog_aanwezig_bij_herbouw.append(appproject_path.exists() or any(p.exists() for p in repo_paths))
+        return True
+
+    manager.project_manager._manifest_generator.create_kustomization_files = MagicMock(side_effect=_herbouw)
+
+    result = await _delete(manager, exists=os.path.exists)
+
+    assert nog_aanwezig_bij_herbouw == [False], (
+        "de AppProject en/of de repository-bestanden stonden nog toen de kustomization herbouwd werd"
+    )
+    assert not appproject_path.exists()
+    assert not any(p.exists() for p in repo_paths)
+    assert result["success"] is True, result["errors"]

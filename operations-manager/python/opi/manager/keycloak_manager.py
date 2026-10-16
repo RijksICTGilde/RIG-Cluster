@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jsonpath_ng.ext import parse as jsonpath_parse
 from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
@@ -50,6 +49,7 @@ from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import KeycloakSecret
 from opi.utils.totp import build_otpauth_uri, generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
+from opi.utils.yaml_util import compiled_jsonpath
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -798,7 +798,7 @@ class KeycloakManager:
         sso_components = []
 
         # First get component references for this deployment
-        component_refs_query = jsonpath_parse(f"$.deployments[?@.name=='{deployment_name}'].components[*].reference")
+        component_refs_query = compiled_jsonpath(f"$.deployments[?@.name=='{deployment_name}'].components[*].reference")
         component_refs = [match.value for match in component_refs_query.find(project_data)]
 
         # Then check if any of these components use Keycloak service

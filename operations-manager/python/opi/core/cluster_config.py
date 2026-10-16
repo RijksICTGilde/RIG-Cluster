@@ -1196,6 +1196,13 @@ def get_letsencrypt_contact_email(cluster_name: str) -> str | None:
     return letsencrypt_config.get("contact_email")
 
 
+#: Gevonden hashes, op certificaatpad. Het certificaat verandert niet tijdens de looptijd
+#: van het proces, en zonder cache startte ``_compute_ca_hash`` openssl per component, op
+#: de event loop. Alleen een gevonden hash gaat erin: een mislukking cachen zou een
+#: certificaat dat later verschijnt voorgoed onleesbaar maken.
+_ca_hash_cache: dict[str, str] = {}
+
+
 def _compute_ca_hash(cert_path: str) -> str | None:
     """
     Compute the OpenSSL hash of a CA certificate.
@@ -1209,6 +1216,9 @@ def _compute_ca_hash(cert_path: str) -> str | None:
     Returns:
         The 8-character hash string, or None if computation fails
     """
+    if cert_path in _ca_hash_cache:
+        return _ca_hash_cache[cert_path]
+
     if not Path(cert_path).exists():
         return None
 
@@ -1219,9 +1229,13 @@ def _compute_ca_hash(cert_path: str) -> str | None:
             text=True,
             check=True,
         )
-        return result.stdout.strip()
     except subprocess.CalledProcessError, FileNotFoundError:
         return None
+
+    ca_hash = result.stdout.strip()
+    if ca_hash:
+        _ca_hash_cache[cert_path] = ca_hash
+    return ca_hash
 
 
 def get_ca_certificate_config(cluster_name: str) -> dict | None:

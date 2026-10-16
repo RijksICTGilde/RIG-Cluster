@@ -20,12 +20,13 @@ AGE-decrypts, de gebruikelijke verdachte, kostten samen 16 ms.
 
 Een cache op moduleniveau in `opi/connectors/argo.py`, met sleutel `(server, gebruiker)`:
 
-- de constructor pakt een bestaand token op en logt alleen in als er nog geen is;
-- `_ensure_authenticated()` doet hetzelfde voor de async kant;
-- beide login-paden schrijven het token terug in de cache.
+- de constructor pakt een bestaand token op, en logt sinds RC-263 niet meer zelf in;
+- `ensure_authenticated()` logt async in als er nog geen token is;
+- dat login-pad schrijft het token terug in de cache.
 
-Twee locks, omdat er twee login-paden zijn: een `threading.Lock` voor de synchrone constructor en
-een `asyncio.Lock` voor de async kant.
+Twee locks: een `threading.Lock` om de cache-dict zelf, want draden lezen hem ook, en een
+`asyncio.Lock` om de login, zodat een stoot aanroepers met een lege cache er een doet in plaats
+van elk een eigen.
 
 ### Twee details die het verschil maken
 

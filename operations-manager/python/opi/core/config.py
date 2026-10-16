@@ -282,6 +282,10 @@ class Settings(BaseSettings):
     # Prometheus metrics configuration
     ENABLE_TRACEMALLOC: bool = False  # Enable tracemalloc for Python memory allocation tracking (adds ~10-30% overhead)
 
+    # Vanaf deze achterstand van de event loop logt de watchdog een WARNING met de stack
+    # van de hoofdthread. Zie features/event-loop-lag-watchdog.md.
+    EVENT_LOOP_LAG_WARNING_SECONDS: float = 1.0
+
     # Logging configuration
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled

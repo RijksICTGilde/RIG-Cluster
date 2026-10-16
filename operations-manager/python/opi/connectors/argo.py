@@ -6,6 +6,7 @@ including triggering synchronization of applications.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import ssl
@@ -13,7 +14,6 @@ import threading
 from typing import Any
 
 import aiohttp
-import requests
 
 from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
 from opi.utils.connect_retry import retry_on_connect_error
@@ -26,10 +26,9 @@ logger = logging.getLogger(__name__)
 # costs ~700ms because ArgoCD verifies the password with bcrypt, so it dominated
 # every page load and task step that touched ArgoCD.
 #
-# The token is therefore shared process-wide, keyed by (server, user). Two locks
-# guard it because there are two login paths: a synchronous one in __init__ and an
-# async one for requests. Both re-check the cache after acquiring, so a burst of
-# callers that all find the cache empty produces ONE login instead of one each.
+# The token is therefore shared process-wide, keyed by (server, user). Two locks:
+# _token_cache_lock guards the dict (threads read it too), and _token_refresh_lock makes
+# a burst of callers that all find the cache empty produce ONE login instead of one each.
 _token_cache: dict[tuple[str, str], str] = {}
 _token_cache_lock = threading.Lock()
 _token_refresh_lock = asyncio.Lock()
@@ -40,17 +39,34 @@ _token_refresh_lock = asyncio.Lock()
 CONNECT_RETRY_SECONDS = 30.0
 
 
+@functools.cache
+def _ssl_context_voor(verify_ssl: bool) -> ssl.SSLContext:
+    """Een ssl-context per verify_ssl-stand, gedeeld over het hele proces.
+
+    Voorkomt dat ssl.create_default_context() de CA-bundel per request van schijf leest.
+    """
+    context = ssl.create_default_context()
+    if not verify_ssl:
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+    return context
+
+
 def _exc_text(error: BaseException) -> str:
     """De tekst van een uitzondering, of de klasse als die tekst leeg is.
 
-    ``asyncio.TimeoutError`` heeft een lege ``str()``, en juist een read timeout is de meest
-    voorkomende fout op deze paden. Een kale interpolatie van de uitzondering logde daar dus
-    niets: op 6 oktober 2026 stond er twee keer "Error getting application status:" met niets
-    erachter, en dat liet een taak sneuvelen zonder spoor. De repr is geen alternatief, want
-    de uitzonderingen die WEL een tekst hebben worden daarmee slechter leesbaar: aiohttp zegt
-    "Cannot connect to host argocd-server:80" en de repr daarvan is een ConnectionKey vol velden.
+    TimeoutError heeft een lege str(), dus str(error) alleen logde niets bij timeouts.
     """
     return str(error) or type(error).__name__
+
+
+class ArgoTransportError(RuntimeError):
+    """De vraag aan ArgoCD kwam niet aan of kwam niet terug: timeout, connect-fout, 5xx.
+
+    Dit zegt niets over de toestand van de applicatie, dus een wacht-lus hoort door te
+    pollen in plaats van af te breken. Subklasse van RuntimeError zodat aanroepers die
+    dat al afvangen zich niet anders gedragen dan voorheen.
+    """
 
 
 class ArgoConnector:
@@ -102,17 +118,9 @@ class ArgoConnector:
 
         logger.debug(f"ArgoConnector initialized with server: {self.base_url}")
 
-        # Reuse the process-wide token when one is already known. Without this every
-        # construction paid a ~700ms blocking bcrypt login, on the event loop.
+        # Haal cache op, niet inloggen op de loop (~700 ms + 10 s timeout als onbereikbaar).
+        # ensure_authenticated logt async in als nodig.
         self.auth_token = self._cached_token()
-        if self.auth_token is None:
-            # Try to perform initial login during initialization
-            # If this fails, async methods will handle re-authentication
-            try:
-                self._perform_login()
-            except Exception as e:
-                logger.warning(f"Initial login failed during initialization: {_exc_text(e)}")
-                logger.info("Will attempt async login when methods are called")
 
     def _cache_key(self) -> tuple[str, str]:
         return (self.base_url, self.username)
@@ -138,56 +146,6 @@ class ArgoConnector:
             if _token_cache.get(self._cache_key()) == used_token:
                 _token_cache.pop(self._cache_key(), None)
 
-    def _perform_login(self) -> bool:
-        """
-        Perform login during initialization (synchronous).
-
-        Returns:
-            True if login successful, False otherwise
-        """
-        logger.info(f"Logging in to ArgoCD server: {self.base_url}")
-
-        login_url = f"{self.base_url}/api/v1/session"
-        login_data = {"username": self.username, "password": self.password}
-
-        try:
-            # Use requests for synchronous login
-            response = requests.post(
-                login_url,
-                json=login_data,
-                headers={"Content-Type": "application/json"},
-                verify=self.verify_ssl,
-                timeout=10,
-            )
-
-            # Check if we got redirected to HTTPS
-            if response.url.startswith("https://") and self.base_url.startswith("http://"):
-                logger.info(f"Detected redirect to HTTPS: {response.url}")
-                # Update base URL to use HTTPS
-                old_base = self.base_url
-                self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                self._actual_base_url = self.base_url
-                logger.info(f"Updated base URL from {old_base} to {self.base_url}")
-
-            if response.status_code == 200:
-                response_data = response.json()
-                logger.debug("Processing sync login response")
-                self.auth_token = response_data.get("token")
-                if self.auth_token:
-                    self._store_token(self.auth_token)
-                    logger.info("Successfully logged in to ArgoCD (sync) - token received")
-                    return True
-                else:
-                    logger.error("Sync login response missing token")
-                    return False
-            else:
-                logger.error(f"Login failed with status {response.status_code}: {response.text}")
-                return False
-
-        except Exception as e:
-            logger.error(f"Error during ArgoCD login: {_exc_text(e)}")
-            return False
-
     async def login(self) -> bool:
         """
         Login to ArgoCD server and obtain authentication token.
@@ -209,10 +167,7 @@ class ArgoConnector:
         login_data = {"username": self.username, "password": self.password}
 
         # Create SSL context
-        ssl_context = ssl.create_default_context()
-        if not self.verify_ssl:
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+        ssl_context = self._ssl_context()
 
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         request_timeout = aiohttp.ClientTimeout(total=30)
@@ -246,16 +201,14 @@ class ArgoConnector:
                 logger.error(f"Login failed with status {response.status}: {error_text}")
                 return False
 
-    async def _create_ssl_context(self) -> ssl.SSLContext:
-        """Create SSL context based on configuration."""
-        ssl_context = ssl.create_default_context()
-        if not self.verify_ssl:
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-        return ssl_context
+    def _ssl_context(self) -> ssl.SSLContext:
+        return _ssl_context_voor(self.verify_ssl)
 
-    async def _ensure_authenticated(self) -> bool:
+    async def ensure_authenticated(self) -> bool:
         """Ensure we have a valid authentication token, logging in at most once.
+
+        Ook de "is ArgoCD bereikbaar"-toets van de pagina's: die keek vroeger of de
+        constructor een token had bemachtigd, en die logt niet meer in.
 
         The shared token is re-checked after acquiring the refresh lock: when many
         callers hit an empty cache at the same moment, the first performs the login
@@ -319,10 +272,10 @@ class ArgoConnector:
         Returns:
             Tuple of (status_code, response_text)
         """
-        if not await self._ensure_authenticated():
+        if not await self.ensure_authenticated():
             return 401, "Authentication failed"
 
-        ssl_context = await self._create_ssl_context()
+        ssl_context = self._ssl_context()
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         request_timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
@@ -350,7 +303,7 @@ class ArgoConnector:
                 # collapse into a single login.
                 self._invalidate_token(self.auth_token)
                 self.auth_token = None
-                if await self._ensure_authenticated():
+                if await self.ensure_authenticated():
                     logger.info("Re-authentication successful, retrying request")
                     return await self._make_authenticated_request(method, url, json_data, retry_count + 1)
                 else:
@@ -404,6 +357,7 @@ class ArgoConnector:
             exist (ArgoCD returns 404, or 403 for a non-existent app)
 
         Raises:
+            ArgoTransportError: If the request did not complete (timeout, connect error, 5xx)
             RuntimeError: If an unexpected error occurs
         """
         app_name = app_name or self.default_app_name
@@ -432,6 +386,9 @@ class ArgoConnector:
                 # "permission denied" error noise.
                 logger.debug(f"Application {app_name} not found (403 - does not exist yet or already gone)")
                 return None
+            elif status_code >= 500:
+                logger.warning(f"Status request failed with status {status_code}: {response_text}")
+                raise ArgoTransportError(f"Failed to get application status: HTTP {status_code}")
             else:
                 logger.error(f"Status request failed with status {status_code}: {response_text}")
                 raise RuntimeError(f"Failed to get application status: HTTP {status_code}")
@@ -441,8 +398,8 @@ class ArgoConnector:
         except RuntimeError:
             raise
         except Exception as e:
-            logger.error(f"Error getting application status: {_exc_text(e)}")
-            raise RuntimeError(f"Error getting application status: {_exc_text(e)}")
+            logger.warning(f"Error getting application status: {_exc_text(e)}")
+            raise ArgoTransportError(f"Error getting application status: {_exc_text(e)}") from e
 
     async def get_application_manifests(
         self, app_name: str | None = None, revision: str | None = None
@@ -735,7 +692,10 @@ class ArgoConnector:
                     # makes. Without types there is nothing to measure, so the poll yields no
                     # window either, and retrying the discovery would repeat both the
                     # api-resources call and its ERROR for every poll of the wait.
-                    progress_types = await kubectl_connector.list_namespaced_resource_types()
+                    # Only the kinds this Application owns; fallback to full discovery.
+                    progress_types = await kubectl_connector.argocd_application_resource_types(app_name, namespace)
+                    if progress_types is None:
+                        progress_types = await kubectl_connector.list_namespaced_resource_types()
                     if progress_types is None:
                         types_unavailable = True
                         return None

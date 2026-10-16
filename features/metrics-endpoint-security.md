@@ -15,11 +15,47 @@ These endpoints should **never** be publicly accessible and must be restricted t
 
 ### Current
 - **Keycloak** - `/metrics` endpoint on management port 9000 (separate from public UI on 8080) ✅ Secured by default
+- **Operations Manager (OPI)** - `/metrics` on port 8000, afgeschermd met het scrape-token (zie hieronder) ✅
 
 ### Future (applications deployed via platform)
 - User applications with Prometheus metrics
 - Sidecar containers exposing metrics
 - Service meshes with metrics endpoints
+
+## OPI's eigen /metrics
+
+`GET /metrics` op de Operations Manager eist dezelfde header als de projectapps met de dienst
+`metrics-scraper`: `Authorization: Bearer <PROMETHEUS_METRICS_AUTH_TOKEN>`. Het token komt uit
+het secret `prometheus-metrics-auth` (sleutel `token`) en onze Prometheus stuurt het al mee bij
+de job `kubernetes-pods`, dus de scrape hoefde er niet voor te veranderen.
+
+De controle zit in de route zelf (`validate_metrics_scrape_token` in
+`opi/api/endpoint_util.py`), niet in de SSO-middleware: Prometheus heeft geen sessie, dus die
+middleware blijft `/metrics` overslaan.
+
+| situatie | antwoord |
+|---|---|
+| geen `Authorization`-header | 401 |
+| header zonder `Bearer `-voorvoegsel | 401 |
+| `Bearer` met fout token | 401 |
+| `PROMETHEUS_METRICS_AUTH_TOKEN` niet gezet | 501, het endpoint is dan dicht, niet open |
+| `Bearer` met het goede token | 200 met de metrieken |
+
+Bij 401 en 501 komt er geen enkele metriek terug en staat er geen hint over het token in het
+antwoord. Een mislukte poging komt als WARNING in de log, zonder de headerwaarde.
+
+Met de hand opvragen:
+
+```bash
+kubectl exec -n rig-prd-operations deploy/operations-manager -- \
+  sh -c 'curl -s -H "Authorization: Bearer $PROMETHEUS_METRICS_AUTH_TOKEN" localhost:8000/metrics | head'
+```
+
+Het token los nodig, bijvoorbeeld om van buiten de pod te toetsen:
+
+```bash
+TOKEN=$(kubectl get secret -n rig-prd-operations prometheus-metrics-auth -o jsonpath='{.data.token}' | base64 -d)
+```
 
 ## Security Concerns
 

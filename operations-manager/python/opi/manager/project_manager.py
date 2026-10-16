@@ -14,6 +14,7 @@ import shutil
 import time
 from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
     AsyncIterator,
+    Awaitable,
     Callable,
 )
 from contextlib import asynccontextmanager
@@ -23,7 +24,6 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import asyncpg
 from fastapi import HTTPException
-from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.scalarstring import LiteralScalarString
@@ -89,6 +89,8 @@ from opi.handlers.project_file_handler import (
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    ARGOCD_HERSTEL_BUDGET_SECONDEN,
+    ARGOCD_HERSTEL_POLL_SECONDEN,
     PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     UMBRELLA_REFRESH_MAX_POGINGEN,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
@@ -214,6 +216,7 @@ from opi.utils.sops import (
     sops_filenames,
 )
 from opi.utils.yaml_util import (
+    compiled_jsonpath,
     find_value_by_jsonpath,
 )
 
@@ -1606,7 +1609,7 @@ class ProjectManager:
         secret_template = os.path.join(
             os.path.dirname(__file__), "..", "..", "manifests", "generic-secret.yaml.to-sops.jinja"
         )
-        self._write_secret_file(
+        await self._write_secret_file(
             SecretFileSpec(
                 secret_name=sleep_manifests.waker_token_secret_name(unique_name),
                 secret_pairs=WakeTokenSecret(token=plain_token).to_k8s_secret_data(),
@@ -1625,7 +1628,7 @@ class ProjectManager:
             "sleep-mode: emitted waker for %s/%s (component %s)", project_name, deployment_name, component_reference
         )
 
-    def _write_secret_file(
+    async def _write_secret_file(
         self,
         spec: SecretFileSpec,
         *,
@@ -1652,8 +1655,9 @@ class ProjectManager:
         secret_data = dict(spec.secret_pairs)
         manifest_name = f"{spec.secret_name}-secret"
         if spec.keep_existing_values:
-            existing = _existing_secret_pairs(
-                os.path.join(output_dir, sops_filenames(manifest_name).encrypted), private_key
+            # In een thread: dit start het sops-binary om de vorige ciphertext te lezen.
+            existing = await asyncio.to_thread(
+                _existing_secret_pairs, os.path.join(output_dir, sops_filenames(manifest_name).encrypted), private_key
             )
             secret_data.update({key: existing[key] for key in spec.secret_pairs if key in existing})
         if spec.resolve_aliases and spec.secret_type:
@@ -2724,7 +2728,8 @@ class ProjectManager:
             project_public_key = get_project_public_key(project_data)
             if not project_public_key:
                 raise RuntimeError(f"Project '{project_name}' does not have a SOPS public key configured")
-            encrypt_to_sops_files_or_fail(
+            await asyncio.to_thread(
+                encrypt_to_sops_files_or_fail,
                 infra_resources_dir,
                 project_public_key,
                 f"infrastructuur-secrets voor project '{project_name}' in cluster '{cluster_name}'",
@@ -3049,8 +3054,24 @@ class ProjectManager:
             TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
         """
         argo_connector = create_argo_connector()
-        if not await argo_connector.login():
-            raise RuntimeError("Failed to login to ArgoCD")
+        loop = asyncio.get_running_loop()
+        einde = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
+
+        async def _volhouden[T](wat: str, poging: Callable[[], Awaitable[T]]) -> T:
+            """Retry until result or budget exhausted. Empty result means not ready."""
+            while True:
+                uitkomst = await poging()
+                if uitkomst:
+                    return uitkomst
+                over = einde - loop.time()
+                if over <= 0:
+                    raise RuntimeError(
+                        f"{wat} within the {ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget for a recovering ArgoCD"
+                    )
+                logger.warning("%s: opnieuw proberen, %ds van het budget over", wat, int(over))
+                await asyncio.sleep(ARGOCD_HERSTEL_POLL_SECONDEN)
+
+        await _volhouden("Failed to login to ArgoCD", argo_connector.login)
 
         # De umbrella alleen verversen als de applicatie er nog niet is: zo'n refresh
         # hertekent alle child-apps (issue #130) en kan minuten duren
@@ -3069,9 +3090,10 @@ class ProjectManager:
 
         # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
         # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
-        reconciled_at = await argo_connector.refresh_application(app_name)
-        if not reconciled_at:
-            raise RuntimeError(f"Failed to refresh ArgoCD project-level application '{app_name}'")
+        reconciled_at = await _volhouden(
+            f"Failed to refresh ArgoCD project-level application '{app_name}'",
+            lambda: argo_connector.refresh_application(app_name),
+        )
 
         await self._argo_manager.wait_for_application_synced(
             app_name=app_name,
@@ -4252,7 +4274,8 @@ class ProjectManager:
         public_key = get_project_public_key(project_data)
         if not public_key:
             raise RuntimeError(f"Geen SOPS public key voor het projectniveau van '{project_name}'")
-        encrypt_to_sops_files_or_fail(
+        await asyncio.to_thread(
+            encrypt_to_sops_files_or_fail,
             target_path,
             public_key,
             f"projectbrede secrets van '{project_name}' (namespace '{namespace}')",
@@ -4372,7 +4395,8 @@ class ProjectManager:
                 "dit zou secrets in platte tekst naar git committen."
             )
 
-        encrypt_to_sops_files_or_fail(
+        await asyncio.to_thread(
+            encrypt_to_sops_files_or_fail,
             target_path,
             public_key,
             f"secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
@@ -4635,8 +4659,8 @@ class ProjectManager:
             # Copy chart to target directory
             dest_chart_path = os.path.join(charts_dir, chart_name)
             if os.path.exists(dest_chart_path):
-                shutil.rmtree(dest_chart_path)
-            shutil.copytree(source_chart_path, dest_chart_path)
+                await asyncio.to_thread(shutil.rmtree, dest_chart_path)
+            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path)
 
             logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
 
@@ -4660,8 +4684,8 @@ class ProjectManager:
                         if os.path.exists(dep_source):
                             dep_dest = os.path.join(charts_dir, dep_name)
                             if os.path.exists(dep_dest):
-                                shutil.rmtree(dep_dest)
-                            shutil.copytree(dep_source, dep_dest)
+                                await asyncio.to_thread(shutil.rmtree, dep_dest)
+                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest)
 
                             # Update the dependency path in Chart.yaml
                             dep["repository"] = f"file://../{dep_name}"
@@ -4881,7 +4905,8 @@ class ProjectManager:
         for file_path in to_sops_files:
             logger.info(f"  - {os.path.basename(file_path)}")
 
-        encrypt_to_sops_files_or_fail(
+        await asyncio.to_thread(
+            encrypt_to_sops_files_or_fail,
             target_path,
             public_key,
             f"helm values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
@@ -5020,9 +5045,9 @@ class ProjectManager:
                 src_item = os.path.join(full_source_path, item)
                 dst_item = os.path.join(dest_helmfile_path, item)
                 if os.path.isdir(src_item):
-                    shutil.copytree(src_item, dst_item, dirs_exist_ok=True)
+                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, dirs_exist_ok=True)
                 else:
-                    shutil.copy2(src_item, dst_item)
+                    await asyncio.to_thread(shutil.copy2, src_item, dst_item)
 
             logger.info(f"Copied helmfile source from {full_source_path} to {dest_helmfile_path}")
             if entry_path:
@@ -5301,7 +5326,8 @@ class ProjectManager:
         for file_path in to_sops_files:
             logger.info(f"  - {os.path.basename(file_path)}")
 
-        encrypt_to_sops_files_or_fail(
+        await asyncio.to_thread(
+            encrypt_to_sops_files_or_fail,
             target_path,
             public_key,
             f"helmfile values-secrets voor deployment '{deployment_name}' (namespace '{prefixed_namespace}')",
@@ -7166,7 +7192,7 @@ class ProjectManager:
             # obsolete-manifest prune keeps a name set, both order-independent).
             for contribution in manifest_contributions:
                 for spec in contribution.secret_files:
-                    self._write_secret_file(
+                    await self._write_secret_file(
                         spec,
                         deployment_name=deployment_name,
                         namespace=namespace,
@@ -7378,7 +7404,7 @@ class ProjectManager:
         project_data = await self.get_contents(record_base=False)
 
         try:
-            jsonpath_expr = jsonpath_parse(json_path)
+            jsonpath_expr = compiled_jsonpath(json_path)
             matches = jsonpath_expr.find(project_data)
             return matches[0].value if matches else None
         except Exception as e:
@@ -9535,7 +9561,7 @@ class ProjectManager:
         """
         try:
             project_data = await self.get_contents()
-            jsonpath_expr = jsonpath_parse(json_path)
+            jsonpath_expr = compiled_jsonpath(json_path)
             matches = jsonpath_expr.find(project_data)
 
             if not matches:
@@ -9761,7 +9787,9 @@ class ProjectManager:
         )
 
         try:
-            _ = connector.start_tunnel(
+            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
+            _ = await asyncio.to_thread(
+                connector.start_tunnel,
                 remote_host=tunnel_remote_host,
                 remote_port=tunnel_remote_port,
             )
@@ -9792,7 +9820,7 @@ class ProjectManager:
             return result
 
         finally:
-            connector.stop_tunnel()
+            await asyncio.to_thread(connector.stop_tunnel)
             logger.info("Tunnel cleaned up")
 
     async def clone_database_from_external_direct(
@@ -9862,7 +9890,9 @@ class ProjectManager:
         )
 
         try:
-            _ = connector.start_tunnel(
+            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
+            _ = await asyncio.to_thread(
+                connector.start_tunnel,
                 remote_host=tunnel_remote_host,
                 remote_port=tunnel_remote_port,
             )
@@ -9892,7 +9922,7 @@ class ProjectManager:
             return result
 
         finally:
-            connector.stop_tunnel()
+            await asyncio.to_thread(connector.stop_tunnel)
             logger.info("Tunnel cleaned up")
 
     async def clone_minio_bucket_from_external_direct(

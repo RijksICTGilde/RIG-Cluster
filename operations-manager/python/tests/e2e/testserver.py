@@ -455,6 +455,9 @@ def create_test_app():
             # ``app_server``-fixture wacht, dus faalde elke E2E-test in setup: 397 errors
             # op een suite die per bestand groen was.
             patch("opi.server.run_startup_tasks", new_callable=AsyncMock),
+            # Om dezelfde reden: de vier CLI-connectors proberen hun binary met een
+            # timeout van 10 s, en die is er hier niet of praat met geen cluster.
+            patch("opi.server.warm_connector_singletons", new_callable=AsyncMock),
             patch("opi.core.config.settings.SECRET_KEY", SECRET_KEY),
             patch("opi.core.config.settings.ENABLE_GIT_MONITOR", False),
             patch(
@@ -474,7 +477,7 @@ def create_test_app():
             ),
             patch(
                 "opi.connectors.argo.create_argo_connector",
-                return_value=MagicMock(auth_token=None),
+                return_value=MagicMock(ensure_authenticated=AsyncMock(return_value=False)),
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),

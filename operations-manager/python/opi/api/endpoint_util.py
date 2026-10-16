@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Any
 
 from fastapi import HTTPException
+from opi.api.user_token_auth import UserTokenError, extract_bearer_token
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
@@ -65,7 +66,8 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
 
         project = get_project_store().get(project_name_from_url)
 
-        if not project or not secrets.compare_digest(project.api_key, x_api_key):
+        # Op bytes vergelijken, zie de noot in _require_shared_secret.
+        if not project or not secrets.compare_digest(project.api_key.encode(), x_api_key.encode()):
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
@@ -100,6 +102,39 @@ def normalize_project_name(text: str) -> str:
     return re.sub(r"[^a-z0-9_]", "", text.lower())
 
 
+def _require_shared_secret(
+    presented: str | None,
+    configured: str | None,
+    setting_name: str,
+    route_name: str,
+    missing_detail: str,
+) -> None:
+    """Laat de aanroep alleen door als ``presented`` exact het geconfigureerde secret is.
+
+    Een secret dat niet geconfigureerd is houdt de route dicht (501), nooit open.
+    """
+    logger = logging.getLogger(__name__)
+
+    if not presented:
+        logger.warning(f"Authentication failed for route {route_name} ({setting_name}) - no credential provided")
+        raise HTTPException(status_code=401, detail=missing_detail)
+
+    if not configured:
+        logger.warning(f"{setting_name} not configured - route {route_name} is disabled")
+        raise HTTPException(
+            status_code=501,
+            detail=f"This endpoint requires {setting_name} to be configured",
+        )
+
+    # Op bytes vergelijken: compare_digest op twee str weigert een niet-ASCII teken met een
+    # TypeError, en de header komt van buiten met willekeurige bytes.
+    if not secrets.compare_digest(presented.encode(), configured.encode()):
+        logger.warning(f"Authentication failed for route {route_name} ({setting_name}) - invalid credential")
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    logger.debug(f"{setting_name} validation successful for route {route_name}")
+
+
 def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     Decorator to validate admin API key for maintenance operations.
@@ -116,26 +151,13 @@ def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Admin API route {func.__name__} called with admin key authentication")
-
-        x_api_key = request.headers.get("X-API-Key")
-        if not x_api_key:
-            logger.warning(f"Authentication failed for route {func.__name__} - no X-API-Key provided")
-            raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
-
-        if not settings.ADMIN_API_KEY:
-            logger.warning(f"Admin API key not configured - route {func.__name__} is disabled")
-            raise HTTPException(
-                status_code=501,
-                detail="This endpoint requires ADMIN_API_KEY to be configured",
-            )
-
-        if not secrets.compare_digest(x_api_key, settings.ADMIN_API_KEY):
-            logger.warning(f"Authentication failed for route {func.__name__} - invalid admin API key")
-            raise HTTPException(status_code=401, detail="Invalid API key")
-
-        logger.debug(f"Admin API key validation successful for route {func.__name__}")
+        _require_shared_secret(
+            request.headers.get("X-API-Key"),
+            settings.ADMIN_API_KEY,
+            "ADMIN_API_KEY",
+            func.__name__,
+            "Authentication required - provide X-API-Key header",
+        )
         return await func(*args, request=request, **kwargs)
 
     return wrapper
@@ -157,26 +179,39 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
-        logger = logging.getLogger(__name__)
-        logger.debug(f"Admin API route {func.__name__} called with master key authentication")
+        _require_shared_secret(
+            request.headers.get("X-API-Key"),
+            settings.MASTER_API_KEY,
+            "MASTER_API_KEY",
+            func.__name__,
+            "Authentication required - provide X-API-Key header",
+        )
+        return await func(*args, request=request, **kwargs)
 
-        x_api_key = request.headers.get("X-API-Key")
-        if not x_api_key:
-            logger.warning(f"Authentication failed for route {func.__name__} - no X-API-Key provided")
-            raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+    return wrapper
 
-        if not settings.MASTER_API_KEY:
-            logger.warning(f"Master API key not configured - route {func.__name__} is disabled")
-            raise HTTPException(
-                status_code=501,
-                detail="This endpoint requires MASTER_API_KEY to be configured",
-            )
 
-        if not secrets.compare_digest(x_api_key, settings.MASTER_API_KEY):
-            logger.warning(f"Authentication failed for route {func.__name__} - invalid master API key")
-            raise HTTPException(status_code=401, detail="Invalid API key")
+def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Eist ``Authorization: Bearer <PROMETHEUS_METRICS_AUTH_TOKEN>`` op een metrics-route.
 
-        logger.debug(f"Master API key validation successful for route {func.__name__}")
+    Dat is de header die onze Prometheus al meestuurt, met het token dat de dienst
+    metrics-scraper ook aan projectapps geeft.
+    """
+
+    @wraps(func)
+    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
+        try:
+            token: str | None = extract_bearer_token(request)
+        except UserTokenError:
+            token = None
+
+        _require_shared_secret(
+            token,
+            settings.PROMETHEUS_METRICS_AUTH_TOKEN,
+            "PROMETHEUS_METRICS_AUTH_TOKEN",
+            func.__name__,
+            "Authentication required - provide an Authorization: Bearer header",
+        )
         return await func(*args, request=request, **kwargs)
 
     return wrapper

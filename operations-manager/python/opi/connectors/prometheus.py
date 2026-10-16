@@ -750,14 +750,16 @@ class PrometheusConnector:
         """
         pod_prefixes = {name: generate_unique_name(deployment_name, name) for name in components}
 
-        with ThreadPoolExecutor(max_workers=len(pod_prefixes)) as executor:
-            futures = {
-                name: executor.submit(
+        # future.result() binnen een async def houdt de loop vast tot elke query klaar is.
+        resultaten = await asyncio.gather(
+            *(
+                asyncio.to_thread(
                     self.get_component_metrics_timeseries, namespace, prefix, duration_minutes, step_minutes
                 )
-                for name, prefix in pod_prefixes.items()
-            }
-            return {name: future.result() for name, future in futures.items()}
+                for prefix in pod_prefixes.values()
+            )
+        )
+        return dict(zip(pod_prefixes, resultaten, strict=True))
 
     async def get_pvc_storage_by_namespace(
         self, namespace: str, duration_minutes: int = 60, step_minutes: int = 5
@@ -1010,14 +1012,15 @@ class PrometheusConnector:
         """
         names = [w.get("name", "") for w in workloads if w.get("name")]
 
-        with ThreadPoolExecutor(max_workers=len(names) or 1) as executor:
-            futures = {
-                name: executor.submit(
+        resultaten = await asyncio.gather(
+            *(
+                asyncio.to_thread(
                     self.get_component_metrics_timeseries, namespace, name, duration_minutes, step_minutes
                 )
                 for name in names
-            }
-            return {name: future.result() for name, future in futures.items()}
+            )
+        )
+        return dict(zip(names, resultaten, strict=True))
 
 
 def create_prometheus_connector() -> PrometheusConnector:

@@ -1,0 +1,373 @@
+# Geanonimiseerd naar het grootste productieproject: 25 deployments (PR-previews)
+# met elk drie componenten. Gebruikt om te meten dat het refreshpad de event
+# loop niet vasthoudt; zie tests/test_jsonpath_cache.py.
+schema-version: 2.9
+name: groot-project
+display-name: "Groot project"
+description: "Projectbestand met 25 deployments voor prestatietoetsen"
+
+clusters:
+  - odcn-production
+
+users:
+  - email: admin@rijksoverheid.nl
+    role: admin
+
+services:
+  - publish-on-web
+  - keycloak
+  - namespace-postgresql-database
+  - minio-storage
+
+config:
+  age-public-key: "age1drxwupvn5eg8wd9cdf05nrxp6usrpk7tarc09yzk4c3m7jzzaups8757zy"
+
+repositories:
+  - name: main-repo
+    url: "https://forgejo.example.org/zad/groot-project.git"
+    branch: "main"
+    path: "."
+
+components:
+  - name: backend
+    type: single
+    ports:
+      inbound: [8000]
+      outbound: [80, 443]
+    services:
+      - publish-on-web
+      - keycloak
+      - namespace-postgresql-database
+    resources:
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+  - name: frontend
+    type: single
+    ports:
+      inbound: [3000]
+      outbound: [80, 443]
+    services:
+      - publish-on-web
+      - keycloak
+    resources:
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+  - name: worker
+    type: single
+    ports:
+      inbound: [9000]
+      outbound: [80, 443]
+    services:
+      - minio-storage
+      - redis
+    resources:
+      requests:
+        memory: 256Mi
+      limits:
+        memory: 256Mi
+
+deployments:
+  - name: pr-1
+    cluster: odcn-production
+    namespace: groot-project-pr-1
+    repository: main-repo
+    subdomain: pr-1
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-1"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-1"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-1"
+  - name: pr-2
+    cluster: odcn-production
+    namespace: groot-project-pr-2
+    repository: main-repo
+    subdomain: pr-2
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-2"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-2"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-2"
+  - name: pr-3
+    cluster: odcn-production
+    namespace: groot-project-pr-3
+    repository: main-repo
+    subdomain: pr-3
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-3"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-3"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-3"
+  - name: pr-4
+    cluster: odcn-production
+    namespace: groot-project-pr-4
+    repository: main-repo
+    subdomain: pr-4
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-4"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-4"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-4"
+  - name: pr-5
+    cluster: odcn-production
+    namespace: groot-project-pr-5
+    repository: main-repo
+    subdomain: pr-5
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-5"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-5"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-5"
+  - name: pr-6
+    cluster: odcn-production
+    namespace: groot-project-pr-6
+    repository: main-repo
+    subdomain: pr-6
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-6"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-6"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-6"
+  - name: pr-7
+    cluster: odcn-production
+    namespace: groot-project-pr-7
+    repository: main-repo
+    subdomain: pr-7
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-7"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-7"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-7"
+  - name: pr-8
+    cluster: odcn-production
+    namespace: groot-project-pr-8
+    repository: main-repo
+    subdomain: pr-8
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-8"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-8"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-8"
+  - name: pr-9
+    cluster: odcn-production
+    namespace: groot-project-pr-9
+    repository: main-repo
+    subdomain: pr-9
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-9"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-9"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-9"
+  - name: pr-10
+    cluster: odcn-production
+    namespace: groot-project-pr-10
+    repository: main-repo
+    subdomain: pr-10
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-10"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-10"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-10"
+  - name: pr-11
+    cluster: odcn-production
+    namespace: groot-project-pr-11
+    repository: main-repo
+    subdomain: pr-11
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-11"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-11"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-11"
+  - name: pr-12
+    cluster: odcn-production
+    namespace: groot-project-pr-12
+    repository: main-repo
+    subdomain: pr-12
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-12"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-12"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-12"
+  - name: pr-13
+    cluster: odcn-production
+    namespace: groot-project-pr-13
+    repository: main-repo
+    subdomain: pr-13
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-13"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-13"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-13"
+  - name: pr-14
+    cluster: odcn-production
+    namespace: groot-project-pr-14
+    repository: main-repo
+    subdomain: pr-14
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-14"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-14"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-14"
+  - name: pr-15
+    cluster: odcn-production
+    namespace: groot-project-pr-15
+    repository: main-repo
+    subdomain: pr-15
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-15"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-15"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-15"
+  - name: pr-16
+    cluster: odcn-production
+    namespace: groot-project-pr-16
+    repository: main-repo
+    subdomain: pr-16
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-16"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-16"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-16"
+  - name: pr-17
+    cluster: odcn-production
+    namespace: groot-project-pr-17
+    repository: main-repo
+    subdomain: pr-17
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-17"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-17"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-17"
+  - name: pr-18
+    cluster: odcn-production
+    namespace: groot-project-pr-18
+    repository: main-repo
+    subdomain: pr-18
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-18"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-18"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-18"
+  - name: pr-19
+    cluster: odcn-production
+    namespace: groot-project-pr-19
+    repository: main-repo
+    subdomain: pr-19
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-19"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-19"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-19"
+  - name: pr-20
+    cluster: odcn-production
+    namespace: groot-project-pr-20
+    repository: main-repo
+    subdomain: pr-20
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-20"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-20"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-20"
+  - name: pr-21
+    cluster: odcn-production
+    namespace: groot-project-pr-21
+    repository: main-repo
+    subdomain: pr-21
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-21"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-21"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-21"
+  - name: pr-22
+    cluster: odcn-production
+    namespace: groot-project-pr-22
+    repository: main-repo
+    subdomain: pr-22
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-22"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-22"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-22"
+  - name: pr-23
+    cluster: odcn-production
+    namespace: groot-project-pr-23
+    repository: main-repo
+    subdomain: pr-23
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-23"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-23"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-23"
+  - name: pr-24
+    cluster: odcn-production
+    namespace: groot-project-pr-24
+    repository: main-repo
+    subdomain: pr-24
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-24"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-24"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-24"
+  - name: pr-25
+    cluster: odcn-production
+    namespace: groot-project-pr-25
+    repository: main-repo
+    subdomain: pr-25
+    components:
+      - reference: backend
+        image: "ghcr.io/org/backend:pr-25"
+      - reference: frontend
+        image: "ghcr.io/org/frontend:pr-25"
+      - reference: worker
+        image: "ghcr.io/org/worker:pr-25"

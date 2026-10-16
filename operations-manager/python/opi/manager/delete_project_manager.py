@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
@@ -511,15 +512,22 @@ class DeleteProjectManager:
 
         try:
             gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            # Verversen en niet alleen klonen: de connector is gecached en ensure_repo_cloned
-            # fetcht hooguit eenmaal per proces, terwijl we hieronder een BESLISSING nemen op
-            # wat er op schijf staat.
-            await gitops_connector.refresh_working_tree()
             working_dir = await gitops_connector.get_working_dir()
             project_argocd_folder = os.path.join(working_dir, project_argocd_folder_rel)
 
-            if os.path.exists(project_argocd_folder):
-                shutil.rmtree(project_argocd_folder)
+            # De BESLISSING hoort binnen de lock, op de stand die reset_to_remote daar
+            # ophaalt: een gecachte kloon kan willekeurig oud zijn, en een andere taak kan
+            # deze projectmap intussen herschreven hebben.
+            async def _verwijder_projectmap() -> bool:
+                if not os.path.exists(project_argocd_folder):
+                    return False
+                await asyncio.to_thread(shutil.rmtree, project_argocd_folder)
+                return True
+
+            commit_message = f"Delete ArgoCD resources for project '{project_name}'"
+            verwijderd = await gitops_connector.mutate_and_push(commit_message, _verwijder_projectmap)
+
+            if verwijderd:
                 deletion_results["operations"].append(
                     {
                         "type": "project_argocd_folder_deletion",
@@ -528,9 +536,6 @@ class DeleteProjectManager:
                     }
                 )
                 logger.info(f"Deleted project ArgoCD folder: {project_argocd_folder_rel}")
-
-                commit_message = f"Delete ArgoCD resources for project '{project_name}'"
-                await gitops_connector.commit_and_push(commit_message)
                 deletion_results["operations"].append(
                     {"type": "project_argocd_gitops_commit", "status": "success", "message": commit_message}
                 )
@@ -633,10 +638,17 @@ class DeleteProjectManager:
 
             # 2. Delete project admin from master realm
             try:
-                await keycloak.delete_user_by_username("master", admin_username)
-                logger.info(f"Deleted project admin {admin_username}")
+                deleted = await keycloak.delete_user_by_username("master", admin_username)
+                if deleted:
+                    logger.info(f"Deleted project admin {admin_username}")
+                else:
+                    logger.info(f"Project admin {admin_username} not found")
                 deletion_results["operations"].append(
-                    {"type": "keycloak_user_deletion", "target": admin_username, "status": "success"}
+                    {
+                        "type": "keycloak_user_deletion",
+                        "target": admin_username,
+                        "status": "success" if deleted else "not_found",
+                    }
                 )
             except Exception as e:
                 logger.exception(f"Failed to delete user {admin_username}")
@@ -644,14 +656,17 @@ class DeleteProjectManager:
 
             # 3. Delete platform client from RIG Platform realm
             try:
-                await keycloak.delete_deployment_client(
-                    deployment_name=platform_client_id,
-                    project_name="",
-                    realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-                )
-                logger.info(f"Deleted platform client {platform_client_id}")
+                deleted = await keycloak.delete_client_by_client_id(settings.KEYCLOAK_DEFAULT_REALM, platform_client_id)
+                if deleted:
+                    logger.info(f"Deleted platform client {platform_client_id}")
+                else:
+                    logger.info(f"Platform client {platform_client_id} not found")
                 deletion_results["operations"].append(
-                    {"type": "keycloak_platform_client_deletion", "target": platform_client_id, "status": "success"}
+                    {
+                        "type": "keycloak_platform_client_deletion",
+                        "target": platform_client_id,
+                        "status": "success" if deleted else "not_found",
+                    }
                 )
             except Exception as e:
                 logger.exception("Failed to delete platform client")
@@ -759,12 +774,19 @@ class DeleteProjectManager:
             logger.info(f"Deleting infrastructure ArgoCD folder: {infra_argocd_folder_rel}")
 
             gitops_connector = await self.project_manager.get_git_connector_for_argocd()
-            await gitops_connector.ensure_repo_cloned()
             working_dir = await gitops_connector.get_working_dir()
             infra_argocd_folder = os.path.join(working_dir, infra_argocd_folder_rel)
 
-            if os.path.exists(infra_argocd_folder):
-                shutil.rmtree(infra_argocd_folder)
+            async def _verwijder_inframap() -> bool:
+                if not os.path.exists(infra_argocd_folder):
+                    return False
+                await asyncio.to_thread(shutil.rmtree, infra_argocd_folder)
+                return True
+
+            commit_message = f"Delete infrastructure ArgoCD application for project '{project_name}'"
+            verwijderd = await gitops_connector.mutate_and_push(commit_message, _verwijder_inframap)
+
+            if verwijderd:
                 deletion_results["operations"].append(
                     {
                         "type": "infrastructure_argocd_folder_deletion",
@@ -773,9 +795,6 @@ class DeleteProjectManager:
                     }
                 )
                 logger.info(f"Deleted infrastructure ArgoCD folder: {infra_argocd_folder_rel}")
-
-                commit_message = f"Delete infrastructure ArgoCD application for project '{project_name}'"
-                await gitops_connector.commit_and_push(commit_message)
                 deletion_results["operations"].append(
                     {"type": "infrastructure_gitops_commit", "status": "success", "message": commit_message}
                 )
@@ -931,7 +950,7 @@ class DeleteProjectManager:
                 infra_folder_full_path = os.path.join(await manifest_connector.get_working_dir(), infra_manifest_path)
 
                 if os.path.exists(infra_folder_full_path):
-                    shutil.rmtree(infra_folder_full_path)
+                    await asyncio.to_thread(shutil.rmtree, infra_folder_full_path)
                     deletion_results["operations"].append(
                         {
                             "type": "infrastructure_manifest_deletion",
@@ -1005,7 +1024,7 @@ class DeleteProjectManager:
                     {"type": "project_level_folder_deletion", "target": folder, "status": "not_found"}
                 )
                 return
-            shutil.rmtree(full_path)
+            await asyncio.to_thread(shutil.rmtree, full_path)
             await connector.commit_and_push_changes(f"Delete project level of project '{project_name}'")
             deletion_results["operations"].append(
                 {"type": "project_level_folder_deletion", "target": folder, "status": "success"}
@@ -1437,21 +1456,32 @@ class DeleteProjectManager:
             # Step 2: Delete ArgoCD application file from GitOps
             logger.info(f"Deleting ArgoCD application file for {project_name}/{deployment_name}")
 
-            # Stap 8 mag niet draaien als het argo-bestand nog in git staat (RC-254).
-            # Die check voorkomt dat de Application voorgoed blijft draaien.
-            argocd_file_removed = False
+            gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
+            logger.info(f"Attempting to delete ArgoCD application file: {argocd_app_file_path}")
 
-            try:
-                gitops_connector = await self.project_manager.get_git_connector_for_argocd()
+            working_dir = await gitops_connector.get_working_dir()
+            project_dir = os.path.join(working_dir, cluster, project_name)
+            file_full_path = os.path.join(working_dir, argocd_app_file_path)
 
-                argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-                logger.info(f"Attempting to delete ArgoCD application file: {argocd_app_file_path}")
+            # De AppProject en de repository-secrets gaan mee in DEZE mutatie. Ze stonden na
+            # de commit, dus hun verwijdering bleef ongecommit in de werkboom staan, en de
+            # kustomization die er net voor herbouwd werd noemde ze nog.
+            current_base_namespace = deployment.get("namespace")
+            namespace_used_by_others = any(
+                other_dep.get("name") != deployment_name
+                and other_dep.get("cluster") == cluster
+                and other_dep.get("namespace") == current_base_namespace
+                for other_dep in project_data.get("deployments", [])
+            )
+            current_repo = deployment.get("repository")
+            repo_used_by_others = current_repo is not None and any(
+                other_dep.get("name") != deployment_name and other_dep.get("repository") == current_repo
+                for other_dep in project_data.get("deployments", [])
+            )
 
-                await gitops_connector.ensure_repo_cloned()
-                file_full_path = os.path.join(await gitops_connector.get_working_dir(), argocd_app_file_path)
-                file_exists = os.path.exists(file_full_path)
-
-                if file_exists:
+            async def _verwijder_argocd_bestanden() -> None:
+                if os.path.exists(file_full_path):
                     os.remove(file_full_path)
                     deletion_results["operations"].append(
                         {
@@ -1474,11 +1504,27 @@ class DeleteProjectManager:
                         }
                     )
 
+                if not namespace_used_by_others:
+                    appproject_name = generate_argocd_appproject_prefix(project_name, current_base_namespace)
+                    appproject_filename = get_output_filename_from_template(
+                        "argocd-appproject.yaml.jinja", appproject_name
+                    )
+                    appproject_file_path = os.path.join(project_dir, appproject_filename)
+                    if os.path.exists(appproject_file_path):
+                        os.remove(appproject_file_path)
+                        logger.info(f"Deleted AppProject file: {appproject_filename}")
+
+                if current_repo and not repo_used_by_others:
+                    unique_repo_name = f"{project_name}-{current_repo}"
+                    for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]:
+                        filename = get_output_filename_from_template(template, unique_repo_name)
+                        file_path = os.path.join(project_dir, filename)
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            logger.info(f"Deleted repository file: {filename}")
+
                 # Rebuild kustomization file
                 logger.info(f"Rebuilding kustomization.yaml for project {project_name} in cluster {cluster}")
-                working_dir = await gitops_connector.get_working_dir()
-                project_dir = os.path.join(working_dir, cluster, project_name)
-
                 kustomization_success = self.project_manager._manifest_generator.create_kustomization_files(
                     output_dir=project_dir,
                     namespace=get_argo_namespace(cluster),
@@ -1505,66 +1551,12 @@ class DeleteProjectManager:
                     )
                     logger.error(f"Failed to rebuild kustomization.yaml for project {project_name}")
 
-                # Commit changes to GitOps repository
-                commit_message = f"Delete ArgoCD application for deployment '{deployment_name}' from project '{project_name}' and rebuild kustomization"
-                await gitops_connector.commit_and_push(commit_message)
-                deletion_results["operations"].append(
-                    {"type": "gitops_commit", "status": "success", "message": commit_message}
-                )
-                argocd_file_removed = True
-
-            except Exception as e:
-                argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_application_file_deletion",
-                        "target": argocd_app_file_path,
-                        "cluster": cluster,
-                        "deployment": deployment_name,
-                        "status": "error",
-                        "error": str(e),
-                    }
-                )
-                deletion_results["errors"].append(f"Error deleting ArgoCD application file: {e}")
-                logger.exception("Error deleting ArgoCD application file")
-
-            # Step 2.1: Delete ArgoCD AppProject file (only if no other deployments use the same namespace)
-            current_base_namespace = deployment.get("namespace")
-            namespace_used_by_others = any(
-                other_dep.get("name") != deployment_name
-                and other_dep.get("cluster") == cluster
-                and other_dep.get("namespace") == current_base_namespace
-                for other_dep in project_data.get("deployments", [])
+            # Let git exceptions bubble up for worker retry.
+            commit_message = f"Delete ArgoCD application for deployment '{deployment_name}' from project '{project_name}' and rebuild kustomization"
+            await gitops_connector.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
+            deletion_results["operations"].append(
+                {"type": "gitops_commit", "status": "success", "message": commit_message}
             )
-
-            if not namespace_used_by_others:
-                appproject_name = generate_argocd_appproject_prefix(project_name, current_base_namespace)
-                appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
-                appproject_file_path = os.path.join(
-                    await gitops_connector.get_working_dir(), cluster, project_name, appproject_filename
-                )
-                if os.path.exists(appproject_file_path):
-                    os.remove(appproject_file_path)
-                    logger.info(f"Deleted AppProject file: {appproject_filename}")
-
-            # Step 2.2: Delete Repository Secret files
-            current_repo = deployment.get("repository")
-            if current_repo:
-                repo_used_by_others = any(
-                    other_dep.get("name") != deployment_name and other_dep.get("repository") == current_repo
-                    for other_dep in project_data.get("deployments", [])
-                )
-
-                if not repo_used_by_others:
-                    unique_repo_name = f"{project_name}-{current_repo}"
-                    for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]:
-                        filename = get_output_filename_from_template(template, unique_repo_name)
-                        file_path = os.path.join(
-                            await gitops_connector.get_working_dir(), cluster, project_name, filename
-                        )
-                        if os.path.exists(file_path):
-                            os.remove(file_path)
-                            logger.info(f"Deleted repository file: {filename}")
 
             # Step 3: Refresh user-applications
             try:
@@ -1970,7 +1962,7 @@ class DeleteProjectManager:
                         folder_exists = os.path.exists(folder_full_path)
 
                         if folder_exists:
-                            shutil.rmtree(folder_full_path)
+                            await asyncio.to_thread(shutil.rmtree, folder_full_path)
                             deletion_results["operations"].append(
                                 {
                                     "type": "deployment_folder_deletion",
@@ -2030,7 +2022,8 @@ class DeleteProjectManager:
             # remote and re-apply instead of failing with "manual intervention required".
             #
             # Alleen als git leeg is voor deze deployment (RC-254): anders geeft stap 8 een
-            # 404 en kan een retry het niet meer repareren.
+            # 404 en kan een retry het niet meer repareren. Het argo-bestand staat hier niet
+            # meer bij als voorwaarde: stap 2 gooit door als zijn commit mislukt (RC-265).
             #
             # En alleen als de cluster-delete BEVESTIGD is. Het projectbestand is de
             # gewenste staat die elke latere run leest, dus een verwijdering die gecommit
@@ -2040,10 +2033,8 @@ class DeleteProjectManager:
             # delete_deployment_from_yaml_change heeft met opzet geen tegenhanger van deze
             # stap: daar heeft de gebruiker de entry zelf weggehaald, dus het bestand is de
             # INVOER en er is niets om terug te schrijven.
-            if not argocd_file_removed or not manifest_folder_removed or not argocd_app_deleted:
-                if not argocd_file_removed:
-                    reason = "ArgoCD application file still in git"
-                elif not manifest_folder_removed:
+            if not manifest_folder_removed or not argocd_app_deleted:
+                if not manifest_folder_removed:
                     reason = "deployment manifests still in git"
                 else:
                     reason = "ArgoCD application not confirmed deleted"
@@ -2260,67 +2251,68 @@ class DeleteProjectManager:
         try:
             gitops_connector = await self.project_manager.get_git_connector_for_argocd()
             argocd_app_file_path = generate_gitops_argocd_application_path(cluster, project_name, deployment_name)
-            await gitops_connector.ensure_repo_cloned()
-            file_full_path = os.path.join(await gitops_connector.get_working_dir(), argocd_app_file_path)
-
-            if os.path.exists(file_full_path):
-                os.remove(file_full_path)
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_application_file_deletion",
-                        "target": argocd_app_file_path,
-                        "status": "success",
-                    }
-                )
-                logger.info("Deleted ArgoCD application file: %s", argocd_app_file_path)
-            else:
-                deletion_results["operations"].append(
-                    {
-                        "type": "argocd_application_file_deletion",
-                        "target": argocd_app_file_path,
-                        "status": "not_found",
-                    }
-                )
-
-            # Rebuild kustomization
             working_dir = await gitops_connector.get_working_dir()
             project_dir = os.path.join(working_dir, cluster, project_name)
-            if os.path.isdir(project_dir):
-                self.project_manager._manifest_generator.create_kustomization_files(
-                    output_dir=project_dir,
-                    namespace=get_argo_namespace(cluster),
-                )
+            file_full_path = os.path.join(working_dir, argocd_app_file_path)
 
-            # Delete AppProject if namespace no longer used by other deployments
-            if not namespace_used_by_others and base_namespace:
-                appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
-                appproject_filename = get_output_filename_from_template("argocd-appproject.yaml.jinja", appproject_name)
-                appproject_path = os.path.join(working_dir, cluster, project_name, appproject_filename)
-                if os.path.exists(appproject_path):
-                    os.remove(appproject_path)
-                    logger.info("Deleted AppProject file: %s", appproject_filename)
-
-            # Delete repository secret files if not shared
             repository_name = deployment_data.get("repository")
-            if repository_name:
-                repo_used_by_others = any(
-                    other_dep.get("name") != deployment_name and other_dep.get("repository") == repository_name
-                    for other_dep in project_data.get("deployments", [])
-                )
-                if not repo_used_by_others:
+            repo_used_by_others = repository_name is not None and any(
+                other_dep.get("name") != deployment_name and other_dep.get("repository") == repository_name
+                for other_dep in project_data.get("deployments", [])
+            )
+
+            async def _verwijder_argocd_bestanden() -> None:
+                if os.path.exists(file_full_path):
+                    os.remove(file_full_path)
+                    deletion_results["operations"].append(
+                        {
+                            "type": "argocd_application_file_deletion",
+                            "target": argocd_app_file_path,
+                            "status": "success",
+                        }
+                    )
+                    logger.info("Deleted ArgoCD application file: %s", argocd_app_file_path)
+                else:
+                    deletion_results["operations"].append(
+                        {
+                            "type": "argocd_application_file_deletion",
+                            "target": argocd_app_file_path,
+                            "status": "not_found",
+                        }
+                    )
+
+                if not namespace_used_by_others and base_namespace:
+                    appproject_name = generate_argocd_appproject_prefix(project_name, base_namespace)
+                    appproject_filename = get_output_filename_from_template(
+                        "argocd-appproject.yaml.jinja", appproject_name
+                    )
+                    appproject_path = os.path.join(project_dir, appproject_filename)
+                    if os.path.exists(appproject_path):
+                        os.remove(appproject_path)
+                        logger.info("Deleted AppProject file: %s", appproject_filename)
+
+                if repository_name and not repo_used_by_others:
                     unique_repo_name = f"{project_name}-{repository_name}"
                     for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]:
                         filename = get_output_filename_from_template(template, unique_repo_name)
-                        file_path = os.path.join(working_dir, cluster, project_name, filename)
+                        file_path = os.path.join(project_dir, filename)
                         if os.path.exists(file_path):
                             os.remove(file_path)
                             logger.info("Deleted repository file: %s", filename)
+
+                # Rebuild kustomization NA de verwijderingen: ervoor noemde hij nog de
+                # AppProject en de repository-secrets die er daarna niet meer waren.
+                if os.path.isdir(project_dir):
+                    self.project_manager._manifest_generator.create_kustomization_files(
+                        output_dir=project_dir,
+                        namespace=get_argo_namespace(cluster),
+                    )
 
             # Commit GitOps changes
             commit_message = (
                 f"Remove ArgoCD resources for deleted deployment '{deployment_name}' from project '{project_name}'"
             )
-            await gitops_connector.commit_and_push(commit_message)
+            await gitops_connector.mutate_and_push(commit_message, _verwijder_argocd_bestanden)
             deletion_results["operations"].append(
                 {
                     "type": "gitops_commit",
@@ -2663,7 +2655,7 @@ class DeleteProjectManager:
                     folder_full_path = os.path.join(await manifest_connector.get_working_dir(), deployment_folder_path)
 
                     if os.path.exists(folder_full_path):
-                        shutil.rmtree(folder_full_path)
+                        await asyncio.to_thread(shutil.rmtree, folder_full_path)
                         commit_message = f"Delete deployment '{deployment_name}' from project '{project_name}'"
                         await manifest_connector.commit_and_push_changes(commit_message)
                         deletion_results["operations"].append(

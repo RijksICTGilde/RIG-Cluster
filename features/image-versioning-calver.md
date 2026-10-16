@@ -21,9 +21,29 @@ neer op opnieuw bouwen vanaf een oudere commit en hopen dat het resultaat hetzel
 De datum sorteert chronologisch en is meteen leesbaar. De tijd maakt elke build uniek, ook twee
 builds van dezelfde commit. De hash zegt precies welke broncode erin zit.
 
-Staan er ongecommitte wijzigingen in de werkkopie, dan komt er `-dirty` achter en waarschuwt de task.
-De hash beschrijft dan namelijk niet wat er gepubliceerd wordt, wat juist de eigenschap is waar het
-om begonnen was.
+Staan er ongecommitte wijzigingen in de BRONPADEN VAN HET IMAGE, dan komt er `-dirty` achter en
+waarschuwt de task. De hash beschrijft dan namelijk niet wat er gepubliceerd wordt, wat juist de
+eigenschap is waar het om begonnen was.
+
+De bronpaden en niet de hele repo: voor de operations-manager is dat `operations-manager/` (de
+`COPY`-regels in `operations-manager/Dockerfile`), voor `publish-keycloak-image` zijn dat
+`keycloak-migration/relay-email-sender`, `keycloak-migration/custom-mapper` en
+`images/keycloak-zad`. Over de hele repo was de tag altijd `-dirty`, omdat
+`publish-operations-manager` afhangt van `generate-env-secrets-for-operations-manager` en die het
+secrets-bestand in `bootstrap/` herschrijft. Daarmee verloor `-dirty` zijn betekenis, en weigerde de
+guard in `pin-operations-manager-image` ("komt van ongecommitte bron en hoort niet op productie") een
+image dat in orde was.
+
+De berekening staat in `scripts/calver-tag.sh`, dat zijn paden meekrijgt:
+
+```yaml
+IMAGE_VERSION:
+  sh: scripts/calver-tag.sh operations-manager
+```
+
+Eén script en niet een blok per taak, want er stonden drie identieke kopieën en nu verschillen
+alleen de paden. De vuilheidsmeting zelf doet `scripts/bron-tag.sh`, die hem al deed voor
+`SANDBOX_OM_TAG`.
 
 De tag opvragen zonder te bouwen:
 

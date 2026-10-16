@@ -95,7 +95,11 @@ class TestAuthorizationMiddlewareDispatch:
 
     @pytest.mark.asyncio
     async def test_metrics_scrape_endpoint_skips_auth(self):
-        """The exact /metrics Prometheus scrape endpoint must remain public."""
+        """De SSO-middleware moet /metrics blijven overslaan: Prometheus heeft geen sessie.
+
+        Het endpoint zelf is niet open, het eist het scrape-token
+        (``tests/test_metrics_scrape_token.py``).
+        """
         middleware = self._make_middleware()
         request = self._make_request("/metrics")
         expected_response = Response(content="ok")

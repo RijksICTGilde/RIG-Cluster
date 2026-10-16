@@ -9,12 +9,13 @@ These tests pin the corrected behavior: ArgoCD is the fast path, but a
 the Kubernetes API (the honest source of truth) before reporting success.
 """
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.argo import ArgoConnector
-from opi.connectors.kubectl import KubectlConnectionError, KubectlExecutionError
+from opi.connectors.kubectl import KubectlConnectionError, KubectlConnector, KubectlExecutionError
 
 
 def _kubectl_returning(value: bool | None) -> MagicMock:
@@ -101,6 +102,9 @@ def _kubectl_with_progress(progress: list[tuple[bool, int, bool] | None], gone_a
     kubectl.argocd_application_exists = AsyncMock(side_effect=_exists)
     kubectl.argocd_application_deletion_progress = AsyncMock(side_effect=_progress)
     kubectl.list_namespaced_resource_types = AsyncMock(return_value=["secrets", "deployments.apps"])
+    # Geen typelijst uit de Application, dus deze dubbel meet over de volle discovery. De
+    # keuze tussen die twee staat in de toetsen van RC-265 onderaan dit bestand.
+    kubectl.argocd_application_resource_types = AsyncMock(return_value=None)
     return kubectl
 
 
@@ -629,3 +633,184 @@ async def test_an_inventory_that_throws_once_keeps_being_measured_after_it() -> 
         "de discovery blijft wel onthouden: het venster komt van de metingen, niet van een "
         "discovery die per poll opnieuw gedaan wordt"
     )
+
+
+# ---------------------------------------------------------------------------
+# RC-265: de wachtlus inventariseert alleen de types die de app beheert
+# ---------------------------------------------------------------------------
+
+#: ``api-resources -o wide --no-headers`` voor een cluster dat meer types serveert dan de
+#: Application beheert. De volle discovery was op odcn-production 321 types, een
+#: ``kubectl get`` daarover 60s, per poll en per gelijktijdige wacht.
+_WIDE_API_RESOURCES = (
+    "configmaps      cm   v1                     true   ConfigMap     create,delete,get,list\n"
+    "secrets              v1                     true   Secret        create,delete,get,list\n"
+    "services        svc  v1                     true   Service       create,delete,get,list\n"
+    "deployments     deploy  apps/v1             true   Deployment    create,delete,get,list\n"
+    "ingresses       ing  networking.k8s.io/v1   true   Ingress       create,delete,get,list\n"
+    "prometheuses         monitoring.coreos.com/v1  true  Prometheus  create,delete,get,list\n"
+)
+
+
+def _tracked_item(kind: str, name: str) -> dict:
+    return {
+        "kind": kind,
+        "metadata": {
+            "name": name,
+            "namespace": "rig-prd-nd-j7s",
+            "annotations": {"argocd.argoproj.io/tracking-id": "nd-j7s-pr-63:apps/Deployment:rig-prd-nd-j7s/x"},
+        },
+    }
+
+
+def _kubectl_cluster(
+    status_resources: list[dict] | None,
+    counts: list[int],
+    gevraagde_types: list[list[str]],
+) -> KubectlConnector:
+    """Een echte KubectlConnector op een gestubde kubectl.
+
+    Alleen ``_run_kubectl_command`` is vervangen, dus de typekeuze, de kind-vertaling en de
+    inventaris lopen door de code die in productie draait. Elke inventaris noteert de types
+    die hij opvroeg in ``gevraagde_types`` en geeft ``counts`` resources terug.
+    """
+    with patch("opi.connectors.kubectl.asyncio.create_task", new=MagicMock()):
+        kubectl = KubectlConnector()
+    KubectlConnector.isConnected = True
+
+    application: dict = {
+        "metadata": {"name": "nd-j7s-pr-63", "deletionTimestamp": "2026-10-15T18:51:00Z"},
+        "spec": {"destination": {"namespace": "rig-prd-nd-j7s"}},
+    }
+    if status_resources is not None:
+        application["status"] = {"resources": status_resources}
+
+    async def _run(args: list[str], env=None, stdin_input=None, timeout: int = 60) -> tuple[str, str, int]:
+        if args[:2] == ["get", "application"]:
+            if "-o" in args and args[args.index("-o") + 1] == "name":
+                return "application.argoproj.io/nd-j7s-pr-63", "", 0
+            return json.dumps(application), "", 0
+        if args[0] == "api-resources":
+            if "--verbs=list,delete" in args:
+                return "configmaps\nsecrets\nservices\ndeployments.apps\ningresses.networking.k8s.io\n", "", 0
+            return _WIDE_API_RESOURCES, "", 0
+        if args[0] == "get":
+            gevraagde_types.append(args[1].split(","))
+            over = counts[min(len(gevraagde_types) - 1, len(counts) - 1)]
+            items = [_tracked_item("Secret", f"s{i}") for i in range(over)]
+            return json.dumps({"items": items}), "", 0
+        raise AssertionError(f"onverwacht kubectl-commando: {args}")
+
+    kubectl._run_kubectl_command = AsyncMock(side_effect=_run)  # type: ignore[method-assign]
+    return kubectl
+
+
+async def _wacht(kubectl: KubectlConnector) -> bool:
+    """Vier polls: ``max_retries`` 2 plus een voortgangsvenster van 20s / 5s = 4."""
+    argo = ArgoConnector()
+    with (
+        patch.object(argo, "application_exists", AsyncMock(return_value=True)),
+        patch("asyncio.sleep", AsyncMock()),
+    ):
+        return await argo.wait_for_application_deletion(
+            "nd-j7s-pr-63",
+            max_retries=2,
+            retry_delay=5,
+            kubectl_connector=kubectl,
+            namespace="rig-prd-operations",
+            progress_window_seconds=20,
+        )
+
+
+@pytest.mark.asyncio
+async def test_inventaris_vraagt_alleen_de_types_die_de_app_beheert() -> None:
+    """De drie kinds uit ``status.resources``, niet elk namespaced type van het cluster."""
+    gevraagde_types: list[list[str]] = []
+    kubectl = _kubectl_cluster(
+        [
+            {"group": "", "kind": "Secret", "name": "creds"},
+            {"group": "apps", "kind": "Deployment", "name": "api"},
+            {"group": "networking.k8s.io", "kind": "Ingress", "name": "api"},
+        ],
+        counts=[30, 20, 10],
+        gevraagde_types=gevraagde_types,
+    )
+
+    await _wacht(kubectl)
+
+    assert gevraagde_types, "er is geen inventaris gedaan"
+    for types in gevraagde_types:
+        assert sorted(types) == ["deployments.apps", "ingresses.networking.k8s.io", "secrets"]
+
+
+@pytest.mark.asyncio
+async def test_de_telling_blijft_live_in_de_namespace() -> None:
+    """Alleen de TYPELIJST komt uit ``status.resources``, nooit het aantal: dat bevriest
+    zodra er een deletionTimestamp staat. De wacht moet de daling dus echt meten."""
+    gevraagde_types: list[list[str]] = []
+    kubectl = _kubectl_cluster(
+        [{"group": "", "kind": "Secret", "name": "creds"}],
+        counts=[30, 20, 10, 4],
+        gevraagde_types=gevraagde_types,
+    )
+    gemeten: list[int] = []
+    echte_meting = kubectl.argocd_application_deletion_progress
+
+    async def _meet(app_name: str, namespace=None, resource_types=None):
+        uitkomst = await echte_meting(app_name, namespace, resource_types)
+        if uitkomst is not None:
+            gemeten.append(uitkomst[1])
+        return uitkomst
+
+    with patch.object(kubectl, "argocd_application_deletion_progress", AsyncMock(side_effect=_meet)):
+        await _wacht(kubectl)
+
+    assert gemeten == [30, 20, 10, 4], (
+        "de Application noemt een deletionTimestamp en een vast aantal resources; het "
+        "gemeten aantal hoort uit de namespace te komen en te dalen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_zonder_status_resources_valt_de_wacht_terug_op_de_volle_discovery() -> None:
+    gevraagde_types: list[list[str]] = []
+    kubectl = _kubectl_cluster(None, counts=[5], gevraagde_types=gevraagde_types)
+
+    await _wacht(kubectl)
+
+    assert gevraagde_types
+    for types in gevraagde_types:
+        assert sorted(types) == [
+            "configmaps",
+            "deployments.apps",
+            "ingresses.networking.k8s.io",
+            "secrets",
+            "services",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_een_kind_dat_het_cluster_niet_namespaced_serveert_valt_terug() -> None:
+    """Zonder vertaling van dat kind is er geen typelijst die de app dekt, en een halve
+    lijst zou een namespace als leger meten dan hij is."""
+    gevraagde_types: list[list[str]] = []
+    kubectl = _kubectl_cluster(
+        [
+            {"group": "", "kind": "Secret", "name": "creds"},
+            {"group": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "lezer"},
+        ],
+        counts=[5],
+        gevraagde_types=gevraagde_types,
+    )
+
+    await _wacht(kubectl)
+
+    assert gevraagde_types
+    for types in gevraagde_types:
+        assert sorted(types) == [
+            "configmaps",
+            "deployments.apps",
+            "ingresses.networking.k8s.io",
+            "secrets",
+            "services",
+        ]

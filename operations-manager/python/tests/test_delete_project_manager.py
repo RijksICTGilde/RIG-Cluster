@@ -6,10 +6,22 @@ Verifies separation of concerns:
 - _cleanup_project_infrastructure() runs only when project uses namespace-specific services
 """
 
+from __future__ import annotations
+
+import os
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.manager.delete_project_manager import DeleteProjectManager, parse_retention_period_hours
+from opi.utils.naming import (
+    generate_argocd_appproject_prefix,
+    generate_gitops_argocd_application_path,
+    get_output_filename_from_template,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _make_project_manager_mock() -> MagicMock:
@@ -37,6 +49,13 @@ def _make_project_manager_mock() -> MagicMock:
     mock_gitops.ensure_repo_cloned = AsyncMock()
     mock_gitops.get_working_dir = AsyncMock(return_value="/tmp/gitops")
     mock_gitops.commit_and_push = AsyncMock()
+
+    # Dezelfde vorm als GitConnector.mutate_and_push: de mutatie draait en zijn uitkomst komt
+    # terug. Een kale AsyncMock zou de mutatie nooit aanroepen.
+    async def _mutate_and_push(message, mutate):
+        return await mutate()
+
+    mock_gitops.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
     mock_pm.get_git_connector_for_argocd = AsyncMock(return_value=mock_gitops)
 
     mock_git_projects = AsyncMock()
@@ -270,7 +289,7 @@ class TestCleanupProjectInfrastructure:
 
         # Verify gitops commit was made
         gitops_connector = await mock_pm.get_git_connector_for_argocd()
-        gitops_connector.commit_and_push.assert_called()
+        gitops_connector.mutate_and_push.assert_awaited()
 
         # Verify success operation recorded
         folder_ops = [
@@ -323,7 +342,7 @@ class TestDeleteProjectArgocdFolder:
         mock_rmtree.assert_called_once_with("/tmp/gitops/local/test-project")
 
         gitops_connector = await mock_pm.get_git_connector_for_argocd()
-        gitops_connector.commit_and_push.assert_called()
+        gitops_connector.mutate_and_push.assert_awaited()
         mock_argo.refresh_application.assert_called_once_with("user-applications")
 
         folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
@@ -341,8 +360,8 @@ class TestDeleteProjectArgocdFolder:
         with patch("os.path.exists", return_value=False):
             await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
-        gitops_connector = await mock_pm.get_git_connector_for_argocd()
-        gitops_connector.commit_and_push.assert_not_called()
+        commit_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_gitops_commit"]
+        assert commit_ops == [], "zonder map valt er niets te committen"
 
         folder_ops = [op for op in deletion_results["operations"] if op["type"] == "project_argocd_folder_deletion"]
         assert len(folder_ops) == 1
@@ -379,30 +398,41 @@ class TestDeleteProjectArgocdFolder:
         )
 
     @pytest.mark.asyncio
-    async def test_working_tree_is_refreshed_before_the_existence_check(self):
+    async def test_de_beslissing_valt_binnen_de_gelockte_mutatie(self):
         """De aanwezigheid van de map wordt op een VERSE checkout bepaald.
 
         De connector wordt gecached op de project-manager en `ensure_repo_cloned` fetcht
-        hooguit eenmaal per proces - en `git fetch` verplaatst alleen de remote refs, niet
-        de werkboom. Zonder verversen beslist `os.path.exists` op een checkout die ouder
-        kan zijn dan het project zelf, en dat is hoe de wezen ontstonden.
+        hooguit eenmaal per proces, en `git fetch` verplaatst alleen de remote refs, niet de
+        werkboom. `mutate_and_push` reset eerst naar de remote en past daarna de mutatie toe,
+        dus de beslissing hoort IN die mutatie te staan en niet ervoor: beslissen op een oude
+        checkout is hoe de vijf verweesde ArgoCD-mappen ontstonden.
         """
         mock_pm = _make_project_manager_mock()
         manager = DeleteProjectManager(mock_pm)
         deletion_results: dict = {"operations": [], "errors": [], "success": True}
+        gitops_connector = await mock_pm.get_git_connector_for_argocd()
 
-        mock_argo = AsyncMock()
-        mock_argo.refresh_application = AsyncMock(return_value=True)
+        bekeken: list[str] = []
+
+        async def _mutate_and_push(message, mutate):
+            assert not bekeken, f"de map is bekeken voordat de stand ververst werd: {bekeken}"
+            return await mutate()
+
+        gitops_connector.mutate_and_push = AsyncMock(side_effect=_mutate_and_push)
+
+        def _exists(path):
+            bekeken.append(path)
+            return True
 
         with (
-            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
-            patch("os.path.exists", return_value=True),
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=AsyncMock()),
+            patch("os.path.exists", side_effect=_exists),
             patch("shutil.rmtree"),
         ):
             await manager._delete_project_argocd_folder("test-project", "local", deletion_results)
 
-        gitops_connector = await mock_pm.get_git_connector_for_argocd()
-        gitops_connector.refresh_working_tree.assert_awaited()
+        assert "/tmp/gitops/local/test-project" in bekeken
+        gitops_connector.mutate_and_push.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_errors_are_captured_not_raised(self):
@@ -496,6 +526,59 @@ class TestDeleteDeploymentSeparation:
         wait_ops = [op for op in result["operations"] if op["type"] == "argocd_app_deletion_wait"]
         assert wait_ops, "the deletion wait must run"
         assert wait_ops[0]["status"] == "success", wait_ops
+
+    @pytest.mark.asyncio
+    async def test_de_appproject_en_repo_bestanden_zijn_weg_voor_de_kustomization_herbouw(self, tmp_path: Path) -> None:
+        """Dezelfde valkuil als bij delete_deployment (RC-265): de kustomization werd eerst
+        herbouwd en noemde dan nog de AppProject en de repository-bestanden die er na de
+        verwijdering niet meer waren. Nu gaat de herbouw NA die twee verwijderingen."""
+        mock_pm = _make_project_manager_mock()
+        manager = DeleteProjectManager(mock_pm)
+
+        werkmap = tmp_path / "argo-applications"
+        project_dir = werkmap / "local" / "test-project"
+        project_dir.mkdir(parents=True)
+        gitops = await mock_pm.get_git_connector_for_argocd()
+        gitops.get_working_dir = AsyncMock(return_value=str(werkmap))
+
+        argocd_app_path = werkmap / generate_gitops_argocd_application_path("local", "test-project", "pr-42")
+        appproject_name = generate_argocd_appproject_prefix("test-project", "test-project")
+        appproject_path = project_dir / get_output_filename_from_template(
+            "argocd-appproject.yaml.jinja", appproject_name
+        )
+        repo_paths = [
+            project_dir / get_output_filename_from_template(template, "test-project-main-repo")
+            for template in ["argo-repository-https.yaml.jinja", "argo-repository.yaml.jinja"]
+        ]
+        for pad in [argocd_app_path, appproject_path, *repo_paths]:
+            pad.write_text("kind: Placeholder\n")
+
+        nog_aanwezig_bij_herbouw: list[bool] = []
+
+        def _herbouw(output_dir: str, **kwargs) -> bool:
+            nog_aanwezig_bij_herbouw.append(appproject_path.exists() or any(p.exists() for p in repo_paths))
+            return True
+
+        mock_pm._manifest_generator.create_kustomization_files = MagicMock(side_effect=_herbouw)
+
+        mock_argo = AsyncMock()
+        mock_argo.refresh_application = AsyncMock(return_value=True)
+        mock_argo.application_exists = AsyncMock(return_value=False)
+
+        with (
+            patch("opi.manager.delete_project_manager.create_argo_connector", return_value=mock_argo),
+            patch("os.path.exists", side_effect=os.path.exists),
+        ):
+            result = await manager.delete_deployment_from_yaml_change(
+                "test-project", _make_deployment("pr-42"), _make_project_data(deployments=[])
+            )
+
+        assert nog_aanwezig_bij_herbouw == [False], (
+            "de AppProject en/of de repository-bestanden stonden nog toen de kustomization herbouwd werd"
+        )
+        assert not appproject_path.exists()
+        assert not any(p.exists() for p in repo_paths)
+        assert [op for op in result["operations"] if op["type"] == "argocd_cleanup"] == [], result["errors"]
 
     @pytest.mark.asyncio
     async def test_deployment_resources_are_cleaned(self):

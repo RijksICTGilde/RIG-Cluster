@@ -9,7 +9,9 @@ import logging
 
 from fastapi import APIRouter
 from fastapi.responses import Response
+from opi.api.endpoint_util import validate_metrics_scrape_token
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,8 @@ prometheus_router: APIRouter = APIRouter(
 
 
 @prometheus_router.get("/metrics", include_in_schema=False)
-async def prometheus_metrics() -> Response:
+@validate_metrics_scrape_token
+async def prometheus_metrics(request: Request) -> Response:
     """Prometheus scrape endpoint.
 
     Returns all registered metrics in Prometheus text exposition format.

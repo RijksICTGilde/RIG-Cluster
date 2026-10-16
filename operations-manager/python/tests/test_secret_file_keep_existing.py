@@ -48,12 +48,14 @@ def _sleutels(age_keypair: tuple[str, str], make_age_keypair) -> None:
     WRONG_KEY, _publiek = make_age_keypair()
 
 
-def _write(directory: str, value: str, *, keep: bool = True, private_key: str | None | object = _EIGEN_SLEUTEL) -> str:
+async def _write(
+    directory: str, value: str, *, keep: bool = True, private_key: str | None | object = _EIGEN_SLEUTEL
+) -> str:
     """Schrijf het cookie-secret en geef de waarde uit de geschreven plaintext terug."""
     pm = ProjectManager.__new__(ProjectManager)
     pm._manifest_generator = ManifestGenerator()
     created_files: list[str] = []
-    pm._write_secret_file(
+    await pm._write_secret_file(
         SecretFileSpec(secret_name=NAME, secret_pairs={"cookie-secret": value}, keep_existing_values=keep),
         deployment_name="productie",
         namespace="rig-demo",
@@ -77,43 +79,43 @@ def _read(path: str) -> str:
 
 
 class TestKeepExistingValues:
-    def test_zonder_vorige_ciphertext_komt_de_nieuwe_waarde(self, tmp_path):
-        assert _write(str(tmp_path), "eerste") == "eerste"
+    async def test_zonder_vorige_ciphertext_komt_de_nieuwe_waarde(self, tmp_path):
+        assert await _write(str(tmp_path), "eerste") == "eerste"
 
-    def test_de_vorige_waarde_gaat_voor(self, tmp_path):
+    async def test_de_vorige_waarde_gaat_voor(self, tmp_path):
         d = str(tmp_path)
-        _write(d, "eerste")
+        await _write(d, "eerste")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert _write(d, "tweede") == "eerste"
+        assert await _write(d, "tweede") == "eerste"
 
-    def test_tweede_run_laat_de_ciphertext_ongemoeid(self, tmp_path):
+    async def test_tweede_run_laat_de_ciphertext_ongemoeid(self, tmp_path):
         d = str(tmp_path)
-        _write(d, "eerste")
+        await _write(d, "eerste")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
         first = _read(_sops_path(d))
 
-        _write(d, "tweede")
+        await _write(d, "tweede")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
         assert _read(_sops_path(d)) == first
 
-    def test_zonder_de_vlag_wint_de_nieuwe_waarde(self, tmp_path):
+    async def test_zonder_de_vlag_wint_de_nieuwe_waarde(self, tmp_path):
         d = str(tmp_path)
-        _write(d, "eerste")
+        await _write(d, "eerste")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert _write(d, "tweede", keep=False) == "tweede"
+        assert await _write(d, "tweede", keep=False) == "tweede"
 
-    def test_een_sleutel_die_de_vorige_versie_niet_heeft_krijgt_de_nieuwe_waarde(self, tmp_path):
+    async def test_een_sleutel_die_de_vorige_versie_niet_heeft_krijgt_de_nieuwe_waarde(self, tmp_path):
         d = str(tmp_path)
         with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml"), "w") as f:
             f.write("apiVersion: v1\nkind: Secret\nmetadata:\n  name: x\nstringData:\n  anders: oud\n")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert _write(d, "tweede") == "tweede"
+        assert await _write(d, "tweede") == "tweede"
 
-    def test_een_sleutel_die_de_dienst_niet_meer_levert_komt_niet_terug(self, tmp_path):
+    async def test_een_sleutel_die_de_dienst_niet_meer_levert_komt_niet_terug(self, tmp_path):
         d = str(tmp_path)
         with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml"), "w") as f:
             f.write(
@@ -121,19 +123,19 @@ class TestKeepExistingValues:
             )
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        _write(d, "tweede")
+        await _write(d, "tweede")
 
         with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml")) as f:
             assert yaml.safe_load(f)["stringData"] == {"cookie-secret": "oud"}
 
-    def test_een_gewijzigd_aliassjabloon_wordt_opnieuw_opgelost(self, tmp_path):
+    async def test_een_gewijzigd_aliassjabloon_wordt_opnieuw_opgelost(self, tmp_path):
         d = str(tmp_path)
 
-        def write(password: str, template: str) -> dict[str, str]:
+        async def write(password: str, template: str) -> dict[str, str]:
             pm = ProjectManager.__new__(ProjectManager)
             pm._manifest_generator = ManifestGenerator()
             pm._deployment_aliases = {"productie": {"secret": {"redis": {"REDIS_URL": template}}}}
-            pm._write_secret_file(
+            await pm._write_secret_file(
                 SecretFileSpec(
                     secret_name=NAME,
                     secret_pairs={"REDIS_PASSWORD": password},
@@ -151,35 +153,35 @@ class TestKeepExistingValues:
             with open(os.path.join(d, f"{NAME}-secret.to-sops.yaml")) as f:
                 return yaml.safe_load(f)["stringData"]
 
-        write("geheim", "redis://:$REDIS_PASSWORD@oudhost")
+        await write("geheim", "redis://:$REDIS_PASSWORD@oudhost")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert write("vers", "redis://:$REDIS_PASSWORD@nieuwhost") == {
+        assert await write("vers", "redis://:$REDIS_PASSWORD@nieuwhost") == {
             "REDIS_PASSWORD": "geheim",
             "REDIS_URL": "redis://:geheim@nieuwhost",
         }
 
 
 class TestFaaltNaarDeNieuweWaarde:
-    def test_onleesbare_ciphertext(self, tmp_path):
+    async def test_onleesbare_ciphertext(self, tmp_path):
         d = str(tmp_path)
         with open(_sops_path(d), "w") as f:
             f.write("dit is: [geen sops")
-        assert _write(d, "tweede") == "tweede"
+        assert await _write(d, "tweede") == "tweede"
 
-    def test_verkeerde_sleutel(self, tmp_path):
+    async def test_verkeerde_sleutel(self, tmp_path):
         d = str(tmp_path)
-        _write(d, "eerste")
+        await _write(d, "eerste")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert _write(d, "tweede", private_key=WRONG_KEY) == "tweede"
+        assert await _write(d, "tweede", private_key=WRONG_KEY) == "tweede"
 
-    def test_geen_sleutel(self, tmp_path):
+    async def test_geen_sleutel(self, tmp_path):
         d = str(tmp_path)
-        _write(d, "eerste")
+        await _write(d, "eerste")
         encrypt_to_sops_files(d, PUBLIC_KEY, PRIVATE_KEY)
 
-        assert _write(d, "tweede", private_key=None) == "tweede"
+        assert await _write(d, "tweede", private_key=None) == "tweede"
 
     @pytest.mark.parametrize(
         "decrypted",

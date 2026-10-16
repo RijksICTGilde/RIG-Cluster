@@ -24,8 +24,7 @@ from opi.connectors.argo import ArgoConnector, _exc_text
 
 def _connector() -> ArgoConnector:
     """Een connector met een token in de hand, zodat er geen login plaatsvindt."""
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
     connector.auth_token = "token-1"
     return connector
 
