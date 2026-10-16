@@ -634,10 +634,17 @@ class DeleteProjectManager:
 
             # 2. Delete project admin from master realm
             try:
-                await keycloak.delete_user_by_username("master", admin_username)
-                logger.info(f"Deleted project admin {admin_username}")
+                deleted = await keycloak.delete_user_by_username("master", admin_username)
+                if deleted:
+                    logger.info(f"Deleted project admin {admin_username}")
+                else:
+                    logger.info(f"Project admin {admin_username} not found")
                 deletion_results["operations"].append(
-                    {"type": "keycloak_user_deletion", "target": admin_username, "status": "success"}
+                    {
+                        "type": "keycloak_user_deletion",
+                        "target": admin_username,
+                        "status": "success" if deleted else "not_found",
+                    }
                 )
             except Exception as e:
                 logger.exception(f"Failed to delete user {admin_username}")
@@ -645,14 +652,17 @@ class DeleteProjectManager:
 
             # 3. Delete platform client from RIG Platform realm
             try:
-                await keycloak.delete_deployment_client(
-                    deployment_name=platform_client_id,
-                    project_name="",
-                    realm_name=settings.KEYCLOAK_DEFAULT_REALM,
-                )
-                logger.info(f"Deleted platform client {platform_client_id}")
+                deleted = await keycloak.delete_client_by_client_id(settings.KEYCLOAK_DEFAULT_REALM, platform_client_id)
+                if deleted:
+                    logger.info(f"Deleted platform client {platform_client_id}")
+                else:
+                    logger.info(f"Platform client {platform_client_id} not found")
                 deletion_results["operations"].append(
-                    {"type": "keycloak_platform_client_deletion", "target": platform_client_id, "status": "success"}
+                    {
+                        "type": "keycloak_platform_client_deletion",
+                        "target": platform_client_id,
+                        "status": "success" if deleted else "not_found",
+                    }
                 )
             except Exception as e:
                 logger.exception("Failed to delete platform client")
