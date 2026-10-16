@@ -13,12 +13,13 @@ import re
 from datetime import UTC
 from typing import Any
 
-from jinja2 import Template
+from jinja2 import Environment
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
 from opi.core.cluster_config import get_argo_namespace
 from opi.core.config import settings
+from opi.generation.manifests import yaml_scalar
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
 
@@ -360,7 +361,9 @@ class KubectlConnector:
         """
         logger.debug(f"Templating manifest with variables: {variables.keys()}")
 
-        template = Template(manifest_content)
+        env = Environment()
+        env.filters["yaml_scalar"] = yaml_scalar
+        template = env.from_string(manifest_content)
         result = template.render(**variables)
         # convention: files should end with a newline
         if not result.endswith("\n"):
