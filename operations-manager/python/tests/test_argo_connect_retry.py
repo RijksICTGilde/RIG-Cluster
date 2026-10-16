@@ -29,6 +29,7 @@ These tests pin what makes riding that out safe:
 """
 
 import asyncio
+import inspect
 import json
 import time
 from types import SimpleNamespace
@@ -43,6 +44,7 @@ from opi.api.v2.router import _connect_status_backend
 from opi.connectors import argo as argo_module
 from opi.connectors.argo import ArgoConnector, create_argo_connector
 from opi.manager.argo_manager import ArgoManager
+from opi.web import router
 from opi.web.router import argocd_status_fragment, dashboard
 
 _APPLICATIONS_URL = "http://argocd-server:80/api/v1/applications"
@@ -163,16 +165,14 @@ class _FakeNetwork:
 
 def _authenticated_connector(connect_retry_seconds: float = 30.0) -> ArgoConnector:
     """A connector with a token in hand, so no login happens in these tests."""
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector(connect_retry_seconds=connect_retry_seconds)
+    connector = ArgoConnector(connect_retry_seconds=connect_retry_seconds)
     connector.auth_token = "token-1"
     return connector
 
 
 def _unauthenticated_connector(connect_retry_seconds: float) -> ArgoConnector:
-    """A connector without a token, so _ensure_authenticated has to go for the lock."""
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        return ArgoConnector(connect_retry_seconds=connect_retry_seconds)
+    """A connector without a token, so ensure_authenticated has to go for the lock."""
+    return ArgoConnector(connect_retry_seconds=connect_retry_seconds)
 
 
 class _Harness:
@@ -285,8 +285,7 @@ async def test_the_wait_loop_rides_out_a_connect_failure_instead_of_failing_the_
     session_patch, connector_patch, sleep_patch, h = _harness(
         [_FakeResponse(200, '{"token": "token-1"}'), _connect_error(), _FakeResponse(200, synced)]
     )
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
 
     with (
         session_patch,
@@ -404,13 +403,9 @@ async def test_the_status_backend_builds_a_fail_fast_connector() -> None:
     passing the argument through.
     """
 
-    def _login(self: ArgoConnector) -> bool:
-        self.auth_token = "token-1"
-        return True
-
     with (
-        patch.object(ArgoConnector, "_perform_login", _login),
         patch("opi.api.v2.router.create_kubectl_connector", MagicMock()),
+        patch.object(ArgoConnector, "ensure_authenticated", AsyncMock(return_value=True)),
     ):
         argo, _ = await _connect_status_backend()
 
@@ -419,8 +414,7 @@ async def test_the_status_backend_builds_a_fail_fast_connector() -> None:
 
 def test_a_connector_defaults_to_the_thirty_second_budget() -> None:
     """Everything that is not an interactive poll rides out the restart window."""
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        assert create_argo_connector().connect_retry_seconds == 30.0
+    assert create_argo_connector().connect_retry_seconds == 30.0
 
 
 @pytest.mark.asyncio
@@ -429,8 +423,7 @@ async def test_a_connect_failure_during_login_is_retried() -> None:
     session_patch, connector_patch, sleep_patch, h = _harness(
         [_connect_error(), _FakeResponse(200, '{"token": "token-fresh"}')]
     )
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is True
@@ -445,8 +438,7 @@ async def test_a_connect_failure_during_login_is_retried() -> None:
 async def test_login_degrades_to_false_when_the_budget_runs_out() -> None:
     """Unchanged at the outside: the caller sees no token, not an exception."""
     session_patch, connector_patch, sleep_patch, h = _harness([_connect_error() for _ in range(6)])
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is False
@@ -464,8 +456,7 @@ async def test_a_fail_fast_connector_does_not_sleep_on_the_login_path_either() -
     one, so a login that spends the default budget shows up as extra attempts.
     """
     session_patch, connector_patch, sleep_patch, h = _harness([_connect_error() for _ in range(6)])
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector(connect_retry_seconds=0)
+    connector = ArgoConnector(connect_retry_seconds=0)
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is False
@@ -478,8 +469,7 @@ async def test_a_fail_fast_connector_does_not_sleep_on_the_login_path_either() -
 async def test_a_login_failure_that_is_not_a_connect_error_degrades_without_retrying() -> None:
     """Unchanged for every other failure too: login reports False, it never raises."""
     session_patch, connector_patch, sleep_patch, h = _harness([aiohttp.ServerDisconnectedError()])
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is False
@@ -505,8 +495,7 @@ async def test_a_login_answer_that_carries_no_usable_token_reports_false(status:
     and nothing lands in the process-wide cache for the next caller to adopt.
     """
     session_patch, connector_patch, sleep_patch, h = _harness([_FakeResponse(status, body)])
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
 
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is False
@@ -528,8 +517,7 @@ async def test_a_login_redirected_to_https_switches_the_connector_over() -> None
     answer = _FakeResponse(200, '{"token": "token-fresh"}')
     answer.url = "https://argocd-server:443/api/v1/session"
     session_patch, connector_patch, sleep_patch, h = _harness([answer])
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        connector = ArgoConnector()
+    connector = ArgoConnector()
     assert connector.base_url == "http://argocd-server:80"
 
     with session_patch, connector_patch, sleep_patch:
@@ -557,11 +545,6 @@ def _connector_recorder(built: list[ArgoConnector]):
     return _record
 
 
-def _logs_in(self: ArgoConnector) -> bool:
-    self.auth_token = "token-1"
-    return True
-
-
 def _project_with_one_deployment() -> Any:
     store = MagicMock()
     project = SimpleNamespace(
@@ -584,7 +567,6 @@ async def test_the_dashboard_builds_a_fail_fast_connector() -> None:
     built: list[ArgoConnector] = []
 
     with (
-        patch.object(ArgoConnector, "_perform_login", _logs_in),
         patch("opi.connectors.argo.create_argo_connector", _connector_recorder(built)),
         patch.object(ArgoConnector, "get_application_status", AsyncMock(return_value=None)),
         patch("opi.web.router.get_current_user", MagicMock(return_value={"email": "u@example.com"})),
@@ -603,7 +585,6 @@ async def test_the_status_fragment_builds_a_fail_fast_connector() -> None:
     built: list[ArgoConnector] = []
 
     with (
-        patch.object(ArgoConnector, "_perform_login", _logs_in),
         patch("opi.connectors.argo.create_argo_connector", _connector_recorder(built)),
         patch("opi.web.router.get_current_user", MagicMock(return_value={"email": "u@example.com"})),
         patch("opi.web.router.get_project_store", MagicMock(return_value=_project_with_one_deployment())),
@@ -615,6 +596,20 @@ async def test_the_status_fragment_builds_a_fail_fast_connector() -> None:
         await argocd_status_fragment(MagicMock(), "proj", "dep")
 
     assert [c.connect_retry_seconds for c in built] == [0], "a lazy-loaded card would wait out an ArgoCD restart"
+
+
+def test_the_project_page_checks_availability_with_a_fail_fast_connector() -> None:
+    """De bereikbaarheidstoets op de projectpagina valt onder dezelfde regel.
+
+    Op het standaardbudget hangt die pagina 30 seconden tijdens de argocd-server-herstart.
+    Op de bron getoetst en niet door ``render_project_page`` aan te roepen, zoals
+    tests/test_lotc_backups_tabblad.py dat voor dezelfde functie al doet: een render van
+    die pagina vraagt het halve projectmodel mee.
+    """
+    source = inspect.getsource(router.render_project_page)
+    toets = source.index("argocd_available = await create_argo_connector(")
+
+    assert "connect_retry_seconds=0" in source[toets : source.index("\n", toets)]
 
 
 @pytest.mark.asyncio
@@ -634,7 +629,7 @@ async def test_a_fail_fast_connector_still_logs_in_when_the_refresh_lock_is_free
         return True
 
     with patch.object(ArgoConnector, "login", _login):
-        assert await connector._ensure_authenticated() is True
+        assert await connector.ensure_authenticated() is True
 
     assert logins == ["login"], "a free lock refused a fail-fast caller its login"
     assert connector.auth_token == "token-fresh"
@@ -660,7 +655,7 @@ async def test_a_fail_fast_connector_does_not_queue_behind_another_login() -> No
         started = time.monotonic()
         with patch.object(ArgoConnector, "login", _login):
             # An unbounded wait would hang here, so the wait_for turns that into red.
-            answer = await asyncio.wait_for(connector._ensure_authenticated(), timeout=2)
+            answer = await asyncio.wait_for(connector.ensure_authenticated(), timeout=2)
         waited = time.monotonic() - started
 
     assert answer is False, "the caller has to degrade, the same as it does on a failed login"
@@ -687,7 +682,7 @@ async def test_a_background_caller_still_adopts_the_token_of_the_login_in_flight
         return True
 
     with patch.object(ArgoConnector, "login", _slow_login):
-        answers = await asyncio.gather(first._ensure_authenticated(), second._ensure_authenticated())
+        answers = await asyncio.gather(first.ensure_authenticated(), second.ensure_authenticated())
 
     assert answers == [True, True]
     assert logins == ["login"], "the second caller logged in again instead of adopting the token"
@@ -718,7 +713,7 @@ async def test_a_background_caller_waits_out_a_login_that_outlasts_its_own_budge
         return True
 
     with patch.object(ArgoConnector, "login", _slow_login):
-        answers = await asyncio.gather(holder._ensure_authenticated(), waiter._ensure_authenticated())
+        answers = await asyncio.gather(holder.ensure_authenticated(), waiter.ensure_authenticated())
 
     assert answers == [True, True], "the waiter gave up before the token it was waiting for landed"
     assert logins == ["login"], "the waiter logged in again instead of adopting the token"

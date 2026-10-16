@@ -11,11 +11,14 @@ Covers:
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.jobs.reconciliation import _build_expected_resources, _purge_backup_data, cleanup_project, reconcile
 from opi.services.marked_for_deletion_service import MarkedForDeletionService
+from opi.utils.yaml_util import load_yaml_from_string
+from tests.loop_meeloper import meeloper
 
 # --- _row_to_dict tests ---
 
@@ -725,3 +728,27 @@ class TestMarkedForDeletionServiceRealDB:
         names = sorted(m["resource_name"] for m in await svc.get_marks_in_namespace("ns1", "c1"))
         assert names == ["ns1", "v1"]
         assert await svc.get_marks_in_namespace("ns1", "other-cluster") == []
+
+
+# --- _build_expected_resources houdt de event loop niet vast ---
+
+
+class TestBuildExpectedResourcesHoudtDeLoopNietVast:
+    """De nachtelijke reconciliatie en de admin-endpoints draaien dit op de hele vloot.
+
+    Zonder de gedeelde jsonpath-compiler en de directe deployment-lookup kostte een
+    enkel project met 25 deployments ongeveer 1 s, en faalde deze toets.
+    """
+
+    @pytest.mark.asyncio
+    async def test_een_project_met_25_deployments_blokkeert_de_loop_niet(self) -> None:
+        project_data = load_yaml_from_string(
+            (Path(__file__).parent / "fixtures" / "projects" / "groot-project-25-deployments.yaml").read_text()
+        )
+        assert project_data is not None
+
+        async with meeloper() as meting:
+            expected = _build_expected_resources([project_data])
+
+        assert expected
+        meting.eis_onder(0.2, "_build_expected_resources op 25 deployments")

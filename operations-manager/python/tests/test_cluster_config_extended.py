@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 from opi.core.cluster_config import (
     CLUSTER_CONFIG,
+    _ca_hash_cache,
     _compute_ca_hash,
     get_argo_namespace,
     get_ca_certificate_config,
@@ -201,6 +202,13 @@ class TestCapsuleAndLetsEncrypt:
 
 class TestComputeCaHash:
     """Tests for _compute_ca_hash."""
+
+    @pytest.fixture(autouse=True)
+    def _lege_cache(self):
+        """De hash wordt op het certificaatpad gecachet; die cache deelt tussen tests."""
+        _ca_hash_cache.clear()
+        yield
+        _ca_hash_cache.clear()
 
     def test_nonexistent_file(self):
         result = _compute_ca_hash("/nonexistent/cert.pem")

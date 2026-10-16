@@ -4,11 +4,12 @@ Generic YAML utility module for loading, finding, and updating YAML files using 
 This module provides centralized utilities for YAML file operations using JSONPath expressions.
 """
 
+import functools
 import logging
 import os
 import tempfile
 from io import StringIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from jsonpath_ng.ext import parse as jsonpath_parse
 from ruamel.yaml import YAML
@@ -16,7 +17,24 @@ from ruamel.yaml.error import YAMLError
 from ruamel.yaml.representer import RoundTripRepresenter
 from ruamel.yaml.scalarstring import DoubleQuotedScalarString, SingleQuotedScalarString
 
+if TYPE_CHECKING:
+    from jsonpath_ng import JSONPath
+
 logger = logging.getLogger(__name__)
+
+
+@functools.lru_cache(maxsize=4096)
+def compiled_jsonpath(path: str) -> JSONPath:
+    """Een gecompileerde jsonpath-expressie, gedeeld over alle aanroepers.
+
+    ``jsonpath_ng.ext.parse`` bouwt per aanroep de ply-parser opnieuw op (7,4 ms tegen
+    0,026 ms voor de ``find()`` erna), en het refreshpad parst er tientallen per
+    deployment. Alleen de EXPRESSIE komt in de cache, nooit data of resultaten: de
+    sleutel is uitsluitend de padstring en de nodes van jsonpath_ng zetten hun
+    attributen enkel in ``__init__``, dus delen tussen projecten en taken is veilig.
+    Geef de expressie niet door aan code die er attributen op zet.
+    """
+    return jsonpath_parse(path)
 
 
 def _fits_literal_block(data: str) -> bool:
@@ -173,7 +191,7 @@ def find_value_by_jsonpath(data: dict[str, Any], json_path: str, default: Any = 
         if not data:
             return default
 
-        jsonpath_expr = jsonpath_parse(json_path)
+        jsonpath_expr = compiled_jsonpath(json_path)
         matches = jsonpath_expr.find(data)
 
         return matches[0].value if matches else default
@@ -290,7 +308,7 @@ def update_value_by_jsonpath(data: dict[str, Any], json_path: str, new_value: An
             logger.error("Cannot update value in empty data")
             return False
 
-        jsonpath_expr = jsonpath_parse(json_path)
+        jsonpath_expr = compiled_jsonpath(json_path)
         matches = jsonpath_expr.find(data)
 
         if not matches:

