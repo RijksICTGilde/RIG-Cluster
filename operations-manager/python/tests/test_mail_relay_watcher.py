@@ -18,6 +18,7 @@ of onbruikbaar maken:
 from __future__ import annotations
 
 import inspect
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -199,3 +200,24 @@ class TestDeWiring:
             assert await connector.is_ready() is True
 
         assert gevraagd == ["http://rig-mail-relay:8080/healthz/ready"]
+
+    @pytest.mark.asyncio
+    async def test_een_timeout_noemt_zijn_soort_in_de_regel(self, caplog: pytest.LogCaptureFixture) -> None:
+        """``TimeoutError`` stringificeert leeg, en een exceptie-object is altijd waar, dus
+        de regel eindigde op "/healthz/ready: " zonder reden erachter."""
+        connector = MailConnector("http://rig-mail-relay:8080", "admin", "geheim")
+
+        class _Sessie:
+            async def __aenter__(self) -> _Sessie:
+                return self
+
+            async def __aexit__(self, *_: object) -> None:
+                return None
+
+            def get(self, url: str) -> object:
+                raise TimeoutError
+
+        with patch("aiohttp.ClientSession", return_value=_Sessie()), caplog.at_level(logging.WARNING):
+            assert await connector.is_ready() is False
+
+        assert "Mailrelay antwoordt niet op /healthz/ready: TimeoutError" in caplog.text

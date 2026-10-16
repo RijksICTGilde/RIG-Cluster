@@ -692,7 +692,10 @@ class ArgoConnector:
                     # makes. Without types there is nothing to measure, so the poll yields no
                     # window either, and retrying the discovery would repeat both the
                     # api-resources call and its ERROR for every poll of the wait.
-                    progress_types = await kubectl_connector.list_namespaced_resource_types()
+                    # Only the kinds this Application owns; fallback to full discovery.
+                    progress_types = await kubectl_connector.argocd_application_resource_types(app_name, namespace)
+                    if progress_types is None:
+                        progress_types = await kubectl_connector.list_namespaced_resource_types()
                     if progress_types is None:
                         types_unavailable = True
                         return None

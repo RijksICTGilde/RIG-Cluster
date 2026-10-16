@@ -119,6 +119,20 @@ finalizer draagt.
    inventaris staat buiten de vergelijking en gaat alleen de log in, want juist die
    inventaris gaf tijdens het incident exit 1.
 
+   Geinventariseerd worden alleen de KINDS die de Application beheert, gelezen uit zijn
+   `status.resources` en met `list_namespaced_kinds()` naar kubectl-typenamen vertaald
+   (`argocd_application_resource_types`). De volle discovery is elk namespaced type dat het
+   cluster serveert: 321 op odcn-production, waar een `kubectl get` daarover 60 seconden
+   duurde en 92 van die types in een tenant Forbidden gaven, per poll en per gelijktijdige
+   wacht. Met drie tot acht van die lussen naast elkaar was dit op 15 oktober 2026 de
+   grootste CPU-verbruiker van OPI (het CPU-limit van 3 cores vol, en na het einde van de
+   lussen binnen een minuut terug naar 1,4), en om 18:53 liepen de inventarissen zelf op
+   hun timeout van 120 seconden. Alleen de typeLIJST komt uit `status.resources`, nooit het
+   aantal: dat bevriest zodra er een `deletionTimestamp` staat, en dat is precies de
+   bevroren telling waar deze meting voor in de plaats kwam. Is `status.resources` leeg of
+   niet te lezen, of kent het cluster een van die kinds niet als namespaced, dan valt die
+   wacht terug op de volle discovery, met een INFO-regel.
+
    Een Application die niet te lezen is telt niet als stilstand, want een mislukte read zegt
    niets over de cascade, maar hij verdient er ook geen ruimer venster mee: alleen een
    GEMETEN daling doet dat. Hetzelfde geldt voor de type-discovery: mislukt die, dan is er
@@ -203,10 +217,12 @@ nog om de verwijdering: de deployment was weg uit de file en stond nog op het cl
 
 `delete_deployment` haalt de deployment daarom pas uit de project file als de delete op het
 cluster BEVESTIGD is. Is hij dat niet, dan blijft de entry staan, komt de reden als fout in
-`deletion_results["errors"]` en faalt de taak. Dat is de derde voorwaarde op die stap: de
-twee andere, het argo-bestand en de manifestmap uit git, komen uit RC-254 en staan in
-`features/verwijderde-deployment-geen-zombie.md`. Alle drie staan op dezelfde `if`, en de
-overgeslagen stap meldt met `status: "skipped"` welke van de drie het was. Dat houdt de delete opnieuw aanvraagbaar: de
+`deletion_results["errors"]` en faalt de taak. Dat is een van de twee voorwaarden op die
+stap: de andere, de manifestmap uit git, komt uit RC-254 en staat in
+`features/verwijderde-deployment-geen-zombie.md`. Het argo-bestand stond daar als derde
+voorwaarde bij en is er met RC-265 af: stap 2 gooit de fout van zijn eigen commit nu door,
+dus deze stap wordt dan niet meer bereikt. Beide staan op dezelfde `if`, en de overgeslagen
+stap meldt met `status: "skipped"` welke van de twee het was. Dat houdt de delete opnieuw aanvraagbaar: de
 taakhandler faalt op een niet-lege errors-lijst en `delete_deployment` is idempotent. De
 manifesten in de deployments-repo hadden deze grendel al, en om een zwaardere reden: de
 resources-finalizer heeft het source-pad nodig om te weten wat hij moet opruimen, dus ze
@@ -504,7 +520,7 @@ er OVER is, niet wat er gebeurd lijkt te zijn.
 | Bestand | Wat het doet |
 |---|---|
 | `opi/utils/argocd_tracking.py` | Welke Application een resource bezit, via allebei de merktekens; `may_be_cut_from` voor de labelwaarde die twee namen kan zijn |
-| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application`, `argocd_application_deletion_progress`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `types_named_in_kubectl_error`, `delete_tracked_resources`, `list_argocd_applications` |
+| `opi/connectors/kubectl.py` | `terminate_argocd_application_operation`, `get_argocd_application`, `argocd_application_deletion_progress`, `argocd_application_resource_types`, `get_argocd_application_destination_namespace`, `list_namespaced_resource_types`, `list_namespaced_kinds`, `list_tracked_resources`, `types_named_in_kubectl_error`, `delete_tracked_resources`, `list_argocd_applications` |
 | `opi/connectors/argo.py` | `wait_for_application_deletion`: de wacht die op de stilstand stopt en niet op de klok |
 | `opi/manager/delete_project_manager.py` | `_terminate_application_operation`, `_force_delete_stuck_application`, `_force_delete_or_await_cascade`, `DELETION_PROGRESS_BUDGET_SECONDS` met `deletion_progress_window()`, en de vier verwijderplekken |
 | `manifests/argocd-application.yaml.jinja` | De syncOptions van een gegenereerde Application |

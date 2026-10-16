@@ -14,6 +14,7 @@ import shutil
 import time
 from collections.abc import (  # noqa: TC003 - used in an eagerly-evaluated annotation (no future-annotations)
     AsyncIterator,
+    Awaitable,
     Callable,
 )
 from contextlib import asynccontextmanager
@@ -88,6 +89,8 @@ from opi.handlers.project_file_handler import (
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
     APPLICATIE_AANMAAK_TIMEOUT_SECONDEN,
+    ARGOCD_HERSTEL_BUDGET_SECONDEN,
+    ARGOCD_HERSTEL_POLL_SECONDEN,
     PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN,
     UMBRELLA_REFRESH_MAX_POGINGEN,
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
@@ -3051,8 +3054,24 @@ class ProjectManager:
             TimeoutError: Als de applicatie niet binnen de tijd gesynchroniseerd is.
         """
         argo_connector = create_argo_connector()
-        if not await argo_connector.login():
-            raise RuntimeError("Failed to login to ArgoCD")
+        loop = asyncio.get_running_loop()
+        einde = loop.time() + ARGOCD_HERSTEL_BUDGET_SECONDEN
+
+        async def _volhouden[T](wat: str, poging: Callable[[], Awaitable[T]]) -> T:
+            """Retry until result or budget exhausted. Empty result means not ready."""
+            while True:
+                uitkomst = await poging()
+                if uitkomst:
+                    return uitkomst
+                over = einde - loop.time()
+                if over <= 0:
+                    raise RuntimeError(
+                        f"{wat} within the {ARGOCD_HERSTEL_BUDGET_SECONDEN}s budget for a recovering ArgoCD"
+                    )
+                logger.warning("%s: opnieuw proberen, %ds van het budget over", wat, int(over))
+                await asyncio.sleep(ARGOCD_HERSTEL_POLL_SECONDEN)
+
+        await _volhouden("Failed to login to ArgoCD", argo_connector.login)
 
         # De umbrella alleen verversen als de applicatie er nog niet is: zo'n refresh
         # hertekent alle child-apps (issue #130) en kan minuten duren
@@ -3071,9 +3090,10 @@ class ProjectManager:
 
         # Wel altijd DEZE applicatie verversen: zonder een sync die na onze eigen refresh
         # komt bewijst een `Synced` niets over de commit die we net gepusht hebben.
-        reconciled_at = await argo_connector.refresh_application(app_name)
-        if not reconciled_at:
-            raise RuntimeError(f"Failed to refresh ArgoCD project-level application '{app_name}'")
+        reconciled_at = await _volhouden(
+            f"Failed to refresh ArgoCD project-level application '{app_name}'",
+            lambda: argo_connector.refresh_application(app_name),
+        )
 
         await self._argo_manager.wait_for_application_synced(
             app_name=app_name,

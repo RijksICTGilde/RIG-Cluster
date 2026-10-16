@@ -25,6 +25,7 @@ from tests.programma import echt_programma
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TASKFILE = REPO_ROOT / "Taskfile.yaml"
 BRON_TAG = REPO_ROOT / "scripts/bron-tag.sh"
+CALVER_TAG = REPO_ROOT / "scripts/calver-tag.sh"
 
 STUB_TOOLS = (
     "docker",
@@ -53,13 +54,15 @@ def boom(tmp_path: Path) -> Path:
 
     Git hoort erbij: de globale var SANDBOX_OM_TAG leest de commit, en zonder repo valt elke
     taak om voordat hij aan zijn eigen weigering komt. Hij rekent dat uit in
-    `scripts/bron-tag.sh`, dus dat script gaat om dezelfde reden mee.
+    `scripts/bron-tag.sh`, en de CalVer-tag van een image in `scripts/calver-tag.sh`, dus
+    die twee gaan om dezelfde reden mee.
     """
     if shutil.which("bash") is None or shutil.which("git") is None:
         pytest.skip("bash of git ontbreekt")
     shutil.copy(TASKFILE, tmp_path / "Taskfile.yaml")
     (tmp_path / "scripts").mkdir()
-    shutil.copy(BRON_TAG, tmp_path / "scripts" / BRON_TAG.name)
+    for script in (BRON_TAG, CALVER_TAG):
+        shutil.copy(script, tmp_path / "scripts" / script.name)
     # De env-bestanden van de twee clusters die er nog zijn, zodat select-cluster een
     # geldige keuze echt kan afmaken. Niet .env-taskfile-current: die hoort te ontbreken.
     for naam in (".env-taskfile-odcn-production", ".env-taskfile-sandboxed-local"):

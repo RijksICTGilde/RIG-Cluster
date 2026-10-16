@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from opi.connectors.argo import ArgoTransportError
@@ -89,6 +90,12 @@ UMBRELLA_REFRESH_MAX_POGINGEN = 6
 #: haalt een deployment die zijn ServiceAccount mist zijn eigen sync-timeout ook niet.
 PROJECT_LEVEL_SYNC_TIMEOUT_SECONDEN = 240
 
+#: Budget for login/refresh retries during ArgoCD recovery (seconds).
+ARGOCD_HERSTEL_BUDGET_SECONDEN = 600
+
+#: Minimum interval between retries (seconds).
+ARGOCD_HERSTEL_POLL_SECONDEN = 5
+
 #: Hoe lang een wacht op het BESTAAN van een kind-Application mag duren. Dat wachten gaat
 #: niet over de applicatie zelf maar over de umbrella die hem moet aanmaken, en een refresh
 #: daarvan hertekent circa 90 child-apps (issue #130), dus onder last kost dat minuten.
@@ -136,7 +143,7 @@ class ArgoManager:
             project_manager: The main ProjectManager instance for accessing shared resources
         """
         self.project_manager = project_manager
-        #: De commit die `_commit_and_push_argo` als laatste naar de argo-applications
+        #: De commit die `_mutate_and_push_argo` als laatste naar de argo-applications
         #: repo pushte. De wachters gebruiken hem als het enige harde bewijs dat de
         #: umbrella onze wijziging gezien heeft: een tijdstempel zegt niets, een revisie
         #: wel. None zolang er in deze taak niets gepusht is.
@@ -200,15 +207,19 @@ class ArgoManager:
 
         project_data = await self.project_manager.get_contents()
 
-        await self.create_repository_secrets(project_data, deployment_name, deployment_names)
-        await self.create_app_projects(project_data, deployment_name, deployment_names)
-        # Projectbreed, dus buiten de deployment-scope hierboven. Idempotent.
-        project_app_name = await self.create_project_application(project_data)
-        # The kustomization is a single shared per-project file that must enumerate
-        # every manifest, so it intentionally stays project-wide.
-        await self.create_kustomization_files(project_data, deployment_name)
-        await self._commit_and_push_argo(
-            f"Added ArgoCD project-level resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}"
+        async def _projectniveau() -> str | None:
+            await self.create_repository_secrets(project_data, deployment_name, deployment_names)
+            await self.create_app_projects(project_data, deployment_name, deployment_names)
+            # Projectbreed, dus buiten de deployment-scope hierboven. Idempotent.
+            app_name = await self.create_project_application(project_data)
+            # The kustomization is a single shared per-project file that must enumerate
+            # every manifest, so it intentionally stays project-wide.
+            await self.create_kustomization_files(project_data, deployment_name)
+            return app_name
+
+        project_app_name = await self._mutate_and_push_argo(
+            f"Added ArgoCD project-level resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}",
+            _projectniveau,
         )
 
         # RC-229: hier ligt de ordening, en niet bij de sync-wave. Zolang de CR van een
@@ -218,26 +229,26 @@ class ArgoManager:
         if project_app_name:
             await self.project_manager.wait_for_project_level_application(project_app_name)
 
-        await self.create_applications(project_data, deployment_name, deployment_names)
-        await self.create_kustomization_files(project_data, deployment_name)
-        await self._commit_and_push_argo(
-            f"Added ArgoCD resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}"
+        async def _deploymentapplicaties() -> None:
+            await self.create_applications(project_data, deployment_name, deployment_names)
+            await self.create_kustomization_files(project_data, deployment_name)
+
+        await self._mutate_and_push_argo(
+            f"Added ArgoCD resources for project {project_name} on cluster {settings.CLUSTER_MANAGER}",
+            _deploymentapplicaties,
         )
 
-    async def _commit_and_push_argo(self, message: str) -> None:
-        """Push de argo-applications repo en onthoud de commit die eruit kwam.
-
-        Onthoud welke commit we net gepusht hebben; de wachter kan daarmee zien of de
-        umbrella-applicatie onze wijziging al vergeleken heeft.
-        """
+    async def _mutate_and_push_argo[T](self, message: str, mutate: Callable[[], Awaitable[T]]) -> T:
+        """Write to argo-applications repo and remember the pushed commit."""
         git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
-        await git_connector_for_argocd.commit_and_push(message)
+        uitkomst = await git_connector_for_argocd.mutate_and_push(message, mutate)
         try:
             self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
         except RuntimeError as e:
             # Zonder hash valt er niets te bewijzen; de wachter gedraagt zich dan als voorheen.
             logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
             self.last_pushed_argo_commit = None
+        return uitkomst
 
     async def create_repository_secrets(
         self,
@@ -516,11 +527,9 @@ class ArgoManager:
                 project_label=project_name,
             )
 
-            # Write the AppProject manifest to the checked out repository
             template_filename = "argocd-appproject.yaml.jinja"
             output_filename = get_output_filename_from_template(template_filename, appproject_name)
 
-            # Create cluster/project subdirectory structure
             project_dir = os.path.join(working_dir, generate_argocd_project_folder_path(cluster_name, project_name))
             appproject_file_path = self._write_manifest_file(project_dir, output_filename, appproject_content)
 
@@ -690,7 +699,6 @@ class ArgoManager:
                 repo_url = make_argocd_repository_url_unique(repo_info.get("url"), project_name)
                 logger.debug(f"Using unique repository URL for ArgoCD application: {repo_url}")
 
-                # Create ArgoCD application manifest content
                 argocd_app_content = self.generate_application_manifest(
                     name=app_name,
                     namespace=get_argo_namespace(cluster_name),
@@ -702,11 +710,9 @@ class ArgoManager:
                     project_label=project_name,
                 )
 
-                # Write the ArgoCD application manifest to the checked out repository
                 template_filename = "argocd-application.yaml.jinja"
                 output_filename = get_output_filename_from_template(template_filename, app_name)
 
-                # Create cluster/project subdirectory structure
                 cluster_name = deployment.get("cluster")
                 project_dir = os.path.join(
                     str(working_dir), generate_argocd_project_folder_path(str(cluster_name), str(project_name))
@@ -863,122 +869,101 @@ class ArgoManager:
             # Make repository URL unique for ArgoCD
             repo_url = make_argocd_repository_url_unique(repo_info.get("url"), project_name)
 
-            # Create directory for infrastructure ArgoCD resources
-            # Path: {cluster}/{project_name}-infrastructure/
-            # This follows the App-of-Apps pattern where each subfolder becomes an app
-            infra_folder_relative = generate_infrastructure_argocd_folder_path(cluster_name, project_name)
-            infra_argo_dir = os.path.join(str(working_dir), infra_folder_relative)
-            os.makedirs(infra_argo_dir, exist_ok=True)
+            async def _infrastructuur() -> None:
+                infra_folder_relative = generate_infrastructure_argocd_folder_path(cluster_name, project_name)
+                infra_argo_dir = os.path.join(str(working_dir), infra_folder_relative)
+                os.makedirs(infra_argo_dir, exist_ok=True)
 
-            logger.info(f"Creating ArgoCD infrastructure resources in: {infra_argo_dir}")
+                logger.info(f"Creating ArgoCD infrastructure resources in: {infra_argo_dir}")
 
-            # Create infrastructure AppProject
-            appproject_name = generate_infrastructure_application_name(project_name)
-            appproject_content = self.generate_appproject_manifest(
-                name=appproject_name,
-                namespace=get_argo_namespace(cluster_name),
-                destination_namespace=infrastructure_namespace,
-                project_label=project_name,
-            )
+                appproject_name = generate_infrastructure_application_name(project_name)
+                appproject_content = self.generate_appproject_manifest(
+                    name=appproject_name,
+                    namespace=get_argo_namespace(cluster_name),
+                    destination_namespace=infrastructure_namespace,
+                    project_label=project_name,
+                )
 
-            # Write AppProject
-            appproject_filename = generate_infrastructure_argocd_appproject_filename(project_name)
-            appproject_file_path = self._write_manifest_file(infra_argo_dir, appproject_filename, appproject_content)
+                appproject_filename = generate_infrastructure_argocd_appproject_filename(project_name)
+                appproject_file_path = self._write_manifest_file(
+                    infra_argo_dir, appproject_filename, appproject_content
+                )
 
-            logger.info(f"Created infrastructure AppProject: {appproject_file_path}")
+                logger.info(f"Created infrastructure AppProject: {appproject_file_path}")
 
-            # Create repository secret for infrastructure (same as normal deployments).
-            # Scope the secret name to the infrastructure app so it does not collide with the
-            # parent project's repository secret (same repo URL) when both subfolders are
-            # rendered into the single user-applications ArgoCD app (RepeatedResourceWarning).
-            repo_name = repo_info.get("name", "main-repo")
-            unique_repo_name = generate_argocd_repository_secret_name(
-                generate_infrastructure_application_name(project_name), repo_name
-            )
+                # Scope the secret name to the infrastructure app so it does not collide with the
+                # parent project's repository secret (same repo URL) when both subfolders are
+                # rendered into the single user-applications ArgoCD app (RepeatedResourceWarning).
+                repo_name = repo_info.get("name", "main-repo")
+                unique_repo_name = generate_argocd_repository_secret_name(
+                    generate_infrastructure_application_name(project_name), repo_name
+                )
 
-            # Prepare variables for the manifest template
-            variables = await self.prepare_repository_variables(
-                name=unique_repo_name,
-                namespace=get_argo_namespace(cluster_name),
-                repository=repo_info,
-                repo_type="git",
-                project_name=project_name,
-            )
+                variables = await self.prepare_repository_variables(
+                    name=unique_repo_name,
+                    namespace=get_argo_namespace(cluster_name),
+                    repository=repo_info,
+                    repo_type="git",
+                    project_name=project_name,
+                )
 
-            # Determine template path based on authentication method
-            is_https = repo_info.get("url", "").startswith("https://")
-            template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
-            template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
-            output_filename = get_output_filename_from_template(template_filename, unique_repo_name)
+                is_https = repo_info.get("url", "").startswith("https://")
+                template_filename = "argo-repository-https.yaml.jinja" if is_https else "argo-repository.yaml.jinja"
+                template_path = os.path.join(settings.MANIFESTS_PATH, template_filename)
+                output_filename = get_output_filename_from_template(template_filename, unique_repo_name)
 
-            # Create repository secret with SOPS encryption
-            repo_secret_path = self.project_manager._manifest_generator.create_manifest_file(
-                template_path=template_path,
-                values=variables,
-                output_dir=infra_argo_dir,
-                output_filename=output_filename,
-                use_sops=True,
-            )
-            logger.info(f"Created repository secret: {os.path.basename(repo_secret_path)}")
+                repo_secret_path = self.project_manager._manifest_generator.create_manifest_file(
+                    template_path=template_path,
+                    values=variables,
+                    output_dir=infra_argo_dir,
+                    output_filename=output_filename,
+                    use_sops=True,
+                )
+                logger.info(f"Created repository secret: {os.path.basename(repo_secret_path)}")
 
-            # SOPS encrypt the repository secret
-            await asyncio.to_thread(
-                encrypt_to_sops_files_or_fail,
-                infra_argo_dir,
-                cast("str", settings.SOPS_AGE_PUBLIC_KEY),
-                f"ArgoCD infrastructuur repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
-                private_key=settings.SOPS_AGE_PRIVATE_KEY,
-            )
+                await asyncio.to_thread(
+                    encrypt_to_sops_files_or_fail,
+                    infra_argo_dir,
+                    cast("str", settings.SOPS_AGE_PUBLIC_KEY),
+                    f"ArgoCD infrastructuur repository-secret (git SSH key/HTTPS-wachtwoord) voor project '{project_name}'",
+                    private_key=settings.SOPS_AGE_PRIVATE_KEY,
+                )
 
-            # Create infrastructure Application (with sync-wave: 0)
-            argocd_app_content = self.generate_application_manifest(
-                name=app_name,
-                namespace=get_argo_namespace(cluster_name),
-                argo_project=appproject_name,
-                repo_url=repo_url,
-                target_revision=repo_info.get("branch", "main"),
-                repo_path=infrastructure_path,
-                destination_namespace=infrastructure_namespace,
-                project_label=project_name,
-            )
+                argocd_app_content = self.generate_application_manifest(
+                    name=app_name,
+                    namespace=get_argo_namespace(cluster_name),
+                    argo_project=appproject_name,
+                    repo_url=repo_url,
+                    target_revision=repo_info.get("branch", "main"),
+                    repo_path=infrastructure_path,
+                    destination_namespace=infrastructure_namespace,
+                    project_label=project_name,
+                )
 
-            # Modify the generated manifest to add sync-wave: 0 (infrastructure first)
-            # The template already has sync-wave: 1, we need to change it to 0
-            argocd_app_content = argocd_app_content.replace(
-                'argocd.argoproj.io/sync-wave: "1"', 'argocd.argoproj.io/sync-wave: "0"'
-            )
+                argocd_app_content = argocd_app_content.replace(
+                    'argocd.argoproj.io/sync-wave: "1"', 'argocd.argoproj.io/sync-wave: "0"'
+                )
 
-            # Write Application
-            app_filename = generate_infrastructure_argocd_application_filename(project_name)
-            app_file_path = self._write_manifest_file(infra_argo_dir, app_filename, argocd_app_content)
+                app_filename = generate_infrastructure_argocd_application_filename(project_name)
+                app_file_path = self._write_manifest_file(infra_argo_dir, app_filename, argocd_app_content)
 
-            logger.info(f"Created infrastructure Application: {app_file_path}")
+                logger.info(f"Created infrastructure Application: {app_file_path}")
 
-            # Create kustomization.yaml for the infrastructure ArgoCD folder
-            kustomization_success = self.project_manager._manifest_generator.create_kustomization_files(
-                output_dir=infra_argo_dir,
-                namespace=None,  # No namespace override for ArgoCD resources
-            )
-            if not kustomization_success:
-                raise RuntimeError("Failed to create kustomization files for infrastructure ArgoCD resources")
+                kustomization_success = self.project_manager._manifest_generator.create_kustomization_files(
+                    output_dir=infra_argo_dir,
+                    namespace=None,  # No namespace override for ArgoCD resources
+                )
+                if not kustomization_success:
+                    raise RuntimeError("Failed to create kustomization files for infrastructure ArgoCD resources")
 
-            logger.info("Created kustomization.yaml for infrastructure ArgoCD resources")
+                logger.info("Created kustomization.yaml for infrastructure ArgoCD resources")
 
-            # Commit and push all infrastructure ArgoCD resources
-            await git_connector_for_argocd.commit_and_push(
-                f"Add ArgoCD infrastructure application for {project_name} in {cluster_name} cluster"
+            await self._mutate_and_push_argo(
+                f"Add ArgoCD infrastructure application for {project_name} in {cluster_name} cluster",
+                _infrastructuur,
             )
 
             logger.info(f"Successfully committed ArgoCD infrastructure resources for project '{project_name}'")
-
-            # Zelfde reden als in create_argocd_resources: de wachter op de
-            # infrastructuur-applicatie moet kunnen zien of de umbrella onze commit al
-            # vergeleken heeft.
-            try:
-                self.last_pushed_argo_commit = await git_connector_for_argocd.get_local_commit_hash()
-            except RuntimeError as e:
-                logger.warning(f"Kon de gepushte ArgoCD-commit niet bepalen: {e}")
-                self.last_pushed_argo_commit = None
 
             return True
 

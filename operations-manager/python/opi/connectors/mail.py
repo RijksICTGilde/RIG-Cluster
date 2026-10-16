@@ -241,7 +241,7 @@ class MailConnector:
             ):
                 return response.status == 200
         except (aiohttp.ClientError, TimeoutError, OSError) as error:
-            logger.warning(f"Mailrelay antwoordt niet op /healthz/ready: {error or type(error).__name__}")
+            logger.warning(f"Mailrelay antwoordt niet op /healthz/ready: {str(error) or type(error).__name__}")
             return False
 
     async def get_principal(self, name: str) -> dict[str, Any] | None:
