@@ -1,0 +1,33 @@
+# AppProject — vervangt het ingebouwde 'default' project voor de twee
+# productie-Applications. Pint sourceRepos + destinations zodat een
+# willekeurige push naar een andere repo niet automatisch in productie landt.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: rig-platform
+  namespace: rig-system
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Beperkt project voor de productie-Applications.
+
+  sourceRepos:
+    - https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
+    - https://user-applications@github.com/RijksICTGilde/argo-applications.git
+
+  # Beide Applications syncen alleen naar rig-prd-operations (live geverifieerd).
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: rig-prd-operations
+
+  # Cluster-scoped beheert ODCN; namespaced open want destinations pint de scope.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+
+  # Warn uit: rig-prd-operations bevat ook bootstrap-resources (Argo, OPI,
+  # Keycloak, Postgres, etc.) die niet door Argo gemanaged zijn — namespace-
+  # opsplitsing is follow-up #106.
+  orphanedResources:
+    warn: false
