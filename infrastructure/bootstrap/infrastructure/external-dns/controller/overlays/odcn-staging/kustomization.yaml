@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rig-staging-operations
+
+resources:
+  - ../../base
+
+# Tenant-eigenaar via owner promotion van Capsule, net als de SA's van de bootstrap
+# (zie argocd-pull-secrets.yaml daar). Hier zet ArgoCD het label. Dat zou moeten mogen,
+# omdat de application-controller dan zelf al eigenaar is; gemeten is het nog niet.
+patches:
+  - target:
+      kind: ServiceAccount
+      name: external-dns
+    patch: |-
+      - op: add
+        path: /metadata/labels
+        value:
+          owner.projectcapsule.dev/promote: "true"
+  - target:
+      kind: Deployment
+      name: external-dns
+    patch: |-
+      # Alleen de eigen subzone, en een eigen owner-id. De instantie van productie
+      # draait in dezelfde TransIP-zone rijksapp.dev met de default owner-id; met
+      # --policy=sync raakt elke instantie alleen de records die hij zelf bezit.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --domain-filter=staging.rijksapp.dev
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --txt-owner-id=zad-staging
+      # TransIP enforces RFC 1035 strictly: a CNAME cannot coexist with any
+      # other record at the same name. Place the ownership TXT at a sibling.
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --txt-prefix=edns-
+      # Use Capsule Proxy for tenant-scoped ingress watching
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: KUBERNETES_SERVICE_HOST
+          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl

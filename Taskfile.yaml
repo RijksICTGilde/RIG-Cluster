@@ -46,8 +46,9 @@ tasks:
         echo "Available clusters:"
         echo "1) odcn-production"
         echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
+        echo "3) odcn-staging (ODCN, tenant rig-staging)"
         echo ""
-        printf "Select cluster [1-2]: "
+        printf "Select cluster [1-3]: "
         read -r CLUSTER_CHOICE
 
         case $CLUSTER_CHOICE in
@@ -58,6 +59,10 @@ tasks:
           2)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
+            ;;
+          3)
+            ENV_FILE=".env-taskfile-odcn-staging"
+            CLUSTER_NAME="odcn-staging"
             ;;
           *)
             echo "❌ Invalid selection: '$CLUSTER_CHOICE'. Nothing changed."
@@ -129,6 +134,11 @@ tasks:
       VERSION: '{{default "v0.14.0" .VERSION}}'
       OUTPUT_DIR: '{{default "bootstrap/crd/operator" .OUTPUT_DIR}}'
       APPLY: '{{default "true" .APPLY}}'
+    preconditions:
+      # Op ODCN is de operator clusterbreed en gedeeld door alle tenants: een replace
+      # --force voor staging raakt ook de ArgoCD van productie.
+      - sh: '[ "{{.APPLY}}" != "true" ] || case "{{.CLUSTER_TYPE}}" in odcn-*) false ;; *) true ;; esac'
+        msg: "Niet op ODCN ({{.CLUSTER_TYPE}}): de ArgoCD-operator is daar van het platform. Gebruik APPLY=false om alleen het manifest te maken."
     cmds:
       - |
         echo "Preparing ArgoCD Operator version {{.VERSION}}..."
@@ -224,14 +234,22 @@ tasks:
     silent: true
 
   generate-age-key:
-    desc: "Generate AGE key for SOPS encryption (only if security/key.txt doesn't exist)"
+    desc: "Generate the AGE key of the selected cluster (AGE_KEY_FILE), only if it doesn't exist"
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      # Geen terugval op een vaste sleutel: een cluster zonder AGE_KEY_FILE versleutelde
+      # vroeger stil met de prod-sleutel security/key.txt.
+      - &age_key_file_guard
+        sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY_FILE=... mee."
     cmds:
       - |
         # Check if key already exists
-        if [[ -f "security/key.txt" ]]; then
-          echo "✅ AGE key already exists: security/key.txt"
-          echo "🔑 Current public key: $(sed -n '2p' security/key.txt | sed 's/# public key: //')"
-          echo "⚠️  To generate a new key, first remove the existing security/key.txt file"
+        if [[ -f "{{.KEY_FILE}}" ]]; then
+          echo "✅ AGE key already exists: {{.KEY_FILE}}"
+          echo "🔑 Current public key: $(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
+          echo "⚠️  To generate a new key, first remove the existing {{.KEY_FILE}} file"
           exit 0
         fi
 
@@ -244,28 +262,31 @@ tasks:
         fi
 
         # Create security directory if it doesn't exist
-        mkdir -p security
+        mkdir -p "$(dirname "{{.KEY_FILE}}")"
 
-        # Generate a new age key directly to security/key.txt
+        # Generate a new age key directly to {{.KEY_FILE}}
         echo "🔐 Generating new AGE key for SOPS encryption..."
-        age-keygen -o security/key.txt
+        age-keygen -o {{.KEY_FILE}}
 
         # Extract the public key
-        PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo ""
         echo "✅ AGE key generated successfully!"
-        echo "🔑 Key saved to: security/key.txt"
+        echo "🔑 Key saved to: {{.KEY_FILE}}"
         echo "🔑 Public key: $PUBLIC_KEY"
         echo ""
-        echo "⚠️  IMPORTANT: The security/key.txt file is gitignored and must be managed securely!"
+        echo "⚠️  IMPORTANT: The {{.KEY_FILE}} file is gitignored and must be managed securely!"
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
   encrypt-value-age-base64:
     desc: "Encrypt a value with AGE and output in base64+age:base64encoded format"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -273,13 +294,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age and encode to base64
         ENCRYPTED=$(echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a | base64 | tr -d '\n')
@@ -290,7 +311,10 @@ tasks:
   encrypt-value-age:
     desc: "Encrypt a value with AGE and output in armor format"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -298,13 +322,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age in armor format
         echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a
@@ -313,7 +337,10 @@ tasks:
   decrypt-secret:
     desc: "Decrypt a SOPS-encrypted secret file for editing"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -326,8 +353,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -343,7 +370,7 @@ tasks:
         echo "📄 Output: $OUTPUT_FILE"
 
         # Decrypt using SOPS with the AGE key
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
 
         echo ""
         echo "✅ Decrypted successfully!"
@@ -354,7 +381,10 @@ tasks:
     desc: "Print a project file with every AGE-encrypted value decrypted (stdout only)"
     vars:
       FILE: '{{.FILE | default ""}}'
-      KEY: '{{.KEY | default "security/key.txt"}}'
+      KEY: '{{default .AGE_KEY_FILE .KEY}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY}}" ]'
+        msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY=... mee."
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -370,8 +400,11 @@ tasks:
   encrypt-secret:
     desc: "Encrypt a secret YAML file with SOPS (creates .sops.yaml version)"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
       KEEP_ORIGINAL: '{{.KEEP_ORIGINAL | default "false"}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -385,8 +418,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -404,8 +437,8 @@ tasks:
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo "🔐 Encrypting: {{.FILE}}"
         echo "📄 Output: $OUTPUT_FILE"
@@ -436,11 +469,17 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
 
@@ -456,6 +495,30 @@ tasks:
         # Build and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
 
+        # De repo-credentials van ArgoCD uit de secrets-repo, na de overlay omdat die de
+        # namespace aanmaakt. ArgoCD pakt een repository-secret op zodra het er staat.
+        # De overlay bevat ook de OPI, dus diens env-secret hoort er meteen bij.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec "{{.SECRETS_DIR}}/bootstrap" | kubectl apply $KUBECTL_FLAGS -f -
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
+
+        # De sleutel voor de CMP in de platformnamespace. Alleen aanmaken als hij er nog
+        # niet is, om dezelfde reden als bij de ron-namespace hieronder. Het managed-by-label
+        # gaat er net als daar pas na het aanmaken op (Kyverno); op productie staat het al.
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          kubectl label namespace {{.RIG_NAMESPACE}} argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
+          if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
+            echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
+          else
+            kubectl create secret generic sops-age-key \
+              --from-file=key={{.KEY_FILE}} \
+              -n {{.RIG_NAMESPACE}} \
+              --dry-run=client -o yaml | kubectl apply -f -
+            echo "secret sops-age-key aangemaakt in {{.RIG_NAMESPACE}}"
+          fi
+        fi
+
         # Extra namespaces die niet DOOR de overlay-kustomization kunnen: haar
         # namespace-transformer hernoemt elk Namespace-object naar de eigen
         # namespace-waarde (gemeten 21 augustus 2026 als ID-conflict met rig-prd-ron).
@@ -466,8 +529,9 @@ tasks:
         # tenant-namespaces (project_manager, "apply the label after creating").
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
+          RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
-            kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+            kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
 
             # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
             # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
@@ -475,14 +539,14 @@ tasks:
             # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
             # platformsleutel draagt een rotatie zijn, en die loopt langs
             # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
-            if kubectl get secret sops-age-key -n rig-prd-ron >/dev/null 2>&1; then
-              echo "secret sops-age-key staat al in rig-prd-ron, ongemoeid gelaten"
+            if kubectl get secret sops-age-key -n "$RON_NAMESPACE" >/dev/null 2>&1; then
+              echo "secret sops-age-key staat al in $RON_NAMESPACE, ongemoeid gelaten"
             else
               kubectl create secret generic sops-age-key \
                 --from-file=key={{.KEY_FILE}} \
-                -n rig-prd-ron \
+                -n "$RON_NAMESPACE" \
                 --dry-run=client -o yaml | kubectl apply -f -
-              echo "secret sops-age-key aangemaakt in rig-prd-ron"
+              echo "secret sops-age-key aangemaakt in $RON_NAMESPACE"
             fi
           fi
         fi
@@ -519,9 +583,15 @@ tasks:
   bootstrap-backup-destination:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
-      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      CLUSTER: '{{default .INFRASTRUCTURE_CLUSTER_FOLDER .CLUSTER}}'  # overlay name, e.g. odcn
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
+    preconditions:
+      - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
 
@@ -536,6 +606,12 @@ tasks:
 
         # Build (SOPS-decrypted) and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+
+        # Met SECRETS_DIR staat het root-secret in de secrets-repo (task
+        # generate-backup-destination-secret), na de overlay omdat die de namespace aanmaakt.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec "{{.SECRETS_DIR}}/backup-destination" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
@@ -628,14 +704,27 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
-      OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+      OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}/operations-manager{{else}}bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}{{end}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+    preconditions:
+      - &secrets_dir_current_guard
+        # Op een verouderde clone maakt de generator een secret dat een ander al maakte
+        # opnieuw aan, met een ander wachtwoord; dat zie je pas bij de push.
+        # staging:setup controleert de clone een keer vooraf en zet dan SECRETS_DIR_CHECKED:
+        # na zijn eerste generatiestap is de clone vanzelf niet meer schoon.
+        sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -n "{{.SECRETS_DIR_CHECKED}}" ] || { git -C "{{.SECRETS_DIR}}" fetch -q && [ -z "$(git -C "{{.SECRETS_DIR}}" status --porcelain)" ] && [ "$(git -C "{{.SECRETS_DIR}}" rev-parse HEAD)" = "$(git -C "{{.SECRETS_DIR}}" rev-parse @{u})" ]; }'
+        msg: "{{.SECRETS_DIR}} is niet schoon of loopt niet gelijk met zijn remote. Commit of push eerst, of git pull."
+      - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -696,8 +785,7 @@ tasks:
         done
 
         echo "Finished processing environment variables."
-        echo "Generated secret file content:"
-        cat "$SECRET_FILE"
+        # De inhoud niet tonen: dit zijn de onversleutelde waarden (alleen base64).
 
         # Encrypt with SOPS using the AGE key
         echo "Encrypting secret with SOPS..."
@@ -714,24 +802,30 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
     deps: [generate-env-secrets-for-operations-manager]
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         echo "Updating operations-manager deployment..."
+        # Met SECRETS_DIR draagt de overlay het env-secret niet zelf.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        # On odcn-production the image is a CalVer tag that changes every deploy, so the
+        # On the ODCN clusters the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
         # briefly see three pods. Only restart where apply may see nothing new: the sandbox
         # overlay keeps the tag of its last configure.
-        if [ "{{.CLUSTER}}" = "odcn-production" ]; then
-          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
-        else
+        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        else
+          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -986,10 +1080,13 @@ tasks:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   pin-operations-manager-image:
-    desc: "Pin the odcn-production overlay to a published operations-manager tag"
+    desc: "Pin an ODCN overlay (default odcn-production, or OVERLAY=odcn-staging) to a published operations-manager tag"
     vars:
       IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
-      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
+      # Bewust een eigen default en niet het geselecteerde cluster: een pin is een
+      # deploybeslissing, en die hoort niet stil mee te schuiven met select-cluster.
+      OVERLAY: '{{.OVERLAY | default "odcn-production"}}'
+      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/{{.OVERLAY}}/patches/deployment.yaml
     preconditions:
       - sh: '[ -n "{{.IMAGE_TAG}}" ]'
         msg: |
@@ -1000,12 +1097,12 @@ tasks:
         sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
         rm -f {{.PATCH_FILE}}.bak
         echo ""
-        echo "✅ odcn-production pinned to {{.IMAGE_TAG}}"
+        echo "✅ {{.OVERLAY}} pinned to {{.IMAGE_TAG}}"
         grep -n 'image:' {{.PATCH_FILE}}
         echo ""
         echo "Commit this pin, then deploy:"
         echo "  git add {{.PATCH_FILE}} && git commit -m 'deploy: operations-manager {{.IMAGE_TAG}}'"
-        echo "  task deploy-operations-manager CLUSTER_TYPE=odcn-production"
+        echo "  task deploy-operations-manager CLUSTER_TYPE={{.OVERLAY}}"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
     silent: true
@@ -1182,8 +1279,10 @@ tasks:
       OUTPUT_DIR: '{{.OUTPUT_DIR}}'
       CLUSTER_TYPE: '{{.CLUSTER_TYPE}}'
       CLUSTER_FOLDER: '{{.CLUSTER_FOLDER}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
@@ -1409,25 +1508,71 @@ tasks:
 
   generate-infrastructure-secrets-for-cluster:
     desc: "Generate infrastructure secrets for selected cluster from templates (run 'task select-cluster' first)"
+    preconditions:
+      - *secrets_dir_current_guard
     cmds:
       - task: _generate-secrets-shared
         vars:
           MODE: "infrastructure"
           TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
-          OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
+          OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}{{else}}infrastructure/bootstrap/infrastructure/secrets/config/overlays{{end}}'
           CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+          CLUSTER_FOLDER: '{{if .SECRETS_DIR}}infrastructure{{else}}{{.INFRASTRUCTURE_CLUSTER_FOLDER}}{{end}}'
+      # De mailrelay leest twee van die geheimen in zijn eigen namespace. In de publieke
+      # repo rendert de mail-overlay ze een tweede keer; in de secrets-repo doet de map
+      # ron/ dat, met een eigen Application. Alleen bedrading, geen geheimen.
+      - |
+        if [ -n "{{.SECRETS_DIR}}" ] && [ ! -f "{{.SECRETS_DIR}}/ron/kustomization.yaml" ]; then
+          mkdir -p "{{.SECRETS_DIR}}/ron"
+          RIG_NS="{{.RIG_NAMESPACE}}"
+          printf '%s\n' \
+            'apiVersion: kustomize.config.k8s.io/v1beta1' \
+            'kind: Kustomization' \
+            '' \
+            "namespace: ${RIG_NS%-operations}-ron" \
+            'generators:' \
+            '- decrypt-sops.yaml' > "{{.SECRETS_DIR}}/ron/kustomization.yaml"
+          printf '%s\n' \
+            'apiVersion: viaduct.ai/v1' \
+            'kind: ksops' \
+            'metadata:' \
+            '  name: ron-secret-generator' \
+            '  annotations:' \
+            '    config.kubernetes.io/function: "exec:\n  path: ksops\n"' \
+            'files:' \
+            '- ../infrastructure/mail-relay-secret.yaml.sops.yaml' \
+            '- ../infrastructure/mail-db-credentials-secret.yaml.sops.yaml' > "{{.SECRETS_DIR}}/ron/decrypt-sops.yaml"
+          echo "✅ ron/ aangemaakt in {{.SECRETS_DIR}}"
+        fi
 
   generate-bootstrap-secrets-for-cluster:
     desc: "Generate bootstrap secrets for selected cluster from templates (ArgoCD, etc.) (run 'task select-cluster' first)"
+    preconditions:
+      - *secrets_dir_current_guard
     cmds:
       - task: _generate-secrets-shared
         vars:
           MODE: "bootstrap"
-          TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
-          OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
+          TEMPLATES_DIR: '{{default "bootstrap/rig-system/kustomize/secrets/templates" .BOOTSTRAP_TEMPLATES_DIR}}'
+          OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}{{else}}bootstrap/rig-system/kustomize/overlays{{end}}'
           CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+          CLUSTER_FOLDER: '{{if .SECRETS_DIR}}bootstrap{{else}}{{.BOOTSTRAP_CLUSTER_FOLDER}}{{end}}'
+
+  generate-backup-destination-secret:
+    desc: "Generate the root secret of the backup-destination MinIO into the secrets repo (SECRETS_DIR, odcn-staging)"
+    preconditions:
+      - *secrets_dir_current_guard
+      - sh: '[ -n "{{.SECRETS_DIR}}" ]'
+        msg: "Alleen met SECRETS_DIR: zonder secrets-repo staat dit secret in de overlay zelf."
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "backup-destination"
+          TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/backup-destination/controller/secret-templates"
+          OUTPUT_DIR: "{{.SECRETS_DIR}}"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "backup-destination"
+          RIG_NAMESPACE: "{{.BACKUP_NAMESPACE}}"
 
   build-keycloak-custom-mapper:
     desc: "Build the Keycloak custom mapper JAR"
@@ -3500,3 +3645,219 @@ tasks:
 
         echo "Cluster rig-sandbox deleted and sandbox artifacts cleaned up"
     silent: true
+
+  # ---------------------------------------------------------------------------
+  # staging: ZAD op ODCN in de tenant rig-staging. Zie features/zad-staging.md.
+  # ---------------------------------------------------------------------------
+
+  staging:setup:
+    desc: "Richt staging (odcn-staging) in: sleutel, secrets-repo, tokens, bootstrap, wachten op ArgoCD. Opnieuw te draaien."
+    preconditions:
+      - sh: '[ "{{.CLUSTER_TYPE}}" = "odcn-staging" ]'
+        msg: "Kies eerst odcn-staging met 'task select-cluster' (nu: '{{.CLUSTER_TYPE}}'). Deze taak draait nooit op productie."
+    cmds:
+      - task: staging:check-context
+      - task: generate-age-key
+      - task: staging:clone-secrets
+      - task: generate-infrastructure-secrets-for-cluster
+        vars: {SECRETS_DIR_CHECKED: "true"}
+      - task: generate-bootstrap-secrets-for-cluster
+        vars: {SECRETS_DIR_CHECKED: "true"}
+      - task: generate-backup-destination-secret
+        vars: {SECRETS_DIR_CHECKED: "true"}
+      - task: staging:set-tokens
+      - task: staging:push-secrets
+      - task: staging:check-image
+      - task: bootstrap-argo-system
+      - task: bootstrap-backup-destination
+      - task: staging:wait-ready
+
+  staging:check-context:
+    internal: true
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        # Staging en productie zitten op dezelfde cluster en dus achter dezelfde context;
+        # de groepen zeggen of dit account in de tenant rig-staging mag.
+        CONTEXT="$(kubectl config current-context)"
+        KUBE_GROUPS="$(kubectl auth whoami -o jsonpath='{.status.userInfo.groups}' 2>/dev/null || true)"
+        echo "Context: $CONTEXT"
+        echo "Doel:    tenant rig-staging, namespace {{.RIG_NAMESPACE}}"
+        if ! echo "$KUBE_GROUPS" | grep -q 'rig-staging-admin-group'; then
+          echo "❌ Dit account zit niet in rig-staging-admin-group. Verkeerde context?"
+          exit 1
+        fi
+        if [ "${STAGING_CONFIRM:-}" != "staging" ]; then
+          printf "Typ 'staging' om door te gaan: "
+          read -r ANTWOORD
+          [ "$ANTWOORD" = "staging" ] || { echo "Afgebroken."; exit 1; }
+        fi
+
+  staging:clone-secrets:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        if [ ! -d "{{.SECRETS_DIR}}/.git" ]; then
+          git clone https://github.com/RijksICTGilde/zad-staging-secrets.git "{{.SECRETS_DIR}}"
+        fi
+        # Het risico is een clone die achterloopt: dan maakt de generator geheimen opnieuw
+        # aan die er op GitHub al zijn. Niet-gecommitte bestanden op een clone die gelijk
+        # loopt zijn een afgebroken vorige run, en die hervatten we.
+        git -C "{{.SECRETS_DIR}}" fetch -q
+        if [ "$(git -C "{{.SECRETS_DIR}}" rev-parse HEAD)" != "$(git -C "{{.SECRETS_DIR}}" rev-parse @{u})" ]; then
+          if [ -n "$(git -C "{{.SECRETS_DIR}}" status --porcelain)" ]; then
+            echo "❌ {{.SECRETS_DIR}} loopt niet gelijk met GitHub en heeft niet-gecommitte wijzigingen. Ruim die eerst op."
+            exit 1
+          fi
+          git -C "{{.SECRETS_DIR}}" pull -q --ff-only
+        elif [ -n "$(git -C "{{.SECRETS_DIR}}" status --porcelain)" ]; then
+          echo "ℹ️  niet-gecommitte bestanden in {{.SECRETS_DIR}}: een vorige run wordt hervat"
+        fi
+
+  staging:set-tokens:
+    internal: true
+    silent: true
+    interactive: true
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER_TYPE}}.secrets'
+    cmds:
+      - |
+        set -euo pipefail
+        export SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})"
+        vraag() {  # naam van de omgevingsvariabele, prompt; vraagt alleen als hij niet gezet is
+          # Gezet-maar-leeg telt als antwoord: zo kan "geen SSO" ook zonder prompt.
+          local waarde="${!1:-}"
+          if ! printenv "$1" >/dev/null; then
+            printf "%s: " "$2" >&2
+            # stty en geen read -s: de shell van Task kent die optie niet.
+            stty -echo 2>/dev/null || true; read -r waarde; stty echo 2>/dev/null || true; echo >&2
+          fi
+          printf '%s' "$waarde"
+        }
+
+        # Het PAT van ArgoCD (lezen op de staging-repos), direct versleuteld op zijn plek.
+        for f in "{{.SECRETS_DIR}}"/bootstrap/argocd-repo-*.sops.yaml; do
+          if sops --decrypt "$f" | grep -q 'password: PLACEHOLDER'; then
+            ARGOCD_TOKEN="${ARGOCD_TOKEN:-$(vraag STAGING_ARGOCD_TOKEN 'PAT van ArgoCD (lezen)')}"
+            sops --set "[\"stringData\"][\"password\"] $(python3 -I -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$ARGOCD_TOKEN")" "$f"
+            echo "✅ token gezet in $(basename "$f")"
+          fi
+        done
+
+        # TransIP voor external-dns: hetzelfde account als productie, met een eigen
+        # owner-id en domeinfilter (zie de external-dns-overlay van odcn-staging). De
+        # sleutel is een PEM over meerdere regels, dus die komt uit een bestand.
+        TRANSIP_FILE="{{.SECRETS_DIR}}/infrastructure/transip-secret.yaml.sops.yaml"
+        if [ ! -f "$TRANSIP_FILE" ]; then
+          TRANSIP_ACCOUNT="$(vraag STAGING_TRANSIP_ACCOUNT 'TransIP-accountnaam (dezelfde als productie)')"
+          if printenv STAGING_TRANSIP_KEY_FILE >/dev/null; then
+            TRANSIP_KEY_FILE="$STAGING_TRANSIP_KEY_FILE"
+          else
+            printf "Pad naar de TransIP-sleutel (PEM): " >&2; read -r TRANSIP_KEY_FILE
+          fi
+          # Een prompt vouwt ~ niet uit, dus dat doen we zelf.
+          case "$TRANSIP_KEY_FILE" in "~"/*) TRANSIP_KEY_FILE="$HOME/${TRANSIP_KEY_FILE#??}" ;; esac
+          [ -f "$TRANSIP_KEY_FILE" ] || { echo "❌ $TRANSIP_KEY_FILE bestaat niet"; exit 1; }
+          AGE_PUBLIC_KEY="$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
+          kubectl create secret generic transip-credentials -n {{.RIG_NAMESPACE}} \
+            --from-literal=TRANSIP_ACCOUNT_NAME="$TRANSIP_ACCOUNT" \
+            --from-file=TRANSIP_PRIVATE_KEY="$TRANSIP_KEY_FILE" \
+            --dry-run=client -o yaml \
+            | sops --encrypt --input-type yaml --output-type yaml --age "$AGE_PUBLIC_KEY" /dev/stdin > "$TRANSIP_FILE"
+          grep -qF "transip-secret.yaml.sops.yaml" "{{.SECRETS_DIR}}/infrastructure/decrypt-sops.yaml" \
+            || echo "  - transip-secret.yaml.sops.yaml" >> "{{.SECRETS_DIR}}/infrastructure/decrypt-sops.yaml"
+          echo "✅ transip-credentials versleuteld in de secrets-repo"
+        fi
+
+        # Het env-bestand van de OPI: alleen de eerste keer. Staat het env-secret al in de
+        # secrets-repo (andere laptop, bestand opgeruimd), dan is die de bron en vragen we
+        # niets: een nieuw bestand kreeg een andere SECRET_KEY dan wat er draait.
+        if [ ! -f "{{.ENV_FILE}}" ] && [ ! -f "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" ]; then
+          OPI_TOKEN="$(vraag STAGING_OPI_TOKEN 'PAT van de OPI (schrijven)')"
+          KC_SECRET="$(vraag STAGING_KEYCLOAK_CLIENT_SECRET 'Client secret van zad-staging in de prod-Keycloak (leeg = geen SSO)')"
+          BACKUP_PASSWORD="$(sops --decrypt "{{.SECRETS_DIR}}/backup-destination/minio-credentials-secret.yaml.sops.yaml" | yq '.stringData."root-password"')"
+          # Eerst leeg en alleen voor jou leesbaar, dan pas de tokens erin (geen umask in de
+          # shell van Task).
+          : > "{{.ENV_FILE}}" && chmod 600 "{{.ENV_FILE}}"
+          {
+            echo "SECRET_KEY=$(openssl rand -hex 32)"
+            echo "DEBUG_MODE=false"
+            echo "GIT_PROJECTS_SERVER_PASSWORD=plain:$OPI_TOKEN"
+            echo "GIT_ARGO_APPLICATIONS_PASSWORD=plain:$OPI_TOKEN"
+            echo "PROJECT_REPO_PASSWORD=plain:$OPI_TOKEN"
+            echo "BACKUP_S3_ENDPOINT=http://minio.{{.BACKUP_NAMESPACE}}.svc.cluster.local:9000"
+            echo "BACKUP_S3_ACCESS_KEY=backup-admin"
+            echo "BACKUP_S3_SECRET_KEY=$BACKUP_PASSWORD"
+            if [ -n "$KC_SECRET" ]; then echo "KEYCLOAK_MASTER_OIDC_CLIENT_SECRET=$KC_SECRET"; fi
+          } >> "{{.ENV_FILE}}"
+          echo "✅ {{.ENV_FILE}} aangemaakt (gitignored)"
+        fi
+      # Alleen als het env-secret nog ontbreekt: opnieuw versleutelen bij elke run zou de
+      # secrets-repo elke keer een wijziging geven zonder dat er iets veranderd is. In de
+      # shell en niet met if: op de aanroep, want Task 3.41 negeert dat veld stil.
+      - |
+        if [ ! -f "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" ]; then
+          task generate-env-secrets-for-operations-manager SECRETS_DIR_CHECKED=true SECRETS_DIR="{{.SECRETS_DIR}}" KEY_FILE="{{.KEY_FILE}}"
+        fi
+
+  staging:push-secrets:
+    internal: true
+    silent: true
+    interactive: true
+    cmds:
+      - |
+        cd "{{.SECRETS_DIR}}"
+        if [ -z "$(git status --porcelain)" ]; then echo "secrets-repo: niets nieuws"; exit 0; fi
+        git status --short
+        if [ "${STAGING_CONFIRM:-}" != "staging" ]; then
+          printf "Deze bestanden committen en naar GitHub pushen? [j/N] "
+          read -r ANTWOORD
+          [ "$ANTWOORD" = "j" ] || { echo "Afgebroken: zonder push kan ArgoCD de geheimen niet lezen."; exit 1; }
+        fi
+        git add -A && git commit -q -m "staging: geheimen bijgewerkt door task staging:setup" && git push -q
+        echo "✅ secrets-repo gepusht"
+      - echo "⚠️  Ruim de secrets-overview-*.yaml in deze map op; daar staan de wachtwoorden in platte tekst."
+
+  staging:check-image:
+    internal: true
+    silent: true
+    vars:
+      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-staging/patches/deployment.yaml
+    cmds:
+      - |
+        # Op de INHOUD van de commit van het image en niet op de geschiedenis: commits gaan
+        # als cherry-pick naar GitHub, dus een merge-base zegt hier niets.
+        TAG="$(grep -oE 'operations-manager:[^ ]+' {{.PATCH_FILE}} | head -1 | cut -d: -f2)"
+        COMMIT="$(echo "$TAG" | cut -d- -f2)"
+        if ! git cat-file -e "$COMMIT^{commit}" 2>/dev/null; then
+          echo "❌ commit $COMMIT van image $TAG staat niet in deze checkout; controleer zelf dat het image odcn-staging kent."
+          exit 1
+        fi
+        if ! git show "$COMMIT:operations-manager/python/opi/core/cluster_config.py" | grep -q '"odcn-staging"'; then
+          echo "❌ image $TAG kent odcn-staging niet; de OPI valt dan om bij het starten."
+          echo "   task publish-operations-manager, dan task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>"
+          exit 1
+        fi
+        echo "✅ image $TAG kent odcn-staging"
+
+  staging:wait-ready:
+    desc: "Wacht tot de Applications van staging Synced en Healthy zijn, en toon de tenant-eigenaren"
+    silent: true
+    vars:
+      TIMEOUT: '{{default "900" .TIMEOUT}}'
+    cmds:
+      - |
+        EINDE=$(( $(date +%s) + {{.TIMEOUT}} ))
+        while :; do
+          STAAT="$(kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io -o custom-columns='NAAM:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' --no-headers 2>/dev/null)"
+          if [ -n "$STAAT" ] && ! echo "$STAAT" | grep -vq 'Synced *Healthy'; then break; fi
+          if [ "$(date +%s)" -gt "$EINDE" ]; then echo "❌ na {{.TIMEOUT}}s nog niet klaar:"; echo "$STAAT"; exit 1; fi
+          sleep 15
+        done
+        echo "$STAAT"
+        echo ""
+        echo "Tenant-eigenaren van rig-staging:"
+        kubectl get tenants.capsule.clastix.io rig-staging -o jsonpath='{range .status.owners[*]}{.kind}{"  "}{.name}{"\n"}{end}'

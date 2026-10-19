@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-manager
+spec:
+  template:
+    spec:
+      imagePullSecrets:
+      - name: ghcr-rig-robot-pull-secret
+      containers:
+      - name: operations-manager
+        image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager:2026.10.16.1607-a6ba067f
+        # Limits boven requests, want de pieken zijn kortstondig en het gemiddelde is
+        # laag. OPI splitst per aanroep een kubectl af; bij gelijktijdige verzoeken
+        # lopen dat er tientallen tegelijk zijn (gemeten: 27), en elk kost tientallen
+        # MB's bovenop een rustige basislijn van zo'n 270Mi. Stonden requests en limits
+        # allebei op 1Gi, dan was er geen enkele speling en tikte zo'n uitwaaiering
+        # meteen tegen het plafond: 9 OOMKills, waarvan 8 op 2 september alleen.
+        #
+        # De pieken vallen bovendien tussen twee scrapes van 30 seconden, dus in de
+        # grafieken blijft het een vlakke lijn van ongeveer 300Mi terwijl de zelfgemeten
+        # hoogwaterlijn opi_peak_memory_bytes op 990Mi stond, 97% van de oude limiet.
+        #
+        # Requests op 512Mi: dat is wat hij werkelijk continu gebruikt, en daarmee
+        # reserveert de scheduler niet een halve gigabyte die stil blijft liggen.
+        resources:
+          limits:
+            cpu: "3"
+            memory: 2Gi
+          requests:
+            cpu: "500m"
+            memory: 512Mi
+        env:
+        # OPI's eigen confidential master-client (client-credentials), zodat het
+        # gedeelde admin-wachtwoord geen dagelijkse sleutel meer is en het menselijke
+        # admin-account op OTP kan zonder de automatisering buiten te sluiten.
+        # optional:true zodat een cluster waarvan het secret deze sleutel nog niet
+        # kent gewoon blijft werken: OPI valt dan terug op het admin-wachtwoord.
+        # Bij de eerste boot mét de sleutel maakt OPI de client eenmalig aan met het
+        # admin-wachtwoord en draait daarna volledig op client-credentials.
+        - name: KEYCLOAK_ADMIN_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_ADMIN_CLIENT_SECRET
+              optional: true
+        - name: KEYCLOAK_OTP_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_USERNAME
+              optional: true
+        - name: KEYCLOAK_OTP_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_PASSWORD
+              optional: true
+        - name: KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: keycloak-admin-credentials
+              key: KEYCLOAK_OTP_ADMIN_TOTP_SECRET
+              optional: true
+        - name: KUBERNETES_SERVICE_HOST
+          value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
+        - name: PROMETHEUS_METRICS_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: prometheus-metrics-auth
+              key: token
+        # De mailrelay (RC-114). OPI praat met het BEHEERDERSACCOUNT van de relay en maakt
+        # daarmee alle accounts aan: die van een project en dat van ZAD zelf. Het geheim is
+        # dezelfde gegenereerde bron als die de relay in zijn eigen namespace krijgt, hier
+        # gerenderd in de namespace van OPI - zoals bij Keycloak en PostgreSQL.
+        # optional: true zodat OPI ook op een cluster zonder relay gewoon doorboot; zonder
+        # het geheim blijft de dienst send-email zeggen dat er geen relay is.
+        #
+        # MAIL_RELAY_API_URL is de SCHAKELAAR: leeg betekent "geen relay op dit cluster" en
+        # de dienst weigert dan een account aan te maken in plaats van onbruikbare
+        # inloggegevens uit te delen. Aan sinds 21 augustus 2026, die avond uit gezet toen
+        # de relay in een crashlus zat, en weer aan zodra de RCA rond was en een verse boot
+        # bewezen op onze configuratie draaide. De toelichting staat bij
+        # argocd-application-ron-infrastructure.yaml in de bootstrap-kustomization.
+        - name: MAIL_RELAY_API_URL
+          value: "http://rig-mail-relay.rig-staging-ron.svc.cluster.local:8080"
+        - name: MAIL_RELAY_ADMIN_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: mail-relay-credentials
+              key: MAIL_RELAY_ADMIN_USERNAME
+              optional: true
+        - name: MAIL_RELAY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mail-relay-credentials
+              key: MAIL_RELAY_ADMIN_PASSWORD
+              optional: true
+        # Geen TransIP voor de OPI op staging, anders dan op productie. external-dns heeft
+        # het account wel, maar de DNS-reconcilers van de OPI beheren de CAA- en no-mail-
+        # records van rijks.app, rijksapp.nl en rijksapp.dev; dat doet productie al, en een
+        # tweede schrijver op die records hoort niet in de pentestomgeving. Zonder deze
+        # variabelen slaan ze zichzelf over.
+        - name: LOG_ERRORS_TO_FILE
+          value: "true"
+        - name: LOG_ERRORS_FILE_PATH
+          value: "/data/logs/errors.log"
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/config
+          readOnly: true
+        - name: error-logs
+          mountPath: /data/logs
+      volumes:
+      - name: config-volume
+        configMap:
+          name: operations-manager-config
+      - name: tmp
+        emptyDir:
+          sizeLimit: 8Gi
+      - name: error-logs
+        emptyDir:
+          sizeLimit: 1Gi

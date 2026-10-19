@@ -83,9 +83,9 @@ class KeycloakSetup:
             if bootstrap_config == "local":
                 yaml_filename = "bootstrap-local.yaml"
                 logger.info("Using local bootstrap configuration (upstream IDP mode)")
-            elif bootstrap_config == "sandbox":
+            elif bootstrap_config in ("sandbox", "staging"):
                 yaml_filename = "bootstrap-sandbox.yaml"
-                logger.info("Using sandbox bootstrap configuration (upstream IDP mode)")
+                logger.info(f"Using {bootstrap_config} bootstrap configuration (upstream IDP mode)")
             else:
                 yaml_filename = "bootstrap.yaml"
                 logger.info("Using default bootstrap configuration (production mode)")
@@ -190,7 +190,8 @@ class KeycloakSetup:
 
         Selects the appropriate project file based on KEYCLOAK_BOOTSTRAP_CONFIG:
         - "local" or "sandbox": uses operations-manager-local.yaml (sso-support + admin user)
-        - "default" (production): uses operations-manager.yaml (sso-only)
+        - "default" (production) and "staging": uses operations-manager.yaml (sso-only).
+          Staging is a pentest environment, so it gets no local admin with a known password.
         """
         # Select project file based on bootstrap config
         if settings.KEYCLOAK_BOOTSTRAP_CONFIG in ("local", "sandbox"):

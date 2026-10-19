@@ -371,6 +371,122 @@ CLUSTER_CONFIG = {
             ],
         },
     },
+    # Dezelfde OpenShift-cluster als odcn-production, in de Capsule-tenant rig-staging:
+    # de pentest-omgeving, zie features/zad-staging.md. Wat de cluster zelf bepaalt
+    # (router, storage, Quay) is gelijk aan productie; mail en VLAM komen van de sandbox,
+    # want de RON-koppeling bestaat alleen voor productie.
+    "odcn-staging": {
+        # Dezelfde router-shard als productie, dus ook dezelfde technische zone.
+        "ingress_postfix": ".rig.prd1.gn2.quattro.rijksapps.nl",
+        "namespace_prefix": "rig-staging-",
+        "namespace": "rig-staging-operations",
+        "argo_namespace": "rig-staging-operations",
+        "keycloak_discovery_url": "https://keycloak.staging.rijksapp.dev",
+        "database_server": "rig-db-rw.rig-staging-operations.svc.cluster.local",
+        "minio_host": "minio.rig-staging-operations.svc.cluster.local",
+        "minio_port": 9000,
+        "redis_server": "rig-redis.rig-staging-operations.svc.cluster.local",
+        "backup_namespace": "rig-staging-backup",
+        # Een relay met de mailsink van de sandbox: er gaat geen mail naar buiten.
+        "mail_relay_namespace": "rig-staging-ron",
+        "mail_relay_host": "rig-mail-relay.rig-staging-ron.svc.cluster.local",
+        "service_namespaces": ["rig-staging-operations", "rig-staging-backup", "rig-staging-ron"],
+        "mail_relay_port": 587,
+        "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
+        "database_operator_namespace": "cnpg-system",
+        "ingress_controller_selector": {
+            "namespace": "openshift-ingress",
+            "pod_labels": {
+                "ingresscontroller.operator.openshift.io/deployment-ingresscontroller": "rig",
+            },
+        },
+        "ingress": {
+            "enable_tls": True,
+            "ip_whitelist": "0.0.0.0/0,::/0",
+        },
+        "storage": {
+            "storage_class_name": "ocs-storagecluster-ceph-rbd",
+            "access_modes": ["ReadWriteOnce"],
+            "volume_snapshot_class": "ocs-storagecluster-rbdplugin-snapclass",
+        },
+        "keycloak": {
+            "support_http": False,
+        },
+        "min_memory_limit_mi": 25,
+        "max_memory_limit_mi": 4096,
+        "max_memory_request_mi": 1024,
+        "uses_capsule": True,
+        "min_cpu_m": 25,
+        "max_cpu_request_m": 250,
+        "max_cpu_limit_m": 4000,
+        "supports_vpa": True,
+        "oom_pod_watch": False,
+        "supports_custom_domain_certificates": True,
+        # Een PLAATSHOUDER, net als in de sandbox: er is geen VLAM op staging. Alleen de
+        # bedrading van de dienst is zo end-to-end te doorlopen; het adres wijst naar een
+        # project dat hier niet bestaat.
+        "vlam": {
+            "project": "vlam-wt8",
+            "deployment": "productie",
+            "component": "vlam-proxy-intern",
+            "namespace": "vlam-wt8",
+            "port": 8081,
+            "passthrough_port": 8443,
+            "api_host": "vlam-api.rijksweb.nl",
+            "cluster_ip": "172.30.0.1",
+            "ca_bundle": "vlam-ca.pem",
+        },
+        "letsencrypt": {
+            "contact_email": "rig-platform@rijksoverheid.nl",
+        },
+        "domains": {
+            "supported_domains": [
+                {
+                    "domain": "staging.rijksapp.dev",
+                    "supports_dots": True,
+                    "issuer": "letsencrypt",
+                    "restricted_subdomains": True,
+                    "external_dns_target": "router.rijksapp.dev",
+                },
+            ],
+            "managed_zones": ["staging.rijksapp.dev", "rig.prd1.gn2.quattro.rijksapps.nl"],
+        },
+        "image_registries": {
+            "backend": "quay-proxy-organization",
+            "registry_host": "rcr.rijksapps.nl",
+            "customer_name": "rig",
+            "tenants": ["staging"],
+            "organization_api_version": "quay.k8s.rijksapps.nl/v1alpha1",
+            "rotation_days": 90,
+            "quota_limit_gib": 3,
+            # De gedeelde proxy-caches van de klant rig, dezelfde als in productie.
+            "rules": [
+                {"match": "ghcr.io", "to": "rcr.rijksapps.nl/ghcr-rig", "secret": "ghcr-rig-robot-pull-secret"},
+                {
+                    "match": "docker.io",
+                    "to": "rcr.rijksapps.nl/dockerhub-rig",
+                    "secret": "dockerhub-rig-robot-pull-secret",
+                },
+                {
+                    "match": "registry.gitlab.com",
+                    "to": "rcr.rijksapps.nl/gitlab-rig",
+                    "secret": "gitlab-rig-robot-pull-secret",
+                },
+                {"match": "gcr.io", "to": "rcr.rijksapps.nl/gcr-rig", "secret": "gcr-rig-robot-pull-secret"},
+                {"match": "quay.io", "to": "rcr.rijksapps.nl/quay-rig", "secret": "quay-rig-robot-pull-secret"},
+                {
+                    "match": "registry.k8s.io",
+                    "to": "rcr.rijksapps.nl/k8s-rig",
+                    "secret": "k8s-rig-robot-pull-secret",
+                },
+                {
+                    "match": "code.overheid.nl",
+                    "to": "rcr.rijksapps.nl/code-overheid-rig",
+                    "secret": "code-overheid-rig-robot-pull-secret",
+                },
+            ],
+        },
+    },
 }
 
 

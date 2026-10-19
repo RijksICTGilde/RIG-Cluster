@@ -1,0 +1,28 @@
+# De sink bewaart elke "bezorgde" mail, ook resetlinks en uitnodigingen. Op een gedeelde
+# cluster zonder deze regel kan elke pod hem lezen: alleen de relay mag er post afleveren,
+# en alleen de router mag bij de web-UI (die ingress staat zelf ook alleen op het VPN-bereik).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-mail-sink-access
+  namespace: rig-staging-ron
+spec:
+  podSelector:
+    matchLabels:
+      app: rig-mail-sink
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: rig-mail-relay
+      ports:
+        - protocol: TCP
+          port: 1025
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+      ports:
+        - protocol: TCP
+          port: 8025

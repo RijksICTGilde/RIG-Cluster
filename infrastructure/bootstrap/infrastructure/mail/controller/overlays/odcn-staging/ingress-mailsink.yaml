@@ -1,0 +1,23 @@
+# De web-UI van de mailsink. Alleen vanaf het VPN-bereik, net als Prometheus: hij toont
+# elke mail die de relay "bezorgd" heeft.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rig-mail-sink
+  namespace: rig-staging-ron
+  annotations:
+    haproxy.router.openshift.io/ip_whitelist: "147.181.0.0/16"
+spec:
+  rules:
+    - host: mailsink-staging.rig.prd1.gn2.quattro.rijksapps.nl
+      http:
+        paths:
+          - backend:
+              service:
+                name: rig-mail-sink
+                port:
+                  number: 8025
+            path: /
+            pathType: Prefix
+  tls:
+    - {}

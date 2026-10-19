@@ -1,0 +1,229 @@
+apiVersion: argoproj.io/v1beta1
+kind: ArgoCD
+metadata:
+  name: argocd
+  namespace: rig-system
+spec:
+  # RIG-eigen image: upstream v3.5.1 plus de namespace-sync en health-fixes uit
+  # images/argocd-rig. Alle componenten volgen dit, behalve repo-server (zie spec.repo
+  # verderop), die op de Red Hat build blijft -- dezelfde vorm als sandboxed-local.
+  #
+  # Via rcr.rijksapps.nl en niet via ghcr.io: ODCN kan ghcr niet bereiken, en dat pad is
+  # voor de operations-manager al zo gezet. Het image moet dus in die spiegel staan
+  # VOORDAT dit landt, anders blijft ArgoCD hangen op een pull die niet lukt.
+  #
+  # Een echte versietag en geen 'latest': dan is het uitrolbesluit een commit die je kunt
+  # terugdraaien, en weet je achteraf welke build er draait.
+  image: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig
+  version: v3.5.1-rig2
+  # Alleen keys die de operator in argocd-cm zet EN die ArgoCD daar leest. De
+  # cmd-params-keys die hier stonden kwamen nooit bij een component aan (RC-250);
+  # tests/test_argocd_extra_config_keys.py houdt dit blok daarvan vrij.
+  # Op dit cluster veranderde weghalen niets: die waarden herhaalden de operator-default of
+  # stonden langs de werkende route (spec.controller/spec.server) al goed.
+  extraConfig:
+    timeout.reconciliation: "15m"
+    timeout.hard.reconciliation: "0s"
+  server:
+    extraCommandArgs:
+      - --repo-server-timeout-seconds=180
+    host: argocd-staging.rig.prd1.gn2.quattro.rijksapps.nl
+    autoscale:
+      enabled: false
+    grpc:
+      ingress:
+        enabled: false
+    ingress:
+      enabled: false
+    resources:
+      limits:
+        cpu: "1"
+        # Was 512Mi met een request van 128Mi, en daarop is de server vier keer OOMKilled
+        # (exit 137). Steady state is ~375Mi, dus de request lag een factor 3 te laag en de
+        # limit liet geen ruimte voor een piek. De request dekt nu het gemeten gebruik, de
+        # limit geeft daarboven dezelfde marge nog een keer.
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 384Mi
+    insecure: true
+    route:
+      annotations:
+        # limit access to within VPN of ODCN
+        haproxy.router.openshift.io/ip_whitelist: 147.181.15.230
+      enabled: true
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+    service:
+      type: ''
+  grafana:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  resourceTrackingMethod: annotation
+  monitoring:
+    enabled: false
+  notifications:
+    enabled: false
+  prometheus:
+    enabled: false
+    ingress:
+      enabled: false
+    route:
+      enabled: false
+  initialSSHKnownHosts: {}
+  applicationSet:
+    resources:
+      limits:
+        cpu: 100m
+        memory: 512Mi
+      requests:
+        cpu: 50m
+        memory: 256Mi
+  rbac:
+    defaultPolicy: 'role:none'
+    policy: |-
+      # Access Control
+      p, role:none, applications, get, */*, deny
+      p, role:none, certificates, get, *, deny
+      p, role:none, clusters, get, *, deny
+      p, role:none, repositories, get, *, deny
+      p, role:none, projects, get, *, deny
+      p, role:none, accounts, get, *, deny
+      p, role:none, gpgkeys, get, *, deny
+      g, system:cluster-admins, role:admin
+      g, rig-staging-admin-group, role:admin
+      g, rig-staging-developer-group, role:admin
+      g, rig-staging-viewer-group, role:readonly
+    scopes: '[groups]'
+  sso:
+    dex:
+      openShiftOAuth: true
+      resources:
+        limits:
+          cpu: 100m
+          memory: 256Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+    provider: dex
+  repo:
+    env:
+      - name: ARGOCD_EXEC_TIMEOUT
+        value: "180s"
+      - name: ARGOCD_GIT_ATTEMPTS_COUNT
+        value: "3"
+      - name: ARGOCD_HELM_ALLOW_CONCURRENCY
+        value: "true"
+    resources:
+      limits:
+        cpu: "2"
+        memory: 2Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    serviceaccount: argocd-argocd-server
+    sidecarContainers:
+      - name: cmp-server
+        command:
+          - /var/run/argocd/argocd-cmp-server
+        image: rig-cmp-argo-kustomize-sops:latest
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: ARGOCD_EXEC_TIMEOUT
+            value: "180s"
+          - name: KUSTOMIZE_PLUGIN_HOME
+            value: /etc/kustomize/plugin
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 999
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+          - mountPath: /var/run/argocd
+            name: var-files
+          - mountPath: /home/argocd/cmp-server/plugins
+            name: plugins
+          - mountPath: /home/argocd/cmp-server/config
+            name: cmp-plugin
+          - mountPath: /tmp
+            name: cmp-tmp
+    volumes:
+      - name: cmp-plugin
+        configMap:
+          name: cmp-plugin
+      - name: cmp-tmp
+        emptyDir: {}
+  resourceHealthChecks:
+    - check: |
+        hs = {}
+        if obj.status ~= nil and obj.status.readyInstances ~= nil then
+            if obj.status.readyInstances == obj.spec.instances then
+                hs.status = "Healthy"
+                hs.message = obj.status.phase
+                return hs
+            end
+            if obj.status.instancesStatus.failed ~= nil then
+                hs.status = "Degraded"
+                hs.message = obj.status.phase
+                return hs
+            end
+        end
+        hs.status = "Progressing"
+        hs.message = obj.status.phase
+        return hs
+      group: postgresql.cnpg.io
+      kind: Cluster
+  ha:
+    enabled: false
+  tls:
+    ca: {}
+  redis:
+    resources:
+      limits:
+        cpu: "500m"
+        memory: 256Mi
+      requests:
+        cpu: "250m"
+        memory: 64Mi
+  controller:
+    extraCommandArgs:
+      - --repo-server-timeout-seconds=180
+      # De bovengrens op een sync-operation; de default 0 is nooit. Als flag en niet als
+      # extraConfig-key, want geen enkele cmd-params-key bereikt onder deze operator de
+      # controller. Waarom dit nodig is en waarom 600: features/vastgelopen-sync-breekt-af.md.
+      - --sync-timeout=600
+    env:
+      - name: ARGOCD_REPO_SERVER_TIMEOUT_SECONDS
+        value: "180"
+      - name: ARGOCD_K8S_CLIENT_QPS
+        value: "50"
+      - name: ARGOCD_K8S_CLIENT_BURST
+        value: "100"
+    processors: {}
+    resources:
+      limits:
+        cpu: "4"
+        memory: 8Gi
+      requests:
+        cpu: "1"
+        memory: 4Gi
+    # Sharding disabled - not needed for current cluster size.
+    # Enable when managing 100+ applications for better performance.
+    # sharding:
+    #   enabled: true
+    #   replicas: 2
