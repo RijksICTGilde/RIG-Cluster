@@ -1,5 +1,7 @@
 # De tests in vijf lagen, en de snelle lus in een minuut
 
+Kaart: RijksICTGilde/RIG-Cluster#223 (ZAD-bord).
+
 ## Aanleiding
 
 Gemeten op 19 oktober 2026, op main `2ac8c130b`, op een machine met 14 cores, alles op één core zoals het nu draait:
