@@ -504,8 +504,10 @@ tasks:
         fi
 
         # De sleutel voor de CMP in de platformnamespace. Alleen aanmaken als hij er nog
-        # niet is, om dezelfde reden als bij de ron-namespace hieronder.
+        # niet is, om dezelfde reden als bij de ron-namespace hieronder. Het managed-by-label
+        # gaat er net als daar pas na het aanmaken op (Kyverno); op productie staat het al.
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          kubectl label namespace {{.RIG_NAMESPACE}} argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
           if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
             echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
           else
