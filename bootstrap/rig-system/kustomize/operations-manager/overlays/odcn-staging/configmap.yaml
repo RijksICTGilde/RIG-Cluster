@@ -1,0 +1,71 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operations-manager-config
+  namespace: rig-system
+data:
+  .env: |
+    CLUSTER_MANAGER=odcn-staging
+    # Upstream-IdP zoals de sandbox, maar geen lokale beheerder in het OPI-realm: staging
+    # is een pentestomgeving. Zie opi/bootstrap/keycloak_setup.py.
+    KEYCLOAK_BOOTSTRAP_CONFIG=staging
+
+    # De wachtwoorden van de drie git-repos staan niet hier maar in het env-secret uit
+    # de private repo zad-staging-secrets: GIT_PROJECTS_SERVER_PASSWORD,
+    # GIT_ARGO_APPLICATIONS_PASSWORD en PROJECT_REPO_PASSWORD.
+    ENABLE_GIT_MONITOR=false
+    GIT_PROJECTS_SERVER_URL=https://github.com/RijksICTGilde/zad-staging-projects.git
+    GIT_PROJECTS_SERVER_USERNAME=git
+    GIT_PROJECTS_SERVER_REPO_PATH=/
+    GIT_PROJECTS_SERVER_FILE_PATH=projects/simple-example.yaml
+    GIT_PROJECTS_SERVER_BRANCH=main
+    GIT_PROJECTS_SERVER_POLL_INTERVAL=120
+
+    GIT_ARGO_APPLICATIONS_URL=https://github.com/RijksICTGilde/zad-staging-argo-applications.git
+    GIT_ARGO_APPLICATIONS_USERNAME=git
+    GIT_ARGO_APPLICATIONS_BRANCH=main
+
+    PROJECT_REPO_URL=https://github.com/RijksICTGilde/zad-staging-deployments.git
+    PROJECT_REPO_USERNAME=git
+    PROJECT_REPO_BRANCH=main
+
+    DATABASE_HOST=rig-db-rw
+    MINIO_HOST=minio:9000
+
+    OWN_DOMAIN=zad.staging.rijksapp.dev
+    ADDITIONAL_DOMAINS="operations-manager-staging.rig.prd1.gn2.quattro.rijksapps.nl"
+
+    OIDC_CLIENT_ID=rig-platform-operations-manager
+    OIDC_DISCOVERY_URL=https://keycloak.staging.rijksapp.dev/realms/rig-platform/.well-known/openid-configuration
+
+    KEYCLOAK_URL=https://keycloak.staging.rijksapp.dev
+    KEYCLOAK_ENFORCE_ADMIN_OTP=true
+
+    # De upstream: het rig-platform-realm van de productie-Keycloak. Een EIGEN client en
+    # niet development-clusters (dat is de sandbox), zodat staging los in te trekken is.
+    # De client bestaat nog niet; het secret komt in het env-secret als
+    # KEYCLOAK_MASTER_OIDC_CLIENT_SECRET. Zie features/zad-staging.md.
+    KEYCLOAK_MASTER_OIDC_CLIENT_ID=zad-staging
+    KEYCLOAK_MASTER_OIDC_DISCOVERY_URL=https://keycloak.rijksapp.nl/realms/rig-platform/.well-known/openid-configuration
+
+    PROMETHEUS_URL=http://prometheus.rig-staging-operations:9090
+    PROMETHEUS_EXTERNAL_URL=https://prometheus-staging.rig.prd1.gn2.quattro.rijksapps.nl
+
+    ARGOCD_HOST=argocd-server
+    ARGOCD_PORT=80
+
+    LOG_TO_FILE=false
+    USE_UNSAFE_API_KEY=false
+
+    # Dezelfde lijsten als productie; wie er tijdens de pentest bij mag, is een keuze die
+    # nog gemaakt moet worden.
+    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
+    ENABLE_TRACEMALLOC=false
+    ARGOCD_MANAGER=rig-staging-operations
+
+    # Geen GRAFANA_DATASOURCE_UID en geen REGISTRY_*: de Mimir-datasources tonen de
+    # metrics van productie, en de registry-organisatie rig/zad is die van productie.
+    # Zonder REGISTRY_URL staat de image-upload uit.
+
+    SLEEP_MODE_WAKER_IMAGE=rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker:latest

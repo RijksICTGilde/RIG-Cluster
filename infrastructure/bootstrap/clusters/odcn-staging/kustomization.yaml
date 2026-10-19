@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Dezelfde componenten als odcn, met twee verschillen:
+#   - geen secrets-overlay: de geheimen komen uit de private repo zad-staging-secrets,
+#     via de Application infrastructure-secrets (bootstrap/rig-system/kustomize/overlays/
+#     odcn-staging);
+#   - de mailrelay draait, net als op productie, via een eigen Application
+#     (ron-infrastructure) en dus niet via deze kustomization.
+resources:
+  - ../../infrastructure/postgresql/database/overlays/odcn-staging
+  - ../../infrastructure/keycloak/controller/overlays/odcn-staging
+  - ../../infrastructure/keycloak/config/overlays/odcn-staging
+  - ../../infrastructure/minio/controller/overlays/odcn-staging
+  - ../../infrastructure/minio/config/overlays/odcn-staging
+  - ../../infrastructure/prometheus/controller/overlays/odcn-staging
+  - ../../infrastructure/redis/controller/overlays/odcn-staging
+  - ../../infrastructure/external-dns/controller/overlays/odcn-staging

@@ -1,0 +1,32 @@
+# De RON-namespace, aangemaakt door de BOOTSTRAP (task bootstrap-argo-system past dit
+# bestand LOS toe, met kale kubectl) en niet door ArgoCD: die draait op ODCN in
+# namespaced mode en kan geen Namespace-resources beheren. Los, en niet via de
+# kustomization hiernaast: haar namespace-transformer hernoemt elk Namespace-object
+# naar rig-staging-operations. De ron-infrastructure Application deployt er vervolgens IN,
+# en de CMP eist dat hij bestaat voordat er ook maar iets rendert.
+#
+# Wat er naast de namespace nog nodig is en niet uit git kan komen: het secret
+# sops-age-key in deze namespace (de CMP leest de AGE-sleutel in de namespace van de
+# app). Dezelfde taak die dit bestand toepast zet dat secret er sinds RC-261 zelf in,
+# als het er nog niet is.
+# Het label argocd.argoproj.io/managed-by staat hier BEWUST NIET in: de Kyverno-policy
+# van ODCN (validate-argocd-customer-prefix-on-namespace) valideert dat label met een
+# APICall naar de namespace zelf, en die bestaat bij het aanmaken nog niet - de policy
+# weigert dan de hele create (gemeten 21 augustus 2026). OPI loopt bij tenant-namespaces
+# om dezelfde reden dezelfde omweg: eerst de namespace, dan het label. De bootstrap-taak
+# zet het label direct na de apply; zonder dat label kan de ron-infrastructure app hier
+# niets beheren.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rig-staging-ron
+  labels:
+    app.kubernetes.io/name: operations-ron
+    app.kubernetes.io/component: mail
+    app.kubernetes.io/part-of: rig-platform
+  annotations:
+    # Geen RON op staging: de relay bezorgt bij de sink in deze namespace, en zijn
+    # netpol laat verder alleen DNS en de database toe. "internet" zoals bij de
+    # namespaces die OPI aanmaakt; of ODCN een namespace zonder deze annotatie toelaat,
+    # is niet gemeten.
+    egress.projectcalico.org/egressGatewayPolicy: "internet"
