@@ -711,6 +711,11 @@ tasks:
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
     preconditions:
+      - &secrets_dir_current_guard
+        # Op een verouderde clone maakt de generator een secret dat een ander al maakte
+        # opnieuw aan, met een ander wachtwoord; dat zie je pas bij de push.
+        sh: '[ -z "{{.SECRETS_DIR}}" ] || { git -C "{{.SECRETS_DIR}}" fetch -q && [ -z "$(git -C "{{.SECRETS_DIR}}" status --porcelain)" ] && [ "$(git -C "{{.SECRETS_DIR}}" rev-parse HEAD)" = "$(git -C "{{.SECRETS_DIR}}" rev-parse @{u})" ]; }'
+        msg: "{{.SECRETS_DIR}} is niet schoon of loopt niet gelijk met zijn remote. Commit of push eerst, of git pull."
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
@@ -1500,6 +1505,8 @@ tasks:
 
   generate-infrastructure-secrets-for-cluster:
     desc: "Generate infrastructure secrets for selected cluster from templates (run 'task select-cluster' first)"
+    preconditions:
+      - *secrets_dir_current_guard
     cmds:
       - task: _generate-secrets-shared
         vars:
@@ -1537,6 +1544,8 @@ tasks:
 
   generate-bootstrap-secrets-for-cluster:
     desc: "Generate bootstrap secrets for selected cluster from templates (ArgoCD, etc.) (run 'task select-cluster' first)"
+    preconditions:
+      - *secrets_dir_current_guard
     cmds:
       - task: _generate-secrets-shared
         vars:
@@ -1549,6 +1558,7 @@ tasks:
   generate-backup-destination-secret:
     desc: "Generate the root secret of the backup-destination MinIO into the secrets repo (SECRETS_DIR, odcn-staging)"
     preconditions:
+      - *secrets_dir_current_guard
       - sh: '[ -n "{{.SECRETS_DIR}}" ]'
         msg: "Alleen met SECRETS_DIR: zonder secrets-repo staat dit secret in de overlay zelf."
     cmds:
