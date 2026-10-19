@@ -63,15 +63,17 @@ task staging:setup
 1. controleert de context: je account moet in `rig-staging-admin-group` zitten, en je typt `staging` om door te gaan;
 2. maakt `security/odcn-staging-key.txt` als die ontbreekt, en clonet `zad-staging-secrets` naast het project (een afgebroken vorige run hervat hij; een clone die achterloopt op GitHub weigert hij);
 3. genereert de infra-, bootstrap- en backup-geheimen in die clone;
-4. vraagt het PAT van ArgoCD (lezen op `zad-staging-argo-applications`, `zad-staging-secrets` en `zad-staging-deployments`), het PAT van de OPI (schrijven op de drie datarepos) en het client secret van `zad-staging` (leeg = geen SSO), en zet ze versleuteld op hun plek; het env-bestand van de OPI maakt hij alleen de eerste keer;
+4. vraagt het PAT van ArgoCD (lezen op `zad-staging-argo-applications`, `zad-staging-secrets` en `zad-staging-deployments`), het PAT van de OPI (schrijven op de drie datarepos), het client secret van `zad-staging` (leeg = geen SSO) en het TransIP-account van productie (accountnaam en het pad naar de PEM-sleutel) voor external-dns, en zet ze versleuteld op hun plek; het env-bestand van de OPI maakt hij alleen als het env-secret nog niet in de secrets-repo staat;
 5. commit en pusht de secrets-repo na bevestiging;
 6. stopt als het gepinde OPI-image `odcn-staging` niet kent;
 7. draait `bootstrap-argo-system` en `bootstrap-backup-destination`;
 8. wacht tot de Applications Synced en Healthy zijn, en toont de tenant-eigenaren.
 
-Zonder vragen: zet `STAGING_CONFIRM=staging`, `STAGING_ARGOCD_TOKEN`, `STAGING_OPI_TOKEN` en `STAGING_KEYCLOAK_CLIENT_SECRET` (gezet maar leeg betekent geen SSO).
+Zonder vragen: zet `STAGING_CONFIRM=staging`, `STAGING_ARGOCD_TOKEN`, `STAGING_OPI_TOKEN`, `STAGING_KEYCLOAK_CLIENT_SECRET` (gezet maar leeg betekent geen SSO), `STAGING_TRANSIP_ACCOUNT` en `STAGING_TRANSIP_KEY_FILE`.
 
-Wat hij bewust niet doet: het OPI-image bouwen (`task publish-operations-manager`, dan `task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>`), de ArgoCD-operator installeren (die is op ODCN van het platform; `prepare-argocd-operator` weigert daar), en DNS.
+Wat hij bewust niet doet: het OPI-image bouwen (`task publish-operations-manager`, dan `task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>`), de ArgoCD-operator installeren (die is op ODCN van het platform; `prepare-argocd-operator` weigert daar), en de client `zad-staging` in de prod-Keycloak aanmaken (dat doe je vooraf met de hand).
+
+DNS doet external-dns, net als op productie: hij maakt de records aan zodra er een ingress is, met het TransIP-account van productie maar alleen voor `staging.rijksapp.dev` en met owner-id `zad-staging`. De OPI krijgt op staging geen TransIP: zijn CAA- en no-mail-records in `rijks.app`, `rijksapp.nl` en `rijksapp.dev` beheert productie al, en een tweede schrijver daarop hoort niet in de pentestomgeving.
 
 Ruim na afloop de `secrets-overview-*.yaml` in de root van RIG-Cluster op: daar staan de gegenereerde wachtwoorden in platte tekst. Ze staan bewust daar (gitignored) en niet in de secrets-repo. Het env-bestand `operations-manager/python/.env.odcn-staging.secrets` (gitignored, alleen voor jou leesbaar) bevat de PAT's en is de bron voor het env-secret.
 
@@ -95,7 +97,7 @@ Lokaal is alles gebouwd en gerenderd; dit kan alleen op de cluster:
 
 ## Open beslissingen
 
-- **TransIP.** external-dns en de CAA-reconciler van de OPI gebruiken een TransIP-sleutel, en TransIP kent geen sleutels per zone: een staging-sleutel kan ook `rijksapp.nl` en `rijks.app` wijzigen. Het alternatief is een wildcard `*.staging.rijksapp.dev` als CNAME naar `router.rijksapp.dev`, met de hand gezet, en dan geen external-dns en geen `transip-credentials` op staging. De OPI slaat zijn DNS-werk dan zelf over. Tot dit besloten is, staat external-dns in de clusterlijst maar ontbreekt het secret.
+- **TransIP.** Besloten: external-dns op staging gebruikt het TransIP-account van productie, met eigen filter en owner-id. TransIP kent geen sleutels per zone, dus wie staging overneemt kan met die sleutel ook `rijksapp.nl` en `rijks.app` wijzigen; een eigen TransIP-sleutel (in te trekken zonder productie te raken) is het minimum om later te regelen.
 - **`emergency-restore-allow-all`.** Productie draagt een allow-all-netpol in `rig-prd-operations` sinds de storing van 10 juni; staging heeft hem overgenomen om gelijk aan productie te zijn. Voor de pentest is dat een bewuste keuze: met de policy toets je wat productie heeft, zonder toets je wat productie zou moeten hebben.
 - **Wie er bij mag.** `ALLOWED_EMAILS` en `ADMIN_EMAILS` zijn die van productie.
 - **De kubecontext.** Staging en productie bereik je met dezelfde context. Het fundament pinde `KUBE_CONTEXT` per cluster en controleerde hem voor elke taak; hier is dat nog niet gebouwd. De overlays van staging noemen hun namespaces expliciet, maar een verkeerd geselecteerd cluster past de overlays van productie toe.
