@@ -1,0 +1,61 @@
+# Hoi, voor onze tenant rig-staging willen we dezelfde tenant-owners als in rig-prd, nu
+# voor vier serviceaccounts in rig-staging-operations. Met het promote-label zijn ze wel
+# eigenaar, maar geen Capsule-gebruiker: via capsule-proxy krijgen external-dns en
+# namespace-manager Forbidden op het lijsten van ingresses en namespaces. Hieronder het
+# manifest zoals wij vermoeden dat het er in productie uitziet. De TenantOwners zelf
+# kunnen we niet lezen, dus neem gerust jullie eigen vorm over. Alvast bedankt!
+apiVersion: capsule.clastix.io/v1beta2
+kind: TenantOwner
+metadata:
+  name: rig-staging-namespace-manager
+  labels:
+    customer: rig
+    tenant: staging
+spec:
+  kind: ServiceAccount
+  name: system:serviceaccount:rig-staging-operations:namespace-manager
+  clusterRoles:
+    - admin
+    - capsule-namespace-deleter
+---
+apiVersion: capsule.clastix.io/v1beta2
+kind: TenantOwner
+metadata:
+  name: rig-staging-argocd-application-controller
+  labels:
+    customer: rig
+    tenant: staging
+spec:
+  kind: ServiceAccount
+  name: system:serviceaccount:rig-staging-operations:argocd-argocd-application-controller
+  clusterRoles:
+    - admin
+    - capsule-namespace-deleter
+---
+apiVersion: capsule.clastix.io/v1beta2
+kind: TenantOwner
+metadata:
+  name: rig-staging-argocd-server
+  labels:
+    customer: rig
+    tenant: staging
+spec:
+  kind: ServiceAccount
+  name: system:serviceaccount:rig-staging-operations:argocd-argocd-server
+  clusterRoles:
+    - admin
+    - capsule-namespace-deleter
+---
+apiVersion: capsule.clastix.io/v1beta2
+kind: TenantOwner
+metadata:
+  name: rig-staging-external-dns
+  labels:
+    customer: rig
+    tenant: staging
+spec:
+  kind: ServiceAccount
+  name: system:serviceaccount:rig-staging-operations:external-dns
+  clusterRoles:
+    - admin
+    - capsule-namespace-deleter

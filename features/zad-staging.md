@@ -43,7 +43,7 @@ De Taskfile kiest dit pad met `SECRETS_DIR` in `.env-taskfile-odcn-staging`. Zon
 
 ### Wat er moet zijn voordat je begint
 
-Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) promoveren we zelf met het label `owner.projectcapsule.dev/promote: "true"`. ODC-Noord biedt dat als self-service voor een serviceaccount binnen één tenant; alleen eigenaarschap over al je tenants tegelijk gaat via een TopDesk-aanvraag. De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
+Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) moeten via ODC-Noord TenantOwner worden, zoals in productie. Het aanvraagbestand is `docs/odcn-aanvraag-staging-tenantowners.yaml`. Promotie met het label `owner.projectcapsule.dev/promote` (staat in de overlays) maakt ze wel eigenaar binnen de tenant, maar geen Capsule-gebruiker: via capsule-proxy krijgen ze Forbidden op clusterbrede lijsten (gemeten 19 oktober 2026). Dat breekt external-dns (ingresses), de OPI (namespaces) en de discovery van Prometheus. ArgoCD zelf werkt wel met alleen promotie.
 
 Zelf:
 
