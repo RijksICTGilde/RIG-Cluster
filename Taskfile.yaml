@@ -471,6 +471,10 @@ tasks:
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
     preconditions:
       - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
 
@@ -486,6 +490,26 @@ tasks:
         # Build and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
 
+        # De repo-credentials van ArgoCD uit de secrets-repo, na de overlay omdat die de
+        # namespace aanmaakt. ArgoCD pakt een repository-secret op zodra het er staat.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec "{{.SECRETS_DIR}}/bootstrap" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
+
+        # De sleutel voor de CMP in de platformnamespace. Alleen aanmaken als hij er nog
+        # niet is, om dezelfde reden als bij de ron-namespace hieronder.
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
+            echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
+          else
+            kubectl create secret generic sops-age-key \
+              --from-file=key={{.KEY_FILE}} \
+              -n {{.RIG_NAMESPACE}} \
+              --dry-run=client -o yaml | kubectl apply -f -
+            echo "secret sops-age-key aangemaakt in {{.RIG_NAMESPACE}}"
+          fi
+        fi
+
         # Extra namespaces die niet DOOR de overlay-kustomization kunnen: haar
         # namespace-transformer hernoemt elk Namespace-object naar de eigen
         # namespace-waarde (gemeten 21 augustus 2026 als ID-conflict met rig-prd-ron).
@@ -496,8 +520,9 @@ tasks:
         # tenant-namespaces (project_manager, "apply the label after creating").
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
+          RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
-            kubectl label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite
+            kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
 
             # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
             # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
@@ -505,14 +530,14 @@ tasks:
             # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
             # platformsleutel draagt een rotatie zijn, en die loopt langs
             # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
-            if kubectl get secret sops-age-key -n rig-prd-ron >/dev/null 2>&1; then
-              echo "secret sops-age-key staat al in rig-prd-ron, ongemoeid gelaten"
+            if kubectl get secret sops-age-key -n "$RON_NAMESPACE" >/dev/null 2>&1; then
+              echo "secret sops-age-key staat al in $RON_NAMESPACE, ongemoeid gelaten"
             else
               kubectl create secret generic sops-age-key \
                 --from-file=key={{.KEY_FILE}} \
-                -n rig-prd-ron \
+                -n "$RON_NAMESPACE" \
                 --dry-run=client -o yaml | kubectl apply -f -
-              echo "secret sops-age-key aangemaakt in rig-prd-ron"
+              echo "secret sops-age-key aangemaakt in $RON_NAMESPACE"
             fi
           fi
         fi
@@ -549,11 +574,15 @@ tasks:
   bootstrap-backup-destination:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
-      CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn
+      CLUSTER: '{{default .INFRASTRUCTURE_CLUSTER_FOLDER .CLUSTER}}'  # overlay name, e.g. odcn
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
     preconditions:
       - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
 
@@ -568,6 +597,12 @@ tasks:
 
         # Build (SOPS-decrypted) and apply
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+
+        # Met SECRETS_DIR staat het root-secret in de secrets-repo (task
+        # generate-backup-destination-secret), na de overlay omdat die de namespace aanmaakt.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec "{{.SECRETS_DIR}}/backup-destination" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
@@ -665,11 +700,15 @@ tasks:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
-      OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
+      OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}/operations-manager{{else}}bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}{{end}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
     preconditions:
       - *age_key_file_guard
+      # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
+      # geheimen staan dan daar en niet in de overlays van deze publieke repo.
+      - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
+        msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -758,6 +797,10 @@ tasks:
     cmds:
       - |
         echo "Updating operations-manager deployment..."
+        # Met SECRETS_DIR draagt de overlay het env-secret niet zelf.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
+        fi
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
         # On the ODCN clusters the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
@@ -1452,9 +1495,35 @@ tasks:
         vars:
           MODE: "infrastructure"
           TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/secrets/templates"
-          OUTPUT_DIR: "infrastructure/bootstrap/infrastructure/secrets/config/overlays"
+          OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}{{else}}infrastructure/bootstrap/infrastructure/secrets/config/overlays{{end}}'
           CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.INFRASTRUCTURE_CLUSTER_FOLDER}}"
+          CLUSTER_FOLDER: '{{if .SECRETS_DIR}}infrastructure{{else}}{{.INFRASTRUCTURE_CLUSTER_FOLDER}}{{end}}'
+      # De mailrelay leest twee van die geheimen in zijn eigen namespace. In de publieke
+      # repo rendert de mail-overlay ze een tweede keer; in de secrets-repo doet de map
+      # ron/ dat, met een eigen Application. Alleen bedrading, geen geheimen.
+      - |
+        if [ -n "{{.SECRETS_DIR}}" ] && [ ! -f "{{.SECRETS_DIR}}/ron/kustomization.yaml" ]; then
+          mkdir -p "{{.SECRETS_DIR}}/ron"
+          RIG_NS="{{.RIG_NAMESPACE}}"
+          printf '%s\n' \
+            'apiVersion: kustomize.config.k8s.io/v1beta1' \
+            'kind: Kustomization' \
+            '' \
+            "namespace: ${RIG_NS%-operations}-ron" \
+            'generators:' \
+            '- decrypt-sops.yaml' > "{{.SECRETS_DIR}}/ron/kustomization.yaml"
+          printf '%s\n' \
+            'apiVersion: viaduct.ai/v1' \
+            'kind: ksops' \
+            'metadata:' \
+            '  name: ron-secret-generator' \
+            '  annotations:' \
+            '    config.kubernetes.io/function: "exec:\n  path: ksops\n"' \
+            'files:' \
+            '- ../infrastructure/mail-relay-secret.yaml.sops.yaml' \
+            '- ../infrastructure/mail-db-credentials-secret.yaml.sops.yaml' > "{{.SECRETS_DIR}}/ron/decrypt-sops.yaml"
+          echo "✅ ron/ aangemaakt in {{.SECRETS_DIR}}"
+        fi
 
   generate-bootstrap-secrets-for-cluster:
     desc: "Generate bootstrap secrets for selected cluster from templates (ArgoCD, etc.) (run 'task select-cluster' first)"
@@ -1462,10 +1531,25 @@ tasks:
       - task: _generate-secrets-shared
         vars:
           MODE: "bootstrap"
-          TEMPLATES_DIR: "bootstrap/rig-system/kustomize/secrets/templates"
-          OUTPUT_DIR: "bootstrap/rig-system/kustomize/overlays"
+          TEMPLATES_DIR: '{{default "bootstrap/rig-system/kustomize/secrets/templates" .BOOTSTRAP_TEMPLATES_DIR}}'
+          OUTPUT_DIR: '{{if .SECRETS_DIR}}{{.SECRETS_DIR}}{{else}}bootstrap/rig-system/kustomize/overlays{{end}}'
           CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
-          CLUSTER_FOLDER: "{{.BOOTSTRAP_CLUSTER_FOLDER}}"
+          CLUSTER_FOLDER: '{{if .SECRETS_DIR}}bootstrap{{else}}{{.BOOTSTRAP_CLUSTER_FOLDER}}{{end}}'
+
+  generate-backup-destination-secret:
+    desc: "Generate the root secret of the backup-destination MinIO into the secrets repo (SECRETS_DIR, odcn-staging)"
+    preconditions:
+      - sh: '[ -n "{{.SECRETS_DIR}}" ]'
+        msg: "Alleen met SECRETS_DIR: zonder secrets-repo staat dit secret in de overlay zelf."
+    cmds:
+      - task: _generate-secrets-shared
+        vars:
+          MODE: "backup-destination"
+          TEMPLATES_DIR: "infrastructure/bootstrap/infrastructure/backup-destination/controller/secret-templates"
+          OUTPUT_DIR: "{{.SECRETS_DIR}}"
+          CLUSTER_TYPE: "{{.CLUSTER_TYPE}}"
+          CLUSTER_FOLDER: "backup-destination"
+          RIG_NAMESPACE: "{{.BACKUP_NAMESPACE}}"
 
   build-keycloak-custom-mapper:
     desc: "Build the Keycloak custom mapper JAR"

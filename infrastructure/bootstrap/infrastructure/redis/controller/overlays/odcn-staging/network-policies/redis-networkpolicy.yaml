@@ -1,0 +1,41 @@
+# podSelector + policyTypes maakt redis-pods automatisch deny-by-default;
+# alleen verkeer dat hieronder expliciet allowed wordt komt door.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-redis-access
+  namespace: rig-staging-operations
+spec:
+  podSelector:
+    matchLabels:
+      app: rig-redis
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Platform namespace (OPI gebruikt Redis voor cache/sessions).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-operations
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Tenant namespaces met apps die de gedeelde Redis gebruiken.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,77 @@
+# podSelector + policyTypes maakt postgres-pods automatisch deny-by-default;
+# alleen verkeer dat hieronder expliciet allowed wordt komt door.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-access
+  namespace: rig-staging-operations
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: rig-db
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Platform namespace (OPI, Keycloak, co-located workloads).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-operations
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Tenant namespaces (OPI-generated, created-by label).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              created-by: operations-manager
+      ports:
+        - protocol: TCP
+          port: 5432
+    # De mailrelay (rig-staging-ron): Stalwart bewaart zijn accounts en zijn wachtrij in de
+    # gedeelde PostgreSQL (rol en database staan declaratief in ../../base). De
+    # RON-namespace draagt niet het created-by-label, dus hij valt buiten de tenant-regel
+    # hierboven.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-ron
+      ports:
+        - protocol: TCP
+          port: 5432
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # CNPG intra-namespace replication / WAL streaming.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-staging-operations
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-postgres-monitoring
+  namespace: rig-staging-operations
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: rig-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 9187

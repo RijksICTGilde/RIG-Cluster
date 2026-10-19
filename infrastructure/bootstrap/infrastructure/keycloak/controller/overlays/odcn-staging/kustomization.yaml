@@ -1,0 +1,75 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rig-system
+resources:
+- ../../base
+# Let's Encrypt issuer for keycloak.staging.rijksapp.dev TLS certificate
+- issuer-letsencrypt.yaml
+
+patches:
+  - target:
+      kind: Ingress
+      name: keycloak
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: keycloak.staging.rijksapp.dev
+      - op: add
+        path: /metadata/annotations/haproxy.router.openshift.io~1ip_whitelist
+        value: "0.0.0.0/0,::/0" # publiek: OIDC-flow voor end-users
+      - op: add
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1target
+        value: router.rijksapp.dev
+      - op: remove
+        path: /metadata/annotations/cert-manager.io~1cluster-issuer
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1issuer
+        value: letsencrypt-keycloak
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-algorithm
+        value: ECDSA
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-size
+        value: "384"
+      - op: add
+        path: /metadata/annotations/cert-manager.io~1private-key-rotation-policy
+        value: Always
+      - op: remove
+        path: /spec/ingressClassName
+      - op: replace
+        path: /spec/tls
+        value:
+          - hosts:
+              - keycloak.staging.rijksapp.dev
+            secretName: keycloak-staging-tls
+  - target:
+      kind: Deployment
+      name: keycloak
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/0/env/4/name
+        value: "KC_HOSTNAME"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/4/value
+        value: "https://keycloak.staging.rijksapp.dev"
+  # De mailrelay draait op staging in rig-staging-ron; de basis noemt rig-ron. Een
+  # samenvoegpatch en geen JSON-patch met een index: de env-lijst wordt op naam
+  # samengevoegd, dus deze regel blijft staan als er elders een variabele bijkomt.
+  - path: patch-mail-relay-host.yaml
+    target:
+      kind: Deployment
+      name: keycloak
+  # De rcr-proxy vraagt authenticatie, ook voor een image dat op ghcr publiek is.
+  # Zonder dit secret faalt de pull op 'invalid username/password', en dat blijft
+  # onzichtbaar tot de pod voor het eerst opnieuw wordt aangemaakt; zo lag de
+  # platformdatabase op 1 september plat. Hetzelfde secret als de operations-manager.
+  - path: patch-pull-secret.yaml
+    target:
+      kind: Deployment
+      name: keycloak
+
+# Zie de prometheus-overlay voor de reden: zonder het rcr-pad in git blijft ArgoCD OutOfSync.
+# De tag komt uit de basis: dat is de tag die productie draait.
+images:
+  - name: ghcr.io/rijksictgilde/zad/keycloak-zad
+    newName: rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad
