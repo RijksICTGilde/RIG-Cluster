@@ -3747,8 +3747,33 @@ tasks:
           fi
         done
 
-        # Het env-bestand van de OPI: alleen de eerste keer, daarna is het de bron.
-        if [ ! -f "{{.ENV_FILE}}" ]; then
+        # TransIP voor external-dns: hetzelfde account als productie, met een eigen
+        # owner-id en domeinfilter (zie de external-dns-overlay van odcn-staging). De
+        # sleutel is een PEM over meerdere regels, dus die komt uit een bestand.
+        TRANSIP_FILE="{{.SECRETS_DIR}}/infrastructure/transip-secret.yaml.sops.yaml"
+        if [ ! -f "$TRANSIP_FILE" ]; then
+          TRANSIP_ACCOUNT="$(vraag STAGING_TRANSIP_ACCOUNT 'TransIP-accountnaam (dezelfde als productie)')"
+          if printenv STAGING_TRANSIP_KEY_FILE >/dev/null; then
+            TRANSIP_KEY_FILE="$STAGING_TRANSIP_KEY_FILE"
+          else
+            printf "Pad naar de TransIP-sleutel (PEM): " >&2; read -r TRANSIP_KEY_FILE
+          fi
+          [ -f "$TRANSIP_KEY_FILE" ] || { echo "❌ $TRANSIP_KEY_FILE bestaat niet"; exit 1; }
+          AGE_PUBLIC_KEY="$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
+          kubectl create secret generic transip-credentials -n {{.RIG_NAMESPACE}} \
+            --from-literal=TRANSIP_ACCOUNT_NAME="$TRANSIP_ACCOUNT" \
+            --from-file=TRANSIP_PRIVATE_KEY="$TRANSIP_KEY_FILE" \
+            --dry-run=client -o yaml \
+            | sops --encrypt --input-type yaml --output-type yaml --age "$AGE_PUBLIC_KEY" /dev/stdin > "$TRANSIP_FILE"
+          grep -qF "transip-secret.yaml.sops.yaml" "{{.SECRETS_DIR}}/infrastructure/decrypt-sops.yaml" \
+            || echo "  - transip-secret.yaml.sops.yaml" >> "{{.SECRETS_DIR}}/infrastructure/decrypt-sops.yaml"
+          echo "✅ transip-credentials versleuteld in de secrets-repo"
+        fi
+
+        # Het env-bestand van de OPI: alleen de eerste keer. Staat het env-secret al in de
+        # secrets-repo (andere laptop, bestand opgeruimd), dan is die de bron en vragen we
+        # niets: een nieuw bestand kreeg een andere SECRET_KEY dan wat er draait.
+        if [ ! -f "{{.ENV_FILE}}" ] && [ ! -f "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" ]; then
           OPI_TOKEN="$(vraag STAGING_OPI_TOKEN 'PAT van de OPI (schrijven)')"
           KC_SECRET="$(vraag STAGING_KEYCLOAK_CLIENT_SECRET 'Client secret van zad-staging in de prod-Keycloak (leeg = geen SSO)')"
           BACKUP_PASSWORD="$(sops --decrypt "{{.SECRETS_DIR}}/backup-destination/minio-credentials-secret.yaml.sops.yaml" | yq '.stringData."root-password"')"
