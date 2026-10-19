@@ -3758,6 +3758,8 @@ tasks:
           else
             printf "Pad naar de TransIP-sleutel (PEM): " >&2; read -r TRANSIP_KEY_FILE
           fi
+          # Een prompt vouwt ~ niet uit, dus dat doen we zelf.
+          case "$TRANSIP_KEY_FILE" in "~"/*) TRANSIP_KEY_FILE="$HOME/${TRANSIP_KEY_FILE#??}" ;; esac
           [ -f "$TRANSIP_KEY_FILE" ] || { echo "❌ $TRANSIP_KEY_FILE bestaat niet"; exit 1; }
           AGE_PUBLIC_KEY="$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
           kubectl create secret generic transip-credentials -n {{.RIG_NAMESPACE}} \
