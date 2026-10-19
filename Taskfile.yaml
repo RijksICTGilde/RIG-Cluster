@@ -134,6 +134,11 @@ tasks:
       VERSION: '{{default "v0.14.0" .VERSION}}'
       OUTPUT_DIR: '{{default "bootstrap/crd/operator" .OUTPUT_DIR}}'
       APPLY: '{{default "true" .APPLY}}'
+    preconditions:
+      # Op ODCN is de operator clusterbreed en gedeeld door alle tenants: een replace
+      # --force voor staging raakt ook de ArgoCD van productie.
+      - sh: '[ "{{.APPLY}}" != "true" ] || case "{{.CLUSTER_TYPE}}" in odcn-*) false ;; *) true ;; esac'
+        msg: "Niet op ODCN ({{.CLUSTER_TYPE}}): de ArgoCD-operator is daar van het platform. Gebruik APPLY=false om alleen het manifest te maken."
     cmds:
       - |
         echo "Preparing ArgoCD Operator version {{.VERSION}}..."
@@ -1067,10 +1072,13 @@ tasks:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   pin-operations-manager-image:
-    desc: "Pin the odcn-production overlay to a published operations-manager tag"
+    desc: "Pin an ODCN overlay (default odcn-production, or OVERLAY=odcn-staging) to a published operations-manager tag"
     vars:
       IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
-      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
+      # Bewust een eigen default en niet het geselecteerde cluster: een pin is een
+      # deploybeslissing, en die hoort niet stil mee te schuiven met select-cluster.
+      OVERLAY: '{{.OVERLAY | default "odcn-production"}}'
+      PATCH_FILE: bootstrap/rig-system/kustomize/operations-manager/overlays/{{.OVERLAY}}/patches/deployment.yaml
     preconditions:
       - sh: '[ -n "{{.IMAGE_TAG}}" ]'
         msg: |
@@ -1081,12 +1089,12 @@ tasks:
         sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
         rm -f {{.PATCH_FILE}}.bak
         echo ""
-        echo "✅ odcn-production pinned to {{.IMAGE_TAG}}"
+        echo "✅ {{.OVERLAY}} pinned to {{.IMAGE_TAG}}"
         grep -n 'image:' {{.PATCH_FILE}}
         echo ""
         echo "Commit this pin, then deploy:"
         echo "  git add {{.PATCH_FILE}} && git commit -m 'deploy: operations-manager {{.IMAGE_TAG}}'"
-        echo "  task deploy-operations-manager CLUSTER_TYPE=odcn-production"
+        echo "  task deploy-operations-manager CLUSTER_TYPE={{.OVERLAY}}"
         echo ""
         echo "To roll back, pin an earlier tag from the git history of that file."
     silent: true
