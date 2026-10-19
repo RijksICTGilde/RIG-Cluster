@@ -67,8 +67,8 @@ spec:
             # Explicit, tolerant values. The k8s defaults (timeoutSeconds 1,
             # failureThreshold 3) SIGKILL this pod whenever MinIO can't answer
             # the health check within 1s during Ceph-RBD I/O spikes -- the cause
-            # of the ~daily exit-137 restarts. Memory is fine (never OOMKilled,
-            # ~371Mi of 512Mi), so this is the actual fix.
+            # of the ~daily exit-137 restarts. Never OOMKilled, but the working
+            # set reached 400-500Mi of the old 512Mi limit, hence 1Gi below.
             timeoutSeconds: 5
             failureThreshold: 5
           resources:
