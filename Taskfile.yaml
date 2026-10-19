@@ -3885,11 +3885,18 @@ tasks:
         EINDE=$(( $(date +%s) + {{.TIMEOUT}} ))
         while :; do
           STAAT="$(kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io -o custom-columns='NAAM:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' --no-headers 2>/dev/null)"
+          # user-applications vindt zijn map pas als de OPI het eerste project aanmaakt;
+          # tot dan is "app path does not exist" geen fout maar een lege omgeving.
+          if kubectl -n {{.RIG_NAMESPACE}} get applications.argoproj.io user-applications -o jsonpath='{.status.conditions[*].message}' 2>/dev/null | grep -q 'app path does not exist'; then
+            STAAT="$(echo "$STAAT" | grep -v '^user-applications ')"
+            GEEN_PROJECTEN=1
+          fi
           if [ -n "$STAAT" ] && ! echo "$STAAT" | grep -vq 'Synced *Healthy'; then break; fi
           if [ "$(date +%s)" -gt "$EINDE" ]; then echo "❌ na {{.TIMEOUT}}s nog niet klaar:"; echo "$STAAT"; exit 1; fi
           sleep 15
         done
         echo "$STAAT"
+        if [ -n "${GEEN_PROJECTEN:-}" ]; then echo "user-applications: nog geen projecten (de OPI maakt de map bij het eerste project)"; fi
         echo ""
         echo "Tenant-eigenaren van rig-staging:"
         kubectl get tenants.capsule.clastix.io rig-staging -o jsonpath='{range .status.owners[*]}{.kind}{"  "}{.name}{"\n"}{end}'
