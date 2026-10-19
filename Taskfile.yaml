@@ -3814,9 +3814,12 @@ tasks:
       - |
         cd "{{.SECRETS_DIR}}"
         if [ -z "$(git status --porcelain)" ]; then echo "secrets-repo: niets nieuws"; exit 0; fi
+        echo ""
+        echo "Secrets-repo: $(pwd)"
+        echo "Remote:       $(git remote get-url origin)"
         git status --short
         if [ "${STAGING_CONFIRM:-}" != "staging" ]; then
-          printf "Deze bestanden committen en naar GitHub pushen? [j/N] "
+          printf "Deze bestanden committen en naar $(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##') pushen? [j/N] "
           read -r ANTWOORD
           [ "$ANTWOORD" = "j" ] || { echo "Afgebroken: zonder push kan ArgoCD de geheimen niet lezen."; exit 1; }
         fi
