@@ -51,42 +51,31 @@ Zelf:
 2. **Een client `zad-staging`** in het realm `rig-platform` van de productie-Keycloak, als kopie van `development-clusters` maar met als redirect-URI alleen `https://keycloak.staging.rijksapp.dev/*`. Het client secret gaat in het env-secret als `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`. Gebruik niet `development-clusters` zelf: dat is de sandbox.
 3. **DNS**: zie de open beslissing over TransIP hieronder.
 
-### De volgorde
-
-Vanuit de root van RIG-Cluster, op een commit waarvan de staging-overlays al op GitHub main staan: ArgoCD op staging leest RIG-Cluster van GitHub.
+### Inrichten met één commando
 
 ```bash
-task select-cluster                          # 3) odcn-staging
-task generate-age-key                        # maakt security/odcn-staging-key.txt
-git clone https://github.com/RijksICTGilde/zad-staging-secrets.git ../zad-staging-secrets
-
-task generate-infrastructure-secrets-for-cluster   # infrastructure/ en ron/
-task generate-bootstrap-secrets-for-cluster        # bootstrap/
-task generate-backup-destination-secret            # backup-destination/
+task select-cluster      # 3) odcn-staging
+task staging:setup
 ```
 
-Dan de waarden die niet te genereren zijn:
+`staging:setup` is opnieuw te draaien: wat er al is, slaat hij over. Hij doet achter elkaar:
 
-- de twee repo-tokens in `bootstrap/*.sops.yaml` (het veld `password` staat op `PLACEHOLDER`): `SOPS_AGE_KEY="$(sed -n '3p' security/odcn-staging-key.txt)" sops ../zad-staging-secrets/bootstrap/<bestand>`;
-- `operations-manager/python/.env.odcn-staging.secrets` (gitignored) met `SECRET_KEY`, `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`, `GIT_PROJECTS_SERVER_PASSWORD`, `GIT_ARGO_APPLICATIONS_PASSWORD`, `PROJECT_REPO_PASSWORD`, `BACKUP_S3_ENDPOINT=http://minio.rig-staging-backup.svc.cluster.local:9000`, `BACKUP_S3_ACCESS_KEY=backup-admin` en `BACKUP_S3_SECRET_KEY` (het `root-password` uit het overzicht van de vorige stap), en dan `task generate-env-secrets-for-operations-manager`.
+1. controleert de context: je account moet in `rig-staging-admin-group` zitten, en je typt `staging` om door te gaan;
+2. maakt `security/odcn-staging-key.txt` als die ontbreekt, en clonet `zad-staging-secrets` naast het project (een afgebroken vorige run hervat hij; een clone die achterloopt op GitHub weigert hij);
+3. genereert de infra-, bootstrap- en backup-geheimen in die clone;
+4. vraagt het PAT van ArgoCD (lezen op `zad-staging-argo-applications`, `zad-staging-secrets` en `zad-staging-deployments`), het PAT van de OPI (schrijven op de drie datarepos) en het client secret van `zad-staging` (leeg = geen SSO), en zet ze versleuteld op hun plek; het env-bestand van de OPI maakt hij alleen de eerste keer;
+5. commit en pusht de secrets-repo na bevestiging;
+6. stopt als het gepinde OPI-image `odcn-staging` niet kent;
+7. draait `bootstrap-argo-system` en `bootstrap-backup-destination`;
+8. wacht tot de Applications Synced en Healthy zijn, en toont de tenant-eigenaren.
 
-Commit en push `zad-staging-secrets`, en ruim de `secrets-overview-*.yaml` op: daar staan de wachtwoorden in platte tekst. Die staan bewust in RIG-Cluster (gitignored) en niet in de secrets-repo, waar ze zo mee gecommit zouden worden. De generatietaken weigeren op een clone die niet schoon is of niet gelijk loopt met GitHub: op een verouderde clone maakt de generator een secret dat er al was opnieuw aan, met een ander wachtwoord.
+Zonder vragen: zet `STAGING_CONFIRM=staging`, `STAGING_ARGOCD_TOKEN`, `STAGING_OPI_TOKEN` en `STAGING_KEYCLOAK_CLIENT_SECRET` (gezet maar leeg betekent geen SSO).
 
-Het OPI-image moet `odcn-staging` kennen. Het image dat nu in de overlay staat (dat van productie) doet dat niet, en de OPI valt dan bij het starten om op `Cluster 'odcn-staging' not found`:
+Wat hij bewust niet doet: het OPI-image bouwen (`task publish-operations-manager`, dan `task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>`), de ArgoCD-operator installeren (die is op ODCN van het platform; `prepare-argocd-operator` weigert daar), en DNS.
 
-```bash
-task publish-operations-manager
-task pin-operations-manager-image OVERLAY=odcn-staging IMAGE_TAG=<tag>
-```
+Ruim na afloop de `secrets-overview-*.yaml` in de root van RIG-Cluster op: daar staan de gegenereerde wachtwoorden in platte tekst. Ze staan bewust daar (gitignored) en niet in de secrets-repo. Het env-bestand `operations-manager/python/.env.odcn-staging.secrets` (gitignored, alleen voor jou leesbaar) bevat de PAT's en is de bron voor het env-secret.
 
-Dan de cluster:
-
-```bash
-task bootstrap-argo-system          # namespaces, ArgoCD, de Applications, repo-credentials, sops-age-key, OPI
-task bootstrap-backup-destination   # de backup-MinIO, bewust buiten ArgoCD
-```
-
-**Nooit `task prepare-argocd-operator` op staging.** De operator is op ODCN clusterbreed en gedeeld met productie; de taak weigert daar sinds deze opzet ook zelf.
+De losse taken (`generate-*-for-cluster`, `generate-backup-destination-secret`, `generate-env-secrets-for-operations-manager`, `bootstrap-argo-system`, `bootstrap-backup-destination`) blijven bruikbaar; buiten `staging:setup` weigeren de generatietaken op een clone die niet schoon is of niet gelijk loopt met GitHub.
 
 ## Wat er op de cluster nog getoetst moet worden
 
