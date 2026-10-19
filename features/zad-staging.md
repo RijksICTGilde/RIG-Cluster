@@ -45,14 +45,15 @@ De Taskfile kiest dit pad met `SECRETS_DIR` in `.env-taskfile-odcn-staging`. Zon
 
 Bij ODC-Noord:
 
-1. **Tenant-eigenaarschap voor vier serviceaccounts** in `rig-staging-operations`, zoals in productie voor `rig-prd-operations`: `namespace-manager` (OPI en Prometheus), `argocd-argocd-application-controller`, `argocd-argocd-server` en `external-dns`. Op productie krijgt elke projectnamespace daardoor via Capsule een `admin`- en een `capsule-namespace-deleter`-binding voor die vier. Dat zijn `TenantOwner`-objecten bij ODC-Noord; wij kunnen ze niet lezen of maken.
-2. **Of de ArgoCD-operator een instantie in `rig-staging-operations` mag beheren.** Niet geverifieerd.
+1. **Of de ArgoCD-operator een instantie in `rig-staging-operations` mag beheren.** Niet geverifieerd.
+
+Tenant-eigenaarschap voor de vier serviceaccounts hoeft niet aangevraagd te worden. Op productie zijn `namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server` en `external-dns` eigenaar via ODC-Noord, vermoedelijk met `TenantOwner`-objecten. Op staging promoveren we ze zelf met het label `owner.projectcapsule.dev/promote: "true"` (owner promotion van Capsule, `allowOwnerPromotion` staat aan). De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
 
 Zelf:
 
-3. **Tokens per repo, met een eigen token per omgeving**, zodat het intrekken van een gelekt staging-token productie niet raakt. ArgoCD heeft leesrecht nodig op `zad-staging-argo-applications` en `zad-staging-secrets`; de OPI heeft schrijfrecht nodig op `zad-staging-projects`, `zad-staging-argo-applications` en `zad-staging-deployments`. RIG-Cluster is publiek en vraagt geen token.
-4. **Een client `zad-staging`** in het realm `rig-platform` van de productie-Keycloak, als kopie van `development-clusters` maar met als redirect-URI alleen `https://keycloak.staging.rijksapp.dev/*`. Het client secret gaat in het env-secret als `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`. Gebruik niet `development-clusters` zelf: dat is de sandbox.
-5. **DNS**: zie de open beslissing over TransIP hieronder.
+2. **Tokens per repo, met een eigen token per omgeving**, zodat het intrekken van een gelekt staging-token productie niet raakt. ArgoCD heeft leesrecht nodig op `zad-staging-argo-applications` en `zad-staging-secrets`; de OPI heeft schrijfrecht nodig op `zad-staging-projects`, `zad-staging-argo-applications` en `zad-staging-deployments`. RIG-Cluster is publiek en vraagt geen token.
+3. **Een client `zad-staging`** in het realm `rig-platform` van de productie-Keycloak, als kopie van `development-clusters` maar met als redirect-URI alleen `https://keycloak.staging.rijksapp.dev/*`. Het client secret gaat in het env-secret als `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`. Gebruik niet `development-clusters` zelf: dat is de sandbox.
+4. **DNS**: zie de open beslissing over TransIP hieronder.
 
 ### De volgorde
 
@@ -98,7 +99,8 @@ Lokaal is alles gebouwd en gerenderd; dit kan alleen op de cluster:
 - [ ] De eerste route in `rig-staging-operations` krijgt de zone `rig.prd1.gn2.quattro.rijksapps.nl`, en de router-shard `rig` bedient de staging-namespaces.
 - [ ] De pull-secrets van de proxycaches (`ghcr-rig-robot-pull-secret` en de andere) komen in de staging-namespaces terecht.
 - [ ] ODCN laat `rig-staging-ron` met `egressGatewayPolicy: internet` toe.
-- [ ] De ArgoCD-instantie in `rig-staging-operations` start (operator, rechten).
+- [ ] De ArgoCD-instantie in `rig-staging-operations` start (operator, rechten), en de CMP-sidecar draait met UID 1003110000.
+- [ ] De operator laat het promote-label op `argocd-argocd-application-controller` en `argocd-argocd-server` staan, en ArgoCD mag het label op `external-dns` zetten: alle vier staan in `status.owners` van `rig-staging`.
 - [ ] De CMP rendert `infrastructure-secrets` en `ron-secrets` uit de private repo.
 - [ ] Keycloak en de OPI starten zodra hun secrets er zijn, zonder sync-waves.
 - [ ] Inloggen via de upstream: staging-Keycloak, prod-Keycloak, SSO-Rijk.

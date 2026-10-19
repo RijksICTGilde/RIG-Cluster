@@ -65,9 +65,13 @@ patches:
       kind: ArgoCD
       name: argocd
     patch: |-
+      # Het begin van het UID-bereik dat OpenShift aan rig-staging-operations gaf
+      # (annotatie openshift.io/sa.scc.uid-range, 1003110000/10000, 19 oktober 2026).
+      # Wordt de namespace opnieuw aangemaakt, dan krijgt hij een ander bereik en moet
+      # dit getal mee.
       - op: replace
         path: /spec/repo/sidecarContainers/0/securityContext/runAsUser
-        value: 1001620000
+        value: 1003110000
   - target:
       kind: ArgoCD
       name: argocd
