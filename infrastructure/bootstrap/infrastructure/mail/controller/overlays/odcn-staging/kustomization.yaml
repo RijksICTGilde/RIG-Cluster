@@ -1,0 +1,92 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# De relay van staging: de OpenShift-kant van odcn, de sink van de sandbox als upstream.
+# Er gaat geen mail naar buiten. De geheimen (mail-relay-credentials en
+# mail-db-credentials) komen niet uit deze overlay maar uit de app ron-secrets, die ze
+# uit de private repo zad-staging-secrets in deze namespace zet.
+namespace: rig-staging-ron
+
+resources:
+  - ../../base
+  - network-policies/mail-relay-networkpolicy.yaml
+  - network-policies/mail-sink-networkpolicy.yaml
+  - ingress-mailsink.yaml
+
+components:
+  - ../../../sink/as-upstream
+
+patches:
+  # Zie de odcn-overlay: de namespace komt uit de bootstrap, niet uit ArgoCD.
+  - target:
+      kind: Namespace
+      name: rig-ron
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: rig-ron
+  # De component wijst naar de sink in rig-ron; hier heet de namespace rig-staging-ron.
+  # De database draait in rig-staging-operations, de basis noemt rig-prd-operations.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: rig-mail-relay
+      spec:
+        template:
+          spec:
+            containers:
+              - name: stalwart
+                env:
+                  - name: MAIL_UPSTREAM_HOST
+                    value: rig-mail-sink.rig-staging-ron.svc.cluster.local
+                  - name: MAIL_DB_HOST
+                    value: rig-db-rw.rig-staging-operations.svc.cluster.local
+  # OpenShift kent de UID/GID zelf toe uit het toegestane bereik, voor de relay en de sink.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+      - op: remove
+        path: /spec/template/spec/securityContext/fsGroup
+  - target:
+      kind: Deployment
+      name: rig-mail-sink
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/securityContext/runAsGroup
+  # Zie de odcn-overlay: de pull-secrets hangen op een verse namespace pas na minuten aan
+  # het default-serviceaccount.
+  - target:
+      kind: Deployment
+      name: rig-mail-relay
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: dockerhub-rig-robot-pull-secret
+  - target:
+      kind: Deployment
+      name: rig-mail-sink
+    patch: |-
+      - op: add
+        path: /spec/template/spec/imagePullSecrets
+        value:
+          - name: dockerhub-rig-robot-pull-secret
+
+images:
+  - name: stalwartlabs/mail-server
+    newName: rcr.rijksapps.nl/dockerhub-rig/stalwartlabs/mail-server
+  - name: axllent/mailpit
+    newName: rcr.rijksapps.nl/dockerhub-rig/axllent/mailpit
