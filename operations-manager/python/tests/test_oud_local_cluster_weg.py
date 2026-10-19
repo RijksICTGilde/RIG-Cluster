@@ -121,9 +121,19 @@ def test_een_overlaypad_zonder_clustersoort_weigert(boom: Path, taak: str) -> No
 
 
 def test_een_overlaypad_met_een_geldige_clustersoort_loopt_wel(boom: Path) -> None:
-    uitslag = _task(boom, "--dry", "deploy-operations-manager", "CLUSTER_TYPE=odcn-production")
+    uitslag = _task(
+        boom, "--dry", "deploy-operations-manager", "CLUSTER_TYPE=odcn-production", "KEY_FILE=security/key.txt"
+    )
 
     assert uitslag.returncode == 0, uitslag.stderr
+
+
+def test_zonder_sleutel_weigert_de_taak_in_plaats_van_de_prodsleutel_te_nemen(boom: Path) -> None:
+    """Zonder AGE_KEY_FILE viel de sleutel vroeger stil op security/key.txt, ook voor een ander cluster."""
+    uitslag = _task(boom, "--dry", "deploy-operations-manager", "CLUSTER_TYPE=odcn-staging")
+
+    assert uitslag.returncode != 0
+    assert "AGE_KEY_FILE" in uitslag.stderr + uitslag.stdout
 
 
 def test_local_wordt_als_clustersoort_geweigerd(boom: Path) -> None:
