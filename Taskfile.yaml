@@ -46,8 +46,9 @@ tasks:
         echo "Available clusters:"
         echo "1) odcn-production"
         echo "2) sandboxed-local (self-contained sandbox with Forgejo)"
+        echo "3) odcn-staging (ODCN, tenant rig-staging)"
         echo ""
-        printf "Select cluster [1-2]: "
+        printf "Select cluster [1-3]: "
         read -r CLUSTER_CHOICE
 
         case $CLUSTER_CHOICE in
@@ -58,6 +59,10 @@ tasks:
           2)
             ENV_FILE=".env-taskfile-sandboxed-local"
             CLUSTER_NAME="sandboxed-local"
+            ;;
+          3)
+            ENV_FILE=".env-taskfile-odcn-staging"
+            CLUSTER_NAME="odcn-staging"
             ;;
           *)
             echo "❌ Invalid selection: '$CLUSTER_CHOICE'. Nothing changed."
@@ -224,14 +229,22 @@ tasks:
     silent: true
 
   generate-age-key:
-    desc: "Generate AGE key for SOPS encryption (only if security/key.txt doesn't exist)"
+    desc: "Generate the AGE key of the selected cluster (AGE_KEY_FILE), only if it doesn't exist"
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      # Geen terugval op een vaste sleutel: een cluster zonder AGE_KEY_FILE versleutelde
+      # vroeger stil met de prod-sleutel security/key.txt.
+      - &age_key_file_guard
+        sh: '[ -n "{{.KEY_FILE}}" ]'
+        msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY_FILE=... mee."
     cmds:
       - |
         # Check if key already exists
-        if [[ -f "security/key.txt" ]]; then
-          echo "✅ AGE key already exists: security/key.txt"
-          echo "🔑 Current public key: $(sed -n '2p' security/key.txt | sed 's/# public key: //')"
-          echo "⚠️  To generate a new key, first remove the existing security/key.txt file"
+        if [[ -f "{{.KEY_FILE}}" ]]; then
+          echo "✅ AGE key already exists: {{.KEY_FILE}}"
+          echo "🔑 Current public key: $(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')"
+          echo "⚠️  To generate a new key, first remove the existing {{.KEY_FILE}} file"
           exit 0
         fi
 
@@ -244,28 +257,31 @@ tasks:
         fi
 
         # Create security directory if it doesn't exist
-        mkdir -p security
+        mkdir -p "$(dirname "{{.KEY_FILE}}")"
 
-        # Generate a new age key directly to security/key.txt
+        # Generate a new age key directly to {{.KEY_FILE}}
         echo "🔐 Generating new AGE key for SOPS encryption..."
-        age-keygen -o security/key.txt
+        age-keygen -o {{.KEY_FILE}}
 
         # Extract the public key
-        PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo ""
         echo "✅ AGE key generated successfully!"
-        echo "🔑 Key saved to: security/key.txt"
+        echo "🔑 Key saved to: {{.KEY_FILE}}"
         echo "🔑 Public key: $PUBLIC_KEY"
         echo ""
-        echo "⚠️  IMPORTANT: The security/key.txt file is gitignored and must be managed securely!"
+        echo "⚠️  IMPORTANT: The {{.KEY_FILE}} file is gitignored and must be managed securely!"
         echo "⚠️  For production use, consider storing the key in a secure vault or HSM."
     silent: true
 
   encrypt-value-age-base64:
     desc: "Encrypt a value with AGE and output in base64+age:base64encoded format"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -273,13 +289,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age and encode to base64
         ENCRYPTED=$(echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a | base64 | tr -d '\n')
@@ -290,7 +306,10 @@ tasks:
   encrypt-value-age:
     desc: "Encrypt a value with AGE and output in armor format"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       VALUE: '{{.VALUE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -298,13 +317,13 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         # Encrypt the value with age in armor format
         echo -n "{{.VALUE}}" | age -r "$AGE_PUBLIC_KEY" -a
@@ -313,7 +332,10 @@ tasks:
   decrypt-secret:
     desc: "Decrypt a SOPS-encrypted secret file for editing"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -326,8 +348,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -343,7 +365,7 @@ tasks:
         echo "📄 Output: $OUTPUT_FILE"
 
         # Decrypt using SOPS with the AGE key
-        SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
+        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.FILE}}" > "$OUTPUT_FILE"
 
         echo ""
         echo "✅ Decrypted successfully!"
@@ -354,7 +376,10 @@ tasks:
     desc: "Print a project file with every AGE-encrypted value decrypted (stdout only)"
     vars:
       FILE: '{{.FILE | default ""}}'
-      KEY: '{{.KEY | default "security/key.txt"}}'
+      KEY: '{{default .AGE_KEY_FILE .KEY}}'
+    preconditions:
+      - sh: '[ -n "{{.KEY}}" ]'
+        msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY=... mee."
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -370,8 +395,11 @@ tasks:
   encrypt-secret:
     desc: "Encrypt a secret YAML file with SOPS (creates .sops.yaml version)"
     vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FILE: '{{.FILE | default ""}}'
       KEEP_ORIGINAL: '{{.KEEP_ORIGINAL | default "false"}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -385,8 +413,8 @@ tasks:
           exit 1
         fi
 
-        if [[ ! -f "security/key.txt" ]]; then
-          echo "❌ security/key.txt not found. Please run 'task generate-age-key' first."
+        if [[ ! -f "{{.KEY_FILE}}" ]]; then
+          echo "❌ {{.KEY_FILE}} not found. Please run 'task generate-age-key' first."
           exit 1
         fi
 
@@ -404,8 +432,8 @@ tasks:
           exit 1
         fi
 
-        # Extract the public key from security/key.txt
-        AGE_PUBLIC_KEY=$(sed -n '2p' security/key.txt | sed 's/# public key: //')
+        # Extract the public key from {{.KEY_FILE}}
+        AGE_PUBLIC_KEY=$(sed -n '2p' {{.KEY_FILE}} | sed 's/# public key: //')
 
         echo "🔐 Encrypting: {{.FILE}}"
         echo "📄 Output: $OUTPUT_FILE"
@@ -436,11 +464,13 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
 
@@ -520,8 +550,10 @@ tasks:
     desc: "Apply the backup-destination MinIO (SOPS-decrypted) to the selected cluster. Managed outside ArgoCD by design (prune-safe for the backup PVC)."
     vars:
       CLUSTER: '{{default "odcn" .CLUSTER}}'              # overlay name: odcn
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
 
@@ -628,14 +660,16 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER}}.secrets'
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}'
       SECRET_NAME: '{{default "operations-manager-env-secrets" .SECRET_NAME}}'
       NAMESPACE: '{{default .RIG_NAMESPACE .NAMESPACE}}'
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -714,24 +748,26 @@ tasks:
     requires:
       vars:
         - name: CLUSTER_TYPE
-          enum: [sandboxed-local, odcn-production]
+          enum: [sandboxed-local, odcn-production, odcn-staging]
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
-      KEY_FILE: '{{if eq .CLUSTER_TYPE "sandboxed-local"}}security/sandbox-key.txt{{else}}security/key.txt{{end}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
     deps: [generate-env-secrets-for-operations-manager]
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         echo "Updating operations-manager deployment..."
         SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/operations-manager/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
-        # On odcn-production the image is a CalVer tag that changes every deploy, so the
+        # On the ODCN clusters the image is a CalVer tag that changes every deploy, so the
         # apply above already rolls the deployment. A `rollout restart` on top of that is
         # a SECOND change to the pod template, so two rollouts start at once and you
         # briefly see three pods. Only restart where apply may see nothing new: the sandbox
         # overlay keeps the tag of its last configure.
-        if [ "{{.CLUSTER}}" = "odcn-production" ]; then
-          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
-        else
+        if [ "{{.CLUSTER}}" = "sandboxed-local" ]; then
           kubectl rollout restart deployment operations-manager -n {{.RIG_NAMESPACE}}
+        else
+          echo "CalVer image tag changed; the apply triggers the rollout (no restart needed)."
         fi
       - echo -e "✅ Operations manager updated successfully!"
     silent: true
@@ -1182,8 +1218,10 @@ tasks:
       OUTPUT_DIR: '{{.OUTPUT_DIR}}'
       CLUSTER_TYPE: '{{.CLUSTER_TYPE}}'
       CLUSTER_FOLDER: '{{.CLUSTER_FOLDER}}'
-      KEY_FILE: '{{default "security/key.txt" .KEY_FILE}}'
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
+    preconditions:
+      - *age_key_file_guard
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
