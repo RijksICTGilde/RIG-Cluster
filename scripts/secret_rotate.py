@@ -395,6 +395,21 @@ COMPONENTS: list[Component] = [
         "Wordt op termijn vervangen door een ander backup-systeem.",
     ),
     Component(
+        key="registry",
+        title="Robot-token van de platformregistry (image-upload)",
+        template="",  # leeft in het ZAD-envbestand; host en robotnaam staan in de configmap
+        category="external",
+        rotate_fields=("REGISTRY_PASSWORD",),
+        # Geen workloads: de external-tak herstart niets, en dat kan hier ook niet. Het
+        # envbestand is de bron van het env-secret, dus eerst regenereren en dan herstarten;
+        # de env-stap meldt dat zelf. Een workload hier zetten zou suggereren dat het al gebeurt.
+        workloads=(),
+        zad_env=("REGISTRY_PASSWORD",),
+        note="Een PUSH-credential: hiermee pusht ZAD de image-tarballs die klanten via de API "
+        "uploaden. Een nieuw robot-token komt NAAST het oude, dus het intrekken van het oude is "
+        "een eigen stap en geen bijzaak; zonder die stap verandert een rotatie hier niets.",
+    ),
+    Component(
         key="argocd-admin",
         title="ArgoCD admin (via het cluster-secret van de operator)",
         template="",  # geen generatie-template: het secret is operator-owned en kan niet in git
@@ -445,6 +460,7 @@ TEMPLATELESS: dict[str, str] = {
     "transip": "de sleutel komt van buiten het cluster; het doelbestand in de overlay staat er wel",
     "grafana": "leeft uitsluitend in het ZAD-envbestand",
     "platform-repo-pat": "leeft uitsluitend in het ZAD-envbestand (image-default is weg sinds 28-09-2026)",
+    "registry": "het token leeft in het ZAD-envbestand; host, organisatie en robotnaam staan in de OPI-configmap",
     "argocd-admin": "leeft in het cluster-secret van de operator, dat met een ownerReference "
     "aan de ArgoCD-CR hangt en daarom niet in git kan",
 }
@@ -1164,6 +1180,13 @@ def argocd_login(kube: Kube, password: str) -> bool:
 
     De CLI zit in de argocd-server-pod; OPI heeft hem niet. Het wachtwoord gaat via een
     env-variabele en niet via argv, zodat het niet in een proceslijst of foutmelding opduikt.
+
+    De uitslag staat in de TEKST en niet in de exitcode. Op odcn is het rootfs van die pod
+    read-only, en dan meldt de CLI eerst "logged in successfully" en valt daarna alsnog
+    fataal om op `mkdir /.config`, met exitcode 20. Een toets op de returncode las een
+    geslaagde login dus als afgewezen (gemeten 16-10-2026, en op de sandbox viel het niet op
+    omdat het rootfs daar schrijfbaar is). De eigen config-dir in /tmp houdt die fout weg en
+    wordt daarna opgeruimd, zodat er geen sessietoken in de pod achterblijft.
     """
     result = kube.exec(
         "deploy/argocd-server",
@@ -1172,12 +1195,13 @@ def argocd_login(kube: Kube, password: str) -> bool:
             f"W={password}",
             "sh",
             "-c",
-            'argocd login localhost:8080 --username admin --password "$W" --plaintext --insecure --grpc-web '
-            ">/dev/null 2>&1 && echo JA || echo NEE",
+            'argocd login localhost:8080 --username admin --password "$W" '
+            "--plaintext --insecure --grpc-web --config /tmp/argocd-rot.config 2>&1; "
+            "rm -f /tmp/argocd-rot.config",
         ],
         check=False,
     )
-    return "JA" in result.stdout
+    return "logged in successfully" in (result.stdout + result.stderr)
 
 
 def argocd_admin_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
@@ -1523,6 +1547,123 @@ def cluster_secret_check(component: Component) -> Step:
         ],
         _compare,
     )
+
+
+def registry_config(cluster: Cluster) -> dict[str, str]:
+    """De registry-instellingen van dit cluster, uit het `.env`-blok van de OPI-configmap.
+
+    Die staan daar en niet in het secret: alleen het token is geheim, de host, organisatie en
+    robotnaam niet. De configmap wordt als bestand gemount, dus ze zijn in de pod ook geen
+    env-variabelen; `printenv REGISTRY_URL` geeft daar niets en dat zegt niets over of de
+    registry is ingericht.
+    """
+    path = (
+        REPO
+        / "bootstrap/rig-system/kustomize/operations-manager/overlays"
+        / cluster.folders["bootstrap"]
+        / "configmap.yaml"
+    )
+    if not path.exists():
+        raise EditFailed(f"configmap van {cluster.name} niet gevonden: {path}")
+    found: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^\s*(REGISTRY_[A-Z_]+)=(.*)$", line)
+        if match:
+            found[match.group(1)] = match.group(2).strip()
+    missing = [key for key in ("REGISTRY_URL", "REGISTRY_USERNAME") if not found.get(key)]
+    if missing:
+        raise EditFailed(f"{', '.join(missing)} staat niet in {path}; dan is de registry niet ingericht")
+    return found
+
+
+def registry_probe(kube: Kube, url: str, username: str, password: str) -> str:
+    """Of de registry deze credentials accepteert. Geeft "HTTP <status>".
+
+    Via `/v2/` van de registry-API: die geeft 200 bij geldige credentials en 401 bij
+    ongeldige, zonder dat je een bestaande repositorynaam hoeft te kennen. `skopeo list-tags`
+    zou het ook kunnen, maar dat vraagt een repository en die verschilt per cluster.
+
+    Dit loopt in de OPI-pod en niet lokaal, anders dan bij de GitHub-PAT: de registry is van
+    buiten het cluster niet bereikbaar (gemeten: timeout). Het token gaat via een
+    env-variabele, zodat het niet in een proceslijst of foutmelding opduikt.
+    """
+    snippet = (
+        "import os,urllib.request,urllib.error\n"
+        "import base64 as b\n"
+        "req=urllib.request.Request('https://'+os.environ['U']+'/v2/')\n"
+        "req.add_header('Authorization','Basic '+b.b64encode((os.environ['A']+':'+os.environ['W']).encode()).decode())\n"
+        "try:\n"
+        "    print(f'HTTP {urllib.request.urlopen(req, timeout=20).status}')\n"
+        "except urllib.error.HTTPError as e:\n"
+        "    print(f'HTTP {e.code}')\n"
+        "except Exception as e:\n"
+        "    print(f'FOUT {type(e).__name__}')\n"
+    )
+    result = kube.exec(
+        OPI_DEPLOYMENT,
+        ["env", f"U={url}", f"A={username}", f"W={password}", "python3", "-c", snippet],
+        check=False,
+    )
+    return result.stdout.strip() or "geen antwoord"
+
+
+def registry_steps(kube: Kube, values: Ctx) -> list[Step]:
+    """Het robot-token van de platformregistry.
+
+    Een klant uploadt een image-tarball (`docker save`) naar de ZAD-API, en die pusht hem
+    hiermee naar REGISTRY_ORG op de registry. Het is dus een PUSH-credential: wie het heeft
+    kan een bestaande tag overschrijven, en dat haalt het cluster bij de volgende pull op.
+
+    Aanmaken kan alleen in de registry zelf, een robot-account in de RCR-organisatie, dus dat
+    blijft de handmatige stap. Let op het verschil met de andere componenten: een nieuw
+    robot-token komt NAAST het oude te staan. Het oude blijft geldig tot je het in de console
+    intrekt, en daarom toetst dit component niet dat de oude waarde dood is: dat kan hij niet
+    waarmaken. Die intrekking staat als eigen stap in de ronde.
+    """
+    config = registry_config(values.cluster)
+    url, user = config["REGISTRY_URL"], config["REGISTRY_USERNAME"]
+    org = config.get("REGISTRY_ORG", "?")
+
+    def _probe(ctx: Ctx, password: str, label: str) -> str:
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        outcome = registry_probe(ctx.kube, url, user, password)
+        if "HTTP 200" not in outcome:
+            _ok(f"registry wees de {label} waarde af: {outcome}")
+        return f"{label} waarde: {outcome}"
+
+    return [
+        Step(
+            f"Huidig token testen tegen {url} (robot {user})",
+            "check",
+            [f"kubectl exec {OPI_DEPLOYMENT} -- GET https://{url}/v2/ met basic-auth; 200 = geldig"],
+            lambda ctx: _probe(ctx, ctx.current[ctx.rotating], "huidige"),
+        ),
+        Step(
+            f"EXTERN: maak een nieuw token voor robot {user} in de registry",
+            "manual",
+            [
+                f"In de RCR-organisatie: robot-account {user}, nieuw token, push-rechten op {org}.",
+                "Het oude token blijft werken tot je het daar intrekt; doe dat pas na de verificatie.",
+            ],
+            None,
+        ),
+        Step(
+            "Verifiëren: de registry accepteert het nieuwe token",
+            "verify",
+            [f"kubectl exec {OPI_DEPLOYMENT} -- GET https://{url}/v2/ met de nieuwe waarde"],
+            lambda ctx: _probe(ctx, ctx.new[ctx.rotating], "nieuwe"),
+        ),
+        Step(
+            f"EXTERN: trek het OUDE token van {user} in",
+            "manual",
+            [
+                "Pas nu, en dit hoort er echt bij: tot die intrekking is de gelekte waarde nog een",
+                f"geldig push-credential op {org}. Een rotatie die dat overslaat verandert niets.",
+            ],
+            None,
+        ),
+    ]
 
 
 def github_pat_steps(kube: Kube, values: Ctx) -> list[Step]:
@@ -1933,7 +2074,12 @@ def steps_for(
     minio_endpoint = "http://minio:9000"
 
     if component.category == "external":
-        builders = {"transip": transip_steps, "grafana": grafana_steps, "platform-repo-pat": github_pat_steps}
+        builders = {
+            "transip": transip_steps,
+            "grafana": grafana_steps,
+            "platform-repo-pat": github_pat_steps,
+            "registry": registry_steps,
+        }
         builder = builders.get(component.key)
         if builder is None:
             raise EditFailed(f"external-component zonder bouwer: {component.key}")
