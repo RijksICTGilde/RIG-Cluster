@@ -32,7 +32,7 @@ components:
 
 patches:
   # Set ARGOCD_EXEC_TIMEOUT on repo-server to allow longer manifest generation
-  # NB: this patch REPLACES spec.repo.env wholesale — repo-server env vars
+  # NB: this patch REPLACES spec.repo.env wholesale: repo-server env vars
   # must be added HERE, not in argocd-deployment.yaml (the patch wins).
   - target:
       kind: ArgoCD
