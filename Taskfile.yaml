@@ -485,17 +485,6 @@ tasks:
 
         echo "🚀 Bootstrapping minimal RIG Cluster with source type: {{.CLUSTER}}"
 
-        # Capsule zet de rolebindings van de tenant-eigenaren een paar seconden NA het
-        # aanmaken van een namespace (gemeten 19 oktober 2026: 2 s). Wie meteen een secret
-        # zet, krijgt Forbidden; wacht dus tot de rechten er zijn.
-        wacht_op_rechten() {
-          for i in $(seq 1 30); do
-            [ "$(kubectl auth can-i create secrets -n "$1" 2>/dev/null)" = "yes" ] && return 0
-            sleep 2
-          done
-          echo "❌ na 60 s nog geen rechten op secrets in $1"; return 1
-        }
-
         # Set flags for kubectl apply
         KUBECTL_FLAGS=""
         if [[ "{{.DRY_RUN}}" == "true" ]]; then
@@ -519,7 +508,7 @@ tasks:
         # gaat er net als daar pas na het aanmaken op (Kyverno); op productie staat het al.
         if [[ "{{.DRY_RUN}}" != "true" ]]; then
           kubectl label namespace {{.RIG_NAMESPACE}} argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
-          wacht_op_rechten {{.RIG_NAMESPACE}}
+          task wait-namespace-rights NAMESPACE={{.RIG_NAMESPACE}}
           if kubectl get secret sops-age-key -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
             echo "secret sops-age-key staat al in {{.RIG_NAMESPACE}}, ongemoeid gelaten"
           else
@@ -544,7 +533,7 @@ tasks:
           RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
-            wacht_op_rechten "$RON_NAMESPACE"
+            task wait-namespace-rights NAMESPACE="$RON_NAMESPACE"
 
             # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
             # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
@@ -618,7 +607,14 @@ tasks:
         fi
 
         # Build (SOPS-decrypted) and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        MANIFEST="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec infrastructure/bootstrap/infrastructure/backup-destination/controller/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
+        # Eerst de namespace en dan de rest: in een tenant komen de rechten erin pas een
+        # paar seconden na het aanmaken (zie wait-namespace-rights).
+        echo "$MANIFEST" | yq 'select(.kind == "Namespace")' | kubectl apply $KUBECTL_FLAGS -f -
+        if [[ "{{.DRY_RUN}}" != "true" ]]; then
+          task wait-namespace-rights NAMESPACE="$(echo "$MANIFEST" | yq 'select(.kind == "Namespace") | .metadata.name')"
+        fi
+        echo "$MANIFEST" | kubectl apply $KUBECTL_FLAGS -f -
 
         # Met SECRETS_DIR staat het root-secret in de secrets-repo (task
         # generate-backup-destination-secret), na de overlay omdat die de namespace aanmaakt.
@@ -628,6 +624,23 @@ tasks:
 
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
+
+  wait-namespace-rights:
+    desc: "Wacht tot je in een (nieuwe) namespace secrets mag aanmaken, maximaal 60 s"
+    silent: true
+    requires:
+      vars: [NAMESPACE]
+    cmds:
+      - |
+        # Capsule zet de rolebindings van de tenant-eigenaren een paar seconden NA het
+        # aanmaken van een namespace (gemeten 19 oktober 2026: 2 s). Wie meteen iets in
+        # die namespace zet, krijgt Forbidden.
+        for i in $(seq 1 30); do
+          [ "$(kubectl auth can-i create secrets -n {{.NAMESPACE}} 2>/dev/null)" = "yes" ] && exit 0
+          sleep 2
+        done
+        echo "❌ na 60 s nog geen rechten in {{.NAMESPACE}}"
+        exit 1
 
   log-watch:
     desc: "One OPI prod-log triage cycle: Loki scan -> ignore-list -> Claude triage -> ntfy. Config in scripts/log_watch/config.py."
