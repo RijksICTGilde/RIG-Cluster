@@ -334,10 +334,11 @@ class Settings(BaseSettings):
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"
 
-    # Bootstrap configuration type: "default", "local", or "sandbox"
+    # Bootstrap configuration type: "default", "local", "sandbox" or "staging"
     # - "default": Production setup with direct SSO-Rijk integration
     # - "local": Local Kind cluster using production Keycloak as upstream IDP
     # - "sandbox": Sandbox cluster with upstream IDP (production Keycloak)
+    # - "staging": upstream IDP like the sandbox, but no local admin user in OPI's realm
     # In all cases, OPI creates its own realm during startup using the project file config.
     KEYCLOAK_BOOTSTRAP_CONFIG: str = "default"
 
