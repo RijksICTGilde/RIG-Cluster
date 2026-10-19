@@ -785,8 +785,7 @@ tasks:
         done
 
         echo "Finished processing environment variables."
-        echo "Generated secret file content:"
-        cat "$SECRET_FILE"
+        # De inhoud niet tonen: dit zijn de onversleutelde waarden (alleen base64).
 
         # Encrypt with SOPS using the AGE key
         echo "Encrypting secret with SOPS..."
