@@ -1043,7 +1043,7 @@ tasks:
     silent: true
 
   publish-operations-manager:
-    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest)"
+    desc: "Build and publish the operations-manager to GitHub Container Registry (CalVer tag + latest), and pin OVERLAY (default odcn-production)"
     deps: [requirements-check, generate-env-secrets-for-operations-manager]
     vars:
       IMAGE_VERSION:
@@ -1075,9 +1075,12 @@ tasks:
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
           SKIP_VALIDATION: "true"
+      # Pint alleen de overlay die je noemt: een image bouwen voor staging mag de pin van
+      # productie niet meeschuiven.
       - task: pin-operations-manager-image
         vars:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          OVERLAY: '{{.OVERLAY | default "odcn-production"}}'
 
   pin-operations-manager-image:
     desc: "Pin an ODCN overlay (default odcn-production, or OVERLAY=odcn-staging) to a published operations-manager tag"
