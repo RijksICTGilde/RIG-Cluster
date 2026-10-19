@@ -54,6 +54,10 @@ spec:
               port: 9000
             initialDelaySeconds: 5
             periodSeconds: 10
+            # Dezelfde ruimte als de liveness hieronder. Met de default van 1s viel de pod bij
+            # een Ceph-RBD-piek uit de Service, en kreeg een lopende backup connection refused.
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /minio/health/live
@@ -72,7 +76,7 @@ spec:
               memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "1Gi"
               cpu: "500m"
       volumes:
         - name: data
