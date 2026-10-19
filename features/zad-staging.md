@@ -43,17 +43,13 @@ De Taskfile kiest dit pad met `SECRETS_DIR` in `.env-taskfile-odcn-staging`. Zon
 
 ### Wat er moet zijn voordat je begint
 
-Bij ODC-Noord:
-
-1. **Of de ArgoCD-operator een instantie in `rig-staging-operations` mag beheren.** Niet geverifieerd.
-
-Tenant-eigenaarschap voor de vier serviceaccounts hoeft niet aangevraagd te worden. Op productie zijn `namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server` en `external-dns` eigenaar via ODC-Noord, vermoedelijk met `TenantOwner`-objecten. Op staging promoveren we ze zelf met het label `owner.projectcapsule.dev/promote: "true"` (owner promotion van Capsule, `allowOwnerPromotion` staat aan). De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
+Tenant-eigenaarschap: de vier serviceaccounts (`namespace-manager`, `argocd-argocd-application-controller`, `argocd-argocd-server`, `external-dns`) promoveren we zelf met het label `owner.projectcapsule.dev/promote: "true"`. ODC-Noord biedt dat als self-service voor een serviceaccount binnen één tenant; alleen eigenaarschap over al je tenants tegelijk gaat via een TopDesk-aanvraag. De labels staan in de staging-overlays. Gemeten op 19 oktober 2026: de gepromoveerde `namespace-manager` komt in `status.owners` met `capsule-namespace-provisioner`, `capsule-namespace-deleter` en `admin`, en mag `rig-staging-*` aanmaken maar geen `rig-prd-*`. Alleen een eigenaar mag het label zetten, dus de bootstrap past het met jouw account toe.
 
 Zelf:
 
-2. **Tokens per repo, met een eigen token per omgeving**, zodat het intrekken van een gelekt staging-token productie niet raakt. ArgoCD heeft leesrecht nodig op `zad-staging-argo-applications` en `zad-staging-secrets`; de OPI heeft schrijfrecht nodig op `zad-staging-projects`, `zad-staging-argo-applications` en `zad-staging-deployments`. RIG-Cluster is publiek en vraagt geen token.
-3. **Een client `zad-staging`** in het realm `rig-platform` van de productie-Keycloak, als kopie van `development-clusters` maar met als redirect-URI alleen `https://keycloak.staging.rijksapp.dev/*`. Het client secret gaat in het env-secret als `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`. Gebruik niet `development-clusters` zelf: dat is de sandbox.
-4. **DNS**: zie de open beslissing over TransIP hieronder.
+1. **Tokens per repo, met een eigen token per omgeving**, zodat het intrekken van een gelekt staging-token productie niet raakt. ArgoCD heeft leesrecht nodig op `zad-staging-argo-applications` en `zad-staging-secrets`; de OPI heeft schrijfrecht nodig op `zad-staging-projects`, `zad-staging-argo-applications` en `zad-staging-deployments`. RIG-Cluster is publiek en vraagt geen token.
+2. **Een client `zad-staging`** in het realm `rig-platform` van de productie-Keycloak, als kopie van `development-clusters` maar met als redirect-URI alleen `https://keycloak.staging.rijksapp.dev/*`. Het client secret gaat in het env-secret als `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`. Gebruik niet `development-clusters` zelf: dat is de sandbox.
+3. **DNS**: zie de open beslissing over TransIP hieronder.
 
 ### De volgorde
 
