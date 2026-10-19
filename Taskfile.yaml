@@ -492,8 +492,10 @@ tasks:
 
         # De repo-credentials van ArgoCD uit de secrets-repo, na de overlay omdat die de
         # namespace aanmaakt. ArgoCD pakt een repository-secret op zodra het er staat.
+        # De overlay bevat ook de OPI, dus diens env-secret hoort er meteen bij.
         if [ -n "{{.SECRETS_DIR}}" ]; then
           SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec "{{.SECRETS_DIR}}/bootstrap" | kubectl apply $KUBECTL_FLAGS -f -
+          SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" sops --decrypt "{{.SECRETS_DIR}}/operations-manager/operations-manager-env-secrets.yaml" | kubectl apply $KUBECTL_FLAGS -f -
         fi
 
         # De sleutel voor de CMP in de platformnamespace. Alleen aanmaken als hij er nog

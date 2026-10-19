@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: operations-manager-rijksapp
+  namespace: rig-staging-operations
+  annotations:
+    cert-manager.io/issuer: letsencrypt-operations-manager
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "384"
+    cert-manager.io/private-key-rotation-policy: Always
+    external-dns.alpha.kubernetes.io/target: router.rijksapp.dev
+    haproxy.router.openshift.io/ip_whitelist: "0.0.0.0/0,::/0"
+    haproxy.router.openshift.io/timeout: "300s"
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000;includeSubDomains;preload"
+spec:
+  rules:
+    - host: zad.staging.rijksapp.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: operations-manager
+                port:
+                  number: 8000
+  tls:
+    - hosts:
+        - zad.staging.rijksapp.dev
+      secretName: operations-manager-staging-tls
