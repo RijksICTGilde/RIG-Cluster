@@ -73,7 +73,7 @@ Dan de waarden die niet te genereren zijn:
 - de twee repo-tokens in `bootstrap/*.sops.yaml` (het veld `password` staat op `PLACEHOLDER`): `SOPS_AGE_KEY="$(sed -n '3p' security/odcn-staging-key.txt)" sops ../zad-staging-secrets/bootstrap/<bestand>`;
 - `operations-manager/python/.env.odcn-staging.secrets` (gitignored) met `SECRET_KEY`, `KEYCLOAK_MASTER_OIDC_CLIENT_SECRET`, `GIT_PROJECTS_SERVER_PASSWORD`, `GIT_ARGO_APPLICATIONS_PASSWORD`, `PROJECT_REPO_PASSWORD`, `BACKUP_S3_ENDPOINT=http://minio.rig-staging-backup.svc.cluster.local:9000`, `BACKUP_S3_ACCESS_KEY=backup-admin` en `BACKUP_S3_SECRET_KEY` (het `root-password` uit het overzicht van de vorige stap), en dan `task generate-env-secrets-for-operations-manager`.
 
-Commit en push `zad-staging-secrets`, en ruim de `secrets-overview-*.yaml` op: daar staan de wachtwoorden in platte tekst.
+Commit en push `zad-staging-secrets`, en ruim de `secrets-overview-*.yaml` op: daar staan de wachtwoorden in platte tekst. Die staan bewust in RIG-Cluster (gitignored) en niet in de secrets-repo, waar ze zo mee gecommit zouden worden. De generatietaken weigeren op een clone die niet schoon is of niet gelijk loopt met GitHub: op een verouderde clone maakt de generator een secret dat er al was opnieuw aan, met een ander wachtwoord.
 
 Het OPI-image moet `odcn-staging` kennen. Het image dat nu in de overlay staat (dat van productie) doet dat niet, en de OPI valt dan bij het starten om op `Cluster 'odcn-staging' not found`:
 
