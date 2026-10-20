@@ -408,6 +408,7 @@ class GitProjectStore(ProjectStore):
         filename: str | None = None,
         refresh_cache: bool = True,
         base: dict[str, Any] | None = None,
+        approval_decision: bool = False,
     ) -> MutationResult:
         """Persist a pre-built project dict (create or update).
 
@@ -429,6 +430,10 @@ class GitProjectStore(ProjectStore):
         Note this is still weaker than ``mutate``, which re-runs the caller's change
         function on fresh state and therefore resolves the case a text merge cannot:
         two edits to the same YAML list, e.g. both adding a component.
+
+        ``approval_decision`` marks this save as an approver's verdict, the one write that
+        may put an approval status on ``approved`` / ``denied``. Only the approval route
+        passes it; see ``validate_approval_decisions``.
         """
         async with self._locked("save", name):
             connector = await self.get_connector()
@@ -453,13 +458,24 @@ class GitProjectStore(ProjectStore):
                 attempt_data = data
                 if base is not None:
                     attempt_data = await self._reconcile_with_concurrent_write(
-                        connector, relative_path, name=name, base=base, data=data, actor=actor
+                        connector,
+                        relative_path,
+                        name=name,
+                        base=base,
+                        data=data,
+                        actor=actor,
+                        approval_decision=approval_decision,
                     )
 
                 # Read before validating, not after: the committed version is what this
                 # write replaces, and a rule about a change needs both halves.
                 before = await self._read_committed(connector, relative_path)
-                await self._validate(attempt_data, enforce=enforce_validation, previous=before)
+                await self._validate(
+                    attempt_data,
+                    enforce=enforce_validation,
+                    previous=before,
+                    approval_decision=approval_decision,
+                )
 
                 try:
                     ref = await self._persist(connector, relative_path, attempt_data, message, actor)
@@ -608,6 +624,7 @@ class GitProjectStore(ProjectStore):
         base: dict[str, Any],
         data: dict[str, Any],
         actor: Actor,
+        approval_decision: bool = False,
     ) -> dict[str, Any]:
         """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
 
@@ -663,7 +680,7 @@ class GitProjectStore(ProjectStore):
         # the grounds that both inputs were.
         try:
             validate_project_schema(merged)
-            await validate_project_structure(merged, previous=current)
+            await validate_project_structure(merged, previous=current, approval_decision=approval_decision)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             raise ConflictError(
                 f"Project '{name}' is gewijzigd sinds je begon met bewerken en de samengevoegde "
@@ -673,7 +690,14 @@ class GitProjectStore(ProjectStore):
         logger.info("Three-way merge for '%s' applied and validated; both changes preserved", name)
         return merged
 
-    async def _validate(self, data: dict[str, Any], *, enforce: bool, previous: dict[str, Any] | None = None) -> None:
+    async def _validate(
+        self,
+        data: dict[str, Any],
+        *,
+        enforce: bool,
+        previous: dict[str, Any] | None = None,
+        approval_decision: bool = False,
+    ) -> None:
         """Schema + structural validation of the FINAL state, before any write.
 
         ``enforce=False`` is for trusted, narrow programmatic mutators (auto-tune,
@@ -685,10 +709,13 @@ class GitProjectStore(ProjectStore):
         CHANGE (a volume that cannot shrink) can only run here, where both versions are
         in hand; without it the rule would be decoration. A create has no previous
         version and is judged on its values alone.
+
+        ``approval_decision`` is passed on to ``validate_project_structure``: only a save
+        that says it IS the approver's verdict may move an approval status to a decision.
         """
         try:
             validate_project_schema(data)
-            await validate_project_structure(data, previous=previous)
+            await validate_project_structure(data, previous=previous, approval_decision=approval_decision)
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             if enforce:
                 raise

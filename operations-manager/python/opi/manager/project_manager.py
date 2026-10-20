@@ -1968,6 +1968,7 @@ class ProjectManager:
         refresh_cache: bool = True,
         enforce_validation: bool = True,
         base: dict[str, Any] | None = None,
+        approval_decision: bool = False,
     ) -> None:
         """The ONLY validated way to persist a mutated project file.
 
@@ -1997,6 +1998,9 @@ class ProjectManager:
         silently dropping whatever landed in between. Passing the version the form was
         rendered from restores the compare-and-swap, so the store merges the two
         changes instead of overwriting one.
+
+        approval_decision: mark this save as an approver's decision; only the approval route
+        sets True, and it is the one write that may set status to ``approved`` / ``denied``.
         """
         filename = (
             os.path.basename(self._project_file_relative_path)
@@ -2022,6 +2026,7 @@ class ProjectManager:
             filename=filename,
             refresh_cache=refresh_cache,
             base=base if base is not None else self.__contents_as_read,
+            approval_decision=approval_decision,
         )
 
         # This manager now knows the current state, so a second save from the same

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import html
 import logging
 from typing import TYPE_CHECKING, Any, NamedTuple
@@ -38,9 +39,11 @@ from opi.forms.wizard.session import (
 )
 from opi.forms.wizard.state import CLEARED_FIELD
 from opi.handlers.project_file_handler import merge_staged_attachments
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.help_text import is_markdown_help, render_service_help
 from opi.services.schema_migration import normalize_service_entries
+from opi.services.services import ServiceAdapter
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.lotc_switch import render
 from opi.web.menu import get_menu_items
@@ -2566,8 +2569,12 @@ async def _save_existing_project(
     # Explicitly close the ProjectManager so its temp git clone is cleaned up.
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
-        existing_data = await project_manager.get_contents()
-        existing_data = apply_form_data_to_project(existing_data, data)
+        stored_data = await project_manager.get_contents()
+        existing_data = apply_form_data_to_project(copy.deepcopy(stored_data), data)
+
+        # Form path bypasses set_service_config, so guard platform fields here (RC-286).
+        ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
+        ensure_approval_requests(existing_data)
 
         # The complete file only exists after the merge with the stored project -- the
         # form itself writes a subset. Same check the store makes, one step earlier, so

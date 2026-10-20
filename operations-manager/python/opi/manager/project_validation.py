@@ -22,6 +22,8 @@ from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.services import ServiceAdapter
+from opi.services.approvals import collect_approval_items
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.base import ConfigLayer, Service
 from opi.services.catalog.config_settings import SettingError, check_setting_changes, check_settings
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
@@ -828,7 +830,44 @@ def validate_service_setting_changes(previous: dict[str, Any], project_data: dic
             ) from None
 
 
-async def validate_project_structure(project_data: dict[str, Any], *, previous: dict[str, Any] | None = None) -> None:
+#: Decision statuses; ``requested`` is OK from any write path, these two aren't.
+APPROVAL_DECISIONS = frozenset({ApprovalStatus.APPROVED.value, ApprovalStatus.DENIED.value})
+
+
+def _approval_items_by_identity(project_data: dict[str, Any]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    """Each approvable item keyed by identity (service, type, domain, name) with current_status."""
+    return {
+        (item.get("service", ""), item.get("type", ""), item.get("domain", ""), item.get("name", "")): item
+        for item in collect_approval_items(project_data)
+    }
+
+
+def validate_approval_decisions(previous: dict[str, Any], project_data: dict[str, Any]) -> None:
+    """Decisions (approved/denied) may only be set by approval_decision=True.
+
+    Raises ProjectIntegrityError if a status moves to a decision without the marker.
+    """
+    before = _approval_items_by_identity(previous)
+    for identity, item in _approval_items_by_identity(project_data).items():
+        status = item.get("current_status", "")
+        if status not in APPROVAL_DECISIONS:
+            continue
+        was = before.get(identity)
+        if was is not None and was.get("current_status", "") == status:
+            continue
+        raise ProjectIntegrityError(
+            f"Project '{project_data.get('name', '(onbekend)')}': de goedkeuringsstatus van "
+            f"{item.get('label', identity[1])} '{item.get('subject', '(onbekend)')}' kan niet via deze "
+            f"schrijfweg op '{status}' worden gezet; een besluit komt alleen van de goedkeuringsroute"
+        )
+
+
+async def validate_project_structure(
+    project_data: dict[str, Any],
+    *,
+    previous: dict[str, Any] | None = None,
+    approval_decision: bool = False,
+) -> None:
     """Validate cross-field structural integrity of a complete project dict.
 
     Runs the reference/uniqueness/path/root/domain checks against the final merged
@@ -839,6 +878,8 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     rules that judge a CHANGE rather than a value need it (see
     ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
     so a caller without a previous version -- a create, a replay -- loses nothing else.
+
+    ``approval_decision`` marks an approver's decision; only the approval route sets True.
     """
     project_name = project_data.get("name", "(onbekend)")
     components = project_data.get("components", []) or []
@@ -975,3 +1016,5 @@ async def validate_project_structure(project_data: dict[str, Any], *, previous: 
     # can only move one way. Only when the caller handed over the version being replaced.
     if previous is not None:
         validate_service_setting_changes(previous, project_data)
+        if not approval_decision:
+            validate_approval_decisions(previous, project_data)
