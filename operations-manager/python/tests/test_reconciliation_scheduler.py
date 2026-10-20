@@ -1,10 +1,12 @@
 """Tests voor de nachtelijke reconciliation-scheduler."""
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from opi.core.actor import scheduler_actor
 from opi.core.reconciliation_scheduler import ReconciliationScheduler, _seconds_until_next_run
 
 TZ = ZoneInfo("Europe/Amsterdam")
@@ -61,3 +63,15 @@ async def test_draait_standaard_in_dry_run() -> None:
 async def test_stoppen_zonder_gestart_te_zijn_is_veilig() -> None:
     scheduler = ReconciliationScheduler(cluster="odcn-production")
     await scheduler.stop()
+
+
+@pytest.mark.asyncio
+async def test_run_zet_de_scheduler_actor_voor_de_lus() -> None:
+    scheduler = ReconciliationScheduler(cluster="odcn-production")
+
+    with patch("opi.core.reconciliation_scheduler.set_actor") as mock_set_actor:
+        await scheduler.start()
+        await asyncio.sleep(0)
+        await scheduler.stop()
+
+    mock_set_actor.assert_called_once_with(scheduler_actor("reconciliation"))

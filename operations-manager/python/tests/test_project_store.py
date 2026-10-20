@@ -183,7 +183,13 @@ class FakeGitConnector:
             return dict(self._built[ref][0])
         return next((dict(c["files"]) for c in self.remote.commits if c["ref"] == ref), {})
 
-    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+    async def build_commit(
+        self,
+        changes: dict[str, str | None],
+        message: str,
+        parent: str | None = None,
+        actor: object | None = None,
+    ) -> str | None:
         # Built from the PARENT COMMIT's tree, never from self.tree. Real plumbing
         # does read-tree <parent> into a private index and applies only the named
         # paths, so a dirty working copy cannot leak into the commit. Deriving this

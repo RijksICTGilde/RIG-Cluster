@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 from freezegun import freeze_time
+from opi.core.actor import scheduler_actor
 from opi.core.async_task_service import TaskType
 from opi.core.backup_scheduler import (
     BackupScheduler,
@@ -572,3 +573,22 @@ class TestTaskTypeEnum:
     def test_restore_value(self) -> None:
         assert TaskType.RESTORE == "restore"
         assert TaskType.RESTORE.value == "restore"
+
+
+# ---------------------------------------------------------------------------
+# _run: de actor voor de hele lus (RC-284)
+# ---------------------------------------------------------------------------
+
+
+class TestRunSetsActor:
+    async def test_run_zet_de_scheduler_actor_voor_de_lus(self) -> None:
+        """Een commit die deze scheduler aanstuurt moet herleidbaar zijn naar het proces,
+        niet naar de persoon die toevallig de laatste wijziging in de buurt deed."""
+        scheduler, _ = _make_scheduler()
+
+        with patch("opi.core.backup_scheduler.set_actor") as mock_set_actor:
+            await scheduler.start()
+            await asyncio.sleep(0)  # laat de taak tot aan de eerste await lopen
+            await scheduler.stop()
+
+        mock_set_actor.assert_called_once_with(scheduler_actor("backup"))

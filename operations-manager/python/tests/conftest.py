@@ -288,6 +288,17 @@ def reset_readiness_state() -> Any:
     readiness_module._state = None
 
 
+@pytest.fixture(autouse=True)
+def reset_actor_context() -> Any:
+    """Reset the actor contextvar between tests, so one test's set_actor call can never
+    leak into another test's assertions."""
+    from opi.core.actor import ACTOR_UNKNOWN, actor
+
+    token = actor.set(ACTOR_UNKNOWN)
+    yield
+    actor.reset(token)
+
+
 # --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------
 # Een ECHTE Postgres, zodat de ORM-repositories van de diensten tegen echt SQL draaien
 # (ON CONFLICT-uniciteit, transacties) en niet tegen mocks.

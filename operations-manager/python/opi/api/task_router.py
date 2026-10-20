@@ -12,8 +12,10 @@ from opi.api.user_token_auth import (
     extract_bearer_token,
     verify_user_token,
 )
+from opi.core.actor import get_actor
+from opi.core.config import settings
 from opi.services.project_store import get_project_store
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,16 @@ class CreateTaskRequest(BaseModel):
     deployment_name: str | None = None
     cluster: str
     payload: dict = {}
-    created_by: str | None = None
+    created_by: str | None = Field(
+        None,
+        deprecated=True,
+        description=(
+            "Alleen een federatie-peer wordt hierin geloofd. De actor volgt de ingang die de "
+            "aanroeper legitimeert, en deze route is de master-key: op een instantie met "
+            "FEDERATION_ROLE=slave is die sleutel in handen van de master-OPI en blijft het "
+            "meegestuurde adres staan, elders wordt het veld genegeerd."
+        ),
+    )
 
 
 class TaskListResponse(BaseModel):
@@ -82,6 +93,20 @@ def _get_task_service(request: Request):
     if task_service is None:
         raise HTTPException(status_code=503, detail="Task service not available")
     return task_service
+
+
+def _created_by(claimed: str | None) -> str:
+    """Wie de taak startte: de ingang bepaalt dat, niet de body.
+
+    Deze route zit achter de master-key, dus de actor is het platform. Op een
+    federatie-slave is die sleutel in handen van de master-OPI, die een taak doorzet en
+    het adres van de starter meestuurt; alleen daar blijft dat adres staan, zodat het
+    spoor van een gefedereerde taak heel blijft. Elders zou iedere master-key-houder
+    anders zelf kiezen onder wiens naam de git-commit komt.
+    """
+    if claimed and settings.FEDERATION_ROLE == "slave":
+        return claimed
+    return str(get_actor())
 
 
 async def _caller_started_this_task(request: Request, task: dict) -> bool:
@@ -345,7 +370,7 @@ async def create_task(request: Request, task_data: CreateTaskRequest) -> JSONRes
         deployment_name=task_data.deployment_name,
         cluster=task_data.cluster,
         payload=task_data.payload,
-        created_by=task_data.created_by,
+        created_by=_created_by(task_data.created_by),
     )
 
     task_id = str(task["task_id"])

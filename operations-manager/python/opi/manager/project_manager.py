@@ -43,6 +43,7 @@ from opi.connectors.subdomain import (
     is_deployment_domain_approved,
     validate_bare_domain_allowed,
 )
+from opi.core.actor import get_actor
 from opi.core.async_task_service import AsyncTaskService
 from opi.core.cluster_config import (
     get_argo_namespace,
@@ -2016,7 +2017,7 @@ class ProjectManager:
             str(project_data.get("name")),
             project_data,
             message=commit_message,
-            actor="operations-manager",
+            actor=get_actor(),
             enforce_validation=enforce_validation,
             filename=filename,
             refresh_cache=refresh_cache,
@@ -2066,7 +2067,7 @@ class ProjectManager:
             name,
             mutator,
             message=commit_message,
-            actor="operations-manager",
+            actor=get_actor(),
             enforce_validation=enforce_validation,
             filename=filename,
         )

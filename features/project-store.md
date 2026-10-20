@@ -81,6 +81,7 @@ repos keep using their own `ProjectManager` git connectors and are explicitly ou
 ## Usage
 
 ```python
+from opi.core.actor import get_actor
 from opi.services.project_store import get_project_store
 
 store = get_project_store()
@@ -98,7 +99,7 @@ def add_component(data: dict) -> dict | None:
     return data
 
 result = await store.mutate(
-    "my-project", add_component, message="add component api", actor="user@example.com"
+    "my-project", add_component, message="add component api", actor=get_actor()
 )
 result.committed   # False when the change function returned None
 result.before      # state before the change
@@ -110,6 +111,13 @@ revisions = await store.history("my-project")
 old = await store.read_at("my-project", revisions[-1].ref)
 prev = await store.previous("my-project")   # file-scoped: last commit touching THIS path
 ```
+
+### De actor
+
+`actor` is de `Actor` uit `opi/core/actor.py`, server-side bepaald op de ingang die
+legitimeert en opgehaald met `get_actor()`. Hij komt in de logregel van de write en als
+`Actor:`-trailer in de commit, uit te lezen met
+`git log -1 --format=%(trailers:key=Actor,valueonly)`.
 
 ### Why a change function and not a dict
 

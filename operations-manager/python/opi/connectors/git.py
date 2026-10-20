@@ -14,6 +14,7 @@ from urllib.parse import ParseResult, urlparse, urlunparse
 
 from ruamel.yaml import YAML
 
+from opi.core.actor import Actor, get_actor
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
@@ -52,6 +53,32 @@ def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock
 # working-tree path (git config) and the plumbing path (commit-tree env) cannot drift.
 GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
 GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
+
+COMMIT_ACTOR_TRAILER = "Actor"
+"""Git-trailer voor wie de commit startte. Auteur/committer blijft OPI; trailer zodat git
+het kan uitlezen (``git log --format=%(trailers:key=Actor,valueonly)``).
+"""
+
+_TRAILER_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*: ")
+
+
+def _with_actor_trailer(message: str, actor: Actor | None = None) -> str:
+    """Vul een commitbericht aan met de actor. Zonder ``actor`` die van de context."""
+    body = message.rstrip("\n")
+    # Een nieuwe regel in de waarde zou er een tweede trailer van maken. Van buiten komt
+    # alleen het adres dat een federatie-peer meestuurt, en dat blijft hiermee één regel.
+    trailer = f"{COMMIT_ACTOR_TRAILER}: {' '.join(str(actor or get_actor()).split())}"
+    if any(line.startswith(f"{COMMIT_ACTOR_TRAILER}: ") for line in body.splitlines()):
+        return body
+
+    # Een trailer hoort in de laatste alinea, en de onderwerpregel is geen alinea om aan
+    # te vullen: alleen onder een bestaand trailerblok komt de regel er direct bij.
+    paragraphs = body.split("\n\n")
+    last = paragraphs[-1].splitlines()
+    if len(paragraphs) > 1 and last and all(_TRAILER_LINE.match(line) for line in last):
+        return f"{body}\n{trailer}"
+    return f"{body}\n\n{trailer}"
+
 
 #: Vast pad, zodat de hostsleutel die de eerste SSH-verbinding vastlegt de volgende
 #: verbindingen overleeft en een wijziging ertussen opvalt.
@@ -1469,7 +1496,7 @@ class GitConnector:
 
         await self._configure_git_user()
 
-        commit_cmd = ["commit", "--no-verify", "-m", message]
+        commit_cmd = ["commit", "--no-verify", "-m", _with_actor_trailer(message)]
         stdout, stderr, code = await self._run_git_command(commit_cmd, cwd=self.__working_dir)
 
         if code != 0:
@@ -1789,7 +1816,13 @@ class GitConnector:
 
         return [line.strip() for line in stdout.splitlines() if line.strip()]
 
-    async def build_commit(self, changes: dict[str, str | None], message: str, parent: str | None = None) -> str | None:
+    async def build_commit(
+        self,
+        changes: dict[str, str | None],
+        message: str,
+        parent: str | None = None,
+        actor: Actor | None = None,
+    ) -> str | None:
         """Build a commit object directly, without touching the working tree or shared index.
 
         Uses git's low-level object commands so a write never materialises a file in the
@@ -1806,6 +1839,7 @@ class GitConnector:
             changes: repo-relative path -> new content, or None to delete that path
             message: commit message
             parent: parent commit (defaults to current HEAD; None-and-no-HEAD makes a root commit)
+            actor: de handelende partij voor de trailer; zonder deze die van de context
 
         Returns:
             The new commit sha, or None when the resulting tree is identical to the parent's
@@ -1877,7 +1911,7 @@ class GitConnector:
                 commit_args.append(f"-S{signing.fingerprint}")
             if parent:
                 commit_args += ["-p", parent]
-            commit_args += ["-m", message]
+            commit_args += ["-m", _with_actor_trailer(message, actor)]
             commit, stderr, code = await self._run_git_command(commit_args, env=identity, cwd=self.__working_dir)
             self._check_git_command_result(code, stderr, "commit-tree")
 
