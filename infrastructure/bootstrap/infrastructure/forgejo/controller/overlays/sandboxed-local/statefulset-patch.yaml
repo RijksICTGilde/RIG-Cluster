@@ -54,14 +54,15 @@ spec:
           value: "public"
         - name: FORGEJO__service__DISABLE_REGISTRATION
           value: "true"
+        # Zie de base: lezen vraagt een login, en de repositories staan op privé.
         - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
-          value: "false"
+          value: "true"
         - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
           value: "true"
         - name: FORGEJO__repository__DEFAULT_BRANCH
           value: "main"
         - name: FORGEJO__repository__DEFAULT_PRIVATE
-          value: "false"
+          value: "true"
         - name: FORGEJO__webhook__ALLOWED_HOST_LIST
           value: "*"
         - name: FORGEJO__webhook__SKIP_TLS_VERIFY
