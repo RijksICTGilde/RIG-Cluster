@@ -60,6 +60,10 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
+        # Hier NIET afdwingen: ca_certificate.enabled mount de CA van de node met een
+        # hostPath, en dat verbiedt baseline. Waarschuwen geeft wel de lijst.
+        "pod_security": {"enforce": "privileged", "warn": "baseline", "audit": "baseline"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
@@ -138,6 +142,8 @@ CLUSTER_CONFIG = {
         "max_memory_limit_mi": 4096,
         "max_memory_request_mi": 1024,
         "uses_capsule": False,
+        # Pod Security Admission op namespaceniveau; zie features/pod-security-labels.md.
+        "pod_security": {"enforce": "baseline", "warn": "restricted", "audit": "restricted"},
         "min_cpu_m": 25,
         "max_cpu_request_m": 250,
         "max_cpu_limit_m": 4000,
@@ -1217,6 +1223,21 @@ def uses_capsule(cluster_name: str) -> bool:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("uses_capsule", False)
+
+
+def get_pod_security_labels(cluster_name: str) -> dict[str, str]:
+    """Pod Security Admission labels for this cluster, or {} if not configured."""
+    cluster_config = get_cluster_config(cluster_name)
+    modes: dict[str, str] = cluster_config.get("pod_security", {})
+    return {f"pod-security.kubernetes.io/{mode}": level for mode, level in modes.items()}
+
+
+def namespace_labels(cluster_name: str) -> dict[str, str]:
+    """The labels every namespace OPI manages must carry on this cluster."""
+    return {
+        "argocd.argoproj.io/managed-by": get_argo_namespace(cluster_name),
+        **get_pod_security_labels(cluster_name),
+    }
 
 
 def supports_vpa(cluster_name: str) -> bool:

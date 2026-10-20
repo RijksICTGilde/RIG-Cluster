@@ -124,6 +124,72 @@ async def test_a_namespace_without_the_label_is_present_with_an_empty_value(conn
         }
 
 
+async def test_apply_labels_to_resource_sets_all_labels_in_one_call(connector):
+    """RC-316: namespace creation sets managed-by and Pod Security labels together."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "", 0)
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace",
+            resource_name="rig-myproject",
+            labels={"argocd.argoproj.io/managed-by": "rig-system", "pod-security.kubernetes.io/enforce": "baseline"},
+        )
+
+        assert result is True
+        mock_run_cmd.assert_called_once()
+        args = mock_run_cmd.call_args[0][0]
+        assert args[:3] == ["label", "namespace", "rig-myproject"]
+        assert "argocd.argoproj.io/managed-by=rig-system" in args
+        assert "pod-security.kubernetes.io/enforce=baseline" in args
+        assert "--overwrite" in args
+        assert "-n" not in args, "namespace is cluster-scoped, no -n flag"
+
+
+async def test_apply_labels_to_resource_with_no_labels_skips_kubectl(connector):
+    """An empty dict (e.g. a cluster without pod_security configured) is a no-op, not a call."""
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        assert await connector.apply_labels_to_resource(resource_type="namespace", resource_name="x", labels={})
+
+        mock_run_cmd.assert_not_called()
+
+
+async def test_apply_labels_to_resource_retries_then_succeeds(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.side_effect = [("", "conflict", 1), ("", "", 0)]
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="x", labels={"a": "b"}, retry_delay=0
+        )
+
+        assert result is True
+        assert mock_run_cmd.call_count == 2
+
+
+async def test_apply_labels_to_resource_fails_after_exhausting_retries(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "Forbidden", 1)
+
+        result = await connector.apply_labels_to_resource(
+            resource_type="namespace", resource_name="x", labels={"a": "b"}, max_retries=2, retry_delay=0
+        )
+
+        assert result is False
+        assert mock_run_cmd.call_count == 2
+
+
+async def test_apply_labels_to_resource_passes_the_namespace_for_a_namespaced_resource(connector):
+    with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:
+        mock_run_cmd.return_value = ("", "", 0)
+
+        assert await connector.apply_labels_to_resource(
+            resource_type="pod", resource_name="x", labels={"a": "b"}, namespace="rig-myproject"
+        )
+
+        args = mock_run_cmd.call_args[0][0]
+        assert "a=b" in args
+        assert args[-2:] == ["-n", "rig-myproject"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
 

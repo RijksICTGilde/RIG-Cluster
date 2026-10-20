@@ -4,6 +4,9 @@ metadata:
   name: {{ namespace | yaml_scalar }}
   labels:
     created-by: operations-manager
+{% for key, value in (pod_security_labels | default({}, true)).items() %}
+    {{ key }}: "{{ value }}"
+{% endfor %}
   annotations:
     # NOTE: we need manifests per cluster
     # https://docs.rijksapps.nl/egress-internet-traffic/

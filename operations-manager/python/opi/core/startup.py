@@ -620,11 +620,9 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
             # loop used to take 70 of the 83 seconds it took to boot, nearly all of it
             # spent forking kubectl: 127 `get namespace` plus 127 `label namespace` for
             # 44 distinct namespaces that were already correct.
-            known_namespace_labels: dict[str, str] | None = None
+            known_namespace_labels: dict[str, dict[str, str]] | None = None
             try:
-                known_namespace_labels = await create_kubectl_connector().get_namespace_label_map(
-                    "argocd.argoproj.io/managed-by"
-                )
+                known_namespace_labels = await create_kubectl_connector().get_namespace_labels_map()
                 logger.info(f"Read {len(known_namespace_labels)} namespaces in one call for the startup check")
             except Exception as e:
                 # Fall back to the per-namespace path rather than skipping the check.

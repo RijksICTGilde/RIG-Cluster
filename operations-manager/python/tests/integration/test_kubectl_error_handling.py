@@ -147,11 +147,10 @@ class TestKubectlEdgeCases:
 
         try:
             # Labels have restrictions - this should handle them gracefully
-            result = await connector.apply_label_to_resource(
+            result = await connector.apply_labels_to_resource(
                 resource_type="configmap",
                 resource_name="special-label-test",
-                label_key="valid-label",
-                label_value="valid-value-123",
+                labels={"valid-label": "valid-value-123"},
                 namespace="test-project",
             )
             assert result is True
