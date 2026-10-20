@@ -2,6 +2,7 @@
 
 from opi.core.cluster_config import get_supported_domain_names
 from opi.core.config import settings
+from opi.core.project_schema import validate_project_schema
 from opi.forms.visualizers.providers import (
     CUSTOM_DOMAIN_SENTINEL,
     BaseDomainOptionsProvider,
@@ -13,6 +14,7 @@ from opi.forms.visualizers.providers import (
     RepositoryOptionsProvider,
     StorageSizeOptionsProvider,
     StorageTypeOptionsProvider,
+    UserRoleOptionsProvider,
 )
 
 
@@ -68,6 +70,28 @@ class TestBaseDomainOptionsProvider:
         assert "" in values
         assert "rijksapp.nl" in values
         assert "__custom__" in values
+
+
+class TestUserRoleOptionsProvider:
+    """De keuzelijst van een veld is ook het antwoord op "welke waarden mag ik hier
+    sturen" (RC-323): elke aangeboden rolwaarde moet dus tegen het schema valideren.
+    """
+
+    def test_every_offered_role_validates_against_the_schema(self) -> None:
+        for option in UserRoleOptionsProvider().get_options():
+            project = {
+                "name": "voorbeeld",
+                "users": [{"email": "a@rijksoverheid.nl", "role": option["value"]}],
+            }
+            validate_project_schema(project)
+
+    def test_the_read_role_is_offered_as_member_not_operator(self) -> None:
+        """De vorige keuzelijst bood ``operator`` aan, een waarde die het schema
+        altijd al weigerde; ``member`` is de leesrol die het schema wel kent.
+        """
+        values = [o["value"] for o in UserRoleOptionsProvider().get_options()]
+        assert "member" in values
+        assert "operator" not in values
 
 
 class TestFilteredServiceOptionsProvider:

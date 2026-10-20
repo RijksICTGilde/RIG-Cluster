@@ -136,6 +136,9 @@ BACKUP_GEVALLEN: list[tuple[str, dict[str, Any]]] = [
             "deployments": [{"name": "dep1"}, {"name": "dep2"}],
             "backups_by_deployment": {"dep1": [SNAPSHOT], "dep2": []},
             "backups_error": None,
+            # Terugzetten vraagt een operationele rol (RC-323); de leesrol ziet de
+            # herstelknop niet, en dat meet test_de_herstelknop_volgt_de_rol.
+            "mag_terugzetten": True,
         },
     ),
     (
@@ -144,6 +147,7 @@ BACKUP_GEVALLEN: list[tuple[str, dict[str, Any]]] = [
             "deployments": [{"name": "dep1"}],
             "backups_by_deployment": {"dep1": []},
             "backups_error": None,
+            "mag_terugzetten": True,
         },
     ),
     (
@@ -152,6 +156,7 @@ BACKUP_GEVALLEN: list[tuple[str, dict[str, Any]]] = [
             "deployments": [{"name": "dep1"}],
             "backups_by_deployment": {"dep1": []},
             "backups_error": "kopia niet bereikbaar",
+            "mag_terugzetten": True,
         },
     ),
 ]
@@ -300,3 +305,13 @@ def test_de_herstelknop_opent_de_dialoog() -> None:
     aanroep = "openEditModal(&#39;modal-restore&#39;, &#39;Backup herstellen&#39;, {deployment: &#39;dep1&#39;})"
     assert aanroep in met
     assert "modal-restore" not in zonder
+
+
+def test_de_herstelknop_volgt_de_rol() -> None:
+    """De leesrol member mag niet terugzetten, dus de knop komt er niet (RC-323)."""
+    context = {**BACKUP_GEVALLEN[0][1], "mag_terugzetten": False}
+
+    html = _render(BACKUP_TEMPLATE, context)
+
+    assert "modal-restore" not in html
+    assert 'id="backups-snapshots-dep1"' in html

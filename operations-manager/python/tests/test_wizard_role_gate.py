@@ -39,6 +39,9 @@ PROJECT_NAME = "takeover-target"
 OWNER_EMAIL = "owner@example.com"
 MEMBER_EMAIL = "member@example.com"
 ADMIN_EMAIL = "global-admin@example.com"
+# Alleen voor de operationele-rolgrens (RC-323): niet in STORED_DATA, dat bepaalt de
+# inhoud van het projectbestand voor de save-tests en blijft ongewijzigd.
+DEVELOPER_EMAIL = "developer@example.com"
 
 # The wizard save path now schema-checks the finished file before handing it to the
 # store, so the secrets in this fixture have to look like what the schema demands:
@@ -100,7 +103,11 @@ def project_service() -> ProjectService:
         project_name=PROJECT_NAME,
         api_key=STORED_DATA["config"]["api-key"],
         filename=f"{PROJECT_NAME}.yaml",
-        users=[ProjectUser(email=OWNER_EMAIL, role="owner"), ProjectUser(email=MEMBER_EMAIL, role="member")],
+        users=[
+            ProjectUser(email=OWNER_EMAIL, role="owner"),
+            ProjectUser(email=MEMBER_EMAIL, role="member"),
+            ProjectUser(email=DEVELOPER_EMAIL, role="developer"),
+        ],
         data=dict(STORED_DATA),
     )
     yield service
@@ -486,3 +493,177 @@ async def test_submit_step_skips_gate_in_create_mode(project_service: ProjectSer
                 section_id="identity",
             )
         assert not isinstance(exc.value, AssertionError)
+
+
+# ---------------------------------------------------------------------------
+# Backup/restore flow-role split (RC-323): _require_flow_access
+#
+# modal-backup stays membership-gated for every role. modal-restore moved to the
+# operational-role gate (developer/owner/admin, not member) because a restore
+# overwrites a deployment's data or writes a new one into the project file. Every
+# other modal-wizard flow keeps the admin/owner edit gate.
+# ---------------------------------------------------------------------------
+
+
+def test_require_flow_access_backup_allows_member(project_service: ProjectService) -> None:
+    from opi.web.router_detail_edit import _require_flow_access
+
+    project, user_email = _require_flow_access(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-backup")
+    assert project.name == PROJECT_NAME
+    assert user_email == MEMBER_EMAIL
+
+
+def test_require_flow_access_restore_rejects_member(project_service: ProjectService) -> None:
+    from opi.web.router_detail_edit import _require_flow_access
+
+    with pytest.raises(HTTPException) as exc:
+        _require_flow_access(_request_for(MEMBER_EMAIL), PROJECT_NAME, "modal-restore")
+    assert exc.value.status_code == 403
+
+
+def test_require_flow_access_restore_allows_developer(project_service: ProjectService) -> None:
+    """developer is not admin/owner, so this proves the operate-gate runs here,
+    not the stricter edit-gate (which would also happen to accept owner/admin).
+    """
+    from opi.web.router_detail_edit import _require_flow_access
+
+    project, user_email = _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-restore")
+    assert project.name == PROJECT_NAME
+    assert user_email == DEVELOPER_EMAIL
+
+
+def test_require_flow_access_other_flow_rejects_developer(project_service: ProjectService) -> None:
+    """Every flow outside backup/restore edits the project file, so it still needs
+    admin/owner; a developer (allowed into restore) must be rejected here.
+    """
+    from opi.web.router_detail_edit import _require_flow_access
+
+    with pytest.raises(HTTPException) as exc:
+        _require_flow_access(_request_for(DEVELOPER_EMAIL), PROJECT_NAME, "modal-edit-identity")
+    assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Route -> gate wiring for the routes touched by RC-323
+#
+# `modal_wizard_load_step` (back-navigation) used to always require admin/owner,
+# so a member doing backup/restore step back got 403 even though init/submit
+# allowed them. These pin that it now goes through the shared `_require_flow_access`,
+# like the other five modal-wizard routes.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_modal_wizard_load_step_invokes_flow_access_gate() -> None:
+    from opi.web.router_detail_edit import modal_wizard_load_step
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+    request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}), query_params={})
+
+    with (
+        patch("opi.web.router_detail_edit._require_flow_access", side_effect=sentinel) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await modal_wizard_load_step(
+            request=request,
+            project_name=PROJECT_NAME,
+            flow_id="modal-backup",
+            section_id="select-deployment",
+        )
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once_with(request, PROJECT_NAME, "modal-backup")
+
+
+@pytest.mark.asyncio
+async def test_restore_select_mode_invokes_operate_access_gate() -> None:
+    """`restore_select_mode` re-renders a restore step; it must use the
+    operational gate, not plain membership (RC-323).
+    """
+    from opi.web.router_detail_edit import restore_select_mode
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+    request = SimpleNamespace(state=SimpleNamespace(user={"email": MEMBER_EMAIL}))
+
+    with (
+        patch("opi.web.router_detail_edit.require_project_operate_access", side_effect=sentinel) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await restore_select_mode(request=request, project_name=PROJECT_NAME)
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once_with(request, PROJECT_NAME)
+
+
+# ---------------------------------------------------------------------------
+# _handle_backup_restore_submit: the TOCTOU guard on trigger_restore
+#
+# The route-level gates above run at init/step time. A restore is only actually
+# executed here, so this function re-checks the operate-role itself as a guard
+# against any intermediate step missing the gate; a backup needs no such guard.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_gates_restore() -> None:
+    from unittest.mock import MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {}
+
+    sentinel = HTTPException(status_code=403, detail="gate-fired-from-test")
+    with (
+        patch("opi.core.task_helpers.get_task_service", return_value=MagicMock()),
+        patch("opi.web.router_detail_edit.require_project_operate_access", side_effect=sentinel) as gate,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await _handle_backup_restore_submit(
+            request=_request_for(MEMBER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-restore",
+            action="trigger_restore",
+            state=state,
+        )
+
+    assert exc.value.status_code == 403
+    gate.assert_called_once_with(_request_for(MEMBER_EMAIL), PROJECT_NAME)
+
+
+@pytest.mark.asyncio
+async def test_handle_backup_restore_submit_skips_gate_for_backup() -> None:
+    """A backup makes no change that needs the operate-role guard; member-level
+    access (already checked at init/step time) is enough.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from opi.web.router_detail_edit import _handle_backup_restore_submit
+
+    state = MagicMock()
+    state.get_merged_data.return_value = {"deployment_name": "dep1", "resource_types": ["postgres"]}
+
+    task_service = MagicMock()
+    task_service.create_task = AsyncMock(return_value={"task_id": "t1"})
+
+    with (
+        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
+        patch(
+            "opi.web.router_detail_edit.require_project_operate_access",
+            side_effect=AssertionError("operate-gate must not run for a backup"),
+        ),
+        patch("opi.web.router_detail_edit.render_fragment", return_value="<div>progress</div>"),
+        patch("opi.web.router_detail_edit.clear_modal_state_by_token"),
+    ):
+        response = await _handle_backup_restore_submit(
+            request=_request_for(MEMBER_EMAIL),
+            wizard_token="tok",
+            project_name=PROJECT_NAME,
+            flow_id="modal-backup",
+            action="trigger_backup",
+            state=state,
+        )
+
+    assert response.status_code == 200
+    task_service.create_task.assert_called_once()

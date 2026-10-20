@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # of its own, so handing it out wider than this gate widens the gate.
 PROJECT_EDIT_ROLES: tuple[str, ...] = ("admin", "owner")
 
+# De rollen die job, databaseconsole en restore mogen starten: voeren code uit met
+# databasecredentials of overschrijven data (RC-323, BIO2 8.02), dus member valt erbuiten.
+PROJECT_OPERATE_ROLES: tuple[str, ...] = ("admin", "owner", "developer")
+
 
 def get_project_users(project_name: str) -> list[ProjectUser] | None:
     """Return the members of a project, or None when the project is unknown."""
