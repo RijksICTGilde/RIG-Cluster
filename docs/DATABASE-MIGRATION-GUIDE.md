@@ -2,12 +2,18 @@
 
 This guide explains how to clone databases from external sources (like other clusters) into your RIG-Cluster deployments using the Operations Manager API.
 
+For security requirements, see `features/externe-kloonbron-op-een-publiek-adres.md`.
+
 ## Overview
 
 The external database cloning feature allows you to:
 - Migrate databases from Digilab cluster to local Kind cluster
 - Migrate databases from Digilab to ODCN production
-- Clone any PostgreSQL database accessible via network/port-forward
+- Clone any PostgreSQL database that is reachable on a public address, directly or through a Chisel tunnel
+
+The source host that the operations-manager connects to must resolve to a public address. A
+`kubectl port-forward` to `localhost` is therefore refused with a 422: use the `tunnel`
+parameters below to reach a source inside another cluster.
 
 ## Architecture
 
@@ -32,10 +38,12 @@ POST /api/projects/{project_name}/deployments/{deployment_name}/:clone-database-
 
 ### Request Body
 
+Direct connection to a publicly reachable source:
+
 ```json
 {
-  "sourceHost": "localhost",
-  "sourcePort": 15432,
+  "sourceHost": "db.voorbeeld.nl",
+  "sourcePort": 5432,
   "sourceUsername": "postgres",
   "sourcePassword": "password",
   "sourceDatabase": "amt_staging",
@@ -44,17 +52,42 @@ POST /api/projects/{project_name}/deployments/{deployment_name}/:clone-database-
 }
 ```
 
+Through a Chisel tunnel, for a source that is only reachable inside the source cluster:
+
+```json
+{
+  "sourceUsername": "postgres",
+  "sourcePassword": "password",
+  "sourceDatabase": "amt_staging",
+  "sourceSchema": "amt_staging",
+  "forceClone": true,
+  "tunnel": {
+    "serverUrl": "https://chisel.source-cluster.example.com",
+    "username": "admin",
+    "password": "secret",
+    "remoteHost": "amt-cluster-db-rw.tn-ai-validation-amt.svc.cluster.local",
+    "remotePort": 5432
+  }
+}
+```
+
 ### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `sourceHost` | string | Yes | External database host (e.g., `localhost` for port-forward) |
-| `sourcePort` | integer | Yes | External database port (e.g., `15432`) |
+| `sourceHost` | string | Yes, unless `tunnel` is used | External database host; must resolve to a public address |
+| `sourcePort` | integer | Yes, unless `tunnel` is used | External database port (e.g., `5432`) |
 | `sourceUsername` | string | Yes | Username for source database |
 | `sourcePassword` | string | Yes | Password for source database |
 | `sourceDatabase` | string | Yes | Source database name |
 | `sourceSchema` | string | Yes | Source schema name to clone |
 | `forceClone` | boolean | No | If true, drops existing target database (default: false) |
+| `tunnel` | object | No | Chisel tunnel to a source inside another cluster |
+| `tunnel.serverUrl` | string | Yes, inside `tunnel` | Chisel server URL (`https://` only); must resolve to a public address |
+| `tunnel.username` | string | Yes, inside `tunnel` | Chisel authentication username |
+| `tunnel.password` | string | Yes, inside `tunnel` | Chisel authentication password |
+| `tunnel.remoteHost` | string | Yes, inside `tunnel` | Source hostname as seen by the Chisel server; not checked here |
+| `tunnel.remotePort` | integer | Yes, inside `tunnel` | Source port as seen by the Chisel server |
 
 ### Response
 
@@ -62,12 +95,12 @@ POST /api/projects/{project_name}/deployments/{deployment_name}/:clone-database-
 ```json
 {
   "status": "success",
-  "message": "Database cloned successfully from localhost:15432 to amt/production",
+  "message": "Database cloned successfully from db.voorbeeld.nl:5432 to amt/production",
   "project": "amt",
   "deployment": "production",
   "source": {
-    "host": "localhost",
-    "port": 15432,
+    "host": "db.voorbeeld.nl",
+    "port": 5432,
     "database": "amt_staging",
     "schema": "amt_staging"
   },
@@ -115,12 +148,12 @@ POST /api/projects/{project_name}/deployments/{deployment_name}/:clone-database-
 ```json
 {
   "status": "failed",
-  "message": "Database clone failed: Source validation failed: Source database 'amt_staging' does not exist at localhost:15432",
+  "message": "Database clone failed: Source validation failed: de bron is niet bereikbaar of weigerde de verbinding",
   "project": "amt",
   "deployment": "production",
   "source": {
-    "host": "localhost",
-    "port": 15432,
+    "host": "db.voorbeeld.nl",
+    "port": 5432,
     "database": "amt_staging",
     "schema": "amt_staging"
   },
@@ -129,84 +162,93 @@ POST /api/projects/{project_name}/deployments/{deployment_name}/:clone-database-
     {
       "type": "source_validation",
       "status": "failed",
-      "error": "Source database 'amt_staging' does not exist at localhost:15432"
+      "error": "de bron is niet bereikbaar of weigerde de verbinding"
     }
   ],
   "errors": [
-    "Source validation failed: Source database 'amt_staging' does not exist at localhost:15432"
+    "Source validation failed: de bron is niet bereikbaar of weigerde de verbinding"
   ]
 }
 ```
+
+An unreachable source, an unknown database and a wrong password all give this one message.
+Which of the three it was, with host and port, is in the operations-manager log.
+
+**Refused source (422)**: a source host or `tunnel.serverUrl` that does not resolve to a
+public address is refused before any connection is made, with the message "de kloonbron moet
+op een publiek adres staan".
 
 ## Usage Examples
 
 ### Example 1: Digilab to Local Kind (AMT Migration)
 
-**Step 1: Port-forward source database from Digilab**
-```bash
-# Connect to Digilab cluster
-kubectl config use-context digilab
+The source database lives inside the Digilab cluster, so it is reached through the Chisel
+server of that cluster. The operations-manager sets the tunnel up itself; nothing needs to be
+port-forwarded.
 
-# Port-forward PostgreSQL from Digilab
-kubectl port-forward -n tn-ai-validation-amt svc/amt-cluster-db-rw 15432:5432
-```
-
-**Step 2: Clone database to local kind**
 ```bash
 curl -X POST "http://localhost:9595/api/projects/amt/deployments/local/:clone-database-from-external" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-amt-api-key" \
   -d '{
-    "sourceHost": "localhost",
-    "sourcePort": 15432,
     "sourceUsername": "postgres",
     "sourcePassword": "digilab-postgres-password",
     "sourceDatabase": "amt_production",
     "sourceSchema": "amt_production",
-    "forceClone": true
+    "forceClone": true,
+    "tunnel": {
+      "serverUrl": "https://chisel.digilab.example.com",
+      "username": "admin",
+      "password": "chisel-password",
+      "remoteHost": "amt-cluster-db-rw.tn-ai-validation-amt.svc.cluster.local",
+      "remotePort": 5432
+    }
   }'
 ```
 
 ### Example 2: Digilab to ODCN Production
 
-**Step 1: Port-forward source (Digilab) and target (ODCN) databases**
-```bash
-# Terminal 1: Port-forward from Digilab (source)
-kubectl config use-context digilab
-kubectl port-forward -n amt-namespace svc/postgresql 15432:5432
+Same request against the ODCN operations-manager. Port-forwarding the operations-manager
+itself is fine: that is the API you call, not the clone source.
 
-# Terminal 2: Access ODCN operations-manager
+```bash
+# Access the ODCN operations-manager
 kubectl config use-context odcn-production
-kubectl port-forward -n rig-system svc/operations-manager 9595:9595
+kubectl port-forward -n rig-prd-operations svc/operations-manager 9595:9595
 ```
 
-**Step 2: Clone from Digilab to ODCN**
 ```bash
 curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-database-from-external" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-amt-api-key" \
   -d '{
-    "sourceHost": "localhost",
-    "sourcePort": 15432,
     "sourceUsername": "postgres",
     "sourcePassword": "digilab-postgres-password",
     "sourceDatabase": "amt_production",
     "sourceSchema": "amt_production",
-    "forceClone": true
+    "forceClone": true,
+    "tunnel": {
+      "serverUrl": "https://chisel.digilab.example.com",
+      "username": "admin",
+      "password": "chisel-password",
+      "remoteHost": "postgresql.amt-namespace.svc.cluster.local",
+      "remotePort": 5432
+    }
   }'
 ```
 
 ### Example 3: Clone Without Force (Safe Mode)
 
-If you want to prevent accidental overwrites, omit `forceClone` or set it to `false`:
+If you want to prevent accidental overwrites, omit `forceClone` or set it to `false`. This
+example connects directly to a source that is reachable on a public address:
 
 ```bash
 curl -X POST "http://localhost:9595/api/projects/amt/deployments/staging/:clone-database-from-external" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-amt-api-key" \
   -d '{
-    "sourceHost": "localhost",
-    "sourcePort": 15432,
+    "sourceHost": "db.voorbeeld.nl",
+    "sourcePort": 5432,
     "sourceUsername": "postgres",
     "sourcePassword": "source-password",
     "sourceDatabase": "amt_production",
@@ -222,6 +264,7 @@ This will fail if the target database already exists, preventing accidental data
 The API performs comprehensive validation before cloning:
 
 ### Source Validation
+0. **Public address** - Does the source host, or `tunnel.serverUrl`, resolve to a public address?
 1. **Connectivity** - Can we connect to source host:port?
 2. **Authentication** - Are credentials valid?
 3. **Database Exists** - Does source database exist?
@@ -243,12 +286,10 @@ The API performs comprehensive validation before cloning:
 
 ## Error Handling
 
-The API provides detailed error messages for common issues:
-
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Source database does not exist` | Wrong database name or inaccessible | Verify port-forward and database name |
-| `Authentication failed` | Wrong username/password | Check source credentials |
+| `de kloonbron moet op een publiek adres staan` (422) | Source host or `tunnel.serverUrl` does not resolve to a public address | Use a public source address, or reach a private source through `tunnel` |
+| `de bron is niet bereikbaar of weigerde de verbinding` | Unreachable source, unknown database, or wrong credentials | Check host, port and credentials; the operations-manager log says which of the three it was |
 | `Source schema does not exist` | Schema name mismatch | Verify schema name in source |
 | `Deployment does not use PostgreSQL` | Target deployment has no database | Add PostgreSQL to deployment services |
 | `Target database already exists` | Database exists and forceClone=false | Use forceClone=true or delete manually |
@@ -269,13 +310,27 @@ The API provides detailed error messages for common issues:
 
 ## Troubleshooting
 
-### Port-forward Issues
+### Source Refused
 ```bash
-# Verify port-forward is active
-netstat -an | grep 15432
+# Does the source host, or the Chisel server, resolve to a public address?
+dig +short db.voorbeeld.nl
+dig +short chisel.digilab.example.com
+```
 
-# Test connectivity manually
-psql -h localhost -p 15432 -U postgres -d amt_staging
+A source on a private address is only accepted if the cluster allows that range; see
+`features/externe-kloonbron-op-een-publiek-adres.md`.
+
+### Source Unreachable
+```bash
+# Test connectivity manually from a machine that can reach the source
+psql -h db.voorbeeld.nl -p 5432 -U postgres -d amt_staging
+```
+
+The response does not say whether the host, the database or the password was the problem.
+The operations-manager log does:
+
+```bash
+kubectl logs -n rig-prd-operations deployment/operations-manager | grep -i "external"
 ```
 
 ### Clone Taking Too Long

@@ -28,6 +28,13 @@ HERE = settings.CLUSTER_MANAGER
 TARGET_DB = "demo_staging"
 
 
+@pytest.fixture(autouse=True)
+def _kloonbron_toegestaan():
+    """Deze tests gaan over de kloonlogica, niet over de guard die de bronhost opzoekt."""
+    with patch("opi.manager.database_manager.clone_source_refusal", AsyncMock(return_value=None)):
+        yield
+
+
 def _project(**status: Any) -> dict[str, Any]:
     clone_from: dict[str, Any] = {"type": "deployment", "reference": "production", "mode": "once"}
     if status:

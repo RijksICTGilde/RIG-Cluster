@@ -28,6 +28,7 @@ from opi.services.postgres_scope import (
     project_uses_dedicated_postgres,
 )
 from opi.services.project import Project
+from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_database_name, generate_extra_database_schema
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import DatabaseSecret
@@ -1794,13 +1795,14 @@ class DatabaseManager:
             return {"table_count": table_count}
 
         except asyncpg.InvalidCatalogNameError as e:
-            raise Exception(f"Source database '{source_database}' does not exist at {source_host}:{source_port}") from e
+            logger.warning(f"Source database '{source_database}' does not exist at {source_host}:{source_port}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         except asyncpg.InvalidPasswordError as e:
-            raise Exception(f"Authentication failed for {source_username}@{source_host}:{source_port}") from e
+            logger.warning(f"Authentication failed for {source_username}@{source_host}:{source_port}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         except Exception as e:
-            raise Exception(
-                f"Failed to connect to external source {source_host}:{source_port}/{source_database}: {e!s}"
-            ) from e
+            logger.warning(f"Failed to connect to external source {source_host}:{source_port}/{source_database}: {e!s}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         finally:
             if source_conn:
                 await source_conn.close()
@@ -1918,6 +1920,22 @@ class DatabaseManager:
             ...     force_clone=True
             ... )
         """
+        refusal = await clone_source_refusal(source_host, chisel_config.get("server-url") if chisel_config else None)
+        if refusal:
+            return {
+                "project": project_name,
+                "deployment": deployment_name,
+                "source": {
+                    "host": source_host,
+                    "port": source_port,
+                    "database": source_database,
+                    "schema": source_schema,
+                },
+                "operations": [],
+                "success": False,
+                "errors": [refusal],
+            }
+
         if chisel_config:
             # Use Chisel tunnel for the connection
             return await self._clone_database_with_chisel_tunnel(

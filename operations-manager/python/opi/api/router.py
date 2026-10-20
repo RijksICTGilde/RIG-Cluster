@@ -35,6 +35,8 @@ from opi.services.catalog.image_registries.config_model import (
 )
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
+from opi.utils.age import encrypt_age_content
+from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
 from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
 from pydantic import BaseModel, Field, model_validator
@@ -679,6 +681,15 @@ class ProjectDeleteRequest(BaseModel):
     model_config = {"json_schema_extra": {"example": {"confirmDeletion": True, "force": False}}}
 
 
+#: Hostnaam of IP-adres, zonder protocol, poort of pad.
+CLONE_HOST_PATTERN = r"^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?$"
+
+
+async def _encrypt_for_task(secret: str) -> str:
+    """Een geheim uit het verzoek staat versleuteld in ``async_tasks.payload``."""
+    return await encrypt_age_content(secret, settings.SOPS_AGE_PUBLIC_KEY)
+
+
 class ChiselTunnelConfig(BaseModel):
     """
     Chisel tunnel configuration for accessing remote services.
@@ -688,22 +699,44 @@ class ChiselTunnelConfig(BaseModel):
     """
 
     serverUrl: str = Field(
-        ..., description="Chisel server URL in source cluster", examples=["https://chisel.source-cluster.example.com"]
+        ...,
+        max_length=512,
+        pattern=r"^https://",
+        description="Chisel server URL in source cluster",
+        examples=["https://chisel.source-cluster.example.com"],
     )
     username: str = Field(..., description="Chisel authentication username", examples=["admin"])
     password: str = Field(..., description="Chisel authentication password", examples=["secret"])
     remoteHost: str = Field(
         ..., description="Remote service hostname in source cluster", examples=["postgres.namespace.svc.cluster.local"]
     )
-    remotePort: int = Field(..., description="Remote service port in source cluster", examples=[5432])
+    remotePort: int = Field(..., ge=1, le=65535, description="Remote service port in source cluster", examples=[5432])
+
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De tunnel in de vorm die de taakhandlers lezen, met het wachtwoord versleuteld."""
+        return {
+            "server_url": self.serverUrl,
+            "username": self.username,
+            "password": await _encrypt_for_task(self.password),
+            "remote_host": self.remoteHost,
+            "remote_port": self.remotePort,
+        }
 
 
 class CloneDatabaseFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source database host (not needed if using tunnel)", examples=["localhost"]
+        None,
+        max_length=253,
+        pattern=CLONE_HOST_PATTERN,
+        description="External source database host (not needed if using tunnel)",
+        examples=["db.voorbeeld.nl"],
     )
     sourcePort: int | None = Field(
-        None, description="External source database port (not needed if using tunnel)", examples=[15432]
+        None,
+        ge=1,
+        le=65535,
+        description="External source database port (not needed if using tunnel)",
+        examples=[15432],
     )
     sourceUsername: str = Field(..., description="Username for external source connection", examples=["postgres"])
     sourcePassword: str = Field(..., description="Password for external source connection", examples=["password"])
@@ -716,11 +749,26 @@ class CloneDatabaseFromExternalRequest(BaseModel):
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
 
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De payload in de vorm die ``handle_clone_database`` leest, met de geheimen versleuteld."""
+        payload: dict[str, Any] = {
+            "source_host": self.sourceHost,
+            "source_port": self.sourcePort,
+            "source_username": self.sourceUsername,
+            "source_password": await _encrypt_for_task(self.sourcePassword),
+            "source_database": self.sourceDatabase,
+            "source_schema": self.sourceSchema,
+            "force_clone": self.forceClone,
+        }
+        if self.tunnel:
+            payload["tunnel"] = await self.tunnel.to_task_payload()
+        return payload
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "sourceHost": "localhost",
+                    "sourceHost": "db.voorbeeld.nl",
                     "sourcePort": 15432,
                     "sourceUsername": "postgres",
                     "sourcePassword": "password",
@@ -749,10 +797,18 @@ class CloneDatabaseFromExternalRequest(BaseModel):
 
 class CloneBucketFromExternalRequest(BaseModel):
     sourceHost: str | None = Field(
-        None, description="External source MinIO host (not needed if using tunnel)", examples=["localhost"]
+        None,
+        max_length=253,
+        pattern=CLONE_HOST_PATTERN,
+        description="External source MinIO host (not needed if using tunnel)",
+        examples=["minio.voorbeeld.nl"],
     )
     sourcePort: int | None = Field(
-        None, description="External source MinIO port (not needed if using tunnel)", examples=[19000]
+        None,
+        ge=1,
+        le=65535,
+        description="External source MinIO port (not needed if using tunnel)",
+        examples=[19000],
     )
     sourceAccessKey: str = Field(..., description="Access key for external source connection", examples=["minioadmin"])
     sourceSecretKey: str = Field(..., description="Secret key for external source connection", examples=["minioadmin"])
@@ -763,11 +819,26 @@ class CloneBucketFromExternalRequest(BaseModel):
         None, description="Optional Chisel tunnel configuration for accessing remote source"
     )
 
+    async def to_task_payload(self) -> dict[str, Any]:
+        """De payload in de vorm die ``handle_clone_bucket`` leest, met de geheimen versleuteld."""
+        payload: dict[str, Any] = {
+            "source_host": self.sourceHost,
+            "source_port": self.sourcePort,
+            "source_access_key": self.sourceAccessKey,
+            "source_secret_key": await _encrypt_for_task(self.sourceSecretKey),
+            "source_bucket": self.sourceBucket,
+            "source_secure": self.sourceSecure,
+            "force_clone": self.forceClone,
+        }
+        if self.tunnel:
+            payload["tunnel"] = await self.tunnel.to_task_payload()
+        return payload
+
     model_config = {
         "json_schema_extra": {
             "examples": [
                 {
-                    "sourceHost": "localhost",
+                    "sourceHost": "minio.voorbeeld.nl",
                     "sourcePort": 19000,
                     "sourceAccessKey": "minioadmin",
                     "sourceSecretKey": "minioadmin",
@@ -2567,16 +2638,17 @@ async def clone_database_from_external(
     Headers:
         X-API-Key: The API key for the project (required)
 
-    Example curl command (with port-forward running):
-    ```bash
-    # First, establish port-forward from source cluster:
-    # kubectl port-forward -n namespace svc/postgresql 15432:5432
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
 
+    Example curl command:
+    ```bash
     curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-database-from-external" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key" \
       -d '{
-        "sourceHost": "localhost",
+        "sourceHost": "db.voorbeeld.nl",
         "sourcePort": 15432,
         "sourceUsername": "postgres",
         "sourcePassword": "password",
@@ -2595,6 +2667,12 @@ async def clone_database_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
+
     # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-database
     if not sync:
         task = await create_async_task(
@@ -2605,7 +2683,7 @@ async def clone_database_from_external(
             payload={
                 "project_name": project_name,
                 "deployment_name": deployment_name,
-                **clone_data.model_dump(),
+                **await clone_data.to_task_payload(),
             },
         )
         task_id = str(task["task_id"])
@@ -2732,16 +2810,17 @@ async def clone_bucket_from_external(
     Headers:
         X-API-Key: The API key for the project (required)
 
-    Example curl command (with port-forward running):
-    ```bash
-    # First, establish port-forward from source cluster:
-    # kubectl port-forward -n namespace svc/minio 19000:9000
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422. Een bron in private adresruimte gaat via een chisel-tunnel.
 
+    Example curl command:
+    ```bash
     curl -X POST "http://localhost:9595/api/projects/amt/deployments/production/:clone-bucket-from-external" \
       -H "Content-Type: application/json" \
       -H "X-API-Key: your-api-key" \
       -d '{
-        "sourceHost": "localhost",
+        "sourceHost": "minio.voorbeeld.nl",
         "sourcePort": 19000,
         "sourceAccessKey": "minioadmin",
         "sourceSecretKey": "minioadmin",
@@ -2760,6 +2839,12 @@ async def clone_bucket_from_external(
     Returns:
         JSON response with detailed clone operation results
     """
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
+
     # Async path (default) - deprecated, use /api/v2/.../deployments/{deployment_name}/:clone-bucket
     if not sync:
         task = await create_async_task(
@@ -2770,7 +2855,7 @@ async def clone_bucket_from_external(
             payload={
                 "project_name": project_name,
                 "deployment_name": deployment_name,
-                **clone_data.model_dump(),
+                **await clone_data.to_task_payload(),
             },
         )
         task_id = str(task["task_id"])

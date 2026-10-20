@@ -903,7 +903,9 @@ class TestV2UpdateImage:
 class TestV2CloneDatabase:
     """Tests for POST /api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-database."""
 
-    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         response = v2_client.post(
@@ -921,7 +923,9 @@ class TestV2CloneDatabase:
 
         _assert_accepted(response, "clone_database")
 
-    def test_passes_clone_data_in_payload(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_passes_clone_data_in_payload(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         v2_client.post(
@@ -939,8 +943,8 @@ class TestV2CloneDatabase:
         )
 
         call_kwargs = mock_task_service.create_task.call_args[1]
-        assert call_kwargs["payload"]["sourceHost"] == "db.example.com"
-        assert call_kwargs["payload"]["forceClone"] is True
+        assert call_kwargs["payload"]["source_host"] == "db.example.com"
+        assert call_kwargs["payload"]["force_clone"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -951,7 +955,9 @@ class TestV2CloneDatabase:
 class TestV2CloneBucket:
     """Tests for POST /api/v2/projects/{project_name}/deployments/{deployment_name}/:clone-bucket."""
 
-    def test_returns_202_with_task_id(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         response = v2_client.post(

@@ -154,6 +154,7 @@ from opi.services.services import (
 )
 from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
 from opi.utils.age import get_decoded_project_private_key
+from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_database_schema,
@@ -1546,12 +1547,22 @@ async def clone_database_v2(
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
 
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "clone_database")
 
     logger.info("V2 clone database for %s/%s", project_name, deployment_name)
+
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
 
     task = await create_async_task(
         request=request,
@@ -1561,7 +1572,7 @@ async def clone_database_v2(
         payload={
             "project_name": project_name,
             "deployment_name": deployment_name,
-            **clone_data.model_dump(),
+            **await clone_data.to_task_payload(),
         },
     )
     return _accepted_response(task, "clone_database")
@@ -1587,12 +1598,22 @@ async def clone_bucket_v2(
 
     Returns immediately with task ID. Poll /api/tasks/{task_id} for status.
 
+    De bron moet op een publiek adres staan: resolvet sourceHost (of bij een tunnel de host
+    van tunnel.serverUrl) naar een privaat of cluster-intern adres, of helemaal niet, dan is
+    het antwoord 422.
+
     Headers:
         X-API-Key: The API key for the project (required)
     """
     _reject_deferred_rollout(rollout, "clone_bucket")
 
     logger.info("V2 clone bucket for %s/%s", project_name, deployment_name)
+
+    refusal = await clone_source_refusal(
+        clone_data.sourceHost, clone_data.tunnel.serverUrl if clone_data.tunnel else None
+    )
+    if refusal:
+        raise HTTPException(status_code=422, detail=refusal)
 
     task = await create_async_task(
         request=request,
@@ -1602,7 +1623,7 @@ async def clone_bucket_v2(
         payload={
             "project_name": project_name,
             "deployment_name": deployment_name,
-            **clone_data.model_dump(),
+            **await clone_data.to_task_payload(),
         },
     )
     return _accepted_response(task, "clone_bucket")

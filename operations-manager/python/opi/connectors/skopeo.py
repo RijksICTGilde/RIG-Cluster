@@ -7,11 +7,9 @@ registries using the skopeo CLI, following the same singleton pattern as minio_m
 
 import asyncio
 import contextlib
-import ipaddress
 import logging
 import os
 import re
-import socket
 import subprocess
 import tempfile
 import threading
@@ -19,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
 from opi.utils.secrets import RegistrySecret
 
@@ -73,19 +72,11 @@ def _is_sandbox_registry(authority: str) -> bool:
 
 
 async def _destination_refused(repository: str) -> bool:
-    """Valt de host van ``repository`` in private of bijzondere adresruimte, of resolvet hij niet?
-
-    ``is_global`` en niet ``is_private``: die laatste laat ``100.64.0.0/10`` door.
-    """
+    """Valt de host van ``repository`` in private of bijzondere adresruimte, of resolvet hij niet?"""
     authority = upstream_host(repository)
     if _is_sandbox_registry(authority):
         return False
-    host = authority.partition(":")[0]
-    try:
-        addresses = await asyncio.get_running_loop().getaddrinfo(host, None, type=socket.SOCK_STREAM)
-    except socket.gaierror, UnicodeError:
-        return True
-    return any(not ipaddress.ip_address(address[4][0]).is_global for address in addresses)
+    return not await host_is_public(authority.partition(":")[0])
 
 
 class SkopeoConnector:

@@ -13,6 +13,7 @@ from typing import Any
 from opi.core.task_errors import platform_failure_fields
 from opi.services.oom_watcher import reset_oom_tune_attempts
 from opi.services.project_store import get_project_store
+from opi.utils.age import decrypt_password_smart_auto
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
             - source_database: Source database name
             - source_schema: Source schema name
             - source_username: Source database username
-            - source_password: Source database password
+            - source_password: Source database password (AGE-encrypted in the task payload)
             - force_clone: Whether to drop existing target before cloning
             - source_host: Direct connection host (required if no tunnel)
             - source_port: Direct connection port (required if no tunnel)
@@ -54,7 +55,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
     source_database: str = payload["source_database"]
     source_schema: str = payload["source_schema"]
     source_username: str = payload["source_username"]
-    source_password: str = payload["source_password"]
+    source_password: str = await decrypt_password_smart_auto(payload["source_password"])
     force_clone: bool = payload.get("force_clone", False)
     tunnel: dict | None = payload.get("tunnel")
 
@@ -90,7 +91,7 @@ async def handle_clone_database(payload: dict, progress: Any) -> dict:
                 source_password=source_password,
                 tunnel_server_url=tunnel["server_url"],
                 tunnel_username=tunnel["username"],
-                tunnel_password=tunnel["password"],
+                tunnel_password=await decrypt_password_smart_auto(tunnel["password"]),
                 tunnel_remote_host=tunnel["remote_host"],
                 tunnel_remote_port=tunnel["remote_port"],
                 force_clone=force_clone,
@@ -170,7 +171,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
             - deployment_name: Target deployment name
             - source_bucket: Source bucket name
             - source_access_key: Source MinIO access key
-            - source_secret_key: Source MinIO secret key
+            - source_secret_key: Source MinIO secret key (AGE-encrypted in the task payload)
             - source_secure: Whether source uses HTTPS (default False)
             - force_clone: Whether to overwrite existing target bucket
             - source_host: Direct connection host (required if no tunnel)
@@ -188,7 +189,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
     deployment_name: str = payload["deployment_name"]
     source_bucket: str = payload["source_bucket"]
     source_access_key: str = payload["source_access_key"]
-    source_secret_key: str = payload["source_secret_key"]
+    source_secret_key: str = await decrypt_password_smart_auto(payload["source_secret_key"])
     source_secure: bool = payload.get("source_secure", False)
     force_clone: bool = payload.get("force_clone", False)
     tunnel: dict | None = payload.get("tunnel")
@@ -223,7 +224,7 @@ async def handle_clone_bucket(payload: dict, progress: Any) -> dict:
                 source_secret_key=source_secret_key,
                 tunnel_server_url=tunnel["server_url"],
                 tunnel_username=tunnel["username"],
-                tunnel_password=tunnel["password"],
+                tunnel_password=await decrypt_password_smart_auto(tunnel["password"]),
                 tunnel_remote_host=tunnel["remote_host"],
                 tunnel_remote_port=tunnel["remote_port"],
                 source_secure=source_secure,

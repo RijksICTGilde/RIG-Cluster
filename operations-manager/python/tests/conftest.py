@@ -16,7 +16,7 @@ import time
 from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -183,6 +183,25 @@ def mock_settings() -> Any:
         # De waarde is expres een andere dan de projectsleutels in de fixtures.
         mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
         yield mock_settings
+
+
+@pytest.fixture
+def clone_route_without_guard_and_encryption() -> Iterator[None]:
+    """Een kloonroute toetsen op haar payload, niet op de bron-guard en de versleuteling.
+
+    De guard doet een naamsopzoeking en de versleuteling vraagt de AGE-sleutel van het
+    cluster. Beide hebben hun eigen tests in ``test_external_clone_source.py``.
+    """
+
+    async def _unencrypted(secret: str) -> str:
+        return secret
+
+    with (
+        patch("opi.api.router.clone_source_refusal", AsyncMock(return_value=None)),
+        patch("opi.api.v2.router.clone_source_refusal", AsyncMock(return_value=None)),
+        patch("opi.api.router._encrypt_for_task", _unencrypted),
+    ):
+        yield
 
 
 @pytest.fixture

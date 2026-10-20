@@ -262,7 +262,9 @@ class TestV1AsyncRefreshDeployment:
 class TestV1AsyncCloneDatabase:
     """V1 clone database with async mode (default)."""
 
-    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
 
         response = client.post(
@@ -284,7 +286,9 @@ class TestV1AsyncCloneDatabase:
 class TestV1AsyncCloneBucket:
     """V1 clone bucket with async mode (default)."""
 
-    def test_returns_202_with_task_id(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_task_id(
+        self, client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
 
         response = client.post(

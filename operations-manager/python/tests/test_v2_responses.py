@@ -176,7 +176,9 @@ class TestUpdateImageResponse:
 class TestCloneDatabaseResponse:
     """POST /api/v2/projects/{project_name}/deployments/{name}/:clone-database."""
 
-    def test_returns_202_with_correct_shape(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_correct_shape(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_database")
         response = v2_client.post(
             "/api/v2/projects/test-project/deployments/staging/:clone-database",
@@ -196,7 +198,9 @@ class TestCloneDatabaseResponse:
 class TestCloneBucketResponse:
     """POST /api/v2/projects/{project_name}/deployments/{name}/:clone-bucket."""
 
-    def test_returns_202_with_correct_shape(self, v2_client: TestClient, mock_task_service: AsyncMock) -> None:
+    def test_returns_202_with_correct_shape(
+        self, v2_client: TestClient, mock_task_service: AsyncMock, clone_route_without_guard_and_encryption: None
+    ) -> None:
         mock_task_service.create_task.return_value = _make_task(task_type="clone_bucket")
         response = v2_client.post(
             "/api/v2/projects/test-project/deployments/staging/:clone-bucket",
