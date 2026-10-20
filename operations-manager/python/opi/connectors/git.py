@@ -15,6 +15,7 @@ from ruamel.yaml import YAML
 
 from opi.core.config import settings
 from opi.utils.age import decrypt_password_smart_auto_sync
+from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.sops import TO_SOPS_SUFFIX
 
 if TYPE_CHECKING:
@@ -355,6 +356,17 @@ class GitConnector:
         if code != 0:
             logger.warning(f"Failed to configure git user email: {stderr}")
 
+        signing = get_git_signing_identity()
+        if signing:
+            # commit.gpgsign dekt ook de commits die een rebase na een push-conflict
+            # opnieuw maakt. commit-tree leest het niet, die krijgt -S in build_commit.
+            for config_key, config_value in (("user.signingkey", signing.fingerprint), ("commit.gpgsign", "true")):
+                stdout, stderr, code = await self._run_git_command(
+                    ["config", config_key, config_value], cwd=self.__working_dir
+                )
+                if code != 0:
+                    logger.warning(f"Failed to configure git {config_key}: {stderr}")
+
         self._git_user_configured = True
         logger.debug("Git user identity configured successfully")
 
@@ -384,6 +396,12 @@ class GitConnector:
         cmd_env = os.environ.copy()
         if env:
             cmd_env.update(env)
+
+        signing = get_git_signing_identity()
+        if signing:
+            # git geeft zijn eigen omgeving door aan gpg, dus hiermee vindt gpg de
+            # geïmporteerde sleutel. Een wrapper via gpg.program is daarvoor niet nodig.
+            cmd_env["GNUPGHOME"] = signing.gnupg_home
 
         # Configure SSH if using SSH URL and credentials are provided
         if (
@@ -771,6 +789,7 @@ class GitConnector:
                     logger.debug("Repository is empty, creating initial setup")
 
                     # Create an initial empty commit
+                    await self._configure_git_user()
                     commit_cmd = ["commit", "--allow-empty", "--no-verify", "-m", "Initial commit"]
                     stdout, stderr, code = await self._run_git_command(commit_cmd, cwd=self.__working_dir)
                     if code != 0:
@@ -884,6 +903,10 @@ class GitConnector:
         logger.info(f"Rebasing local commits on origin/{target_branch}")
 
         try:
+            # De commits die de rebase opnieuw maakt moeten ook ondertekend zijn, en die
+            # identiteit staat in de git-config van deze werkmap.
+            await self._configure_git_user()
+
             # First fetch the latest from remote
             fetch_cmd = ["fetch", "origin", target_branch]
             stdout, stderr, code = await self._run_git_command(fetch_cmd, cwd=self.__working_dir)
@@ -1841,6 +1864,9 @@ class GitConnector:
                 "GIT_COMMITTER_EMAIL": GIT_COMMIT_AUTHOR_EMAIL,
             }
             commit_args = ["commit-tree", tree]
+            signing = get_git_signing_identity()
+            if signing:
+                commit_args.append(f"-S{signing.fingerprint}")
             if parent:
                 commit_args += ["-p", parent]
             commit_args += ["-m", message]
