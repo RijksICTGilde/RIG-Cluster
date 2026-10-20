@@ -51,6 +51,26 @@ _BLUEPRINT_REALM_FIELDS = (
     "defaultLocale",
 )
 
+#: De velden die een blauwdruk op een BESTAANDE realm zet als BESCHERMING: lockout,
+#: wachtwoordbeleid en het bewaren van events.
+#:
+#: Apart van ``_BLUEPRINT_REALM_FIELDS``, want dat lijstje loopt over elke projectrealm en
+#: ``bruteForceProtected`` hoort daar niet bij: ``configure_sso_redirect_flow`` zet hem op
+#: een realm met SSO-redirect juist UIT, en de twee zouden dan elke verwerking om dat veld
+#: vechten, met een admin-event per ronde. Alleen ``master-realm.yaml`` noemt deze velden.
+_HARDENING_REALM_FIELDS = (
+    "bruteForceProtected",
+    "failureFactor",
+    "waitIncrementSeconds",
+    "maxFailureWaitSeconds",
+    "maxDeltaTimeSeconds",
+    "passwordPolicy",
+    "eventsEnabled",
+    "eventsExpiration",
+    "adminEventsEnabled",
+    "adminEventsDetailsEnabled",
+)
+
 #: The ``smtpServer`` keys that describe a CONNECTION, and that OPI therefore removes.
 #:
 #: Not a defence -- the defence is that Keycloak's sender is replaced and ignores this whole
@@ -564,6 +584,15 @@ class KeycloakYamlHandler:
         if not gewenst:
             return
 
+        await self._schrijf_verschil(realm_name, realm, gewenst)
+
+    async def _schrijf_verschil(self, realm_name: str, realm: dict[str, Any], gewenst: dict[str, Any]) -> None:
+        """Schrijf alleen de velden die op de realm anders staan dan de blauwdruk vraagt.
+
+        Een write die niets wijzigt staat alsnog in het admin-event-logboek, bij elke
+        verwerking van elk project. Vergelijken gaat via ``_veld_is_gelijk``, want een LIJST
+        komt niet terug zoals hij erin ging.
+        """
         verschil = {veld: waarde for veld, waarde in gewenst.items() if not _veld_is_gelijk(realm.get(veld), waarde)}
         await self.keycloak.update_realm_settings(realm_name, verschil)
 
@@ -644,6 +673,30 @@ class KeycloakYamlHandler:
                 logger.warning("Realm missing 'name' field, skipping self-service restrictions")
                 continue
             await self._apply_realm_self_service(realm_name, item)
+
+    async def ensure_realm_hardening(self, yaml_path: str | Path, context: dict[str, Any]) -> None:
+        """Zet de velden uit ``_HARDENING_REALM_FIELDS`` op elke realm in deze blauwdruk.
+
+        Smaller dan ``ensure_realm_self_service``: een realm die hier langskomt bestaat al
+        en krijgt verder niets van ons, geen ``smtpServer`` en geen required actions. De
+        master-realm is de enige die deze weg gebruikt, en daar is dat precies de bedoeling.
+        """
+        config = self._load_yaml(yaml_path)
+        variables = {**config.get("variables", {}), **context}
+
+        for item in self._expand_list(config.get("realms"), variables):
+            realm_name = item.get("name")
+            if not realm_name:
+                logger.warning("Realm missing 'name' field, skipping hardening fields")
+                continue
+
+            realm = await self.keycloak.get_realm(realm_name)
+            if realm is None:
+                logger.warning(f"Realm {realm_name} not found, skipping hardening fields")
+                continue
+
+            gewenst = {veld: item[veld] for veld in _HARDENING_REALM_FIELDS if veld in item}
+            await self._schrijf_verschil(realm_name, realm, gewenst)
 
     async def _process_identity_providers(self, idp_section: Any, variables: dict[str, Any]) -> None:
         """Process identityProviders section.

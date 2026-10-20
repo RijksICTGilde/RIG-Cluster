@@ -1,0 +1,30 @@
+# De gewenste stand van de MASTER-realm: lockout, wachtwoordbeleid en events.
+# Zie features/opi-keycloak-service-account.md.
+# Hier staan alleen de velden die we willen zetten; wat een blauwdruk niet noemt
+# blijft staan. Raak niet de realmnaam, uit-/aanzetting of themes aan.
+
+---
+realms:
+  # De naam komt uit de context, zoals bij elke blauwdruk hier: een projectbestand mag deze
+  # map aanwijzen, en dan hoort zo'n tenant-pad op zijn eigen realm te schrijven.
+  - name: "{{ realm_name }}"
+    # Lockout bij herhaalde mislukte logins. Dit zijn de Keycloak-standaarden: geen
+    # projectrealm en geen blauwdruk noemt eigen waarden. Ze staan uitgeschreven zodat
+    # een wijziging in de console bij de volgende start terugkomt op deze stand.
+    bruteForceProtected: true
+    failureFactor: 30
+    waitIncrementSeconds: 60
+    maxFailureWaitSeconds: 900
+    maxDeltaTimeSeconds: 43200
+    # Geldt bij het ZETTEN van een wachtwoord, niet voor wachtwoorden die er al staan.
+    # Geen specialChars: de wachtwoorden die OPI zelf in master zet, voor de
+    # beheeraccounts van projectrealms, zijn alfanumeriek (generate_secure_password).
+    passwordPolicy: "length(14) and notUsername and notEmail and passwordHistory(5)"
+    # Login- en admin-events bewaren. De termijn komt uit
+    # KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS, want BIO2 8.15.04 vraagt een risicogerichte
+    # termijn en die staat nog open. Keycloak 25 heeft geen bewaartermijn voor
+    # admin-events; adminEventsExpiration volgt met de upgrade naar 26.
+    eventsEnabled: true
+    eventsExpiration: "{{ events_expiration_seconds }}"
+    adminEventsEnabled: true
+    adminEventsDetailsEnabled: true

@@ -103,11 +103,57 @@ break-glass:
 - Keep the original `admin` super-user as **break-glass**: password in a vault, OTP-enforced, otherwise unused. With OPI on its service account, `admin` is no longer needed for automation.
 - Restrict the `/admin` console at the ingress (VPN/allowlist) so password-only exposure isn't internet-reachable.
 
+## De master-realm zelf: lockout, wachtwoordbeleid en events
+
+In de master-realm staan de platformbeheerders en de beheeraccounts van elke projectrealm
+(`{project}_{cluster}_admin`). Keycloak maakt die realm zelf bij de eerste start, dus hij
+komt nooit langs `create_realm`: lockout, wachtwoordbeleid en events stonden er alle drie
+uit, terwijl elke projectrealm ze wel krijgt.
+
+`KeycloakSetup.ensure_master_realm_hardening()` zet bij **elke** start de stand uit
+`opi/configs/keycloak/master-realm.yaml` op die realm: `bruteForceProtected` met de
+Keycloak-standaarden voor de lockout, een `passwordPolicy`
+(`length(14) and notUsername and notEmail and passwordHistory(5)`), en login- plus
+admin-events. Bij elke start, omdat een wijziging in de console zo de volgende start
+terugkomt op de gewenste stand.
+Alleen velden die afwijken worden geschreven, dus een realm die de stand al draagt levert
+geen admin-event op. Faalt de stap, dan logt OPI een ERROR en gaat de rest van de bootstrap
+door.
+
+De blauwdruk noemt `master` niet zelf: hij staat in de map die een projectbestand via
+`services/keycloak/config/template` mag aanwijzen, dus de realmnaam komt als
+`{{ realm_name }}` uit de context en `ensure_master_realm_hardening()` geeft `master` mee.
+Op dezelfde weg komt de bewaartermijn van de events binnen, uit
+`KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS` (default 90, 0 betekent in Keycloak nooit
+opruimen). Dat is een instelling en geen vast getal omdat BIO2 8.15.04 een risicogerichte
+termijn vraagt en die keuze nog openstaat: open beslissing 7 in
+`features/futures/gebeurtenissen-plan-van-aanpak.md` beveelt langer dan 90 dagen aan en
+legt het getal bij wie de risicoafweging doet. Geen overlay zet hem vandaag, dus beide
+clusters staan op 90 dagen. Keycloak 25 kent geen bewaartermijn voor admin-events; die
+volgt met de upgrade naar 26.
+
+Twee dingen die deze stap niet raakt:
+
+- **Het service-account van OPI.** Brute-force-bescherming geldt in Keycloak voor
+  gebruikerslogins, niet voor client-credentials, dus een geblokkeerd `admin` zet OPI niet
+  stil. Wel: zolang een cluster nog op de admin-password-weg zit (`KEYCLOAK_ADMIN_CLIENT_SECRET`
+  niet gezet), tellen mislukte pogingen van OPI zelf mee voor de lockout van `admin`.
+- **Bestaande wachtwoorden.** Een `passwordPolicy` geldt bij het ZETTEN van een wachtwoord.
+  Wat OPI zelf in master zet komt uit `generate_secure_password()`, 20 tekens alfanumeriek,
+  en haalt het beleid; `KEYCLOAK_OTP_ADMIN_PASSWORD` komt op 24 tekens uit de
+  secret-generator. Het beleid noemt daarom geen `specialChars`. Een cluster dat dat
+  wachtwoord met de hand vast zet valt daarbuiten: de sandbox gebruikt er 9 tekens, en
+  bestaat `admin-otp` daar nog niet terwijl master al gehard is, dan weigert Keycloak de
+  aanmaak met HTTP 400 `invalidPasswordMinLengthMessage`. Bij een eerste start speelt dat
+  niet, want de hardening loopt na `ensure_otp_master_admin`.
+
 ## Files
 
-- `opi/core/config.py` - `KEYCLOAK_ADMIN_CLIENT_ID/SECRET`.
+- `opi/core/config.py` - `KEYCLOAK_ADMIN_CLIENT_ID/SECRET`, `KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS`.
 - `opi/connectors/keycloak.py` - client-credentials mode in `KeycloakConnector.__init__`, factory selection, `connection_works()`, `ensure_master_service_account_client()`.
-- `opi/bootstrap/keycloak_setup.py` - `ensure_master_admin_service_account()` (first-boot self-bootstrap).
+- `opi/bootstrap/keycloak_setup.py` - `ensure_master_admin_service_account()` (first-boot self-bootstrap),
+  `ensure_master_realm_hardening()` (de stand van de master-realm, bij elke start).
+- `opi/configs/keycloak/master-realm.yaml` - die stand; `KeycloakYamlHandler.ensure_realm_hardening()` zet hem.
 - `opi/core/startup.py` - availability probe falls back to admin password before the client exists.
 - `infrastructure/bootstrap/infrastructure/secrets/templates/keycloak-admin-secret.yaml` - generates the client secret.
 - `bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local/patches/deployment.yaml` - env injection.

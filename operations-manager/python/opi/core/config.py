@@ -334,6 +334,12 @@ class Settings(BaseSettings):
     # retrofitted (seed shown in the portal) the next time they are processed.
     KEYCLOAK_ENFORCE_ADMIN_OTP: bool = False
 
+    # Bewaartermijn van de login- en admin-events van de MASTER-realm, in dagen. 0 betekent
+    # in Keycloak: nooit opruimen. Instelbaar omdat BIO2 8.15.04 een risicogerichte termijn
+    # vraagt die niet vanuit de code te bepalen is (open beslissing 7 in
+    # features/futures/gebeurtenissen-plan-van-aanpak.md, aanbeveling: langer dan 90 dagen).
+    KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS: int = 90
+
     # Default shared realm configuration
     KEYCLOAK_DEFAULT_REALM: str = "rig-platform"
     KEYCLOAK_DEFAULT_REALM_DISPLAY_NAME: str = "RIG Platform"

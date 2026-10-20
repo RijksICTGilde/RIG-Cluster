@@ -393,7 +393,10 @@ def test_elk_blueprint_noemt_elk_gelezen_realmveld() -> None:
     from opi.handlers.keycloak_yaml_handler import _BLUEPRINT_REALM_FIELDS
     from ruamel.yaml import YAML
 
-    blauwdrukken = sorted(BLUEPRINT_DIR.glob("*.yaml"))
+    # master-realm.yaml doet niet mee: die realm maakt Keycloak zelf, hij komt nooit langs
+    # create_realm, en ensure_realm_hardening leest er alleen _HARDENING_REALM_FIELDS uit.
+    # Deze zeven velden daar neerzetten zou niets doen behalve suggereren dat ze gelden.
+    blauwdrukken = sorted(pad for pad in BLUEPRINT_DIR.glob("*.yaml") if pad.name != "master-realm.yaml")
     assert blauwdrukken, "geen blauwdrukken gevonden - het pad klopt niet"
 
     gemeten = 0

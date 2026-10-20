@@ -68,6 +68,29 @@ Dit is het lastigste stuk en het moet in één keer kloppen. De bootstrap genere
 
 Wat daarbij niet vergeten mag worden: de bootstrap moet expliciet maken wat er daarna met dat adminwachtwoord gebeurt. Laat je dat impliciet, dan blijft het gewoon in de omgeving van OPI staan en is er niets gewonnen.
 
+### Wat de hardening van de master-realm hieraan verandert
+
+Sinds RC-276 zet `KeycloakSetup.ensure_master_realm_hardening()` bij elke start lockout, een
+`passwordPolicy` en events op de master-realm (details in
+`features/opi-keycloak-service-account.md`). Dat raakt dit plan op vier plekken:
+
+- **Elk wachtwoord dat dit plan in master zet, moet minstens 14 tekens hebben**
+  (`length(14) and notUsername and notEmail and passwordHistory(5)`). `generate_secure_password()`
+  haalt dat met 20 en de secret-generator met 24; een met de hand gezet wachtwoord niet per se,
+  en de sandbox heeft er een van 9 in `KEYCLOAK_OTP_ADMIN_PASSWORD`. Keycloak weigert dan met
+  HTTP 400 `invalidPasswordMinLengthMessage`.
+- **`passwordHistory(5)` weigert een rotatie naar hetzelfde wachtwoord.** Dat raakt de
+  bootstrap en elke rotatieweg die dit plan aanlegt.
+- **De hardening loopt in `setup_all` als laatste van de drie masterstappen**, na
+  `ensure_master_admin_service_account` en `ensure_otp_master_admin`. Een account dat dit plan
+  daarvoor aanmaakt valt op een vers cluster nog buiten het beleid; een stap die erna komt niet.
+- **Stap 1 wordt urgenter.** Lockout geldt voor gebruikerslogins, niet voor client-credentials
+  (gemeten), dus zolang `KEYCLOAK_ADMIN_CLIENT_SECRET` leeg is tellen mislukte logins van OPI
+  zelf mee voor de lockout van `admin`. Stap 3 blijft wel veilig: `permanentLockout` staat op
+  false, dus buitensluiting is tijdelijk (ten hoogste `maxFailureWaitSeconds`, 900 seconden).
+  Wat nog niet gemeten is en bij stap 3 hoort: of een verkeerde OTP-code bij een juist
+  wachtwoord meetelt voor die lockout.
+
 ### Wat opnieuw toegepast moet worden
 
 `connectors/keycloak.py` en `manager/keycloak_manager.py` zijn op 1 augustus gewijzigd voor de zelfbedienings-fix (`set_required_action_enabled`, `remove_default_role`, `_ensure_realm_self_service`). Het bewaarde werk raakt dezelfde bestanden. Neem `opi/utils/totp.py` en de feature-documenten over, en pas de rest opnieuw toe op de huidige code in plaats van de branch te mergen.
