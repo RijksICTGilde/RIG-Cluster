@@ -404,7 +404,7 @@ async def test_modal_do_submit_skips_edit_gate_on_backup_restore_flow(project_se
         ),
         # State lookup returns None -> raises 400 before any data mutation.
         # We only care that the edit-gate was NOT called.
-        patch("opi.web.router_detail_edit.get_modal_state_by_token", return_value=None),
+        patch("opi.web.router_detail_edit.load_modal_state_for", return_value=None),
         pytest.raises(HTTPException) as exc,
     ):
         await _modal_do_submit(

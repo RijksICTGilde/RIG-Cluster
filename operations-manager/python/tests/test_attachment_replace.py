@@ -48,6 +48,7 @@ from starlette.requests import Request
 PROJECT_NAME = "bijlage-vervangen"
 FLOW_ID = "modal-edit-attachments"
 TOKEN = "0" * 32
+OWNER_EMAIL = "eigenaar@example.com"
 
 OLD_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\noud\n-----END AGE ENCRYPTED FILE-----\n"
 REALM_PASSWORD = "-----BEGIN AGE ENCRYPTED FILE-----\nrealm\n-----END AGE ENCRYPTED FILE-----\n"
@@ -264,12 +265,24 @@ async def test_vervangen_levert_geen_tweede_catalogusregel_op(age_keypair: tuple
 
 
 def _request() -> Request:
-    """Een verzoek zonder wizard in de cookie, zodat het token de sessie aanwijst."""
-    return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "session": {}})
+    """Een verzoek zonder wizard in de cookie, zodat het token de sessie aanwijst.
+
+    De gebruiker staat erin omdat een modaltoken alleen voor zijn eigen eigenaar opent.
+    """
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/",
+            "headers": [],
+            "session": {},
+            "state": {"user": {"email": OWNER_EMAIL}},
+        }
+    )
 
 
 def _session_state(replace_target: str | None, catalog_ids: tuple[str, ...] = ("server-cert",)) -> WizardState:
-    state = WizardState(flow_id=FLOW_ID, current_step="attachments", project_name=PROJECT_NAME)
+    state = WizardState(flow_id=FLOW_ID, current_step="attachments", project_name=PROJECT_NAME, owner_email=OWNER_EMAIL)
     state.base_data = {
         "services": [{"attachments": {"data": [{"id": att_id, "filename": f"{att_id}.pem"} for att_id in catalog_ids]}}]
     }

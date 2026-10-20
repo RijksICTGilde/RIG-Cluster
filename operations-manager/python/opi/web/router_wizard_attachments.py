@@ -36,8 +36,8 @@ from opi.core.auth_decorators import requires_sso
 from opi.core.templates_lotc import templates_lotc
 from opi.forms.editables.pipeline import validate_field
 from opi.forms.wizard.session import (
-    get_modal_state_by_token,
     get_wizard_state,
+    load_modal_state_for_user,
     save_modal_state_by_token,
     save_wizard_state,
 )
@@ -65,18 +65,19 @@ REPLACE_TARGET_KEY = "_replace_attachment"
 REPLACE_MODE = "replace"
 
 
-def _resolve_state(request: Request, wizard_token: str | None) -> tuple[Any, Callable[[Any], None] | None]:
-    """Resolve the wizard state for both the full-page (cookie) and modal (_wizard_token) flows.
+def _resolve_state(
+    request: Request, wizard_token: str | None, flow_id: str
+) -> tuple[Any, Callable[[Any], None] | None]:
+    """Resolve the wizard state from session cookie (if it matches the flow) or modal token (for this user).
 
     Returns (state, save_fn) or (None, None) if no active wizard session.
     """
     state = get_wizard_state(request)
-    if state is not None:
+    if state is not None and state.flow_id == flow_id:
         return state, lambda s: save_wizard_state(request, s)
-    if wizard_token:
-        modal = get_modal_state_by_token(wizard_token)
-        if modal is not None:
-            return modal, lambda s: save_modal_state_by_token(wizard_token, s)
+    modal = load_modal_state_for_user(request, wizard_token)
+    if modal is not None:
+        return modal, lambda s: save_modal_state_by_token(wizard_token, s)
     return None, None
 
 
@@ -194,7 +195,7 @@ def _remove_from_session_catalog(state: Any, attachment_id: str) -> None:
 @requires_sso
 async def list_staged(request: Request, flow_id: str, wizard_token: str | None = Query(None, alias="_wizard_token")):
     """Render the unified attachments list (used on section load)."""
-    state, _ = _resolve_state(request, wizard_token)
+    state, _ = _resolve_state(request, wizard_token, flow_id)
     return _attachments_list_response(request, state, wizard_token)
 
 
@@ -216,7 +217,7 @@ async def stage_attachment(
     written over instead of a second one being added -- which is what keeps every
     component that couples to that id pointing at it.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
@@ -281,7 +282,7 @@ async def validate_attachment_id(
     check that accepts both would let a typo in a new id land on an existing attachment
     and overwrite it, which is the accident this endpoint exists to prevent.
     """
-    state, _ = _resolve_state(request, wizard_token)
+    state, _ = _resolve_state(request, wizard_token, flow_id)
     staged = _staged(state) if state else {}
     error: str | None = None
     if attachment_id:
@@ -306,7 +307,7 @@ async def unstage_attachment(
     ``attachment_id`` rides the URL path, not an hx-vals JSON attribute: the c-button
     re-emits attribute values with double quotes, which mangles inline JSON.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 
@@ -334,7 +335,7 @@ async def remove_existing_attachment(
     and would otherwise re-write the deleted entry back on save. Blocked when a component
     still references the attachment.
     """
-    state, save = _resolve_state(request, wizard_token)
+    state, save = _resolve_state(request, wizard_token, flow_id)
     if state is None or save is None:
         raise HTTPException(status_code=400, detail="Geen actieve wizard-sessie")
 

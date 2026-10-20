@@ -15,11 +15,17 @@ The first fix is what makes it safe; the second keeps made-up names out of the t
 the first place (and gives the user a 404 at the click instead of a task that fails).
 """
 
+from __future__ import annotations
+
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+
+if TYPE_CHECKING:
+    from fastapi.responses import HTMLResponse
 
 PAYLOAD = "{{ 7 * 7 }}"
 
@@ -256,3 +262,53 @@ async def test_whoever_started_the_task_may_follow_it_to_the_end() -> None:
 
     assert task is not None
     authorized.assert_not_called()
+
+
+async def _modal_progress(email: str, task: dict | None, *, member: bool) -> HTMLResponse:
+    """``modal_wizard_progress_html`` met alleen de taakservice weggenomen.
+
+    De poort erachter (``_require_task_of_project``) draait echt: dat is wat gemeten wordt.
+    """
+    from opi.web import router
+    from opi.web.router_detail_edit import modal_wizard_progress_html
+
+    task_service = MagicMock()
+    task_service.get_task = AsyncMock(return_value=task)
+
+    with (
+        patch("opi.core.task_helpers.get_task_service", return_value=task_service),
+        patch.object(router, "is_user_authorized_for_project", return_value=member),
+    ):
+        return await modal_wizard_progress_html(_request(email), "demo", "t-1")
+
+
+async def test_de_modal_geeft_een_taak_van_een_ander_project_niet_vrij() -> None:
+    """Hetzelfde gat als in de zusterroute: het taak-id alleen was genoeg om mee te kijken."""
+    response = await _modal_progress("lid@example.com", {"task_id": "t-1", "project_name": "ander"}, member=True)
+
+    assert response.status_code == 404
+
+
+async def test_de_modal_geeft_een_niet_lid_geen_voortgang() -> None:
+    with pytest.raises(HTTPException) as excinfo:
+        await _modal_progress("vreemde@example.com", {"task_id": "t-1", "project_name": "demo"}, member=False)
+
+    assert excinfo.value.status_code == 403
+
+
+async def test_de_modal_geeft_een_lid_het_fragment() -> None:
+    response = await _modal_progress(
+        "lid@example.com",
+        {"task_id": "t-1", "project_name": "demo", "status": "running", "current_step": "Verwerken"},
+        member=True,
+    )
+
+    assert response.status_code == 200
+    assert "Verwerken" in response.body.decode()
+
+
+async def test_de_modal_geeft_een_onbekende_taak_een_404() -> None:
+    """Hetzelfde antwoord als een taak van een ander project, zodat het niet zegt welk van de twee."""
+    response = await _modal_progress("lid@example.com", None, member=True)
+
+    assert response.status_code == 404

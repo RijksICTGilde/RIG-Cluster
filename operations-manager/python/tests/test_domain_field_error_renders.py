@@ -244,7 +244,7 @@ class TestDeModalStapZetHemInDeBalk:
         with (
             patch.object(router_detail_edit, "require_project_edit_access"),
             patch.object(router_detail_edit, "_get_wizard_token", return_value="token"),
-            patch.object(router_detail_edit, "get_modal_state_by_token", return_value=state),
+            patch.object(router_detail_edit, "load_modal_state_for", return_value=state),
             patch.object(router_detail_edit, "get_flow", return_value=flow),
             patch.object(router_detail_edit, "_render_modal_step", side_effect=_vang),
         ):
@@ -384,7 +384,7 @@ class TestDeKaalDomeinMeldingBereiktDeGebruiker:
         with (
             patch.object(router_detail_edit, "require_project_edit_access"),
             patch.object(router_detail_edit, "_get_wizard_token", return_value="token"),
-            patch.object(router_detail_edit, "get_modal_state_by_token", return_value=state),
+            patch.object(router_detail_edit, "load_modal_state_for", return_value=state),
             patch.object(router_detail_edit, "get_flow", return_value=flow),
             patch.object(router_detail_edit, "_render_modal_step", side_effect=_vang),
             patch.object(router_detail_edit, "save_modal_state_by_token"),
