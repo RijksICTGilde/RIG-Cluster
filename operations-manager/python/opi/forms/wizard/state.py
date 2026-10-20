@@ -288,14 +288,6 @@ class WizardState:
     owner_email: str | None = None
     """Who started this wizard (lowercase). Legacy state files without this are treated as expired."""
 
-    base_version: str | None = None
-    """Version of the project file this wizard was seeded from (ProjectStore token).
-
-    Travels with the resulting write so it is applied as a change relative to what
-    the user saw, and a change someone else made in the meantime is merged rather
-    than overwritten. None for the create wizard: there is no earlier version.
-    """
-
     base_data: dict[str, Any] = field(default_factory=dict)
     """The base: what was already there before this wizard started.
 
@@ -475,7 +467,6 @@ class WizardState:
             "active_sections": self.active_sections,
             "project_name": self.project_name,
             "owner_email": self.owner_email,
-            "base_version": self.base_version,
             "base_data": self.base_data,
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
@@ -515,7 +506,6 @@ class WizardState:
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
             owner_email=data.get("owner_email"),
-            base_version=data.get("base_version"),
             # ``template_data`` is the old name for the same layer; a session written
             # before the rename must keep working across a deploy.
             base_data=data.get("base_data", data.get("template_data", {})),

@@ -36,7 +36,7 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.services.approvals import collect_approval_items
-from opi.services.project_store import get_project_store
+from opi.services.project_store import ConflictError, get_project_store
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.web.lotc_switch import render_fragment
@@ -347,9 +347,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     )
     state.step_data = {first_section.section_id: seed_data}
     state.base_data = {"_admin_email": user.get("email", "")}
-    # The version this approval decision is being taken on; it travels with the save so
-    # a change made elsewhere in the meantime is merged instead of overwritten.
-    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
     save_modal_state_by_token(wizard_token, state)
 
     yaml_data = state.get_merged_data()
@@ -498,15 +495,18 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
                 # This route is the only place that may set an approval decision.
                 approval_decision=True,
             )
-        except (ProjectSchemaError, ProjectIntegrityError) as e:
-            logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)
+        # ConflictError hoort in dezelfde rij als de validatiefouten: zonder deze regel
+        # viel hij door naar buiten als een kale 500.
+        except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:
+            logger.warning("Domain approval save rejected for %s (%s): %s", project_name, type(e).__name__, e)
             first_section = active_sections[0]
             render_data = _reseed_approval_items(state.get_merged_data(), project_name)
             step_html = _render_section_html(first_section, render_data)
-            # Say what was blocked. The bare validation message describes the resulting
-            # state ("het subdomein is afgewezen"), which reads as a report of the
-            # approver's own action instead of a refusal to record it.
-            message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
+            # ConflictError goes through as-is; validation errors get an intro ("het project is daarna niet geldig").
+            if isinstance(e, ConflictError):
+                message = str(e)
+            else:
+                message = f"Het besluit is niet opgeslagen, want het project is daarna niet geldig: {e}"
             rendered = _render_modal_step(
                 request, wizard_token, state, first_section, step_html, project_name, global_errors=[message]
             )
@@ -530,7 +530,8 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
             "project_name": project_name,
             "yaml_content": yaml_content,
             "deployment_names": deployment_names,
-            "base_version": state.base_version,
+            # Besluit al opgeslagen; taak moet het niet herschrijven.
+            "project_file_already_saved": True,
         },
         max_attempts=1,
     )
