@@ -667,6 +667,7 @@ class KeycloakConnector:
         support_http: bool = False,
         additional_redirect_uris: list[str] | None = None,
         logout_path: str | None = None,
+        require_pkce: bool = False,
     ) -> dict[str, Any]:
         """
         Create a client for a specific deployment in the specified realm.
@@ -680,6 +681,9 @@ class KeycloakConnector:
             additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
             logout_path: Optional path on the application that ends its own session; becomes this
                 client's front-channel logout URL on the first ingress host.
+            require_pkce: Whether Keycloak must refuse an authorization code without PKCE S256.
+                Only the platform's own clients set this; of a project deployment the
+                application itself decides.
 
         Returns:
             Dictionary containing client information and OIDC configuration
@@ -737,6 +741,8 @@ class KeycloakConnector:
             "post.logout.redirect.uris": "+",
             "frontchannel.logout.url": frontchannel_logout_url,
         }
+        if require_pkce:
+            expected_attributes["pkce.code.challenge.method"] = "S256"
         if frontchannel_logout_url:
             logger.info(f"Front-channel logout URL for '{client_id}': {frontchannel_logout_url}")
 

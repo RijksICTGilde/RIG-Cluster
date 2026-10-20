@@ -254,18 +254,13 @@ clients:
     enabled: true
     publicClient: false
     protocol: "openid-connect"
-    # Allow redirects from local Kind cluster Keycloak instances
+    # Alleen https naar de twee hostnamen. Het geheim staat op elke machine, dus
+    # loopback-redirects zouden code daarmee naar eigen localhost kunnen sturen.
     redirectUris:
       - "https://keycloak.kind/*"
-      - "http://keycloak.kind/*"
-      - "https://localhost:*/*"
-      - "http://localhost:*/*"
       - "https://keycloak.sandbox.rijksapp.dev/*"
     webOrigins:
       - "https://keycloak.kind"
-      - "http://keycloak.kind"
-      - "https://localhost"
-      - "http://localhost"
       - "https://keycloak.sandbox.rijksapp.dev"
     standardFlowEnabled: true
     directAccessGrantsEnabled: false

@@ -23,44 +23,6 @@ variables:
     - "role_1"
     - "role_2"
 
-  # Demo users: 2 per group, all get all roles
-  demo_users:
-    - username: "ictu_user1"
-      email: "ictu.user1@example.com"
-      firstName: "ICTU"
-      lastName: "User One"
-      password: "demo123"
-      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
-      groups: ["ICTU"]
-      removeDefaultRoles: true  # Remove default Keycloak role assignments
-
-    - username: "ictu_user2"
-      email: "ictu.user2@example.com"
-      firstName: "ICTU"
-      lastName: "User Two"
-      password: "demo123"
-      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
-      groups: ["ICTU"]
-      removeDefaultRoles: true
-
-    - username: "minbzk_user1"
-      email: "minbzk.user1@example.com"
-      firstName: "MinBZK"
-      lastName: "User One"
-      password: "demo123"
-      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
-      groups: ["MIN_BZK"]
-      removeDefaultRoles: true
-
-    - username: "minbzk_user2"
-      email: "minbzk.user2@example.com"
-      firstName: "MinBZK"
-      lastName: "User Two"
-      password: "demo123"
-      roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
-      groups: ["MIN_BZK"]
-      removeDefaultRoles: true
-
 realms:
   - name: "{{ realm_name }}"
     displayName: "{{ realm_display_name }}"
@@ -238,7 +200,8 @@ clients:
         - "view-realm"
 
 users:
-  # Demo users created via forEach loop
+  # demo_users komt uit de context, niet uit dit bestand: alleen een lokaal of
+  # sandboxcluster krijgt de lijst (algoritmeregister-demo-users.yaml).
   forEach: "{{ demo_users }}"
   as: user
   user:

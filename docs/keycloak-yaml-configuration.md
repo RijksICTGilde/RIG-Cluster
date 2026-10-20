@@ -326,7 +326,7 @@ users:
     email: "{{ user.email }}"
     credentials:
       - type: "password"
-        value: "demo123"
+        value: "{{ user.password }}"
         temporary: false
     realmRoles:
       - "admin"
