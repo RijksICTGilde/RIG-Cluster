@@ -109,6 +109,7 @@
       "/admin/users",
       "/admin/users/<id>/delete",
       "/admin/users/<id>/edit",
+      "/admin/users/<id>/revoke-sessions",
       "/admin/users/create",
       "/auth/logout",
       "/cli",

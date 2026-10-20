@@ -47,6 +47,7 @@ from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS
+from opi.services.session_revocation_service import load_revocations
 from opi.services.user_service import get_user_service
 from opi.utils.git_signing import load_git_signing_identity
 
@@ -600,6 +601,11 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
                     logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
         except Exception as e:
             logger.warning(f"Could not load platform users from database: {e}")
+
+        # Welke sessies zijn ingetrokken, in het geheugen: de controle per verzoek leest
+        # daar (opi/core/session_guard.py). Loopt dit mis, dan is die controle stil uit,
+        # dus de fout hoort het opstarten te stoppen.
+        await load_revocations()
 
         if settings.ADMIN_EMAILS:
             env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]

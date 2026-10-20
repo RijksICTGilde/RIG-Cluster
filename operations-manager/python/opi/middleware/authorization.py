@@ -15,6 +15,7 @@ from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
 from opi.core.actor import set_actor, user_actor
+from opi.core.session_guard import drop_refused_session, valid_session_user
 from opi.services.user_service import get_user_service
 
 if typing.TYPE_CHECKING:
@@ -44,6 +45,9 @@ def get_user(request: Request) -> dict[str, Any] | None:
     """
     Extract user information from the session.
 
+    A session past its absolute lifetime, or one revoked by a logout elsewhere, counts
+    as unauthenticated (see opi/core/session_guard.py).
+
     Args:
         request: The incoming HTTP request
 
@@ -54,11 +58,11 @@ def get_user(request: Request) -> dict[str, Any] | None:
         logger.debug("No session available in request")
         return None
 
-    user = request.session.get("user")
+    user = valid_session_user(request.session)
     if user:
         logger.debug(f"Found authenticated user: {user.get('email', 'unknown')}")
     else:
-        logger.debug("No user found in session")
+        logger.debug("No valid user found in session")
     return user
 
 
@@ -100,6 +104,8 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 
         # Get user from session
         user = get_user(request)
+        if not user and hasattr(request, "session"):
+            drop_refused_session(request.session)
 
         # Check if the route requires SSO by examining route metadata
         route_requires_sso = self._route_requires_sso(request)

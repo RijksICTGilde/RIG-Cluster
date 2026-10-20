@@ -189,6 +189,10 @@ class Settings(BaseSettings):
     # WebSocket handshake so both enforce the same lifetime.
     SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
 
+    # Absolute maximumduur van een sessie vanaf het inloggen, hoe actief ook (BIO2 8.05,
+    # ASVS 3.3.1). De inactiviteitsgrens hierboven is een schuivend venster; dit is hard.
+    SESSION_ABSOLUTE_MAX_SECONDS: int = 43200  # 12 hours
+
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
     # Default "production": een vergeten instelling valt naar de dichte kant, zonder
     # bestandsbewaking en zonder debugger. Lokaal en sandbox zetten "reload" expliciet.
