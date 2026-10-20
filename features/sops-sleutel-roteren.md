@@ -200,7 +200,9 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --v
 
 ## De guard
 
-Drie lagen, zodat een geheim niet in git komt: de pre-commit hook (lokaal, met `--no-verify` te omzeilen, en dat is geaccepteerd), de security-workflow (bindend, scant de hele boom van de branch) en GitHub push protection (op de server).
+Vier lagen beschermen tegen geheimen in git: de pre-commit hook (lokaal), de job `secret-scan` in de security-workflow (bindend voor de branch), `test_this_repository_is_clean_right_now` in `tests/test_secret_scan.py` (dezelfde boomscan, buiten GitHub), en GitHub push protection (op de server).
+
+De boomscan ziet alleen de huidige boom. De geschiedenis scant de job `secret-scan-history` wekelijks op een volledige clone (`fetch-depth: 0`), omdat die minuten duurt. De baseline in `scripts/secret-scan-baseline.json` trekt ingetrokken treffers af. Zonder die lijst zou de job elke week rood zijn, en een alarmbalk die altijd rood is, niemand opent. Voor de details: `scripts/README.md`.
 
 Een AGE-kandidaat telt alleen als `age-keygen` hem als geldige sleutel accepteert. Zonder die controle zou elke placeholder in de testsuite een bevinding zijn, en een alarm met bekende bevindingen erin is een alarm waar mensen omheen leren lopen. Daarom staat er ook geen vaste sleutel meer in een toets: wie er een nodig heeft maakt er een.
 

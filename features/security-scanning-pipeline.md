@@ -37,10 +37,16 @@ Manual trigger via GitHub Actions UI.
 | Job | Tool | What | When |
 |-----|------|------|------|
 | `dependency-audit` | pip-audit | Python deps against PyPI/OSV | Push, PR, weekly |
+| `secret-scan` | `scripts/scan-secrets.py` | Every tracked file in the branch tree | Push, PR, weekly |
+| `secret-scan-history` | `scripts/scan-secrets.py --history` | Every blob that ever existed, minus `scripts/secret-scan-baseline.json` | Weekly and on demand |
 | `container-scan` | Trivy | Every image CI publishes (HIGH/CRITICAL) | Push, PR, weekly |
 | `sbom` | Trivy | CycloneDX SBOM | Main only |
 
-Results appear in the **GitHub Security tab** (SARIF upload).
+Results appear in the **GitHub Security tab** (SARIF upload). The secret scan is the exception: its
+output stays in the job log and goes nowhere else, because a list of where secrets sit is a map to
+what is not revoked yet. The same tree scan also runs as `test_this_repository_is_clean_right_now`
+in `tests/test_secret_scan.py`, so a build outside GitHub has the guard too. The layers and the
+baseline are in `features/sops-sleutel-roteren.md`.
 
 ## Dependency Management
 

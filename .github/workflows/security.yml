@@ -6,6 +6,7 @@ on:
   pull_request:
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC - catch newly disclosed CVEs
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -51,6 +52,29 @@ jobs:
 
       - name: Scan the branch tree for committed secrets
         run: python scripts/scan-secrets.py
+
+  secret-scan-history:
+    name: Secret scan - history
+    # Alleen wekelijks en op aanvraag: de sweep leest elke blob die ooit bestond en duurt
+    # minuten, en de historie verandert niet per pull request.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # een shallow clone heeft geen historie om te scannen
+
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      # De uitvoer gaat niet als artefact mee: een lijst van plekken waar geheimen zitten is een
+      # routekaart naar wat nog niet is ingetrokken. Zie scripts/scan-secrets.py.
+      - name: Scan the whole git history for committed secrets
+        run: python scripts/scan-secrets.py --history
 
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
