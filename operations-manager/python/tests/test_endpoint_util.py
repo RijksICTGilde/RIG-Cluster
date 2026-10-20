@@ -9,10 +9,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.api.endpoint_util import (
+    REQUIRES_ADMIN_API_KEY,
+    REQUIRES_MASTER_API_KEY,
+    REQUIRES_METRICS_SCRAPE_TOKEN,
+    REQUIRES_PROJECT_NAME,
     normalize_project_name,
     parse_ports,
+    validate_admin_api_key,
     validate_api_token,
     validate_master_api_key,
+    validate_metrics_scrape_token,
 )
 from starlette.requests import Request
 
@@ -273,3 +279,49 @@ class TestValidateMasterApiKey:
             result = await dummy_route(request=mock_request)
 
         assert result == {"admin": True}
+
+
+class TestMarkeringen:
+    """Elke herkenningsdecorator laat op de route zien dat hij er zit.
+
+    Zonder die markering valt een route niet te onderscheiden van een route zonder enige
+    controle, en dat is precies wat ``tests/test_elke_route_heeft_een_herkenning.py`` moet
+    kunnen zien.
+    """
+
+    @pytest.mark.parametrize(
+        ("decorator", "markering"),
+        [
+            (validate_api_token, REQUIRES_PROJECT_NAME),
+            (validate_admin_api_key, REQUIRES_ADMIN_API_KEY),
+            (validate_master_api_key, REQUIRES_MASTER_API_KEY),
+            (validate_metrics_scrape_token, REQUIRES_METRICS_SCRAPE_TOKEN),
+        ],
+    )
+    def test_de_decorator_zet_zijn_eigen_markering(self, decorator, markering):
+        async def dummy_route(request: Request):
+            return {}
+
+        assert getattr(decorator(dummy_route), markering, False) is True
+
+    def test_elke_markering_is_een_eigen_naam(self):
+        """Twee decorators met dezelfde markering zijn in een route niet te onderscheiden."""
+        markeringen = [
+            REQUIRES_PROJECT_NAME,
+            REQUIRES_ADMIN_API_KEY,
+            REQUIRES_MASTER_API_KEY,
+            REQUIRES_METRICS_SCRAPE_TOKEN,
+        ]
+
+        assert len(set(markeringen)) == len(markeringen)
+
+    def test_een_decorator_zet_niet_de_markering_van_een_ander(self):
+        """Anders zou een route twee herkenningen lijken te eisen."""
+
+        async def dummy_route(request: Request):
+            return {}
+
+        gedecoreerd = validate_admin_api_key(dummy_route)
+
+        assert getattr(gedecoreerd, REQUIRES_MASTER_API_KEY, False) is False
+        assert getattr(gedecoreerd, REQUIRES_PROJECT_NAME, False) is False
