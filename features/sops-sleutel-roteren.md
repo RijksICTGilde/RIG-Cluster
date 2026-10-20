@@ -44,6 +44,8 @@ Buiten scope: de sleutels per project (issue #183) en de zad-deployments-repo, d
 
 De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/sops-en-age-met-de-hand.md`.
 
+Op de productie-overlays staat een tweede laag: `test_productie_overlay_geen_platte_secrets.py` weigert een `kind: Secret` onder `**/overlays/odcn*/` dat niet SOPS-versleuteld is. De secret-scan kan dat niet vangen (die zoekt sleutelVORMEN, en korte wachtwoorden hebben geen vorm), dus deze toets kijkt naar de documentsoort en draait in CI.
+
 ## Twee situaties
 
 Bepaal eerst welke van de twee je doet. Ze lopen door dezelfde fasen; alleen stap 3 en de eindtoetsen verschillen.
