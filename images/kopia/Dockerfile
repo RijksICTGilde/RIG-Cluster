@@ -7,7 +7,10 @@ ARG KOPIA_VERSION=0.22.3
 RUN apk add --no-cache ca-certificates bash
 
 # Install Kopia directly (hard-coded to x64 since that's what's used in production)
+# Checksum staat literaal; zie images/README.md.
+ARG KOPIA_SHA256_X64=d9e906e0813fc73addca7caa91c6ee33641e49e4fabe3462cd221445cc790c2d
 RUN wget -q "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-x64.tar.gz" -O /tmp/kopia.tar.gz \
+    && echo "${KOPIA_SHA256_X64}  /tmp/kopia.tar.gz" | sha256sum -c - \
     && tar xzf /tmp/kopia.tar.gz -C /tmp \
     && mv /tmp/kopia-${KOPIA_VERSION}-linux-x64/kopia /usr/local/bin/kopia \
     && chmod +x /usr/local/bin/kopia \

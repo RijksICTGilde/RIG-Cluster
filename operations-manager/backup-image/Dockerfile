@@ -25,12 +25,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Kopia - for encrypted backup/restore operations
+# Architectuur: was hardgecodeerd op "x64" terwijl deze image voor amd64 en arm64 gebouwd
+# wordt, dus arm64 kreeg een amd64-binary. Nu per TARGETARCH.
 ARG KOPIA_VERSION=0.23.1
-RUN curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-x64.tar.gz" \
-    && tar -xzf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" \
-    && mv "kopia-${KOPIA_VERSION}-linux-x64/kopia" /usr/local/bin/kopia \
+ARG TARGETARCH
+ARG KOPIA_SHA256_AMD64=416d0f84a3dbb321a8b2d8f0997b1a0a6e915babe79ee76fa6e4d2bd1e1c5178
+ARG KOPIA_SHA256_ARM64=a4ffbc019e0b0f932e2632054e73ec521dc1e80172a00095369c53ecf4e5a6cb
+RUN case "${TARGETARCH}" in \
+      amd64) KOPIA_ARCH=x64; KOPIA_SHA256="${KOPIA_SHA256_AMD64}" ;; \
+      arm64) KOPIA_ARCH=arm64; KOPIA_SHA256="${KOPIA_SHA256_ARM64}" ;; \
+      *) echo "geen kopia-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
+    && echo "${KOPIA_SHA256}  kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" | sha256sum -c - \
+    && tar -xzf "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
+    && mv "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}/kopia" /usr/local/bin/kopia \
     && chmod +x /usr/local/bin/kopia \
-    && rm -rf "kopia-${KOPIA_VERSION}-linux-x64.tar.gz" "kopia-${KOPIA_VERSION}-linux-x64"
+    && rm -rf "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}"
 
 # Install MinIO client - for bucket operations
 COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
