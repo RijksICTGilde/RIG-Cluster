@@ -1,24 +1,24 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: {{ name }}
-  namespace: {{ namespace }}
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
-    project: {{ labels.project }}
+    project: {{ labels.project | yaml_scalar }}
   annotations:
     {# Het projectniveau op wave 0, de deployments op wave 1, zodat wat namespace-breed
        is er staat voor de pods die het nodig hebben. #}
-    argocd.argoproj.io/sync-wave: "{{ sync_wave | default(1) }}"
+    argocd.argoproj.io/sync-wave: {{ (sync_wave | default(1)) | string | yaml_scalar }}
     # https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/#manifest-paths-annotation
     argocd.argoproj.io/manifest-generate-paths: .
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  project: {{ argo_project }}
+  project: {{ argo_project | yaml_scalar }}
   source:
-    repoURL: {{ repoURL }}
-    targetRevision: {{ targetRevision }}
-    path: {{ repoPath }}
+    repoURL: {{ repoURL | yaml_scalar }}
+    targetRevision: {{ targetRevision | yaml_scalar }}
+    path: {{ repoPath | yaml_scalar }}
     plugin:
       name: kustomize-sops-v1.0
       env:
@@ -26,7 +26,7 @@ spec:
           value: "sops-age-key"
   destination:
     server: "https://kubernetes.default.svc"
-    namespace: {{ destination.namespace }}
+    namespace: {{ destination.namespace | yaml_scalar }}
   syncPolicy:
     automated:
       prune: true

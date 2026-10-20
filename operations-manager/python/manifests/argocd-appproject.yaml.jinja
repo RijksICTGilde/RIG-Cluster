@@ -3,18 +3,18 @@ kind: AppProject
 metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-  name: "{{ name }}"
-  namespace: "{{ namespace }}"
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
-    project: "{{ labels.project }}"
+    project: {{ labels.project | yaml_scalar }}
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Project for {{ labels.project }}
+  description: {{ ("Project for " ~ labels.project) | yaml_scalar }}
   sourceRepos:
     - '*'
   destinations:
-    - namespace: {{ destination.namespace }}
+    - namespace: {{ destination.namespace | yaml_scalar }}
       server: "https://kubernetes.default.svc"
   # Cluster-scoped dicht; namespaced open want destinations.namespace pint al de scope.
   clusterResourceWhitelist: []
