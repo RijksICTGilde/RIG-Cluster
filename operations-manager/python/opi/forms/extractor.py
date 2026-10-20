@@ -5,7 +5,7 @@ This module provides utilities to extract FormField instances
 from Pydantic models annotated with FormMeta.
 """
 
-from typing import TYPE_CHECKING, Any, get_args, get_origin
+from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -74,8 +74,9 @@ def extract_single_field(
     """
     field_errors = field_errors or []
 
-    # Get the Python type
-    python_type = field_info.annotation
+    # pydantic 2.14 typeert FieldInfo.annotation als TypeForm, breder dan de type | None
+    # waarmee de formulierlaag werkt. De waarde zelf is onveranderd een type of None.
+    python_type = cast("type | None", field_info.annotation)
     origin_type = get_origin(python_type)
 
     # Extract FormMeta if present

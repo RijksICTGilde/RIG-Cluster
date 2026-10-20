@@ -1,0 +1,35 @@
+name: Renovate
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Maandag 6:00 UTC, gelijk met security.yml
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: Log level
+        type: choice
+        default: info
+        options: [debug, info]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate
+  cancel-in-progress: false
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      # Een eigen token, geen GITHUB_TOKEN: PR's van GITHUB_TOKEN starten geen workflows,
+      # waardoor ci.yml niet op de Renovate-PR's zou draaien.
+      - uses: renovatebot/github-action@v46.3.8
+        env:
+          LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          RENOVATE_REPOSITORIES: RijksICTGilde/RIG-Cluster
+          RENOVATE_PLATFORM: github
+        with:
+          token: ${{ secrets.RENOVATE_TOKEN }}

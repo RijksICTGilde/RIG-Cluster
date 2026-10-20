@@ -1,35 +1,226 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
+  "timezone": "Europe/Amsterdam",
   "schedule": ["before 9am on monday"],
+  "dependencyDashboard": true,
   "labels": ["dependencies"],
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 3,
+  "ignorePaths": [
+    "archive/**",
+    "self-service-portal/**",
+    "**/node_modules/**",
+    "**/.venv/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**"
+  ],
   "kubernetes": {
-    "fileMatch": [
-      "infrastructure/.+\\.yaml$",
-      "bootstrap/.+\\.yaml$"
-    ]
+    "managerFilePatterns": ["/^(infrastructure|bootstrap)/.+\\.ya?ml$/"]
   },
+  "kustomize": {
+    "managerFilePatterns": ["/^(infrastructure|bootstrap)/.+/kustomization\\.ya?ml$/"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Versies in de URL's van remote kustomize-resources en kubectl apply in de Taskfile",
+      "managerFilePatterns": [
+        "/^(infrastructure|bootstrap)/.+\\.ya?ml$/",
+        "/^Taskfile\\.yaml$/"
+      ],
+      "matchStrings": [
+        "https://raw\\.githubusercontent\\.com/(?<depName>[^/\\s]+/[^/\\s]+)/v(?<currentValue>\\d+\\.\\d+\\.\\d+)/"
+      ],
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "depTypeTemplate": "remote-manifest"
+    },
+    {
+      "customType": "regex",
+      "description": "ingress-nginx tagt zijn controller als controller-vX.Y.Z, niet als vX.Y.Z",
+      "managerFilePatterns": ["/^(infrastructure|bootstrap)/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "https://raw\\.githubusercontent\\.com/kubernetes/ingress-nginx/controller-v(?<currentValue>\\d+\\.\\d+\\.\\d+)/"
+      ],
+      "depNameTemplate": "kubernetes/ingress-nginx",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^controller-v(?<version>.+)$",
+      "depTypeTemplate": "remote-manifest"
+    },
+    {
+      "customType": "regex",
+      "description": "Het CNPG-operatormanifest in de Taskfile. Het segment release-X.Y in dezelfde URL wordt NIET meegeschreven: controleer dat met de hand bij een minor",
+      "managerFilePatterns": ["/^Taskfile\\.yaml$/"],
+      "matchStrings": [
+        "/releases/cnpg-(?<currentValue>\\d+\\.\\d+\\.\\d+)\\.yaml"
+      ],
+      "depNameTemplate": "cloudnative-pg/cloudnative-pg",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "depTypeTemplate": "remote-manifest"
+    },
+    {
+      "customType": "regex",
+      "description": "De argocd-operator die prepare-argocd-operator uit de brontarball bouwt",
+      "managerFilePatterns": ["/^Taskfile\\.yaml$/"],
+      "matchStrings": [
+        "default \"v(?<currentValue>\\d+\\.\\d+\\.\\d+)\" \\.VERSION"
+      ],
+      "depNameTemplate": "argoproj-labs/argocd-operator",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "depTypeTemplate": "remote-manifest"
+    },
+    {
+      "customType": "regex",
+      "description": "task en mc kent de asdf-manager niet. mc volgt MC_VERSION uit images/mc/Dockerfile en blijft handwerk",
+      "managerFilePatterns": ["/^\\.tool-versions$/"],
+      "matchStrings": [
+        "task (?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "go-task/task",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "depTypeTemplate": "tool-version"
+    },
+    {
+      "customType": "regex",
+      "description": "De node-image van het kind-sandboxcluster",
+      "managerFilePatterns": ["/^sandboxed-local/kind-config\\.yaml$/"],
+      "matchStrings": [
+        "image:\\s*kindest/node:v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "kindest/node",
+      "datasourceTemplate": "docker",
+      "extractVersionTemplate": "^v(?<version>.+)$",
+      "depTypeTemplate": "kind-node"
+    }
+  ],
   "packageRules": [
     {
-      "description": "Group minor and patch updates",
-      "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "minor and patch dependencies"
+      "description": "Patch en minor per ecosysteem, zodat een rode update de andere niet blokkeert",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["pep621"],
+      "groupName": "python"
     },
     {
-      "description": "GitHub Actions updates",
-      "matchManagers": ["github-actions"],
-      "groupName": "GitHub Actions",
-      "labels": ["dependencies", "ci"]
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["gomod"],
+      "groupName": "go"
     },
     {
-      "description": "Docker image updates",
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["maven"],
+      "groupName": "maven"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["npm"],
+      "groupName": "npm"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
       "matchManagers": ["dockerfile"],
-      "labels": ["dependencies", "docker"]
+      "groupName": "dockerfile base images"
     },
     {
-      "description": "Kubernetes manifest image updates",
-      "matchManagers": ["kubernetes"],
-      "labels": ["dependencies", "infrastructure"]
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["kubernetes", "kustomize"],
+      "groupName": "kubernetes manifests"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchFileNames": [".tool-versions"],
+      "groupName": "tool-versions"
+    },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchDepTypes": ["remote-manifest"],
+      "groupName": "remote manifests"
+    },
+    {
+      "description": "Een major komt alleen op het dashboard. Pas na een vinkje maakt Renovate de PR",
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "De odcn-overlays verwijzen bewust naar de rcr-proxy. Zoek de versie op bij de echte bron en laat het rcr-pad in de PR staan",
+      "matchPackageNames": ["rcr.rijksapps.nl/ghcr-rig/**"],
+      "overridePackageName": "{{{replace 'rcr.rijksapps.nl/ghcr-rig/' 'ghcr.io/' packageName}}}"
+    },
+    {
+      "matchPackageNames": ["rcr.rijksapps.nl/dockerhub-rig/**"],
+      "overridePackageName": "{{{replace 'rcr.rijksapps.nl/dockerhub-rig/' 'docker.io/' packageName}}}"
+    },
+    {
+      "matchPackageNames": ["rcr.rijksapps.nl/k8s-rig/**"],
+      "overridePackageName": "{{{replace 'rcr.rijksapps.nl/k8s-rig/' 'registry.k8s.io/' packageName}}}"
+    },
+    {
+      "matchPackageNames": ["rcr.rijksapps.nl/quay-rig/**"],
+      "overridePackageName": "{{{replace 'rcr.rijksapps.nl/quay-rig/' 'quay.io/' packageName}}}"
+    },
+    {
+      "description": "external-dns 0.22 haalde de ingebouwde transip-provider eruit; v0.23.0 weigert --provider=transip met een fatal. Verder dan 0.21 vraagt een migratie naar de webhook-provider",
+      "matchPackageNames": [
+        "registry.k8s.io/external-dns/external-dns",
+        "rcr.rijksapps.nl/k8s-rig/external-dns/external-dns"
+      ],
+      "allowedVersions": "<v0.22.0"
+    },
+    {
+      "description": "byte-buddy publiceert naast de mainline een JDK5-lijn met een -jdk5-achtervoegsel, die als nieuwer leest. Houd de lijn die mockito zelf meebrengt",
+      "matchPackageNames": ["net.bytebuddy:byte-buddy", "net.bytebuddy:byte-buddy-agent"],
+      "allowedVersions": "/^\\d+\\.\\d+\\.\\d+$/"
+    },
+    {
+      "description": "MinIO tagt met RELEASE.<datum>, wat de docker-versioning niet leest. De spiegel op ghcr levert de tags, dus alleen bestaande tags komen voorbij",
+      "matchPackageNames": [
+        "ghcr.io/minbzk/base-images/minio",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/minio",
+        "ghcr.io/minbzk/base-images/mc"
+      ],
+      "versioning": "regex:^RELEASE\\.(?<major>\\d{4})-(?<minor>\\d{2})-(?<patch>\\d{2})T(?<build>[\\d-]+)Z$"
+    },
+    {
+      "description": "Eigen images met een CalVer-tag: de pin in de overlay is een deploybeslissing die een mens neemt",
+      "matchPackageNames": [
+        "ghcr.io/minbzk/base-images/operations-manager/operations-manager",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager",
+        "ghcr.io/rijksictgilde/zad/keycloak-zad",
+        "rcr.rijksapps.nl/ghcr-rig/rijksictgilde/zad/keycloak-zad"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Eigen images zonder upstream-versiereeks",
+      "matchPackageNames": [
+        "ghcr.io/minbzk/base-images/argocd-rig",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig",
+        "ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops",
+        "ghcr.io/minbzk/base-images/zad-waker",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Lokale sandboxverwijzingen: geen registry om een versie bij op te zoeken",
+      "matchPackageNames": [
+        "localhost:5001/**",
+        "operations-manager",
+        "rig-cmp-argo-kustomize-sops"
+      ],
+      "enabled": false
     }
   ]
 }

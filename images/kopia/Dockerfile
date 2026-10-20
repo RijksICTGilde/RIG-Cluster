@@ -1,5 +1,5 @@
 # Simple Kopia backup image for RIG
-FROM alpine:3.19
+FROM alpine:3.24
 
 ARG KOPIA_VERSION=0.22.3
 

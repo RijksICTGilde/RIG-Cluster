@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import TypeAdapter, ValidationError
 
@@ -37,7 +37,7 @@ class ModelFieldValidator:
         # one argument -- is a TypeError at import time. The annotation alone already
         # carries the rule in that case, so use it as-is.
         annotation = Annotated[(field.annotation, *field.metadata)] if field.metadata else field.annotation
-        self._adapter: TypeAdapter[Any] = TypeAdapter(annotation)
+        self._adapter: TypeAdapter[Any] = TypeAdapter(cast("Any", annotation))
         self._message = message
 
     def validate(self, value: Any, context: dict[str, Any] | None = None) -> list[str]:

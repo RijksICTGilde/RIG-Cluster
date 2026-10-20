@@ -108,6 +108,9 @@ tasks:
       - sh: command -v pwgen
         msg: |
           🚨 pwgen is not installed! Install with 'brew install pwgen' on MacOS or 'apt-get install pwgen' on Linux.
+      - sh: command -v rsync
+        msg: |
+          🚨 rsync is not installed! sandbox:sync needs it. Install with 'brew install rsync' on MacOS or 'apt-get install rsync' on Linux.
       - sh: command -v age-keygen
         msg: |
           🚨 age is not installed! Install with 'brew install age' on MacOS or 'apt-get install age' on Linux.

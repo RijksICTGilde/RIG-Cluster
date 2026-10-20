@@ -267,7 +267,7 @@ infrastructure/bootstrap/infrastructure/prometheus/
 ├── controller/
 │   ├── base/
 │   │   ├── kustomization.yaml
-│   │   ├── deployment.yaml            # Prometheus server (prom/prometheus:v2.54.1)
+│   │   ├── deployment.yaml            # Prometheus server (prom/prometheus:v2.55.1)
 │   │   ├── service.yaml               # ClusterIP on port 9090
 │   │   ├── configmap.yaml             # Full scrape config (k8s discovery + static)
 │   │   ├── pvc.yaml                   # 10Gi storage, 7-day retention
