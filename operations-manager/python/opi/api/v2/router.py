@@ -42,6 +42,7 @@ from opi.api.task_models import (
     ManageDatabaseSchemasResult,
     RefreshDeploymentResult,
     RefreshProjectResult,
+    RotateCredentialsResult,
     TaskResponse,
     UpdateImageResult,
     UpsertDeploymentResult,
@@ -134,6 +135,7 @@ from opi.services.component_values import validate_value as validate_values_valu
 from opi.services.component_values import validate_value_for_storage as validate_values_value_for_storage
 from opi.services.config_lists import PatchableList, patchable_lists
 from opi.services.config_singular import overflowing_list, singular_config_model, to_singular, to_stored
+from opi.services.credential_rotation import rotatable_services_for_deployment, services_with_pending_clone
 from opi.services.deployment_diagnostics import categorize_error, gather_deployment_errors, gather_sync_deviations
 from opi.services.help_text import service_guide_markdown, service_help_markdown
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
@@ -1676,6 +1678,92 @@ async def refresh_deployment_v2(
         },
     )
     return _accepted_response(task, "refresh_deployment")
+
+
+class RotateCredentialsRequest(BaseModel):
+    """De diensten waarvan het geheim vervangen moet worden."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={"example": {"services": ["postgresql-database", "minio-storage", "keycloak"]}},
+    )
+
+    services: list[str] = Field(
+        ...,
+        min_length=1,
+        description="Diensten van deze deployment waarvan het geheim vervangen wordt",
+        examples=[["postgresql-database"]],
+    )
+
+
+@v2_router.post(
+    "/projects/{project_name}/deployments/{deployment_name}/:rotate-credentials",
+    tags=["deployments"],
+    responses={
+        200: {"model": TaskResponse[RotateCredentialsResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+    },
+)
+@validate_api_token
+async def rotate_credentials_v2(
+    request: Request,
+    project_name: str,
+    deployment_name: str,
+    rotate_data: RotateCredentialsRequest = Body(...),
+    rollout: NoDeferQuery = True,
+) -> JSONResponse:
+    """Vervang het geheim van één of meer diensten van deze deployment.
+
+    OPI maakt de nieuwe waarde en schrijft het Secret. Een dienst die deze deployment
+    niet gebruikt geeft 422 met de diensten die wel kunnen.
+
+    Headers:
+        X-API-Key: The API key for the project (required)
+    """
+    _reject_deferred_rollout(rollout, "rotate_credentials")
+
+    logger.info("V2 rotate credentials for %s/%s: %s", project_name, deployment_name, rotate_data.services)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name format.")
+
+    project_data = _project_data_or_404(project_name)
+    available = rotatable_services_for_deployment(project_data, deployment_name)
+    requested = list(dict.fromkeys(rotate_data.services))
+    unusable = [name for name in requested if name not in available]
+    if unusable:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Deployment '{deployment_name}' heeft geen te vervangen geheim voor {', '.join(unusable)}. "
+                f"Mogelijk: {', '.join(available) if available else 'geen enkele dienst'}"
+            ),
+        )
+
+    cloning = [name for name in requested if name in services_with_pending_clone(project_data, deployment_name)]
+    if cloning:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Deployment '{deployment_name}' heeft een lopende clone-from: het geheim van "
+                f"{', '.join(cloning)} wordt door de kloon bepaald en is nu niet te vervangen. "
+                "Wacht tot de kloon afgerond is."
+            ),
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="rotate_credentials",
+        project_name=project_name,
+        deployment_name=deployment_name,
+        payload={
+            "project_name": project_name,
+            "deployment_name": deployment_name,
+            "rotate_credentials": requested,
+            "reset_running_sync": True,
+        },
+    )
+    return _accepted_response(task, "rotate_credentials")
 
 
 @v2_router.post(

@@ -214,7 +214,12 @@ class KeycloakManager:
         """
         self.project_manager = project_manager
 
-    async def create_resources_for_deployment(self, project_data: dict[str, Any], deployment: dict[str, Any]) -> None:
+    async def create_resources_for_deployment(
+        self,
+        project_data: dict[str, Any],
+        deployment: dict[str, Any],
+        rotate_client_secret: bool = False,
+    ) -> None:
         """
         Create Keycloak SSO resources for a deployment that has SSO service enabled.
 
@@ -223,6 +228,7 @@ class KeycloakManager:
         Args:
             project_data: The project configuration data
             deployment: The specific deployment configuration
+            rotate_client_secret: Let Keycloak issue a new client secret instead of reusing the stored one
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -263,6 +269,11 @@ class KeycloakManager:
         try:
             # Handle external keycloak (credentials from Kubernetes secret)
             if keycloak_config.get("type") == "external":
+                if rotate_client_secret:
+                    raise ValueError(
+                        f"Deployment {deployment_name} uses an external Keycloak; its client secret is managed "
+                        "outside ZAD and cannot be replaced from here"
+                    )
                 logger.info(f"Using external keycloak for deployment {deployment_name}")
                 await self._handle_external_keycloak(
                     project_name=project_name,
@@ -351,6 +362,7 @@ class KeycloakManager:
                 ingress_hosts=all_ingress_hosts,  # All hostnames from all components
                 cluster=cluster,
                 config=keycloak_config,  # Pass extracted Keycloak configuration
+                rotate_client_secret=rotate_client_secret,
             )
 
             if keycloak_credentials:
@@ -1009,6 +1021,18 @@ class KeycloakManager:
 
         return False
 
+    async def _regenerate_deployment_client_secret(self, keycloak_url: str, realm_name: str, client_id: str) -> str:
+        """Laat Keycloak een nieuw secret maken voor de client van deze deployment."""
+        keycloak = await create_keycloak_connector(
+            keycloak_url=keycloak_url,
+            admin_username=settings.KEYCLOAK_ADMIN_USERNAME,
+            admin_password=settings.KEYCLOAK_ADMIN_PASSWORD,
+        )
+        client = await keycloak.find_client_by_client_id(client_id, realm_name)
+        if not client:
+            raise ValueError(f"Keycloak client '{client_id}' not found in realm '{realm_name}'")
+        return await keycloak.regenerate_client_secret(client["id"], realm_name)
+
     async def _setup_sso_rijk_integration(
         self,
         project_name: str,
@@ -1016,6 +1040,7 @@ class KeycloakManager:
         ingress_hosts: list[str],
         cluster: str,
         config: dict[str, Any],
+        rotate_client_secret: bool = False,
     ) -> dict[str, Any] | None:
         """
         Set up SSO-Rijk integration by adding a client to the project realm.
@@ -1126,6 +1151,12 @@ class KeycloakManager:
             if existing_credentials:
                 logger.info(f"Using existing Keycloak credentials for {project_name}/{deployment_name}")
 
+                client_secret = existing_credentials.client_secret
+                if rotate_client_secret:
+                    client_secret = await self._regenerate_deployment_client_secret(
+                        keycloak_url, realm_name, existing_credentials.client_id
+                    )
+
                 # Always check and apply access restriction even for existing clients
                 restrict_access = config.get("restrict_access")
                 if restrict_access and restrict_access.get("enabled", False):
@@ -1159,7 +1190,7 @@ class KeycloakManager:
                     # Update the stored secret so the new URLs get written
                     updated_secret = KeycloakSecret(
                         client_id=existing_credentials.client_id,
-                        client_secret=existing_credentials.client_secret,
+                        client_secret=client_secret,
                         public_client_id=existing_credentials.public_client_id,
                         discovery_url=discovery_url,
                         base_url=base_url,
@@ -1169,7 +1200,7 @@ class KeycloakManager:
 
                 return {
                     "client_id": existing_credentials.client_id,
-                    "client_secret": existing_credentials.client_secret,
+                    "client_secret": client_secret,
                     "discovery_url": discovery_url,
                     "base_url": base_url,
                     "realm": existing_credentials.realm,
@@ -1217,13 +1248,22 @@ class KeycloakManager:
                     template=config.get("template", SSO_ONLY_TEMPLATE),
                 )
 
+            # create_deployment_client is idempotent: een client die al bestaat komt terug met
+            # zijn huidige secret. Zonder deze slag blijft het oude secret dus geldig, precies
+            # wat de aanvraag wil voorkomen.
+            client_secret = client_info["client_secret"]
+            if rotate_client_secret:
+                client_secret = await self._regenerate_deployment_client_secret(
+                    keycloak_url, realm_name, client_info["client_id"]
+                )
+
             # Get cluster-specific discovery URL for the project realm
             cluster_discovery_url = get_keycloak_discovery_url(cluster)
             realm_discovery_url = f"{cluster_discovery_url}/realms/{realm_name}/.well-known/openid-configuration"
 
             credentials = {
                 "client_id": client_info["client_id"],
-                "client_secret": client_info["client_secret"],
+                "client_secret": client_secret,
                 "public_client_id": client_info.get("public_client_id", ""),
                 "discovery_url": realm_discovery_url,
                 "base_url": keycloak_url,
@@ -1233,7 +1273,7 @@ class KeycloakManager:
             # Store credentials in secrets map
             keycloak_secret = KeycloakSecret(
                 client_id=client_info["client_id"],
-                client_secret=client_info["client_secret"],
+                client_secret=client_secret,
                 public_client_id=client_info.get("public_client_id", ""),
                 discovery_url=realm_discovery_url,
                 base_url=keycloak_url,

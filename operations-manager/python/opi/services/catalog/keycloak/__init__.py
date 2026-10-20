@@ -49,7 +49,11 @@ class KeycloakService(Service):
     manifest_order = 30
 
     async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.keycloak_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment)
+        await ctx.keycloak_manager.create_resources_for_deployment(
+            ctx.project_data,
+            ctx.deployment,
+            rotate_client_secret=self.service_type.value in ctx.rotate_credentials,
+        )
 
     # --- config field ownership -------------------------------------------------
 

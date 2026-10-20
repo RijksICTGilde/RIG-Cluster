@@ -306,6 +306,8 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             - reset_running_sync: Whether a sync that is still running must be broken
               off, however young. The refresh endpoints set this; an automated caller (the
               OOM watcher queues a refresh for itself) leaves it out.
+            - rotate_credentials: Services whose credential must be replaced during this
+              run instead of reused (see ``handle_rotate_credentials``).
         progress: PersistentTaskProgressManager for reporting progress.
 
     Returns:
@@ -324,6 +326,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     # moving-tag (e.g. :latest) disables, or a still-broken component would flap.
     # User-initiated refreshes (no flag) are an explicit retry request.
     automated_remediation: bool = payload.get("automated_remediation", False)
+    rotate_credentials = frozenset(payload.get("rotate_credentials", []))
 
     # Clear OOM tune state at start (not end): the sync wait records what it answered,
     # and clearing after would wipe that. Automated refreshes skip this entirely.
@@ -371,6 +374,7 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
             force_clone=force_clone,
             force_reenable=not automated_remediation,
             reset_running_sync=reset_running_sync,
+            rotate_credentials=rotate_credentials,
         )
 
         if processing_result:
@@ -454,6 +458,31 @@ async def handle_refresh_deployment(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def handle_rotate_credentials(payload: dict, progress: Any) -> dict:
+    """Vervang de credentials van een deployment en rol de deployment opnieuw uit.
+
+    De rotatie zelf gebeurt in de gewone verwerking: de managers maken een nieuwe waarde
+    voor elke dienst in ``rotate_credentials`` in plaats van de opgeslagen te hergebruiken.
+    Daarom is dit een refresh met die set erbij, en niet een eigen uitrolpad.
+
+    Args:
+        payload: Zoals ``handle_refresh_deployment``, met ``rotate_credentials`` als
+            niet-lege lijst dienstnamen.
+        progress: PersistentTaskProgressManager voor voortgang.
+
+    Returns:
+        Het resultaat van de refresh, met ``rotated`` erbij als alles slaagde.
+    """
+    services: list[str] = payload["rotate_credentials"]
+    result = await handle_refresh_deployment(payload, progress)
+    if result.get("status") == "success":
+        result["rotated"] = services
+        result["message"] = (
+            f"Credentials van deployment '{payload['deployment_name']}' vervangen voor: {', '.join(services)}"
+        )
+    return result
 
 
 async def handle_refresh_project(payload: dict, progress: Any) -> dict:

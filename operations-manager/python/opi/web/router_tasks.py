@@ -29,6 +29,7 @@ _TASK_LABELS = {
     "create_project": "Project aanmaken",
     "refresh_project": "Project verversen",
     "refresh_deployment": "Deployment verversen",
+    "rotate_credentials": "Credentials vervangen",
     "update_image": "Image bijwerken",
     "delete_deployment": "Deployment verwijderen",
     "delete_project": "Project verwijderen",

@@ -1183,6 +1183,26 @@ class KeycloakConnector:
             self.admin.change_current_realm("master")
             return None
 
+    async def regenerate_client_secret(self, client_internal_id: str, realm_name: str) -> str:
+        """Laat Keycloak een nieuw clientsecret maken en geef het terug.
+
+        Het oude secret werkt daarna niet meer: Keycloak vervangt het.
+        """
+        try:
+            self.admin.change_current_realm(realm_name)
+            secret_data = self.admin.generate_client_secrets(client_id=client_internal_id)
+        except KeycloakError as e:
+            raise RuntimeError(f"Failed to regenerate client secret for client {client_internal_id}: {e}") from e
+        finally:
+            self.admin.change_current_realm("master")
+
+        client_secret = secret_data.get("value")
+        if not client_secret:
+            raise RuntimeError(f"Keycloak returned no secret when regenerating it for client {client_internal_id}")
+
+        logger.info(f"Regenerated client secret for client {client_internal_id} in realm {realm_name}")
+        return client_secret
+
     # ==================== Identity Provider Operations ====================
 
     async def add_identity_provider(

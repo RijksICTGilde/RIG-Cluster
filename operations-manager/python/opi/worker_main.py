@@ -55,6 +55,7 @@ async def main() -> None:
         handle_clone_database,
         handle_refresh_deployment,
         handle_refresh_project,
+        handle_rotate_credentials,
     )
     from opi.core.task_handlers_project import (
         handle_create_project,
@@ -75,6 +76,7 @@ async def main() -> None:
     worker.register_handler(TaskType.CLONE_DATABASE, handle_clone_database)
     worker.register_handler(TaskType.CLONE_BUCKET, handle_clone_bucket)
     worker.register_handler(TaskType.REFRESH_DEPLOYMENT, handle_refresh_deployment)
+    worker.register_handler(TaskType.ROTATE_CREDENTIALS, handle_rotate_credentials)
     worker.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
     worker.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)

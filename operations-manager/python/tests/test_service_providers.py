@@ -120,9 +120,9 @@ def test_provision_delegates_to_the_right_manager():
 
     asyncio.run(run())
     # same calls + args as the old fixed sequence
-    db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, clone_interrupted=False)
-    minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True)
-    keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"})
+    db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, clone_interrupted=False, rotate_password=False)
+    minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, rotate_secret_key=False)
+    keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"}, rotate_client_secret=False)
     redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     mail.assert_awaited_once_with({"name": "p"}, {"name": "d"})
 
