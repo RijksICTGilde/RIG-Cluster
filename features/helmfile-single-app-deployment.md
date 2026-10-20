@@ -213,12 +213,43 @@ Migrating an existing record to the new target is a separate, manual step, descr
 
 ### Environment Variables for CMP
 
-The `.cmp-env` file passes environment-specific configuration to helmfile:
+OPI writes the environment-specific configuration for helmfile as `cmp-env.sops.yaml`, a
+map of `KEY: value` encrypted with SOPS on the project key:
 
-```bash
-ENVIRONMENT=production
-MIJNBUREAU_MASTER_PASSWORD=<encrypted>
+```yaml
+ENVIRONMENT: production
+MIJNBUREAU_MASTER_PASSWORD: <encrypted on the project key>
 ```
+
+The plugin fetches the project key from the `sops-age-key` secret in the target namespace,
+decrypts the file, turns the map into `KEY=value` lines and parses those line by line
+instead of sourcing them: shell syntax in a value stays a literal value. Blank lines and
+`#` comments are skipped; anything else stops the render.
+
+A deployment that has not been reprocessed since RC-333 may still carry a plain-text
+`.cmp-env`; the plugin keeps reading that as a fallback, and OPI removes it as soon as it
+rewrites the deployment. A new or changed `.cmp-env` is refused by the git connector, so
+no plain-text env-var reaches `zad-deployments` again.
+
+- A key is a shell variable name (`^[A-Za-z_][A-Za-z0-9_]*$`), the same form the schema
+  demands of component `env-vars`.
+- A value is one line. An AGE-encrypted value may span lines in the project file; OPI
+  decrypts it before encrypting the map with SOPS, and the decrypted value must be
+  single-line too.
+- Variables the plugin reads itself are reserved and refused: anything starting with
+  `ARGOCD_`, `SOPS_`, `KUSTOMIZE_`, `HELM_`, `HELMFILE_`, `KUBE`, `BASH`, `LD_` or `GIT_`,
+  plus `PATH`, `HOME`, `IFS`, `ENV`, `SHELL`, `PS4` and `PROMPT_COMMAND`. The list lives
+  in `CMP_ENV_RESERVED_PREFIXES`/`CMP_ENV_RESERVED_NAMES` (`opi/generation/manifests.py`)
+  and in the plugin script; `tests/test_cmp_env_contract.py` pins the two together.
+- `ENVIRONMENT` is the one variable a deployment may set that the plugin itself uses: it
+  becomes `helmfile -e <value>`, as a single argument. A value with spaces is one
+  environment name, never an extra helmfile flag.
+
+OPI applies the same rules when it writes the file, so a bad pair fails at save time with
+the key named, not at render time. Without any env-vars no file is written, and an
+existing `cmp-env.sops.yaml` is removed, so a deleted variable also leaves the render.
+The keys are written in a fixed order, so an unchanged map keeps its existing ciphertext
+(see `sops-skip-unchanged-reencryption.md`) and does not churn `zad-deployments`.
 
 ### Deployment Flow
 
@@ -272,7 +303,7 @@ Compared to full mijn-bureau deployment which would include 10+ additional appli
 | `values.sops.yaml` | Encrypted values including service credentials |
 | `kustomization.yaml` | Kustomize config for additional resources |
 | `decrypt-sops.yaml` | KSOPS generator referencing secret files |
-| `.cmp-env` | Environment variables for helmfile |
+| `cmp-env.sops.yaml` | Environment variables for helmfile, encrypted on the project key |
 | `.helmfile-entry` | Points CMP to helmfile location (if in subfolder) |
 
 ### Related Documentation

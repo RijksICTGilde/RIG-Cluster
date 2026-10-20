@@ -19,17 +19,40 @@ data:
             set -e  # Exit on any error
             set -o pipefail
 
-            # Source environment variables from .cmp-env if it exists
-            # This allows deployments to pass configuration to the CMP
-            # Use set -a to auto-export all variables for child processes (like helmfile)
-            if [ -f ".cmp-env" ]; then
-              # Do NOT dump the contents of .cmp-env: it holds configuration secrets that
-              # would otherwise end up in the repo-server logs. Log only that it was sourced.
-              echo "Sourcing environment variables from .cmp-env" >&2
-              set -a
-              source .cmp-env
-              set +a
-            fi
+            # A deployment passes configuration to the CMP as env-vars. The file comes from a
+            # tenant, so it is read as data: every line is one KEY=value pair and nothing in it
+            # is ever executed. 'source' would run it as a script in the very process that
+            # fetches the AGE key and reads ARGOCD_APP_NAMESPACE.
+            # The reserved list is the same one as CMP_ENV_RESERVED_* in
+            # operations-manager/python/opi/generation/manifests.py, which pins it with a test.
+            load_cmp_env() {
+              local file="$1" line key value lineno=0
+
+              while IFS= read -r line || [ -n "$line" ]; do
+                lineno=$((lineno + 1))
+                case "$line" in
+                  ''|'#'*) continue ;;
+                esac
+
+                key="${line%%=*}"
+                value="${line#*=}"
+                if [ "$key" = "$line" ]; then
+                  echo "ERROR: env-vars line $lineno has no '=' separator" >&2
+                  exit 1
+                fi
+                if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                  echo "ERROR: env-vars line $lineno has an invalid variable name '$key'" >&2
+                  exit 1
+                fi
+                case "$key" in
+                  ARGOCD_*|SOPS_*|KUSTOMIZE_*|HELM_*|HELMFILE_*|KUBE*|BASH*|LD_*|GIT_*|PATH|HOME|IFS|ENV|SHELL|PS4|PROMPT_COMMAND)
+                    echo "ERROR: env-vars may not set reserved variable '$key'" >&2
+                    exit 1 ;;
+                esac
+
+                export "$key=$value"
+              done < "$file"
+            }
 
             SOPS_KEY_SECRET="${ARGOCD_ENV_SOPS_KEY_SECRET:-sops-age-key}"
             KUSTOMIZE_FOLDERS="${ARGOCD_ENV_KUSTOMIZE_FOLDERS:-current}"
@@ -64,6 +87,24 @@ data:
             if [ -z "$SOPS_AGE_KEY" ]; then
               echo "ERROR: No valid AGE-SECRET-KEY found in secret '${SOPS_KEY_SECRET}'. Key must start with 'AGE-SECRET-KEY-'" >&2
               exit 1
+            fi
+
+            # cmp-env.sops.yaml (encrypted) replaces .cmp-env. Keep plaintext fallback for old
+            # deployments; remove once all are rewritten.
+            CMP_ENV_PLAIN=""
+            trap 'rm -f ${CMP_ENV_PLAIN:-} ${TEMP_OUTPUT:-}' EXIT
+
+            if [ -f "cmp-env.sops.yaml" ]; then
+              # Do NOT dump the contents: they hold configuration secrets that would
+              # otherwise end up in the repo-server logs. Log only that they were read.
+              echo "Reading environment variables from cmp-env.sops.yaml" >&2
+              CMP_ENV_PLAIN=$(mktemp /tmp/cmp_env.XXXXXX)
+              SOPS_AGE_KEY="$SOPS_AGE_KEY" sops --config /dev/null --decrypt "cmp-env.sops.yaml" \
+                | yq eval -r 'to_entries | .[] | .key + "=" + (.value | tostring)' - > "$CMP_ENV_PLAIN"
+              load_cmp_env "$CMP_ENV_PLAIN"
+            elif [ -f ".cmp-env" ]; then
+              echo "Reading environment variables from .cmp-env" >&2
+              load_cmp_env .cmp-env
             fi
 
             # Function to build Helm chart dependencies
@@ -167,13 +208,16 @@ data:
               # Decrypt SOPS-encrypted values files (in the root folder)
               decrypt_helmfile_values "$folder"
 
-              # Build optional helmfile arguments
-              local helmfile_args=""
+              # Build optional helmfile arguments. An array, not a string: ENVIRONMENT comes
+              # from .cmp-env and so from a tenant, and an unquoted string would word-split
+              # that value into extra arguments of its own choosing on the helmfile command
+              # line. Reading .cmp-env as data only helps if the value stays one argument.
+              local helmfile_args=()
 
               # Only add environment flag if ENVIRONMENT is explicitly set
               # This allows simpler helmfile projects without environments to work
               if [ -n "${ENVIRONMENT:-}" ]; then
-                helmfile_args="$helmfile_args -e $ENVIRONMENT"
+                helmfile_args+=(-e "$ENVIRONMENT")
                 echo "DEBUG: Using helmfile environment: $ENVIRONMENT" >&2
               else
                 echo "DEBUG: No ENVIRONMENT set, using helmfile default" >&2
@@ -183,7 +227,7 @@ data:
               # Use --state-values-file for .gotmpl template values (not --values which is for helm charts)
               # Path must be absolute since helmfile resolves relative to helmfile location, not cwd
               if [ -f "$folder/values.yaml" ]; then
-                helmfile_args="$helmfile_args --state-values-file $abs_folder/values.yaml"
+                helmfile_args+=(--state-values-file "$abs_folder/values.yaml")
                 echo "DEBUG: Using state values file: $abs_folder/values.yaml" >&2
               fi
 
@@ -218,7 +262,7 @@ data:
               # Run helmfile template with conditional arguments
               # Use just the filename since we're now in the helmfile's directory
               echo "DEBUG: Running helmfile from $(pwd) with file $helmfile_name" >&2
-              helmfile --file "$helmfile_name" $helmfile_args template --include-crds 2>&2 >> "$output_file"
+              helmfile --file "$helmfile_name" "${helmfile_args[@]}" template --include-crds 2>&2 >> "$output_file"
 
               cd - > /dev/null
             }
@@ -335,7 +379,6 @@ data:
 
             # Create unique temporary file
             TEMP_OUTPUT=$(mktemp /tmp/kustomize_output.XXXXXX)
-            trap "rm -f $TEMP_OUTPUT" EXIT
 
             # Process all folders
             > "$TEMP_OUTPUT"  # Clear output file

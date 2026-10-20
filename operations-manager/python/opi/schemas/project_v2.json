@@ -507,7 +507,14 @@
         "helm-values": {},
         "env-vars": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*\\Z" },
+          "additionalProperties": {
+            "type": "string",
+            "anyOf": [
+              { "pattern": "^[^\\r\\n\\u0000]*\\Z" },
+              { "pattern": "^-----BEGIN AGE ENCRYPTED FILE-----[^\\u0000]*-----END AGE ENCRYPTED FILE-----\\s*\\Z" }
+            ]
+          }
         }
       }
     },

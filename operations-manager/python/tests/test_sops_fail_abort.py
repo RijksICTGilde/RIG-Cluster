@@ -34,7 +34,7 @@ import pytest
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-from opi.connectors.git import GitConnector
+from opi.connectors.git import GitConnector, _cmp_env_paths_added_or_modified
 from opi.utils.sops import (
     SOPSEncryptionError,
     encrypt_to_sops_files,
@@ -190,7 +190,7 @@ def test_precommit_guard_aborts_on_leftover_to_sops(git_repo) -> None:
         f.write("ssh-private-key: TOP-SECRET")
 
     with pytest.raises(RuntimeError) as exc:
-        connector._abort_if_plaintext_secrets_present()
+        asyncio.run(connector._abort_if_plaintext_secrets_present())
 
     message = str(exc.value)
     assert "argocd-repo-secret.to-sops.yaml" in message
@@ -205,7 +205,7 @@ def test_precommit_guard_finds_nested_to_sops(git_repo) -> None:
         f.write("password: secret")
 
     with pytest.raises(RuntimeError) as exc:
-        connector._abort_if_plaintext_secrets_present()
+        asyncio.run(connector._abort_if_plaintext_secrets_present())
 
     assert os.path.join("odcn", "demo", "db.to-sops.yaml") in str(exc.value)
 
@@ -231,7 +231,7 @@ def test_precommit_guard_daalt_niet_af_in_dot_git(git_repo) -> None:
             yield root, dirs, files
 
     with patch("opi.connectors.git.os.walk", tellende_walk):
-        connector._abort_if_plaintext_secrets_present()
+        asyncio.run(connector._abort_if_plaintext_secrets_present())
 
     assert not any(".git" in Path(m).parts for m in bezochte_mappen), (
         f"os.walk daalde alsnog af in .git: {[m for m in bezochte_mappen if '.git' in m]}"
@@ -243,7 +243,90 @@ def test_precommit_guard_passes_when_only_encrypted_present(git_repo) -> None:
     with open(os.path.join(work, "db.sops.yaml"), "w") as f:
         f.write("enc: payload")
     # Must not raise.
-    connector._abort_if_plaintext_secrets_present()
+    asyncio.run(connector._abort_if_plaintext_secrets_present())
+
+
+def _commit_alles(work: str) -> None:
+    subprocess.run(["git", "-C", work, "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", work, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "commit", "-q", "-m", "basis"],
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("codes", [" M", "M ", "MM", "AM"])
+def test_cmp_env_paths_modified_tracked_bestand_telt_als_aangeraakt(codes: str) -> None:
+    """Een al getrackt .cmp-env dat verandert is net zo erg als een nieuw bestand."""
+    assert _cmp_env_paths_added_or_modified(f"{codes} odcn-production/demo/.cmp-env\n") == [
+        "odcn-production/demo/.cmp-env"
+    ]
+
+
+def test_cmp_env_paths_verwijdering_telt_niet_mee() -> None:
+    assert _cmp_env_paths_added_or_modified(" D .cmp-env\n") == []
+    assert _cmp_env_paths_added_or_modified("D  .cmp-env\n") == []
+
+
+def test_cmp_env_paths_rename_kijkt_naar_de_nieuwe_naam() -> None:
+    """Git toont een rename als 'oud -> nieuw'; de nieuwe naam komt in de commit."""
+    assert _cmp_env_paths_added_or_modified("R  oud-bestand -> odcn/demo/.cmp-env\n") == ["odcn/demo/.cmp-env"]
+    # Een rename WEG van .cmp-env (naar iets anders) raakt het bestand niet aan.
+    assert _cmp_env_paths_added_or_modified("R  odcn/demo/.cmp-env -> oud-bestand\n") == []
+
+
+def test_cmp_env_paths_quoted_pad_wordt_ontdaan_van_aanhalingstekens() -> None:
+    """Git quote't paden met een spatie of niet-ascii teken."""
+    assert _cmp_env_paths_added_or_modified('?? "map met spatie/.cmp-env"\n') == ["map met spatie/.cmp-env"]
+
+
+def test_cmp_env_paths_alleen_bestanden_die_echt_cmp_env_heten() -> None:
+    """Een bestand dat .cmp-env toevallig in de naam draagt telt niet mee."""
+    assert _cmp_env_paths_added_or_modified("?? odcn/demo/.cmp-env.bak\n") == []
+    assert _cmp_env_paths_added_or_modified("?? odcn/demo/oud.cmp-env\n") == []
+
+
+def test_cmp_env_paths_meerdere_bestanden_komen_gesorteerd_terug() -> None:
+    status = "?? zz-project/.cmp-env\n?? aa-project/.cmp-env\n"
+    assert _cmp_env_paths_added_or_modified(status) == ["aa-project/.cmp-env", "zz-project/.cmp-env"]
+
+
+def test_precommit_guard_aborts_on_new_cmp_env(git_repo) -> None:
+    """Een plat .cmp-env hoort niet meer in zad-deployments (RC-333)."""
+    connector, work = git_repo
+    deployment = os.path.join(work, "odcn-production", "demo")
+    os.makedirs(deployment)
+    with open(os.path.join(deployment, ".cmp-env"), "w") as f:
+        f.write("API_KEY=geheim\n")
+
+    with pytest.raises(RuntimeError) as exc:
+        asyncio.run(connector._abort_if_plaintext_secrets_present())
+
+    message = str(exc.value)
+    assert os.path.join("odcn-production", "demo", ".cmp-env") in message
+    assert "cmp-env.sops.yaml" in message
+
+
+def test_precommit_guard_allows_removing_a_cmp_env(git_repo) -> None:
+    """OPI ruimt de bestaande bestanden juist op; die commit moet erdoor."""
+    connector, work = git_repo
+    with open(os.path.join(work, ".cmp-env"), "w") as f:
+        f.write("API_KEY=geheim\n")
+    _commit_alles(work)
+    os.remove(os.path.join(work, ".cmp-env"))
+
+    asyncio.run(connector._abort_if_plaintext_secrets_present())
+
+
+def test_precommit_guard_allows_an_untouched_cmp_env(git_repo) -> None:
+    """De werkboom is de hele repo: een ander project mag deze commit niet tegenhouden."""
+    connector, work = git_repo
+    with open(os.path.join(work, ".cmp-env"), "w") as f:
+        f.write("API_KEY=geheim\n")
+    _commit_alles(work)
+    with open(os.path.join(work, "andere.yaml"), "w") as f:
+        f.write("niets: geheims")
+
+    asyncio.run(connector._abort_if_plaintext_secrets_present())
 
 
 def test_commit_and_push_aborts_before_staging_plaintext(git_repo, monkeypatch) -> None:
