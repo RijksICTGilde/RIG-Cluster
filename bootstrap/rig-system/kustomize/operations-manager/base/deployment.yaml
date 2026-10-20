@@ -94,6 +94,9 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
+        - name: git-signing-key
+          mountPath: /etc/opi/git-signing
+          readOnly: true
         env:
         # Who is answering /version. During a rolling update two pods serve the same
         # Service, so an answer without a pod name reads as version drift instead of
@@ -108,6 +111,9 @@ spec:
               fieldPath: metadata.namespace
         - name: TMPDIR
           value: "/tmp"
+        # Staat het secret er niet, dan is de mount leeg en commit OPI zonder handtekening.
+        - name: GIT_SIGNING_KEY_FILE
+          value: "/etc/opi/git-signing/signing-key.asc"
         - name: ENVIRONMENT
           value: "production"
         - name: KUBERNETES_SERVICE_HOST
@@ -178,3 +184,7 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 500Mi
+      - name: git-signing-key
+        secret:
+          secretName: operations-manager-git-signing-key
+          optional: true  # Een cluster zonder sleutel moet gewoon kunnen starten

@@ -114,6 +114,9 @@ tasks:
       - sh: command -v age-keygen
         msg: |
           🚨 age is not installed! Install with 'brew install age' on MacOS or 'apt-get install age' on Linux.
+      - sh: command -v gpg
+        msg: |
+          gpg is not installed! Install with 'brew install gnupg' on MacOS or 'apt-get install gnupg' on Linux.
       - sh: command -v yq
         msg: |
           🚨 yq is not installed! Install with 'brew install yq' on MacOS or 'apt-get install yq' on Linux.
@@ -2472,6 +2475,7 @@ tasks:
       - task: sandbox:create-namespace
       - task: sandbox:import-wildcard-cert
       - task: sandbox:create-sops-age-secret
+      - task: sandbox:create-git-signing-key-secret
       # Phase 2: Bootstrap Forgejo (minimal direct deploys, just enough for git)
       - task: sandbox:deploy-postgresql-direct
       - task: sandbox:deploy-forgejo-direct
@@ -3133,6 +3137,60 @@ tasks:
           --dry-run=client -o yaml | kubectl apply -f -
 
         echo "namespace rig-ron en sops-age-key secret created"
+    silent: true
+
+  sandbox:create-git-signing-key-secret:
+    desc: "Generate the sandbox GPG signing key and store it as a secret for OPI"
+    cmds:
+      - |
+        KEY_FILE="security/sandbox-git-signing-key.asc"
+
+        if [ ! -f "$KEY_FILE" ]; then
+          echo "Generating sandbox GPG signing key: $KEY_FILE"
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          chmod 700 "$GNUPGHOME"
+          # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+          # Zonder passphrase: OPI importeert de sleutel zelf en kan er geen invoeren.
+          gpg --batch --quiet --passphrase '' \
+            --quick-generate-key "Operations Manager <operations-manager@example.com>" ed25519 sign never
+          # umask om de redirect: zonder dat staat de privesleutel kort op 644.
+          (umask 077; gpg --batch --quiet --armor --export-secret-keys > "$KEY_FILE")
+        else
+          echo "Sandbox GPG signing key already exists: $KEY_FILE"
+        fi
+
+        kubectl create secret generic operations-manager-git-signing-key \
+          --from-file=signing-key.asc="$KEY_FILE" \
+          -n {{.RIG_NAMESPACE}} \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "operations-manager-git-signing-key secret created in {{.RIG_NAMESPACE}}"
+    silent: true
+
+  git-signing-key:public:
+    desc: "Print the public key and fingerprint of OPI's git signing key (for ArgoCD signatureKeys)"
+    cmds:
+      - |
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          -o jsonpath='{.data.signing-key\.asc}' 2>/dev/null)
+        if [ -z "$SECRET" ]; then
+          echo "No operations-manager-git-signing-key secret in {{.RIG_NAMESPACE}}: this cluster signs nothing."
+          exit 1
+        fi
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        echo "$SECRET" | base64 -d | gpg --batch --quiet --import
+
+        FINGERPRINT=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        echo "fingerprint: $FINGERPRINT"
+        echo ""
+        gpg --batch --armor --export "$FINGERPRINT"
     silent: true
 
   sandbox:deploy-postgresql-direct:

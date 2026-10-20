@@ -295,6 +295,10 @@ class Settings(BaseSettings):
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
 
+    # GPG-privésleutel (ASCII-armored, zonder passphrase) voor commits in de GitOps-repo's.
+    # Zie features/opi-ondertekent-zijn-commits.md.
+    GIT_SIGNING_KEY_FILE: str | None = None
+
     # Container registry configuration (for image upload proxy)
     REGISTRY_URL: str = ""  # Target registry (e.g., rcr.rijksapps.nl)
     REGISTRY_ORG: str = ""  # Organization prefix (e.g., rig)

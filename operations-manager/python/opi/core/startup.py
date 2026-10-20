@@ -47,6 +47,7 @@ from opi.services.project_service import initialize_project_service
 from opi.services.project_store import get_project_store
 from opi.services.schema_migration import SCHEMA_VERSIONS
 from opi.services.user_service import get_user_service
+from opi.utils.git_signing import load_git_signing_identity
 
 logger = logging.getLogger(__name__)
 
@@ -842,6 +843,10 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # project files being rejected by the git-monitor gate, months later and
     # without an obvious cause; this stops the boot instead.
     check_schema_versions(SCHEMA_VERSIONS)
+
+    # Zonder sleutel commit OPI zoals altijd, met alleen een WARNING. Een sleutel die gpg
+    # niet kan importeren is een configuratiefout en stopt de opstart.
+    load_git_signing_identity()
 
     # Initialize metrics connector (non-critical)
     logger.info("Initializing metrics connector")
