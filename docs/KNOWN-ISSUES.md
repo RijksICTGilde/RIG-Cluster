@@ -192,6 +192,12 @@ SSO-only realm nooit rechtstreeks bij Keycloak inlogt, dan staat daar precies he
 aangemaakte account waar de keten hierboven op begint. Een uitnodiging heeft geen veld om dat
 te omzeilen: `Email verified` op On bestaat alleen in de console.
 
+Die lokale tak is sindsdien wel dicht in de realms waar het meeste op het spel staat: koppelt
+het realm een SSO-identiteit automatisch op e-mailadres (`account-link`), dan werkt een
+uitnodiging daar alleen nog via SSO en ontstaat er dus geen onbevestigd account met een zelf
+ingetypt adres. Zie `features/keycloak-auto-link.md`, sectie Security. In een realm zonder
+`account-link` blijft de keten hierboven staan.
+
 De **SSO**-tak van een uitnodiging maakt dat account niet. `invite_sso_start` stuurt de
 uitgenodigde naar het projectrealm zelf (`_build_realm_auth_url`), dus Keycloak heeft zijn
 first-broker-login al gedaan voordat `complete_sso_invite` draait: stond er nog geen account,

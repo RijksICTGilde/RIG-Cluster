@@ -16,6 +16,7 @@ from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
+from opi.services.catalog.keycloak.account_link import account_link_mode
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
@@ -1867,12 +1868,20 @@ class InviteAuthMethodOptionsProvider:
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
+
+    Koppelt het realm een SSO-identiteit op e-mailadres (``account-link``), dan vervalt
+    "Lokaal account" ook: daar is geen account met een zelf ingetypt adres toegestaan. De
+    uitnodigingsweg weigert die methode dan al en opslaan wordt geweigerd, dus hem hier
+    aanbieden zou een keuze zijn die bij het bewaren alsnog afketst. Anders dan bij sso-only
+    blijft het veld in dat geval wel staan, met alleen SSO: de hulptekst van het veld zegt
+    waarom "Lokaal account" er niet bij staat, en dat is het enige dat het hier nog meldt.
     """
 
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (het template is dan niet sso-only)."
+            "accounts toestaat (het template is dan niet sso-only) en het realm niet "
+            "automatisch koppelt op e-mailadres (account-link)."
         ),
         endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
         path="configurations[].config.template",
@@ -1889,7 +1898,10 @@ class InviteAuthMethodOptionsProvider:
         # so it is what the realm actually gets. Reading it as "unknown, allow both" would
         # also disagree with the field's show_when, which hides the field in that same case.
         template = smart_get_value(self.yaml_data, "services/keycloak/config/template") or "sso-only"
-        if template != "sso-only":
+        # Via smart_get_value en niet via de project-ingang van de helper: in de wizard staat
+        # de keycloak-config onder de virtuele root, waar een lezing op "services" niets vindt.
+        links_on_email = account_link_mode(smart_get_value(self.yaml_data, "services/keycloak/config")) is not None
+        if template != "sso-only" and not links_on_email:
             options.append({"value": "local", "label": "Lokaal account"})
         return options
 

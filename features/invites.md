@@ -91,7 +91,7 @@ services:
 | `active[].contact-email` | Shown to the user as a contact, and on the role-not-assigned error page. |
 | `active[].application-target` | Where the success-page button points, as a `component:deployment[:/path]` choice within this project. |
 | `active[].application-url` | Where the success-page button points, as a fixed address. For a destination outside this project. |
-| `active[].auth-methods` | `sso` and/or `local`. Empty = both allowed (subject to the realm). |
+| `active[].auth-methods` | `sso` and/or `local`. Empty = both allowed (subject to the realm). `local` is refused when the realm links on email, see below. |
 | `active[].message` / `success-title` / `success-button` | `{nl, en}` texts for the invite pages. |
 
 ### Where the success button points
@@ -154,6 +154,23 @@ equals and live side by side; precedence is target, then URL, then no button.
 Advanced pass-through fields (`groups`, `client-roles`, and the deprecated `roles`, an alias
 for `realm-roles`) validate but are not offered in the UI. Keys are hyphenated on disk; the
 service model also accepts the underscore spelling that predates this service.
+
+## Geen lokaal account in een realm dat koppelt op e-mailadres
+
+Staat `account-link` op `automatic` of `confirm` op de keycloak-service van het project, dan
+koppelt het realm een SSO-identiteit aan elk bestaand account met hetzelfde adres
+(`features/keycloak-auto-link.md`). De lokale weg hieronder laat de uitgenodigde zijn adres
+zelf intypen, en zo'n account staat daarna klaar als koppeldoel voor wie dat adres via SSO
+wel autoritatief aanlevert. In zo'n realm werkt een uitnodiging daarom alleen via SSO:
+
+- de lokale knop staat niet op de uitnodigingspagina en `/invite/{key}/register` weigert,
+  ongeacht wat `auth-methods` zegt;
+- `local` expliciet in `auth-methods` zetten wordt bij het opslaan geweigerd, en het
+  formulier biedt de keuze niet aan.
+
+Wil een project lokale accounts via een uitnodiging, dan is de keuze: `account-link` weglaten
+(dan bewijst de gebruiker het bestaande account via Keycloaks eigen flow), of de uitgenodigde
+via SSO binnenlaten.
 
 ## Wie een account krijgt, bevestigt eerst zijn adres
 

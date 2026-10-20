@@ -218,6 +218,33 @@ class InviteService(Service):
             for stale in ("application-url", "application_url"):
                 entry.pop(stale, None)
 
+    def validate_project(self, project_data: dict[str, Any]) -> list[str]:
+        """Geen uitnodiging met een lokaal account in een realm dat op e-mailadres koppelt.
+
+        Zo'n realm koppelt een SSO-identiteit aan elk account met hetzelfde adres, dus een
+        account dat hier met een zelf ingetypt adres ontstaat, neemt de identiteit over van
+        wie dat adres via SSO aanlevert. De uitnodigingsweg weigert ``local`` daar al
+        (``get_invite_auth_methods``); dit houdt de keuze ook uit het projectbestand, zodat
+        het bestand niet belooft wat de link niet doet.
+
+        Gelezen via de handler, dezelfde weg als de uitnodigingsweg: die kent naast de
+        dienstlocatie ook de oude ``invites:``-sectie en levert één schrijfwijze op.
+        """
+        from opi.handlers.project_file_handler import ProjectFileHandler
+        from opi.services.catalog.keycloak.account_link import realm_account_link_mode
+
+        mode = realm_account_link_mode(project_data)
+        if mode is None:
+            return []
+
+        return [
+            f"uitnodiging '{invite.get('key', '')}' staat een lokaal account toe, maar het "
+            f"keycloak-realm van dit project koppelt automatisch op e-mailadres "
+            f"(account-link: {mode}); lokale accounts zijn daar niet toegestaan"
+            for invite in ProjectFileHandler().get_all_active_invites(project_data)
+            if "local" in (invite.get("auth_methods") or [])
+        ]
+
     # --- config field ownership -------------------------------------------------
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
