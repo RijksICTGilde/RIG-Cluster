@@ -1,0 +1,44 @@
+# Eigen monitoring-query voor CNPG: welke rol verbindt zonder TLS, en op welke database.
+# CNPG scrapet dit mee op zijn metrics-poort, dus de PodMonitor ernaast pikt het op.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rig-db-monitoring-queries
+  namespace: rig-system
+  labels:
+    # Zonder dit label laden de instanties een gewijzigde query pas na een handmatige
+    # `kubectl cnpg reload`.
+    cnpg.io/reload: ""
+data:
+  queries.yaml: |
+    # Metriek: cnpg_connections_without_tls_count{usename,datname}. CNPG laat de reeks
+    # weg zodra de query geen rijen geeft, dus "afwezig" betekent nul.
+    # Een client achter een pooler telt hier als TLS: PgBouncer versleutelt zelf naar de
+    # server. Dat been meet je op de pooler, zie features/postgresql-tls.md.
+    connections_without_tls:
+      query: |
+        SELECT a.usename AS usename,
+               a.datname AS datname,
+               count(*) AS count
+        FROM pg_stat_activity a
+        JOIN pg_stat_ssl s ON s.pid = a.pid
+        WHERE a.backend_type = 'client backend'
+          -- client_addr IS NULL is een verbinding over de unix-socket, en die heeft per
+          -- definitie geen TLS. Zonder deze regel telt de instance-manager van CNPG
+          -- zichzelf mee en staat de teller nooit op nul.
+          AND a.client_addr IS NOT NULL
+          AND NOT s.ssl
+        GROUP BY 1, 2
+      # pg_stat_activity en pg_stat_ssl zijn clusterbreed, dus één database volstaat.
+      target_databases:
+        - postgres
+      metrics:
+        - usename:
+            usage: "LABEL"
+            description: "Rol die zonder TLS verbindt"
+        - datname:
+            usage: "LABEL"
+            description: "Database waarop die verbinding staat"
+        - count:
+            usage: "GAUGE"
+            description: "Aantal verbindingen zonder TLS op het moment van scrapen"

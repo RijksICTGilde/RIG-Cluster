@@ -27,6 +27,7 @@ async def main() -> None:
         user=settings.DATABASE_ADMIN_NAME,
         password=settings.DATABASE_ADMIN_PASSWORD,
         database=settings.DATABASE_NAME,
+        sslmode=settings.DATABASE_SSLMODE,
     )
     await pool.initialize()
 

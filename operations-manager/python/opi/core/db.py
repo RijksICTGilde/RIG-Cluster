@@ -52,6 +52,8 @@ def _default_url() -> str:
     return (
         f"postgresql+asyncpg://{settings.DATABASE_ADMIN_NAME}:{settings.DATABASE_ADMIN_PASSWORD}"
         f"@{settings.DATABASE_HOST}:5432/{settings.DATABASE_NAME}"
+        # asyncpg noemt de parameter ssl; de waarden zijn die van libpq sslmode.
+        f"?ssl={settings.DATABASE_SSLMODE}"
     )
 
 

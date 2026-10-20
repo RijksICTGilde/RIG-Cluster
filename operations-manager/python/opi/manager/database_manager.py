@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import asyncpg
+
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
@@ -1716,17 +1718,27 @@ class DatabaseManager:
             host: Database host (shared or namespace-specific service endpoint)
 
         Returns:
-            True if connection successful, False otherwise
-        """
-        import asyncpg
+            True if the server accepts the credentials, False if it rejects them or the
+            database does not exist yet (a fresh generation reaches this before phase 2).
 
+        Raises:
+            Exception: Any other connection failure. De aanroeper leest False als
+                "authenticatie mislukt" en zet dan het wachtwoord opnieuw, dus een
+                onbereikbare host of een mislukte TLS-handshake mag daar niet in vallen.
+        """
         try:
-            # Create a direct connection with the user's credentials
-            conn = await asyncpg.connect(host=host, port=5432, user=username, password=password, database=database)
+            conn = await asyncpg.connect(
+                host=host,
+                port=5432,
+                user=username,
+                password=password,
+                database=database,
+                ssl=settings.DATABASE_SSLMODE,
+            )
             await conn.close()
             logger.debug(f"Connection test successful for {username}@{host}/{database}")
             return True
-        except Exception as e:
+        except (asyncpg.InvalidAuthorizationSpecificationError, asyncpg.InvalidCatalogNameError) as e:
             logger.debug(f"Database connection test failed for user {username}: {e}")
             return False
 
@@ -1759,8 +1771,6 @@ class DatabaseManager:
         Raises:
             Exception: If connection or validation fails
         """
-        import asyncpg
-
         logger.info(f"Validating external source: {source_host}:{source_port}/{source_database}.{source_schema}")
 
         source_conn = None

@@ -15,6 +15,7 @@ def _build_url() -> str:
     return (
         f"postgresql+psycopg2://{settings.DATABASE_ADMIN_NAME}:{settings.DATABASE_ADMIN_PASSWORD}"
         f"@{settings.DATABASE_HOST}:5432/{settings.DATABASE_NAME}"
+        f"?sslmode={settings.DATABASE_SSLMODE}"
     )
 
 

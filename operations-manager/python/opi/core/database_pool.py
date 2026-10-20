@@ -45,6 +45,8 @@ class DatabasePool:
         min_size: int = 0,
         max_size: int = 10,
         max_inactive_connection_lifetime: float = 300.0,
+        *,
+        sslmode: str,
     ) -> None:
         """Initialize the database pool configuration.
 
@@ -56,6 +58,9 @@ class DatabasePool:
             port: Database port
             min_size: Minimum pool size
             max_size: Maximum pool size
+            sslmode: libpq sslmode for every connection in the pool. Verplicht en zonder
+                default, zodat een nieuwe aanroeper settings.DATABASE_SSLMODE niet
+                stilzwijgend kan overslaan.
         """
         self.host = host
         self.user = user
@@ -65,6 +70,7 @@ class DatabasePool:
         self.min_size = min_size
         self.max_size = max_size
         self.max_inactive_connection_lifetime = max_inactive_connection_lifetime
+        self.sslmode = sslmode
         self.pool: asyncpg.Pool | None = None
         self._initialized = False
         # Connection tracking for leak detection
@@ -87,6 +93,7 @@ class DatabasePool:
                 min_size=self.min_size,
                 max_size=self.max_size,
                 max_inactive_connection_lifetime=self.max_inactive_connection_lifetime,
+                ssl=self.sslmode,
             )
             self._initialized = True
             logger.info(f"Database pool initialized (min={self.min_size}, max={self.max_size}) for {self.host}")
