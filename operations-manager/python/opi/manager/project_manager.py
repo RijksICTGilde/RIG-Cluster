@@ -162,6 +162,11 @@ from opi.utils.env_vars import (
     substitute_known_variables,
     substitute_variables,
 )
+from opi.utils.fs_paths import (
+    reject_escaping_symlinks,
+    safe_join,
+    single_segment,
+)
 
 # Environment variables are now generated using service definitions
 from opi.utils.naming import (
@@ -516,6 +521,20 @@ def _looks_like_render_failure(detail: str | None) -> bool:
         return False
     lowered = detail.lower()
     return any(marker in lowered for marker in _RENDER_FAILURE_MARKERS)
+
+
+def _clear_destination(path: str) -> None:
+    """Haal `path` weg zodat een kopie die symlinks behoudt er niet op stuit.
+
+    `os.symlink` en een geneste symlink in `copytree` weigeren op een bestaande
+    bestemming, en bij een tweede uitrol staat de vorige ronde er nog.
+    """
+    if not os.path.lexists(path):
+        return
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path)
+    else:
+        os.remove(path)
 
 
 @dataclass
@@ -4647,20 +4666,22 @@ class ProjectManager:
             await git_connector.clone()
 
             # Get the chart source path
-            source_chart_path = os.path.join(temp_dir, chart_path)
+            source_chart_path = safe_join(temp_dir, chart_path)
 
             if not os.path.exists(source_chart_path):
                 raise FileNotFoundError(f"Chart path not found: {chart_path} in {git_url}")
+
+            reject_escaping_symlinks(source_chart_path)
 
             # Create charts directory in target
             charts_dir = os.path.join(target_dir, "charts")
             os.makedirs(charts_dir, exist_ok=True)
 
             # Copy chart to target directory
-            dest_chart_path = os.path.join(charts_dir, chart_name)
+            dest_chart_path = safe_join(charts_dir, single_segment(chart_name, "helm-charts[].name"))
             if os.path.exists(dest_chart_path):
                 await asyncio.to_thread(shutil.rmtree, dest_chart_path)
-            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path)
+            await asyncio.to_thread(shutil.copytree, source_chart_path, dest_chart_path, symlinks=True)
 
             logger.info(f"Copied helm chart '{chart_name}' to {dest_chart_path}")
 
@@ -4679,13 +4700,14 @@ class ProjectManager:
                     # Handle local file:// dependencies
                     if dep_repo.startswith("file://"):
                         rel_path = dep_repo.replace("file://", "")
-                        dep_source = os.path.join(temp_dir, chart_path, rel_path)
+                        dep_source = safe_join(temp_dir, chart_path, rel_path)
 
                         if os.path.exists(dep_source):
-                            dep_dest = os.path.join(charts_dir, dep_name)
+                            reject_escaping_symlinks(dep_source)
+                            dep_dest = safe_join(charts_dir, single_segment(dep_name, "Chart.yaml dependencies[].name"))
                             if os.path.exists(dep_dest):
                                 await asyncio.to_thread(shutil.rmtree, dep_dest)
-                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest)
+                            await asyncio.to_thread(shutil.copytree, dep_source, dep_dest, symlinks=True)
 
                             # Update the dependency path in Chart.yaml
                             dep["repository"] = f"file://../{dep_name}"
@@ -5017,15 +5039,17 @@ class ProjectManager:
             await git_connector.clone()
 
             # Determine source path within the cloned repo
-            full_source_path = os.path.join(temp_dir, source_path) if source_path else temp_dir
+            full_source_path = safe_join(temp_dir, source_path) if source_path else temp_dir
 
             if not os.path.exists(full_source_path):
                 await git_connector.close()
                 raise ValueError(f"Helmfile path '{source_path}' not found in repository for '{helmfile_name}'")
 
+            reject_escaping_symlinks(full_source_path)
+
             # If entry is specified, verify it exists within the source path
             if entry_path:
-                full_entry_path = os.path.join(full_source_path, entry_path)
+                full_entry_path = safe_join(full_source_path, entry_path)
                 if not os.path.exists(full_entry_path):
                     await git_connector.close()
                     raise ValueError(
@@ -5044,10 +5068,11 @@ class ProjectManager:
                     continue
                 src_item = os.path.join(full_source_path, item)
                 dst_item = os.path.join(dest_helmfile_path, item)
-                if os.path.isdir(src_item):
-                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, dirs_exist_ok=True)
+                await asyncio.to_thread(_clear_destination, dst_item)
+                if os.path.isdir(src_item) and not os.path.islink(src_item):
+                    await asyncio.to_thread(shutil.copytree, src_item, dst_item, symlinks=True)
                 else:
-                    await asyncio.to_thread(shutil.copy2, src_item, dst_item)
+                    await asyncio.to_thread(shutil.copy2, src_item, dst_item, follow_symlinks=False)
 
             logger.info(f"Copied helmfile source from {full_source_path} to {dest_helmfile_path}")
             if entry_path:

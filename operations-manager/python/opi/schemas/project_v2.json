@@ -86,6 +86,12 @@
       }
     },
 
+    "relative-path": {
+      "type": "string",
+      "description": "Een relatief pad binnen een repository, zonder '..', zonder voorloopstreep en zonder backslash. Leeg of '.' betekent de repository zelf.",
+      "pattern": "^(?:(?:[^./\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])(?:[^.\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])*)?\\.?\\z"
+    },
+
     "repository": {
       "type": "object",
       "required": ["name", "url"],
@@ -96,11 +102,7 @@
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
         "branch": { "type": "string" },
-        "path": {
-          "type": "string",
-          "description": "Een relatief pad binnen de repository, zonder '..', zonder voorloopstreep en zonder backslash. Gebruik '.' voor de repository zelf.",
-          "pattern": "^(?:(?:[^./\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])(?:[^.\\\\\\u0000-\\u001f]|\\.[^.\\\\\\u0000-\\u001f])*)?\\.?\\z"
-        },
+        "path": { "$ref": "#/$defs/relative-path" },
         "project_name": { "type": "string" }
       }
     },
@@ -499,11 +501,11 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "source-type": { "type": "string" },
-        "git-url": { "type": "string" },
+        "git-url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "git-ref": { "type": "string" },
-        "chart-path": { "type": "string" },
+        "chart-path": { "$ref": "#/$defs/relative-path" },
         "helm-values": {},
         "services": {
           "type": "array",
@@ -517,10 +519,11 @@
       "required": ["name"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z", "maxLength": 63 },
         "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
         "ref": { "type": "string" },
-        "path": { "type": "string" },
+        "path": { "$ref": "#/$defs/relative-path" },
+        "entry": { "$ref": "#/$defs/relative-path" },
         "files": {
           "type": "object",
           "additionalProperties": { "type": "string" }
