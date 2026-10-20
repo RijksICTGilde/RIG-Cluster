@@ -50,7 +50,13 @@ def _manager[M: BaseBackupManager](cls: type[M]) -> M:
 
 
 def _applied_pod(manager: BaseBackupManager) -> dict[str, Any]:
-    return yaml.safe_load(manager.kubectl.run_command.await_args.kwargs["stdin_input"])
+    """Het Pod-document uit de toegepaste manifesten; het credentials-Secret gaat eerst."""
+    docs = [
+        yaml.safe_load(call.kwargs["stdin_input"])
+        for call in manager.kubectl.run_command.await_args_list
+        if call.kwargs.get("stdin_input")
+    ]
+    return next(doc for doc in docs if doc["kind"] == "Pod")
 
 
 type PodCreator = Callable[[Any, str | None], Awaitable[None]]

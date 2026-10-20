@@ -28,7 +28,7 @@ flowchart TB
         KEY["AGE/SOPS-sleutel van de namespace<br/>SHA256 leidt hier het Kopia-wachtwoord uit af"]
     end
 
-    S3[("S3-bestemming<br/>bucket per project, prefix cluster/namespace<br/>= één Kopia repository per project")]
+    S3[("S3-bestemming<br/>bucket per project, eigen S3-account per bucket<br/>prefix cluster/namespace = één Kopia repository per project")]
 
     SCHED --> WORK
     API --> WORK
@@ -72,7 +72,8 @@ Restore loopt dezelfde weg terug. Voor een RIG-project schrijft een restore een 
 - Het Kopia-repositorywachtwoord is `SHA256("kopia-backup-<namespace>-<agekey>")`, base64, eerste 32 tekens. Er staat dus nergens een aparte backupsleutel die we moeten beheren, en er is geen lijst met wachtwoorden die kan lekken.
 - Gevolg: één repository per project, met een eigen sleutel. Project A kan de backups van project B niet lezen, ook niet als het bij de S3-bucket zou kunnen.
 - Gevolg twee, en dat is de belangrijke: **raak je de AGE-sleutel van een namespace kwijt, dan is die backup onleesbaar.** De sleutels leven in het cluster en in `security/`. Dat is een tweede reden om niet alles op één plek te hebben.
-- De S3-credentials zelf staan versleuteld in de OPI-secrets (SOPS).
+- De S3-credentials van de bestemming staan versleuteld in de OPI-secrets (SOPS). Dat is het beheeraccount en dat blijft bij OPI.
+- Een backup- of restorepod krijgt niet dat beheeraccount, maar een eigen account `backup-<bucket>` dat alleen bij de bucket van zijn eigen project mag. Het geheim is `HMAC-SHA256(beheergeheim, "backup-bucket-account-<bucket>")`, dus ook daarvan is er geen lijst die kan lekken.
 
 ## Retention en verwijderen
 

@@ -43,9 +43,8 @@ spec:
             TLS_FLAG="--disable-tls"
           fi
 
-          # Configure mc alias for source MinIO
-          echo "Configuring MinIO client for source..."
-          mc alias set source "${SOURCE_MINIO_ENDPOINT}" "${SOURCE_ACCESS_KEY}" "${SOURCE_SECRET_KEY}" --api S3v4
+          # mc reads the `source` alias, keys included, from MC_HOST_source. `mc alias set`
+          # would put those keys in argv.
 
           # Verify source bucket exists
           echo "Verifying source bucket exists..."
@@ -58,25 +57,19 @@ spec:
           # via the connect-time override flags. Manual backups connect with a
           # `-manual` suffix so scheduled retention never touches them.
           KOPIA_IDENTITY_ARGS="--override-hostname={{ kopia_hostname }} --override-username=opi-backup"
-          KOPIA_S3_ARGS="--bucket=${S3_BUCKET} --prefix=${BACKUP_PREFIX}/ --endpoint=${S3_ENDPOINT} --access-key=${S3_ACCESS_KEY} --secret-access-key=${S3_SECRET_KEY} --password=${KOPIA_PASSWORD} ${TLS_FLAG}"
+          # Kopia takes the repository password from KOPIA_PASSWORD and the S3 keys from
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, so they stay out of argv.
+          KOPIA_S3_ARGS="--bucket=${S3_BUCKET} --prefix=${BACKUP_PREFIX}/ --endpoint=${S3_ENDPOINT} ${TLS_FLAG}"
 
           echo "Connecting to Kopia repository as {{ kopia_source }}..."
           if kopia repository connect s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS} 2>/dev/null; then
             echo "Connected to existing repository"
-          elif kopia repository create s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS} 2>/dev/null; then
+          elif kopia repository create s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS}; then
             echo "Created new repository"
           else
-            echo "WARNING: Normal create failed (stale data?), clearing prefix and reinitializing..."
-            if [ "${S3_DISABLE_TLS}" = "true" ]; then
-              MC_ENDPOINT="http://${S3_ENDPOINT}"
-            else
-              MC_ENDPOINT="https://${S3_ENDPOINT}"
-            fi
-            export MC_CONFIG_DIR=/tmp/mc
-            mc alias set backup-s3 "${MC_ENDPOINT}" "${S3_ACCESS_KEY}" "${S3_SECRET_KEY}" --api S3v4
-            mc rm --recursive --force backup-s3/${S3_BUCKET}/${BACKUP_PREFIX}/ 2>/dev/null || true
-            kopia repository create s3 ${KOPIA_S3_ARGS} ${KOPIA_IDENTITY_ARGS}
-            echo "Created new repository (after clearing stale data)"
+            # Repository exists but cannot be opened. Do not empty the prefix: a pod should never remove backup data.
+            echo "ERROR: the Kopia repository at ${S3_BUCKET}/${BACKUP_PREFIX} exists but cannot be opened, and creating one failed. No backup data was removed."
+            exit {{ repository_unusable_exit_code }}
           fi
 
           echo "Repository connected successfully"
@@ -146,24 +139,34 @@ spec:
           value: "{{ source_minio_endpoint }}"
         - name: SOURCE_BUCKET_NAME
           value: "{{ source_bucket_name }}"
-        - name: SOURCE_ACCESS_KEY
-          value: "{{ source_access_key }}"
-        - name: SOURCE_SECRET_KEY
-          value: "{{ source_secret_key }}"
+        - name: MC_HOST_source
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: MC_HOST_source
         - name: S3_ENDPOINT
           value: "{{ s3_endpoint }}"
         - name: S3_BUCKET
           value: "{{ s3_bucket }}"
-        - name: S3_ACCESS_KEY
-          value: "{{ s3_access_key }}"
-        - name: S3_SECRET_KEY
-          value: "{{ s3_secret_key }}"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: AWS_SECRET_ACCESS_KEY
         - name: S3_DISABLE_TLS
           value: "{{ s3_disable_tls | lower }}"
         - name: BACKUP_PREFIX
           value: "{{ backup_prefix }}"
         - name: KOPIA_PASSWORD
-          value: "{{ kopia_password }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: KOPIA_PASSWORD
         # Use /tmp for Kopia paths (HOME is not writable on OpenShift)
         - name: KOPIA_CONFIG_PATH
           value: "/tmp/kopia-repository.config"

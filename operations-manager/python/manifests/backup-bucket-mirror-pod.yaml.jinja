@@ -34,10 +34,8 @@ spec:
           echo "Backup Path: ${BACKUP_PATH}"
           echo "Namespace: {{ namespace }}"
 
-          # Configure mc aliases
-          echo "Configuring MinIO client aliases..."
-          mc alias set source "${SOURCE_MINIO_ENDPOINT}" "${SOURCE_ACCESS_KEY}" "${SOURCE_SECRET_KEY}" --api S3v4
-          mc alias set backup "${BACKUP_MINIO_ENDPOINT}" "${BACKUP_ACCESS_KEY}" "${BACKUP_SECRET_KEY}" --api S3v4
+          # mc reads the `source` and `backup` aliases, keys included, from MC_HOST_source
+          # and MC_HOST_backup. `mc alias set` would put those keys in argv.
 
           # Verify source bucket exists
           echo "Verifying source bucket exists..."
@@ -96,18 +94,20 @@ spec:
           value: "{{ source_minio_endpoint }}"
         - name: SOURCE_BUCKET_NAME
           value: "{{ source_bucket_name }}"
-        - name: SOURCE_ACCESS_KEY
-          value: "{{ source_access_key }}"
-        - name: SOURCE_SECRET_KEY
-          value: "{{ source_secret_key }}"
+        - name: MC_HOST_source
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: MC_HOST_source
         - name: BACKUP_MINIO_ENDPOINT
           value: "{{ backup_minio_endpoint }}"
         - name: BACKUP_BUCKET
           value: "{{ backup_bucket }}"
-        - name: BACKUP_ACCESS_KEY
-          value: "{{ backup_access_key }}"
-        - name: BACKUP_SECRET_KEY
-          value: "{{ backup_secret_key }}"
+        - name: MC_HOST_backup
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: MC_HOST_backup
         - name: BACKUP_PATH
           value: "{{ backup_path }}"
       resources:

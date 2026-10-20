@@ -79,6 +79,58 @@ The backup system provides:
 Elke backup- en restorepod draait op de serviceaccount van het project (`{project}-sa`),
 niet op `default`. Waarom staat in `image-registries.md`, "De eigen serviceaccount per project".
 
+### De sleutels van een pod staan in een Secret
+
+Back-up- en restorepods hebben S3-sleutels, het Kopia-wachtwoord en soms database- of MinIO-wachtwoorden nodig. Die gaan niet in de pod-spec (leesbaar voor wie pods ziet, en argv staat in `/proc/<pid>/cmdline`), maar in een Secret `<pod_name>-credentials`.
+
+De manager maakt het Secret vóór de pod, verwijdert het met de pod, en zet een ownerReference erop zodat OPI-herstart halverwege geen sleutels achterlaat.
+
+De pod leest de sleutels onder de namen die het gereedschap zelf uit de omgeving haalt, dus
+geen enkele sleutel komt op een commandoregel terecht:
+
+| Variabele | Gelezen door | Pods |
+|---|---|---|
+| `KOPIA_PASSWORD` | `kopia` | alle pods met een Kopia-repository |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` | `kopia` (S3-bestemming) | idem |
+| `DB_PASSWORD`, `TARGET_DB_PASSWORD` | `psql`, `pg_dump`, `pg_restore` via `PGPASSWORD` | database-back-up en -restore |
+| `MC_HOST_source`, `MC_HOST_backup`, `MC_HOST_target` | `mc` (alias inclusief sleutels, percent-encoded) | bucket-back-up, -mirror en -restore |
+
+`mc_host_url` in `opi/manager/backup/base.py` bouwt de `MC_HOST_`-URL; `mc alias set` komt
+in geen enkel sjabloon meer voor. Vastgelegd in `tests/test_backup_pod_credentials.py`,
+inclusief een veegtoets over elk `manifests/*-pod.yaml.jinja`.
+
+### Elke pod krijgt het S3-account van zijn eigen bucket
+
+De bestemming kent in `per-project`-modus een bucket per project. Bij die bucket hoort een
+eigen S3-account `backup-<bucket>`, met een policy op alleen `arn:aws:s3:::<bucket>` en
+`arn:aws:s3:::<bucket>/*` (lezen, schrijven, verwijderen, lijsten; Kopia heeft verwijderrecht
+nodig voor `kopia snapshot expire --delete`). Dat account gaat in het credentials-Secret van
+de pod, zodat een sleutel in een projectnamespace alleen bij de back-ups van dat project kan.
+
+Het geheim van zo'n account wordt afgeleid, niet bewaard:
+
+```
+HMAC-SHA256(BACKUP_S3_SECRET_KEY, "backup-bucket-account-<bucket>") -> base64url, 40 tekens
+```
+
+OPI hoeft het dus nergens op te slaan en komt na een herstart op dezelfde waarde uit. Wijzig
+je `BACKUP_S3_SECRET_KEY`, dan wijzigen alle accountgeheimen mee; `mc admin user add` zet het
+bij de volgende back-up- of restorerun opnieuw.
+
+`_ensure_backup_bucket_exists` zet bucket en account in één keer, en elke back-up- en
+restoreflow roept dat aan voordat er een pod komt. Het beheeraccount
+(`BACKUP_S3_ACCESS_KEY`) blijft bij OPI: voor het aanmaken van bucket en account, de
+retentiesweep en het opruimen bij projectverwijdering. In `single`-modus is er geen bucket
+per project, dus krijgen de pods het beheeraccount, met een waarschuwing in het log.
+Vastgelegd in `tests/test_backup_bucket_account.py`, inclusief een guard die afdwingt dat
+alleen de OPI-functies de beheersleutel nog lezen.
+
+### Een back-uppod ruimt niets op
+
+Faalt `kopia repository connect` en daarna ook `create`, dan stopt de pod met `BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE` en de manager maakt daar een taakfout van. Vroeger leegde de pod de prefix en begon opnieuw: op elke fout, ook bij netwerk of wachtwoord, dus gezonde snapshots gingen verloren. Een back-uppod verwijdert geen back-updata meer.
+
+Uitzondering: `restore-bucket-pod` leegt op verzoek (`clear_target`) de doelbucket van een restore, dat is bedoeld.
+
 ## Quick Start
 
 ### 1. Configure Backup in project.yaml
@@ -444,7 +496,7 @@ text to decide whether retrying makes sense:
 | Success | `200` | field absent |
 
 **How that is decided — never on the log text.** Both restore pods probe their destination
-before touching any data (`psql -c "SELECT 1"`, `mc alias set`). That gate exits with the
+before touching any data (`psql -c "SELECT 1"`, `mc ls target`). That gate exits with the
 dedicated `RESTORE_TARGET_UNUSABLE_EXIT_CODE` (`opi/core/backup_constants.py`), and the
 manager reads the exit code from the pod status into `RestoreResult.target_unusable`.
 Matching on `could not translate host name` would break the moment PostgreSQL or mc rewords
@@ -491,8 +543,8 @@ components:
 |----------|-------------|---------|
 | `BACKUP_S3_ENDPOINT` | S3 endpoint URL | `minio.rig-backup-destination.svc:9000` |
 | `BACKUP_S3_BUCKET` | S3 bucket name (used when project context unavailable) | `rig-backups` |
-| `BACKUP_S3_ACCESS_KEY` | S3 access key | - |
-| `BACKUP_S3_SECRET_KEY` | S3 secret key | - |
+| `BACKUP_S3_ACCESS_KEY` | S3 access key van het beheeraccount, alleen voor OPI zelf | - |
+| `BACKUP_S3_SECRET_KEY` | S3 secret key van dat account, ook de basis voor de accountgeheimen per bucket | - |
 | `BACKUP_SNAPSHOT_CLASS` | VolumeSnapshotClass name | `ocs-storagecluster-rbdplugin-snapclass` |
 | `BACKUP_TIMEOUT_SECONDS` | Max backup duration | `3600` |
 | `BACKUP_RETENTION_KEEP_LATEST` | Keep N latest snapshots per source | `30` |
@@ -519,7 +571,7 @@ task sandbox:setup
 This creates:
 - `rig-backup-destination` namespace
 - MinIO deployment with S3-compatible API
-- Default credentials: `backup-admin` / `backup-secret-key-local`
+- Beheeraccount: `backup-admin` / `backup-secret-key-local` (OPI gebruikt dit om bucket en bucketaccount aan te maken; de pods krijgen het niet)
 
 ## Generational Versioning System
 
@@ -952,6 +1004,8 @@ Project SOPS Age Key → SHA256 derivation → Kopia Repository Password
 - S3 credentials leaked? Data is encrypted, unusable without project keys
 - Project A cannot read Project B's backups (different encryption keys)
 - Backup key is derived, not stored separately
+- A pod's S3 account reaches only its own project's bucket; the destination's admin account
+  stays with OPI and never enters a project namespace
 
 ### Disaster Recovery
 
