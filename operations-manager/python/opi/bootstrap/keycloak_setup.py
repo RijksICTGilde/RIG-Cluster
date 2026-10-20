@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from keycloak.exceptions import KeycloakError
 from ruamel.yaml import YAML
 
 from opi.connectors.keycloak import create_keycloak_connector
@@ -29,6 +30,9 @@ from opi.utils.naming import extract_domain_from_url
 logger = logging.getLogger(__name__)
 
 OPERATIONS_REALM_NAME = "operations-manager"
+
+#: Keycloak drukt eventsExpiration in seconden uit, de instelling in dagen.
+SECONDS_PER_DAY = 86400
 
 
 class KeycloakSetup:
@@ -64,6 +68,10 @@ class KeycloakSetup:
             # Step 0b: a human master admin that already has OTP, so a fresh cluster is
             # not left with one shared password-only account.
             await self.ensure_otp_master_admin()
+
+            # Step 0c: the master realm's own security stand. Keycloak creates that realm
+            # itself, so it never passes create_realm and gets nothing from a blueprint.
+            await self.ensure_master_realm_hardening()
             self.kubectl = KubectlConnector()
 
             # Build context from settings
@@ -160,6 +168,23 @@ class KeycloakSetup:
         )
         await keycloak.assign_realm_roles_to_user("master", user["id"], ["admin"])
         logger.info(f"Master admin '{username}' created with OTP; seed is in the cluster secret")
+
+    async def ensure_master_realm_hardening(self) -> None:
+        """Zet lockout, wachtwoordbeleid en events op de master-realm.
+
+        Zie features/opi-keycloak-service-account.md: De master-realm maakt Keycloak zelf,
+        dus hij krijgt deze bescherming niet via create_realm. Faalt dit, gaat de bootstrap door.
+        """
+        keycloak = self.keycloak or await create_keycloak_connector()
+        yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / "master-realm.yaml"
+        context = {
+            "realm_name": "master",
+            "events_expiration_seconds": settings.KEYCLOAK_MASTER_EVENTS_EXPIRATION_DAYS * SECONDS_PER_DAY,
+        }
+        try:
+            await KeycloakYamlHandler(keycloak).ensure_realm_hardening(yaml_path, context)
+        except KeycloakError as e:
+            logger.error(f"Kon de beveiligingsstand van de master-realm niet zetten: {e}")
 
     async def ensure_master_admin_service_account(self) -> None:
         """First-boot self-bootstrap of OPI's client-credentials service account.
