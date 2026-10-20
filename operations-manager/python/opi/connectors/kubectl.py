@@ -259,55 +259,35 @@ class KubectlConnector:
         if env:
             cmd_env.update(env)
 
-        # Create cmd_str for logging regardless of execution path
-        cmd_args_str = " ".join([f'"{arg}"' if " " in arg else arg for arg in args])
-        cmd_str = f"kubectl {cmd_args_str}"
         # Values-free "operation X on project Y" summary for log lines.
         safe_cmd = _summarize_kubectl_command(args)
 
         from opi.core.metrics import track_subprocess_memory
 
-        if stdin_input:
-            # Use shell execution with EOF markers for stdin input to handle spaces/newlines properly
-            shell_cmd = f"{cmd_str} <<'EOF'\n{stdin_input}\nEOF"
+        logger.debug(f"Running: {safe_cmd}")
 
-            logger.debug(f"Running (stdin): {safe_cmd}")
+        # Input goes through a pipe, never through a shell: a manifest can hold a secret
+        # (BIO2 8.28) and a line reading exactly "EOF" closed the old heredoc.
+        process = await asyncio.create_subprocess_exec(
+            "kubectl",
+            *args,
+            stdin=asyncio.subprocess.PIPE if stdin_input is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=cmd_env,
+        )
 
-            # Create shell process
-            process = await asyncio.create_subprocess_shell(
-                shell_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
-            )
-
-            # Wait for command to complete with timeout
-            try:
-                async with track_subprocess_memory("kubectl"):
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-            except TimeoutError:
-                logger.error(f"Timed out after {timeout}s: {safe_cmd}")
-                process.kill()
-                await process.wait()
-                return "", f"Command timed out after {timeout}s", 1
-        else:
-            # Use regular exec for commands without stdin
-            cmd = ["kubectl"]
-            cmd.extend(args)
-
-            logger.debug(f"Running: {safe_cmd}")
-
-            # Create process
-            process = await asyncio.create_subprocess_exec(
-                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=cmd_env
-            )
-
-            # Wait for command to complete with timeout
-            try:
-                async with track_subprocess_memory("kubectl"):
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-            except TimeoutError:
-                logger.error(f"Timed out after {timeout}s: {safe_cmd}")
-                process.kill()
-                await process.wait()
-                return "", f"Command timed out after {timeout}s", 1
+        try:
+            async with track_subprocess_memory("kubectl"):
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=stdin_input.encode("utf-8") if stdin_input is not None else None),
+                    timeout=timeout,
+                )
+        except TimeoutError:
+            logger.error(f"Timed out after {timeout}s: {safe_cmd}")
+            process.kill()
+            await process.wait()
+            return "", f"Command timed out after {timeout}s", 1
 
         stdout_str = stdout.decode("utf-8").strip()
         stderr_str = stderr.decode("utf-8").strip()

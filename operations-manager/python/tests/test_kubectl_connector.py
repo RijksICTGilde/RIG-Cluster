@@ -2,6 +2,7 @@
 Tests for the kubectl connector.
 """
 
+import asyncio
 import os
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -144,3 +145,109 @@ def test_template_manifest_renders_generic_secret(connector):
 
     assert 'username: "zad"' in result
     assert 'password: "p\\\\a\\"s"' in result
+
+
+FAKE_KUBECTL = """#!/usr/bin/env python3
+import os
+import pathlib
+import sys
+
+# Own command line plus that of every ancestor: an intermediate /bin/sh is what carries the
+# input in its argv, so dumping only this process would miss exactly the leak under test.
+cmdlines = []
+pid = os.getpid()
+while pid > 1:
+    cmdlines.append(pathlib.Path(f"/proc/{pid}/cmdline").read_bytes())
+    pid = int(pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+pathlib.Path(os.environ["KUBECTL_ARGV_DUMP"]).write_bytes(b"\\n".join(cmdlines))
+pathlib.Path(os.environ["KUBECTL_STDIN_DUMP"]).write_bytes(sys.stdin.buffer.read())
+"""
+
+
+@pytest.fixture
+def fake_kubectl(connector, tmp_path):
+    """A real ``kubectl`` on PATH that dumps its argv and its stdin, so a test can assert
+    what the process table showed and what arrived through the pipe."""
+    script = tmp_path / "kubectl"
+    script.write_text(FAKE_KUBECTL)
+    script.chmod(0o755)
+    connector.env = connector.env | {"PATH": f"{tmp_path}:{os.environ['PATH']}"}
+    KubectlConnector.isConnected = True
+
+    argv_dump = tmp_path / "argv"
+    stdin_dump = tmp_path / "stdin"
+    env = {"KUBECTL_ARGV_DUMP": str(argv_dump), "KUBECTL_STDIN_DUMP": str(stdin_dump)}
+    return env, argv_dump, stdin_dump
+
+
+async def test_stdin_input_travels_through_a_pipe_and_never_through_the_arguments(connector):
+    """The old path wrapped the input in a heredoc for ``create_subprocess_shell``, which put
+    the whole manifest (project keys, client secrets) in the argv of ``/bin/sh -c``."""
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"applied", b""))
+    process.returncode = 0
+    KubectlConnector.isConnected = True
+
+    with (
+        patch(
+            "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)
+        ) as exec_mock,
+        patch("opi.connectors.kubectl.asyncio.create_subprocess_shell") as shell_mock,
+    ):
+        await connector._run_kubectl_command(["apply", "-f", "-"], stdin_input="kind: Secret\n")
+
+    shell_mock.assert_not_called()
+    assert exec_mock.call_args.args == ("kubectl", "apply", "-f", "-")
+    assert exec_mock.call_args.kwargs["stdin"] is asyncio.subprocess.PIPE
+    process.communicate.assert_awaited_once_with(input=b"kind: Secret\n")
+
+
+async def test_a_command_without_input_opens_no_stdin_pipe(connector):
+    process = MagicMock()
+    process.communicate = AsyncMock(return_value=(b"", b""))
+    process.returncode = 0
+    KubectlConnector.isConnected = True
+
+    with patch(
+        "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)
+    ) as exec_mock:
+        await connector._run_kubectl_command(["get", "pods"])
+
+    assert exec_mock.call_args.kwargs["stdin"] is None
+    process.communicate.assert_awaited_once_with(input=None)
+
+
+async def test_a_manifest_containing_a_line_eof_is_data_and_not_a_command(connector, fake_kubectl, tmp_path):
+    """Under the heredoc a line reading exactly ``EOF`` ended the input and the shell ran the
+    rest. The templates quote their values today, but the connector may not depend on that."""
+    env, _argv_dump, stdin_dump = fake_kubectl
+    sentinel = tmp_path / "pwned"
+    manifest = f"kind: ConfigMap\nEOF\ntouch {sentinel}\n"
+
+    stdout, stderr, code = await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=manifest)
+
+    assert (stdout, stderr, code) == ("", "", 0)
+    assert stdin_dump.read_text() == manifest
+    assert not sentinel.exists(), "the input after the EOF line was executed by a shell"
+
+
+async def test_no_secret_from_the_input_appears_in_the_argv_of_the_process(connector, fake_kubectl):
+    """Measured on the old path: the marker was visible in ``/proc/<pid>/cmdline`` of
+    ``/bin/sh`` for as long as the apply ran."""
+    env, argv_dump, _stdin_dump = fake_kubectl
+    marker = "AGE-SECRET-KEY-1KANARIE"
+
+    await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=f"kind: Secret\ndata:\n  key: {marker}\n")
+
+    assert marker not in argv_dump.read_text()
+
+
+async def test_an_input_of_several_megabytes_is_no_longer_bounded_by_the_argument_length(connector, fake_kubectl):
+    """As a shell argument this hit the kernel limit (``E2BIG``); through a pipe it does not."""
+    env, _argv_dump, stdin_dump = fake_kubectl
+    manifest = "kind: ConfigMap\ndata:\n  blob: " + "x" * (4 * 1024 * 1024) + "\n"
+
+    _stdout, _stderr, code = await connector.run_command(["apply", "-f", "-"], env=env, stdin_input=manifest)
+
+    assert code == 0
+    assert stdin_dump.read_text() == manifest
