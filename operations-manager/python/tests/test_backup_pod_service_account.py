@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
+from opi.core.config import settings
 from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.manager.backup.bucket_backup import BucketBackupManager
@@ -160,6 +161,20 @@ async def test_without_a_project_no_pod_is_applied(kind: str) -> None:
         await create(manager, None)
 
     manager.kubectl.run_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", POD_CREATORS)
+async def test_the_applied_pod_takes_its_image_from_the_setting(kind: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hard in het sjabloon kon een cluster de image niet zetten, en de sandbox moet dat."""
+    monkeypatch.setattr(settings, "BACKUP_IMAGE", "ghcr.io/minbzk/base-images/rig-backup:toets")
+    cls, create = POD_CREATORS[kind]
+    manager = _manager(cls)
+
+    await create(manager, PROJECT)
+
+    containers = _applied_pod(manager)["spec"]["containers"]
+    assert [container["image"] for container in containers] == ["ghcr.io/minbzk/base-images/rig-backup:toets"]
 
 
 @pytest.mark.asyncio

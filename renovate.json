@@ -208,6 +208,7 @@
         "ghcr.io/minbzk/base-images/argocd-rig",
         "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig",
         "ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops",
+        "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops",
         "ghcr.io/minbzk/base-images/zad-waker",
         "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/zad-waker"
       ],

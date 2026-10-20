@@ -46,6 +46,10 @@ jobs:
     if: inputs.image == 'rig-backup' || inputs.image == 'all'
     runs-on: ubuntu-latest
     env:
+      # Deze naam wordt niet gepind: wat er draait komt van
+      # ghcr.io/minbzk/base-images/rig-backup, waar `task publish-*` naartoe
+      # pusht. GITHUB_TOKEN mag alleen in de eigen org pushen, dus deze job kan die naam
+      # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-backup
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -80,6 +84,10 @@ jobs:
     if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all'
     runs-on: ubuntu-latest
     env:
+      # Deze naam wordt niet gepind: wat er draait komt van
+      # ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops, waar `task publish-*` naartoe
+      # pusht. GITHUB_TOKEN mag alleen in de eigen org pushen, dus deze job kan die naam
+      # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-cmp-argo-kustomize-sops
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

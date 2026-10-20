@@ -77,6 +77,7 @@ _SENTINELS = {
 
 _RENDER_CTX: dict[str, Any] = {
     **_SENTINELS,
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "test-pod",
     "namespace": "rig-test",
     "service_account_name": "wies-sa",

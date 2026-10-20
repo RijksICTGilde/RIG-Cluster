@@ -101,12 +101,72 @@ via de publicatie lopen. Een oudere schone tag pinnen blijft gewoon werken.
 Committen en deployen zoals hierboven. Er wordt niets herbouwd: je wijst naar een image dat al in de
 registry staat, bit voor bit hetzelfde als wat er eerder draaide.
 
+## De sidecar van ArgoCD en de back-upimage
+
+Twee andere eigen images volgen sinds RC-348 dezelfde weg, met één verschil: ze dragen ook
+de **digest**. Een tag in de registry is te overschrijven, een digest niet, en voor de
+container die bij het renderen de SOPS-sleutel gebruikt is dat de tweede verdedigingslaag
+(BIO2 8.19 en 8.09).
+
+| Image | Publiceren | Pin in git |
+|---|---|---|
+| `rig-cmp-argo-kustomize-sops` | `task publish-cmp-kustomize-sops` | `task pin-cmp-image IMAGE_TAG=...` |
+| `rig-backup` | `task publish-backup-image` | de standaard van `BACKUP_IMAGE` in `opi/core/config.py` |
+
+Beide publicatietaken **weigeren** een `-dirty`-tag, waar `publish-operations-manager`
+alleen waarschuwt: deze tags worden meteen in git gepind.
+
+Voor deze twee images is nog nooit een CalVer-tag gepubliceerd: in de registry staat alleen
+`latest`. De pin in git is daarom **alleen de digest** van de image die `latest` op 18 oktober
+2026 aanwees. Dat is al onveranderlijk, en de eerste `task publish-*` zet er de CalVer-tag
+voor: de pin wordt dan `<naam>:<tag>@<digest>`, en de tag maakt zichtbaar uit welke commit de
+image komt.
+
+### De sidecar staat drie keer in git
+
+`pin-cmp-image` zet alle drie, en elk bestand houdt het registrypad dat het al had:
+
+| Bestand | Wat het doet |
+|---|---|
+| `components/sops-plugin/kustomization.yaml` | de sidecar zelf, via `ghcr.io` (wat de sandbox pullt) |
+| `overlays/odcn-production/kustomization.yaml` | de image-patch die op productie telt, via de rcr-spiegel |
+| `overlays/odcn-production/argocd-deployment.yaml` | de ArgoCD-CR; de component vervangt `/spec/repo`, dus deze waarde bereikt het cluster niet |
+
+Het rcr-pad staat in git omdat de ODCN-admission images daarheen herschrijft. Staat `ghcr.io`
+in git, dan blijft ArgoCD OutOfSync op precies die herschrijving.
+
+De digest komt uit de registry en niet uit een lokale bouw: `_pin-image-digest` leest hem met
+`docker buildx imagetools inspect`. Diezelfde stap zet de digest ook bij
+`pin-operations-manager-image`, zodat er één lezer is.
+
+### De back-upimage komt uit de config
+
+De zeven back-up- en restoresjablonen zetten `{{ backup_image }}` en niet meer een
+registrypad. De waarde komt uit `BACKUP_IMAGE`; de standaard is de gepinde digest, en de
+sandbox zet hem via zijn configmap op `:latest` omdat `task build-backup-image` de image daar
+lokaal bouwt en onder die tag in kind laadt.
+
+### Eén naam per image
+
+De Taskfile publiceert naar `ghcr.io/minbzk/base-images/...`, `docker-images.yml` naar
+`ghcr.io/rijksictgilde/zad/...`. Gepind wordt de eerste: daar staan deze twee images ook
+werkelijk (gemeten op 18 oktober 2026 zijn de rijksictgilde-paden voor `rig-backup` en
+`rig-cmp-argo-kustomize-sops` leeg). De workflow houdt zijn naam, want `GITHUB_TOKEN` mag
+alleen in de eigen org pushen; bij die regel staat dat zijn naam niet gepind wordt.
+
+### Een guard op de productiepaden
+
+`tests/test_image_layer_guard.py::TestManifestImages` leest de manifesten die op ODCN
+terechtkomen, de kustomizations volgend die ze opnemen, plus de standaard van `BACKUP_IMAGE`
+en de zeven sjablonen. Een `latest`-tag of een verwijzing zonder tag is rood. De
+uitzonderingen staan in `UITZONDERINGEN`, met de reden per regel.
+
 ## Wat bewust niet is meegenomen
 
 - **De sandbox.** Die pusht naar de registry naast het cluster met de commit als tag
   (`docs/sandbox-kind-registry.md`), en publiceert niet, dus er is geen rollback-probleem.
-- **De overige images** (rig-backup, cmp-kustomize-sops, hello-world). `docker-build-and-push`
-  ondersteunt `IMAGE_TAG` en `EXTRA_TAG` inmiddels voor iedereen, dus dit is per image een kleine
-  stap zodra het nodig is.
+- **De overige images** (hello-world, argocd-rig, zad-waker). `docker-build-and-push`
+  ondersteunt `IMAGE_TAG` en `EXTRA_TAG` voor iedereen, dus dit is per image een kleine stap
+  zodra het nodig is.
 - **Automatisch deployen na een publish.** De pin wordt geschreven, niet gecommit en niet
   uitgerold. Dat blijft een bewuste handeling.

@@ -65,13 +65,17 @@ patches:
         # streaming; the kustomize+sops render itself is ~1s).
         - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
           value: "true"
+  # Deze patch is de sidecar die op productie draait: de sops-plugin component zet hem
+  # neer, en wat hier staat overschrijft dat. Via de rcr-spiegel, want ODCN kan ghcr niet
+  # bereiken; het pad staat in git zodat de admission-herschrijving niets meer te doen
+  # heeft en ArgoCD niet OutOfSync blijft. Ophogen met `task pin-cmp-image`.
   - target:
       kind: ArgoCD
       name: argocd
     patch: |-
       - op: replace
         path: /spec/repo/sidecarContainers/0/image
-        value: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
+        value: rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/rig-cmp-argo-kustomize-sops@sha256:0f82b84e5dd99ddd61897e31e5edcf333a5aa21b43b384189411783734cc0a26
   # TESTING: use the userid assigned by openshift to our CMP instead of 999
   - target:
       kind: ArgoCD

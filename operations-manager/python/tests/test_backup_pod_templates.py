@@ -27,6 +27,7 @@ _MANIFESTS_DIR = Path(__file__).parent.parent / "manifests"
 # kopia_hostname/kopia_source are computed in Python — defaults here cover the
 # scheduled case so individual tests can override for manual.
 _BASE_CTX: dict = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "test-pod",
     "namespace": "rig-test",
     "service_account_name": "wies-sa",

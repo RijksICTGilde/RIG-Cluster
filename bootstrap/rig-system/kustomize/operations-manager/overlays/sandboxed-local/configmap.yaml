@@ -88,3 +88,7 @@ data:
     SLEEP_MODE_SCHEDULER_ENABLED=true
     SLEEP_MODE_SWEEP_MINUTES=1
     SLEEP_MODE_WAKER_IMAGE=ghcr.io/minbzk/base-images/zad-waker:latest
+
+    # Back-uppods op :latest en niet op de gepinde digest uit de code: task
+    # build-backup-image bouwt deze image lokaal en laadt hem onder die tag in kind.
+    BACKUP_IMAGE=ghcr.io/minbzk/base-images/rig-backup:latest

@@ -101,6 +101,7 @@ def env() -> Environment:
 
 
 _DATABASE_CTX: dict[str, Any] = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "db-restore-test",
     "namespace": NAMESPACE,
     "service_account_name": f"{PROJECT}-sa",
@@ -127,6 +128,7 @@ _DATABASE_CTX: dict[str, Any] = {
 }
 
 _BUCKET_CTX: dict[str, Any] = {
+    "backup_image": "ghcr.io/minbzk/base-images/rig-backup@sha256:abc",
     "pod_name": "bucket-restore-test",
     "namespace": NAMESPACE,
     "service_account_name": f"{PROJECT}-sa",
