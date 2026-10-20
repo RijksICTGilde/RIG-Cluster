@@ -1,6 +1,6 @@
 # Upgrade-veiligheidstest: blijven de huidige projectbestanden werken?
 
-Status: plan, 3 augustus 2026. Nog niet gebouwd. Basis: `branches-samenvoegen-naar-main`.
+Status: gebouwd in RC-288. Plan geschreven 3 augustus 2026 op basis `branches-samenvoegen-naar-main`.
 
 ## 1. Aanleiding
 
@@ -12,7 +12,7 @@ Dat risico is niet theoretisch. `dp-bn7` viel maandenlang bij elke herverwerking
 
 | Wat | Waar | Wat het doet |
 |---|---|---|
-| Projectomzetting | `scripts/migrate_project_to_sandbox.py` | Zet `clusters` en per deployment `cluster` en `base-domain` om, herversleutelt `age-private-key` van de productiesleutel naar de sandboxsleutel, laat `config.keycloak` vallen. Neemt meerdere projecten in één aanroep. |
+| Projectomzetting | `scripts/migrate_project_to_sandbox.py` | Zet `clusters` en per deployment `cluster` en `base-domain` om, genereert een eigen AGE-sleutelpaar voor de sandbox, versleutelt alle geheimen opnieuw met die sleutel en laat `config.keycloak` vallen. Sinds RC-288: aliassen blijven inhoudelijk ongewijzigd maar gaan met de nieuwe sleutel. Neemt meerdere projecten in één aanroep. |
 | Projecten aansturen | `scripts/sandbox_project_tool.py` | Haalt een API-sleutel op, verwijdert een project, zet een serviceconfig. Via HTTP met een ondertekend sessiecookie, dus zonder browser. |
 | Schemamigratie | `opi/services/schema_migration.py` | `migrate_to_latest()`, `LATEST_SCHEMA_VERSION = 2.6`. |
 | Testwerklast | `images/e2e-allservices/` | Statisch Go-binair, bindt elke gekoppelde dienst en meldt het oordeel op `/status`. Sinds 3 augustus publiek op `ghcr.io/minbzk/base-images/e2e-allservices`. |
@@ -24,7 +24,7 @@ Wat er níet is: het omzetscript raakt images en poorten niet aan, en er is geen
 
 De server heeft de productiesleutel niet en hoort die ook niet te krijgen. Dat is geen hindernis maar een randvoorwaarde die bepaalt waar elke stap draait.
 
-**De omzetting is een lokale stap.** `migrate_project_to_sandbox.py` ontsleutelt `age-private-key` met de productiesleutel en versleutelt hem opnieuw met de sandboxsleutel. Dat kan alleen op een machine die `security/key.txt` heeft, dus op de werkplek. Wat daarna naar de Forgejo van de server gaat is uitsluitend de omgezette uitvoer: die is versleuteld met de sandboxsleutel en de productiesleutel komt er niet in voor. De server ziet dus nooit productiegeheimen, ook niet versleuteld.
+**De omzetting is een lokale stap.** `migrate_project_to_sandbox.py` ontsleutelt `age-private-key` met de productiesleutel, genereert een **nieuw AGE-sleutelpaar voor het gemigreerde project** en versleutelt alle geheimen opnieuw met die sleutel. Dat kan alleen op een machine die `security/key.txt` heeft, dus op de werkplek. Wat daarna naar de Forgejo van de server gaat is uitsluitend de omgezette uitvoer: die is versleuteld met een sleutel die alleen op de sandbox bestaat en de productiesleutel komt er niet in voor. De server ziet dus nooit productiegeheimen, ook niet versleuteld.
 
 **Laag 1 heeft helemaal geen sleutel nodig.** Migratie en validatie werken op de structuur van het bestand; de AGE-blokken zijn voor dat werk gewoon ondoorzichtige strings die nergens ontsleuteld worden. Die controle kan dus draaien op de productiebestanden zoals ze zijn, zonder enige sleutel, waar dan ook.
 
@@ -90,7 +90,7 @@ De uitkomst is niet "byte-identiek". Deze release verandert bewust dingen, en di
 
 1. `schema-version` gaat naar 2.6.
 2. Bij `openp-4pw` en `dp-bn7` verhuizen de invites van top-level `invites:` naar `services/invite/config`. Beide zijn juist daarom gekozen.
-3. Aliaswaarden worden bij de eerstvolgende opslag AGE-versleuteld: twee blokken in `wies`, één in `openp-4pw`.
+3. Aliassen worden opnieuw versleuteld met de nieuwe projectsleutel, maar de inhoud blijft ongewijzigd (aliassen zijn verwijzingen naar platformvariabelen, geen geheimen).
 4. Verder niets. De nieuwe variabele-interpolatie in `user-env-vars` verandert in deze zes niets, want geen van hen gebruikt een hoofdletterverwijzing; en geen van hen heeft een dubbele service-entry, dus die reparatie doet hier ook niets.
 
 Alles buiten deze lijst is een bevinding.
@@ -103,29 +103,21 @@ De maatstaf is de zad-deployments-repo. Die bevat alles wat OPI voor een project
 
 Wat een diff niet ziet, en waar de live-omgeving juist voor is: databaserechten en `search_path`, of Keycloak-realms, clients en rollen nog kloppen, of buckets en hun beleid er nog zijn, en of ArgoCD alles gesynchroniseerd en healthy krijgt. Daar is de e2e-allservices-probe voor: die bindt elke dienst en meldt per dienst op `/status` of hij hem echt heen en weer krijgt.
 
-### De belangrijkste toets, en die ontbreekt nog
+### De belangrijkste toets
 
-Bovenstaande bewijst dat er niets verdwijnt en dat elke dienst nog te bereiken is. Het bewijst NIET wat er het meest toe doet: dat een dienst nog hetzelfde ding is. Een deployment die na de upgrade netjes verbindt met een andere database is een geslaagde probe en een ramp.
+Bovenstaande bewijst dat er niets verdwijnt en dat elke dienst nog te bereiken is. De identiteitstoets zegt dat een dienst nog hetzelfde ding is: dat je er naar een ander systeem kunt wijzen zou een ramp zijn.
 
-Twee dingen staan die toets vandaag in de weg, en allebei moeten ze opgelost:
+Deze toets is gebouwd en draait in de upgrade-veiligheidstest: ontsleutel de gegenereerde secrets aan beide kanten en vergelijk de opgeloste waarden van wat de identiteit van een dienst bepaalt. Concreet per deployment de databasehost, -naam, -gebruiker en het schema; de OIDC-issuer, realm en client-id; de bucketnaam; en de hostname plus het domein waarop gepubliceerd wordt. Die verzameling moet aan beide kanten gelijk zijn.
 
-- `compare_deployments_diff.py` identificeert een regel op de **sleutel**, met de expliciete keuze dat "changing only the value keeps the same identity and is not reported". Een gewijzigde `DATABASE_NAME` valt daar dus buiten.
-- Die waarden staan versleuteld in de deployments-repo, en AGE-cijfertekst is niet deterministisch. Een vergelijking op de ruwe tekst zegt dus sowieso niets, in beide richtingen: gelijke inhoud kan verschillen en verschil kan ruis zijn.
+Zie `features/upgrade-safety-test.md` sectie "The identity check" voor de details en `scripts/compare_service_identity.py` voor de implementatie.
 
-De toets die er wel moet komen: ontsleutel de gegenereerde secrets aan beide kanten en vergelijk de opgeloste waarden van wat de identiteit van een dienst bepaalt. Concreet per deployment de databasehost, -naam, -gebruiker en het schema; de OIDC-issuer, realm en client-id; de bucketnaam; en de hostname plus het domein waarop gepubliceerd wordt. Die verzameling moet aan beide kanten gelijk zijn, en dát is de assertie waar de test op staat of valt. Verschilt er iets, dan noemt het rapport de dienst, het veld en beide waarden.
+## 5. Wat gebouwd is
 
-Let daarbij op de bestaande skip-if-unchanged in `encrypt_to_sops_files`: die houdt een bestand verbatim als de geparste YAML gelijk is, juist omdat SOPS anders churnt. Dat helpt de manifest-diff schoon te houden, maar het is geen vervanging voor de vergelijking hierboven, want het zegt niets over waarden die wél veranderd zijn.
-
-Een verschil is niet per se fout. Deze release verandert bewust dingen, bijvoorbeeld de eenmalige migratie naar v2.6. De uitkomst van deze test is dus geen groen vinkje maar een beoordeelde diff: elk verschil is verklaard en gewenst, of het is een bug.
-
-## 5. Wat er gebouwd moet worden
-
-1. **Laag-1-test** die alle productiebestanden migreert en valideert, met een rapport per bestand en een duidelijke uitkomst per klasse fout. Bron is de projecten-repo uit 2a; een ondiepe kloon volstaat, want alleen de huidige inhoud telt.
-2. **Uitbreiding van het omzetscript** met twee dingen die het nu niet doet: het image van elk component vervangen door `e2e-allservices`, en de poort meeverhuizen. De probe luistert op 8080 terwijl productiecomponenten eigen poorten declareren, dus zonder die herschrijving falen de gezondheidscontroles. Overweeg dit als aparte vlag zodat het omzetscript ook zonder die vervanging bruikbaar blijft.
-3. **De dienst-identiteitstoets uit sectie 4**, die de gegenereerde secrets aan beide kanten ontsleutelt en de opgeloste waarden vergelijkt. Dit is het belangrijkste ontbrekende stuk: zonder dit meet de test wel of er iets verdwijnt maar niet of een dienst nog hetzelfde ding is.
-4. **De projectbestanden zelf diffen**, niet alleen de gegenereerde manifests. De verversing met de nieuwe OPI herschrijft die bestanden, en juist daar zit de migratie; een verdwenen sleutel daar weegt zwaarder dan in een manifest, want een manifest kun je opnieuw genereren.
-5. **Uitvoeren op de server-sandbox**, waar `kind-rig-sandbox` draait en orch met `orch sandbox claim` al een beurtwisseling kent. Claim aan het begin, release aan het eind, ook bij een mislukking.
-6. **Een draaiboek** in `features/` zodat de test herhaalbaar is bij de volgende release, en niet eenmalig werk blijft.
+1. **Laag-1-test:** `tests/test_upgrade_safety_replay.py` migreert alle productiebestanden en valideert met een rapport per bestand en een duidelijke uitkomst per klasse fout.
+2. **Uitbreiding van het omzetscript:** `scripts/migrate_project_to_sandbox.py` kan elk component vervangen door `e2e-allservices` en de poort meeverhuizen. De vlag `--probe-image` is optioneel.
+3. **De dienst-identiteitstoets:** `scripts/compare_service_identity.py` ontsleutelt gegenereerde secrets aan beide kanten en vergelijkt wat de identiteit bepaalt.
+4. **De projectbestanden diffen:** `scripts/compare_deployments_diff.py` meet op `zad-deployments` en `zad-projects`.
+5. **Draaiboeken:** `features/upgrade-safety-test.md` beschrijft beide lagen en hoe je ze herhaalt, met alle valstrikken.
 
 ## 6. Open beslissingen
 

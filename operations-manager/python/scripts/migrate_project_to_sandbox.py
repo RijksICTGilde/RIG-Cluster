@@ -38,6 +38,7 @@ import os
 import sys
 from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 # Make ``opi`` importable no matter the working directory: the OPI package lives in
 # operations-manager/python, the parent of this scripts/ directory. Without this the
@@ -48,9 +49,18 @@ if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
 from opi.core.cluster_config import get_domain_supports_dots  # noqa: E402
-from opi.utils.age import decrypt_age_content_sync, encrypt_age_content_sync  # noqa: E402  (after sys.path bootstrap)
+from opi.services.catalog.sleep_mode import token as wake_token  # noqa: E402
+from opi.services.services import service_entry_data, service_entry_name  # noqa: E402
+from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
+    carries_encrypted_value,
+    decrypt_age_content_sync,
+    decrypt_password_smart_sync,
+    encrypt_age_content_sync,
+    encrypt_file_to_age_block_sync,
+)
 from opi.utils.api_keys import generate_api_key  # noqa: E402
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
+from opi.utils.sops import generate_sops_key_pair  # noqa: E402
 from opi.utils.yaml_util import (  # noqa: E402
     load_yaml_from_path,
     save_yaml_to_path,
@@ -73,9 +83,10 @@ SANDBOX_DOMAIN = "sandbox.rijksapp.dev"
 DEFAULT_PROBE_IMAGE = "ghcr.io/minbzk/base-images/e2e-allservices:latest"
 DEFAULT_PROBE_PORT = 8080
 
-#: Value written over every user-env-var. Recognisable on sight in a manifest or a pod,
-#: so nobody mistakes a sandbox copy for real configuration.
-SANDBOX_ENV_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
+#: Value written over every secret the conversion does not regenerate: user-env-vars, the
+#: content of an attachment, and whatever ``replace_remaining_secrets`` finds. Recognisable
+#: on sight in a manifest or a pod, so nobody mistakes a sandbox copy for real configuration.
+SANDBOX_PLACEHOLDER = "SANDBOX-PLACEHOLDER"
 SANDBOX_ADMIN = {"email": f"admin@{SANDBOX_DOMAIN}", "role": "admin"}
 SANDBOX_REPOSITORIES = [
     {
@@ -232,6 +243,10 @@ def migrate_project(
 ) -> dict:
     """Apply all transformations to convert a production project to sandbox.
 
+    The project gets a key of its OWN (step 2): everything that travels encrypted is
+    re-encrypted for that key, and is a placeholder or freshly generated unless the upgrade
+    test needs the value and the value is not a secret. See ``AGE_FIELD_HANDLING``.
+
     When ``probe_image`` is given, every component workload is additionally replaced
     with the e2e-allservices probe (see ``apply_probe_workload``); otherwise the
     original images and ports are kept so the script stays usable for a plain migration.
@@ -251,28 +266,37 @@ def migrate_project(
     """
     project = deepcopy(data)
     name = project.get("name", "unknown")
-    # Kept from step 2 so later steps can read blocks encrypted with the project's own
-    # key (user-env-vars); after step 2 the stored copy is sandbox-encrypted.
-    project_private_key: str | None = None
+    # De sleutels uit stap 2. De oude blijft alleen in het geheugen van dit script, om de
+    # blokken te openen die met de projectsleutel van productie versleuteld zijn; de nieuwe
+    # is waar alles wat meegaat opnieuw mee versleuteld wordt.
+    old_project_private_key: str | None = None
+    new_project_private_key: str | None = None
 
     # 1. Clusters -> sandboxed-local
     project["clusters"] = [TARGET_CLUSTER]
     logger.info(f"  [{name}] clusters -> [{TARGET_CLUSTER}]")
 
-    # 2. Re-encrypt age-private-key: prod cluster key -> sandbox cluster key
+    # 2. Een eigen projectsleutel voor de sandbox, private helft versleuteld met de
+    #    sandbox-clustersleutel.
     config = project.get("config", {})
     age_private_key_encrypted = config.get("age-private-key")
     project_public_key = config.get("age-public-key")
 
     if age_private_key_encrypted:
         raw_content = str(age_private_key_encrypted).strip()
-        logger.info(f"  [{name}] Re-encrypting age-private-key with sandbox cluster key")
         decrypted = decrypt_age_content_sync(raw_content, prod_private_key)
         if decrypted is None:
             raise RuntimeError(f"Failed to decrypt age-private-key for {name}")
-        project_private_key = decrypted
-        re_encrypted = encrypt_age_content_sync(decrypted, sandbox_public_key)
-        config["age-private-key"] = LiteralScalarString(re_encrypted)
+        old_project_private_key = decrypted
+        # Dezelfde projectsleutel hergebruiken scheidde productie en testomgeving niet: elke
+        # waarde die later in productie met die sleutel bijkomt, opent daarna ook op de
+        # sandbox (BIO2 8.31, 8.33). Dus een nieuw paar, met OPI's eigen generator.
+        new_project_private_key, project_public_key = generate_sops_key_pair()
+        config["age-public-key"] = project_public_key
+        config["age-private-key"] = LiteralScalarString(
+            encrypt_age_content_sync(new_project_private_key, sandbox_public_key)
+        )
+        logger.info(f"  [{name}] Nieuwe projectsleutel; private helft versleuteld met de sandbox-clustersleutel")
     else:
         logger.warning(f"  [{name}] No age-private-key found in config")
 
@@ -366,7 +390,11 @@ def migrate_project(
                                         f"'{comp.get('name', '?')}': stripped {svc_name} config"
                                     )
 
-    replace_user_env_var_values(project, project_private_key, project_public_key, name)
+    replace_user_env_var_values(project, old_project_private_key, project_public_key, name)
+    rekey_aliases(project, old_project_private_key, project_public_key, name)
+    replace_attachment_contents(project, project_public_key, name)
+    regenerate_wake_tokens(project, project_public_key, name)
+    replace_remaining_secrets(project, old_project_private_key, new_project_private_key, project_public_key, name)
 
     if as_existing:
         carry_domain_capabilities(project, name)
@@ -444,7 +472,7 @@ def _blank_env_values(content: str) -> str:
         return content
 
     separator = ": " if _detect_env_var_format(content) == "yaml" else "="
-    return "\n".join(f"{key}{separator}{SANDBOX_ENV_PLACEHOLDER}" for key in parsed) + "\n"
+    return "\n".join(f"{key}{separator}{SANDBOX_PLACEHOLDER}" for key in parsed) + "\n"
 
 
 def replace_user_env_var_values(
@@ -452,12 +480,11 @@ def replace_user_env_var_values(
 ) -> None:
     """Overwrite the *values* in every ``user-env-vars`` block, keeping the keys.
 
-    These blocks are AGE-encrypted with the project's own public key, and step 2 above
-    re-encrypts that project key with the sandbox key. Copying them across verbatim would
-    therefore make every production value a team put there (API tokens, third-party
-    credentials) readable by anyone holding the sandbox key. That is a real downgrade of
-    protection, not a theoretical one: over the six sample projects it covers fifteen
-    components.
+    These blocks are AGE-encrypted with the project's own public key. Carrying them over
+    re-encrypted for the sandbox project key would make every production value a team put
+    there (API tokens, third-party credentials) readable by anyone holding the sandbox
+    cluster key. That is a real downgrade of protection, not a theoretical one: over the
+    six sample projects it covers fifteen components.
 
     Dropping the block instead would be safe but would stop the upgrade test from proving
     anything about it, and whether user-env-vars survive a migration and still reach the
@@ -500,6 +527,212 @@ def replace_user_env_var_values(
 # at least one service variable") -- so a literal secret is not a valid alias, while the
 # placeholder that replaced it was not valid either. The RC-22 run had to restore 25
 # aliases by hand across openp-4pw and wies before either project would validate at all.
+
+
+def _rekey_block(value: str, old_private_key: str, new_public_key: str) -> LiteralScalarString | None:
+    """Dezelfde inhoud op de nieuwe sleutel, of None als de oude sleutel hem niet opent.
+
+    Lezen via ``_opens_with``, dus beide opgeslagen vormen gaan mee; terug gaat het als een
+    armored blok, de vorm die deze velden zelf schrijven.
+    """
+    plaintext = _opens_with(value, old_private_key)
+    if plaintext is None:
+        return None
+    return LiteralScalarString(encrypt_age_content_sync(plaintext, new_public_key))
+
+
+def rekey_aliases(project: dict, old_private_key: str | None, new_public_key: str | None, name: str) -> None:
+    """Versleutel aliassen opnieuw voor de nieuwe sleutel, inhoud gelijk.
+
+    Aliases zijn verwijzingen naar platformvariabelen, geen geheimen (zie NOTE hierboven).
+    Handelt beide vormen af: sinds RC-106 AGE-blok, daarvoor mapping met waarden apart versleuteld.
+    """
+    if not old_private_key or not new_public_key:
+        return
+
+    rekeyed = 0
+    for component in project.get("components", []) or []:
+        if not isinstance(component, dict):
+            continue
+        aliases = component.get("aliases")
+        where = f"component '{component.get('name', '?')}'"
+        if isinstance(aliases, str) and carries_encrypted_value(aliases):
+            block = _rekey_block(aliases, old_private_key, new_public_key)
+            if block is None:
+                logger.warning(f"  [{name}] {where}: aliases niet te openen, blijft staan")
+                continue
+            component["aliases"] = block
+            rekeyed += 1
+        elif isinstance(aliases, dict):
+            for key, value in aliases.items():
+                if not isinstance(value, str) or not carries_encrypted_value(value):
+                    continue
+                block = _rekey_block(value, old_private_key, new_public_key)
+                if block is None:
+                    logger.warning(f"  [{name}] {where}: alias '{key}' niet te openen, blijft staan")
+                    continue
+                aliases[key] = block
+                rekeyed += 1
+
+    if rekeyed:
+        logger.info(f"  [{name}] {rekeyed} alias(sen) opnieuw versleuteld voor de nieuwe projectsleutel")
+
+
+def replace_attachment_contents(project: dict, new_public_key: str | None, name: str) -> None:
+    """Zet bijlage-inhoud op placeholder, versleuteld met nieuwe sleutel. Metadata (id, filename) blijft.
+
+    Encrypted met encrypt_file_to_age_block_sync omdat dit veld base64 van bytes is.
+    """
+    if not new_public_key:
+        return
+
+    replaced = 0
+    for entry in project.get("services", []) or []:
+        if service_entry_name(entry) != "attachments":
+            continue
+        for item in service_entry_data(entry) or []:
+            if not isinstance(item, dict) or not item.get("content"):
+                continue
+            item["content"] = LiteralScalarString(
+                encrypt_file_to_age_block_sync(SANDBOX_PLACEHOLDER.encode(), new_public_key)
+            )
+            replaced += 1
+
+    if replaced:
+        logger.info(f"  [{name}] Inhoud van {replaced} bijlage(n) vervangen door een placeholder")
+
+
+def regenerate_wake_tokens(project: dict, new_public_key: str | None, name: str) -> None:
+    """Munt een nieuw wake-token voor elke deployment die er een heeft.
+
+    Het token wekt een deployment via een publiek bereikbaar endpoint, dus het
+    productietoken mag niet tegen de sandboxkopie werken en het sandboxtoken niet tegen
+    productie. Gemunt en versleuteld met de helpers van sleep-mode zelf, zodat de opgeslagen
+    vorm niet kan afwijken van wat OPI terugleest.
+    """
+    if not new_public_key:
+        return
+
+    minted = 0
+    for dep in project.get("deployments", []) or []:
+        sleep = dep.get("sleep") if isinstance(dep, dict) else None
+        if not isinstance(sleep, dict) or not sleep.get("wake-token"):
+            continue
+        sleep["wake-token"] = LiteralScalarString(wake_token.encrypt(wake_token.mint(), project))
+        minted += 1
+
+    if minted:
+        logger.info(f"  [{name}] {minted} wake-token(s) opnieuw gemunt")
+
+
+#: Het enige AGE-blok in de uitvoer dat met geen van beide projectsleutels opengaat en dat
+#: ook niet hoort te doen: de nieuwe private projectsleutel staat op de sandbox-clustersleutel.
+_NOT_ON_A_PROJECT_KEY = ("/config/age-private-key",)
+
+
+def _encrypted_values(node: object, path: str = "") -> list[tuple[Any, Any, str, str]]:
+    """Elk versleuteld blad in het document, als (houder, sleutel, pad, waarde).
+
+    De houder en de sleutel komen mee zodat de beller de waarde kan vervangen; het pad is
+    voor de melding en volgt dezelfde vorm als ``_leaf_paths``.
+    """
+    found: list[tuple[Any, Any, str, str]] = []
+    items: list[tuple[Any, Any, str, Any]]
+    if isinstance(node, dict):
+        items = [(node, key, f"{path}/{key}", value) for key, value in node.items()]
+    elif isinstance(node, list):
+        items = [(node, index, f"{path}[]", value) for index, value in enumerate(node)]
+    else:
+        return found
+
+    for container, key, child_path, value in items:
+        if isinstance(value, str):
+            if carries_encrypted_value(value):
+                found.append((container, key, child_path, value))
+        else:
+            found.extend(_encrypted_values(value, child_path))
+    return found
+
+
+def _opens_with(value: str, private_key: str | None) -> str | None:
+    """De platte tekst van een waarde, of None als deze sleutel hem niet opent.
+
+    Via decrypt_password_smart_sync (beide vormen). AGE-logger ERROR level onderdrukt.
+    """
+    if not private_key:
+        return None
+    age_logger = logging.getLogger("opi.utils.age")
+    previous_level = age_logger.level
+    age_logger.setLevel(logging.CRITICAL)
+    try:
+        return decrypt_password_smart_sync(value, private_key)
+    except ValueError:
+        return None
+    finally:
+        age_logger.setLevel(previous_level)
+
+
+def replace_remaining_secrets(
+    project: dict,
+    old_private_key: str | None,
+    new_private_key: str | None,
+    new_public_key: str | None,
+    name: str,
+) -> list[str]:
+    """Vangnet: vervang waarden die nog op de OUDE projectsleutel opengaan.
+
+    Dit pakt velden die de conversie niet bij naam kent (registry passwords, remote-source
+    credentials, helmfile-waarden). Meenemen op de nieuwe sleutel houdt een
+    productiecredential leesbaar op de sandbox. Returns de vervangen paden; waarden op
+    geen van beide sleutels worden gemeld.
+    """
+    if not old_private_key or not new_public_key:
+        return []
+
+    replaced: list[str] = []
+    unreadable: list[str] = []
+    for container, key, path, value in _encrypted_values(project):
+        if path in _NOT_ON_A_PROJECT_KEY:
+            continue
+        if _opens_with(value, new_private_key) is not None:
+            continue
+        if _opens_with(value, old_private_key) is None:
+            unreadable.append(path)
+            continue
+        container[key] = LiteralScalarString(encrypt_age_content_sync(SANDBOX_PLACEHOLDER, new_public_key))
+        replaced.append(path)
+
+    if replaced:
+        logger.info(f"  [{name}] {len(replaced)} overig(e) geheim(en) vervangen door een placeholder: {replaced}")
+    for path in unreadable:
+        logger.warning(f"  [{name}] {path} gaat met geen van beide projectsleutels open; controleer deze waarde")
+
+    return replaced
+
+
+#: Hoe de conversie omgaat met elk AGE-versleuteld veld dat het projectschema kent, per
+#: ``$defs``-pad. De code leest deze tabel niet: het is de vastgelegde bedoeling, en
+#: ``tests/test_migrate_project_sandbox_keys.py`` faalt zodra het schema een versleuteld veld
+#: krijgt dat er niet in staat. Zo dwingt een nieuw veld een beslissing af in plaats van mee
+#: te liften op de projectsleutel.
+#:
+#: ``component.aliases`` staat er niet in: dat veld verwijst niet naar ``age-encrypted``,
+#: omdat een onversleutelde mapping er een geldige vorm van blijft. ``rekey_aliases``
+#: behandelt het.
+AGE_FIELD_HANDLING = {
+    "config.age-private-key": "een nieuw gegenereerde projectsleutel, versleuteld voor het sandboxcluster",
+    "config.api-key": "opnieuw gegenereerd, versleuteld voor de nieuwe projectsleutel",
+    "repository.password": "vervangen door de credentials van de sandbox-Forgejo",
+    "attachment-data-entry.content": "placeholder; id en filename blijven staan",
+    "component.user-env-vars": "sleutels blijven, elke waarde wordt een placeholder",
+    "deployment-component.user-env-vars": "sleutels blijven, elke waarde wordt een placeholder",
+    "deployment.configuration": "weggehaald",
+    "deployment-sleep.wake-token": "opnieuw gemunt",
+    "remote-source.chisel.password": "placeholder, via replace_remaining_secrets",
+    "remote-source-service.password": "placeholder, via replace_remaining_secrets",
+    "remote-source-service.access-key": "placeholder, via replace_remaining_secrets",
+    "remote-source-service.secret-key": "placeholder, via replace_remaining_secrets",
+}
 
 
 def _leaf_paths(node: object, path: str = "") -> set[str]:

@@ -21,7 +21,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 from migrate_project_to_sandbox import (  # noqa: E402
     DEFAULT_PROBE_IMAGE,
     DEFAULT_PROBE_PORT,
-    SANDBOX_ENV_PLACEHOLDER,
+    SANDBOX_PLACEHOLDER,
     _blank_env_values,
     apply_probe_workload,
     report_unintended_removals,
@@ -124,8 +124,8 @@ class TestBlankEnvValues:
         out = _blank_env_values("DJANGO_SECRET_KEY=s3cr3t\nDEBUG=false\n")
 
         assert "s3cr3t" not in out
-        assert f"DJANGO_SECRET_KEY={SANDBOX_ENV_PLACEHOLDER}" in out
-        assert f"DEBUG={SANDBOX_ENV_PLACEHOLDER}" in out
+        assert f"DJANGO_SECRET_KEY={SANDBOX_PLACEHOLDER}" in out
+        assert f"DEBUG={SANDBOX_PLACEHOLDER}" in out
 
     def test_yaml_colon_format_is_handled_too(self):
         """Both formats occur in real files; only handling ``=`` shipped a real secret.
@@ -136,8 +136,8 @@ class TestBlankEnvValues:
         out = _blank_env_values('SECRET_KEY_BASE: "abc123"\nOPENPROJECT_HTTPS: "true"\n')
 
         assert "abc123" not in out
-        assert f"SECRET_KEY_BASE: {SANDBOX_ENV_PLACEHOLDER}" in out
-        assert f"OPENPROJECT_HTTPS: {SANDBOX_ENV_PLACEHOLDER}" in out
+        assert f"SECRET_KEY_BASE: {SANDBOX_PLACEHOLDER}" in out
+        assert f"OPENPROJECT_HTTPS: {SANDBOX_PLACEHOLDER}" in out
 
     def test_a_value_holding_the_other_separator_is_cut_at_the_first_one(self):
         # A URL value contains ':' while the line's separator is '='; cutting at the
@@ -145,7 +145,7 @@ class TestBlankEnvValues:
         out = _blank_env_values("API_URL=https://example.com:8443/path\n")
 
         assert "example.com" not in out
-        assert out.strip() == f"API_URL={SANDBOX_ENV_PLACEHOLDER}"
+        assert out.strip() == f"API_URL={SANDBOX_PLACEHOLDER}"
 
     def test_a_comment_only_block_is_left_alone(self):
         # Nothing to blank, and OPI's parser returns no keys for it.
