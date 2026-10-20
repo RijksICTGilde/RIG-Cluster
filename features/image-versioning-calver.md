@@ -22,8 +22,15 @@ De datum sorteert chronologisch en is meteen leesbaar. De tijd maakt elke build 
 builds van dezelfde commit. De hash zegt precies welke broncode erin zit.
 
 Staan er ongecommitte wijzigingen in de BRONPADEN VAN HET IMAGE, dan komt er `-dirty` achter en
-waarschuwt de task. De hash beschrijft dan namelijk niet wat er gepubliceerd wordt, wat juist de
-eigenschap is waar het om begonnen was.
+WEIGERT de task te publiceren. De hash beschrijft dan namelijk niet wat er gepubliceerd wordt, wat
+juist de eigenschap is waar het om begonnen was. Eerder was dit een waarschuwing en publiceerde de
+task toch; op productie draaide er dan een image waarvan niemand kan nagaan wat erin zit en dat ook
+niet opnieuw te maken is.
+
+Om dezelfde reden weigert de task een commit die op geen enkele remote staat: die bestaat na een
+rebase of een verse clone niet meer, dus de tag wijst naar bron die niemand kan opzoeken. Dat wat in
+productie draait herleidbaar is tot een vastgelegde wijziging, is wat BIO2 8.32 (wijzigingsbeheer)
+en 8.19 (installeren van software) vragen.
 
 De bronpaden en niet de hele repo: voor de operations-manager is dat `operations-manager/` (de
 `COPY`-regels in `operations-manager/Dockerfile`), voor `publish-keycloak-image` zijn dat
@@ -59,7 +66,9 @@ task publish-operations-manager CLUSTER_TYPE=odcn-production
 
 Die task doet drie dingen:
 
-1. de CalVer-tag berekenen en tonen (met een waarschuwing bij een dirty werkkopie);
+1. de CalVer-tag berekenen en tonen, en weigeren bij een dirty werkkopie of een commit die niet
+   gepusht is. Dat gebeurt voor de bouw, zodat er geen image ontstaat dat toch niet gepind mag
+   worden;
 2. het image bouwen en pushen onder **twee** tags: de CalVer-tag en `latest`. Het is één build en één
    digest, dus `latest` kost niets extra en blijft werken voor scripts of handmatige pulls;
 3. de odcn-production-overlay op de CalVer-tag pinnen.
@@ -85,6 +94,9 @@ Zoek de vorige tag op en pin hem terug:
 git log -p --follow bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/patches/deployment.yaml
 task pin-operations-manager-image IMAGE_TAG=2026.07.21.0913-4f2c9ab1
 ```
+
+Die task weigert zelf ook een `-dirty`-tag, want pinnen en terugrollen zijn losse aanroepen die niet
+via de publicatie lopen. Een oudere schone tag pinnen blijft gewoon werken.
 
 Committen en deployen zoals hierboven. Er wordt niets herbouwd: je wijst naar een image dat al in de
 registry staat, bit voor bit hetzelfde als wat er eerder draaide.

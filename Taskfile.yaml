@@ -1049,15 +1049,29 @@ tasks:
       IMAGE_VERSION:
         sh: scripts/calver-tag.sh operations-manager
     cmds:
+      # Allebei de controles voor version:generate en de bouw, zodat er niets ontstaat dat
+      # toch niet gepind mag worden.
       - |
         echo "Image version: {{.IMAGE_VERSION}}"
+
+        # Dezelfde weigering als de promote-taak van Keycloak: een -dirty-tag komt van bron
+        # die niet in git staat, dus op productie is niet na te gaan wat er draait en is de
+        # image ook niet opnieuw te maken.
         case "{{.IMAGE_VERSION}}" in
           *-dirty)
-            echo "⚠️  Working tree has uncommitted changes, so the commit hash in this tag"
-            echo "    does not describe what is being published. Commit first to get a"
-            echo "    tag you can trace back."
+            echo "{{.IMAGE_VERSION}} komt van ongecommitte bron en hoort niet op productie." >&2
+            echo "Commit de wijziging en bouw opnieuw." >&2
+            exit 1
             ;;
         esac
+
+        # Een commit die alleen hier staat kan niemand anders opzoeken, en na een rebase of
+        # een verse clone bestaat hij niet meer. De tag wijst dan naar niets.
+        if [ -z "$(git branch -r --contains HEAD)" ]; then
+          echo "De commit van deze tag staat op geen enkele remote." >&2
+          echo "Push hem eerst, anders wijst de tag naar bron die niemand kan opzoeken." >&2
+          exit 1
+        fi
       # Zie sandbox:build-operations-manager-image. Hier weegt het het zwaarst: dit is de
       # image die uitgerold wordt, en de CalVer-tag zou dan een andere commit noemen dan
       # de image over zichzelf meldt.
@@ -1092,6 +1106,12 @@ tasks:
         msg: |
           IMAGE_TAG is required, for example:
             task pin-operations-manager-image IMAGE_TAG=2026.07.22.1432-7ccad61d
+      # Ook voor een pin met de hand: publish-operations-manager weigert zo'n tag al, maar
+      # terugrollen en pinnen zijn losse aanroepen die deze taak rechtstreeks gebruiken.
+      - sh: 'case "{{.IMAGE_TAG}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_TAG}} komt van ongecommitte bron en hoort niet op productie.
+          Commit de wijziging en bouw opnieuw.
     cmds:
       - |
         sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
