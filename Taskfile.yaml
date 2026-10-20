@@ -2474,6 +2474,7 @@ tasks:
       - task: sandbox:configure-coredns
       - task: sandbox:create-namespace
       - task: sandbox:import-wildcard-cert
+      - task: sandbox:generate-argocd-tls
       - task: sandbox:create-sops-age-secret
       - task: sandbox:create-git-signing-key-secret
       # Phase 2: Bootstrap Forgejo (minimal direct deploys, just enough for git)
@@ -2821,6 +2822,50 @@ tasks:
         else
           echo "nginx default certificate already configured"
         fi
+    silent: true
+
+  sandbox:generate-argocd-tls:
+    desc: "Genereer de CA en het servercertificaat waarmee argocd-server TLS serveert"
+    cmds:
+      - |
+        # Kind heeft geen service-CA; de sandbox tekent zelf. keyUsage op de CA is
+        # verplicht: zonder keyCertSign weigert Python de certificaatketen.
+        CERT_DIR="security/tls/sandbox-argocd"
+        mkdir -p "$CERT_DIR"
+
+        if [ ! -f "$CERT_DIR/ca.crt" ] || [ ! -f "$CERT_DIR/ca.key" ]; then
+          echo "Generating ArgoCD CA..."
+          openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+            -keyout "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
+            -subj "/CN=sandbox-argocd-ca" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign"
+        fi
+
+        echo "Generating argocd-server certificate..."
+        SAN="DNS:argocd-server,DNS:argocd-server.rig-system,DNS:argocd-server.rig-system.svc,DNS:argocd-server.rig-system.svc.cluster.local,DNS:argo.sandbox.rijksapp.dev"
+        openssl req -newkey rsa:2048 -nodes \
+          -keyout "$CERT_DIR/tls.key" -out "$CERT_DIR/tls.csr" \
+          -subj "/CN=argocd-server" -addext "subjectAltName=$SAN" \
+          -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+          -addext "extendedKeyUsage=serverAuth"
+        openssl x509 -req -in "$CERT_DIR/tls.csr" -days 825 \
+          -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+          -out "$CERT_DIR/tls.crt" -copy_extensions copyall
+        rm -f "$CERT_DIR/tls.csr"
+
+        # argocd-server leest zijn servercertificaat uit dit secret; zonder secret maakt
+        # hij er zelf een die niemand kan toetsen.
+        kubectl create secret tls argocd-server-tls \
+          --cert="$CERT_DIR/tls.crt" --key="$CERT_DIR/tls.key" \
+          -n rig-system --dry-run=client -o yaml | kubectl apply -f -
+
+        # De bundel die de operations-manager mount (ARGOCD_CA_BUNDLE).
+        kubectl create configmap argocd-ca-bundle \
+          --from-file=ca.crt="$CERT_DIR/ca.crt" \
+          -n rig-system --dry-run=client -o yaml | kubectl apply -f -
+
+        echo "ArgoCD TLS material applied (argocd-server-tls, argocd-ca-bundle)"
     silent: true
 
   sandbox:generate-age-key:

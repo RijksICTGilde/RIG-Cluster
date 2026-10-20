@@ -2780,16 +2780,7 @@ class ProjectManager:
             logger.info(
                 f"Refreshing ArgoCD user-applications to create infrastructure application for '{project_name}'"
             )
-            from opi.connectors.argo import ArgoConnector
-
-            argo_connector = ArgoConnector(
-                server_host=settings.ARGOCD_HOST,
-                server_port=settings.ARGOCD_PORT,
-                username=settings.ARGOCD_USERNAME,
-                password=settings.ARGOCD_PASSWORD,
-                use_tls=settings.ARGOCD_USE_TLS,
-                verify_ssl=settings.ARGOCD_VERIFY_SSL,
-            )
+            argo_connector = create_argo_connector()
 
             if not await argo_connector.login():
                 raise RuntimeError("Failed to login to ArgoCD")

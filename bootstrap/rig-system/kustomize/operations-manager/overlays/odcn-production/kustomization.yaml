@@ -10,6 +10,7 @@ resources:
   - ../../base
   - ingress.yaml
   - configmap.yaml
+  - argocd-ca-bundle.yaml
   - network-policy.yaml
   - prometheusrule-billing.yaml
   - prometheusrule-image-pull.yaml

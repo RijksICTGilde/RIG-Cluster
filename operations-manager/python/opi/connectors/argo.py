@@ -40,12 +40,12 @@ CONNECT_RETRY_SECONDS = 30.0
 
 
 @functools.cache
-def _ssl_context_voor(verify_ssl: bool) -> ssl.SSLContext:
-    """Een ssl-context per verify_ssl-stand, gedeeld over het hele proces.
+def _ssl_context_voor(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext:
+    """Een ssl-context per (verify_ssl, ca_bundle), gedeeld over het hele proces.
 
     Voorkomt dat ssl.create_default_context() de CA-bundel per request van schijf leest.
     """
-    context = ssl.create_default_context()
+    context = ssl.create_default_context(cafile=ca_bundle)
     if not verify_ssl:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
@@ -69,6 +69,14 @@ class ArgoTransportError(RuntimeError):
     """
 
 
+class ArgoTLSConfiguratieError(ValueError):
+    """TLS staat aan met certificaatcontrole, maar er is geen CA-bundel om tegen te toetsen.
+
+    De CA van de ArgoCD-server (de service-CA op ODCN, de eigen CA op de sandbox) zit niet
+    in de systeemtrust van de container, dus zonder bundel faalt elke aanroep alsnog.
+    """
+
+
 class ArgoConnector:
     """Connector for interacting with ArgoCD server."""
 
@@ -80,6 +88,7 @@ class ArgoConnector:
         password: str = "admin",  # noqa: S107
         use_tls: bool = False,
         verify_ssl: bool = False,
+        ca_bundle: str | None = None,
         connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
     ):
         """
@@ -92,22 +101,27 @@ class ArgoConnector:
             password: Password for authentication
             use_tls: Whether to use TLS/HTTPS
             verify_ssl: Whether to verify SSL certificates
+            ca_bundle: Path of the mounted CA bundle to verify the server certificate against
             connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
+
+        Raises:
+            ArgoTLSConfiguratieError: TLS with certificate verification but no CA bundle
         """
+        if use_tls and verify_ssl and not ca_bundle:
+            raise ArgoTLSConfiguratieError("ARGOCD_USE_TLS en ARGOCD_VERIFY_SSL staan aan zonder ARGOCD_CA_BUNDLE")
+
         self.server_host = server_host
         self.server_port = server_port
         self.username = username
         self.password = password
         self.use_tls = use_tls
         self.verify_ssl = verify_ssl
+        self.ca_bundle = ca_bundle
         self.connect_retry_seconds = connect_retry_seconds
 
         # Build base URL
         protocol = "https" if use_tls else "http"
         self.base_url = f"{protocol}://{server_host}:{server_port}"
-
-        # Handle auto-redirect to HTTPS
-        # ArgoCD often redirects HTTP to HTTPS, so we need to detect this
         self._actual_base_url = self.base_url
 
         # Authentication token
@@ -176,15 +190,6 @@ class ArgoConnector:
             aiohttp.ClientSession(connector=connector, timeout=request_timeout) as session,
             session.post(login_url, json=login_data, headers={"Content-Type": "application/json"}) as response,
         ):
-            # Check if we got redirected to HTTPS
-            if str(response.url).startswith("https://") and self.base_url.startswith("http://"):
-                logger.info(f"Detected redirect to HTTPS: {response.url}")
-                # Update base URL to use HTTPS
-                old_base = self.base_url
-                self.base_url = self.base_url.replace("http://", "https://").replace(":80", ":443")
-                self._actual_base_url = self.base_url
-                logger.info(f"Updated base URL from {old_base} to {self.base_url}")
-
             if response.status == 200:
                 response_data = await response.json()
                 logger.debug(f"Login response data: {response_data}")
@@ -202,7 +207,7 @@ class ArgoConnector:
                 return False
 
     def _ssl_context(self) -> ssl.SSLContext:
-        return _ssl_context_voor(self.verify_ssl)
+        return _ssl_context_voor(self.verify_ssl, self.ca_bundle)
 
     async def ensure_authenticated(self) -> bool:
         """Ensure we have a valid authentication token, logging in at most once.
@@ -806,6 +811,7 @@ def create_argo_connector(
     password: str | None = None,
     use_tls: bool | None = None,
     verify_ssl: bool | None = None,
+    ca_bundle: str | None = None,
     connect_retry_seconds: float = CONNECT_RETRY_SECONDS,
 ) -> ArgoConnector:
     """
@@ -820,6 +826,7 @@ def create_argo_connector(
         password: Password for authentication (defaults to config)
         use_tls: Whether to use TLS/HTTPS (defaults to config)
         verify_ssl: Whether to verify SSL certificates (defaults to config)
+        ca_bundle: Path of the mounted CA bundle (defaults to config)
         connect_retry_seconds: How long to keep retrying connect failures (0 to fail fast)
 
     Returns:
@@ -834,6 +841,7 @@ def create_argo_connector(
     final_password = password if password is not None else settings.ARGOCD_PASSWORD
     final_use_tls = use_tls if use_tls is not None else settings.ARGOCD_USE_TLS
     final_verify_ssl = verify_ssl if verify_ssl is not None else settings.ARGOCD_VERIFY_SSL
+    final_ca_bundle = ca_bundle if ca_bundle is not None else settings.ARGOCD_CA_BUNDLE
 
     logger.debug(f"Creating ArgoConnector for server: {final_server_host}:{final_server_port}")
     return ArgoConnector(
@@ -843,5 +851,6 @@ def create_argo_connector(
         password=final_password,
         use_tls=final_use_tls,
         verify_ssl=final_verify_ssl,
+        ca_bundle=final_ca_bundle,
         connect_retry_seconds=connect_retry_seconds,
     )

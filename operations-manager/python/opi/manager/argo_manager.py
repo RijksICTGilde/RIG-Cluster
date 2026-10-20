@@ -1001,21 +1001,14 @@ class ArgoManager:
         Raises:
             TimeoutError: If application is not created within timeout
         """
-        from opi.connectors.argo import ArgoConnector
+        from opi.connectors.argo import create_argo_connector
 
         logger.info(
             f"Waiting for ArgoCD application '{app_name}' to be created (timeout: {timeout}s, poll: {poll_interval}s)"
         )
 
         # Create ArgoConnector instance
-        argo_connector = ArgoConnector(
-            server_host=settings.ARGOCD_HOST,
-            server_port=settings.ARGOCD_PORT,
-            username=settings.ARGOCD_USERNAME,
-            password=settings.ARGOCD_PASSWORD,
-            use_tls=settings.ARGOCD_USE_TLS,
-            verify_ssl=settings.ARGOCD_VERIFY_SSL,
-        )
+        argo_connector = create_argo_connector()
 
         # Login to ArgoCD
         if not await argo_connector.login():
@@ -1086,7 +1079,7 @@ class ArgoManager:
             TimeoutError: If infrastructure doesn't become ready within timeout
             RuntimeError: If infrastructure application fails to sync or becomes unhealthy
         """
-        from opi.connectors.argo import ArgoConnector
+        from opi.connectors.argo import create_argo_connector
 
         app_name = f"{project_name}-infrastructure"
         logger.info(
@@ -1095,14 +1088,7 @@ class ArgoManager:
         )
 
         # Create ArgoConnector instance
-        argo_connector = ArgoConnector(
-            server_host=settings.ARGOCD_HOST,
-            server_port=settings.ARGOCD_PORT,
-            username=settings.ARGOCD_USERNAME,
-            password=settings.ARGOCD_PASSWORD,
-            use_tls=settings.ARGOCD_USE_TLS,
-            verify_ssl=settings.ARGOCD_VERIFY_SSL,
-        )
+        argo_connector = create_argo_connector()
 
         # Login to ArgoCD
         if not await argo_connector.login():

@@ -12,11 +12,20 @@ lock, op het moment dat de token echt nodig is.
 from __future__ import annotations
 
 import ssl
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.x509.oid import NameOID
 from opi.connectors import argo as argo_module
-from opi.connectors.argo import ArgoConnector
+from opi.connectors.argo import ArgoConnector, ArgoTLSConfiguratieError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -80,3 +89,37 @@ def test_de_ssl_context_wordt_een_keer_gemaakt() -> None:
 
 def test_een_andere_verify_stand_krijgt_een_eigen_context() -> None:
     assert ArgoConnector(verify_ssl=True)._ssl_context() is not ArgoConnector(verify_ssl=False)._ssl_context()
+
+
+def _ca_bundel(tmp_path: Path) -> str:
+    """Een zelfondertekend CA-certificaat op schijf, zoals de gemounte bundel in het cluster."""
+    sleutel = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    naam = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test-ca")])
+    nu = datetime.now(UTC)
+    certificaat = (
+        x509.CertificateBuilder()
+        .subject_name(naam)
+        .issuer_name(naam)
+        .public_key(sleutel.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(nu)
+        .not_valid_after(nu + timedelta(days=1))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .sign(sleutel, hashes.SHA256())
+    )
+    pad = tmp_path / "ca.crt"
+    pad.write_bytes(certificaat.public_bytes(serialization.Encoding.PEM))
+    return str(pad)
+
+
+def test_tls_met_bundel_controleert_het_certificaat(tmp_path: Path) -> None:
+    context = ArgoConnector(use_tls=True, verify_ssl=True, ca_bundle=_ca_bundel(tmp_path))._ssl_context()
+
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname is True
+
+
+def test_tls_met_controle_zonder_bundel_weigert() -> None:
+    """De CA van de ArgoCD-server zit niet in de systeemtrust, dus dit faalt toch."""
+    with pytest.raises(ArgoTLSConfiguratieError):
+        ArgoConnector(use_tls=True, verify_ssl=True)
