@@ -27,7 +27,12 @@ from opi.core.config import settings
 from opi.core.startup import keycloak_operation_with_retry
 from opi.handlers.keycloak_yaml_handler import KeycloakYamlHandler
 from opi.services import ServiceAdapter, ServiceType
-from opi.services.catalog.keycloak.config_model import LEGACY_ACCOUNT_LINK, AccountLink, RestrictAccessConfig
+from opi.services.catalog.keycloak.config_model import (
+    LEGACY_ACCOUNT_LINK,
+    AccountLink,
+    KeycloakClientEntry,
+    RestrictAccessConfig,
+)
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -47,6 +52,7 @@ from opi.utils.naming import (
     resolve_effective_base_domain,
 )
 from opi.utils.passwords import generate_secure_password
+from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.secrets import KeycloakSecret
 from opi.utils.totp import build_otpauth_uri, generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
@@ -572,6 +578,8 @@ class KeycloakManager:
             "restrict_access": None,
             "account_link": None,  # None = keep Keycloak's stock first-broker-login flow (opt-in)
             "logout_path": None,  # None = the application clears its own session (opt-in)
+            "direct_access_grants": False,  # Password grant (ROPC), opt-in per project
+            "service_accounts": False,  # Client credentials, opt-in per project
         }
 
         project_services = project_data.get("services", [])
@@ -652,10 +660,8 @@ class KeycloakManager:
             additional_uris = user_config[redirect_uris_key]
             if not isinstance(additional_uris, list):
                 raise ValueError(f"additional_redirect_uris must be a list, got {type(additional_uris).__name__}")
-            # Validate all entries are strings
-            for uri in additional_uris:
-                if not isinstance(uri, str):
-                    raise TypeError(f"All additional_redirect_uris must be strings, got {type(uri).__name__}: {uri}")
+            # Dezelfde regel als in het configmodel en het formulier, via dezelfde functie.
+            validate_redirect_uris(additional_uris, "additional_redirect_uris")
             merged_config["additional_redirect_uris"] = additional_uris
             logger.info(f"Found {len(additional_uris)} additional redirect URIs in config")
 
@@ -698,10 +704,26 @@ class KeycloakManager:
             for i, client_config in enumerate(additional_clients):
                 if not isinstance(client_config, dict):
                     raise TypeError(f"additional-clients[{i}] must be a dict, got {type(client_config).__name__}")
-                if "name" not in client_config:
-                    raise ValueError(f"additional-clients[{i}].name is required")
+                # Guardrail through the model, net als restrict-access hierboven: de eis dat
+                # ``name`` en ``redirect-uris`` er zijn, en de regel voor een redirect URI,
+                # staan daar. ValidationError is een ValueError, dus aanroepers merken niets.
+                KeycloakClientEntry.model_validate(client_config)
             merged_config["additional_clients"] = additional_clients
             logger.info(f"Found {len(additional_clients)} additional clients to create")
+
+        # Extract the per-project flow opt-ins; the model names them and defaults them off.
+        # Beide schrijfwijzen, net als bij additional_redirect_uris: het configmodel
+        # accepteert ze allebei, dus een lezer die er maar een kent maakt de andere stil.
+        for config_key, yaml_keys in (
+            ("direct_access_grants", ("direct-access-grants", "direct_access_grants")),
+            ("service_accounts", ("service-accounts", "service_accounts")),
+        ):
+            yaml_key = next((key for key in yaml_keys if key in user_config), None)
+            if yaml_key is not None:
+                waarde = user_config[yaml_key]
+                if not isinstance(waarde, bool):
+                    raise ValueError(f"{yaml_key} must be a boolean, got {type(waarde).__name__}")
+                merged_config[config_key] = waarde
 
         # Extract and validate realm-roles
         if "realm-roles" in user_config:
@@ -1180,6 +1202,8 @@ class KeycloakManager:
                 support_http=support_http,
                 additional_redirect_uris=additional_redirect_uris or None,
                 logout_path=config.get("logout_path"),
+                direct_access_grants=config.get("direct_access_grants", False),
+                service_accounts=config.get("service_accounts", False),
             )
 
             # Apply access restriction if configured
@@ -2214,7 +2238,7 @@ class KeycloakManager:
             keycloak_host: Base URL of the Keycloak server
             additional_clients: List of client configurations with:
                 - name: Client ID
-                - redirect-uris: List of allowed redirect URIs
+                - redirect-uris: List of allowed redirect URIs (required)
             cluster: Cluster name for determining protocol support
 
         Returns:
@@ -2234,7 +2258,9 @@ class KeycloakManager:
                 logger.warning("Additional client config missing 'name', skipping")
                 continue
 
-            redirect_uris = client_config.get("redirect-uris", ["*"])
+            # Geen ``["*"]``-default meer: zonder redirect URI's weigert de connector, en
+            # dat is de bedoeling. KeycloakClientEntry eist het veld al bij het inlezen.
+            redirect_uris = client_config.get("redirect-uris")
 
             logger.info(f"Creating additional client '{client_name}' in realm '{realm_name}'")
 
@@ -2244,6 +2270,8 @@ class KeycloakManager:
                 client_id=client_name,
                 client_name=client_name,
                 redirect_uris=redirect_uris,
+                direct_access_grants=client_config.get("direct-access-grants", False),
+                service_accounts=client_config.get("service-accounts", False),
             )
 
             client_secret = result.get("secret", "")

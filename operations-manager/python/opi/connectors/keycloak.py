@@ -18,6 +18,7 @@ from keycloak import KeycloakAdmin, KeycloakOpenIDConnection
 from keycloak.exceptions import KeycloakError, KeycloakGetError, KeycloakPostError
 
 from opi.core.config import settings
+from opi.utils.redirect_uris import derive_web_origin
 from opi.utils.totp import build_credential_representation
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,31 @@ AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
 #: een projectrealm maakt hem onder deze alias aan (``sso-only.yaml``, ``sso-support.yaml``),
 #: en de flow die er automatisch naartoe stuurt noemt hem als ``defaultProvider``.
 PLATFORM_IDP_ALIAS = "rig-platform-oidc"
+
+
+def _redirect_uris_and_origins(
+    ingress_hosts: list[str],
+    support_http: bool,
+    additional_redirect_uris: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Build redirect URIs and web origins from ingress hosts and additional URIs.
+
+    Extracted to avoid duplication in create and update paths."""
+    redirect_uris: set[str] = set()
+    web_origins: set[str] = set()
+
+    for host in ingress_hosts:
+        redirect_uris.add(f"https://{host}/*")
+        web_origins.add(f"https://{host}")
+        if support_http:
+            redirect_uris.add(f"http://{host}/*")
+            web_origins.add(f"http://{host}")
+
+    for uri in additional_redirect_uris or []:
+        redirect_uris.add(uri)
+        web_origins.add(derive_web_origin(uri))
+
+    return sorted(redirect_uris), sorted(web_origins)
 
 
 def role_gate_flow_alias(client_id: str) -> str:
@@ -509,6 +535,29 @@ class KeycloakConnector:
         self.admin.update_realm(realm_name=realm_name, payload=payload)
         logger.info(f"Updated realm {realm_name}: {sorted(payload)}")
 
+    def _converge_oidc_client(
+        self,
+        existing_client: dict[str, Any],
+        redirect_uris: list[str],
+        web_origins: list[str],
+    ) -> None:
+        """Sync redirect URIs and web origins of an existing client to match the project file.
+
+        Flows and attributes are not touched, so an existing client keeps them unchanged."""
+        if set(existing_client.get("redirectUris", [])) == set(redirect_uris) and set(
+            existing_client.get("webOrigins", [])
+        ) == set(web_origins):
+            logger.info(f"Client '{existing_client.get('clientId')}' redirect URIs and web origins are already correct")
+            return
+
+        # Alleen deze twee sleutels: Keycloak laat weggelaten velden staan, dus de
+        # attributen en de flows van de bestaande client blijven ongemoeid.
+        self.admin.update_client(
+            client_id=existing_client["id"],
+            payload={"redirectUris": redirect_uris, "webOrigins": web_origins},
+        )
+        logger.info(f"Updated redirect URIs and web origins of client '{existing_client.get('clientId')}'")
+
     def get_discovery_url(self, realm_name: str) -> str:
         """
         Get the OIDC discovery URL for a realm.
@@ -532,21 +581,34 @@ class KeycloakConnector:
         client_name: str | None = None,
         redirect_uris: list[str] | None = None,
         web_origins: list[str] | None = None,
+        direct_access_grants: bool = False,
+        service_accounts: bool = False,
     ) -> dict[str, Any]:
         """
-        Create an OIDC client in the specified realm.
+        Create an OIDC client in the specified realm, or converge an existing one.
 
         Args:
             realm_name: Name of the realm
             client_id: Client ID for the OIDC client
             client_name: Optional display name for the client
-            redirect_uris: List of allowed redirect URIs
-            web_origins: List of allowed web origins
+            redirect_uris: Allowed redirect URIs, required and never a wildcard
+            web_origins: Allowed web origins; derived from the redirect URIs when omitted
+            direct_access_grants: Allow the password grant (ROPC) on a NEW client
+            service_accounts: Allow client credentials on a NEW client
 
         Returns:
             Dictionary containing client information including secret
+
+        Raises:
+            ValueError: When no redirect URIs are given. A client without them is a
+                configuration error, not a reason to accept every callback URL.
         """
         logger.info(f"Creating OIDC client '{client_id}' in realm '{realm_name}'")
+
+        if not redirect_uris:
+            raise ValueError(f"OIDC client '{client_id}' needs at least one redirect URI")
+        if not web_origins:
+            web_origins = sorted({derive_web_origin(uri) for uri in redirect_uris})
 
         client_secret = self._generate_client_secret()
 
@@ -557,12 +619,12 @@ class KeycloakConnector:
             "enabled": True,
             "publicClient": False,
             "secret": client_secret,
-            "redirectUris": redirect_uris or ["*"],
-            "webOrigins": web_origins or ["*"],
+            "redirectUris": redirect_uris,
+            "webOrigins": web_origins,
             "standardFlowEnabled": True,
             "implicitFlowEnabled": False,
-            "directAccessGrantsEnabled": True,
-            "serviceAccountsEnabled": True,
+            "directAccessGrantsEnabled": direct_access_grants,
+            "serviceAccountsEnabled": service_accounts,
         }
 
         try:
@@ -575,7 +637,7 @@ class KeycloakConnector:
                 client_data["created"] = True
             except KeycloakPostError as e:
                 if "409" in str(e) or "Conflict" in str(e):
-                    logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', returning existing")
+                    logger.info(f"Client '{client_id}' already exists in realm '{realm_name}', checking for changes")
                     # Get existing client info - we're already in the target realm context
                     all_clients = self.admin.get_clients()
                     existing_client = next((c for c in all_clients if c.get("clientId") == client_id), None)
@@ -584,6 +646,11 @@ class KeycloakConnector:
                         existing_secret = self.admin.get_client_secrets(existing_client["id"])
                         client_data["secret"] = existing_secret.get("value", "")
                         client_data["created"] = False
+                        self._converge_oidc_client(
+                            existing_client=existing_client,
+                            redirect_uris=redirect_uris,
+                            web_origins=web_origins,
+                        )
                     else:
                         raise
                 else:
@@ -667,6 +734,8 @@ class KeycloakConnector:
         support_http: bool = False,
         additional_redirect_uris: list[str] | None = None,
         logout_path: str | None = None,
+        direct_access_grants: bool = False,
+        service_accounts: bool = False,
         require_pkce: bool = False,
     ) -> dict[str, Any]:
         """
@@ -681,6 +750,8 @@ class KeycloakConnector:
             additional_redirect_uris: Optional list of additional redirect URIs (e.g., localhost URLs for development)
             logout_path: Optional path on the application that ends its own session; becomes this
                 client's front-channel logout URL on the first ingress host.
+            direct_access_grants: Allow the password grant (ROPC) on a NEW client
+            service_accounts: Allow client credentials on a NEW client
             require_pkce: Whether Keycloak must refuse an authorization code without PKCE S256.
                 Only the platform's own clients set this; of a project deployment the
                 application itself decides.
@@ -697,35 +768,7 @@ class KeycloakConnector:
         if additional_redirect_uris:
             logger.info(f"Additional redirect URIs: {additional_redirect_uris}")
 
-        # Build redirect URIs and web origins from ingress hosts
-        redirect_uris_set = set()
-        web_origins_set = set()
-
-        for host in ingress_hosts:
-            # Always add HTTPS
-            redirect_uris_set.add(f"https://{host}/*")
-            web_origins_set.add(f"https://{host}")
-
-            # Add HTTP only if cluster supports it
-            if support_http:
-                redirect_uris_set.add(f"http://{host}/*")
-                web_origins_set.add(f"http://{host}")
-
-        # Add project-specific additional redirect URIs (e.g., localhost for development)
-        if additional_redirect_uris:
-            for uri in additional_redirect_uris:
-                redirect_uris_set.add(uri)
-                # Extract origin from URI (remove /* suffix and path components)
-                if uri.endswith("/*"):
-                    origin = uri[:-2]
-                elif "/*" in uri:
-                    origin = uri.split("/*")[0]
-                else:
-                    origin = uri.rstrip("/")
-                web_origins_set.add(origin)
-
-        redirect_uris = list(redirect_uris_set)
-        web_origins = list(web_origins_set)
+        redirect_uris, web_origins = _redirect_uris_and_origins(ingress_hosts, support_http, additional_redirect_uris)
 
         logger.info(f"Final redirect_uris: {redirect_uris}")
         logger.info(f"Final web_origins: {web_origins}")
@@ -758,8 +801,12 @@ class KeycloakConnector:
             "webOrigins": web_origins,
             "standardFlowEnabled": True,
             "implicitFlowEnabled": False,
-            "directAccessGrantsEnabled": True,
-            "serviceAccountsEnabled": True,
+            # Standaard uit, en opt-in per project: een applicatie die de gebruiker naar
+            # Keycloak stuurt heeft de password grant noch een service account nodig. De
+            # update-tak hieronder laat ze bewust buiten de vergelijking, zodat een
+            # bestaande client zijn flows houdt.
+            "directAccessGrantsEnabled": direct_access_grants,
+            "serviceAccountsEnabled": service_accounts,
             # Voorwaarde voor frontchannel.logout.url, en binnen de federatie de reden dat de
             # realm-sessie een uitlog overleeft. _ensure_public_client zet hem ook, en omzetten
             # telt pas als beide mee gaan: zie de vork in
@@ -1033,35 +1080,9 @@ class KeycloakConnector:
                 self.admin.change_current_realm("master")
                 return False
 
-            # Build new redirect URIs and web origins
-            redirect_uris_set = set()
-            web_origins_set = set()
-
-            for host in ingress_hosts:
-                # Always add HTTPS
-                redirect_uris_set.add(f"https://{host}/*")
-                web_origins_set.add(f"https://{host}")
-
-                # Add HTTP only if cluster supports it
-                if support_http:
-                    redirect_uris_set.add(f"http://{host}/*")
-                    web_origins_set.add(f"http://{host}")
-
-            # Add project-specific additional redirect URIs (e.g., localhost for development)
-            if additional_redirect_uris:
-                for uri in additional_redirect_uris:
-                    redirect_uris_set.add(uri)
-                    # Extract origin from URI (remove /* suffix and path components)
-                    if uri.endswith("/*"):
-                        origin = uri[:-2]
-                    elif "/*" in uri:
-                        origin = uri.split("/*")[0]
-                    else:
-                        origin = uri.rstrip("/")
-                    web_origins_set.add(origin)
-
-            redirect_uris = list(redirect_uris_set)
-            web_origins = list(web_origins_set)
+            redirect_uris, web_origins = _redirect_uris_and_origins(
+                ingress_hosts, support_http, additional_redirect_uris
+            )
 
             logger.info(f"Final redirect_uris for update: {redirect_uris}")
             logger.info(f"Final web_origins for update: {web_origins}")

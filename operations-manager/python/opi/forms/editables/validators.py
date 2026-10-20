@@ -9,6 +9,7 @@ from opi.forms.editables.converters import command_line_has_unbalanced_quote, sp
 from opi.services.catalog.config_settings import ConfigSetting, SettingError
 from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
 from opi.utils.naming import CONTAINER_IMAGE_PATTERN, SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
+from opi.utils.redirect_uris import REDIRECT_URI_MESSAGE, validate_redirect_uri
 from opi.utils.url_paths import normalize_logout_path, sanitize_path_value
 
 if TYPE_CHECKING:
@@ -392,6 +393,23 @@ class LogoutPathValidator:
             normalize_logout_path(value)
         except ValueError:
             return [self.MESSAGE]
+        return []
+
+
+class RedirectUriValidator:
+    """Een redirect URI, getoetst met dezelfde functie die het configmodel gebruikt.
+
+    Niet ``UrlValidator``: die keurt ook ``*``, een wildcard-host en http:// naar een
+    publieke host goed, en dat zijn precies de vormen die hier geweigerd worden.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        try:
+            validate_redirect_uri(value, "redirect-uri")
+        except ValueError:
+            return [REDIRECT_URI_MESSAGE]
         return []
 
 
