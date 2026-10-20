@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import FastAPI, HTTPException
 from fastapi.exception_handlers import http_exception_handler
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -30,6 +31,7 @@ from opi.api.task_router import task_router
 from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
+from opi.core.auth_decorators import requires_sso
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -52,7 +54,7 @@ from opi.middleware.body_limit import BodyLimitMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
-from opi.web.router import web_router
+from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -485,8 +487,10 @@ def create_app() -> FastAPI:
         description=API_DESCRIPTION,
         summary=PROJECT_DESCRIPTION,
         version=VERSION,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        # Swagger en ReDoc staan niet hier maar als eigen route met requires_sso, verderop.
+        docs_url=None,
+        redoc_url=None,
+        # Afschermen beschermt niet (zad-cli haalt het live op) en breekt de CLI.
         openapi_url="/openapi.json",
         default_response_class=HTMLResponse,
         debug=settings.DEBUG,
@@ -763,7 +767,12 @@ def create_app() -> FastAPI:
     from opi.core.templates_lotc import resolve_lotc_static
     from opi.web.lotc_router import router as lotc_web_router
 
-    app.include_router(lotc_web_router, include_in_schema=False)
+    # De proefopstelling en testpagina's tonen fixture-data zonder SSO, dus alleen lokaal
+    # en in de sandbox. Zonder ENVIRONMENT staat er "production" en bestaan ze niet.
+    if settings.is_development_environment:
+        app.include_router(lotc_web_router, include_in_schema=False)
+        app.include_router(dev_router, include_in_schema=False)
+        logger.info("LOTC-proefopstelling en testpagina's geregistreerd (ENVIRONMENT=%s)", settings.ENVIRONMENT)
 
     @app.get("/static/lotc/{rel:path}", include_in_schema=False)
     async def lotc_static(rel: str) -> FileResponse:
@@ -787,6 +796,18 @@ def create_app() -> FastAPI:
     async def favicon():
         """Serve favicon from the expected root path."""
         return FileResponse(favicon_path, media_type="image/x-icon")
+
+    # De API-documentatie is beheerdersgereedschap, geen publieke pagina: de paden van
+    # FastAPI zelf staan uit (docs_url/redoc_url) en deze twee vragen een sessie.
+    @app.get("/docs", include_in_schema=False)
+    @requires_sso
+    async def swagger_ui() -> HTMLResponse:
+        return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{PROJECT_NAME} - Swagger UI")
+
+    @app.get("/redoc", include_in_schema=False)
+    @requires_sso
+    async def redoc_ui() -> HTMLResponse:
+        return get_redoc_html(openapi_url="/openapi.json", title=f"{PROJECT_NAME} - ReDoc")
 
     # security.txt: redirect to NCSC central file per Rijksoverheid guidance
     # https://www.ncsc.nl/.well-known/security.txt
@@ -842,7 +863,9 @@ if __name__ == "__main__":
         # Debug mode: Start with debugpy, no reload
         import debugpy
 
-        debugpy.listen(("0.0.0.0", 5678))
+        # Alleen op localhost: kubectl port-forward praat met localhost in de pod, dus de
+        # Skaffold-debugweg werkt, maar de poort hangt niet aan het netwerk van het cluster.
+        debugpy.listen(("127.0.0.1", 5678))
         logger.info("🐛 Debug mode: Waiting for debugger to attach on port 5678...")
         debugpy.wait_for_client()
         logger.info("🐛 Debugger attached! Starting server...")

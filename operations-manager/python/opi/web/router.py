@@ -85,6 +85,10 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 web_router = APIRouter()
 
+#: Proef- en testpagina's. Ze hangen aan een eigen router omdat opi/server.py ze alleen
+#: lokaal en in de sandbox registreert.
+dev_router = APIRouter()
+
 # Include sub-routers
 web_router.include_router(services_router)
 web_router.include_router(metrics_explorer_router)
@@ -778,7 +782,7 @@ async def project_action_confirm(
     )
 
 
-@web_router.get("/test-hero", response_class=HTMLResponse)
+@dev_router.get("/test-hero", response_class=HTMLResponse)
 @requires_sso
 async def test_hero(request: Request):
     """Test route for hero component."""
@@ -797,7 +801,7 @@ async def test_hero(request: Request):
         ) from e
 
 
-@web_router.get("/forms/formulier", response_class=HTMLResponse)
+@dev_router.get("/forms/formulier", response_class=HTMLResponse)
 @requires_sso
 async def formulier_demo_form(request: Request):
     """
@@ -2842,7 +2846,7 @@ async def about_platform(request: Request):
         ) from e
 
 
-@web_router.get("/test-template-variables", response_class=HTMLResponse)
+@dev_router.get("/test-template-variables", response_class=HTMLResponse)
 @requires_sso
 async def test_template_variables(request: Request):
     """Test route for debugging Jinja variables in componenttags."""
@@ -2867,7 +2871,7 @@ async def test_template_variables(request: Request):
         ) from e
 
 
-@web_router.get("/example", response_class=HTMLResponse)
+@dev_router.get("/example", response_class=HTMLResponse)
 @requires_sso
 async def example_page(request: Request):
     """

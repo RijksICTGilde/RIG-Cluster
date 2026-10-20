@@ -64,7 +64,7 @@ def _get_env_files() -> list[str]:
 
     ENVIRONMENT is read from system environment variable first to avoid circular dependency.
     ENVIRONMENT can be a single value or comma-separated list (e.g., "production,kubernetes").
-    If ENVIRONMENT is not set in system env, defaults to 'local'.
+    If ENVIRONMENT is not set in system env, defaults to 'production' (fail closed).
 
     Examples:
     - ENVIRONMENT="local" -> loads .env, then .env.local
@@ -82,7 +82,7 @@ def _get_env_files() -> list[str]:
     env_files = []
 
     # Get ENVIRONMENT from system environment variable first (not from .env files to avoid circular dependency)
-    environment_var = os.environ.get("ENVIRONMENT", "local")
+    environment_var = os.environ.get("ENVIRONMENT", "production")
     environments = [env.strip() for env in environment_var.split(",")]
     # Logging is now initialized via early_logging import
     logger.debug(f"Using ENVIRONMENT={environment_var} -> environments={environments}")
@@ -177,7 +177,9 @@ class Settings(BaseSettings):
     ADDITIONAL_DOMAINS: str = ""  # Comma-separated list of additional domains for redirect URIs
 
     SECRET_KEY: str = Field(default_factory=generate_secret_key)
-    ENVIRONMENT: str = "local"
+    # Default "production": een vergeten instelling valt naar de dichte kant, zonder
+    # proef- en testroutes. Lokaal, sandbox en de dev-compose zetten hun waarde expliciet.
+    ENVIRONMENT: str = "production"
     DEBUG: bool = False
     CLUSTER_MANAGER: str = "local"
 
@@ -188,7 +190,9 @@ class Settings(BaseSettings):
     SESSION_MAX_AGE_SECONDS: int = 28800  # 8 hours - one workday
 
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
-    DEBUG_MODE: str = "reload"
+    # Default "production": een vergeten instelling valt naar de dichte kant, zonder
+    # bestandsbewaking en zonder debugger. Lokaal en sandbox zetten "reload" expliciet.
+    DEBUG_MODE: str = "production"
 
     # Developer settings
     FIXED_PROJECT_POSTFIX: str | None = None  # If set, use this instead of random postfix for project names
@@ -655,6 +659,11 @@ class Settings(BaseSettings):
     # Independently toggleable and TTL'd; the shared run reaper sweeps both kinds.
     JOB_ENABLED: bool = True
     JOB_TTL_SECONDS: int = 3600  # Max job lifetime; pod kept until then so logs stay readable
+
+    @property
+    def is_development_environment(self) -> bool:
+        """Lokaal of sandbox: de enige plekken waar proef- en testroutes mogen bestaan."""
+        return self.ENVIRONMENT in ("local", "sandboxed-local")
 
     @model_validator(mode="after")
     def _enforce_secure_secret_key(self) -> Settings:

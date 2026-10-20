@@ -152,6 +152,21 @@ class TestGetEnvFiles:
 
         assert "/custom/.env" in result
 
+    @patch("opi.core.config._check_env_file_for_environment_var")
+    @patch("os.path.exists")
+    @patch.dict("os.environ", {}, clear=True)
+    def test_zonder_environment_laadt_env_production(self, mock_exists, mock_check):
+        """conftest.py zet ENVIRONMENT altijd op 'local' voor de testrun, dus hier expliciet
+        leeg: zonder de variabele moet dit dezelfde 'production'-default lezen als het
+        Settings-veld, anders zeggen de twee lezers iets anders (RC-321).
+        """
+        mock_exists.side_effect = lambda p: p in (".env", ".env.production")
+
+        result = _get_env_files()
+
+        assert ".env.production" in result
+        assert ".env.local" not in result
+
 
 class TestParseSopsAgeKeyContent:
     """Tests for parse_sops_age_key_content."""

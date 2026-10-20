@@ -68,8 +68,3 @@ portForward:
   namespace: rig-system
   port: 8000
   localPort: 9595
-- resourceType: service
-  resourceName: operations-manager
-  namespace: rig-system
-  port: 5678
-  localPort: 5678
