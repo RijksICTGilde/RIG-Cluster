@@ -53,6 +53,7 @@ from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.base import ManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
+from ruamel.yaml import YAML
 
 # Realistic per-component deployment variables (the dict ProjectManager builds before
 # rendering deployment.yaml.jinja). Reused so LEVEL 4 renders what the real pipeline
@@ -293,14 +294,14 @@ def test_level4_http_config_renders_httpget_probes() -> None:
         {"scheme": "http", "port": 8081, "liveness-path": "/health/live", "readiness-path": "/health/ready"},
         inbound=[8080],
     )
-    # httpGet probes on the monitoring port with the configured paths + scheme.
-    assert "httpGet:" in rendered
-    assert "port: 8081" in rendered
-    assert 'path: "/health/live"' in rendered or "path: /health/live" in rendered
-    assert 'path: "/health/ready"' in rendered or "path: /health/ready" in rendered
-    assert "scheme: HTTP" in rendered
+    # Op de geparste probes: het sjabloon bepaalt de quoting, de waarden zijn het contract.
+    container = YAML(typ="safe", pure=True).load(rendered)["spec"]["template"]["spec"]["containers"][0]
+    live = {"port": 8081, "path": "/health/live", "scheme": "HTTP"}
+    assert container["startupProbe"]["httpGet"] == live
+    assert container["livenessProbe"]["httpGet"] == live
+    assert container["readinessProbe"]["httpGet"] == {"port": 8081, "path": "/health/ready", "scheme": "HTTP"}
     # Not a bare tcp socket probe anymore.
-    assert "tcpSocket:" not in rendered
+    assert "tcpSocket" not in container["livenessProbe"]
 
 
 def test_level4_scheme_none_renders_no_probes() -> None:

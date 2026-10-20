@@ -36,10 +36,16 @@ from opi.services.catalog.temp_storage.editables import TEMP_STORAGE_SIZE_EDITAB
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from pydantic import ValidationError
+from ruamel.yaml import YAML
 
 
 def _entry(size: str) -> dict[str, str]:
     return {"name": "data", "size": size, "mount-path": "/data"}
+
+
+def _gevraagde_opslag(manifest: str) -> str:
+    """De maat uit het gerenderde PVC, geparst: de quoting van de waarde is vrij."""
+    return YAML(typ="safe").load(manifest)["spec"]["resources"]["requests"]["storage"]
 
 
 class TestDeRegelZelf:
@@ -178,7 +184,7 @@ class TestDeTerugvalInDeManifestgeneratie:
     @pytest.mark.asyncio
     async def test_zonder_maat_valt_hij_terug_op_de_startmaat(self, tmp_path) -> None:
         manifest = await self._render(tmp_path, {"name": "data"})
-        assert f"storage: {DEFAULT_STORAGE_SIZE}" in manifest
+        assert _gevraagde_opslag(manifest) == DEFAULT_STORAGE_SIZE
         assert "10Gi" not in manifest
 
     @pytest.mark.asyncio
@@ -187,4 +193,4 @@ class TestDeTerugvalInDeManifestgeneratie:
         boven het plafond ligt wordt gerenderd zoals hij is: een PVC kan niet krimpen, dus
         hem hier verkleinen zou de sync laten falen in plaats van iets op te lossen."""
         manifest = await self._render(tmp_path, {"name": "data", "size": "10Gi"})
-        assert "storage: 10Gi" in manifest
+        assert _gevraagde_opslag(manifest) == "10Gi"

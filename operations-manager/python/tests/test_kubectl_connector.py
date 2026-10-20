@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from opi.connectors.kubectl import KubectlConnector, KubectlExecutionError, create_kubectl_connector
+from ruamel.yaml import YAML
 
 
 @pytest.fixture(autouse=True)
@@ -143,8 +144,9 @@ def test_template_manifest_renders_generic_secret(connector):
         },
     )
 
-    assert 'username: "zad"' in result
-    assert 'password: "p\\\\a\\"s"' in result
+    # Op de geparste waarden: het filter bepaalt de quoting, dus de tekstvorm is geen contract.
+    stringdata = YAML(typ="safe", pure=True).load(result)["stringData"]
+    assert stringdata == {"username": "zad", "password": 'p\\a"s'}
 
 
 FAKE_KUBECTL = """#!/usr/bin/env python3
