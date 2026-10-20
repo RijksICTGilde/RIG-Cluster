@@ -21,6 +21,7 @@ ZAD kent geen classificatie per project. Er is geen veld in het projectbestand w
 | Persistente opslag (PVC's) van componenten | Ja |
 | PostgreSQL-databases | Ja |
 | MinIO-buckets die bij een deployment horen | Ja |
+| De platformdatabase zelf (Keycloak, de Operations Manager, de mailrelay) | Ja, nachtelijk en los van de Operations Manager |
 | Projectdefinities en gegenereerde manifesten | Niet via back-up, deze staan in Git bij GitHub, buiten het cluster |
 | De MinIO-installatie zelf (accounts, policies) | Nee, deze wordt opnieuw aangemaakt vanuit het projectbestand |
 | De back-upbestemming zelf | Nee, dit is het eindpunt van de keten |
@@ -47,6 +48,8 @@ Voor een deployment met een dagelijks schema geldt:
 | Maandelijkse momenten | 12 |
 
 Deze regels gelden naast elkaar; een moment blijft bewaard zolang minstens één regel het aanwijst. In de praktijk komt dat neer op ongeveer een jaar historie, fijnmazig voor de recente periode en grofmazig voor het oudere deel.
+
+Voor de nachtelijke back-up van de platformdatabase geldt een eigen regel: 14 dagelijkse, 8 wekelijkse en 6 maandelijkse momenten (zes maanden). Die dump bevat persoonsgegevens (Keycloak-accounts, OPI-gebruikers, mailrelay-wachtrij). Een verwijderde gebruiker staat tot zes maanden later nog in een snapshot. Voor de fysieke opslag zie `features/platformdatabase-back-up.md`.
 
 Handmatig gemaakte back-ups vervallen niet vanzelf. Die blijven staan tot iemand ze expliciet verwijdert.
 

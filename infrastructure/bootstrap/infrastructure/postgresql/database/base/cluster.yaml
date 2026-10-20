@@ -98,6 +98,19 @@ spec:
         passwordSecret:
           name: mail-db-credentials  # This must exist
 
+      # De leesrol van de nachtelijke platformback-up (platform-backup-cronjob.yaml).
+      # pg_read_all_data in plaats van het superuser-secret: de pod hoeft alleen te lezen.
+      # Komt hij een object tegen dat deze rol niet mag lezen, dan faalt pg_dump zichtbaar
+      # in plaats van een halve dump af te leveren.
+      - name: platform_backup
+        ensure: present
+        login: true
+        connectionLimit: 2
+        inRoles:
+          - pg_read_all_data
+        passwordSecret:
+          name: platform-backup-credentials  # This must exist
+
   # Enable backups if the cluster provides S3-compatible storage
   # backup:
   #   barmanObjectStore:

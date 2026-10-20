@@ -50,8 +50,14 @@ flowchart TB
 | PostgreSQL-databases | Ja | `pg_dump` rechtstreeks de Kopia-snapshot in, geen tussenbestand op schijf |
 | MinIO-buckets van projecten | Ja | `mc mirror` van de bucket naar een tijdelijke map, daarna Kopia-snapshot |
 | De MinIO-installatie zelf | Nee | Alleen de inhoud van de buckets die bij een deployment horen. Users, policies en serviceaccounts van MinIO zitten er niet in; die worden opnieuw aangemaakt vanuit het projectbestand |
+| De platformdatabase (`rig-db`) | Ja | Een eigen CronJob naast het cluster, los van OPI: `pg_dump` per platformdatabase (Keycloak, OPI, de mailrelay) naar een Kopia-snapshot in de bucket `rig-platform-db`. Dat is de enige bucket met object lock, nog zonder vergrendelde termijn. Zie `features/platformdatabase-back-up.md` |
 | De backupbestemming zelf | Nee | Dat is het eindpunt van de keten, daar zit geen tweede kopie achter |
 | Cluststaat en manifesten | Niet nodig | Die staan in Git (zad-projects, zad-argo-user-applications, zad-deployments) en worden door ArgoCD teruggezet |
+
+De platformdatabase loopt bewust NIET via de keten hierboven: die hangt aan projecten en
+deployments en draait in OPI, en juist de gegevens waarmee OPI zelf werkt moeten ook terug te
+halen zijn als OPI stilstaat. Dezelfde bestemming, dezelfde versleuteling, een eigen bucket en
+een eigen wachtwoord.
 
 Kan MinIO zelf wel gebackupt worden? De data ja, dat doen we al per bucket. Wat ontbreekt is de configuratielaag (IAM-policies, accounts) en de garantie dat we alle buckets zien: we backuppen wat een project in zijn projectbestand declareert, niet wat er toevallig in de MinIO staat. Een volledige MinIO-kluis vraagt om replicatie naar een tweede MinIO of om een bucketniveau-export van de IAM.
 
@@ -126,3 +132,4 @@ Dat is de voornaamste reden om de backupopslag buiten het cluster te trekken: **
 - `features/scheduled-backups.md`, planning en RRULE
 - `features/backup-retention-sweep.md`, de opruimlogica
 - `features/backup-kopia-incremental-deduplication.md`, waarom incrementeel nu nog niet echt incrementeel is
+- `features/platformdatabase-back-up.md`, de nachtelijke dump van de platformdatabase en het herstelpad
