@@ -2568,6 +2568,11 @@ async def _restore_database_with_versioning(
 
         logger.info(f"Created new database: {new_database_name}")
 
+        # Een nieuwe generatie is een nieuwe database, dus ook hier dicht voor PUBLIC
+        # (RC-285). Alleen de eigenaar: de read-only rol krijgt zijn CONNECT bij de
+        # verwerking die deze generatie in gebruik neemt, en heeft hem daarvoor niet nodig.
+        await postgres_connector.restrict_database_to_roles(new_database_name, [db_username])
+
         # Create schema in new database
         schema_result = await postgres_connector.create_schema(
             schema_name=new_database_name,  # Schema name matches database name

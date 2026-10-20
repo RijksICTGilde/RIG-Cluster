@@ -40,6 +40,7 @@ from opi.core.config import settings
 from opi.core.database_pools import initialize_database_pools
 from opi.core.keycloak_client_startup import ensure_keycloak_credentials
 from opi.core.no_mail_reconciler import reconcile_no_mail_records
+from opi.core.platform_database_access import restrict_platform_databases
 from opi.core.project_schema import check_schema_versions
 from opi.core.version import set_running_image
 from opi.manager.project_manager import ProjectManager, create_project_manager
@@ -850,6 +851,9 @@ async def run_startup_tasks(app: FastAPI) -> bool:
     # Phase 2: Project files (requires database)
     if readiness.database.ready:
         await _setup_projects(readiness, app, skip_checks)
+
+    # Phase 2b: de platformdatabases alleen voor hun eigen rol
+    await restrict_platform_databases()
 
     # Resolve which image this pod runs, so /version can say who is answering.
     await _resolve_running_image()

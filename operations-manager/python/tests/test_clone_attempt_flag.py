@@ -147,6 +147,9 @@ class FakePostgres:
     async def set_role_search_path(self, **_: Any) -> None:
         return None
 
+    async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, str]:
+        return {"status": "restricted"}
+
     async def set_connection_limit(self, username: str, connection_limit: int) -> dict[str, Any]:
         # Een rol zonder expliciete limiet staat op -1, en database_manager blaast op bij
         # "not_found": de rol is in deze run al aangemaakt, dus die uitkomst hoort hier niet.

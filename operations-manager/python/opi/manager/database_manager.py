@@ -289,6 +289,11 @@ class DatabaseManager:
                 connection_limit=connection_limit,
             )
 
+            # Alleen deze twee rollen openen deze database. Staat hier en niet in
+            # create_database, omdat de rollen daar nog niet bekend zijn; en op elke
+            # verwerking, zodat een database van voor RC-285 ook wordt afgesloten.
+            await self.postgres_connector.restrict_database_to_roles(db_database, [db_username, ro_username])
+
             # PHASE 3: FINAL STATE STORAGE - Store working credentials with correct host
             logger.info(f"Phase 3: Storing final credentials for {project_name}/{deployment_name}")
             database_secret = DatabaseSecret(
@@ -2110,6 +2115,10 @@ class DatabaseManager:
                     owner=target_username,
                 )
                 target_db_exists = create_result["status"] == "exists"
+                # Ook de handmatige kloon-API komt hier langs, buiten een verwerking om, dus
+                # sluit de database hier al af (RC-285). Alleen de eigenaar: de read-only rol
+                # krijgt zijn CONNECT bij de verwerking die deze database in gebruik neemt.
+                await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
 
                 if force_clone and target_db_exists:
                     # Generational approach: increment generation and create new versioned database
@@ -2133,6 +2142,7 @@ class DatabaseManager:
                             f"Failed to create versioned database {target_database}: {create_result.get('message', 'Unknown error')}"
                         )
                     logger.info(f"Created new versioned database: {target_database}")
+                    await self.postgres_connector.restrict_database_to_roles(target_database, [target_username])
                     new_generation_created = True
 
                     # Update generation in project file

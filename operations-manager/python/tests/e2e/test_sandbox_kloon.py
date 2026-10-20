@@ -134,17 +134,6 @@ def _databases(secret: dict[str, str], prefix: str) -> list[str]:
     return [regel.strip() for regel in uit.splitlines() if regel.strip().startswith(prefix)]
 
 
-def _deployment_secret(project: str, deployment: str) -> dict[str, str]:
-    namespace = f"rig-{project}"
-    namen = [
-        item["metadata"]["name"]
-        for item in cluster.get_json_strict("get", "secrets", "-n", namespace)["items"]
-        if deployment in item["metadata"]["name"] and "database" in item["metadata"]["name"].lower()
-    ]
-    assert namen, f"geen databasesecret voor deployment '{deployment}' in {namespace}"
-    return cluster.secret_values(namespace, namen[0])
-
-
 def _clone_blok(forgejo: ForgejoClient, project: str, deployment: str) -> dict[str, Any]:
     yaml = forgejo.get_project_yaml(project) or {}
     for item in yaml.get("deployments") or []:
@@ -155,7 +144,7 @@ def _clone_blok(forgejo: ForgejoClient, project: str, deployment: str) -> dict[s
 
 def test_de_brondatabase_krijgt_een_merkteken(kloon_project: CreatedProject) -> None:
     """Zonder een rij in de bron bewijst een geslaagde kloon niets over de INHOUD."""
-    secret = _deployment_secret(kloon_project.name, kloon_project.deployment_name)
+    secret = cluster.deployment_database_secret(kloon_project.name, kloon_project.deployment_name)
     schema = secret["DATABASE_SCHEMA"]
 
     # Herhaalbaar, want ``_psql`` mag een statement een tweede keer sturen als de pod de
@@ -199,7 +188,7 @@ def test_klonen_via_de_cli_neemt_de_data_mee(
     logger.info("deployment create --clone-from: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:500])
     resultaat.assert_ok()
 
-    doel = _deployment_secret(kloon_project.name, doel_deployment)
+    doel = cluster.deployment_database_secret(kloon_project.name, doel_deployment)
     code, uit = _psql(doel, f'SELECT merk FROM "{doel["DATABASE_SCHEMA"]}".rc227_kloon')
     assert code == 0, f"de doeldatabase is niet te bevragen: {uit}"
     assert _MERKTEKEN in uit, f"het merkteken uit de bron staat niet in de kloon: {uit}"
@@ -211,7 +200,7 @@ def test_de_kloon_kostte_geen_generatie(kloon_project: CreatedProject, doel_depl
     Dit is de kern van het blok: een kloon die wel landt maar een generatie kost laat een
     lege database achter en verandert de naam die de deployment gebruikt.
     """
-    doel = _deployment_secret(kloon_project.name, doel_deployment)
+    doel = cluster.deployment_database_secret(kloon_project.name, doel_deployment)
     prefix = f"{kloon_project.name.replace('-', '_')}_{doel_deployment.replace('-', '_')}"
 
     gevonden = _databases(doel, prefix)
@@ -258,7 +247,7 @@ def test_nog_een_run_zet_er_geen_generatie_naast(
     logger.info("project refresh: exit %d %s", resultaat.exitcode, resultaat.uitvoer.strip()[:400])
     resultaat.assert_ok()
 
-    doel = _deployment_secret(kloon_project.name, doel_deployment)
+    doel = cluster.deployment_database_secret(kloon_project.name, doel_deployment)
     prefix = f"{kloon_project.name.replace('-', '_')}_{doel_deployment.replace('-', '_')}"
     gevonden = _databases(doel, prefix)
     assert gevonden, f"geen enkele database begint met '{prefix}'; dan meet 'geen _vN' niets"
