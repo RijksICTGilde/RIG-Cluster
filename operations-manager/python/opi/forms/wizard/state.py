@@ -285,6 +285,9 @@ class WizardState:
     project_name: str | None = None
     """None for create wizard, set for edit wizard."""
 
+    owner_email: str | None = None
+    """Who started this wizard (lowercase). Legacy state files without this are treated as expired."""
+
     base_version: str | None = None
     """Version of the project file this wizard was seeded from (ProjectStore token).
 
@@ -471,6 +474,7 @@ class WizardState:
             "step_data": self.step_data,
             "active_sections": self.active_sections,
             "project_name": self.project_name,
+            "owner_email": self.owner_email,
             "base_version": self.base_version,
             "base_data": self.base_data,
             "stashed_data": self.stashed_data,
@@ -510,6 +514,7 @@ class WizardState:
             step_data=data.get("step_data", {}),
             active_sections=data.get("active_sections", []),
             project_name=data.get("project_name"),
+            owner_email=data.get("owner_email"),
             base_version=data.get("base_version"),
             # ``template_data`` is the old name for the same layer; a session written
             # before the rename must keep working across a deploy.

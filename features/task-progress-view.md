@@ -23,21 +23,28 @@ er niet meer.
 ## Hoe het werkt
 
 Het fragment vervangt zichzelf elke twee seconden via htmx en stopt met pollen zodra de
-taak klaar of mislukt is. Er zijn drie ingangen die hetzelfde fragment vullen:
+taak klaar of mislukt is. Er zijn vier ingangen die hetzelfde fragment vullen:
 
-| Route | Gebruikt door |
-|---|---|
-| `GET /projects/{project}/task-progress/{task_id}` | de modals van de projectdetailpagina |
-| `GET /projects/progress/{task_id}/fragment` | de volledige voortgangspagina |
-| `GET /projects/progress/{task_id}` | de pagina zelf: het omhulsel, met de eerste weergave er al in |
+| Route | Autorisatie | Gebruikt door |
+|---|---|---|
+| `GET /projects/{project}/task-progress/{task_id}` | `_require_task_of_project` | de modals van de projectdetailpagina |
+| `GET /projects/{project}/modal-wizard/progress/{task_id}` | `_require_task_of_project` | de modal-wizard voor projectbewerking |
+| `GET /projects/progress/{task_id}/fragment` | `_require_task_access` | de volledige voortgangspagina |
+| `GET /projects/progress/{task_id}` | `_require_task_access` | de pagina zelf: het omhulsel, met de eerste weergave er al in |
 
 De pagina is niet meer dan dat omhulsel (kop, kaart, "Terug naar Dashboard"). Ze bevat
 geen JavaScript en maakt geen datums op.
 
-Wie een taak mag volgen is op alle drie routes dezelfde regel
-(`_require_task_access` in `opi/web/router.py`): je bent geautoriseerd voor het project,
-of je bent degene die de taak gestart is. Dat tweede houdt een verwijdering en een
-aanmaak volgbaar -- het project staat dan niet (meer) in de store.
+De twee routes met een project in hun pad gebruiken `_require_task_of_project`: de taak
+moet van dat project zijn, en daarna geldt `_require_task_access`. Een taak van een ander
+project geeft 404 en geen 403, hetzelfde antwoord als een taak die niet bestaat.
+
+De twee routes zonder project in hun pad lezen het project uit de taak zelf en gebruiken
+alleen `_require_task_access`.
+
+`_require_task_access` (`opi/web/router.py`): je bent geautoriseerd voor het project, of je
+bent degene die de taak gestart is. Dat tweede houdt een verwijdering en een aanmaak
+volgbaar -- het project staat dan niet (meer) in de store.
 
 ## Wat het fragment toont
 

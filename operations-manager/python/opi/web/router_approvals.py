@@ -31,8 +31,8 @@ from opi.forms.wizard.resolver import (
 )
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
-    get_modal_state_by_token,
     init_modal_state_tokenized,
+    load_modal_state_for,
     save_modal_state_by_token,
 )
 from opi.services.approvals import collect_approval_items
@@ -343,6 +343,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         first_step=first_section.section_id,
         active_sections=[first_section.section_id],
         project_name=project_name,
+        owner_email=str(user.get("email", "")),
     )
     state.step_data = {first_section.section_id: seed_data}
     state.base_data = {"_admin_email": user.get("email", "")}
@@ -371,7 +372,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         raise HTTPException(status_code=404, detail="Onbekende flow")
 
     wizard_token = request.query_params.get("_wizard_token")
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (state=%s)", project_name, flow_id, state)
         raise HTTPException(
@@ -429,7 +430,7 @@ def _reseed_approval_items(merged_data: dict[str, Any], project_name: str) -> di
 
 async def _do_submit(request: Request, wizard_token: str | None, user: dict, project_name: str) -> HTMLResponse:
     """Execute the final approval submission."""
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
         raise HTTPException(
             status_code=400,

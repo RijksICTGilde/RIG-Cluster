@@ -44,8 +44,8 @@ from opi.forms.wizard.secrets import (
 )
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
-    get_modal_state_by_token,
     init_modal_state_tokenized,
+    load_modal_state_for,
     save_modal_state_by_token,
 )
 from opi.handlers.project_file_handler import extract_attachment_catalog
@@ -615,7 +615,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 
     # Prefer wizard state data if modal wizard is active
     wizard_token = body.pop("_wizard_token", None) or _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     base_data = state.get_merged_data() if state else project_data
 
     processor = EditableFormProcessor()
@@ -655,9 +655,9 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     """Initialize modal wizard and return the first step HTML."""
     # Backup/restore flows only require project membership, not admin/owner
     if _is_backup_restore_flow(flow_id):
-        project, _user_email = _require_project_member_access(request, project_name)
+        project, user_email = _require_project_member_access(request, project_name)
     else:
-        project, _user_email = require_project_edit_access(request, project_name)
+        project, user_email = require_project_edit_access(request, project_name)
 
     project_data = project.data or {}
 
@@ -747,6 +747,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         first_step=first_step,
         active_sections=active_section_ids,
         project_name=project_name,
+        owner_email=user_email,
     )
     state.step_data = step_data
     state.locked_services = _extract_services(project_data)
@@ -830,7 +831,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     # that carry its section. Template-only: no editable names it, so it falls outside the
     # write set and never reaches the saved project.
     if flow_id in ("modal-edit-cross-domain-config", "modal-edit-services"):
-        state.base_data.update(build_cross_domain_context(_user_email))
+        state.base_data.update(build_cross_domain_context(user_email))
 
     # Mark all sections with data as completed (for step indicator)
     for section_id in active_section_ids:
@@ -856,7 +857,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
     require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -884,7 +885,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
         require_project_edit_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (step=%s)", project_name, flow_id, section_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1175,7 +1176,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
         require_project_edit_access(request, project_name)
 
     wizard_token = await _get_wizard_token_with_body(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (skip)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1193,7 +1194,7 @@ async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str
         require_project_edit_access(request, project_name)
 
     wizard_token = await _get_wizard_token_with_body(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != flow_id:
         logger.warning("Modal wizard session lost for %s/%s (confirm)", project_name, flow_id)
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
@@ -1211,7 +1212,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
     _require_project_member_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != "modal-backup":
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1239,7 +1240,7 @@ async def restore_select_mode(request: Request, project_name: str) -> HTMLRespon
     _require_project_member_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state or state.flow_id != "modal-restore":
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1389,7 +1390,7 @@ async def _modal_do_submit(
     if not _is_backup_restore_flow(flow_id):
         require_project_edit_access(request, project_name)
 
-    state = get_modal_state_by_token(wizard_token)
+    state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
         raise HTTPException(status_code=400, detail=_SESSION_EXPIRED)
 
@@ -1683,27 +1684,19 @@ async def _handle_backup_restore_submit(
 async def modal_wizard_progress_html(request: Request, project_name: str, task_id: str) -> HTMLResponse:
     """Return server-rendered progress fragment for HTMX polling.
 
-    Reads task state from the V2 async task service (database-backed).
+    Reads task state from the V2 async task service (database-backed). The task id
+    alone is not enough: the task has to be this project's and this user's to follow,
+    the same gate the task-progress fragment uses.
     """
     from opi.core.task_helpers import get_task_service
-    from opi.web.router import _v2_task_to_template_context
+    from opi.web.router import _require_task_of_project, _v2_task_to_template_context
 
     task_service = get_task_service(request)
-    task = await task_service.get_task(task_id)
-
+    task = await _require_task_of_project(request, task_service, project_name, task_id)
     if task is None:
-        context: dict[str, Any] = {
-            "task_id": task_id,
-            "project_name": project_name,
-            "progress": 0,
-            "current_step": "",
-            "tasks": [],
-            "status": "failed",
-            "error": "Taak niet gevonden",
-        }
-        return HTMLResponse(content=_progress_fragment(request, context))
+        return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 
-    context = _v2_task_to_template_context(task, project_name)
+    context: dict[str, Any] = _v2_task_to_template_context(task, project_name)
     context["task_id"] = task_id
 
     # Rendered once on purpose. The fragment is a template file, so the component

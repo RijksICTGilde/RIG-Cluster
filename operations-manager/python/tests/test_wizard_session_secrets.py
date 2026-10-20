@@ -205,11 +205,11 @@ class TestSessionFileSweep:
 
     def test_creating_a_session_sweeps_at_most_once_per_interval(self, store: Path):
         stale = _expired(store / ("c" * 32 + ".json"))
-        session.init_modal_state_tokenized("f", "s", ["s"], "p")
+        session.init_modal_state_tokenized("f", "s", ["s"], "p", "u@example.com")
         assert not stale.exists()
 
         second_stale = _expired(store / ("d" * 32 + ".json"))
-        session.init_modal_state_tokenized("f", "s", ["s"], "p")
+        session.init_modal_state_tokenized("f", "s", ["s"], "p", "u@example.com")
         assert second_stale.exists(), "the interval should suppress the second sweep"
 
 
