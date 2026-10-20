@@ -40,6 +40,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from opi.api.restore_router import restore_router
 from opi.api.v2.models import ErrorCategory
 from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup import BucketRestoreResult, DatabaseRestoreResult
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.utils.secrets import DatabaseSecret, MinIOSecret
@@ -77,7 +78,7 @@ EXTERNAL_DATABASE = {
 }
 EXTERNAL_BUCKET = {
     "target_minio_endpoint": "http://doel.invalid:9000",
-    "target_bucket_name": "b",
+    "target_bucket_name": "doelbucket",
     "target_access_key": "a",
     "target_secret_key": CALLER_PASSWORD,
 }
@@ -90,11 +91,13 @@ EXTERNAL_BUCKET = {
 
 @pytest.fixture
 def env() -> Environment:
-    return Environment(
+    env = Environment(
         loader=FileSystemLoader(str(_MANIFESTS_DIR)),
         undefined=StrictUndefined,
         autoescape=False,
     )
+    env.filters.update(MANIFEST_FILTERS)
+    return env
 
 
 _DATABASE_CTX: dict[str, Any] = {
@@ -129,7 +132,7 @@ _BUCKET_CTX: dict[str, Any] = {
     "service_account_name": f"{PROJECT}-sa",
     "reference_name": "main-minio",
     "target_minio_endpoint": "http://doel.invalid:9000",
-    "target_bucket_name": "b",
+    "target_bucket_name": "doelbucket",
     "target_access_key": "a",
     "target_secret_key": CALLER_PASSWORD,
     "s3_endpoint": "minio.example:9000",

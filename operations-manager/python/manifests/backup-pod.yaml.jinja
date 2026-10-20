@@ -1,22 +1,22 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ pod_name }}"
-  namespace: "{{ namespace }}"
+  name: {{ pod_name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
     app.kubernetes.io/name: pvc-backup
     app.kubernetes.io/component: backup-job
     app.kubernetes.io/managed-by: opi-backup
     # Match the deployment's tenant NetworkPolicy so this pod is allowed egress to
     # the backup MinIO (the baseline selects deployment=<name>).
-    deployment: "{{ deployment_name | default('unknown') }}"
-    backup.rig.nl/pvc: "{{ pvc_name }}"
-    backup.rig.nl/timestamp: "{{ timestamp }}"
-    backup.rig.nl/trigger: "{{ trigger | default('scheduled') }}"
+    deployment: {{ deployment_name | default('unknown', true) | yaml_scalar }}
+    backup.rig.nl/pvc: {{ pvc_name | yaml_scalar }}
+    backup.rig.nl/timestamp: {{ timestamp | yaml_scalar }}
+    backup.rig.nl/trigger: {{ trigger | default('scheduled') | yaml_scalar }}
 spec:
-  serviceAccountName: "{{ service_account_name }}"
+  serviceAccountName: {{ service_account_name | yaml_scalar }}
   restartPolicy: Never
-  activeDeadlineSeconds: {{ timeout_seconds | default(3600) }}
+  activeDeadlineSeconds: {{ timeout_seconds | default(3600) | int }}
   containers:
     - name: kopia
       image: ghcr.io/minbzk/base-images/rig-backup:latest
@@ -27,8 +27,8 @@ spec:
         - |
           set -e
 
-          echo "Starting backup for PVC: {{ pvc_name }}"
-          echo "Namespace: {{ namespace }}"
+          echo "Starting backup for PVC: ${PVC_NAME}"
+          echo "Namespace: ${NAMESPACE}"
           echo "S3 Endpoint: ${S3_ENDPOINT}"
           echo "S3 Bucket: ${S3_BUCKET}"
           echo "Backup Prefix: ${BACKUP_PREFIX}"
@@ -59,22 +59,22 @@ spec:
           else
             # Repository exists but cannot be opened. Do not empty the prefix: a pod should never remove backup data.
             echo "ERROR: the Kopia repository at ${S3_BUCKET}/${BACKUP_PREFIX} exists but cannot be opened, and creating one failed. No backup data was removed."
-            exit {{ repository_unusable_exit_code }}
+            exit {{ repository_unusable_exit_code | int }}
           fi
 
           echo "Repository connected successfully"
 
           echo "Starting snapshot of /data..."
           kopia snapshot create /data \
-            --description="PVC backup: {{ pvc_name }}" \
+            --description="PVC backup: ${PVC_NAME}" \
             --tags="resource_type:pvc" \
             --tags="cluster:{{ cluster }}" \
-            --tags="namespace:{{ namespace }}" \
+            --tags="namespace:${NAMESPACE}" \
             --tags="project:{{ project_name | default('unknown') }}" \
             --tags="deployment:{{ deployment_name | default('unknown') }}" \
             --tags="component:{{ component_name | default('unknown') }}" \
             --tags="storage:{{ storage_name | default('unknown') }}" \
-            --tags="pvc:{{ pvc_name }}" \
+            --tags="pvc:${PVC_NAME}" \
             --tags="generation:{{ pvc_generation | default('0') }}" \
             --tags="timestamp:{{ timestamp }}" \
             --tags="backup_run:{{ backup_run_id }}" \
@@ -87,11 +87,11 @@ spec:
           # Manual snapshots (separate source identity) are never affected.
           echo "Setting retention policy for {{ kopia_source }}..."
           kopia policy set "{{ kopia_source }}" \
-            --keep-latest={{ retention_keep_latest | default(30) }} \
-            --keep-daily={{ retention_keep_daily | default(30) }} \
-            --keep-weekly={{ retention_keep_weekly | default(4) }} \
-            --keep-monthly={{ retention_keep_monthly | default(12) }} \
-            --keep-annual={{ retention_keep_annual | default(0) }}
+            --keep-latest={{ retention_keep_latest | default(30) | int }} \
+            --keep-daily={{ retention_keep_daily | default(30) | int }} \
+            --keep-weekly={{ retention_keep_weekly | default(4) | int }} \
+            --keep-monthly={{ retention_keep_monthly | default(12) | int }} \
+            --keep-annual={{ retention_keep_annual | default(0) | int }}
 
           echo "Retention policy set"
 
@@ -104,30 +104,36 @@ spec:
           echo "Current snapshots after retention:"
           kopia snapshot list
 
-          echo "Backup completed successfully for {{ pvc_name }}"
+          echo "Backup completed successfully for ${PVC_NAME}"
       env:
+        # De namen die het script print en als tag meegeeft, komen via env binnen en
+        # niet in het script zelf: YAML-quoting is geen shell-quoting.
+        - name: NAMESPACE
+          value: {{ namespace | yaml_scalar }}
+        - name: PVC_NAME
+          value: {{ pvc_name | yaml_scalar }}
         - name: S3_ENDPOINT
-          value: "{{ s3_endpoint }}"
+          value: {{ s3_endpoint | yaml_scalar }}
         - name: S3_BUCKET
-          value: "{{ s3_bucket }}"
+          value: {{ s3_bucket | yaml_scalar }}
         - name: AWS_ACCESS_KEY_ID
           valueFrom:
             secretKeyRef:
-              name: "{{ credentials_secret }}"
+              name: {{ credentials_secret | yaml_scalar }}
               key: AWS_ACCESS_KEY_ID
         - name: AWS_SECRET_ACCESS_KEY
           valueFrom:
             secretKeyRef:
-              name: "{{ credentials_secret }}"
+              name: {{ credentials_secret | yaml_scalar }}
               key: AWS_SECRET_ACCESS_KEY
         - name: S3_DISABLE_TLS
-          value: "{{ s3_disable_tls | lower }}"
+          value: {{ s3_disable_tls | lower | yaml_scalar }}
         - name: BACKUP_PREFIX
-          value: "{{ backup_prefix }}"
+          value: {{ backup_prefix | yaml_scalar }}
         - name: KOPIA_PASSWORD
           valueFrom:
             secretKeyRef:
-              name: "{{ credentials_secret }}"
+              name: {{ credentials_secret | yaml_scalar }}
               key: KOPIA_PASSWORD
         # Use /tmp for Kopia paths (HOME is not writable on OpenShift)
         - name: KOPIA_CONFIG_PATH
@@ -150,4 +156,4 @@ spec:
   volumes:
     - name: data
       persistentVolumeClaim:
-        claimName: "{{ clone_pvc_name }}"
+        claimName: {{ clone_pvc_name | yaml_scalar }}

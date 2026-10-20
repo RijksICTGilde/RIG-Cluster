@@ -23,6 +23,7 @@ from opi.core.backup_constants import (
     BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
     RESTORE_TARGET_UNUSABLE_EXIT_CODE,
 )
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import mc_endpoint_is_usable, mc_host_url, pod_credentials_secret_name
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.pvc_backup import PVCBackupManager
@@ -130,6 +131,7 @@ _RENDER_CTX: dict[str, Any] = {
 
 def _render(template: str) -> dict[str, Any]:
     env = Environment(loader=FileSystemLoader(str(_MANIFESTS_DIR)), undefined=StrictUndefined, autoescape=False)
+    env.filters.update(MANIFEST_FILTERS)
     return yaml.safe_load(env.get_template(template).render(**_RENDER_CTX))
 
 

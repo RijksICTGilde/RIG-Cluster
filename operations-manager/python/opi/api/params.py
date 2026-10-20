@@ -18,6 +18,7 @@ one declaration.
 from typing import Annotated
 
 from fastapi import Path, Query
+from opi.utils.patterns import DNS1123_LABEL, DNS1123_SUBDOMAIN
 
 #: A project's technical name, as used in the project file and in every path.
 _PROJECT_NAME_DESCRIPTION = (
@@ -36,13 +37,19 @@ DeploymentNameQuery = Annotated[str, Query(description=_DEPLOYMENT_NAME_DESCRIPT
 
 ComponentNamePath = Annotated[str, Path(description=_COMPONENT_NAME_DESCRIPTION)]
 
+#: Path segments that name a Kubernetes resource end up in a generated manifest and, for the
+#: restore endpoints, in the Kopia repository key. The pattern is what Kubernetes itself
+#: accepts, so a value that could never name a resource is refused with a 422 instead of
+#: travelling onwards.
 ClusterPath = Annotated[
     str,
     Path(
         description=(
             "Cluster this resource lives on (e.g. 'odcn-production'). Each Operations Manager "
             "instance only serves its own cluster."
-        )
+        ),
+        pattern=DNS1123_LABEL,
+        max_length=63,
     ),
 ]
 
@@ -52,7 +59,22 @@ NamespacePath = Annotated[
         description=(
             "Kubernetes namespace, which for a project deployment follows rig-{prefix}-{project}. "
             "Must belong to the project the API key authenticates."
-        )
+        ),
+        pattern=DNS1123_LABEL,
+        max_length=63,
+    ),
+]
+
+#: A PVC name or a backup reference name. Both are DNS-1123 subdomains: a PVC name is a
+#: Kubernetes object name, and a reference is either a component service reference or
+#: ``{deployment}-{service prefix}`` (see ``_fallback_reference_names``), so neither
+#: carries an underscore or any other character outside this set.
+ResourceNamePath = Annotated[
+    str,
+    Path(
+        description="Name of the Kubernetes resource or backup reference, as a DNS-1123 subdomain.",
+        pattern=DNS1123_SUBDOMAIN,
+        max_length=253,
     ),
 ]
 

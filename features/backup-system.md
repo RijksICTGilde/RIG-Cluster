@@ -992,6 +992,37 @@ snapshots = await kopia_connector.list_snapshots(config, resource_type="database
 
 ## Security Model
 
+### Invoer van de aanroeper komt getoetst en gequote aan
+
+Een terugzet-endpunt laat OPI een pod of PVC renderen en met zijn eigen serviceaccount
+toepassen, dus wat de aanroeper meegeeft bepaalt wat er in dat manifest staat. Drie
+grenzen houden dat in het gareel:
+
+1. **Een patroon aan de rand.** Elk padsegment en elk veld van de requestmodellen heeft
+   een patroon uit `opi/utils/patterns.py`: `cluster` en `namespace` als DNS-1123-label,
+   `pvc_name` en `reference_name` als DNS-1123-subdomein (`ResourceNamePath`),
+   `storage_size` als Kubernetes-hoeveelheid, een doeldatabase en -gebruiker op de
+   PostgreSQL-identifierregel, een doelbucket op de S3-bucketregels. Een waarde met een
+   regeleinde erin wordt een 422 en bereikt de handler niet.
+2. **Eén gequote scalar in het manifest.** Elke niet-constante waarde in de backup- en
+   restore-sjablonen gaat door `| yaml_scalar`, getallen door `| int`. Naive quoting
+   (`"{{ waarde }}"`) breekt op een backslash of een regeleinde; de YAML-emitter escapet
+   precies wat YAML eist. Alle manifesten lopen daarvoor door één Jinja-omgeving:
+   `KubectlConnector.template_manifest` rendert via `render_template_source` uit
+   `opi/generation/manifests.py`, niet via een eigen `Environment()`.
+3. **Het shellscript van de pod leest uit de omgeving.** `${NAMESPACE}`, `${PVC_NAME}`,
+   `${TARGET_PVC_NAME}`, `${REFERENCE_NAME}` en `${RESTORE_SNAPSHOT_ID}` zijn `env`-items,
+   geen geïnterpoleerde tekst: YAML-quoting is geen shell-quoting, dus een waarde die
+   veilig in een scalar staat kan in een script alsnog een commando afsluiten.
+
+De overige waarden in de backup-scripts (de kopia-tags met project-, deployment- en
+componentnaam, het tijdstip, de `backup_run`) komen niet van een aanroeper maar uit het
+projectbestand, waar het schema ze al als DNS-1123-naam vastlegt.
+
+Gepind in `tests/test_template_injection_sweep.py` (per sjabloon en per veld),
+`tests/test_restore_request_body.py` (de rand) en `tests/test_backup_pod_templates.py`
+(beide renderroutes geven hetzelfde document).
+
 ### Per-Project Encryption
 
 Each namespace's backups are encrypted with a unique key derived from its SOPS age key:

@@ -13,6 +13,8 @@ from typing import Any
 
 import asyncpg
 
+from opi.utils.patterns import POSTGRES_IDENTIFIER
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,7 +146,7 @@ class PostgresConnector:
         # - Must start with a letter (a-z, A-Z) or underscore
         # - Can contain letters, digits, underscores, and dollar signs
         # - Cannot be a PostgreSQL reserved word
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_$]*$", identifier):
+        if not re.match(POSTGRES_IDENTIFIER, identifier):
             raise PostgresValidationError(
                 f"{identifier_type} '{identifier}' contains invalid characters. "
                 "Must start with letter/underscore and contain only letters, digits, underscores, and dollar signs."

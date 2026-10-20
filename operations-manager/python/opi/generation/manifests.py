@@ -69,6 +69,12 @@ def yaml_scalar(value: object) -> str:
     return buffer.getvalue().rstrip("\n")
 
 
+#: De filters die elk manifestsjabloon mag gebruiken. Een tweede omgeving (een test die
+#: ``StrictUndefined`` wil) registreert ze hiermee, in plaats van ze over te typen en er
+#: een te vergeten.
+MANIFEST_FILTERS: dict[str, Any] = {"yaml_scalar": yaml_scalar}
+
+
 @functools.cache
 def _omgeving() -> Environment:
     """De gedeelde Jinja2-omgeving voor alle manifestsjablonen.
@@ -84,7 +90,7 @@ def _omgeving() -> Environment:
         keep_trailing_newline=True,
         autoescape=False,
     )
-    env.filters["yaml_scalar"] = yaml_scalar
+    env.filters.update(MANIFEST_FILTERS)
     return env
 
 
@@ -97,6 +103,16 @@ def _gecompileerd(bron: str) -> Template:
     schijf levert een andere tekst op en dus een nieuwe compilatie.
     """
     return _omgeving().from_string(bron)
+
+
+def render_template_source(bron: str, variables: dict[str, Any]) -> str:
+    """Render manifestbron via de gedeelde omgeving.
+
+    Het enige renderpunt voor een sjabloon dat als TEKST binnenkomt in plaats van als
+    bestandsnaam. Een eigen ``Environment()`` ernaast betekent twee plekken om een filter
+    of een instelling te vergeten (RC-339).
+    """
+    return _gecompileerd(bron).render(**variables)
 
 
 def _resource_identity(doc: Any) -> tuple[str, str, str, str] | None:
@@ -222,7 +238,7 @@ class ManifestGenerator:
         logger.debug(f"Templating manifest with Jinja2 variables: {variables.keys()}")
 
         try:
-            result = _gecompileerd(manifest_content).render(**variables)
+            result = render_template_source(manifest_content, variables)
 
             logger.debug("Successfully templated manifest with Jinja2")
             return result
