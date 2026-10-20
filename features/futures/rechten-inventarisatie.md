@@ -60,13 +60,13 @@ Geen bearer-token-pad. Geen mTLS. Geen tokenintrospectie. Geen enkele poort die 
 
 ### 3.1 Globale allowlist van e-mailadressen
 
-`UserService._allowed_emails` (`opi/services/user_service.py:24`), een `set` in het procesgeheugen. Gevuld bij startup uit drie bronnen (`opi/core/startup.py:469-492`): een hardgecodeerde lijst, de env-variabele `ALLOWED_EMAILS` (komma-gescheiden, `opi/core/config.py:178`) en alle rijen uit de `users`-tabel. Beantwoordt precies één vraag: mag dit e-mailadres überhaupt naar binnen. De middleware stuurt wie er niet op staat naar `/permission-denied` (`opi/middleware/authorization.py:116-119`).
+`UserService._allowed_emails` (`opi/services/user_service.py:24`), een `set` in het procesgeheugen. Gevuld bij startup uit twee bronnen: de env-variabele `ALLOWED_EMAILS` (komma-gescheiden, `opi/core/config.py:178`) en alle rijen uit de `users`-tabel. De hardgecodeerde lijst die er als derde bron stond is in RC-272 verwijderd. Beantwoordt precies één vraag: mag dit e-mailadres überhaupt naar binnen. De middleware stuurt wie er niet op staat naar `/permission-denied` (`opi/middleware/authorization.py:116-119`).
 
-Het laden uit de database staat in een `try/except Exception` die alleen een `logger.warning` schrijft (`opi/core/startup.py:493-494`). Valt de database bij startup weg, dan start OPI met een allowlist die alleen de hardgecodeerde en de env-adressen bevat, zonder dat iets die toestand zichtbaar maakt.
+Het laden uit de database staat in een `try/except Exception` die alleen een `logger.warning` schrijft (`opi/core/startup.py:493-494`). Valt de database bij startup weg, dan start OPI met een allowlist die alleen de env-adressen bevat, zonder dat iets die toestand zichtbaar maakt.
 
 ### 3.2 Platformbeheerders
 
-`UserService._platform_admin_emails` (`opi/services/user_service.py:28`), eveneens in het geheugen, gevuld uit een hardgecodeerde lijst en de env-variabele `ADMIN_EMAILS` (`opi/core/startup.py:496-504`, `opi/core/config.py:179`). Niet uit de database: een rij in de `users`-tabel maakt iemand wél toegelaten, nooit beheerder.
+`UserService._platform_admin_emails` (`opi/services/user_service.py:28`), eveneens in het geheugen, gevuld uit de env-variabele `ADMIN_EMAILS` (`opi/core/config.py:179`). Niet uit de database: een rij in de `users`-tabel maakt iemand wél toegelaten, nooit beheerder.
 
 Een platformbeheerder is lid van elk project met rol `admin`, want `is_user_authorized_for_project` en `get_user_role_for_project` geven hem voorrang vóór ze het projectbestand raadplegen (`opi/services/project_authorization.py:36-38` en `:56-57`).
 
@@ -352,7 +352,9 @@ Omgekeerd is er geen enkele API-route die *minder* mag dan de sleutel. Er bestaa
 
 ### 8.8 Een persoon in de broncode
 
-`opi/core/startup.py:470` en `:497` zetten hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder. Dat is een met naam genoemde superuser in de broncode van een productieplatform, actief in elke omgeving, ongeacht configuratie, en niet uit te schakelen zonder de code te wijzigen. Hij is bovendien onzichtbaar voor iedereen die alleen naar de env-variabelen of de `users`-tabel kijkt.
+**Gesloten in RC-272.** `opi/core/startup.py` zette hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder: een met naam genoemde superuser in de broncode van een productieplatform, actief in elke omgeving, ongeacht configuratie, en niet uit te schakelen zonder de code te wijzigen. Het adres staat nu in `ALLOWED_EMAILS` en `ADMIN_EMAILS` van het productie-SOPS-secret, en de lijsten in de broncode zijn weg.
+
+Wat ermee verviel is de garantie dat er altijd één platformbeheerder is. De opstartcontrole die dat afdwingt staat nog open (plan van aanpak 4.4, stap 3).
 
 ### 8.9 `/metrics` staat op de publieke ingress
 

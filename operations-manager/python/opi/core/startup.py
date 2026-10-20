@@ -579,12 +579,6 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
 
         user_service = get_user_service()
 
-        default_allowed_emails = [
-            "robbert.uittenbroek@rijksoverheid.nl",
-        ]
-        if default_allowed_emails:
-            user_service.add_allowed_emails(default_allowed_emails)
-
         if settings.ALLOWED_EMAILS:
             env_emails = [email.strip() for email in settings.ALLOWED_EMAILS.split(",") if email.strip()]
             if env_emails:
@@ -603,11 +597,6 @@ async def _setup_projects(readiness: ReadinessState, app: FastAPI, skip_checks: 
                     logger.info(f"Loaded {len(db_emails)} platform users from database into allowlist")
         except Exception as e:
             logger.warning(f"Could not load platform users from database: {e}")
-
-        default_admin_emails = [
-            "robbert.uittenbroek@rijksoverheid.nl",
-        ]
-        get_user_service().add_platform_admins(default_admin_emails)
 
         if settings.ADMIN_EMAILS:
             env_admin_emails = [email.strip() for email in settings.ADMIN_EMAILS.split(",") if email.strip()]
