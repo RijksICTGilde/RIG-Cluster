@@ -26,6 +26,8 @@ from prometheus_client.core import CounterMetricFamily, GaugeMetricFamily
 from prometheus_client.registry import Collector
 
 _PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
+# Zodat een test de scan van kindprocessen op een nep-/proc kan laten lopen.
+_PROC = "/proc"
 
 # Peak memory tracking state (updated by background sampler every second)
 _peak_memory_bytes: int = 0
@@ -194,7 +196,7 @@ class OPICollector(Collector):
         child_rss = GaugeMetricFamily(
             "opi_child_process_rss_bytes",
             "RSS memory of active child processes",
-            labels=["pid", "command"],
+            labels=["pid", "comm"],
         )
         child_count = GaugeMetricFamily(
             "opi_child_process_count",
@@ -203,11 +205,11 @@ class OPICollector(Collector):
         my_pid = os.getpid()
         num_children = 0
         try:
-            for entry in os.listdir("/proc"):
+            for entry in os.listdir(_PROC):
                 if not entry.isdigit():
                     continue
                 try:
-                    with open(f"/proc/{entry}/stat") as f:
+                    with open(f"{_PROC}/{entry}/stat") as f:
                         stat = f.read()
                     # Parse: pid (comm) state ppid ...
                     # comm can contain spaces/parens, find closing paren
@@ -218,9 +220,10 @@ class OPICollector(Collector):
                         continue
                     rss_pages = int(fields_after_comm[21])
                     rss_bytes = rss_pages * _PAGE_SIZE
-                    with open(f"/proc/{entry}/cmdline") as f:
-                        cmdline = f.read().replace("\0", " ").strip()[:100]
-                    child_rss.add_metric([entry, cmdline], rss_bytes)
+                    # Alleen de procesnaam, nooit de commandoregel: die kan geheimen bevatten
+                    # en een labelwaarde komt in Prometheus en Grafana terecht (BIO2 8.15).
+                    comm = stat[stat.find("(") + 1 : close_paren]
+                    child_rss.add_metric([entry, comm], rss_bytes)
                     num_children += 1
                 except FileNotFoundError, IndexError, ValueError, PermissionError:
                     continue

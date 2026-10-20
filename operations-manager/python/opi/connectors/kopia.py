@@ -39,6 +39,23 @@ class KopiaExecutionError(Exception):
     """Exception raised when Kopia command execution fails."""
 
 
+# Wat kopia uit de omgeving van OPI mag overnemen. De S3-sleutels en het
+# repository-wachtwoord komen per aanroep uit de KopiaRepositoryConfig.
+_KOPIA_ENV_PASSTHROUGH = (
+    "PATH",
+    "TMPDIR",
+    "HOME",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+
 @dataclass
 class KopiaSnapshot:
     """Information about a Kopia snapshot."""
@@ -185,6 +202,14 @@ class KopiaRepositoryConfig:
     password: str
     use_tls: bool = False
 
+    def credential_env(self) -> dict[str, str]:
+        """De geheimen die kopia uit de omgeving leest, nooit via de commandoregel."""
+        return {
+            "KOPIA_PASSWORD": self.password,
+            "AWS_ACCESS_KEY_ID": self.s3_access_key,
+            "AWS_SECRET_ACCESS_KEY": self.s3_secret_key,
+        }
+
 
 class KopiaConnector:
     """Connector for interacting with Kopia backup repositories."""
@@ -209,9 +234,10 @@ class KopiaConnector:
 
         logger.debug("Initializing KopiaConnector")
 
-        # Setup environment variables
-        # Set HOME to /tmp to avoid Kopia writing to non-existent /home/appuser
-        self.env = os.environ.copy()
+        # Alleen de variabelen die kopia nodig heeft, niet de hele omgeving van OPI:
+        # /proc/<pid>/environ is leesbaar voor elk proces in de container.
+        # HOME op /tmp omdat kopia anders naar het niet-bestaande /home/appuser schrijft.
+        self.env = {name: os.environ[name] for name in _KOPIA_ENV_PASSTHROUGH if name in os.environ}
         self.env["HOME"] = os.environ.get("TMPDIR", "/tmp")
 
         # Test Kopia CLI availability synchronously during initialization
@@ -245,6 +271,7 @@ class KopiaConnector:
         args: list[str],
         config_file: str | None = None,
         timeout: int = 60,
+        credentials: KopiaRepositoryConfig | None = None,
     ) -> tuple[str, str, int]:
         """
         Run a Kopia command asynchronously.
@@ -253,6 +280,7 @@ class KopiaConnector:
             args: Command arguments (without 'kopia' prefix)
             config_file: Optional path to config file
             timeout: Command timeout in seconds
+            credentials: Repository credentials, passed to kopia via the environment
 
         Returns:
             Tuple of (stdout, stderr, return_code)
@@ -289,11 +317,13 @@ class KopiaConnector:
         try:
             from opi.core.metrics import track_subprocess_memory
 
+            env = self.env | (credentials.credential_env() if credentials else {})
+
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=self.env,
+                env=env,
             )
 
             async with track_subprocess_memory("kopia"):
@@ -365,12 +395,6 @@ class KopiaConnector:
                 f"{config.s3_prefix}/",
                 "--endpoint",
                 config.s3_endpoint,
-                "--access-key",
-                config.s3_access_key,
-                "--secret-access-key",
-                config.s3_secret_key,
-                "--password",
-                config.password,
                 "--cache-directory",
                 cache_dir,
                 "--no-check-for-updates",
@@ -381,6 +405,7 @@ class KopiaConnector:
                 connect_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -397,6 +422,7 @@ class KopiaConnector:
                 list_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -451,12 +477,6 @@ class KopiaConnector:
                 f"{config.s3_prefix}/",
                 "--endpoint",
                 config.s3_endpoint,
-                "--access-key",
-                config.s3_access_key,
-                "--secret-access-key",
-                config.s3_secret_key,
-                "--password",
-                config.password,
                 "--cache-directory",
                 cache_dir,
                 "--no-check-for-updates",
@@ -467,6 +487,7 @@ class KopiaConnector:
                 connect_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -483,6 +504,7 @@ class KopiaConnector:
                 delete_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -533,12 +555,6 @@ class KopiaConnector:
                 f"{config.s3_prefix}/",
                 "--endpoint",
                 config.s3_endpoint,
-                "--access-key",
-                config.s3_access_key,
-                "--secret-access-key",
-                config.s3_secret_key,
-                "--password",
-                config.password,
                 "--cache-directory",
                 cache_dir,
                 "--no-check-for-updates",
@@ -549,6 +565,7 @@ class KopiaConnector:
                 connect_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -564,6 +581,7 @@ class KopiaConnector:
                     ["snapshot", "delete", snapshot_id, "--delete"],
                     config_file=config_file,
                     timeout=30,
+                    credentials=config,
                 )
                 results[snapshot_id] = code == 0
                 if code != 0:
@@ -607,12 +625,6 @@ class KopiaConnector:
                 f"{config.s3_prefix}/",
                 "--endpoint",
                 config.s3_endpoint,
-                "--access-key",
-                config.s3_access_key,
-                "--secret-access-key",
-                config.s3_secret_key,
-                "--password",
-                config.password,
                 "--cache-directory",
                 cache_dir,
                 "--no-check-for-updates",
@@ -623,6 +635,7 @@ class KopiaConnector:
                 connect_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             if code != 0:
@@ -639,6 +652,7 @@ class KopiaConnector:
                 show_args,
                 config_file=config_file,
                 timeout=30,
+                credentials=config,
             )
 
             # Disconnect from repository

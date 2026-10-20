@@ -15,6 +15,7 @@ import re
 import tempfile
 import threading
 from typing import Any, ClassVar
+from urllib.parse import quote
 
 from opi.core.config import settings
 
@@ -265,20 +266,19 @@ class MinioConnector:
 
         try:
             protocol = "https" if secure else "http"
-            endpoint = f"{protocol}://{host}"
 
-            args = ["alias", "set", alias, endpoint, access_key, secret_key]
-            stdout, stderr, code = await self._run_mc_command(args)
-
-            if code != 0:
-                error_msg = f"Failed to configure alias {alias}: {stderr}"
-                logger.error(error_msg)
-                return False
+            # MC_HOST_<alias> in de omgeving in plaats van "mc alias set": de sleutels
+            # staan dan niet op een commandoregel, die leesbaar is voor elk proces in de
+            # container via /proc/<pid>/cmdline.
+            self.env[f"MC_HOST_{alias}"] = (
+                f"{protocol}://{quote(access_key, safe='')}:{quote(secret_key, safe='')}@{host}"
+            )
 
             # Test the alias by listing buckets
             test_stdout, test_stderr, test_code = await self._run_mc_command(["ls", alias])
             if test_code != 0:
                 logger.warning(f"Alias {alias} configured but connection test failed: {test_stderr}")
+                del self.env[f"MC_HOST_{alias}"]
                 return False
 
             # Add to configured aliases set
@@ -361,8 +361,10 @@ class MinioConnector:
             if len(secret_key) < 8:
                 raise MinioValidationError("Secret key must be at least 8 characters long")
 
-            args = ["admin", "user", "add", alias, validated_username, secret_key]
-            stdout, stderr, code = await self._run_mc_command(args)
+            # De secret key via stdin: mc leest hem daar als hij niet als argument staat
+            # en stdin geen terminal is, en zo blijft hij van de commandoregel af.
+            args = ["admin", "user", "add", alias, validated_username]
+            stdout, stderr, code = await self._run_mc_command(args, stdin_input=f"{secret_key}\n")
 
             if code != 0:
                 if "already exists" in stderr.lower():
