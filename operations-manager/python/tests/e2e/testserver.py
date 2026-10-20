@@ -481,11 +481,8 @@ def create_test_app():
             ),
             patch("opi.handlers.project_file_handler.save_project_file"),
             patch("opi.services.project_store.GitProjectStore.save", _fake_store_save),
-            # version_of() clones the real zad-projects repo to read a blob SHA -
-            # unavailable here, same reason save is faked above. The edit-modal init
-            # records this as the compare-and-swap base_version, so without a stand-in
-            # every edit-modal open would fail decrypting the git creds. Return a fixed
-            # valid blob SHA (40 hex chars, per _BLOB_SHA_RE); the faked save ignores it.
+            # version_of() clones the real repo, hier niet beschikbaar. Stand-in: een vaste
+            # geldige blob-SHA (40 hex per _BLOB_SHA_RE); de nagemaakte save negeert hem.
             patch(
                 "opi.services.project_store.GitProjectStore.version_of",
                 new_callable=AsyncMock,

@@ -576,13 +576,10 @@ async def _start_deployment(
     project_name: str,
     result_yaml: dict[str, Any],
     deployment_name: str | None = None,
-    base_version: str | None = None,
 ) -> str:
     """Create a V2 async task for deployment processing. Returns task_id.
 
-    ``base_version`` is the project-file version the wizard was seeded from. The task
-    writes the whole file, so without it a change that landed while the user was
-    editing is silently overwritten; with it the store merges the two.
+    project_file_already_saved tells the task not to rewrite: the modal already saved.
     """
     from opi.core.task_helpers import create_async_task
     from opi.utils.yaml_util import dump_yaml_to_string
@@ -598,7 +595,7 @@ async def _start_deployment(
             "project_name": project_name,
             "yaml_content": yaml_content,
             "deployment_name": deployment_name,
-            "base_version": base_version,
+            "project_file_already_saved": True,
         },
         max_attempts=1,
     )
@@ -762,12 +759,6 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     state.step_data = step_data
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
-
-    # Record which version of the project file this form is showing. It travels with
-    # the eventual save so the edit is applied as a change on top of that version --
-    # otherwise the full file written back at the end silently reverts anything that
-    # landed while the user was in the wizard.
-    state.base_version = await get_project_store().version_of(f"projects/{project_name}.yaml")
 
     # The full project data is the domain object — providers and converters
     # use it to resolve context (e.g. deployment name from path, component
@@ -1451,7 +1442,6 @@ async def _modal_do_submit(
             project_name,
             existing_data,
             deployment_name=target_deployment_name,
-            base_version=state.base_version,
         )
         if target_deployment_name:
             logger.info(
