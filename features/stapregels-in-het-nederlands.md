@@ -14,7 +14,13 @@ van de interface Nederlands is.
 | `Queued` | In wachtrij |
 | `Starting...` | Wordt gestart... |
 | `Done` | Klaar |
+| `Failed` | Mislukt |
 | `Failed: <fout>` | Mislukt: `<fout>` |
+
+`Failed: <fout>` is de vorm die een mislukking tot RC-282 wegschreef. De fouttekst hoort
+bij de werkgegevens en niet in een veld dat 90 dagen blijft staan, dus sinds die wijziging
+schrijft `fail_project` alleen `Failed`. De regel met de fouttekst blijft vertaald worden
+voor de rijen die er al staan.
 
 Een regel die hier niet in staat gaat ongewijzigd door: de meeste stapregels worden al in
 het Nederlands geschreven door `format_step_line()`, en een onbekende regel raden is

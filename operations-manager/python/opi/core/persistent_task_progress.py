@@ -352,7 +352,10 @@ class PersistentTaskProgressManager:
         self._project_failure = error
         self.mark_legacy_failed(error)
 
-        self._current_step = f"Failed: {error}"
+        # Zonder de fouttekst: current_step hoort bij de kop en blijft 90 dagen staan,
+        # terwijl de tekst zelf bij de werkgegevens hoort (RC-282). Het detail staat in
+        # error_message en in de subtaak.
+        self._current_step = "Failed"
         self._mark_dirty()
 
         try:

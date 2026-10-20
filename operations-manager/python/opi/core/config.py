@@ -379,7 +379,8 @@ class Settings(BaseSettings):
     TASK_WORKER_STALE_THRESHOLD: int = 120
     TASK_WORKER_MAX_ATTEMPTS: int = 3
     TASK_WORKER_CONCURRENCY: int = 12
-    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1
+    TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1  # Werkgegevens (payload, logs, ...)
+    TASK_WORKER_HEADER_RETENTION_DAYS: int = 90  # Rij zelf (wie, wat, waar, ...)
     TASK_WORKER_MAX_DURATION: int = 1800  # 30 minutes
 
     # MinIO configuration

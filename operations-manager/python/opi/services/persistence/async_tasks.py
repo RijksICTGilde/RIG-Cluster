@@ -58,6 +58,9 @@ class AsyncTask(Base):
     #: het overlappredicaat waarmee ``claim_next_task`` bepaalt of twee taken elkaar in de
     #: weg kunnen zitten.
     affects_deployments: Mapped[list[str] | None] = mapped_column(PG_ARRAY(String(63)))
+    #: Wanneer de werkgegevens van deze rij zijn leeggemaakt; NULL is "nog niet".
+    #: Zie ``cleanup_old_tasks``, de enige schrijver van deze kolom.
+    details_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("idx_async_tasks_pending", "status", "created_at", postgresql_where=text("status = 'pending'")),

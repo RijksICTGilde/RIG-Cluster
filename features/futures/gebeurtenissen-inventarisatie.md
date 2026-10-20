@@ -40,6 +40,8 @@ Er zijn vandaag precies **drie manieren** waarop iemand te weten komt dat er iet
 
 **Dat is de kern van de opdracht.** Het gaat niet alleen om aflevering per e-mail of Mattermost. Het gaat er eerst om dat een gebeurtenis ergens BLIJFT staan, lang genoeg dat iemand hem de volgende ochtend nog kan zien.
 
+> **Sinds RC-282**: De kop van een afgeronde taak blijft 90 dagen staan (zie `features/async-task-system.md` sectie "Bewaartermijn: twee vensters").
+
 ## Hoe je de tabellen leest
 
 | Kolom | Betekenis |
@@ -100,7 +102,7 @@ Het startpunt van de opdracht zegt dat er twee tabellen zijn die dit werk al doe
 
 | Wat | Waar | Sleutelvelden | Wat het niet draagt |
 |---|---|---|---|
-| Taken, 23 soorten (`TaskType`) met zes toestanden (`AsyncTaskStatus`) | tabel `async_tasks`, `opi/core/async_task_schema.py`, `opi/core/async_task_service.py:54` | `project_name`, `deployment_name`, `cluster`, `created_by`, `current_step`, `progress_percent`, `subtasks`, `logs`, `events`, `web_addresses`, `result`, `error_message`, `attempt_count`, `created_at`/`started_at`/`completed_at` | Wordt standaard na **1 uur** verwijderd (`TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1`, `opi/core/config.py:369`, gebruikt in `opi/core/task_worker.py:426`) |
+| Taken, 23 soorten (`TaskType`) met zes toestanden (`AsyncTaskStatus`) | tabel `async_tasks`, `opi/core/async_task_schema.py`, `opi/core/async_task_service.py:54` | `project_name`, `deployment_name`, `cluster`, `created_by`, `current_step`, `progress_percent`, `subtasks`, `logs`, `events`, `web_addresses`, `result`, `error_message`, `attempt_count`, `created_at`/`started_at`/`completed_at` | Sinds RC-282 twee vensters: de werkgegevens (`payload`, `logs`, `subtasks`, `events`, `result`, `error_message`, `current_step`) worden na **1 uur** leeggemaakt (`TASK_WORKER_CLEANUP_RETENTION_HOURS: int = 1`), de rij zelf wordt na **90 dagen** verwijderd (`TASK_WORKER_HEADER_RETENTION_DAYS: int = 90`), allebei in `opi/core/config.py` en gebruikt in `opi/core/task_worker.py`. Daarvoor werd de hele rij na een uur verwijderd |
 | Runs, de tijdelijke databaseconsoles en jobbundels | tabel `runs`, `opi/core/runs_schema.py` | `kind`, `status`, `started_by`, `ended_by`, `expires_at`, `error_message`, `namespace`, `spec` | Alleen deze ene soort werklast; de docstring noemt zichzelf letterlijk "the administration/history record" en "the audit trail" |
 | Platformgebruikers | tabel `users`, `opi/core/user_schema.py` | `email`, `full_name`, `created_at`, `updated_at` | Wie de gebruiker aanmaakte of wijzigde; alleen de laatste toestand, geen historie |
 | Gemarkeerd voor verwijdering | tabel `marked_for_deletion`, `opi/core/marked_for_deletion_schema.py` | `resource_type`, `resource_name`, `project_name`, `deployment_name`, `cluster`, `marked_at`, `metadata` | Wie de markering veroorzaakte; en de rij verdwijnt zodra de reconciliatie opruimt, dus er blijft niets over dat zegt dat er iets is opgeruimd |

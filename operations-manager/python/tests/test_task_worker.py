@@ -36,6 +36,7 @@ def mock_worker_settings() -> Any:
         s.TASK_WORKER_STALE_THRESHOLD = 120
         s.TASK_WORKER_MAX_ATTEMPTS = 3
         s.TASK_WORKER_CLEANUP_RETENTION_HOURS = 72
+        s.TASK_WORKER_HEADER_RETENTION_DAYS = 90
         s.TASK_WORKER_CONCURRENCY = 1
         s.TASK_WORKER_MAX_DURATION = 1800
         yield s
@@ -313,3 +314,28 @@ class TestWorkerHeartbeat:
         # at least one heartbeat should have been sent
         assert mock_task_service.send_heartbeat.call_count >= 1
         mock_task_service.send_heartbeat.assert_any_call("test-id")
+
+
+class TestWorkerCleanupLoop:
+    """RC-282: de kop blijft 90 dagen, de werkgegevens volgens het korte venster."""
+
+    async def test_cleanup_loop_passes_both_retention_windows(
+        self,
+        worker: TaskWorker,
+        mock_task_service: AsyncMock,
+        mock_worker_settings: Any,
+    ) -> None:
+        async def _stop_after_call(**_kwargs: Any) -> int:
+            worker._running = False
+            return 0
+
+        mock_task_service.cleanup_old_tasks.side_effect = _stop_after_call
+        worker._running = True
+
+        with patch("opi.core.task_worker.asyncio.sleep", new=AsyncMock()):
+            await worker._cleanup_loop()
+
+        mock_task_service.cleanup_old_tasks.assert_awaited_once_with(
+            retention_hours=72,
+            header_retention_days=90,
+        )
