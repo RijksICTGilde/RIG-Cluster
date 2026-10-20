@@ -32,6 +32,7 @@ from opi.services.config_location import project_step_config_hint, selection_lab
 from opi.services.deployment_state import DeploymentState, collect_deployment_state
 from opi.services.project import Project
 from opi.services.project_authorization import (
+    PROJECT_EDIT_ROLES,
     get_user_role_for_project,
     is_user_authorized_for_project,
 )
@@ -1561,17 +1562,25 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             project_data["config"]["age-private-key"], settings_private_key
         )
 
-        project_data_decrypted["config"]["api-key"] = await decrypt_password_smart(
-            project_data["config"]["api-key"], project_private_key
-        )
+        # Geheimen gaan alleen naar de context voor admin/owner (BIO2 5.15, 8.03).
+        # Dit stond voorheen alleen in het sjabloon en kon weg via een nieuw fragment.
+        mag_geheimen_zien = user_role in PROJECT_EDIT_ROLES
 
-        # Store decrypted private key for display (admins only see this in UI)
-        project_data_decrypted["config"]["age-private-key"] = project_private_key
+        if mag_geheimen_zien:
+            project_data_decrypted["config"]["api-key"] = await decrypt_password_smart(
+                project_data["config"]["api-key"], project_private_key
+            )
+            project_data_decrypted["config"]["age-private-key"] = project_private_key
+        else:
+            project_data_decrypted["config"]["api-key"] = None
+            project_data_decrypted["config"]["age-private-key"] = None
 
         # Decrypt Keycloak passwords (RC-5 B: connections live under the keycloak
         # service config now, relocated from the old project-level config.keycloak).
         for kc_config in Project(project_data_decrypted).get("services/keycloak/config/realms") or []:
-            if kc_config.get("password"):
+            if not mag_geheimen_zien:
+                kc_config["password"] = None
+            elif kc_config.get("password"):
                 try:
                     kc_config["password"] = await decrypt_password_smart(kc_config["password"], project_private_key)
                 except Exception as e:
@@ -1587,13 +1596,15 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             # het admin-wachtwoord dat er al stond - hetzelfde blok, dezelfde rolpoort
             # (alleen admin/owner), en van de twee is de code de kortstlevende.
             kc_config["has_totp"] = bool(kc_config.get("totp_secret"))
-            if kc_config["has_totp"]:
+            if kc_config["has_totp"] and mag_geheimen_zien:
                 try:
                     seed = await decrypt_password_smart(kc_config["totp_secret"], project_private_key)
                     kc_config["totp_code"], _ = totp_now(seed)
                 except Exception as e:
                     logger.warning(f"Failed to derive OTP code for realm {kc_config.get('realm')}: {e}")
                     kc_config["totp_code"] = None
+            else:
+                kc_config["totp_code"] = None
             kc_config["totp_secret"] = None
 
         # The same reader the read-only API uses (RC-61): one decrypt-and-parse path, so

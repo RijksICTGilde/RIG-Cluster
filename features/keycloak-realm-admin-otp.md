@@ -150,7 +150,9 @@ above for why that is acceptable here and where the person-bound factor lives.
   and `_ensure_admin_otp` (retrofit).
 - `opi/web/router.py` (`render_project_page`) - derives the code of this moment
   from the seed while decrypting the realm data, and nulls the seed before the
-  page context is built.
+  page context is built. Since RC-307 only for a role in `PROJECT_EDIT_ROLES`:
+  for any other role the code stays out of the context, like the admin password
+  next to it (`features/projectgeheimen-alleen-voor-admin-en-owner.md`).
 - `opi/services/catalog/keycloak/section-detail.html.j2` - the field that shows it.
 - `opi/services/catalog/keycloak/config_model.py` + `keycloak.v1.0.json` -
   `totp_secret` field on the `KeycloakRealm` model + regenerated schema fragment.
