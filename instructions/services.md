@@ -1089,6 +1089,15 @@ knowledge: publish-on-web writes the sentence itself, because only it knows that
 unapproved domain does not block the deployment but moves it to the cluster address
 (`apply_domain_approval_fallback` in `opi/utils/naming.py`).
 
+**Een besluit komt alleen van de goedkeuringsroute.** De store weigert elke opslag die een
+status van je spec op `approved` of `denied` zet of laat ontstaan
+(`validate_approval_decisions` in `opi/manager/project_validation.py`), tenzij de opslag
+zich als besluit meldt met `save_and_commit_project(..., approval_decision=True)`. Die
+markering staat op precies een plek, `opi/web/router_approvals.py`, en hoort daar te
+blijven. Je service hoeft er niets voor te doen: de regel leest je `list_items`, dus hij
+geldt voor je spec zodra je hem declareert. Een aanvraag (`requested`) mag elke schrijfweg
+vastleggen, en dat is wat `ensure_approval_requests` doet.
+
 Alongside the spec, the service itself answers one more question:
 
 | Method | Question | Consumed by |

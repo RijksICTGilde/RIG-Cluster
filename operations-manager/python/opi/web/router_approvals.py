@@ -493,7 +493,10 @@ async def _do_submit(request: Request, wizard_token: str | None, user: dict, pro
         # of 500ing (e.g. pre-existing structural drift surfaced by the full check).
         try:
             await project_manager.save_and_commit_project(
-                existing_data, f"Update project {project_name} (domain approval)"
+                existing_data,
+                f"Update project {project_name} (domain approval)",
+                # This route is the only place that may set an approval decision.
+                approval_decision=True,
             )
         except (ProjectSchemaError, ProjectIntegrityError) as e:
             logger.warning("Domain approval save rejected by validation for %s: %s", project_name, e)

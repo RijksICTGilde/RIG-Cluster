@@ -31,6 +31,7 @@ from opi.forms.wizard.state import _strip_cleared_fields
 from opi.forms.wizard.write_set import apply_write_paths, flow_write_paths
 from opi.handlers.project_file_handler import ProjectFileHandler, _parse_resources_block_partial
 from opi.services.schema_migration import normalize_service_entries
+from opi.services.services import ServiceAdapter
 from opi.web.project_edit_security import IMMUTABLE_PROJECT_FIELDS
 
 if TYPE_CHECKING:
@@ -315,6 +316,9 @@ async def apply_modal_edit(
     # appends an item *whole*, outside that discipline. Restoring here means a redaction
     # placeholder cannot reach the project file by any route.
     merged_data = restore_redacted_secrets(merged_data, existing_data)
+
+    # Platform-managed fields are not the form's to set, just like the API rejects them.
+    ServiceAdapter.enforce_platform_managed_fields(merged_data, existing_data)
 
     # A new list item has no stored version to protect, so it is appended
     # whole: the empty slot the wizard was seeded with carries fields no form
