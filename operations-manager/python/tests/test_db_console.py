@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from fastapi import HTTPException
 from opi.core.db_console_reaper import DbConsoleReaper
 from opi.core.templates_lotc import templates_lotc
 from opi.generation.manifests import render_template
@@ -198,6 +200,9 @@ def _fake_request():
 
 def _render_modal_html(**ctx) -> str:
     tmpl = templates_lotc.get_template("shared/_db-console-modal.html.j2")
+    # Een console starten of stoppen vraagt een operationele rol (RC-323). Deze renders
+    # meten het aanzicht van wie dat mag; de leesrol heeft zijn eigen test.
+    ctx.setdefault("mag_uitvoeren", True)
     return tmpl.render(request=_fake_request(), **ctx)
 
 
@@ -255,6 +260,49 @@ def test_modal_running_state_renders_through_roos():
     assert "Nu stoppen" in html
 
 
+def test_modal_running_hides_stop_for_the_read_role():
+    """De console blijft draaien voor wie er maar naar kijkt; member mag hem niet stoppen."""
+    session = DbConsoleSession(
+        session_id="abcd1234",
+        name="dbconsole-proj-dep-abcd1234",
+        namespace="rig-proj",
+        project="proj",
+        deployment="dep",
+        tool=DbConsoleTool.PGWEB,
+        opened_by="u@x.nl",
+        hostname="dbconsole-abcd1234.example.com",
+        url="https://dbconsole-abcd1234.example.com/",
+        expires_at=datetime(2026, 6, 26, 22, 0, tzinfo=UTC),
+    )
+    html = _render_modal_html(
+        project_name="proj",
+        deployment_name="dep",
+        session=session,
+        state="running",
+        error=None,
+        ttl_seconds=3600,
+        enabled=True,
+        mag_uitvoeren=False,
+    )
+    assert "Console openen" in html  # opening the console is membership-level, still shown
+    assert "Nu stoppen" not in html
+
+
+def test_modal_new_shows_explanation_for_the_read_role():
+    html = _render_modal_html(
+        project_name="proj",
+        deployment_name="dep",
+        session=None,
+        state="none",
+        error=None,
+        ttl_seconds=3600,
+        enabled=True,
+        mag_uitvoeren=False,
+    )
+    assert "Je rol in dit project is alleen-lezen" in html
+    assert "/projects/proj/db-console" not in html  # no start form
+
+
 def test_modal_error_renders_through_roos():
     html = _render_modal_html(
         project_name="proj",
@@ -266,6 +314,128 @@ def test_modal_error_renders_through_roos():
         enabled=True,
     )
     assert "Boem" in html
+
+
+# ----------------------------------------- role gate on start/stop (RC-323)
+#
+# A database console gives interactive access to the deployment's database, so
+# starting/stopping one needs an operational role (developer/owner/admin), not
+# plain project membership.
+
+PROJECT_NAME = "db-console-role-target"
+MEMBER_EMAIL = "member@example.com"
+DEVELOPER_EMAIL = "developer@example.com"
+
+
+@pytest.fixture
+def project_with_roles():
+    from opi.services.project_service import ProjectUser, get_project_service
+    from opi.services.user_service import get_user_service
+
+    service = get_project_service()
+    saved_projects = dict(service._projects)
+    service._projects.clear()
+    service.register(
+        project_name=PROJECT_NAME,
+        api_key="k",
+        filename=f"{PROJECT_NAME}.yaml",
+        users=[
+            ProjectUser(email=MEMBER_EMAIL, role="member"),
+            ProjectUser(email=DEVELOPER_EMAIL, role="developer"),
+        ],
+    )
+    yield service
+    service._projects.clear()
+    service._projects.update(saved_projects)
+    get_user_service()._platform_admin_emails.discard(MEMBER_EMAIL)
+
+
+def _role_request(email: str, form: dict[str, str]):
+    return SimpleNamespace(
+        state=SimpleNamespace(csrf_token="tok", user={"email": email}),
+        scope={"type": "http"},
+        headers={},
+        form=AsyncMock(return_value=form),
+    )
+
+
+@pytest.mark.asyncio
+async def test_db_console_start_rejects_the_read_role(project_with_roles) -> None:
+    from opi.services.catalog.shared.db_console import db_console_start
+
+    with (
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager") as get_manager,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await db_console_start(
+            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1", "tool": "pgweb"}),
+            project_name=PROJECT_NAME,
+        )
+
+    assert exc.value.status_code == 403
+    get_manager.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_db_console_start_allows_developer(project_with_roles) -> None:
+    from opi.services.catalog.shared.db_console import db_console_start
+
+    manager = MagicMock()
+    manager.begin = AsyncMock(return_value=SimpleNamespace(session_id="run1"))
+
+    with (
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
+        patch("opi.services.catalog.shared.db_console.spawn", lambda coro: coro.close()),
+        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
+    ):
+        result = await db_console_start(
+            request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1", "tool": "pgweb"}),
+            project_name=PROJECT_NAME,
+        )
+
+    manager.begin.assert_called_once()
+    _, kwargs = manager.begin.call_args
+    assert kwargs["opened_by"] == DEVELOPER_EMAIL
+    assert result == "rendered"
+
+
+@pytest.mark.asyncio
+async def test_db_console_stop_rejects_the_read_role(project_with_roles) -> None:
+    from opi.services.catalog.shared.db_console import db_console_stop
+
+    with (
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager") as get_manager,
+        pytest.raises(HTTPException) as exc,
+    ):
+        await db_console_stop(
+            request=_role_request(MEMBER_EMAIL, {"deployment": "dep1"}),
+            project_name=PROJECT_NAME,
+            session_id="run1",
+        )
+
+    assert exc.value.status_code == 403
+    get_manager.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_db_console_stop_allows_developer(project_with_roles) -> None:
+    from opi.services.catalog.shared.db_console import db_console_stop
+
+    manager = MagicMock()
+    manager.teardown_session = AsyncMock(return_value="dep1")
+
+    with (
+        patch("opi.services.catalog.shared.db_console.get_db_console_manager", return_value=manager),
+        patch("opi.services.catalog.shared.db_console._render", new=AsyncMock(return_value="rendered")),
+    ):
+        result = await db_console_stop(
+            request=_role_request(DEVELOPER_EMAIL, {"deployment": "dep1"}),
+            project_name=PROJECT_NAME,
+            session_id="run1",
+        )
+
+    manager.teardown_session.assert_called_once_with(PROJECT_NAME, "run1", ended_by=DEVELOPER_EMAIL)
+    assert result == "rendered"
 
 
 # ------------------------------------------------------------------ reaper TTL

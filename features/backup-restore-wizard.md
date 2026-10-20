@@ -7,7 +7,10 @@ Interactive modal wizards for creating backups and restoring from backups direct
 Adds two buttons to the Backups section of the project details page:
 
 - **Backup aanmaken** - Opens a wizard to create a backup of a deployment's resources (PVCs, databases, MinIO buckets)
-- **Herstellen** - Opens a wizard to restore from an existing backup run (only visible when backups exist)
+- **Herstellen** - Opens a wizard to restore from an existing backup run (only visible when backups exist, and only for the roles that may restore)
+
+Who may what: a backup is for every project member, a restore is not. See
+`features/rollen-voor-operationele-handelingen.md`.
 
 Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSection` with `TemplatePartial` layouts) with custom `post_save_action` types (`trigger_backup` / `trigger_restore`).
 
@@ -50,7 +53,7 @@ Both buttons use the existing modal wizard infrastructure (`FormFlow` + `FormSec
 ### Key Design Decisions
 
 - **No project file changes**: Backup/restore flows skip the YAML save step - they trigger operations directly (except when creating a new deployment, which modifies the project file)
-- **Member-level auth**: Any project member can create backups and restore, not just admins/owners
+- **Member-level auth**: Any project member can create backups. Restore requires developer, owner, or admin role. See `features/rollen-voor-operationele-handelingen.md`
 - **Template context via yaml_data**: `TemplatePartial` rendering was extended to pass `yaml_data` as template context, enabling dynamic data (deployments, backup runs) in wizard partials
 - **Custom post_save_action**: New action types `trigger_backup` and `trigger_restore` are handled in `_modal_do_submit()`, which creates background tasks instead of saving project files
 - **Async context building**: Backup run data is gathered asynchronously during wizard initialization

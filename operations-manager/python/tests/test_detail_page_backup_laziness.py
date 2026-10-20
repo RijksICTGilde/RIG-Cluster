@@ -85,7 +85,7 @@ def test_the_restore_button_waits_for_the_snapshot_list() -> None:
     assert 'id="restore-btn-{{ ctx.deployment_name }}"' in section
     assert "Herstellen" not in section, "the page must not decide this"
 
-    restore_block = re.search(r"\{% if backups %\}.*?\{% endif %\}", fragment, re.DOTALL)
+    restore_block = re.search(r"\{% if backups and mag_terugzetten %\}.*?\{% endif %\}", fragment, re.DOTALL)
     assert restore_block is not None
     assert 'hx-swap-oob="true"' in restore_block.group(0)
     assert "Herstellen" in restore_block.group(0)
@@ -105,3 +105,13 @@ def test_a_failed_backup_lookup_is_shown_not_swallowed() -> None:
 
     source = inspect.getsource(backups.backups_fragment)
     assert "backups_error" in source or "error" in source
+
+
+def test_mag_terugzetten_follows_the_operate_role_not_membership() -> None:
+    """Restoring needs an operational role (RC-323); the fragment must derive the
+    button's visibility from that gate, not from plain project membership (which
+    `is_user_authorized_for_project` above already checks for every viewer).
+    """
+    source = inspect.getsource(backups.backups_fragment)
+    assert "may_operate_on_project(request, project_name)" in source
+    assert '"mag_terugzetten": may_operate_on_project' in source

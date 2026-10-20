@@ -57,7 +57,7 @@ from opi.services.project_store import ConflictError, get_project_store
 from opi.utils.csrf import reject_misfired_form_get
 from opi.web.lotc_switch import render_fragment
 from opi.web.navigation_lotc import to_nldd_icon
-from opi.web.project_edit_security import require_project_edit_access
+from opi.web.project_edit_security import require_project_edit_access, require_project_operate_access
 from opi.web.router_wizard import (
     _empty_sequence_item,
     _extract_section_data,
@@ -226,6 +226,20 @@ def _extract_deployment_index_from_sections(state: WizardState) -> int | None:
 def _is_backup_restore_flow(flow_id: str) -> bool:
     """Check if a flow ID is a backup or restore flow."""
     return flow_id in ("modal-backup", "modal-restore")
+
+
+def _require_flow_access(request: Request, project_name: str, flow_id: str):
+    """De rolpoort van een modal-wizard-stroom. Returns (project, user_email).
+
+    Een back-up aanmaken mag elk projectlid. Terugzetten overschrijft de data van een
+    deployment of schrijft een nieuwe deployment in het projectbestand, dus dat vraagt
+    een operationele rol (RC-323); elke andere stroom bewerkt het projectbestand.
+    """
+    if flow_id == "modal-backup":
+        return _require_project_member_access(request, project_name)
+    if flow_id == "modal-restore":
+        return require_project_operate_access(request, project_name)
+    return require_project_edit_access(request, project_name)
 
 
 def _flow_context_from_state(state: WizardState | None, flow_id: str) -> dict[str, Any]:
@@ -653,11 +667,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
-    # Backup/restore flows only require project membership, not admin/owner
-    if _is_backup_restore_flow(flow_id):
-        project, user_email = _require_project_member_access(request, project_name)
-    else:
-        project, user_email = require_project_edit_access(request, project_name)
+    project, _user_email = _require_flow_access(request, project_name, flow_id)
 
     project_data = project.data or {}
 
@@ -854,7 +864,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
 async def modal_wizard_load_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Load a step (for back-navigation)."""
     reject_misfired_form_get(request)
-    require_project_edit_access(request, project_name)
+    _require_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -879,10 +889,7 @@ async def modal_wizard_load_step(request: Request, project_name: str, flow_id: s
 @requires_sso
 async def modal_wizard_submit_step(request: Request, project_name: str, flow_id: str, section_id: str) -> HTMLResponse:
     """Validate step data and advance to next step, or complete the flow."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _require_flow_access(request, project_name, flow_id)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1170,10 +1177,7 @@ async def modal_wizard_submit_step(request: Request, project_name: str, flow_id:
 @requires_sso
 async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """'Later configureren' - save accumulated data and trigger deployment."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _require_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1188,10 +1192,7 @@ async def modal_wizard_skip(request: Request, project_name: str, flow_id: str) -
 @requires_sso
 async def modal_wizard_confirm(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Confirm after review - execute the final submit."""
-    if _is_backup_restore_flow(flow_id):
-        _require_project_member_access(request, project_name)
-    else:
-        require_project_edit_access(request, project_name)
+    _require_flow_access(request, project_name, flow_id)
 
     wizard_token = await _get_wizard_token_with_body(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1237,7 +1238,7 @@ async def backup_select_deployment(request: Request, project_name: str) -> HTMLR
 @requires_sso
 async def restore_select_mode(request: Request, project_name: str) -> HTMLResponse:
     """HTMX endpoint: re-render the restore target step when mode changes."""
-    _require_project_member_access(request, project_name)
+    require_project_operate_access(request, project_name)
 
     wizard_token = _get_wizard_token(request)
     state = load_modal_state_for(request, wizard_token, project_name)
@@ -1385,10 +1386,8 @@ async def _modal_do_submit(
 ) -> HTMLResponse:
     """Execute the final modal wizard submission."""
 
-    # TOCTOU recheck on the mutating request. Backup/restore has its own
-    # member-level gate further down.
-    if not _is_backup_restore_flow(flow_id):
-        require_project_edit_access(request, project_name)
+    # TOCTOU recheck on the mutating request, met de poort van deze stroom.
+    _require_flow_access(request, project_name, flow_id)
 
     state = load_modal_state_for(request, wizard_token, project_name)
     if not state:
@@ -1612,6 +1611,9 @@ async def _handle_backup_restore_submit(
         )
 
     else:  # trigger_restore
+        # Guard tegen een tussenstap die de poort mist: terugzetten is geen back-up.
+        require_project_operate_access(request, project_name)
+
         from opi.services import RestoreMode
 
         backup_run_id = merged_data.get("backup_run_id", "")

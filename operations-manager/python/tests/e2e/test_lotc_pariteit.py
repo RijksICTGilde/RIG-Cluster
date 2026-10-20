@@ -420,6 +420,9 @@ def _backups_fragment(deployment: str) -> str:
         deployments=[{"name": deployment}],
         backups_by_deployment={deployment: [dict(SNAPSHOT, deployment_name=deployment)]},
         backups_error=None,
+        # Terugzetten vraagt een operationele rol (RC-323); hier wordt de herstelknop
+        # gemeten, dus het fragment komt zoals wie dat mag het ziet.
+        mag_terugzetten=True,
     )
 
 

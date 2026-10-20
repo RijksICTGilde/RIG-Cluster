@@ -296,9 +296,9 @@ class UserRoleOptionsProvider:
                     "description": "Kan applicaties deployen en logs bekijken",
                 },
                 {
-                    "value": "operator",
-                    "label": "Operator",
-                    "description": "Alleen-lezen toegang voor monitoring",
+                    "value": "member",
+                    "label": "Alleen lezen",
+                    "description": "Kan het project bekijken, niets starten of wijzigen",
                 },
             ]
         )

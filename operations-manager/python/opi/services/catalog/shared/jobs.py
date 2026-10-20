@@ -1,17 +1,18 @@
-"""The job-runner modal, owned by the PostgreSQL services (RC-24).
+"""De job-runner modal, eigendom van de PostgreSQL services (RC-24).
 
-A project member opens a modal from the deployment Acties menu, gives an image +
-command, and OPI launches a one-shot Pod wired with the deployment's database
-connection (migrations are the use case, which is why this belongs to the database
-services rather than to the page). The modal polls live pod state (starting -> running
--> succeeded/failed) and opens the existing component log viewer to tail the logs.
-All routes are member-gated; live status comes from the cluster, history from the
-runs registry.
+Een projectlid opent een dialog uit het Acties-menu van een deployment, geeft een image
+en commando, en OPI start een eenmalige Pod met de databaseverbinding van de deployment
+(migraties zijn het use case, daarom hoort dit bij de databaseservices en niet bij de
+pagina). De dialog polt de live pod-toestand (starting → running → succeeded/failed) en
+opent de bestaande componentlogviewer om de logs te volgen. De modal en de status zijn
+voor elk projectlid; starten en stoppen vragen een operationele rol (RC-323), want een
+job voert code uit met de databasecredentials van de deployment. Live status komt uit
+het cluster, geschiedenis uit de runs registry.
 
-The modal template lives next to this module and the routes are mounted through
-``Service.web_routers``, so the block and the endpoints that drive it travel together.
-This module is imported lazily from ``web_routers`` (never at catalog import time), so
-the catalog itself stays free of manager imports.
+De modal template staat naast deze module en de routes zijn gemonteerd via
+``Service.web_routers``, dus het blok en de endpoints die het aandrijven gaan samen.
+Deze module wordt luie geïmporteerd uit ``web_routers`` (nooit op catalogimport-tijd),
+dus de catalog zelf blijft vrij van manager imports.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from opi.manager.job_manager import JobError, get_job_manager
 from opi.manager.run_support import pending_state, spawn
 from opi.services.runs_service import RunKind
 from opi.web.lotc_switch import render
+from opi.web.project_edit_security import may_operate_on_project, require_project_operate_access
 from opi.web.router_detail_edit import _require_project_member_access
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ async def _render(
             "form_command": form_command,
             "ttl_seconds": settings.JOB_TTL_SECONDS,
             "enabled": settings.JOB_ENABLED,
+            "mag_uitvoeren": may_operate_on_project(request, project_name),
         },
     )
 
@@ -114,7 +117,7 @@ async def job_status(request: Request, project_name: str, deployment_name: str) 
 @requires_sso
 async def job_start(request: Request, project_name: str) -> HTMLResponse:
     """Start a job for a deployment; returns the modal body (now monitoring)."""
-    _, user_email = _require_project_member_access(request, project_name)
+    _, user_email = require_project_operate_access(request, project_name)
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))
@@ -167,7 +170,7 @@ async def job_start(request: Request, project_name: str) -> HTMLResponse:
 @requires_sso
 async def job_stop(request: Request, project_name: str, session_id: str) -> HTMLResponse:
     """Stop/remove a job immediately; returns the modal body (back to the form)."""
-    _, user_email = _require_project_member_access(request, project_name)
+    _, user_email = require_project_operate_access(request, project_name)
 
     form = await request.form()
     deployment_name = str(form.get("deployment", ""))

@@ -167,6 +167,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
     from opi.services.project_authorization import is_user_authorized_for_project
     from opi.services.project_store import get_project_store
     from opi.web.lotc_switch import render
+    from opi.web.project_edit_security import may_operate_on_project
 
     user = get_current_user(request) or {}
     user_email = user.get("email", "").lower()
@@ -224,5 +225,7 @@ async def backups_fragment(request: Request, project_name: str) -> HTMLResponse:
             "deployments": deployments,
             "backups_by_deployment": backups_by_deployment,
             "backups_error": error,
+            # De herstelknop volgt de rolpoort van de restore-stroom (RC-323).
+            "mag_terugzetten": may_operate_on_project(request, project_name),
         },
     )
