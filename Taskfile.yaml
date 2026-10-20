@@ -625,6 +625,31 @@ tasks:
         echo "✅ backup-destination ({{.CLUSTER}}) applied successfully!"
     silent: true
 
+  dns:set:
+    desc: "Zet een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (achter de IP-whitelist, zonder sleutels op je laptop)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE, CONTENT]
+    cmds:
+      - |
+        # De scripts zitten niet in de image (.dockerignore), dus ze gaan naar /tmp in de
+        # pod, zoals in docs/sandbox-wildcard-cert-renewal.md. De TransIP-gegevens komen
+        # uit de omgeving van die pod.
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_set_dns.py "$POD:/tmp/transip_set_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_set_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" --content "{{.CONTENT}}" --expire {{default "60" .EXPIRE}} {{.CLI_ARGS}}
+
+  dns:delete:
+    desc: "Verwijder een DNS-record bij TransIP vanuit de OPI-pod van het geselecteerde cluster (eerst met -- --dry-run kijken)"
+    silent: true
+    requires:
+      vars: [ZONE, NAME, TYPE]
+    cmds:
+      - |
+        POD="$(kubectl -n {{.RIG_NAMESPACE}} get pod -l app=operations-manager -o jsonpath='{.items[0].metadata.name}')"
+        kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_delete_dns.py "$POD:/tmp/transip_delete_dns.py"
+        kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_delete_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" {{.CLI_ARGS}}
+
   wait-namespace-rights:
     desc: "Wacht tot je in een (nieuwe) namespace secrets mag aanmaken, maximaal 60 s"
     silent: true
