@@ -403,6 +403,10 @@ port = 5432
 database = "%{env:MAIL_DB_NAME}%"
 user = "%{env:MAIL_DB_USER}%"
 password = "%{env:MAIL_DB_PASSWORD}%"
+# Versleuteld naar de database. allow-invalid-certs hoort hierbij: Stalwart toetst het
+# servercertificaat tegen de publieke roots, en CNPG tekent met zijn eigen interne CA.
+tls.enable = true
+tls.allow-invalid-certs = true
 # Zonder deze regel pakt Stalwart de deadpool-default: cpu-cores x 4, en dat blaast
 # zo door het connectionLimit van de rol heen (gemeten 20 augustus 2026 als "FATAL:
 # too many connections for role mailrelay" bij een podwissel). De rol staat op 20

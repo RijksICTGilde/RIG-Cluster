@@ -13,6 +13,7 @@ from typing import Any
 
 import asyncpg
 
+from opi.core.config import settings
 from opi.utils.patterns import POSTGRES_IDENTIFIER
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class PostgresConnector:
                 password=self._admin_password,
                 database=database,
                 port=5432,
+                ssl=settings.DATABASE_SSLMODE,
             )
             self._current_database = database
             logger.debug(f"Created connection to {self._host}/{database}")
@@ -102,6 +104,7 @@ class PostgresConnector:
                     password=self._admin_password,
                     database=database,
                     port=5432,
+                    ssl=settings.DATABASE_SSLMODE,
                 )
                 logger.debug(f"Recreated connection to {self._host}/{database}")
 

@@ -5,3 +5,4 @@ resources:
 - databases.yaml
 - users.yaml
 - podmonitor.yaml
+- monitoring-queries.yaml

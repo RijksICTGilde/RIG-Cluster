@@ -88,6 +88,7 @@ async def _ensure_database_exists() -> None:
         password=settings.DATABASE_ADMIN_PASSWORD,
         database="postgres",
         port=5432,
+        ssl=settings.DATABASE_SSLMODE,
     )
 
     try:
@@ -134,6 +135,7 @@ async def initialize_database_pools() -> None:
         min_size=0,
         max_size=20,
         max_inactive_connection_lifetime=300.0,
+        sslmode=settings.DATABASE_SSLMODE,
     )
 
     try:

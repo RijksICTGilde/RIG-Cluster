@@ -365,6 +365,10 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "operations_manager"
     DATABASE_ADMIN_NAME: str = "postgres"
     DATABASE_ADMIN_PASSWORD: str = "changeMe123!"
+    # libpq sslmode voor OPI's verbindingen naar databases van het platform. require
+    # versleutelt zonder het servercertificaat te toetsen (CNPG's interne CA). Local dev:
+    # zet op disable. Zie features/postgresql-tls.md.
+    DATABASE_SSLMODE: str = "require"
 
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7

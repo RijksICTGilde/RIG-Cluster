@@ -90,8 +90,11 @@ spec:
               value: "-1"
             - name: KC_PROXY_ADDRESS_FORWARDING
               value: "true"
+            # sslmode=require versleutelt zonder het servercertificaat te toetsen. CNPG
+            # tekent met zijn eigen interne CA, en die zit niet in de truststore van de
+            # Keycloak-pod; verify-full vraagt dat certificaat erbij.
             - name: KC_DB_URL
-              value: "jdbc:postgresql://rig-db-rw:5432/keycloak"
+              value: "jdbc:postgresql://rig-db-rw:5432/keycloak?sslmode=require"
             - name: KC_DB_USERNAME
               valueFrom:
                 secretKeyRef:
