@@ -154,7 +154,10 @@ def _get_validator(version: float | None = None) -> Draft202012Validator:
             with (LEGACY_PATCH_DIR / f"v{version_key(patch_version)}.json").open(encoding="utf-8") as patch_file:
                 schema = _merge_patch(schema, json.load(patch_file))
     Draft202012Validator.check_schema(schema)
-    return Draft202012Validator(schema)
+    # Met een format_checker doet "format" iets; zonder is het decoratie. Het echte werk
+    # doet het "pattern" ernaast: jsonschema toetst "email" alleen op een apenstaartje, en
+    # slaat "date-time" over zolang rfc3339-validator niet geinstalleerd is.
+    return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
 def check_schema_versions(migration_versions: tuple[int | float, ...]) -> None:

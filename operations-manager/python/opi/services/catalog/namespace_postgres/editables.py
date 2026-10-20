@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import RangeValidator
+from opi.forms.editables.validators import ConfigSettingValidator, RangeValidator
 from opi.services.catalog.base import ConfigLayer, config_path
+from opi.services.catalog.shared.postgres_settings import POSTGRES_STORAGE
 from opi.services.services_enums import ServiceType
 
 POSTGRESQL_INSTANCES_EDITABLE = Editable(
@@ -14,7 +15,10 @@ POSTGRESQL_INSTANCES_EDITABLE = Editable(
 )
 
 POSTGRESQL_STORAGE_EDITABLE = Editable(
-    yaml_path=config_path(ConfigLayer.PROJECT, ServiceType.NAMESPACE_POSTGRESQL_DATABASE, "config", "storage"),
-    values_provider="StorageSizeOptionsProvider",
+    yaml_path=POSTGRES_STORAGE.yaml_path(ServiceType.NAMESPACE_POSTGRESQL_DATABASE, ConfigLayer.PROJECT),
+    # Een keuzelijst is geen toets: de grens staat in de declaratie, en die toetst ook een
+    # met de hand geposte waarde.
+    validator=ConfigSettingValidator(POSTGRES_STORAGE),
+    values_provider="PostgresStorageSizeOptionsProvider",
     virtualize=SERVICE_VIRTUALIZE,
 )

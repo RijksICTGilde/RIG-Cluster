@@ -17,9 +17,12 @@ result the old ``dict.get()`` merge produced.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from opi.utils.naming import CONTAINER_IMAGE_PATTERN
 
 
 class DatabasePrivilege(StrEnum):
@@ -83,9 +86,17 @@ class DedicatedPostgresFields(BaseModel):
     validates to the same merged result the old ``dict.get()`` merge produced.
     """
 
+    # Een gesloten lijst toegestane images (een ChoiceSetting) kan niet: productie draait
+    # een eigen CNPG-image met een eigen tag, en features/namespace-postgresql-database.md
+    # laat eigen images uitdrukkelijk toe. Dus de VORM, met de tekenset die een
+    # image-verwijzing in een projectbestand overal heeft.
     image: str = Field(
         default="ghcr.io/cloudnative-pg/postgresql:17",
-        description="PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+        min_length=1,
+        description=(
+            "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26). "
+            "Letters, digits and . _ : / @ - only, starting with a letter or digit."
+        ),
     )
     registry: str | None = Field(
         default=None,
@@ -94,7 +105,8 @@ class DedicatedPostgresFields(BaseModel):
     instances: int = Field(
         default=1, ge=1, description="Number of PostgreSQL instances; more than one gives a replicated cluster."
     )
-    # Not pattern-constrained, matching today's behaviour (required, non-empty).
+    # De grenzen staan in POSTGRES_STORAGE (shared/postgres_settings.py), niet hier: een
+    # grens op een dienstveld is een declaratie, geen ``le=`` op het model (RC-168).
     # 1Gi en niet 10Gi: de keuzelijst van het formulier (StorageSizeOptionsProvider) loopt tot
     # 1Gi, dus de oude standaardwaarde stond niet in de lijst waaruit je hem kon kiezen. Dat is
     # de bovenkant van de lijst, want een database is de plek waar ruimte het eerst opraakt.
@@ -110,6 +122,19 @@ class DedicatedPostgresFields(BaseModel):
     resources: DatabaseResources = Field(
         default=DatabaseResources(), description="CPU and memory requests and limits for the database pods."
     )
+
+    @field_validator("image")
+    @classmethod
+    def _image_charset(cls, value: str) -> str:
+        # Een ``field_validator`` en geen ``pattern=``: pydantic toetst met de
+        # Rust-regexengine, die ``\Z`` niet kent, en dan zou deze tekenset twee teksten
+        # krijgen.
+        if not re.match(CONTAINER_IMAGE_PATTERN, value):
+            raise ValueError(
+                "Image bevat niet-toegestane tekens: gebruik letters, cijfers en . _ : / @ -, "
+                "beginnend met een letter of cijfer"
+            )
+        return value
 
     @field_validator("privileges", mode="before")
     @classmethod

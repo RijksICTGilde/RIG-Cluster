@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import IntegerConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import PathValidator, RangeValidator
+from opi.forms.editables.validators import RangeValidator, SafePathValidator
 
 METRICS_PORT_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/port",
@@ -20,7 +20,7 @@ METRICS_PORT_EDITABLE = Editable(
 METRICS_PATH_EDITABLE = Editable(
     yaml_path="components[*]/services{metrics-scraper}/path",
     default="/metrics",
-    validator=PathValidator(),
+    validator=SafePathValidator(),
     required=True,
     depends_on="components[*]/services",
     show_when={"contains": "metrics-scraper"},

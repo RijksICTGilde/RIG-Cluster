@@ -15,8 +15,10 @@ niet. Een grens stond hardgecodeerd in `opi/connectors/postgres.py`, of als los 
 een pydantic-model, of nergens: `storage: 500Gi` liep door tot het cluster het weigerde.
 
 > De eerste declaratie is de connectielimiet van `postgresql-database` (RC-201, zie
-> `postgresql-connection-limits.md`). Een dienst die niets declareert gedraagt zich precies
-> zoals hij deed.
+> `postgresql-connection-limits.md`). De tweede is de opslag en de vier
+> resources-hoeveelheden van een eigen PostgreSQL-cluster (RC-327, zie
+> `namespace-postgresql-database.md`), op beide diensten die dat clustertype aanbieden. Een
+> dienst die niets declareert gedraagt zich precies zoals hij deed.
 
 ## De drie regels
 
@@ -213,5 +215,6 @@ invulde dat mocht.
 - `opi/services/catalog/base.py` -- `Service.config_settings()` en `Service.config_setting(path)`
 - `opi/manager/project_validation.py` -- de toetsing bij het inlezen en bij een wijziging
 - `opi/forms/visualizers/config_setting_fields.py` -- het wizardveld uit de declaratie
-- `opi/services/resource_analyzer.py` -- de twee hoeveelheid-parsers
+- `opi/services/resource_analyzer.py` -- de twee hoeveelheid-parsers en `K8S_QUANTITY_PATTERN`, de vorm die een hoeveelheid moet hebben voor hij wordt geparseerd
+- `opi/services/catalog/shared/postgres_settings.py` -- de declaraties van een eigen PostgreSQL-cluster
 - `tests/test_service_config_settings.py`

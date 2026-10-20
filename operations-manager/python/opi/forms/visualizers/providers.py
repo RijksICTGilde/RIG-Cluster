@@ -23,6 +23,7 @@ from opi.services.catalog.postgresql_database.connection_limit import (
     project_connection_limit,
 )
 from opi.services.catalog.shared.storage import STORAGE_SIZES
+from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
 
@@ -453,6 +454,32 @@ class StorageSizeOptionsProvider:
     def get_options(self) -> list[dict[str, Any]]:
         """Get available storage size options."""
         return [{"value": size, "label": self.LABELS.get(size, size)} for size in STORAGE_SIZES]
+
+
+class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
+    """De maten van het platform, plus de opgeslagen waarde als die er niet bij staat.
+
+    Een eigen PostgreSQL-cluster mag tot 20Gi (``POSTGRES_STORAGE``) en zijn volume mag niet
+    krimpen, dus zonder de opgeslagen waarde bood de select een project op 2Gi alleen krimp
+    aan en weigerde het opslaan daarna zijn eigen voorstel. Een eigen klasse en niet de ouder
+    zelf, want bij persistent-storage en temp-storage topt ``check_storage_size`` wel op 1Gi af.
+    """
+
+    def __init__(self, current_value: str | None = None) -> None:
+        self.current_value = current_value
+
+    def get_options(self) -> list[dict[str, Any]]:
+        options = super().get_options()
+        stored = (self.current_value or "").strip()
+        if not stored or any(option["value"] == stored for option in options):
+            return options
+        options.append({"value": stored, "label": f"{stored} (eigen waarde)"})
+        try:
+            return sorted(options, key=lambda option: parse_k8s_memory_to_mi(str(option["value"])))
+        except ValueError:
+            # Een onleesbare opgeslagen maat kan niet op zijn plek in de reeks, maar hij
+            # moet wel te kiezen blijven: anders stuurt het formulier een krimp.
+            return options
 
 
 class ConnectionLimitOptionsProvider:
@@ -2068,6 +2095,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "MemoryRequestOptionsProvider": MemoryRequestOptionsProvider,
     "StorageTypeOptionsProvider": StorageTypeOptionsProvider,
     "StorageSizeOptionsProvider": StorageSizeOptionsProvider,
+    "PostgresStorageSizeOptionsProvider": PostgresStorageSizeOptionsProvider,
     "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
     "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,

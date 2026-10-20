@@ -565,7 +565,20 @@ BARE_DOMAIN_SUBDOMAIN = "@"
 # DNS subdomain validation constants
 SUBDOMAIN_MAX_LENGTH = 63
 SUBDOMAIN_MIN_LENGTH = 1
-SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?$")
+SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\Z")
+
+#: Message for subdomains that don't match SUBDOMAIN_PATTERN. Used by validate_subdomain
+#: and configmodel; stored subdomains must be lowercase, or the manifest hostname differs.
+SUBDOMAIN_FORMAT_MESSAGE = "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten"
+
+#: Domain name: two or more DNS-1123-labels separated by dots. Used by
+#: CustomDomainValidator and configmodel. Form validation only; support/approval is
+#: validate_base_domain's concern.
+DOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+\Z")
+
+#: De melding bij een domein dat niet aan DOMAIN_PATTERN voldoet, zodat formulier, API en
+#: git dezelfde zin geven.
+DOMAIN_FORMAT_MESSAGE = "Ongeldig domeinformaat. Gebruik een geldig domeinnaam zoals 'voorbeeld.nl'"
 
 # The wording stays generic and never says "reserved": a message that sets a reserved name
 # apart from a taken one makes the list probeable from outside.
@@ -855,7 +868,7 @@ def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str 
         "too_long": f"Subdomein mag maximaal {SUBDOMAIN_MAX_LENGTH} tekens bevatten",
         "start_hyphen": "Subdomein mag niet beginnen met een koppelteken",
         "end_hyphen": "Subdomein mag niet eindigen met een koppelteken",
-        "invalid_chars": "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten",
+        "invalid_chars": SUBDOMAIN_FORMAT_MESSAGE,
     }
 
     # English error messages

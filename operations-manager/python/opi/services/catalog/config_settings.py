@@ -42,13 +42,14 @@ A service that declares none behaves exactly as it did.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Final
 
 from opi.services.catalog.base import ConfigLayer, config_path
-from opi.services.resource_analyzer import parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
+from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -287,6 +288,15 @@ class QuantitySetting(ConfigSetting):
             raise SettingError(
                 f"'{self.path}' moet een Kubernetes-hoeveelheid zijn zoals {self.minimum} of {self.maximum}; "
                 f"je gaf {value!r}."
+            )
+        # Eerst de VORM, dan het getal: de parsers strippen en laten een spatie tussen
+        # getal en eenheid door, dus '1 Gi' en '1Gi\n' kwamen als geldige hoeveelheid
+        # binnen. Hetzelfde pattern als het projectschema gebruikt.
+        if not re.match(K8S_QUANTITY_PATTERN, value):
+            raise SettingError(
+                f"'{self.path}' is geen geldige Kubernetes-hoeveelheid: {value!r}. "
+                f"Gebruik iets als {self.minimum} of {self.maximum}.",
+                setting=self,
             )
         try:
             return float(_QUANTITY_PARSERS[self.kind](value))

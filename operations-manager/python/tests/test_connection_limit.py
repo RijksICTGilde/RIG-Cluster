@@ -98,7 +98,9 @@ def test_elke_waarde_binnen_de_speelruimte_is_geldig() -> None:
 
 def test_de_grenzen_staan_alleen_in_de_declaratie() -> None:
     assert (CONNECTION_LIMIT.minimum, CONNECTION_LIMIT.maximum, CONNECTION_LIMIT.default) == (1, 500, 20)
-    assert get_service(ServiceType.POSTGRESQL_DATABASE).config_settings() == (CONNECTION_LIMIT,)
+    # Sinds RC-327 declareert deze dienst ook de CNPG-velden van scope: project; die
+    # staan hier niet herhaald, want dat zou de grenzen op een tweede plek vastleggen.
+    assert CONNECTION_LIMIT in get_service(ServiceType.POSTGRESQL_DATABASE).config_settings()
 
 
 # --- de connector -----------------------------------------------------------------

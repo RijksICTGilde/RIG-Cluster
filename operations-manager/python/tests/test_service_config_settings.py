@@ -7,9 +7,10 @@ en iets moet controleren dat die keuze binnen de perken blijft. Dat mechanisme b
 niet -- een grens stond als los getal in een pydantic-model, hardgecodeerd in een
 connector, of nergens.
 
-Hier wordt het mechanisme gemeten, en niet een dienst die het gebruikt: er is er nog
-geen. De eerste test is dan ook de belangrijkste: de hele catalogus declareert niets, dus
-er verandert vandaag niets aan het gedrag van welke dienst dan ook. De rest meet de vier
+Hier wordt het mechanisme gemeten, en niet een dienst die het gebruikt. De eerste test
+houdt bij WELKE diensten iets declareren, zodat een declaratie erbij niet onopgemerkt het
+gedrag van een dienst verandert; wat die declaraties doen, wordt bij de dienst zelf
+gemeten. De rest meet de vier
 beloften -- een grens op precies een plek, specifieker wint, buiten de speelruimte is een
 leesbare fout bij het INLEZEN, en wat een dienst niet declareert is niet instelbaar --
 met declaraties die alleen in deze tests bestaan.
@@ -50,6 +51,7 @@ from opi.services.catalog.config_settings import (
     resolve_setting,
 )
 from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
+from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
 from opi.services.registry import SERVICES, get_service
@@ -207,15 +209,19 @@ def declaring(monkeypatch: pytest.MonkeyPatch) -> Any:
 # --- 1. er verandert vandaag niets ------------------------------------------------
 
 
-def test_alleen_de_connectielimiet_is_in_de_catalogus_gedeclareerd() -> None:
+def test_wie_in_de_catalogus_een_speelruimte_declareert() -> None:
     """De regressietoets over de hele catalogus.
 
     Declareert een dienst hier iets bij, dan is er gedrag veranderd dat niemand heeft
     gevraagd -- en dan hoort daar een test bij die dat gedrag meet, niet deze. De
-    connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``.
+    connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``; de velden van een
+    eigen PostgreSQL-cluster (RC-327) staan in ``shared/postgres_settings.py``.
     """
     declarerend = {name: provider.config_settings() for name, provider in SERVICES.items()}
-    assert {name: settings for name, settings in declarerend.items() if settings} == {_DATABASE: (CONNECTION_LIMIT,)}
+    assert {name: settings for name, settings in declarerend.items() if settings} == {
+        _DATABASE: (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS),
+        ServiceType.NAMESPACE_POSTGRESQL_DATABASE: DEDICATED_POSTGRES_SETTINGS,
+    }
 
 
 def test_elke_laag_die_een_setting_openzet_telt_mee() -> None:

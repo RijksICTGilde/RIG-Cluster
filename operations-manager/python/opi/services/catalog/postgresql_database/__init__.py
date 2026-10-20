@@ -22,6 +22,7 @@ from opi.services.catalog.postgresql_database.connection_limit import CONNECTION
 from opi.services.catalog.postgresql_database.variables import DatabaseVariables
 from opi.services.catalog.shared.backups import BackupsPageMixin
 from opi.services.catalog.shared.postgres_pages import DatabasePagesMixin
+from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import DatabaseSecret
@@ -81,7 +82,9 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         return None
 
     def config_settings(self) -> tuple[ConfigSetting, ...]:
-        return (CONNECTION_LIMIT,)
+        # De CNPG-velden gelden alleen voor scope: project; op een shared database staan ze
+        # niet in de config en worden ze dus niet getoetst.
+        return (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS)
 
     def _config_selected(self, project_data: dict) -> bool:
         """Section visibility: shown when the project uses this service."""

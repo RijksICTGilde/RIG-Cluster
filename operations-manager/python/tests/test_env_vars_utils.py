@@ -200,6 +200,13 @@ class TestValidateAndParseEnvVars:
         assert isinstance(result, dict)
         assert not isinstance(result, CommentedMap)
 
+    def test_commented_map_with_invalid_key_is_rejected(self):
+        """Regression: the mapping form went through unchecked (RC-327 stap 3)."""
+        cm = CommentedMap()
+        cm["MY KEY"] = "value1"
+        with pytest.raises(ValueError, match="Invalid key format"):
+            validate_and_parse_env_vars(cm)
+
 
 class TestExtractVariableReferences:
     """Tests for extract_variable_references."""

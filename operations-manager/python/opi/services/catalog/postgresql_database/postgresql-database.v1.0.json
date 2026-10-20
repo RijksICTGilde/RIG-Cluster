@@ -82,7 +82,8 @@
         },
         "image": {
           "default": "ghcr.io/cloudnative-pg/postgresql:17",
-          "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26).",
+          "description": "PostgreSQL image for the cluster. Must be CNPG-compatible (a postgres user with UID 26). Letters, digits and . _ : / @ - only, starting with a letter or digit.",
+          "minLength": 1,
           "title": "Image",
           "type": "string"
         },
