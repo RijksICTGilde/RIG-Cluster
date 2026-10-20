@@ -24,3 +24,15 @@ patches:
     target:
       kind: Deployment
       name: operations-manager
+
+  # Persoonsgegevens in secrets, geen configmap. JSON-patch omdat strategic-merge-patch
+  # bestaande secretRefs zou vervangen.
+  - target:
+      kind: Deployment
+      name: operations-manager
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/envFrom/-
+        value:
+          secretRef:
+            name: operations-manager-access

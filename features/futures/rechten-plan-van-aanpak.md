@@ -135,7 +135,9 @@ Zolang beide sleutels niet zijn ingesteld, verandert er voor een draaiend cluste
 
 ### 4.4 Het hardgecodeerde adres in `startup.py`
 
-`opi/core/startup.py:470` en `:497` zetten hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder.
+**Stand:** stap 1 en 2 zijn gedaan in RC-272. Het adres staat nu in `ALLOWED_EMAILS` en `ADMIN_EMAILS` van het SOPS-secret `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/operations-manager-access-secrets.yaml`, en de twee lijsten in `opi/core/startup.py` zijn weg. Stap 3 staat nog open.
+
+De uitgangstoestand was: `opi/core/startup.py` zette hetzelfde persoonlijke e-mailadres neer als standaard-allowlist én als standaard-platformbeheerder.
 
 Voorstel, en dit is de enige migratie met een echt risico op buitensluiting:
 
@@ -143,9 +145,9 @@ Voorstel, en dit is de enige migratie met een echt risico op buitensluiting:
 2. Verwijder daarna de regels uit de broncode.
 3. Voeg pas dan een opstartcontrole toe die faalt als er nul platformbeheerders zijn geconfigureerd. Die volgorde is bewust: eerst zorgen dat er altijd één is, dan pas afdwingen dat er één is.
 
-Stap 3 is meer waard dan hij lijkt. Vandaag is "OPI draait zonder platformbeheerder" een toestand die niet kan bestaan omdat er een adres in de code staat; zonder dat adres kan hij wél bestaan, en dan is er niemand die hem kan repareren.
+Stap 3 is meer waard dan hij lijkt. "OPI draait zonder platformbeheerder" was een toestand die niet kon bestaan omdat er een adres in de code stond; sinds RC-272 kan hij wél bestaan, en dan is er niemand die hem kan repareren.
 
-Merk ook op dat het laden van de `users`-tabel in een brede `except Exception` staat met alleen een waarschuwing (inventarisatie, 8.10). Zolang dat zo is, kan een databasestoring de allowlist stil verkleinen, en dat wordt pijnlijker zodra de hardgecodeerde noodingang weg is.
+Merk ook op dat het laden van de `users`-tabel in een brede `except Exception` staat met alleen een waarschuwing (inventarisatie, 8.10). Zolang dat zo is, kan een databasestoring de allowlist stil verkleinen, en dat is pijnlijker nu de hardgecodeerde noodingang weg is.
 
 ### 4.5 De ontsleutelde omgevingsvariabelen op de detailpagina
 
