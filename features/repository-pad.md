@@ -35,6 +35,17 @@ Op twee plekken, omdat ze elk een ander geval vangen:
 De controle is lexicaal: ze kijkt naar de tekst van het pad en volgt geen symlinks. Een symlink
 in de gekloonde repository kan nog steeds naar een plek buiten de kloon wijzen.
 
+## Hetzelfde patroon voor chart- en helmfilepaden
+
+`$defs/relative-path` in `opi/schemas/project_v2.json` valideert `repositories[].path`,
+`helm-charts[].chart-path`, `helmfile[].path` en `helmfile[].entry`. Chart- en helmfile-
+namen zijn DNS-1123-labels (ze worden mappen onder `charts/`).
+
+`file://`-dependencies uit externe `Chart.yaml`-bestanden liggen buiten het schema. OPI
+valideert ze bij het klonen via `safe_join`, `single_segment` en `reject_escaping_symlinks`
+in `opi/utils/fs_paths.py`. Symlinks worden behouden in plaats van gevolgd.
+Toetsen: `tests/test_helm_paden_binnen_werkmap.py`.
+
 ## Bestaande projectbestanden
 
 Er is geen migratie. Een bestand met een pad dat de regel niet haalt, wordt bij de eerstvolgende
