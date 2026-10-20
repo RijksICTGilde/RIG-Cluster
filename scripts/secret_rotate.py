@@ -15,7 +15,9 @@ Elk component valt in één categorie, en de categorie bezit de stapvolgorde:
   (management-API), keycloak-admin (kcadm). Daar geldt wél app-eerst: wijzig met de huidige
   waarde, verifieer de nieuwe, schrijf dan het bestand en laat de sync convergeren.
 - ``env-restart``  -- de app leest het secret alleen bij start (minio, pgadmin,
-  prometheus-token): bestand, sync afwachten, herstart, verifiëren.
+  prometheus-token): bestand, sync afwachten, herstart, verifiëren. Leeft de waarde alleen in
+  het envsecret van ZAD (secret-key), dan is het envbestand de bestandskant, regenereert een
+  mens daar het Secret van, en wacht de tool op dat Secret voor ze OPI herstart.
 - ``external``     -- de wijziging loopt BUITEN dit cluster (TransIP-console, de
   Grafana-token van ODCN): de tool toont de stap, de gebruiker voert hem uit, de tool
   verifieert via de API en schrijft dan pas het bestand.
@@ -70,6 +72,7 @@ from secret_edit import (  # type: ignore[reportMissingImports]
     values_of,
 )
 from secret_edit import TREES as EDIT_TREES  # type: ignore[reportMissingImports]
+from secret_scan import tracked_files  # type: ignore[reportMissingImports]
 
 # ---------------------------------------------------------------------------
 # kubectl-omhulsel. Alles wat het cluster aanraakt gaat hierdoor, zodat tests en
@@ -196,6 +199,11 @@ def backup_ns_for(cluster_name: str) -> str:
 
 
 OPI_DEPLOYMENT = "deploy/operations-manager"
+
+# Het envsecret van ZAD: één Secret per cluster, dat `task
+# generate-env-secrets-for-operations-manager` uit `.env.<cluster>.secrets` schrijft.
+ZAD_ENV_SECRET = "operations-manager-env-secrets"  # noqa: S105 - de naam van het Secret, niet de inhoud
+ZAD_ENV_OVERLAYS = REPO / "bootstrap/rig-system/kustomize/operations-manager/overlays"
 
 
 def relay_api_for(cluster_name: str) -> str:
@@ -367,6 +375,20 @@ COMPONENTS: list[Component] = [
         "Op odcn is pgAdmin uitgecommentarieerd: alleen de bestandsrotatie doet er dan.",
     ),
     Component(
+        key="secret-key",
+        title="ZAD sessiesleutel (SECRET_KEY)",
+        template="",  # leeft uitsluitend in het envsecret van ZAD
+        category="env-restart",
+        rotate_fields=("SECRET_KEY",),
+        workloads=(OPI_DEPLOYMENT,),
+        zad_env=("SECRET_KEY",),
+        gen_without_template=("random", 48),
+        note="SECRET_KEY ondertekent de sessiecookie en de websocket-logstream. Na de wissel "
+        "vervallen alle sessies en CSRF-tokens: iedereen logt opnieuw in, en een half ingevuld "
+        "formulier is weg. De ondergrens staat in opi/core/secret_key.py (32 tekens); 48 zit "
+        "daar ruim boven. Op 28-09-2026 is deze waarde met de hand vervangen, buiten de tool om.",
+    ),
+    Component(
         key="transip",
         title="TransIP API-sleutel",
         template="transip-secret.yaml",
@@ -396,6 +418,19 @@ COMPONENTS: list[Component] = [
         note="Aanmaken doe je in de GitHub-console (Settings → Developer settings). De tool "
         "toetst huidige én nieuwe token via de GitHub-API vóór het bestand wordt bijgewerkt. "
         "Daarna zelf: het env-secret regenereren en ZAD herstarten (staat als tekst in de stappen).",
+    ),
+    Component(
+        key="keycloak-master-oidc",
+        title="OIDC-client bij de upstream Keycloak (KEYCLOAK_MASTER_OIDC_CLIENT_SECRET)",
+        template="",  # leeft uitsluitend in het envsecret van ZAD
+        category="external",
+        rotate_fields=("KEYCLOAK_MASTER_OIDC_CLIENT_SECRET",),
+        workloads=(OPI_DEPLOYMENT,),
+        zad_env=("KEYCLOAK_MASTER_OIDC_CLIENT_SECRET",),
+        note="Het clientgeheim van de OIDC-client waarmee ZAD een sso-rijk-realm voorziet "
+        "(opi/connectors/keycloak.py:278). De client staat in een upstream Keycloak, dus vernieuwen "
+        "gebeurt daar, niet hier. Op odcn-production zet men KEYCLOAK_MASTER_OIDC_CLIENT_ID noch "
+        "_DISCOVERY_URL in de configmap, dus de pre-flight meldt dat er niets te verifiëren is.",
     ),
     Component(
         key="minio-backup",
@@ -467,7 +502,7 @@ BY_KEY = {component.key: component for component in COMPONENTS}
 # nog niet onderzocht). Een nieuwe template die hier niet staat én niet in de tabel, maakt de
 # dekking-poort en de toetsen rood: dat is hoe niets stilletjes verdwijnt.
 NON_ROTATABLE: dict[str, str] = {
-    "vault-init-secret.yaml": "unseal-keys roteren is een eigen procedure, geen wachtwoordwissel",
+    "vault-init-secret.yaml": "alleen relevant waar Vault draait; op odcn niet uitgerold",
     "chisel-auth-secret.yaml": "nog niet onderzocht; toevoegen aan de tabel is dan een bewuste stap",
 }
 
@@ -476,9 +511,31 @@ TEMPLATELESS: dict[str, str] = {
     "transip": "de sleutel komt van buiten het cluster; het doelbestand in de overlay staat er wel",
     "grafana": "leeft uitsluitend in het ZAD-envbestand",
     "platform-repo-pat": "leeft uitsluitend in het ZAD-envbestand (image-default is weg sinds 28-09-2026)",
+    "secret-key": "leeft uitsluitend in het ZAD-envbestand",
+    "keycloak-master-oidc": "leeft uitsluitend in het ZAD-envbestand",
     "registry": "het token leeft in het ZAD-envbestand; host, organisatie en robotnaam staan in de OPI-configmap",
     "argocd-admin": "leeft in het cluster-secret van de operator, dat met een ownerReference "
     "aan de ArgoCD-CR hangt en daarom niet in git kan",
+}
+
+# Dekking: het envsecret van ZAD. Een sleutel zonder rotatierij moet hier staan
+# (ZAD_ENV_CONFIG of ZAD_ENV_NON_ROTATABLE), zodat verouderde namen worden opgemerkt.
+
+ZAD_ENV_CONFIG: dict[str, str] = {
+    "DEBUG_MODE": "configuratie, geen geheim",
+    "RECREATE_PASSWORD_ON_AUTHENTICATION_FAILURE": "configuratie, geen geheim",
+    "METRICS_BACKEND": "configuratie, geen geheim",
+    "BACKUP_SWEEP_DRY_RUN": "configuratie, geen geheim",
+    "LOGWATCHER_ENABLED": "configuratie, geen geheim",
+    "GRAFANA_URL": "adres, geen geheim; de token ernaast roteert via grafana",
+    "BACKUP_S3_ENDPOINT": "adres, geen geheim",
+    "BACKUP_S3_ACCESS_KEY": "accountnaam bij BACKUP_S3_SECRET_KEY, die via minio-backup roteert",
+}
+
+ZAD_ENV_NON_ROTATABLE: dict[str, str] = {
+    "LOGWATCHER_NTFY_TOPIC": "een onraadbare ntfy-topicnaam (opi/core/config.py noemt hem een "
+    "wachtwoord), maar geen inlog: vervangen betekent elke abonnee meeveranderen, en dat is een "
+    "afspraak met de ontvangers en geen wachtwoordwissel",
 }
 
 
@@ -500,6 +557,56 @@ def coverage_gaps() -> list[str]:
         owner = next(c.key for c in COMPONENTS if c.template == name)
         if owner not in TEMPLATELESS:
             gaps.append(f"rij {owner} wijst naar {name}, maar dat bestand staat niet in {templates_dir}")
+    return gaps + zad_env_coverage_gaps()
+
+
+def zad_env_secret_files() -> list[Path]:
+    """De envsecrets van ZAD die git volgt, één per cluster-overlay.
+
+    Alleen wat in git staat: de sandbox-overlay krijgt hetzelfde bestand lokaal van `task
+    sandbox:generate-env-secrets`, uit een `.env` die deze repo niet kent (`.gitignore`).
+    Die inhoud verschilt per machine, dus een onbenoemde sleutel daarin is geen gat dat
+    hier te sluiten valt -- en zou de hele tool laten weigeren op elke sandboxmachine.
+    Ook odcn-staging valt erbuiten: die overlay houdt zijn envsecret in de private repo
+    zad-staging-secrets, dus git kent het bestand hier niet.
+    """
+    in_git = set(tracked_files(ZAD_ENV_OVERLAYS))
+    return sorted(path for path in ZAD_ENV_OVERLAYS.glob(f"*/{ZAD_ENV_SECRET}.yaml") if path in in_git)
+
+
+def zad_env_keys(path: Path) -> list[str]:
+    """De sleutelnamen van een envsecret. SOPS versleutelt de waarden en niet de namen, dus
+    dit leest zonder AGE-sleutel en zonder sops."""
+    document = YAML().load(path.read_text(encoding="utf-8"))
+    block = document.get("data") or document.get("stringData") or {}
+    return [str(name) for name in block]
+
+
+def zad_env_coverage_gaps() -> list[str]:
+    """De tweede dekking-poort: elke sleutel in het envsecret van ZAD heeft een rotatierij,
+    staat in ZAD_ENV_CONFIG of in ZAD_ENV_NON_ROTATABLE -- en omgekeerd."""
+    paths = zad_env_secret_files()
+    if not paths:
+        # Zonder bestand meet de poort niets, en dat mag niet stil gebeuren: een andere
+        # bestandsnaam of een ander overlay-pad houdt de toets anders groen en leeg.
+        return [f"geen enkel {ZAD_ENV_SECRET}.yaml in git onder {ZAD_ENV_OVERLAYS}: de poort meet niets"]
+    rotated = {name for component in COMPONENTS for name in component.zad_env}
+    named = rotated | set(ZAD_ENV_CONFIG) | set(ZAD_ENV_NON_ROTATABLE)
+    gaps: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        keys = zad_env_keys(path)
+        seen.update(keys)
+        gaps += [
+            f"{path.parent.name}: {name} in {path.name} heeft geen rotatierij en staat niet in "
+            "ZAD_ENV_CONFIG of ZAD_ENV_NON_ROTATABLE"
+            for name in sorted(set(keys) - named)
+        ]
+    gaps += [
+        f"{name} staat in {listing} maar in geen enkel envsecret meer"
+        for listing, names in (("ZAD_ENV_CONFIG", ZAD_ENV_CONFIG), ("ZAD_ENV_NON_ROTATABLE", ZAD_ENV_NON_ROTATABLE))
+        for name in sorted(set(names) - seen)
+    ]
     return gaps
 
 
@@ -1535,7 +1642,10 @@ def keycloak_mail_steps(kube: Kube, values: Ctx, relay_url: str, admin_current: 
 
 
 def secret_name_of(component: Component) -> str:
-    """De naam van het cluster-secret, uit de metadata van de template."""
+    """De naam van het cluster-secret, uit de metadata van de template. Een component zonder
+    template leeft in het envsecret van ZAD, en dat is dan het secret dat de waarde draagt."""
+    if not component.template:
+        return ZAD_ENV_SECRET
     data = YAML().load((EDIT_TREES["infrastructure"][0] / component.template).read_text(encoding="utf-8"))
     return str(data["metadata"]["name"])
 
@@ -1601,7 +1711,9 @@ def registry_probe(kube: Kube, url: str, username: str, password: str) -> str:
 
     Dit loopt in de OPI-pod en niet lokaal, anders dan bij de GitHub-PAT: de registry is van
     buiten het cluster niet bereikbaar (gemeten: timeout). Het token gaat via een
-    env-variabele, zodat het niet in een proceslijst of foutmelding opduikt.
+    env-variabele, zodat de argv van python3 in de pod hem niet draagt en `_redact` hem uit
+    foutmeldingen houdt. De argv van kubectl zelf draagt hem wel, en daarmee de
+    `command=`-parameters van het exec-verzoek: zo doet deze tool al haar probes.
     """
     snippet = (
         "import os,urllib.request,urllib.error\n"
@@ -1812,6 +1924,119 @@ def grafana_steps(kube: Kube, values: Ctx) -> list[Step]:
             lambda ctx: "nieuwe token: " + _probe(ctx, ctx.new["GRAFANA_TOKEN"]),
         ),
     ]
+
+
+# Een tokenaanvraag met client_credentials. Alleen een 401 wijst het clientgeheim zelf af;
+# een 400 betekent dat Keycloak de client herkende en enkel deze grant niet toestaat.
+OIDC_PROBE = (
+    "import json,os,urllib.error,urllib.parse,urllib.request\n"
+    "cid=os.environ.get('KEYCLOAK_MASTER_OIDC_CLIENT_ID','')\n"
+    "url=os.environ.get('KEYCLOAK_MASTER_OIDC_DISCOVERY_URL','')\n"
+    "if not cid or cid=='dummy-client-id' or not url:\n"
+    "    raise SystemExit('ONGECONFIGUREERD client_id=%r discovery=%r' % (cid, url))\n"
+    "endpoint=json.load(urllib.request.urlopen(url, timeout=15))['token_endpoint']\n"
+    "body=urllib.parse.urlencode({'grant_type':'client_credentials','client_id':cid,"
+    "'client_secret':os.environ['W']}).encode()\n"
+    "try:\n"
+    "    code=urllib.request.urlopen(endpoint, data=body, timeout=15).status\n"
+    "except urllib.error.HTTPError as failure:\n"
+    "    code=failure.code\n"
+    "print('AANVAARD' if code != 401 else 'GEWEIGERD', code)\n"
+)
+
+
+def keycloak_master_oidc_steps(kube: Kube, values: Ctx) -> list[Step]:
+    """Het clientgeheim van de OIDC-client bij de upstream Keycloak. Die Keycloak beheren wij
+    niet, dus het vernieuwen is daar; de proef draait vanuit de OPI-pod, want die kent het
+    adres en de client-id uit zijn eigen omgeving."""
+
+    def _probe(ctx: Ctx, secret: str) -> str:
+        result = ctx.kube.exec(OPI_DEPLOYMENT, ["env", f"W={secret}", "python3", "-c", OIDC_PROBE], check=False)
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        if "AANVAARD" not in result.stdout:
+            _ok(f"tokenaanvraag: {result.stdout.strip()} {result.stderr.strip()[:150]}")
+        return result.stdout.strip()
+
+    return [
+        Step(
+            "Huidig clientgeheim testen met een tokenaanvraag",
+            "check",
+            ["POST <token_endpoint uit de discovery-URL> met client_credentials, vanuit de OPI-pod"],
+            lambda ctx: "huidig geheim: " + _probe(ctx, ctx.current["KEYCLOAK_MASTER_OIDC_CLIENT_SECRET"]),
+        ),
+        Step(
+            "EXTERN: vernieuw het clientgeheim in de upstream Keycloak",
+            "manual",
+            [
+                "Clients -> <KEYCLOAK_MASTER_OIDC_CLIENT_ID> -> Credentials -> Regenerate secret, "
+                "in de realm uit KEYCLOAK_MASTER_OIDC_DISCOVERY_URL.",
+                "Het oude geheim werkt daarna niet meer: ZAD kan tot de herstart geen realm "
+                "van een sso-rijk-provider voorzien.",
+            ],
+            None,
+        ),
+        Step(
+            "Verifiëren met een tokenaanvraag op het nieuwe geheim",
+            "verify",
+            ["POST <token_endpoint> met client_credentials, vanuit de OPI-pod"],
+            lambda ctx: "nieuw geheim: " + _probe(ctx, ctx.new["KEYCLOAK_MASTER_OIDC_CLIENT_SECRET"]),
+        ),
+    ]
+
+
+def zad_env_arrived_gate(component: Component) -> Step:
+    """De gate vóór de herstart: het envsecret in het cluster moet de nieuwe waarde dragen."""
+
+    def _wait(ctx: Ctx) -> str:
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        return wait_for_secret_value(ctx.kube, ZAD_ENV_SECRET, ctx.rotating, ctx.new[ctx.rotating])
+
+    return Step(
+        "Wachten tot het envsecret in het cluster de nieuwe waarde draagt",
+        "sync",
+        [f"poll: secret {ZAD_ENV_SECRET}, veld {component.rotate_fields[0]} == <NIEUW>"],
+        _wait,
+    )
+
+
+def zad_env_steps(component: Component, cluster: Cluster, *, defer_restarts: bool) -> list[Step]:
+    """De ronde voor een waarde die alleen in het envsecret van ZAD leeft.
+
+    Er is geen template om te schrijven en geen Argo-eigenaar om op te wachten: het
+    envbestand is de bron, een mens maakt er met de generatie-task het Secret van, past dat
+    zelf toe, en pas als het Secret in het cluster de nieuwe waarde draagt herstart OPI.
+    """
+    deploy = (
+        "task sandbox:update-operations-manager"
+        if cluster.name == "sandboxed-local"
+        else f"task deploy-operations-manager CLUSTER_TYPE={cluster.name}"
+    )
+    steps = [
+        cluster_secret_check(component),
+        env_step(component, cluster),
+        Step(
+            "HANDMATIG: envsecret regenereren, pushen en toepassen",
+            "manual",
+            [
+                f"task generate-env-secrets-for-operations-manager CLUSTER_TYPE={cluster.name}",
+                "review de diff, commit en push",
+                # De OPI-overlay hangt in geen ArgoCD-Application, dus git brengt het
+                # envsecret niet in het cluster: de deploy-task doet de apply.
+                f"{deploy} (zet het secret in het cluster)",
+            ],
+            None,
+        ),
+        zad_env_arrived_gate(component),
+    ]
+    restart = None if defer_restarts else restart_step(component, cluster)
+    if restart is not None:
+        steps.append(restart)
+    followup = followup_step(component)
+    if followup is not None:
+        steps.append(followup)
+    return steps
 
 
 # ---------------------------------------------------------------------------
@@ -2094,6 +2319,7 @@ def steps_for(
             "transip": transip_steps,
             "grafana": grafana_steps,
             "platform-repo-pat": github_pat_steps,
+            "keycloak-master-oidc": keycloak_master_oidc_steps,
             "registry": registry_steps,
         }
         builder = builders.get(component.key)
@@ -2106,6 +2332,9 @@ def steps_for(
             steps = [*steps, env_step(component, cluster)]
         followup = followup_step(component)
         return [*steps] + ([followup] if followup else [])
+
+    if component.category == "env-restart" and not component.template:
+        return zad_env_steps(component, cluster, defer_restarts=defer_restarts)
 
     steps: list[Step] = []
     if component.category in ("cnpg-secret", "env-restart"):
