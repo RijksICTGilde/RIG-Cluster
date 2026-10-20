@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
 
+from opi.core.actor import actor_from_stored, set_actor
 from opi.core.config import settings
 from opi.core.flow_id import set_flow_id
 from opi.core.task_errors import (
@@ -219,6 +220,7 @@ class TaskWorker:
         deployment_name = task.get("deployment_name")
 
         fid = set_flow_id(f"task-{task_id[:8]}")
+        set_actor(actor_from_stored(task.get("created_by")))
         started = time.monotonic()
         logger.info("Executing task %s (type=%s, project=%s, flow=%s)", task_id, task_type, project_name, fid)
 

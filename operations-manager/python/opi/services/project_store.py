@@ -51,7 +51,7 @@ import time
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from deepdiff import DeepDiff, Delta
 from deepdiff.delta import DeltaError
@@ -71,6 +71,9 @@ from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_tree, get_decoded_project_private_key
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
+
+if TYPE_CHECKING:
+    from opi.core.actor import Actor
 
 logger = logging.getLogger(__name__)
 
@@ -180,13 +183,13 @@ class ProjectStore(ABC):
     # ---- mutations: serialized read-modify-write, validated before persist ----
 
     @abstractmethod
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary: ...
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary: ...
 
     @abstractmethod
-    async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: str) -> MutationResult: ...
+    async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: Actor) -> MutationResult: ...
 
     @abstractmethod
-    async def delete(self, name: str, *, message: str, actor: str) -> None: ...
+    async def delete(self, name: str, *, message: str, actor: Actor) -> None: ...
 
     # ---- audit / history ----
 
@@ -359,7 +362,7 @@ class GitProjectStore(ProjectStore):
     # mutations
     # ------------------------------------------------------------------
 
-    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: str) -> ProjectSummary:
+    async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary:
         """Create a new project file. Fails if the project already exists."""
         async with self._locked("create", name):
             connector = await self.get_connector()
@@ -400,7 +403,7 @@ class GitProjectStore(ProjectStore):
         data: dict[str, Any],
         *,
         message: str,
-        actor: str,
+        actor: Actor,
         enforce_validation: bool = True,
         filename: str | None = None,
         refresh_cache: bool = True,
@@ -486,7 +489,7 @@ class GitProjectStore(ProjectStore):
         change: ChangeFunction,
         *,
         message: str,
-        actor: str,
+        actor: Actor,
         enforce_validation: bool = True,
         filename: str | None = None,
     ) -> MutationResult:
@@ -558,7 +561,7 @@ class GitProjectStore(ProjectStore):
                 f"Could not apply mutation to project '{name}' after {MAX_MUTATION_ATTEMPTS} attempts: {last_error}"
             ) from last_error
 
-    async def delete(self, name: str, *, message: str, actor: str) -> None:
+    async def delete(self, name: str, *, message: str, actor: Actor) -> None:
         """Remove a project file and evict it from the cache.
 
         Goes through the same publish path as every other mutation, so a failed push
@@ -577,7 +580,7 @@ class GitProjectStore(ProjectStore):
                     logger.info("Project '%s' already absent, nothing to delete", name)
                     break
                 try:
-                    await self._commit_and_publish(connector, {relative_path: None}, message)
+                    await self._commit_and_publish(connector, {relative_path: None}, message, actor)
                     break
                 except GitPushConflictError as e:
                     last_error = e
@@ -604,7 +607,7 @@ class GitProjectStore(ProjectStore):
         name: str,
         base: dict[str, Any],
         data: dict[str, Any],
-        actor: str = "?",
+        actor: Actor,
     ) -> dict[str, Any]:
         """Compare-and-swap for a pre-built dict, with a three-way merge fallback.
 
@@ -709,7 +712,7 @@ class GitProjectStore(ProjectStore):
             )
 
     async def _persist(
-        self, connector: GitConnector, relative_path: str, data: dict[str, Any], message: str, actor: str
+        self, connector: GitConnector, relative_path: str, data: dict[str, Any], message: str, actor: Actor
     ) -> str:
         """Commit and push a single project file. Returns the resulting commit ref.
 
@@ -717,7 +720,9 @@ class GitProjectStore(ProjectStore):
         succeeds.
         """
         started = time.monotonic()
-        ref, committed = await self._commit_and_publish(connector, {relative_path: dump_yaml_to_string(data)}, message)
+        ref, committed = await self._commit_and_publish(
+            connector, {relative_path: dump_yaml_to_string(data)}, message, actor
+        )
         elapsed = time.monotonic() - started
 
         # Say which of the two happened. A save whose result is byte-identical to what
@@ -739,7 +744,7 @@ class GitProjectStore(ProjectStore):
         return ref
 
     async def _commit_and_publish(
-        self, connector: GitConnector, changes: dict[str, str | None], message: str
+        self, connector: GitConnector, changes: dict[str, str | None], message: str, actor: Actor
     ) -> tuple[str, bool]:
         """Build a commit for exactly these paths, publish it, and roll back cleanly on failure.
 
@@ -757,6 +762,7 @@ class GitProjectStore(ProjectStore):
         Args:
             changes: repo-relative path -> new content, or None to delete the path
             message: commit message
+            actor: de handelende partij, die als trailer in de commit komt
 
         Returns:
             ``(ref, committed)``: the published commit ref and True, or the unchanged HEAD
@@ -791,7 +797,7 @@ class GitProjectStore(ProjectStore):
 
         old_head = await connector.get_local_commit_hash()
 
-        commit = await connector.build_commit(changes, message)
+        commit = await connector.build_commit(changes, message, actor=actor)
         if commit is None:
             logger.debug("Nothing to commit for %s", list(changes))
             return old_head, False

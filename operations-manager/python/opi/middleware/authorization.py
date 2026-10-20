@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import RedirectResponse, Response
 from starlette.routing import Match
 
+from opi.core.actor import set_actor, user_actor
 from opi.services.user_service import get_user_service
 
 if typing.TYPE_CHECKING:
@@ -122,6 +123,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
 
         # Add user to request state for use in handlers
         request.state.user = user
+        # Voor call_next, want een contextvar reist mee naar de taak die call_next start,
+        # niet terug naar deze middleware.
+        if user and user.get("email"):
+            set_actor(user_actor(user["email"]))
 
         return await call_next(request)
 

@@ -1,7 +1,8 @@
 """
 Tests for opi.api.endpoint_util module.
 
-Tests parse_ports, normalize_project_name, validate_api_token, and validate_master_api_key.
+Tests parse_ports, normalize_project_name, validate_api_token, validate_admin_api_key,
+and validate_master_api_key.
 """
 
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ from opi.api.endpoint_util import (
     validate_master_api_key,
     validate_metrics_scrape_token,
 )
+from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, get_actor, project_api_key_actor
 from starlette.requests import Request
 
 
@@ -186,6 +188,29 @@ class TestValidateApiToken:
         assert result == {"project": "test-project"}
 
     @pytest.mark.asyncio
+    async def test_valid_api_key_sets_the_project_actor(self):
+        """De actor van een projectsleutel legitimeert een project, geen persoon."""
+
+        @validate_api_token
+        async def dummy_route(request: Request, project_name: str = ""):
+            return {"actor": get_actor()}
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"X-API-Key": "correct-key"}
+
+        mock_project = MagicMock()
+        mock_project.api_key = "correct-key"
+        mock_project.name = "test-project"
+
+        mock_service = MagicMock()
+        mock_service.get.return_value = mock_project
+
+        with patch("opi.api.endpoint_util.get_project_store", return_value=mock_service):
+            result = await dummy_route(request=mock_request, project_name="test-project")
+
+        assert result == {"actor": project_api_key_actor("test-project")}
+
+    @pytest.mark.asyncio
     async def test_project_not_found(self):
         """Should return 401 when project is not found."""
 
@@ -204,6 +229,43 @@ class TestValidateApiToken:
             pytest.raises(HTTPException) as exc_info,
         ):
             await dummy_route(request=mock_request, project_name="nonexistent")
+
+        assert exc_info.value.status_code == 401
+
+
+class TestValidateAdminApiKey:
+    """Tests for validate_admin_api_key decorator."""
+
+    @pytest.mark.asyncio
+    async def test_valid_admin_key_sets_the_admin_actor(self):
+        """De decorator roept door en zet de vaste admin-actor, geen persoon."""
+
+        @validate_admin_api_key
+        async def dummy_route(request: Request):
+            return {"actor": get_actor()}
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"X-API-Key": "correct-admin-key"}
+
+        with patch("opi.api.endpoint_util.settings") as mock_settings:
+            mock_settings.ADMIN_API_KEY = "correct-admin-key"
+            result = await dummy_route(request=mock_request)
+
+        assert result == {"actor": ACTOR_ADMIN_API_KEY}
+
+    @pytest.mark.asyncio
+    async def test_invalid_admin_key_is_refused(self):
+        @validate_admin_api_key
+        async def dummy_route(request: Request):  # pragma: no cover - must not be reached
+            return {"ok": True}
+
+        mock_request = MagicMock(spec=Request)
+        mock_request.headers = {"X-API-Key": "wrong-key"}
+
+        with patch("opi.api.endpoint_util.settings") as mock_settings:
+            mock_settings.ADMIN_API_KEY = "correct-admin-key"
+            with pytest.raises(HTTPException) as exc_info:
+                await dummy_route(request=mock_request)
 
         assert exc_info.value.status_code == 401
 
@@ -265,11 +327,11 @@ class TestValidateMasterApiKey:
 
     @pytest.mark.asyncio
     async def test_valid_master_key(self):
-        """Should call through when master key matches."""
+        """Should call through when master key matches, and set the platform actor."""
 
         @validate_master_api_key
         async def dummy_route(request: Request):
-            return {"admin": True}
+            return {"admin": True, "actor": get_actor()}
 
         mock_request = MagicMock(spec=Request)
         mock_request.headers = {"X-API-Key": "correct-master-key"}
@@ -278,7 +340,7 @@ class TestValidateMasterApiKey:
             mock_settings.MASTER_API_KEY = "correct-master-key"
             result = await dummy_route(request=mock_request)
 
-        assert result == {"admin": True}
+        assert result == {"admin": True, "actor": ACTOR_PLATFORM_API_KEY}
 
 
 class TestMarkeringen:

@@ -38,6 +38,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+from opi.core.actor import scheduler_actor, set_actor
 from opi.core.async_task_service import AsyncTaskService, TaskType
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
@@ -169,6 +170,7 @@ class BackupScheduler:
 
     async def _run(self) -> None:
         """Main scheduler loop, ticking on wall-clock boundaries."""
+        set_actor(scheduler_actor("backup"))
         while self._running:
             # Sleep first so the loop aligns to the next boundary instead of
             # firing on pod-start time. The initial alignment skip is fine —

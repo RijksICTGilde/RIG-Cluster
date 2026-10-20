@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from opi.api.user_token_auth import UserTokenError, extract_bearer_token
+from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, project_api_key_actor, set_actor
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
@@ -57,6 +58,7 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             raise HTTPException(status_code=401, detail="Invalid API key")
 
         logger.debug(f"Project API key validation successful for route {func.__name__} (project: {project.name})")
+        set_actor(project_api_key_actor(project.name))
         # Add project_id to kwargs so the route function can access it if needed
         kwargs["project_name"] = project.name
         return await func(*args, request=request, **kwargs)
@@ -132,6 +134,7 @@ def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
             func.__name__,
             "Authentication required - provide X-API-Key header",
         )
+        set_actor(ACTOR_ADMIN_API_KEY)
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_ADMIN_API_KEY, True)
@@ -150,6 +153,7 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
             func.__name__,
             "Authentication required - provide X-API-Key header",
         )
+        set_actor(ACTOR_PLATFORM_API_KEY)
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_MASTER_API_KEY, True)

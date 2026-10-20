@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 
 from opi.connectors import create_argo_connector
+from opi.core.actor import get_actor
 from opi.core.cluster_config import get_argo_namespace, get_prefixed_namespace
 from opi.core.config import settings
 from opi.services import ServiceAdapter, ServiceType
@@ -1363,7 +1364,7 @@ class DeleteProjectManager:
             # project carried it to the remote -- silently deleting this project file under
             # someone else's commit message. The store builds the deletion as its own
             # commit and rolls the ref back if the push fails.
-            await get_project_store().delete(project_name, message=commit_message, actor="delete-project")
+            await get_project_store().delete(project_name, message=commit_message, actor=get_actor())
 
             result["operations"].append(
                 {

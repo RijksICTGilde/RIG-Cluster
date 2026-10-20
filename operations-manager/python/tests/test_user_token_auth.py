@@ -26,6 +26,7 @@ from opi.api.user_token_auth import (
     validate_user_token,
     verify_user_token,
 )
+from opi.core.actor import get_actor, user_actor
 from starlette.datastructures import Headers
 
 ISSUER = "https://keycloak.example.test/realms/operations-manager"
@@ -254,6 +255,7 @@ class TestValidateUserTokenDecorator:
         @validate_user_token
         async def route(request: Any) -> str:
             seen["user"] = request.state.user
+            seen["actor"] = get_actor()
             return "ok"
 
         request = _FakeRequest({"Authorization": f"Bearer {_make_token(signing_key)}"})
@@ -262,6 +264,7 @@ class TestValidateUserTokenDecorator:
             assert await route(request=request) == "ok"
 
         assert seen["user"]["email"] == "user@example.test"
+        assert seen["actor"] == user_actor("user@example.test")
 
     async def test_missing_token_gives_401_with_a_challenge(self, realm: Any) -> None:
         @validate_user_token

@@ -30,6 +30,7 @@ from authlib.jose import JsonWebKey, JsonWebToken
 from authlib.jose.errors import JoseError
 from fastapi import HTTPException
 from opi.connectors.keycloak import fetch_jwks, fetch_oidc_metadata
+from opi.core.actor import set_actor, user_actor
 from opi.core.config import settings
 from opi.services.user_service import get_user_service
 from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
@@ -258,6 +259,7 @@ def validate_user_token(func: Callable[..., Any]) -> Callable[..., Any]:
 
         logger.debug("Bearer authentication successful for route %s (user: %s)", func.__name__, user["email"])
         request.state.user = user
+        set_actor(user_actor(user["email"]))
         return await func(*args, request=request, **kwargs)
 
     setattr(wrapper, REQUIRES_USER_TOKEN, True)
