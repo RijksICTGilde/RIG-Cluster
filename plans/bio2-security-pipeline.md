@@ -36,9 +36,12 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 - **Triggers**: Push to main, PRs, weekly schedule (Monday 6am UTC)
 - **Jobs**:
   - `dependency-audit`: pip-audit --strict on Python deps
-  - `container-scan`: Trivy HIGH/CRITICAL scan on all 4 images (matrix)
+  - `container-scan`: Trivy HIGH/CRITICAL scan on all 6 images (matrix)
+    - The gate scans twice: once for the SARIF upload to the GitHub Security tab, then with `exit-code: 1` to fail on solvable findings
+    - Solvable findings are suppressed via `.trivyignore.yaml` (each entry requires a reason and expiry date)
+    - Matrix includes 5 images built by CI plus argocd-rig (scanned as a non-built image using the production pin)
   - `sbom`: CycloneDX SBOM generation (main only), uploaded as artifact
-- SARIF results uploaded to GitHub Security tab
+- SARIF results uploaded to GitHub Security tab regardless of gate outcome
 
 ### 4. `renovate.json` - Replaces Dependabot
 
@@ -47,9 +50,16 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 - Weekly schedule, grouped minor+patch updates
 - Requires Renovate GitHub App installation on the repo (manual step)
 
-### 5. `pyproject.toml` - pip-audit added to dev dependencies
+### 5. `.trivyignore.yaml` - Vulnerability Exceptions
 
-### 6. `Taskfile.yaml` - Local scanning tasks
+- Suppresses solvable findings (no upstream fix available)
+- Each entry requires: CVE/vulnerability ID, reason (`statement`), and expiry date (`expired_at`, max 90 days)
+- OS-level exceptions scoped to package names via `purls` to prevent overly broad suppression
+- Test: `tests/test_trivyignore.py` enforces non-empty statement/expiry and validates expiry is within bounds
+
+### 6. `pyproject.toml` - pip-audit added to dev dependencies
+
+### 7. `Taskfile.yaml` - Local scanning tasks
 
 - `task security-audit` - runs pip-audit locally
 - `task security-scan-image` - builds and scans with Trivy locally
@@ -59,3 +69,4 @@ Three capabilities for BIO2 compliance (A8.08 vulnerability management):
 1. Install [Renovate GitHub App](https://github.com/apps/renovate) on the repo
 2. Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General`)
 3. Check GitHub Security tab after first security.yml run
+4. Monitor first security.yml runs on new PRs: if the `container-scan` gate fails, review findings in the workflow and populate `.trivyignore.yaml` with reasons and expiry dates for solvable findings (or fix them via Renovate/dependency bumps)

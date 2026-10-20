@@ -60,14 +60,14 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # een shallow clone heeft geen historie om te scannen
 
       - name: Install age
         run: sudo apt-get update && sudo apt-get install -y age
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.14"
 
@@ -79,6 +79,10 @@ jobs:
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
+    # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
+    # achter, en dan onderbouwt de meting in de kop van die lijst de gate niet.
+    env:
+      TRIVY_SCANNER_VERSION: 'v0.76.0'
     strategy:
       fail-fast: false
       matrix:
@@ -103,13 +107,20 @@ jobs:
             dockerfile: images/keycloak-zad/Dockerfile
             context: .
             target: ""
+          # Geen Dockerfile: upstream plus patches via images/argocd-rig/Taskfile.yaml.
+          # Gescand wordt wat productie draait; versie uit overlay zodat hij niet dubbel staat.
+          - name: argocd-rig
+            registry: ghcr.io/minbzk/base-images/argocd-rig
+            pin: bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
+        if: ${{ !matrix.image.pin }}
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image for scanning
+        if: ${{ !matrix.image.pin }}
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ${{ matrix.image.context }}
@@ -119,14 +130,41 @@ jobs:
           tags: ${{ matrix.image.name }}:scan
           cache-from: type=gha,scope=${{ matrix.image.name }}
 
+      - name: Resolve the image to scan
+        id: scan
+        env:
+          PIN: ${{ matrix.image.pin }}
+          REGISTRY: ${{ matrix.image.registry }}
+          NAME: ${{ matrix.image.name }}
+        run: |
+          if [ -n "$PIN" ]; then
+            echo "ref=${REGISTRY}:$(yq '.spec.version' "$PIN")" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${NAME}:scan" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
-          image-ref: '${{ matrix.image.name }}:scan'
+          image-ref: ${{ steps.scan.outputs.ref }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
           format: 'sarif'
           output: 'trivy-${{ matrix.image.name }}.sarif'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
+
+      # Scant hetzelfde image als de SARIF, maar faalt op oplosbare HIGH/CRITICAL die niet in
+      # .trivyignore.yaml staan. SARIF-upload staat op if: always() zodat het Security-tabblad gevuld blijft.
+      - name: Fail on fixable HIGH or CRITICAL
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ steps.scan.outputs.ref }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
 
       - name: Upload Trivy results to GitHub Security tab
         uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3

@@ -15,9 +15,9 @@ FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
-ARG SOPS_VERSION=v3.13.2
+ARG SOPS_VERSION=v3.13.3
 ARG KOPIA_VERSION=0.23.1
-ARG CHISEL_VERSION=1.11.8
+ARG CHISEL_VERSION=1.12.0
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -28,10 +28,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Europe/Amsterdam \
     DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies - this layer is cached unless system deps change
+# Install system dependencies - this layer is cached unless system deps change.
+# upgrade pulls Debian security updates to keep the container-scan gate green.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
+    apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     git \
     openssh-client \
     curl \
@@ -54,8 +55,8 @@ ARG TARGETARCH
 
 # Install SOPS - layer cached unless SOPS_VERSION ARG changes
 # Checksums staan literaal; zie images/README.md.
-ARG SOPS_SHA256_AMD64=154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef
-ARG SOPS_SHA256_ARM64=78abf2e15c86250a1553ae6f53aba96be6b2a8126f160b1534959add3467ad76
+ARG SOPS_SHA256_AMD64=e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+ARG SOPS_SHA256_ARM64=53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
 RUN case "${TARGETARCH}" in \
       amd64) SOPS_SHA256="${SOPS_SHA256_AMD64}" ;; \
       arm64) SOPS_SHA256="${SOPS_SHA256_ARM64}" ;; \
@@ -91,8 +92,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends skopeo
 
 # Install Chisel - layer cached unless CHISEL_VERSION ARG changes
-ARG CHISEL_SHA256_AMD64=a34bd97c98164faa2908fd65b42ea167aa8fd1fa8aad5850475b7849e163fcac
-ARG CHISEL_SHA256_ARM64=f71111cd9f5e445fa19546e618136e7ce05b2dcea82fcb319382b6b679fd4bfc
+ARG CHISEL_SHA256_AMD64=f3f180f1d93aa72cce4e6386f98cc06569a0146fbd65eb4423cf83e6434bcfe6
+ARG CHISEL_SHA256_ARM64=2ec6152cd2c74fe0146d4d79e4e7aa174521368c56e433d55e023a92ea404ec3
 RUN case "${TARGETARCH}" in \
       amd64) CHISEL_SHA256="${CHISEL_SHA256_AMD64}" ;; \
       arm64) CHISEL_SHA256="${CHISEL_SHA256_ARM64}" ;; \
