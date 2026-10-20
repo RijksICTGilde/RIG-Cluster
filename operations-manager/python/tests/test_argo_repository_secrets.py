@@ -1114,17 +1114,13 @@ async def test_an_argo_clone_that_is_not_there_is_refused_before_anything_is_wri
 
 @needs_sops
 @pytest.mark.asyncio
-async def test_a_repository_without_credentials_renders_a_secret_the_round_leaves_alone(
+async def test_a_repository_without_credentials_renders_an_empty_password_the_round_brings_in_step(
     tmp_path: Path, platform_keys: tuple[str, str]
 ) -> None:
-    """Measured, because ``RepositorySecret.password`` makes a claim about this exact shape.
+    """Measured because ``RepositorySecret.password`` makes a claim about this exact shape.
 
-    ``prepare_repository_variables`` hands ``password: ""`` to the HTTPS template, which writes
-    ``password:`` with nothing behind it -- and YAML reads that back as None, not as an empty
-    string. So this secret is indistinguishable here from the SSH form and the round leaves it
-    untouched, even though its project file does carry a password on the platform key. Pinning
-    what the templates really produce rather than what the docstring expects them to: if OPI
-    starts quoting that field, this test is where it turns up.
+    The empty password must render as a quoted empty string so the round tool can distinguish
+    HTTPS repositories from SSH repositories.
     """
     platform_private, platform_public = platform_keys
     projects = tmp_path / "zad-projects" / "projects"
@@ -1137,16 +1133,17 @@ async def test_a_repository_without_credentials_renders_a_secret_the_round_leave
         platform_private,
         platform_public,
     )
-    assert decrypted(secret, platform_private)["stringData"]["password"] is None
-    before = raw_hashes(clone)
+    assert decrypted(secret, platform_private)["stringData"]["password"] == ""
 
     plan, converted = await round_tool.run_argo_round(
         clone, projects, platform_private, platform_private, dry_run=False
     )
 
-    assert [s.credential_form for s in plan.pairing.ssh_form] == ["no credentials"]
-    assert (plan.pairing.pairs, converted, plan.closed) == ([], [], [])
-    assert raw_hashes(clone) == before
+    assert plan.pairing.ssh_form == []
+    assert [s.credential_form for s, _ in plan.pairing.pairs] == ["https password"]
+    assert len(converted) == 1
+    assert plan.closed == []
+    assert decrypted(secret, platform_private)["stringData"]["password"] == NEW_TOKEN
 
 
 @needs_sops

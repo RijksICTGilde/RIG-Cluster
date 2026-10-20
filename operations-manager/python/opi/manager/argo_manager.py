@@ -388,6 +388,9 @@ class ArgoManager:
 
         Returns:
             Dictionary containing variables for template substitution with unique URL
+
+        Raises:
+            ValueError: If the decrypted password holds a line break or a NUL byte
         """
         repository_url = repository.get("url", "")
         username = repository.get("username")
@@ -407,6 +410,13 @@ class ArgoManager:
         decrypted_password = None
         if password:
             decrypted_password = await decrypt_password_smart(password, settings.SOPS_AGE_PRIVATE_KEY)
+            # De sjablonen coderen dit al als YAML-scalar; deze controle laat een verkeerd
+            # gezette waarde opvallen bij de verwerking in plaats van pas in ArgoCD.
+            if decrypted_password and any(teken in decrypted_password for teken in "\r\n\x00"):
+                raise ValueError(
+                    f"Het wachtwoord van repository '{repository.get('name') or name}' bevat een regeleinde"
+                    " of een NUL-byte"
+                )
 
         # SSH deploy keys (per-repo, AGE-encrypted in project file) are not
         # injected here. The rendered secret carries an empty sshPrivateKey;

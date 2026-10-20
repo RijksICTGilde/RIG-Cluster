@@ -3,13 +3,15 @@ kind: Secret
 metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
-  name: "{{ name }}"
-  namespace: "{{ namespace }}"
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
   labels:
     argocd.argoproj.io/secret-type: repository
 type: Opaque
 stringData:
-  type: {{ type | tojson }} # like git
-  url: {{ repository_url | tojson }}
-  name: {{ name | tojson }}
-  sshPrivateKey: {{ ssh_private_key | tojson }}
+  {# yaml_scalar en niet tojson: dat laatste schrijft een astraal teken als surrogaatpaar,
+     waar SOPS op afbreekt. #}
+  type: {{ type | yaml_scalar }} # like git
+  url: {{ repository_url | yaml_scalar }}
+  name: {{ name | yaml_scalar }}
+  sshPrivateKey: {{ ssh_private_key | yaml_scalar }}

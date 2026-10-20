@@ -97,11 +97,23 @@
       "required": ["name", "url"],
       "additionalProperties": false,
       "properties": {
-        "name": { "type": "string" },
+        "name": {
+          "type": "string",
+          "description": "De naam wordt een Kubernetes-naam: kleine letters, cijfers en streepjes, beginnend en eindigend met een letter of cijfer.",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\Z"
+        },
         "url": { "type": "string", "pattern": "^(?:https?|ssh|git)://[^\\s\\u0000\"]+\\Z" },
-        "username": { "type": "string" },
+        "username": {
+          "type": "string",
+          "description": "Een gebruikersnaam zonder witruimte: letters, cijfers en '.', '_', '@' of '-'.",
+          "pattern": "^[A-Za-z0-9._@-]+\\Z"
+        },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
-        "branch": { "type": "string" },
+        "branch": {
+          "type": "string",
+          "description": "Een git-refnaam zonder witruimte en zonder '..': letters, cijfers, '/' en '.', '_' of '-'.",
+          "pattern": "^(?!.*\\.\\.)[A-Za-z0-9._/-]+\\Z"
+        },
         "path": { "$ref": "#/$defs/relative-path" },
         "project_name": { "type": "string" }
       }
