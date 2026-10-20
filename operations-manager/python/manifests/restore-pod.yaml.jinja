@@ -47,13 +47,12 @@ spec:
 
           # Connect to repository
           echo "Connecting to Kopia repository..."
+          # Kopia takes the repository password from KOPIA_PASSWORD and the S3 keys from
+          # AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, so they stay out of argv.
           kopia repository connect s3 \
             --bucket="${S3_BUCKET}" \
             --prefix="${BACKUP_PREFIX}/" \
             --endpoint="${S3_ENDPOINT}" \
-            --access-key="${S3_ACCESS_KEY}" \
-            --secret-access-key="${S3_SECRET_KEY}" \
-            --password="${KOPIA_PASSWORD}" \
             ${TLS_FLAG}
 
           echo "Repository connected successfully"
@@ -97,16 +96,25 @@ spec:
           value: "{{ s3_endpoint }}"
         - name: S3_BUCKET
           value: "{{ s3_bucket }}"
-        - name: S3_ACCESS_KEY
-          value: "{{ s3_access_key }}"
-        - name: S3_SECRET_KEY
-          value: "{{ s3_secret_key }}"
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: AWS_ACCESS_KEY_ID
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: AWS_SECRET_ACCESS_KEY
         - name: S3_DISABLE_TLS
           value: "{{ s3_disable_tls | lower }}"
         - name: BACKUP_PREFIX
           value: "{{ backup_prefix }}"
         - name: KOPIA_PASSWORD
-          value: "{{ kopia_password }}"
+          valueFrom:
+            secretKeyRef:
+              name: "{{ credentials_secret }}"
+              key: KOPIA_PASSWORD
         - name: RESTORE_SNAPSHOT_ID
           value: "{{ snapshot_id }}"
         # Use /tmp for Kopia paths (HOME may not be writable)

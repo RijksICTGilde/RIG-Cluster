@@ -36,6 +36,8 @@ _BASE_CTX: dict = {
     "s3_disable_tls": True,
     "backup_prefix": "local/rig-test",
     "kopia_password": "pw",
+    "credentials_secret": "test-pod-credentials",
+    "repository_unusable_exit_code": 21,
     "kopia_hostname": "wies-production-pvc-data",
     "kopia_source": "opi-backup@wies-production-pvc-data",
     "timeout_seconds": 3600,

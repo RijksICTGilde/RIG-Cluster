@@ -77,6 +77,7 @@ _RENDER_CONTEXT: dict[str, Any] = {
     "snapshot_id": "",
     "timeout_seconds": 3600,
     "target_unusable_exit_code": 42,
+    "credentials_secret": "db-restore-test-credentials",
     "source_schema": "amt_prod_v2",
 }
 
@@ -212,8 +213,13 @@ def _manager() -> DatabaseBackupManager:
 
 
 def _applied_pod(manager: DatabaseBackupManager) -> dict[str, Any]:
-    call = manager.kubectl.run_command.await_args
-    return yaml.safe_load(call.kwargs["stdin_input"])
+    """Het Pod-document uit de toegepaste manifesten; het credentials-Secret gaat eerst."""
+    docs = [
+        yaml.safe_load(call.kwargs["stdin_input"])
+        for call in manager.kubectl.run_command.await_args_list
+        if call.kwargs.get("stdin_input")
+    ]
+    return next(doc for doc in docs if doc["kind"] == "Pod")
 
 
 _SNAPSHOT = SnapshotInfo(

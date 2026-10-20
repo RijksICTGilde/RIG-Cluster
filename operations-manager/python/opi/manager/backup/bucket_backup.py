@@ -5,7 +5,10 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-from opi.core.backup_constants import RESTORE_TARGET_UNUSABLE_EXIT_CODE
+from opi.core.backup_constants import (
+    BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
+    RESTORE_TARGET_UNUSABLE_EXIT_CODE,
+)
 from opi.core.config import settings
 from opi.manager.backup.base import (
     BackupConfig,
@@ -14,6 +17,9 @@ from opi.manager.backup.base import (
     RestoreResult,
     SnapshotInfo,
     kopia_backup_identity,
+    mc_endpoint_is_usable,
+    mc_host_url,
+    pod_credentials_secret_name,
     utc_now,
 )
 from opi.utils.naming import generate_backup_prefix
@@ -204,6 +210,7 @@ class BucketBackupManager(BaseBackupManager):
             if not success:
                 logs = await self._get_pod_logs(namespace, pod_name)
                 logger.error(f"Bucket backup pod {pod_name} failed. Full logs:\n{logs}")
+                error = await self._backup_pod_failure_error(namespace, pod_name, logs)
                 return BucketBackupResult(
                     namespace=namespace,
                     pvc_name=reference_name,
@@ -212,7 +219,7 @@ class BucketBackupManager(BaseBackupManager):
                     reference_name=reference_name,
                     source_type=source_type,
                     use_kopia=True,
-                    error=f"Backup pod failed. Logs: {logs[-500:] if logs else 'no logs'}",
+                    error=error,
                     duration_seconds=(utc_now() - start_time).total_seconds(),
                 )
 
@@ -401,20 +408,17 @@ class BucketBackupManager(BaseBackupManager):
                 "service_account_name": self._pod_service_account_name(project_name),
                 "source_minio_endpoint": source_minio_endpoint,
                 "source_bucket_name": source_bucket_name,
-                "source_access_key": source_access_key,
-                "source_secret_key": source_secret_key,
                 "reference_name": reference_name,
                 "source_type": source_type,
                 "timestamp": timestamp,
                 "s3_endpoint": self.config.s3_endpoint,
                 "s3_bucket": bucket_name,
-                "s3_access_key": self.config.s3_access_key,
-                "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
-                "kopia_password": kopia_password,
                 "kopia_hostname": kopia_hostname,
                 "kopia_source": kopia_source,
+                "credentials_secret": pod_credentials_secret_name(pod_name),
+                "repository_unusable_exit_code": BACKUP_REPOSITORY_UNUSABLE_EXIT_CODE,
                 "timeout_seconds": self.config.timeout_seconds,
                 "retention_keep_latest": self.config.retention_keep_latest,
                 "retention_keep_daily": self.config.retention_keep_daily,
@@ -431,11 +435,14 @@ class BucketBackupManager(BaseBackupManager):
             },
         )
 
-        args = ["apply", "-f", "-"]
-        _, stderr, code = await self.kubectl.run_command(args, stdin_input=manifest)
-
-        if code != 0:
-            raise RuntimeError(f"Failed to create bucket backup pod: {stderr}")
+        await self._apply_pod_with_credentials(
+            namespace=namespace,
+            pod_name=pod_name,
+            manifest=manifest,
+            credentials=self._kopia_credentials(kopia_password, bucket_name)
+            | {"MC_HOST_source": mc_host_url(source_minio_endpoint, source_access_key, source_secret_key)},
+            what="bucket backup",
+        )
 
     async def _create_bucket_mirror_pod(
         self,
@@ -479,16 +486,13 @@ class BucketBackupManager(BaseBackupManager):
                 "service_account_name": self._pod_service_account_name(project_name),
                 "source_minio_endpoint": source_minio_endpoint,
                 "source_bucket_name": source_bucket_name,
-                "source_access_key": source_access_key,
-                "source_secret_key": source_secret_key,
                 "reference_name": reference_name,
                 "source_type": source_type,
                 "backup_minio_endpoint": backup_endpoint,
                 "backup_bucket": bucket_name,
-                "backup_access_key": self.config.s3_access_key,
-                "backup_secret_key": self.config.s3_secret_key,
                 "backup_path": backup_path,
                 "timestamp": timestamp,
+                "credentials_secret": pod_credentials_secret_name(pod_name),
                 "timeout_seconds": self.config.timeout_seconds,
                 # Metadata
                 "cluster": effective_cluster,
@@ -500,11 +504,16 @@ class BucketBackupManager(BaseBackupManager):
             },
         )
 
-        args = ["apply", "-f", "-"]
-        _, stderr, code = await self.kubectl.run_command(args, stdin_input=manifest)
-
-        if code != 0:
-            raise RuntimeError(f"Failed to create bucket mirror pod: {stderr}")
+        await self._apply_pod_with_credentials(
+            namespace=namespace,
+            pod_name=pod_name,
+            manifest=manifest,
+            credentials={
+                "MC_HOST_source": mc_host_url(source_minio_endpoint, source_access_key, source_secret_key),
+                "MC_HOST_backup": mc_host_url(backup_endpoint, *self._pod_s3_credentials(bucket_name)),
+            },
+            what="bucket mirror",
+        )
 
     # =========================================================================
     # Restore Methods
@@ -541,6 +550,9 @@ class BucketBackupManager(BaseBackupManager):
         Returns:
             BucketRestoreResult with operation details
         """
+        # Ensure the bucket and its scoped S3 account exist before the restore pod needs them
+        await self._ensure_backup_bucket_exists(project_name=project_name, cluster=cluster)
+
         async with self.lock:
             await self.lock.update_progress(namespace, f"restore-bucket:{reference_name}")
             return await self._restore_bucket(
@@ -579,6 +591,21 @@ class BucketBackupManager(BaseBackupManager):
         backup_prefix = generate_backup_prefix(cluster, namespace)
 
         logger.info(f"Starting bucket restore: {reference_name} -> {target_bucket_name}@{target_minio_endpoint}")
+
+        # Het doel-endpoint komt van de aanroeper, dus een onbruikbare vorm hoort bij
+        # InvalidTarget. De poort in de pod kan er niet meer over oordelen: mc krijgt zijn
+        # alias nu uit MC_HOST_target, en die URL wordt hier gebouwd (RC-271).
+        if not mc_endpoint_is_usable(target_minio_endpoint):
+            return BucketRestoreResult(
+                namespace=namespace,
+                pvc_name=reference_name,
+                success=False,
+                target_bucket_name=target_bucket_name,
+                reference_name=reference_name,
+                error=f"Target MinIO endpoint needs a scheme and a host, got {target_minio_endpoint!r}",
+                duration_seconds=(utc_now() - start_time).total_seconds(),
+                target_unusable=True,
+            )
 
         try:
             # Derive restore key (same as backup key)
@@ -687,27 +714,26 @@ class BucketBackupManager(BaseBackupManager):
                 "reference_name": reference_name,
                 "target_minio_endpoint": target_minio_endpoint,
                 "target_bucket_name": target_bucket_name,
-                "target_access_key": target_access_key,
-                "target_secret_key": target_secret_key,
                 "s3_endpoint": self.config.s3_endpoint,
                 "s3_bucket": bucket_name,
-                "s3_access_key": self.config.s3_access_key,
-                "s3_secret_key": self.config.s3_secret_key,
                 "s3_disable_tls": not self.config.s3_use_tls,
                 "backup_prefix": backup_prefix,
-                "kopia_password": kopia_password,
                 "snapshot_id": snapshot_id or "",
+                "credentials_secret": pod_credentials_secret_name(pod_name),
                 "timeout_seconds": self.config.timeout_seconds,
                 "target_unusable_exit_code": RESTORE_TARGET_UNUSABLE_EXIT_CODE,
                 "clear_target": clear_target,
             },
         )
 
-        args = ["apply", "-f", "-"]
-        _, stderr, code = await self.kubectl.run_command(args, stdin_input=manifest)
-
-        if code != 0:
-            raise RuntimeError(f"Failed to create bucket restore pod: {stderr}")
+        await self._apply_pod_with_credentials(
+            namespace=namespace,
+            pod_name=pod_name,
+            manifest=manifest,
+            credentials=self._kopia_credentials(kopia_password, bucket_name)
+            | {"MC_HOST_target": mc_host_url(target_minio_endpoint, target_access_key, target_secret_key)},
+            what="bucket restore",
+        )
 
     # =========================================================================
     # List Snapshots
