@@ -96,6 +96,7 @@ class TaskType(StrEnum):
     CLONE_DATABASE = "clone_database"
     CLONE_BUCKET = "clone_bucket"
     REFRESH_DEPLOYMENT = "refresh_deployment"
+    ROTATE_CREDENTIALS = "rotate_credentials"
     SLEEP_DEPLOYMENT = "sleep_deployment"
     WAKE_DEPLOYMENT = "wake_deployment"
     REFRESH_PROJECT = "refresh_project"

@@ -176,6 +176,9 @@ class ProvisionContext:
     mail_manager: Any
     # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
     clone_interrupted: bool = False
+    #: Diensten (ServiceType-waarden) waarvan het geheim deze ronde vervangen moet worden
+    #: in plaats van hergebruikt. Leeg bij een gewone ronde.
+    rotate_credentials: frozenset[str] = frozenset()
 
 
 @dataclass

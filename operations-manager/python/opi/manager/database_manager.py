@@ -123,6 +123,7 @@ class DatabaseManager:
         deployment: dict[str, Any],
         force_clone: bool = False,
         clone_interrupted: bool = False,
+        rotate_password: bool = False,
     ) -> None:
         """
         Create database resources for a deployment that has PostgreSQL service enabled.
@@ -145,6 +146,7 @@ class DatabaseManager:
             deployment: The specific deployment configuration
             force_clone: If True, force clone even if target already exists (runtime override)
             clone_interrupted: A previous run started this deployment's clone and did not record it as completed
+            rotate_password: If True, replace the user's password instead of reusing the stored one
         """
         project_name = await self.project_manager.get_name()
         deployment_name = deployment["name"]
@@ -231,6 +233,7 @@ class DatabaseManager:
                 admin_password=admin_password,
                 connection_limit=connection_limit,
                 database_privileges=database_privileges,
+                rotate_password=rotate_password,
             )
             # Not in the password branch: an existing role with valid credentials never
             # reaches it, and a limit change must not rotate credentials.
@@ -287,6 +290,7 @@ class DatabaseManager:
                 database=db_database,
                 schemas=all_schemas,
                 connection_limit=connection_limit,
+                rotate_password=rotate_password,
             )
 
             # Alleen deze twee rollen openen deze database. Staat hier en niet in
@@ -400,6 +404,7 @@ class DatabaseManager:
         database: str,
         schemas: list[str],
         connection_limit: int,
+        rotate_password: bool = False,
     ) -> tuple[str, str]:
         """Ensure a persistent read-only role exists for the deployment's database.
 
@@ -413,6 +418,9 @@ class DatabaseManager:
 
         Args:
             schemas: The deployment's schemas, primary first; must be non-empty.
+            rotate_password: Skip reuse of the stored password and set a new one. Deze rol leest
+                elk schema van de deployment, dus een rotatie die hem laat staan laat een
+                werkende oude waarde achter.
 
         Returns:
             Tuple of (ro_username, ro_password).
@@ -421,8 +429,10 @@ class DatabaseManager:
 
         # Reuse the stored read-only password to avoid churning the secret (and
         # any consumer of it) on every reprocess; generate one only if absent.
-        existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
-        ro_password = existing.ro_password if existing and existing.ro_password else ""
+        ro_password = ""
+        if not rotate_password:
+            existing = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
+            ro_password = existing.ro_password if existing and existing.ro_password else ""
         if not ro_password:
             ro_password = generate_secure_password(min_uppercase=3, min_lowercase=3, min_digits=3, total_length=20)
 
@@ -439,6 +449,26 @@ class DatabaseManager:
 
         return ro_username, ro_password
 
+    async def _reset_user_password(
+        self,
+        db_username: str,
+        connection_limit: int,
+        database_privileges: list[str] | None,
+    ) -> str:
+        """Set a fresh password on the database role and return it."""
+        new_password, result = await self._create_or_update_user(
+            db_username=db_username,
+            postgres_conn=self.postgres_connector,
+            connection_limit=connection_limit,
+            database_privileges=database_privileges,
+        )
+        if result["status"] not in ["updated", "created", "success"]:
+            raise Exception(
+                f"Failed to update password for database user {db_username}: {result.get('message', 'Unknown error')}"
+            )
+        logger.info(f"Updated password for database user: {db_username}")
+        return new_password
+
     async def _resolve_database_credentials(
         self,
         project_name: str,
@@ -452,6 +482,7 @@ class DatabaseManager:
         admin_password: str,
         connection_limit: int,
         database_privileges: list[str] | None = None,
+        rotate_password: bool = False,
     ) -> str:
         """
         Resolve working database credentials through the following steps:
@@ -471,12 +502,17 @@ class DatabaseManager:
             admin_password: Admin password for database operations
             connection_limit: CONNECTION LIMIT for a role this call creates
             database_privileges: List of PostgreSQL privileges to grant to created user
+            rotate_password: Skip reuse of the stored password and set a new one
 
         Returns:
             The working password for the database user
         """
 
         logger.info(f"Checking database credentials for {project_name}/{deployment_name} at host {db_host}")
+
+        if rotate_password:
+            logger.info(f"Replacing database password for {project_name}/{deployment_name} on request")
+            return await self._reset_user_password(db_username, connection_limit, database_privileges)
 
         # Step 1: Check for existing credentials
         existing_credentials = await self._get_existing_database_credentials_from_k8s(deployment_name, deployment)
@@ -511,18 +547,7 @@ class DatabaseManager:
                     logger.warning(
                         f"Database credentials are invalid for {project_name}/{deployment_name}, updating password"
                     )
-                    new_password, update_result = await self._create_or_update_user(
-                        db_username=db_username,
-                        postgres_conn=self.postgres_connector,
-                        connection_limit=connection_limit,
-                        database_privileges=database_privileges,
-                    )
-                    if update_result["status"] not in ["updated", "created", "success"]:
-                        raise Exception(
-                            f"Failed to update password for database user {db_username}: {update_result.get('message', 'Unknown error')}"
-                        )
-                    logger.info(f"Updated password for database user: {db_username}")
-                    return new_password
+                    return await self._reset_user_password(db_username, connection_limit, database_privileges)
                 else:
                     raise Exception(
                         f"Database secret exists for {project_name}/{deployment_name} but credentials are invalid. "

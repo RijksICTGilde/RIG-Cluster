@@ -3114,6 +3114,7 @@ class ProjectManager:
         force_reenable: bool = True,
         wait_for_healthy: bool = True,
         reset_running_sync: bool = False,
+        rotate_credentials: frozenset[str] = frozenset(),
     ) -> bool:
         """
         Process a project file from the Git repository.
@@ -3143,6 +3144,8 @@ class ProjectManager:
                 Application CR is not yet present), so this flag no longer controls
                 it. Redeploys of existing apps skip the expensive umbrella refresh
                 regardless of this value.
+            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
+                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
             wait_for_healthy: Wait for each application to become Synced + Healthy.
                 Pass False when the deployment this run produces cannot become Healthy
                 by design (sleep-mode's waking state), so the wait would only ever end
@@ -3351,6 +3354,7 @@ class ProjectManager:
                     deployment_names=targets,
                     force_reenable=force_reenable,
                     reset_running_sync=reset_running_sync,
+                    rotate_credentials=rotate_credentials,
                 )
             except Exception as e:
                 self._end_step(process_step, str(e))
@@ -5555,6 +5559,7 @@ class ProjectManager:
         deployment_names: list[str] | None = None,
         force_reenable: bool = True,
         reset_running_sync: bool = False,
+        rotate_credentials: frozenset[str] = frozenset(),
     ) -> bool:
         """
         Process the project file and create all required resources.
@@ -5566,6 +5571,8 @@ class ProjectManager:
                 (takes precedence over ``deployment_name``; empty list = none)
             reset_running_sync: Break off a sync that is still running, however young.
                 Komt van een refresh; zie ``_clear_blocking_sync_operations``.
+            rotate_credentials: Diensten waarvan het geheim deze ronde vervangen wordt in
+                plaats van hergebruikt (zie ``opi.services.credential_rotation``)
 
         Returns:
             True if all operations succeeded, False if any operation failed
@@ -5739,6 +5746,7 @@ class ProjectManager:
                         redis_manager=self._redis_manager,
                         mail_manager=self._mail_manager,
                         clone_interrupted=current_deployment_name in interrupted_clones,
+                        rotate_credentials=rotate_credentials,
                     )
                     for provider in provisioning_services():
                         await provider.provision(provision_ctx)

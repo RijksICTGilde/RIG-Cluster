@@ -11,6 +11,7 @@ All V2 endpoints should:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +21,8 @@ from opi.services.project_service import ProjectSummary, ProjectUser
 from opi.services.project_store import GitProjectStore
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from fastapi import FastAPI
 
 SAMPLE_TASK_ID = "550e8400-e29b-41d4-a716-446655440000"
@@ -1424,3 +1427,149 @@ class TestServiceConfigWritesOnlyWhatWasSent:
 
         assert response.status_code == 422, response.text
         mock_task_service.create_task.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# V2 Rotate Credentials
+# ---------------------------------------------------------------------------
+
+
+def _rotatable_project_data(clone_from: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Een project waarvan deployment 'main' een database, een bucket en een client heeft."""
+    deployment: dict[str, Any] = {
+        "name": "main",
+        "cluster": "local",
+        "components": [{"reference": "backend"}],
+    }
+    if clone_from is not None:
+        deployment["clone-from"] = clone_from
+    return {
+        "name": "test-project",
+        "components": [
+            {
+                "name": "backend",
+                "type": "single",
+                "services": ["postgresql-database", "minio-storage", "keycloak"],
+            }
+        ],
+        "deployments": [deployment],
+    }
+
+
+@contextmanager
+def _client_for_project(mock_task_service: AsyncMock, project_data: dict[str, Any]) -> Iterator[TestClient]:
+    """Een TestClient waarvan de store dit projectbestand teruggeeft."""
+    from opi.server import create_app
+
+    mock_service = MagicMock(spec=GitProjectStore)
+    project = ProjectSummary(
+        name="test-project",
+        api_key=API_KEY,
+        filename="test-project.yaml",
+        users=[ProjectUser(email="user@example.com", role="Developer")],
+        data=project_data,
+    )
+    mock_service.get = lambda name: project if name == "test-project" else None
+
+    with (
+        patch("opi.api.endpoint_util.get_project_store", return_value=mock_service),
+        patch("opi.api.v2.router.get_project_store", return_value=mock_service),
+    ):
+        app: FastAPI = create_app()
+        app.state.task_service = mock_task_service
+        yield TestClient(app)
+
+
+class TestV2RotateCredentials:
+    """Tests voor POST /api/v2/projects/{project}/deployments/{deployment}/:rotate-credentials."""
+
+    def test_missing_api_key_returns_401(self, v2_client: TestClient) -> None:
+        response = v2_client.post(
+            "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+            json={"services": ["postgresql-database"]},
+        )
+        assert response.status_code == 401
+
+    def test_service_the_deployment_does_not_use_returns_422(
+        self, mock_settings: Any, mock_task_service: AsyncMock
+    ) -> None:
+        with _client_for_project(mock_task_service, _test_project_data()) as client:
+            response = client.post(
+                "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+                headers={"X-API-Key": API_KEY},
+                json={"services": ["postgresql-database"]},
+            )
+
+        assert response.status_code == 422, response.text
+        assert "postgresql-database" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_called()
+
+    def test_payload_carries_the_requested_services(self, mock_settings: Any, mock_task_service: AsyncMock) -> None:
+        mock_task_service.create_task.return_value = _make_task(task_type="rotate_credentials")
+
+        with _client_for_project(mock_task_service, _rotatable_project_data()) as client:
+            response = client.post(
+                "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+                headers={"X-API-Key": API_KEY},
+                json={"services": ["minio-storage", "keycloak", "minio-storage"]},
+            )
+
+        _assert_accepted(response, "rotate_credentials")
+        payload = mock_task_service.create_task.call_args[1]["payload"]
+        assert payload["rotate_credentials"] == ["minio-storage", "keycloak"]
+        assert payload["deployment_name"] == "main"
+
+    @pytest.mark.parametrize(
+        ("clone_from", "service"),
+        [
+            ({"type": "remote-source", "reference": "bron", "mode": "once"}, "postgresql-database"),
+            ({"type": "remote-source", "reference": "bron", "mode": "always"}, "minio-storage"),
+            ({"type": "deployment", "reference": "acc", "mode": "once"}, "minio-storage"),
+        ],
+    )
+    def test_pending_clone_returns_422(
+        self,
+        mock_settings: Any,
+        mock_task_service: AsyncMock,
+        clone_from: dict[str, Any],
+        service: str,
+    ) -> None:
+        """De klooproute bepaalt het geheim zelf, dus vervangen kan daar niet naast."""
+        with _client_for_project(mock_task_service, _rotatable_project_data(clone_from)) as client:
+            response = client.post(
+                "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+                headers={"X-API-Key": API_KEY},
+                json={"services": [service]},
+            )
+
+        assert response.status_code == 422, response.text
+        assert "clone-from" in response.json()["detail"]
+        mock_task_service.create_task.assert_not_called()
+
+    def test_completed_once_clone_rotates(self, mock_settings: Any, mock_task_service: AsyncMock) -> None:
+        """Een afgeronde 'once'-kloon valt door naar de gewone tak, dus rotatie kan weer."""
+        mock_task_service.create_task.return_value = _make_task(task_type="rotate_credentials")
+        clone_from = {"type": "remote-source", "reference": "bron", "mode": "once", "status": {"completed": True}}
+
+        with _client_for_project(mock_task_service, _rotatable_project_data(clone_from)) as client:
+            response = client.post(
+                "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+                headers={"X-API-Key": API_KEY},
+                json={"services": ["postgresql-database"]},
+            )
+
+        _assert_accepted(response, "rotate_credentials")
+
+    def test_keycloak_rotates_next_to_a_pending_clone(self, mock_settings: Any, mock_task_service: AsyncMock) -> None:
+        """De kloon raakt het clientsecret niet, dus die dienst blijft te vervangen."""
+        mock_task_service.create_task.return_value = _make_task(task_type="rotate_credentials")
+        clone_from = {"type": "remote-source", "reference": "bron", "mode": "always"}
+
+        with _client_for_project(mock_task_service, _rotatable_project_data(clone_from)) as client:
+            response = client.post(
+                "/api/v2/projects/test-project/deployments/main/:rotate-credentials",
+                headers={"X-API-Key": API_KEY},
+                json={"services": ["keycloak"]},
+            )
+
+        _assert_accepted(response, "rotate_credentials")

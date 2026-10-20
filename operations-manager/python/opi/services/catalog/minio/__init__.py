@@ -95,7 +95,12 @@ class MinioStorageService(BackupsPageMixin, Service):
         ]
 
     async def provision(self, ctx: ProvisionContext) -> None:
-        await ctx.minio_manager.create_resources_for_deployment(ctx.project_data, ctx.deployment, ctx.force_clone)
+        await ctx.minio_manager.create_resources_for_deployment(
+            ctx.project_data,
+            ctx.deployment,
+            ctx.force_clone,
+            rotate_secret_key=self.service_type.value in ctx.rotate_credentials,
+        )
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:
         creds = ctx.get_secret(ctx.deployment_name, "minio", MinIOSecret)

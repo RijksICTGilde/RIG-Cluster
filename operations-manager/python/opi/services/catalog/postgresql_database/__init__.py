@@ -187,7 +187,11 @@ class PostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, Service):
         # database_manager handles both the shared and namespace postgres variants in
         # one call, so only this service provisions (namespace-postgres does not).
         await ctx.database_manager.create_resources_for_deployment(
-            ctx.project_data, ctx.deployment, ctx.force_clone, clone_interrupted=ctx.clone_interrupted
+            ctx.project_data,
+            ctx.deployment,
+            ctx.force_clone,
+            clone_interrupted=ctx.clone_interrupted,
+            rotate_password=self.service_type.value in ctx.rotate_credentials,
         )
 
     def build_secret_files(self, ctx: ManifestContext) -> list[SecretFileSpec]:

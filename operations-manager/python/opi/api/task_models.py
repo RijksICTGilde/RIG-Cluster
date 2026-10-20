@@ -249,6 +249,24 @@ class RefreshDeploymentResult(BaseModel):
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
+class RotateCredentialsResult(BaseModel):
+    """Result of a rotate_credentials task.
+
+    ``rotated`` names the services whose credential was replaced; the task fails as a
+    whole if one of them could not be replaced, so there is no per-service failure list.
+    """
+
+    status: str
+    message: str = ""
+    rotated: list[str] = Field(default_factory=list)
+    project: ProjectInfo | None = None
+    urls: dict[str, DeploymentUrls] = Field(default_factory=dict)
+    processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
 class AddComponentResult(BaseModel):
     """Result of an add_component task."""
 
@@ -415,6 +433,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.CLONE_BUCKET: CloneBucketResult,
     TaskType.REFRESH_PROJECT: RefreshProjectResult,
     TaskType.REFRESH_DEPLOYMENT: RefreshDeploymentResult,
+    TaskType.ROTATE_CREDENTIALS: RotateCredentialsResult,
     TaskType.ADD_COMPONENT: AddComponentResult,
     TaskType.UPDATE_COMPONENT: AddComponentResult,
     TaskType.ADD_COMPONENT_TO_DEPLOYMENT: AddComponentToDeploymentResult,
