@@ -53,7 +53,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG TARGETARCH
 
 # Install SOPS - layer cached unless SOPS_VERSION ARG changes
-RUN curl -LO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
+# Checksums staan literaal; zie images/README.md.
+ARG SOPS_SHA256_AMD64=154dfe4cd70554bdd82b98e4cd4acf191d43d01ead6f00a73477aa44c4ac42ef
+ARG SOPS_SHA256_ARM64=78abf2e15c86250a1553ae6f53aba96be6b2a8126f160b1534959add3467ad76
+RUN case "${TARGETARCH}" in \
+      amd64) SOPS_SHA256="${SOPS_SHA256_AMD64}" ;; \
+      arm64) SOPS_SHA256="${SOPS_SHA256_ARM64}" ;; \
+      *) echo "geen sops-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLO "https://github.com/getsops/sops/releases/download/${SOPS_VERSION}/sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
+    && echo "${SOPS_SHA256}  sops-${SOPS_VERSION}.linux.${TARGETARCH}" | sha256sum -c - \
     && chmod +x "sops-${SOPS_VERSION}.linux.${TARGETARCH}" \
     && mv "sops-${SOPS_VERSION}.linux.${TARGETARCH}" /usr/local/bin/sops
 
@@ -62,8 +71,15 @@ COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64
-RUN KOPIA_ARCH=$(echo "${TARGETARCH}" | sed 's/amd64/x64/') \
-    && curl -LO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
+ARG KOPIA_SHA256_AMD64=416d0f84a3dbb321a8b2d8f0997b1a0a6e915babe79ee76fa6e4d2bd1e1c5178
+ARG KOPIA_SHA256_ARM64=a4ffbc019e0b0f932e2632054e73ec521dc1e80172a00095369c53ecf4e5a6cb
+RUN case "${TARGETARCH}" in \
+      amd64) KOPIA_ARCH=x64; KOPIA_SHA256="${KOPIA_SHA256_AMD64}" ;; \
+      arm64) KOPIA_ARCH=arm64; KOPIA_SHA256="${KOPIA_SHA256_ARM64}" ;; \
+      *) echo "geen kopia-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLO "https://github.com/kopia/kopia/releases/download/v${KOPIA_VERSION}/kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
+    && echo "${KOPIA_SHA256}  kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" | sha256sum -c - \
     && tar -xzf "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}.tar.gz" \
     && mv "kopia-${KOPIA_VERSION}-linux-${KOPIA_ARCH}/kopia" /usr/local/bin/kopia \
     && chmod +x /usr/local/bin/kopia \
@@ -75,7 +91,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends skopeo
 
 # Install Chisel - layer cached unless CHISEL_VERSION ARG changes
-RUN curl -LO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
+ARG CHISEL_SHA256_AMD64=a34bd97c98164faa2908fd65b42ea167aa8fd1fa8aad5850475b7849e163fcac
+ARG CHISEL_SHA256_ARM64=f71111cd9f5e445fa19546e618136e7ce05b2dcea82fcb319382b6b679fd4bfc
+RUN case "${TARGETARCH}" in \
+      amd64) CHISEL_SHA256="${CHISEL_SHA256_AMD64}" ;; \
+      arm64) CHISEL_SHA256="${CHISEL_SHA256_ARM64}" ;; \
+      *) echo "geen chisel-checksum voor TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSLO "https://github.com/jpillora/chisel/releases/download/v${CHISEL_VERSION}/chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
+    && echo "${CHISEL_SHA256}  chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" | sha256sum -c - \
     && gunzip "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}.gz" \
     && chmod +x "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" \
     && mv "chisel_${CHISEL_VERSION}_linux_${TARGETARCH}" /usr/local/bin/chisel
