@@ -387,6 +387,8 @@ async def register_oauth_client_after_keycloak_setup(app) -> None:
         server_metadata_url=settings.OIDC_DISCOVERY_URL,
         client_kwargs={
             "scope": "openid profile email",
+            # PKCE met S256, vereist door de OPI-client in Keycloak.
+            "code_challenge_method": "S256",
         },
     )
 

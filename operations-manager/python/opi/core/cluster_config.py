@@ -54,6 +54,7 @@ CLUSTER_CONFIG = {
         },
         "keycloak": {
             "support_http": True,  # Generate both HTTP and HTTPS redirect URIs
+            "demo_users": True,  # Blauwdruk-demogebruikers met een wachtwoord uit de repo mogen hier
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
@@ -131,6 +132,7 @@ CLUSTER_CONFIG = {
         },
         "keycloak": {
             "support_http": False,
+            "demo_users": True,
         },
         "min_memory_limit_mi": 25,
         "max_memory_limit_mi": 4096,
@@ -822,6 +824,16 @@ def get_keycloak_support_http(cluster_name: str) -> bool:
     """
     keycloak_config = get_keycloak_config(cluster_name)
     return keycloak_config.get("support_http", False)
+
+
+def get_keycloak_demo_users(cluster_name: str) -> bool:
+    """Whether realm blueprints may create their demo users on this cluster.
+
+    Those users carry a password from the repository, so they exist only on a local or
+    sandbox cluster. See ``load_demo_users`` in ``opi/manager/keycloak_manager.py``.
+    """
+    keycloak_config = get_keycloak_config(cluster_name)
+    return keycloak_config.get("demo_users", False)
 
 
 def get_database_server(cluster_name: str) -> str:

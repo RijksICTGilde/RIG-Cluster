@@ -18,6 +18,7 @@ from opi.connectors.keycloak import (
 )
 from opi.core.cluster_config import (
     get_ingress_postfix,
+    get_keycloak_demo_users,
     get_keycloak_discovery_url,
     get_keycloak_support_http,
     get_namespace,
@@ -49,7 +50,7 @@ from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import KeycloakSecret
 from opi.utils.totp import build_otpauth_uri, generate_totp_secret
 from opi.utils.url_paths import normalize_logout_path
-from opi.utils.yaml_util import compiled_jsonpath
+from opi.utils.yaml_util import compiled_jsonpath, load_yaml_from_path
 
 if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
@@ -64,6 +65,27 @@ logger = logging.getLogger(__name__)
 #: tonen wat het platform niet deed; het veld heeft daarom geen default meer en vraagt om een
 #: keuze (``opi/services/catalog/keycloak/editables.py``).
 SSO_ONLY_TEMPLATE = "sso-only"
+
+#: De demo-gebruikers die de blauwdruk ``algoritmeregister`` aanmaakt. Ze dragen een
+#: wachtwoord uit de repo en staan daarom apart van de blauwdruk, zodat alleen een cluster
+#: dat ze mag hebben de lijst krijgt.
+DEMO_USERS_CONFIG = "algoritmeregister-demo-users.yaml"
+
+
+def load_demo_users(cluster: str) -> list[dict[str, Any]]:
+    """De demo-gebruikers voor een realm op dit cluster, leeg buiten lokaal en sandbox.
+
+    Een leeg resultaat laat de ``forEach`` in de blauwdruk niets aanmaken, dus een
+    productierealm krijgt geen gebruiker met een wachtwoord uit de repo.
+    """
+    if not get_keycloak_demo_users(cluster):
+        return []
+
+    yaml_path = Path(__file__).parent.parent / "configs" / "keycloak" / DEMO_USERS_CONFIG
+    config = load_yaml_from_path(str(yaml_path))
+    if not config or "demo_users" not in config:
+        raise ValueError(f"Geen demo_users gevonden in {DEMO_USERS_CONFIG}")
+    return config["demo_users"]
 
 
 def build_project_realm_context(
@@ -99,6 +121,8 @@ def build_project_realm_context(
         "invite_client_id": settings.INVITE_CLIENT_ID,
         # Per-realm SSO account-linking mode (automatic | confirm; None -> Keycloak's stock flow)
         "account_link": account_link,
+        # Leeg op een productiecluster; zie load_demo_users.
+        "demo_users": load_demo_users(cluster),
     }
 
 

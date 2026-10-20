@@ -1,0 +1,43 @@
+# De demo-gebruikers van de algoritmeregister-blauwdruk.
+# Hun wachtwoord staat in de repo, dus dit bestand wordt alleen geladen op een lokaal of
+# sandboxcluster (get_keycloak_demo_users). Op productie blijft demo_users leeg en maakt de
+# forEach in algoritmeregister.yaml geen gebruikers aan.
+
+---
+# Twee per groep, allemaal met alle rollen.
+demo_users:
+  - username: "ictu_user1"
+    email: "ictu.user1@example.com"
+    firstName: "ICTU"
+    lastName: "User One"
+    password: "demo123"
+    roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+    groups: ["ICTU"]
+    removeDefaultRoles: true  # Remove default Keycloak role assignments
+
+  - username: "ictu_user2"
+    email: "ictu.user2@example.com"
+    firstName: "ICTU"
+    lastName: "User Two"
+    password: "demo123"
+    roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+    groups: ["ICTU"]
+    removeDefaultRoles: true
+
+  - username: "minbzk_user1"
+    email: "minbzk.user1@example.com"
+    firstName: "MinBZK"
+    lastName: "User One"
+    password: "demo123"
+    roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+    groups: ["MIN_BZK"]
+    removeDefaultRoles: true
+
+  - username: "minbzk_user2"
+    email: "minbzk.user2@example.com"
+    firstName: "MinBZK"
+    lastName: "User Two"
+    password: "demo123"
+    roles: ["admin", "all_groups", "orgdetail", "ictu", "role_1", "role_2"]
+    groups: ["MIN_BZK"]
+    removeDefaultRoles: true
