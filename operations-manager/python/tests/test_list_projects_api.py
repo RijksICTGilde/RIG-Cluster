@@ -277,3 +277,10 @@ class TestTheDocumentationSaysSo:
         spec = test_client.app.openapi()
         item = spec["components"]["schemas"]["ProjectListItem"]
         assert "SECRET" in item["properties"]["api_key"]["description"]
+
+    def test_the_api_key_field_is_marked_deprecated_with_the_way_out(self, test_client: TestClient) -> None:
+        """The field is on its way out, so the spec names the route that replaces it."""
+        spec = test_client.app.openapi()
+        api_key = spec["components"]["schemas"]["ProjectListItem"]["properties"]["api_key"]
+        assert api_key["deprecated"] is True
+        assert "/api/v2/projects/{project_name}/api-key" in api_key["description"]

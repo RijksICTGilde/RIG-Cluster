@@ -269,10 +269,13 @@ class ProjectListItem(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
+        deprecated=True,
         description=(
             "SECRET. The project's API key, for the X-API-Key header on every per-project call. "
             "Only present for the roles 'admin' and 'owner'; null for a 'developer', who may not "
-            "change the project through the web UI either"
+            "change the project through the web UI either. DEPRECATED: ask for one project's key "
+            "with GET /api/v2/projects/{project_name}/api-key, which logs who got it. This field "
+            "disappears from the list once the CLI uses that route"
         ),
         examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
     )
@@ -305,6 +308,16 @@ class ProjectListResponse(BaseModel):
             }
         }
     }
+
+
+class ProjectApiKeyResponse(BaseModel):
+    """The API key of one project, for a caller that may change that project."""
+
+    api_key: str = Field(
+        ...,
+        description="SECRET. The project's API key, for the X-API-Key header on every per-project call",
+        examples=["Xk3mQ9vP2rT7wY1bN5cL8hJ4gF6dS0aZ"],
+    )
 
 
 # ---------------------------------------------------------------------------

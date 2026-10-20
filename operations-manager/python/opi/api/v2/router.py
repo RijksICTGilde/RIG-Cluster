@@ -60,6 +60,7 @@ from opi.api.v2.models import (
     DeploymentListResponse,
     DeploymentStatus,
     PendingRolloutResponse,
+    ProjectApiKeyResponse,
     ProjectListItem,
     ProjectListResponse,
     RunningSync,
@@ -1191,6 +1192,11 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     them. A ``developer`` therefore sees the project, its description and their
     role, and ``api_key`` is ``null``. Do not log this response.
 
+    **The ``api_key`` field is deprecated.** Ask for one project's key with
+    ``GET /api/v2/projects/{project_name}/api-key``, which hands out one key per
+    call and logs who got it. The field disappears from this list once the CLI
+    uses that route.
+
     **A platform administrator sees every project, with every key.** That is
     deliberate and follows from the platform-admin rule the whole application
     uses: an administrator can already open any project's page and read its key
@@ -1228,6 +1234,51 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
     response.headers["Cache-Control"] = "no-store"
     logger.info("V2 list projects requested by %s: %d project(s) visible", caller_email, len(projects))
     return ProjectListResponse(projects=projects)
+
+
+@v2_router.get(
+    "/projects/{project_name}/api-key",
+    tags=["projects"],
+    summary="The API key of one project",
+    response_model=ProjectApiKeyResponse,
+    responses={
+        200: {"model": ProjectApiKeyResponse, "description": "The project's API key"},
+        401: {"description": "No valid bearer token"},
+        403: {"description": "The caller's role in this project may not hold its key"},
+        404: {"description": "No such project, or the caller may not reach it"},
+    },
+)
+@validate_user_token
+async def get_project_api_key_v2(
+    request: Request, response: Response, project_name: ProjectNamePath
+) -> ProjectApiKeyResponse:
+    """The API key of one project, for a caller with admin or owner role.
+
+    Membership and role come from the same two functions the list and the web edit
+    gate use, so a platform administrator reaches every project's key here as well.
+    The response is a secret and carries Cache-Control: no-store. Every key handed
+    out is logged with the caller's email. See features/cli-projecten-opvragen.md
+    for detailed behavior (404/403 conditions, why discovery is not possible).
+    """
+    user = get_current_user(request) or {}
+    caller_email = str(user.get("email", ""))
+
+    project = get_project_store().get(project_name)
+    if project is None or not is_user_authorized_for_project(project_name, caller_email):
+        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found")
+
+    role = get_user_role_for_project(project_name, caller_email)
+    if role not in PROJECT_EDIT_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Role '{role}' may not hold the API key of project '{project_name}'",
+        )
+
+    # The caller holds a secret after this; who asked for which key is the point
+    # of the route, so it is logged. The key itself never is.
+    logger.info("V2 API key of project %s handed to %s", project_name, caller_email)
+    response.headers["Cache-Control"] = "no-store"
+    return ProjectApiKeyResponse(api_key=project.api_key)
 
 
 @v2_router.post(
