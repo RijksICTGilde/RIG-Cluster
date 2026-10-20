@@ -79,8 +79,10 @@ spec:
         # Service configuration - Disable user registration for local dev
         - name: FORGEJO__service__DISABLE_REGISTRATION
           value: "true"
+        # Lezen vraagt een login: de repositories bevatten projectbestanden met
+        # versleutelde waarden en de gegenereerde manifests (BIO2 8.31).
         - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
-          value: "false"
+          value: "true"
         - name: FORGEJO__service__DEFAULT_KEEP_EMAIL_PRIVATE
           value: "true"
 
@@ -88,7 +90,7 @@ spec:
         - name: FORGEJO__repository__DEFAULT_BRANCH
           value: "main"
         - name: FORGEJO__repository__DEFAULT_PRIVATE
-          value: "false"
+          value: "true"
 
         # Webhook configuration - Allow internal network for ArgoCD
         - name: FORGEJO__webhook__ALLOWED_HOST_LIST

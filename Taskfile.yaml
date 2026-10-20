@@ -3512,8 +3512,16 @@ tasks:
           echo "  Creating: $REPO"
           kubectl exec -n rig-system forgejo-0 -- wget -q -O- \
             --header="Content-Type: application/json" \
-            --post-data="{\"name\":\"$REPO\",\"private\":false,\"auto_init\":true,\"default_branch\":\"main\"}" \
+            --post-data="{\"name\":\"$REPO\",\"private\":true,\"auto_init\":true,\"default_branch\":\"main\"}" \
             "http://rig-admin:admin1234@localhost:3000/api/v1/user/repos" 2>/dev/null || echo "  $REPO may already exist"
+
+          # Bestaande repositories omzetten naar privé (busybox-wget kan geen PATCH doen)
+          echo "  Marking private: $REPO"
+          kubectl exec -n rig-system forgejo-0 -- curl -sf -X PATCH \
+            -H "Content-Type: application/json" \
+            -d '{"private":true}' \
+            "http://rig-admin:admin1234@localhost:3000/api/v1/repos/rig-admin/$REPO" \
+            >/dev/null 2>&1 || echo "  Could not mark $REPO private"
         done
 
         # Verify git repos exist on disk, manually init if auto_init failed

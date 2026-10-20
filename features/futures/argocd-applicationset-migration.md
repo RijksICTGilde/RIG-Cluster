@@ -112,6 +112,15 @@ live workloads).
 3. **Create org `repo-creds` template** (bootstrap, all overlays); verify ArgoCD
    resolves creds for the bare URL. 36 per-project secrets stay, coexist.
    *Rollback: delete secret.*
+
+   Werkend voorbeeld: `features/forgejo-repositories-prive.md`. De sandbox heeft
+   deze stap al gezet, omdat haar privé-repositories er niet zonder kunnen. Daar is
+   gemeten wat hier nodig is: de template matcht op prefix en levert de toegang
+   werkelijk (zonder template meldt een applicatie `failed to list refs:
+   authentication required`), de per-project secrets coexisteren en gaan voor, en de
+   repoURL's dragen daar geen userinfo omdat `make_argocd_repository_url_unique`
+   alleen github/gitlab/bitbucket herschrijft. Dat laatste is precies het verschil
+   met odcn-production, en dus de voorwaarde die deze stap hier eerst moet maken.
 4. **Stand up dedicated AppProject Application**; populate `_appprojects/`
    verbatim; sync `prune=false`; verify AppProject count unchanged.
    *Rollback: delete app `--cascade=orphan`.*
