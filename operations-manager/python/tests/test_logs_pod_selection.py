@@ -16,6 +16,7 @@ alleen het openen toetst.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -128,8 +129,10 @@ async def test_resolve_returns_none_for_a_deployment_on_another_cluster():
 
 
 def _request(email: str | None) -> MagicMock:
+    """Een verzoek met (of zonder) sessie. ``login_at`` hoort erbij: zonder inlogtijdstip
+    is een sessie voorbij haar absolute levensduur (opi/core/session_guard.py)."""
     request = MagicMock()
-    request.session = {"user": {"email": email}} if email else {}
+    request.session = {"user": {"email": email, "login_at": time.time()}} if email else {}
     return request
 
 
@@ -261,7 +264,9 @@ def _client(stream_start: Any, toegestane_pods: list[dict[str, Any]]) -> Any:
         TestClient(app),
         patch.multiple(
             "opi.api.logs_websocket_router",
-            _get_session_from_cookie=MagicMock(return_value={"user": {"email": "lid@rijksoverheid.nl"}}),
+            _get_session_from_cookie=MagicMock(
+                return_value={"user": {"email": "lid@rijksoverheid.nl", "login_at": time.time()}}
+            ),
             get_user_service=MagicMock(return_value=MagicMock(is_email_allowed=MagicMock(return_value=True))),
             is_user_authorized_for_project=MagicMock(return_value=True),
             get_project_store=MagicMock(return_value=_project_store()),

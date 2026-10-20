@@ -34,10 +34,10 @@
 {# NLDD maakt van een tabel een CSS-grid: zonder columns valt alles in een
                kolom en stapelen de cellen. En c-table-head IS de kopregel, daar hoort
                geen c-table-row in. #}
-            {# De laatste kolom draagt twee knoppen naast elkaar en heeft daarom meer
+            {# De laatste kolom draagt drie knoppen naast elkaar en heeft daarom meer
                ruimte nodig dan de datum ervoor; met gelijke breedtes vallen ze onder
                elkaar. #}
-            <c-table columns="2fr 2fr 1fr 2fr">
+            <c-table columns="2fr 3fr 1.5fr 7fr">
                 <c-table-head>
                     <c-th>Naam</c-th>
                     <c-th>E-mailadres</c-th>
@@ -58,10 +58,25 @@
                                     icon="pencil-on-square"
                                     show-icon="before"
                                     href="/admin/users/{{ user.id }}/edit" />
-                                {# Het formulier draagt de bevestiging en het CSRF-token, net als nu.
-                                   De knop erin is alleen de verzendknop. #}
+                                {# Het formulier draagt de bevestiging en het CSRF-token. De knop erin
+                                   is alleen de verzendknop.
+                                   tojson/forceescape beschermt tegen XSS op user.full_name
+                                   (patroon: bg/_argocd-deployment-card.html.j2). #}
+                                {% set sessies_js = ('return confirm(' ~ (('Weet je zeker dat je de sessies van ' ~ user.full_name ~ ' wilt beëindigen? Deze gebruiker moet dan opnieuw inloggen.') | tojson) ~ ')') | forceescape %}
+                                <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/revoke-sessions"
+                                      onsubmit="{{ sessies_js }}">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                    <c-button
+                                        type="tertiary"
+                                        size="sm"
+                                        label="Sessies beëindigen"
+                                        icon="logout"
+                                        show-icon="before"
+                                        html-type="submit" />
+                                </form>
+                                {% set verwijderen_js = ('return confirm(' ~ (('Weet je zeker dat je ' ~ user.full_name ~ ' wilt verwijderen?') | tojson) ~ ')') | forceescape %}
                                 <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/delete"
-                                      onsubmit="return confirm('Weet je zeker dat je {{ user.full_name }} wilt verwijderen?');">
+                                      onsubmit="{{ verwijderen_js }}">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
                                     <c-button
                                         type="warning"

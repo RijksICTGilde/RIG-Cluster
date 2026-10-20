@@ -664,7 +664,7 @@ async def sequence_action(request: Request, project_name: str, section_id: str) 
 @requires_sso
 async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -> HTMLResponse:
     """Initialize modal wizard and return the first step HTML."""
-    project, _user_email = _require_flow_access(request, project_name, flow_id)
+    project, user_email = _require_flow_access(request, project_name, flow_id)
 
     project_data = project.data or {}
 

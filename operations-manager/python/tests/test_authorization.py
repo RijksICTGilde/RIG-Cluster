@@ -4,6 +4,7 @@ Tests for opi.middleware.authorization module.
 Tests get_user, _route_requires_sso, and AuthorizationMiddleware.dispatch.
 """
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,11 +21,12 @@ class TestGetUser:
     def test_returns_user_from_session(self):
         """Should return user dict when present in session."""
         mock_request = MagicMock(spec=Request)
-        mock_request.session = {"user": {"email": "test@example.com", "name": "Test"}}
+        user = {"email": "test@example.com", "name": "Test", "login_at": time.time()}
+        mock_request.session = {"user": user}
 
         result = get_user(mock_request)
 
-        assert result == {"email": "test@example.com", "name": "Test"}
+        assert result == user
 
     def test_returns_none_when_no_user_in_session(self):
         """Should return None when session has no user."""
@@ -158,7 +160,7 @@ class TestAuthorizationMiddlewareDispatch:
     async def test_authenticated_user_passes(self):
         """Should pass through when user is authenticated."""
         middleware = self._make_middleware()
-        user = {"email": "test@example.com"}
+        user = {"email": "test@example.com", "login_at": time.time()}
         request = self._make_request("/dashboard", session={"user": user})
         expected_response = Response(content="ok")
         call_next = AsyncMock(return_value=expected_response)
@@ -211,7 +213,7 @@ class TestAuthorizationMiddlewareDispatch:
     async def test_unauthorized_email_redirected(self):
         """Should redirect to permission-denied when email not in allowlist."""
         middleware = self._make_middleware()
-        user = {"email": "blocked@example.com"}
+        user = {"email": "blocked@example.com", "login_at": time.time()}
         request = self._make_request("/dashboard", session={"user": user})
         call_next = AsyncMock()
 

@@ -35,6 +35,7 @@ from opi.api.logs_router import MAX_NAME_LENGTH, MAX_POD_NAME_LENGTH, resolve_co
 from opi.connectors.kubectl import KubectlConnector, is_previous_attempt_missing
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
+from opi.core.session_guard import valid_session_user
 from opi.manager.run_support import LABEL_RUN
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -178,13 +179,6 @@ def _get_session_from_cookie(websocket: WebSocket) -> dict[str, Any] | None:
     except Exception as e:
         logger.warning(f"Failed to decode session cookie: {e}")
         return None
-
-
-def _get_user_from_session(session: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Extract user info from session data."""
-    if not session:
-        return None
-    return session.get("user")
 
 
 async def _register_connection(user_email: str, websocket: WebSocket) -> bool:
@@ -372,7 +366,8 @@ async def stream_logs(
         # === AUTHENTICATION ===
         # Extract session from cookies (same session as web UI)
         session = _get_session_from_cookie(websocket)
-        user = _get_user_from_session(session)
+        # Dezelfde controle als de HTTP-middleware: absolute levensduur en intrekken.
+        user = valid_session_user(session)
         user_email = user.get("email") if user else None
 
         if not user_email:

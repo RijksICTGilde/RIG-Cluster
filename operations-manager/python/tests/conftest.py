@@ -19,18 +19,23 @@ os.environ.setdefault("ENVIRONMENT", "local")
 import time
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from alembic.config import Config
+from alembic.runtime.environment import EnvironmentContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
+from opi.core.db import Base
 from opi.utils.sops import generate_sops_key_pair
+from sqlalchemy import Engine, create_engine, text
 from tests.docker_runtime import DockerError, container_state, docker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
-    from pathlib import Path
 
 
 def write_private_file(path: Path, content: str) -> Path:
@@ -540,6 +545,75 @@ def _ruim_verweesde_databases_op() -> None:
         naam = naam.strip()
         if naam and _is_wees(naam, nu):
             _psql(f'DROP DATABASE IF EXISTS "{naam}" WITH (FORCE)')
+
+
+# --- Het harnas voor een migratietoets ------------------------------------------------
+#
+# Een migratie toets je op een LEGE database met ``alembic upgrade`` erover, en niet op de
+# database van ``orm_db``: die krijgt zijn tabellen uit de modellen en zou de migratie
+# juist overslaan. Dit staat hier omdat meer dan een migratietoets het nodig heeft.
+
+ALEMBIC_INI = Path(__file__).resolve().parents[1] / "alembic.ini"
+
+
+def _alembic_config() -> Config:
+    config = Config(str(ALEMBIC_INI))
+    config.set_main_option("script_location", str(ALEMBIC_INI.parent / "opi" / "migrations"))
+    return config
+
+
+def alembic_script_directory() -> ScriptDirectory:
+    """De migratieketen, los van een database. Voor een toets op de revisies zelf."""
+    return ScriptDirectory.from_config(_alembic_config())
+
+
+def _alembic_run(engine: Engine, destination: str, omhoog: bool) -> None:
+    """``alembic upgrade`` of ``downgrade`` op deze engine, zonder de URL uit env.py."""
+    config = _alembic_config()
+    script = ScriptDirectory.from_config(config)
+
+    def steps(rev, _context):
+        revs = script._upgrade_revs if omhoog else script._downgrade_revs
+        return revs(destination, rev)
+
+    with (
+        engine.connect() as connection,
+        EnvironmentContext(config, script, fn=steps, destination_rev=destination) as env,
+    ):
+        env.configure(connection=connection, target_metadata=Base.metadata)
+        with env.begin_transaction():
+            env.run_migrations()
+        connection.commit()
+
+
+def alembic_upgrade(engine: Engine, destination: str) -> None:
+    """``alembic upgrade <destination>``."""
+    _alembic_run(engine, destination, omhoog=True)
+
+
+def alembic_downgrade(engine: Engine, destination: str) -> None:
+    """``alembic downgrade <destination>``, bijvoorbeeld ``-1``."""
+    _alembic_run(engine, destination, omhoog=False)
+
+
+@pytest.fixture
+def migration_db(_orm_db_url: str) -> Iterator[str]:
+    """An EMPTY database next to the one of this run, as a sync (psycopg2) URL."""
+    server, _, _name = _orm_db_url.rpartition("/")
+    server = server.replace("postgresql+asyncpg", "postgresql+psycopg2")
+    # Eigen prefix: de weesopruimer hierboven leest een pid uit zad_test_<pid> en zou een
+    # naam met achtervoegsel als dood opruimen terwijl deze run hem gebruikt.
+    name = f"zad_mig_{os.getpid()}"
+    admin = create_engine(f"{server}/postgres", isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        conn.execute(text(f'CREATE DATABASE "{name}"'))
+    try:
+        yield f"{server}/{name}"
+    finally:
+        with admin.connect() as conn:
+            conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+        admin.dispose()
 
 
 @pytest.fixture(scope="session")

@@ -17,6 +17,7 @@ import json
 import os
 import socket
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -64,7 +65,14 @@ SANDBOX_TEST_USER = {
 
 
 def _sign_session(data: dict, secret: str = SECRET_KEY) -> str:
-    """Replicate Starlette SessionMiddleware cookie signing."""
+    """Replicate Starlette SessionMiddleware cookie signing.
+
+    De sessiegebruiker krijgt een vers ``login_at``: een sessie zonder inlogtijdstip is
+    voorbij haar absolute levensduur en wordt geweigerd (opi/core/session_guard.py).
+    """
+    user = data.get("user")
+    if user is not None:
+        data = {**data, "user": {**user, "login_at": time.time()}}
     payload = base64.b64encode(json.dumps(data).encode()).decode()
     signer = TimestampSigner(secret)
     return signer.sign(payload).decode()

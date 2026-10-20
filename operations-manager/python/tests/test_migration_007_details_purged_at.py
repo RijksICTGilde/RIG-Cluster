@@ -119,10 +119,11 @@ def test_upgrade_to_head_from_the_previous_revision_succeeds(migration_db: str) 
 
 
 def test_downgrade_removes_the_column_and_upgrade_adds_it_back(migration_db: str) -> None:
+    """Terug naar 006, niet ``-1``: met een migratie bovenop 007 draait ``-1`` die terug."""
     engine = create_engine(migration_db)
     try:
         upgrade(engine, "head")
-        downgrade(engine, "-1")
+        downgrade(engine, "006")
         with engine.connect() as conn:
             columns_after_downgrade = {c["name"] for c in inspect(conn).get_columns("async_tasks")}
 

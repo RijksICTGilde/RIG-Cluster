@@ -239,3 +239,37 @@ class TestMenuIntegration:
         """Gebruikersbeheer menu item is visible on the user admin page."""
         auth_page.goto(f"{app_server}{USERS_URL}")
         assert "Gebruikersbeheer" in auth_page.content()
+
+
+class TestBevestigingMetVijandigeNaam:
+    """De naam in een confirm() is gegeven, geen code (RC-287).
+
+    De naam komt uit Keycloak en staat in een JS-tekenreeks binnen een
+    onsubmit-attribuut. HTML-escaping alleen is daar niet genoeg: de browser draait die
+    terug voordat de JS gelezen wordt, dus een apostrof sloot de tekenreeks af en de
+    rest van de naam werd code. Zonder de fix komt er geen dialoog op.
+    """
+
+    VIJANDIGE_NAAM = "O'Brien\"><img src=x onerror=alert(1)>"
+
+    def test_de_naam_staat_letterlijk_in_beide_dialogen(self, app_server: str, auth_page: Page) -> None:
+        """De pagina rendert, en beide bevestigingen tonen de naam zoals hij is."""
+        auth_page.goto(f"{app_server}{CREATE_URL}")
+        auth_page.locator("input[name='email']").fill("obrien@example.nl")
+        auth_page.locator("input[name='full_name']").fill(self.VIJANDIGE_NAAM)
+        auth_page.locator("button[type='submit'], input[type='submit']").first.click()
+        auth_page.wait_for_url(f"**{USERS_URL}**")
+
+        service = get_in_memory_user_service()
+        user_id = next(uid for uid, u in service._users.items() if u["full_name"] == self.VIJANDIGE_NAAM)
+
+        assert auth_page.locator("img[src='x']").count() == 0, "de naam leverde een element op"
+
+        meldingen: list[str] = []
+        auth_page.on("dialog", lambda d: (meldingen.append(d.message), d.dismiss()))
+        for actie in ("revoke-sessions", "delete"):
+            formulier = auth_page.locator(f"form[action='/admin/users/{user_id}/{actie}']")
+            formulier.locator("button[type='submit']").first.click()
+
+        assert len(meldingen) == 2, f"niet elke bevestiging kwam op: {meldingen}"
+        assert all(self.VIJANDIGE_NAAM in melding for melding in meldingen), meldingen

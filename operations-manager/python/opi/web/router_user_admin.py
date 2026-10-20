@@ -14,6 +14,7 @@ from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.editables.user_editables import USER_SECTION
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
+from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_admin_service import UserAdminService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
@@ -280,6 +281,32 @@ async def edit_user_submit(request: Request, user_id: str) -> Response:
 
     return RedirectResponse(
         url="/admin/users?success=Gebruiker+bijgewerkt",
+        status_code=303,
+    )
+
+
+@user_admin_router.post("/{user_id}/revoke-sessions", response_model=None)
+@requires_sso
+async def revoke_user_sessions(request: Request, user_id: str) -> Response:
+    """Beëindig elke lopende portaalsessie van deze gebruiker."""
+    admin = require_platform_admin(request)
+    service = _get_service()
+    existing = await service.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
+    revoked_after = await revoke_sessions(existing["email"])
+    # Deze handeling hoort in de gebeurtenissentabel zodra die er is; tot die tijd staat
+    # hij hier, met wie, voor wie en vanaf wanneer.
+    logger.info(
+        "Platformbeheerder %s beëindigde de sessies van %s vanaf %s",
+        admin.get("email", "onbekend"),
+        existing["email"],
+        revoked_after.isoformat(),
+    )
+
+    return RedirectResponse(
+        url="/admin/users?success=Sessies+beëindigd",
         status_code=303,
     )
 

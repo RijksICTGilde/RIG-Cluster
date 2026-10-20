@@ -13,6 +13,7 @@ This module provides comprehensive unit tests for:
 
 import asyncio
 import json
+import time
 import unittest
 from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,32 +172,36 @@ class TestSessionExtraction(unittest.TestCase):
 
 
 class TestUserExtraction(unittest.TestCase):
-    """Test cases for user extraction from session."""
+    """Test cases for user extraction from session.
+
+    De handshake leest de sessie via ``valid_session_user``, dezelfde functie als de
+    HTTP-middleware, dus een sessie zonder geldig inlogtijdstip komt er niet door.
+    """
 
     def test_get_user_from_session_valid(self):
         """Test user extraction from valid session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
-        session = {"user": {"email": "test@example.com", "name": "Test User"}}
-        result = _get_user_from_session(session)
+        session = {"user": {"email": "test@example.com", "name": "Test User", "login_at": time.time()}}
+        result = valid_session_user(session)
 
         self.assertIsNotNone(result)
         self.assertEqual(result["email"], "test@example.com")
 
     def test_get_user_from_session_no_user(self):
         """Test user extraction when no user in session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
         session = {"other_data": "value"}
-        result = _get_user_from_session(session)
+        result = valid_session_user(session)
 
         self.assertIsNone(result)
 
     def test_get_user_from_session_none(self):
         """Test user extraction from None session."""
-        from opi.api.logs_websocket_router import _get_user_from_session
+        from opi.core.session_guard import valid_session_user
 
-        result = _get_user_from_session(None)
+        result = valid_session_user(None)
 
         self.assertIsNone(result)
 
