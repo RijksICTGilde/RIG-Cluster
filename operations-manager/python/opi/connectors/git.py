@@ -3,13 +3,14 @@ Git connector for polling repository changes using GitPython.
 """
 
 import asyncio
+import base64
 import logging
 import os
 import re
 import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, ClassVar
-from urllib.parse import urlparse
+from urllib.parse import ParseResult, urlparse, urlunparse
 
 from ruamel.yaml import YAML
 
@@ -52,29 +53,45 @@ def _project_write_lock(repo_url: str, project_name: str | None) -> asyncio.Lock
 GIT_COMMIT_AUTHOR_NAME = "Operations Manager"
 GIT_COMMIT_AUTHOR_EMAIL = "operations-manager@example.com"
 
+#: Vast pad, zodat de hostsleutel die de eerste SSH-verbinding vastlegt de volgende
+#: verbindingen overleeft en een wijziging ertussen opvalt.
+SSH_KNOWN_HOSTS_PATH = os.path.join(settings.TEMP_DIR, "git-known-hosts")
+
+
+#: userinfo in een http(s)-URL: user:wachtwoord@host, en de vorm met alleen een token.
+#: De tweede sluit ":" uit zodat hij niet alsnog over het resultaat van de eerste heen gaat.
+_URL_USERINFO_PATTERN = re.compile(r"(https?://)([^:/@\s]+):[^@\s]+@")
+_URL_TOKEN_PATTERN = re.compile(r"(https?://)[^:/@\s]+@")
+
 
 def _obfuscate_git_command(cmd_str: str) -> str:
+    """Maskeer credentials in een git-commando voor de log.
+
+    Tweede laag: sinds credentials via de omgeving gaan (zie _credential_env) hoort er
+    geen userinfo meer in een URL te staan, maar een URL uit een projectbestand kan hem
+    nog bevatten.
     """
-    Obfuscate sensitive information in Git commands for logging.
+    obfuscated = _URL_USERINFO_PATTERN.sub(r"\1\2:***@", cmd_str)
+    return _URL_TOKEN_PATTERN.sub(r"\1***@", obfuscated)
 
-    Args:
-        cmd_str: The command string to obfuscate
 
-    Returns:
-        Command string with sensitive information replaced by asterisks
+def _authority(parsed: ParseResult) -> str:
+    """Host en poort van een geparste URL, zonder userinfo.
+
+    Uit netloc en niet uit parsed.hostname, want die haalt de blokhaken van een
+    IPv6-literal af en maakt er een onbruikbaar adres van (::1:3000).
     """
-    # Pattern to match URLs with credentials (https://user:password@host or https://token@host)
-    # This handles various formats including GitHub personal access tokens (ghp_*)
-    url_pattern = r"https://([^:/@\s]+):([^@\s]+)@"
+    return parsed.netloc.rsplit("@", 1)[-1]
 
-    # Replace with obfuscated version
-    obfuscated = re.sub(url_pattern, r"https://\1:***@", cmd_str)
 
-    # Also handle the case where there's just a token without username (https://token@host)
-    token_pattern = r"https://([^@\s]*ghp_[^@\s]+)@"
-    obfuscated = re.sub(token_pattern, r"https://***@", obfuscated)
+def _strip_url_credentials(url: str) -> str:
+    """Geef een http(s)-URL terug zonder userinfo. Andere vormen blijven ongewijzigd."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return url
 
-    return obfuscated
+    authority = _authority(parsed)
+    return urlunparse((parsed.scheme, authority, parsed.path, parsed.params, parsed.query, parsed.fragment))
 
 
 class GitPushConflictError(RuntimeError):
@@ -171,6 +188,7 @@ class GitConnector:
 
         # Initialize URL parsing immediately (synchronous)
         self.url_config = self._parse_git_url(self.repo_url)
+        self._clean_repo_url = _strip_url_credentials(self.repo_url)
 
         logger.debug("GitConnector initialization completed")
 
@@ -189,8 +207,11 @@ class GitConnector:
 
     @property
     def repo_url_with_path(self) -> str:
-        """Get the repository URL with credentials embedded for HTTPS URLs."""
-        return self._construct_repo_url_with_credentials()
+        """De repo-URL zonder credentials, zoals hij als argument aan git gaat.
+
+        Authenticatie gaat via de omgeving, zie _credential_env.
+        """
+        return self._clean_repo_url
 
     def _parse_git_url(self, url: str) -> dict[str, Any]:
         """
@@ -284,48 +305,30 @@ class GitConnector:
         logger.debug(f"Normalized repo path: '{repo_path}'")
         return repo_path
 
-    def _construct_repo_url_with_credentials(self) -> str:
+    def _credential_env(self) -> dict[str, str]:
+        """Git-config in de omgeving die de Basic-auth-header aan één basis-URL bindt.
+
+        Via de omgeving in plaats van via de URL, zodat het wachtwoord niet in een
+        procesargument, in .git/config of in een logregel belandt (BIO2 5.17, 8.12). De
+        sleutel noemt scheme, host en poort van de eigen repo-URL, dus git stuurt de header
+        alleen daarheen en niet mee na een redirect naar een andere host.
         """
-        Construct the repository URL with embedded credentials for HTTPS URLs.
+        if not self.url_config or self.url_config.get("scheme") not in ("http", "https"):
+            return {}
 
-        Returns:
-            Repository URL with credentials and path
-        """
-        base_url = self.repo_url
+        parsed = urlparse(self.repo_url)
+        username = self.username or parsed.username
+        password = self._decrypted_password or parsed.password
+        if not username or not password:
+            return {}
 
-        # For HTTPS URLs, embed credentials if provided
-        if (
-            self.url_config
-            and self.url_config.get("scheme") in ("https", "http")
-            and (self.username or self._decrypted_password)
-        ):
-            from urllib.parse import urlparse, urlunparse
-
-            parsed = urlparse(self.repo_url)
-
-            # Extract existing username from URL if present
-            existing_username = parsed.username
-
-            # Use provided credentials or fall back to existing ones
-            username = self.username or existing_username
-            # Use decrypted password if available, otherwise don't embed credentials
-            password = self._decrypted_password
-
-            # Only embed credentials if both username and password are valid strings
-            if username and password and isinstance(username, str) and isinstance(password, str):
-                # Construct new netloc with credentials
-                netloc = f"{username}:{password}@{parsed.hostname}"
-                if parsed.port:
-                    netloc += f":{parsed.port}"
-
-                # Reconstruct URL with credentials
-                base_url = urlunparse(
-                    (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
-                )
-
-        # Return the base URL without the repo path
-        # The repo path is used after cloning to navigate to subdirectories
-        return base_url
+        authority = _authority(parsed)
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        return {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_KEY_0": f"http.{parsed.scheme}://{authority}/.extraHeader",
+            "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
+        }
 
     @property
     def ssh_port(self) -> int:
@@ -394,6 +397,10 @@ class GitConnector:
 
         # Set up environment
         cmd_env = os.environ.copy()
+        # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
+        # falen, niet wachten op een terminal die er niet is.
+        cmd_env["GIT_TERMINAL_PROMPT"] = "0"
+        cmd_env.update(self._credential_env())
         if env:
             cmd_env.update(env)
 
@@ -417,8 +424,9 @@ class GitConnector:
             if port != 22:
                 ssh_cmd += f" -p {port}"
 
-            # Add options for StrictHostKeyChecking
-            ssh_cmd += " -o StrictHostKeyChecking=no"
+            # accept-new vertrouwt een onbekende host eenmalig en legt hem vast, zodat een
+            # gewijzigde hostsleutel daarna een fout geeft in plaats van stil door te gaan.
+            ssh_cmd += f" -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile={SSH_KNOWN_HOSTS_PATH}"
 
             logger.debug(f"Using SSH command: {ssh_cmd}")
             cmd_env["GIT_SSH_COMMAND"] = ssh_cmd
@@ -522,7 +530,7 @@ class GitConnector:
         Returns:
             Dictionary mapping reference names to commit hashes
         """
-        logger.debug(f"Fetching remote refs from: {self.repo_url_with_path}")
+        logger.debug(f"Fetching remote refs from: {_obfuscate_git_command(self.repo_url_with_path)}")
 
         # Use git ls-remote to get all references
         cmd = ["ls-remote", self.repo_url_with_path]
@@ -1980,7 +1988,9 @@ async def poll_for_changes(
         stop_event: Optional asyncio Event to signal stopping the polling
     """
     logger.info(f"Starting to poll for changes to {file_path} every {interval} seconds")
-    logger.debug(f"Monitoring branch: {connector.branch}, Repo URL: {connector.repo_url_with_path}")
+    logger.debug(
+        f"Monitoring branch: {connector.branch}, Repo URL: {_obfuscate_git_command(connector.repo_url_with_path)}"
+    )
 
     # 1. On startup: Clone the repository and do initial load
     try:
