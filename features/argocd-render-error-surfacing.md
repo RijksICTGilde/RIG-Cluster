@@ -58,7 +58,8 @@ it ever reaches ArgoCD.
 The kustomize build in the CMP script (`bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml`)
 ends a failure with a single, final `KUSTOMIZE BUILD FAILED in <folder>: <stderr>` line, so
 the real error survives ArgoCD's truncation of long plugin output and is easy to find. The
-`.cmp-env` contents (which hold secrets) are no longer dumped to the logs.
+env-vars (which hold secrets) are no longer dumped to the logs: the plugin logs only that
+it read them from `cmp-env.sops.yaml`, never the values.
 
 ## Files
 

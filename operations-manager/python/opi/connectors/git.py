@@ -16,9 +16,10 @@ from ruamel.yaml import YAML
 
 from opi.core.actor import Actor, get_actor
 from opi.core.config import settings
+from opi.generation.manifests import CMP_ENV_NAME, CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
-from opi.utils.sops import TO_SOPS_SUFFIX
+from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -119,6 +120,28 @@ def _strip_url_credentials(url: str) -> str:
 
     authority = _authority(parsed)
     return urlunparse((parsed.scheme, authority, parsed.path, parsed.params, parsed.query, parsed.fragment))
+
+
+def _cmp_env_paths_added_or_modified(status_output: str) -> list[str]:
+    """Paden uit ``git status --porcelain`` waar een plain-text ``.cmp-env`` opduikt of wijzigt.
+
+    Een verwijdering is juist de bedoeling: zo verdwijnen de bestanden die er nog staan.
+    """
+    touched: list[str] = []
+    for line in status_output.splitlines():
+        if len(line) < 4:
+            continue
+        codes, path = line[:2], line[3:]
+        # Een rename noemt eerst de oude en dan de nieuwe naam; die laatste komt in de commit.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip('"')
+        if os.path.basename(path) != CMP_ENV_PLAINTEXT_FILENAME:
+            continue
+        if set(codes) <= {"D", " "}:
+            continue
+        touched.append(path)
+    return sorted(touched)
 
 
 class GitPushConflictError(RuntimeError):
@@ -1234,9 +1257,9 @@ class GitConnector:
             logger.error(error_msg)
             raise
 
-    def _abort_if_plaintext_secrets_present(self) -> None:
+    async def _abort_if_plaintext_secrets_present(self) -> None:
         """
-        Refuse to stage/commit if any *.to-sops.yaml file remains in the tree.
+        Refuse to stage/commit plain-text secrets: *.to-sops.yaml or a new .cmp-env.
 
         A .to-sops.yaml file holds a secret in plain text; it must have been
         replaced by its encrypted .sops.yaml counterpart before any git
@@ -1244,8 +1267,15 @@ class GitConnector:
         to fail closed on a SOPS error, no code path can leak plaintext secrets
         into the GitOps repository through this connector.
 
+        A ``.cmp-env`` holds the env-vars of a helmfile deployment in plain text
+        (RC-333). Those now travel as ``cmp-env.sops.yaml``, so a newly added or
+        modified ``.cmp-env`` is refused as well. Removing one is allowed, and an
+        untouched one does not block: the working tree is the whole repository and
+        the files other projects have not been reprocessed yet must not hold up a
+        commit.
+
         Raises:
-            RuntimeError: If one or more *.to-sops.yaml files are found.
+            RuntimeError: If one or more plain-text secret files are found.
         """
         working_dir = self.__working_dir
         leftover: list[str] = []
@@ -1269,6 +1299,31 @@ class GitConnector:
                 "Dit zou secrets in platte tekst naar git committen; operatie afgebroken."
             )
 
+        await self._abort_if_cmp_env_touched()
+
+    async def _abort_if_cmp_env_touched(self) -> None:
+        """Refuse when this commit would add or change a plain-text ``.cmp-env``."""
+        # --untracked-files=all: zonder dit noemt git alleen de nieuwe MAP, en een
+        # .cmp-env in een nieuwe deploymentmap komt er zo onder vandaan.
+        status_cmd = ["status", "--porcelain", "--untracked-files=all"]
+        stdout, stderr, code = await self._run_git_command(status_cmd, cwd=self.__working_dir)
+        if code != 0:
+            raise RuntimeError(
+                f"Kon de status van de werkboom niet opvragen voor de controle op "
+                f"{CMP_ENV_PLAINTEXT_FILENAME}: {stderr}. Operatie afgebroken."
+            )
+
+        touched = _cmp_env_paths_added_or_modified(stdout)
+        if touched:
+            server_info = self._get_server_context()
+            raise RuntimeError(
+                f"Geweigerd om te committen naar {server_info}: "
+                f"{len(touched)} toegevoegd(e) of gewijzigd(e) {CMP_ENV_PLAINTEXT_FILENAME}-bestand(en) "
+                f"aangetroffen in de werkboom: {', '.join(touched)}. "
+                f"De env-vars van een helmfile-deployment horen versleuteld in "
+                f"{sops_filenames(CMP_ENV_NAME).encrypted}; operatie afgebroken."
+            )
+
     async def commit_and_push(self, message: str) -> None:
         """
         Commit all changes in the working directory and push to remote repository.
@@ -1284,7 +1339,7 @@ class GitConnector:
         await self.ensure_repo_cloned()
 
         # Defense in depth: never commit plaintext secrets.
-        self._abort_if_plaintext_secrets_present()
+        await self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]
@@ -1487,7 +1542,7 @@ class GitConnector:
         await self.ensure_repo_cloned()
 
         # Defense in depth: never commit plaintext secrets.
-        self._abort_if_plaintext_secrets_present()
+        await self._abort_if_plaintext_secrets_present()
 
         # Stage all changes in the working directory (new, modified, and deleted files)
         add_cmd = ["add", "-A"]

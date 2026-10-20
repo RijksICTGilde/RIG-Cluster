@@ -12,6 +12,7 @@ import functools
 import glob
 import logging
 import os
+import re
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -34,7 +35,43 @@ from opi.utils.sops import SOPS_SUFFIX, TO_SOPS_SUFFIX, sops_filenames
 CONFIG_HASH_IGNORE_LABEL_KEY = "zad.rig/config-hash"
 CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 
+#: Variabelen die de CMP-plugin zelf leest of zet. Een helmfile-deployment mag ze niet via
+#: .cmp-env meegeven: daarmee stuurt het de namespace, het sleutelpad of de render van de
+#: plugin. Dezelfde lijst staat als case-patroon in het pluginscript in
+#: bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml, dat shell is en niets kan
+#: importeren -- ``tests/test_cmp_env_contract.py`` pint de twee tegen elkaar.
+CMP_ENV_RESERVED_PREFIXES = ("ARGOCD_", "SOPS_", "KUSTOMIZE_", "HELM_", "HELMFILE_", "KUBE", "BASH", "LD_", "GIT_")
+CMP_ENV_RESERVED_NAMES = frozenset({"PATH", "HOME", "IFS", "ENV", "SHELL", "PS4", "PROMPT_COMMAND"})
+
+#: De env-vars van een helmfile-deployment gaan versleuteld naar git: OPI schrijft
+#: ``cmp-env.to-sops.yaml``, SOPS maakt er ``cmp-env.sops.yaml`` van en de plugin
+#: ontsleutelt dat na het ophalen van de projectsleutel (RC-333).
+CMP_ENV_NAME = "cmp-env"
+
+#: Het platte bestand van voor RC-333. OPI ruimt het op waar het nog staat, en de
+#: git-guard weigert een nieuw of gewijzigd exemplaar.
+CMP_ENV_PLAINTEXT_FILENAME = ".cmp-env"
+
+#: Dezelfde sleutelvorm als component-env-vars in opi/schemas/project_v2.json.
+CMP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+
 logger = logging.getLogger(__name__)
+
+
+def cmp_env_rejection(key: str, value: str) -> str | None:
+    """Waarom dit paar niet in ``.cmp-env`` mag, of ``None`` als het mag.
+
+    Weigert precies wat de parser in het pluginscript weigert, zodat een fout bij het
+    opslaan opvalt en niet pas bij de render. De melding noemt nooit de waarde: die is
+    configuratie van de tenant en kan een secret zijn.
+    """
+    if not CMP_ENV_KEY_PATTERN.match(key):
+        return f"'{key}' is not a valid environment variable name"
+    if key in CMP_ENV_RESERVED_NAMES or key.startswith(CMP_ENV_RESERVED_PREFIXES):
+        return f"'{key}' is reserved by the CMP plugin"
+    if any(character in value for character in "\r\n\0"):
+        return f"the value of '{key}' contains a newline or NUL byte"
+    return None
 
 
 def yaml_scalar(value: object) -> str:

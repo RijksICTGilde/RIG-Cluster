@@ -69,9 +69,12 @@ from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, v
 from opi.core.task_errors import TaskInputError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
 from opi.generation.manifests import (
+    CMP_ENV_NAME,
+    CMP_ENV_PLAINTEXT_FILENAME,
     CONFIG_HASH_IGNORE_LABEL_KEY,
     CONFIG_HASH_IGNORE_LABEL_VALUE,
     ManifestGenerator,
+    cmp_env_rejection,
 )
 from opi.handlers.project_file_handler import (
     COMPONENT_USAGE_WEB_ADDRESS,
@@ -5144,9 +5147,13 @@ class ProjectManager:
                     f.write(entry_path)
                 logger.info(f"Created helmfile entry config: {helmfile_config_path} -> {entry_path}")
 
-            # Write .cmp-env file with environment variables for the CMP
-            cmp_env_path = os.path.join(target_path, ".cmp-env")
-            cmp_env_vars: list[str] = []
+            # De env-vars voor de CMP gaan als SOPS-bestand naar git; de plugin
+            # ontsleutelt ze met de projectsleutel en leest ze daarna als KEY=waarde.
+            cmp_env_names = sops_filenames(CMP_ENV_NAME)
+            cmp_env_to_sops_path = os.path.join(target_path, cmp_env_names.plaintext)
+            cmp_env_sops_path = os.path.join(target_path, cmp_env_names.encrypted)
+            cmp_env_plaintext_path = os.path.join(target_path, CMP_ENV_PLAINTEXT_FILENAME)
+            cmp_env_vars: dict[str, str] = {}
 
             # Add env-vars from the deployment's helmfile reference
             # These can be plain text or AGE-encrypted values
@@ -5165,15 +5172,39 @@ class ProjectManager:
                                 f"Helmfile deployment {deployment_name} has AGE-encrypted env var "
                                 f"'{key}' but no project age-private-key is configured"
                             )
-                        decrypted_value = await decrypt_age_content(value, env_private_key)
-                        cmp_env_vars.append(f"{key}={decrypted_value}")
+                        plain_value = await decrypt_age_content(value, env_private_key)
                     else:
-                        cmp_env_vars.append(f"{key}={value}")
+                        plain_value = str(value)
+
+                    # De plugin leest de env-vars als regels KEY=waarde en weigert hetzelfde.
+                    # Toetsen gebeurt na ontsleuteling: alleen daar is te zien wat de
+                    # plugin uiteindelijk voor zich krijgt.
+                    rejection = cmp_env_rejection(key, plain_value)
+                    if rejection:
+                        raise ValueError(
+                            f"Helmfile deployment {deployment_name} cannot pass this env var to the CMP: {rejection}"
+                        )
+                    cmp_env_vars[key] = plain_value
 
             if cmp_env_vars:
-                with open(cmp_env_path, "w") as f:
-                    f.write("\n".join(cmp_env_vars) + "\n")
-                logger.info(f"Created CMP environment file: {cmp_env_path}")
+                # Vaste sleutelvolgorde, zodat de skip-if-unchanged van SOPS een
+                # ongewijzigde map ook echt als ongewijzigd ziet.
+                cmp_env_writer = YAML()
+                cmp_env_writer.default_flow_style = False
+                # Zonder deze breedte vouwt de emitter een lange waarde over regels, en
+                # vouwen trekt een reeks spaties samen: het secret komt gewijzigd terug.
+                cmp_env_writer.width = 10**9
+                with open(cmp_env_to_sops_path, "w") as f:
+                    cmp_env_writer.dump({key: cmp_env_vars[key] for key in sorted(cmp_env_vars)}, f)
+                logger.info(f"Created CMP environment file (to be encrypted): {cmp_env_to_sops_path}")
+            elif os.path.exists(cmp_env_sops_path):
+                # Weggehaalde env-vars moeten ook uit de render verdwijnen.
+                os.remove(cmp_env_sops_path)
+                logger.info(f"Removed CMP environment file, deployment has no env-vars: {cmp_env_sops_path}")
+
+            if os.path.exists(cmp_env_plaintext_path):
+                os.remove(cmp_env_plaintext_path)
+                logger.info(f"Removed plain-text CMP environment file: {cmp_env_plaintext_path}")
 
             # Extract base helm-values from helmfile definition
             base_values = await self._project_file_handler.extract_helmfile_values(project_data, helmfile_reference)
