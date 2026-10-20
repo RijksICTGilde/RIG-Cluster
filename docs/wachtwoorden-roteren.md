@@ -90,7 +90,9 @@ Keycloak-verbindingen, maar kunnen nieuwe logins even tegen de net aangepaste ro
 
 - postgresql / mail-db / forgejo-db: geen downtime van de database; consumer-restarts zijn kort.
 - keycloak-db: de database zelf blijft up; Keycloak herstart (login-onderbreking van seconden tot een halve minuut).
-- minio/prometheus/pgadmin: de pod herstart kort.
+- minio/prometheus/pgadmin: de pod herstart kort. Bij prometheus herstart ook Keycloak, die
+  hetzelfde token leest voor zijn rig-metrics-endpoint (dezelfde login-onderbreking als
+  hierboven: seconden tot een halve minuut).
 - redis / keycloak-admin / relay: geen herstart van de component zelf, alleen ZAD waar nodig.
 
 ## 5. Guardrails die er expres in zitten

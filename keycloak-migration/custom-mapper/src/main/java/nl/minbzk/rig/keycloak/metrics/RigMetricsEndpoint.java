@@ -2,6 +2,7 @@ package nl.minbzk.rig.keycloak.metrics;
 
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import jakarta.ws.rs.ext.Provider;
@@ -24,12 +25,11 @@ public class RigMetricsEndpoint implements RealmResourceProvider {
 
     public RigMetricsEndpoint(KeycloakSession session) {
         this.session = session;
-        logger.info("RigMetricsEndpoint created");
+        logger.debug("RigMetricsEndpoint created");
     }
 
     @Override
     public Object getResource() {
-        logger.info("getResource() called, returning MetricsResource");
         return new MetricsResource(session);
     }
 
@@ -52,21 +52,46 @@ public class RigMetricsEndpoint implements RealmResourceProvider {
 
         public MetricsResource(KeycloakSession session) {
             this.session = session;
-            logger.info("MetricsResource created");
         }
 
         @GET
         @Produces(MediaType.TEXT_PLAIN)
         public Response get() {
-            logger.info("GET /rig-metrics called");
+            String authorization = session.getContext().getRequestHeaders()
+                    .getHeaderString(HttpHeaders.AUTHORIZATION);
+            MetricsTokenGuard.Outcome outcome = MetricsTokenGuard.fromEnvironment().check(authorization);
+            if (outcome != MetricsTokenGuard.Outcome.ALLOWED) {
+                return refuse(outcome);
+            }
+
+            logger.debug("GET /rig-metrics called");
             try {
                 String metrics = PrometheusExporter.instance().export(session);
-                logger.info("Metrics exported successfully, length: " + metrics.length());
+                logger.debugf("Metrics exported successfully, length: %d", metrics.length());
                 return Response.ok(metrics).build();
             } catch (Exception e) {
                 logger.error("Error exporting metrics", e);
                 return Response.serverError().entity("Error: " + e.getMessage()).build();
             }
+        }
+
+        /** Geen enkele metriek in het antwoord, en geen hint over het token in de log. */
+        private static Response refuse(MetricsTokenGuard.Outcome outcome) {
+            if (outcome == MetricsTokenGuard.Outcome.TOKEN_NOT_CONFIGURED) {
+                logger.warnf("%s is niet gezet, dus /rig-metrics geeft geen metrieken",
+                        MetricsTokenGuard.TOKEN_ENV_VAR);
+                return refusal(Response.Status.SERVICE_UNAVAILABLE);
+            }
+            logger.warn("Scrape van /rig-metrics geweigerd: ontbrekend of onjuist Bearer-token");
+            return refusal(Response.Status.UNAUTHORIZED);
+        }
+
+        /**
+         * Het mediatype staat erop omdat Keycloaks DefaultSecurityHeadersProvider een antwoord
+         * zonder mediatype afbreekt, en de 503 op de sandbox zo als 500 met JSON-body aankwam.
+         */
+        private static Response refusal(Response.Status status) {
+            return Response.status(status).type(MediaType.TEXT_PLAIN).build();
         }
     }
 }

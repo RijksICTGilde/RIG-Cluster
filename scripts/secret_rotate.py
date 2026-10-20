@@ -337,8 +337,10 @@ COMPONENTS: list[Component] = [
         # restart_step hem over met een melding, bleef de pod het oude token in zijn env
         # houden, en viel dat niet op omdat dit component geen app-verificatie heeft
         # (gemeten op odcn, 07-10-2026).
-        workloads=("deploy/prometheus", OPI_DEPLOYMENT),
-        note="ZAD gebruikt dit token via secretKeyRef PROMETHEUS_METRICS_AUTH_TOKEN.",
+        workloads=("deploy/prometheus", "deploy/keycloak", OPI_DEPLOYMENT),
+        note="ZAD gebruikt dit token via secretKeyRef PROMETHEUS_METRICS_AUTH_TOKEN, en Keycloak "
+        "via RIG_METRICS_TOKEN: zijn rig-metrics-endpoint weigert een scrape met een ander token "
+        "met 401, dus zonder herstart draagt hij het oude token tegenover de nieuwe scrape.",
     ),
     Component(
         key="pgadmin",
