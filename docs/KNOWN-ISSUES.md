@@ -110,11 +110,11 @@ The `sandbox:sync` task could fail with `unable to forward port because pod is n
 
 **Fix:** Added `kubectl wait --for=condition=Ready` before the port-forward attempt, giving the pod up to 120s to become Ready again.
 
-### GHCR egress limit causing ArgoCD repo server timeout
+### GHCR egress limit causing ArgoCD repo server timeout (fixed in RC-348)
 
-During setup, the ArgoCD repo server rollout can time out if GitHub Container Registry returns a `503 Egress is over the account limit` error when pulling `ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest`. This happens because the image uses the `latest` tag with `imagePullPolicy: Always`, so Kubernetes attempts a fresh pull even when the image is already cached on the node.
+This issue has been resolved. Previously, the ArgoCD sidecar image `rig-cmp-argo-kustomize-sops` was pulled from `:latest` with `imagePullPolicy: Always`, causing Kubernetes to attempt a fresh pull on every rollout even when the image was already cached. This triggered GHCR egress limits during setup.
 
-**Workaround:** Re-run `task sandbox:setup`. The image is typically cached on the Kind node from a previous attempt, and the rollout will succeed once the old pod finishes terminating. The setup is idempotent.
+**Fix (RC-348):** The sidecar is now pinned to a digest instead of `:latest`, and `imagePullPolicy` is set to `IfNotPresent`. This prevents unnecessary pulls and resolves the egress issue.
 
 ### Secrets overview files blocking re-runs
 

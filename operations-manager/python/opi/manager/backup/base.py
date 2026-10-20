@@ -604,7 +604,9 @@ class BaseBackupManager:
 
     def _template_manifest(self, manifest_content: str, variables: dict[str, Any]) -> str:
         """Render template and apply image-registries rules (bypass of project manifest pipeline)."""
-        rendered = self.kubectl.template_manifest(manifest_content, variables)
+        rendered = self.kubectl.template_manifest(
+            manifest_content, {"backup_image": settings.BACKUP_IMAGE, **variables}
+        )
         return apply_rules_to_document(rendered, cluster_rules(settings.CLUSTER_MANAGER))
 
     def _kopia_credentials(self, kopia_password: str, bucket_name: str) -> dict[str, str]:

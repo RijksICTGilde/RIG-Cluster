@@ -562,6 +562,12 @@ class Settings(BaseSettings):
     FEDERATION_REQUEST_TIMEOUT: int = 30
 
     # Backup configuration
+    # De image van de back-up- en restorepods, op digest zodat vastligt wat er draait.
+    # Ophogen: publiceer met `task publish-backup-image` en zet de nieuwe digest hier.
+    # De sandbox zet hem via zijn configmap op :latest, want daar wordt hij in kind geladen.
+    BACKUP_IMAGE: str = (
+        "ghcr.io/minbzk/base-images/rig-backup@sha256:3de60a9f38f9166a36e100561665eee86cc6a1723ccba5089803392b257a7e0c"
+    )
     BACKUP_S3_ENDPOINT: str = "minio.rig-backup-destination.svc:9000"
     BACKUP_S3_BUCKET: str = "rig-backups"  # Fallback bucket when project context unavailable
     BACKUP_S3_BUCKET_MODE: str = "per-project"  # "single" = use BACKUP_S3_BUCKET, "per-project" = auto-generate

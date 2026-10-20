@@ -541,6 +541,7 @@ components:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `BACKUP_IMAGE` | De image van de back-up- en restorepods, op digest gepind (zie features/image-versioning-calver.md) | `ghcr.io/minbzk/base-images/rig-backup@sha256:...` |
 | `BACKUP_S3_ENDPOINT` | S3 endpoint URL | `minio.rig-backup-destination.svc:9000` |
 | `BACKUP_S3_BUCKET` | S3 bucket name (used when project context unavailable) | `rig-backups` |
 | `BACKUP_S3_ACCESS_KEY` | S3 access key van het beheeraccount, alleen voor OPI zelf | - |

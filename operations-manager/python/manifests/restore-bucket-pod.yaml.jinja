@@ -15,7 +15,7 @@ spec:
   activeDeadlineSeconds: {{ timeout_seconds | default(3600) | int }}
   containers:
     - name: restore
-      image: ghcr.io/minbzk/base-images/rig-backup:latest
+      image: {{ backup_image }}
       imagePullPolicy: IfNotPresent
       command:
         - /bin/sh

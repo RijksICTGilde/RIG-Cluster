@@ -1149,6 +1149,76 @@ tasks:
         vars:
           IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
+  _pin-image-digest:
+    internal: true
+    desc: "Schrijf <image>:<tag>@<digest> in de bestanden die dit image pinnen"
+    summary: |
+      De digest komt uit de registry en niet uit een lokale bouw: gepind wordt wat daar
+      staat. Een tag in de registry is te overschrijven, een digest niet.
+
+      Het voorvoegsel dat een bestand al heeft blijft staan, dus de sandbox houdt ghcr.io
+      en productie de rcr-spiegel. Een pad VERHUIZEN doet deze taak niet.
+    requires:
+      vars: [IMAGE_NAME, REPO, IMAGE_TAG, PIN_FILES]
+    cmds:
+      - |
+        DIGEST="$(docker buildx imagetools inspect {{.REPO}}:{{.IMAGE_TAG}} | awk '/^Digest:/ {print $2; exit}')"
+        case "$DIGEST" in
+          sha256:*) ;;
+          *)
+            echo "{{.REPO}}:{{.IMAGE_TAG}} levert geen digest. Staat die tag in de registry?" >&2
+            exit 1
+            ;;
+        esac
+
+        for BESTAND in {{.PIN_FILES}}; do
+          sed -i.bak -E "s#^([[:space:]]*(image|value):[[:space:]]*)([A-Za-z0-9./_-]*{{.IMAGE_NAME}})(:[^@[:space:]]+)?(@sha256:[0-9a-f]{64})?[[:space:]]*\$#\1\3:{{.IMAGE_TAG}}@${DIGEST}#" "$BESTAND"
+          rm -f "$BESTAND.bak"
+          grep -q "@${DIGEST}" "$BESTAND" || {
+            echo "$BESTAND pint {{.IMAGE_NAME}} niet op een regel die deze taak kan lezen." >&2
+            exit 1
+          }
+          grep -nE "^[[:space:]]*(image|value):.*{{.IMAGE_NAME}}" "$BESTAND"
+        done
+    silent: true
+
+  pin-cmp-image:
+    desc: "Pin de SOPS-sidecar van ArgoCD op een gepubliceerde tag plus digest"
+    summary: |
+      publish-cmp-kustomize-sops roept dit aan met de tag die hij net gepusht heeft. Los
+      aanroepen kan ook, bijvoorbeeld om terug te rollen naar een eerdere tag.
+
+      Drie bestanden, want de sidecar staat drie keer in git: de component (die de sandbox
+      gebruikt), de image-patch van de odcn-overlay (die op productie telt) en de ArgoCD-CR
+      zelf. Elk bestand houdt zijn eigen registrypad.
+
+      Dit is geen uitrol: de ArgoCD-CR gaat buiten ArgoCD om en is een handeling van een mens.
+    vars:
+      IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
+      PIN_FILES: >-
+        bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml
+        bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml
+        bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
+    preconditions:
+      - sh: '[ -n "{{.IMAGE_TAG}}" ]'
+        msg: |
+          IMAGE_TAG is verplicht, bijvoorbeeld:
+            task pin-cmp-image IMAGE_TAG=2026.10.18.1432-7ccad61d
+    cmds:
+      - task: _pin-image-digest
+        vars:
+          IMAGE_NAME: rig-cmp-argo-kustomize-sops
+          REPO: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops
+          IMAGE_TAG: '{{.IMAGE_TAG}}'
+          PIN_FILES: '{{.PIN_FILES}}'
+      - |
+        echo ""
+        echo "Commit deze pin. De sandbox volgt via task sandbox:sync; de ArgoCD-CR op"
+        echo "productie rolt een mens uit met task bootstrap-argo-system."
+        echo ""
+        echo "Terugrollen: zoek een eerdere tag in de git-historie van deze bestanden."
+    silent: true
+
   pin-operations-manager-image:
     desc: "Pin an ODCN overlay (default odcn-production, or OVERLAY=odcn-staging) to a published operations-manager tag"
     vars:
@@ -1169,9 +1239,13 @@ tasks:
           {{.IMAGE_TAG}} komt van ongecommitte bron en hoort niet op productie.
           Commit de wijziging en bouw opnieuw.
     cmds:
+      - task: _pin-image-digest
+        vars:
+          IMAGE_NAME: operations-manager
+          REPO: ghcr.io/minbzk/base-images/operations-manager/operations-manager
+          IMAGE_TAG: '{{.IMAGE_TAG}}'
+          PIN_FILES: '{{.PATCH_FILE}}'
       - |
-        sed -i.bak -E 's|(image: rcr\.rijksapps\.nl/ghcr-rig/minbzk/base-images/operations-manager/operations-manager):.*|\1:{{.IMAGE_TAG}}|' {{.PATCH_FILE}}
-        rm -f {{.PATCH_FILE}}.bak
         echo ""
         echo "✅ {{.OVERLAY}} pinned to {{.IMAGE_TAG}}"
         grep -n 'image:' {{.PATCH_FILE}}
@@ -1184,17 +1258,41 @@ tasks:
     silent: true
 
   publish-cmp-kustomize-sops:
-    desc: "Build and publish the cmp-kustomize-sops image to GitHub Container Registry"
+    desc: "Bouw de SOPS-sidecar, push hem naar GHCR (CalVer + latest) en pin hem"
+    summary: |
+      Dezelfde vorm als publish-operations-manager: een CalVer-tag, `latest` ernaast, en
+      daarna de pin in git.
+
+      Deze container leest bij het renderen de SOPS-sleutel, dus hier weegt een
+      onveranderlijke verwijzing het zwaarst: de pin draagt ook de digest.
     deps: [requirements-check]
+    vars:
+      IMAGE_VERSION:
+        sh: scripts/calver-tag.sh images/cmp-kustomize-sops
+    preconditions:
+      # Weigeren en niet waarschuwen zoals publish-operations-manager: deze tag wordt
+      # meteen in git gepind, en een pin die naar ongecommitte bron wijst is niet te
+      # herleiden en niet opnieuw te maken.
+      - sh: 'case "{{.IMAGE_VERSION}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_VERSION}} komt van ongecommitte bron in images/cmp-kustomize-sops.
+          Commit de wijziging eerst, dan beschrijft de tag wat je publiceert.
     cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: .
           DOCKERFILE_PATH: images/cmp-kustomize-sops/Dockerfile
           IMAGE_NAME: rig-cmp-argo-kustomize-sops
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
           BUILDER_NAME: operations-manager-builder
           PLATFORMS: linux/amd64,linux/arm64
+      - task: pin-cmp-image
+        vars:
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
 
   publish-hello-world:
     desc: "Build and publish the hello-world image to GitHub Container Registry"
@@ -1320,15 +1418,31 @@ tasks:
     silent: true
 
   publish-backup-image:
-    desc: "Build and publish the rig-backup image to GitHub Container Registry"
+    desc: "Bouw de rig-backup-image en push hem naar GHCR (CalVer + latest)"
+    summary: |
+      Dezelfde vorm als publish-operations-manager, zonder de pin erachter: welke image de
+      back-uppods krijgen staat in de setting BACKUP_IMAGE (opi/core/config.py). Zet de
+      standaard daar op de tag die je hier publiceert.
     deps: [requirements-check]
+    vars:
+      IMAGE_VERSION:
+        sh: scripts/calver-tag.sh operations-manager/backup-image
+    preconditions:
+      - sh: 'case "{{.IMAGE_VERSION}}" in *-dirty) exit 1 ;; esac'
+        msg: |
+          {{.IMAGE_VERSION}} komt van ongecommitte bron in operations-manager/backup-image.
+          Commit de wijziging eerst, dan beschrijft de tag wat je publiceert.
     cmds:
+      - |
+        echo "Image version: {{.IMAGE_VERSION}}"
       - task: docker-build-and-push
         vars:
           BUILD_CONTEXT: operations-manager/backup-image
           DOCKERFILE_PATH: Dockerfile
           IMAGE_NAME: rig-backup
           REGISTRY_IMAGE: ghcr.io/minbzk/base-images/
+          IMAGE_TAG: '{{.IMAGE_VERSION}}'
+          EXTRA_TAG: latest
           PLATFORMS: linux/amd64,linux/arm64
           CACHE_IMAGE: ghcr.io/minbzk/base-images/rig-backup:cache
           BUILDER_NAME: rig-backup-builder
@@ -2824,7 +2938,7 @@ tasks:
 
         # CMP sidecar in shared sops-plugin component: use local image + Never
         CMP_COMPONENT="bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml"
-        sed -i.bak 's|image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest|image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
+        sed -i.bak -E 's|^( *)image: .*rig-cmp-argo-kustomize-sops.*$|\1image: rig-cmp-argo-kustomize-sops:latest|' "$CMP_COMPONENT"
         sed -i.bak 's|imagePullPolicy: Always|imagePullPolicy: Never|' "$CMP_COMPONENT"
 
         # .bak-bestanden van de portable sed-aanroepen opruimen.

@@ -81,7 +81,9 @@ levert niets op.
 - **Eigen images met een CalVer-tag** (`operations-manager`, `keycloak-zad`). De pin in
   de odcn-overlay is een deploybeslissing in git, die neemt een mens.
 - **Eigen images zonder upstream-versiereeks** (`argocd-rig`, `zad-waker`,
-  `rig-cmp-argo-kustomize-sops`).
+  `rig-cmp-argo-kustomize-sops`). De sidecar staat sinds RC-348 op een digest; ophogen
+  gaat met `task pin-cmp-image` en is een deploybeslissing, dus ook de digest-update blijft
+  uit.
 - **Lokale sandboxverwijzingen** (`localhost:5001/...`, `operations-manager:latest`): er
   is geen registry om een versie bij op te zoeken.
 - **`archive/`**, de testmappen en `self-service-portal/` (een schets, geen app).
@@ -93,6 +95,9 @@ Renovate kan hier niets zinnigs voorstellen; elk van deze punten is een eigen ve
 - Images op een zwevende tag: `jpillora/chisel:latest`, `nginxinc/nginx-unprivileged:alpine`,
   `gcr.io/distroless/static-debian12:nonroot`, `registry:2`,
   `codeberg.org/forgejo/forgejo:14`, `redis:7-alpine`. Pin ze op een versie of een digest.
+  `rig-cmp-argo-kustomize-sops` en `rig-backup` stonden hier ook in en zijn met RC-348
+  gepind; `jpillora/chisel:latest` draait nergens, want geen clusterkustomization neemt
+  `infrastructure/bootstrap/infrastructure/chisel/` op.
 - Tools die een Dockerfile met `ARG ..._VERSION` en een curl binnenhaalt: `SOPS_VERSION`,
   `KOPIA_VERSION`, `CHISEL_VERSION`, `KUSTOMIZE_VERSION`, `KSOPS_VERSION`, en de
   jupyterhub-extensies. Die vragen per regel een `# renovate:`-annotatie.
