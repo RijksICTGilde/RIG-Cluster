@@ -1,0 +1,1134 @@
+# Uitzonderingen op de container-gate in .github/workflows/security.yml.
+#
+# Een regel hier zet een oplosbare HIGH of CRITICAL stil. Dat mag alleen met een reden
+# (statement) en een vervaldatum (expired_at): zo blijft de afweging vastgelegd zoals BIO2
+# 8.08.02 vraagt, en komt de bevinding vanzelf terug in plaats van stil te verdwijnen.
+# tests/test_trivyignore.py weigert een regel zonder die twee, en een vervaldatum die verder
+# dan 90 dagen vooruit ligt. Hoe je er een toevoegt: features/security-scanning-pipeline.md.
+#
+# De twintig OS-pakketregels hebben een purls-scope op pakketnaam, zonder versie. Zonder die
+# scope onderdrukt Trivy op CVE-id alleen, en zou een uitzondering namens de base-image van
+# iemand anders dezelfde CVE stil zetten in de apt-laag van operations-manager en rig-backup,
+# waar hij juist wel op te lossen is. De twee regels voor argocd-rig noemen daarbij ook de
+# distro-release: cmp-kustomize-sops staat op argocd:v2.14.21, dus Ubuntu, en een scope op
+# naam alleen zou een uitzondering voor argocd-rig (ubuntu-26.04) ook in die eigen apt-laag
+# (ubuntu-24.04) stil zetten. De Go- en Java-regels hebben geen scope nodig: die pakketten
+# liggen in een binary van een ander en komen niet in onze eigen lagen terug.
+#
+# De vier pypi-regels horen bij een derde groep: ze zitten in de vendor-map van pip in de
+# python-slim base, niet in onze eigen lock. Een scope helpt daar niet, want een purl op
+# naamniveau onderscheidt die kopie niet van dezelfde naam in onze eigen boom. Wat die
+# regressie wel tegenhoudt is pip-audit --strict in dezelfde workflow: dat scant de lock en
+# gebruikt deze lijst niet.
+#
+# De secrets-regel onderaan staat los van de vulnerabilities: de snakeoil-testsleutel die
+# het Debian-pakket ssl-cert in de postgresql-base achterlaat. Die is op pad gescoped en niet
+# op id alleen, zodat de secret-scanner in de gate blijft meetellen voor elk ander bestand en
+# voor de vijf andere images. Gemeten: dit is de enige secret-bevinding in de zes images.
+#
+# Deze lijst is gemeten op 17 oktober 2026 met Trivy 0.76.0, de versie die de gate zelf pint
+# (TRIVY_SCANNER_VERSION in security.yml), op de zes gescande images: vier als gebouwde
+# image, keycloak-zad op zijn base en argocd-rig op de gepinde productie-image
+# (de meting en de aantallen per image staan op PR 271). Elke regel noemt in
+# welke image de bevinding zit en waarom een patch- of minor-bump hem niet wegneemt: bijna
+# alles is een Go-stdlib of een vendored dependency in een binary van een ander, of een
+# Java-dependency in de Keycloak-base.
+#
+# De namen in "via": mc, kopia, sops en chisel zijn de binaries die operations-manager en
+# rig-backup meenemen; cmp-tools zijn de tools in cmp-kustomize-sops; argocd-base is de
+# ArgoCD-image waarop die image staat; keycloak-base is de Keycloak-image onder keycloak-zad;
+# argocd-rig is de gepinde productie-image van ArgoCD.
+#
+# Voor mc komt geen upstream-fix: MinIO is gearchiveerd en distribueert niets meer, wij
+# spiegelen alleen een release. Zie images/mc/README.md, docs/KNOWN-ISSUES.md en
+# RijksICTGilde/RIG-Cluster#185.
+
+vulnerabilities:
+  - id: CVE-2024-10039
+    statement: >-
+      HIGH in org.keycloak:keycloak-core, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-10270
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-10451
+    statement: >-
+      HIGH in org.keycloak:keycloak-quarkus-server, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-12397
+    statement: >-
+      HIGH in io.quarkus.http:quarkus-http-core, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-25621
+    statement: >-
+      HIGH in github.com/containerd/containerd, via argocd-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste
+      2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-34156
+    statement: >-
+      HIGH in stdlib, via argocd-base. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-45337
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2024-45338
+    statement: >-
+      HIGH in golang.org/x/net, via argocd-base. Niet weg te nemen met een patch- of minor-bump
+      in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-14813
+    statement: >-
+      CRITICAL in org.bouncycastle:bcprov-jdk18on, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-15558
+    statement: >-
+      HIGH in github.com/docker/cli, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-22868
+    statement: >-
+      HIGH in golang.org/x/oauth2, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-22869
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-22874
+    statement: >-
+      HIGH in stdlib, via argocd-rig. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een rebase van de patches in
+      images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images, en is een eigen
+      taak.
+    expired_at: 2026-11-16
+  - id: CVE-2025-24970
+    statement: >-
+      HIGH in io.netty:netty-handler, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-30749
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-3501
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-47273
+    statement: >-
+      HIGH in setuptools 70.3.0, via de vendor-map van pip in de python-slim base van
+      operations-manager en rig-backup. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: deze kopie staat in pip/_vendor en komt mee met pip 26.2.1, de nieuwste pip; onze
+      eigen lock staat op setuptools 84.0.0. Een regressie in onze eigen boom valt op bij
+      pip-audit --strict, dat de lock scant en niet deze lijst gebruikt.
+    expired_at: 2026-11-16
+  - id: CVE-2025-47913
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; mc RELEASE.2025-08-13 is de laatste
+      release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de laatste
+      2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-50059
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-50106
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-55163
+    statement: >-
+      HIGH in io.netty:netty-codec-http2, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-61726
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-61729
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-64720
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-65018
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-66021
+    statement: >-
+      HIGH in com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer, via
+      keycloak-base. Niet weg te nemen met een patch- of minor-bump in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-68121
+    statement: >-
+      CRITICAL in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-68156
+    statement: >-
+      HIGH in github.com/expr-lang/expr, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2025-6965
+    purls:
+      - pkg:rpm/redhat/sqlite-libs
+    statement: >-
+      HIGH in sqlite-libs, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in
+      dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-103111
+    purls:
+      - pkg:rpm/redhat/pcre2
+      - pkg:rpm/redhat/pcre2-syntax
+    statement: >-
+      HIGH in pcre2, pcre2-syntax, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-11822
+    purls:
+      - pkg:rpm/redhat/sqlite-libs
+    statement: >-
+      HIGH in sqlite-libs, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in
+      dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-11824
+    purls:
+      - pkg:rpm/redhat/sqlite-libs
+    statement: >-
+      HIGH in sqlite-libs, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in
+      dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-13506
+    statement: >-
+      HIGH in org.bouncycastle:bcprov-jdk18on, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-1486
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-1529
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-2092
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-21945
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-22016
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-24051
+    statement: >-
+      HIGH in go.opentelemetry.io/otel/sdk, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-25679
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-25681
+    statement: >-
+      HIGH in golang.org/x/net, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-2603
+    statement: >-
+      HIGH in org.keycloak:keycloak-server-spi-private, org.keycloak:keycloak-services, via
+      keycloak-base. Niet weg te nemen met een patch- of minor-bump in dit repo:
+      quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-26740
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-27136
+    statement: >-
+      HIGH in golang.org/x/net, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-27145
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-3009
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-32280
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-32281
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-32283
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33186
+    statement: >-
+      CRITICAL in google.golang.org/grpc, via argocd-base, mc. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert
+      niets meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33811
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33814
+    statement: >-
+      HIGH in golang.org/x/net, stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te
+      nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33818
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33870
+    statement: >-
+      HIGH in io.netty:netty-codec-http, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-33871
+    statement: >-
+      HIGH in io.netty:netty-codec-http2, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-34282
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-34986
+    statement: >-
+      HIGH in github.com/go-jose/go-jose/v4, via argocd-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-35469
+    statement: >-
+      HIGH in github.com/moby/spdystream, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-3872
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39820
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39821
+    statement: >-
+      HIGH in golang.org/x/net, stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops.
+      Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops
+      staan op hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is
+      de laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39822
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc. Niet weg te nemen met
+      een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt
+      een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39828
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39829
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39830
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39831
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39832
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39835
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39836
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39852
+    statement: >-
+      HIGH in io.quarkus:quarkus-vertx-http, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-39883
+    statement: >-
+      HIGH in go.opentelemetry.io/otel/sdk, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-40984
+    statement: >-
+      HIGH in io.micrometer:micrometer-core, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42151
+    statement: >-
+      HIGH in github.com/prometheus/prometheus, via mc. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert
+      niets meer.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42154
+    statement: >-
+      HIGH in github.com/prometheus/prometheus, via mc. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert
+      niets meer.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42198
+    statement: >-
+      HIGH in org.postgresql:postgresql, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42499
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42504
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42508
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42579
+    statement: >-
+      HIGH in io.netty:netty-codec-dns, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42583
+    statement: >-
+      HIGH in io.netty:netty-codec, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42584
+    statement: >-
+      HIGH in io.netty:netty-codec-http, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-42587
+    statement: >-
+      HIGH in io.netty:netty-codec-http, io.netty:netty-codec-http2, via keycloak-base. Niet weg
+      te nemen met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de
+      laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-4282
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-44249
+    statement: >-
+      HIGH in io.netty:netty-handler, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-44893
+    statement: >-
+      HIGH in io.netty:netty-codec-haproxy, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-44973
+    statement: >-
+      HIGH in github.com/go-git/go-billy/v5, via argocd-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-45022
+    statement: >-
+      HIGH in github.com/go-git/go-git/v5, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-45416
+    statement: >-
+      HIGH in io.netty:netty-handler, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-45674
+    statement: >-
+      HIGH in io.netty:netty-resolver-dns, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-4634
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-4636
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-46595
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-46597
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, mc. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets
+      meer; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-46600
+    statement: >-
+      HIGH in golang.org/x/net, stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops.
+      Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops
+      staan op hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is
+      de laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-47063
+    purls:
+      - pkg:rpm/redhat/java-21-openjdk-headless
+    statement: >-
+      HIGH in java-21-openjdk-headless, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-47691
+    statement: >-
+      HIGH in io.netty:netty-resolver-dns, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-48059
+    statement: >-
+      HIGH in io.netty:netty-codec-haproxy, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-4878
+    purls:
+      - pkg:rpm/redhat/libcap
+    statement: >-
+      HIGH in libcap, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-50010
+    statement: >-
+      HIGH in io.netty:netty-handler, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-50151
+    statement: >-
+      HIGH in oras.land/oras-go/v2, via argocd-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-50163
+    statement: >-
+      HIGH in oras.land/oras-go/v2, via argocd-base, argocd-rig, cmp-tools. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-50559
+    statement: >-
+      HIGH in io.quarkus:quarkus-vertx-http, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-53488
+    statement: >-
+      HIGH in github.com/containerd/containerd, via argocd-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/argoproj/argocd:v2.14.21 is de laatste
+      2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-54369
+    purls:
+      - pkg:rpm/redhat/libacl
+    statement: >-
+      HIGH in libacl, via keycloak-base. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-54512
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-54513
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-55797
+    statement: >-
+      HIGH in github.com/argoproj/argo-cd/v3, via argocd-rig. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een rebase
+      van de patches in images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images,
+      en is een eigen taak.
+    expired_at: 2026-11-16
+  - id: CVE-2026-55831
+    statement: >-
+      HIGH in io.netty:netty-codec-http, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-55833
+    statement: >-
+      HIGH in io.netty:netty-codec-http, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-55851
+    statement: >-
+      HIGH in io.netty:netty-codec-haproxy, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56745
+    statement: >-
+      HIGH in io.netty:netty-codec-http, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56819
+    statement: >-
+      HIGH in io.netty:netty-codec-http2, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56851
+    statement: >-
+      HIGH in golang.org/x/text, via argocd-base, argocd-rig, chisel, cmp-tools, kopia, mc,
+      sops. Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak; kopia 0.23.1, sops 3.13.3,
+      ksops 4.5.1, kustomize 5.8.3 en helmfile 1.8.2 zijn de laatste releases; mc
+      RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets meer;
+      quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch. Voor chisel (1.13.0) en helm
+      (3.22.1) bestaat wel een nieuwere minor, maar die neemt de bevinding niet weg: hij blijft
+      staan via de andere binaries in dezelfde images.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56852
+    statement: >-
+      HIGH in golang.org/x/text, via argocd-base, argocd-rig, cmp-tools, kopia, mc. Niet weg te
+      nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56853
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56854
+    statement: >-
+      HIGH in golang.org/x/crypto, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet
+      weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op
+      v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56858
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56859
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56860
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56862
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56864
+    statement: >-
+      HIGH in golang.org/x/mod, via kopia. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: kopia 0.23.1 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-56865
+    statement: >-
+      HIGH in golang.org/x/mod, via kopia. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: kopia 0.23.1 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-59901
+    statement: >-
+      HIGH in io.netty:netty-codec, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-68494
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-core, via keycloak-base. Niet weg te nemen met
+      een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-68497
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-71556
+    statement: >-
+      HIGH in github.com/go-git/go-git/v5, via argocd-base, argocd-rig. Niet weg te nemen met
+      een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt
+      een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-7307
+    statement: >-
+      HIGH in org.keycloak:keycloak-saml-core, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-7504
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-7507
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-75595
+    statement: >-
+      CRITICAL in io.netty:netty-handler, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-7571
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-77459
+    statement: >-
+      CRITICAL in github.com/argoproj/argo-cd/v3, via argocd-rig. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een
+      rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak.
+    expired_at: 2026-11-16
+  - id: CVE-2026-78667
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, chisel, cmp-tools, kopia, mc, sops. Niet weg
+      te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op
+      v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; chisel 1.12.0 is de laatste release; de
+      tools in cmp-kustomize-sops staan op hun laatste release; kopia 0.23.1 is de laatste
+      release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets meer;
+      quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch; sops 3.13.3 is de laatste
+      release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-78669
+    statement: >-
+      HIGH in golang.org/x/net, stdlib, via argocd-base, argocd-rig, chisel, cmp-tools, kopia,
+      mc, sops. Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig
+      v3.5.1-rig2 herbouwen op v3.5.5 vraagt een rebase van de patches in
+      images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images, en is een eigen
+      taak; chisel 1.12.0 is de laatste release; de tools in cmp-kustomize-sops staan op hun
+      laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de laatste
+      release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de laatste
+      2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-84304
+    statement: >-
+      HIGH in google.golang.org/grpc, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops.
+      Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops
+      staan op hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is
+      de laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-84445
+    statement: >-
+      HIGH in google.golang.org/grpc, via argocd-base, argocd-rig, cmp-tools, kopia, mc, sops.
+      Niet weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2
+      herbouwen op v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een
+      push naar ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops
+      staan op hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is
+      de laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch; sops 3.13.3 is de laatste release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-84782
+    purls:
+      - pkg:deb/ubuntu/libssl3t64?distro=ubuntu-26.04
+      - pkg:deb/ubuntu/openssl?distro=ubuntu-26.04
+      - pkg:deb/ubuntu/openssl-provider-legacy?distro=ubuntu-26.04
+    statement: >-
+      HIGH in libssl3t64, openssl, openssl-provider-legacy, via argocd-rig. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak.
+    expired_at: 2026-11-16
+  - id: CVE-2026-84939
+    statement: >-
+      CRITICAL in org.freemarker:freemarker, via keycloak-base. Niet weg te nemen met een patch-
+      of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-85731
+    statement: >-
+      HIGH in oras.land/oras-go/v2, via argocd-base, argocd-rig, cmp-tools. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5
+      vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-86145
+    purls:
+      - pkg:rpm/redhat/pcre2
+      - pkg:rpm/redhat/pcre2-syntax
+    statement: >-
+      HIGH in pcre2, pcre2-syntax, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-8763
+    statement: >-
+      CRITICAL in org.bouncycastle:bcprov-jdk18on, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-89161
+    purls:
+      - pkg:rpm/redhat/pcre2
+      - pkg:rpm/redhat/pcre2-syntax
+    statement: >-
+      HIGH in pcre2, pcre2-syntax, via keycloak-base. Niet weg te nemen met een patch- of
+      minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste 25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-89407
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-core, via keycloak-base. Niet weg te nemen met
+      een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-89425
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-core, via keycloak-base. Niet weg te nemen met
+      een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-91776
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-91777
+    statement: >-
+      HIGH in com.fasterxml.jackson.core:jackson-databind, via keycloak-base. Niet weg te nemen
+      met een patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: CVE-2026-92392
+    purls:
+      - pkg:deb/ubuntu/libcurl3t64-gnutls?distro=ubuntu-26.04
+    statement: >-
+      HIGH in libcurl3t64-gnutls, via argocd-rig. Niet weg te nemen met een patch- of minor-bump
+      in dit repo: argocd-rig v3.5.1-rig2 herbouwen op v3.5.5 vraagt een rebase van de patches
+      in images/argocd-rig/patches en een push naar ghcr.io/minbzk/base-images, en is een eigen
+      taak.
+    expired_at: 2026-11-16
+  - id: CVE-2026-97031
+    statement: >-
+      HIGH in stdlib, via argocd-base, argocd-rig, chisel, cmp-tools, kopia, mc, sops. Niet weg
+      te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op
+      v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; chisel 1.12.0 is de laatste release; de
+      tools in cmp-kustomize-sops staan op hun laatste release; kopia 0.23.1 is de laatste
+      release; mc RELEASE.2025-08-13 is de laatste release en MinIO publiceert niets meer;
+      quay.io/argoproj/argocd:v2.14.21 is de laatste 2.14-patch; sops 3.13.3 is de laatste
+      release.
+    expired_at: 2026-11-16
+  - id: CVE-2026-97687
+    statement: >-
+      HIGH in urllib3 2.7.0, via de vendor-map van pip in de python-slim base van
+      operations-manager en rig-backup. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: deze kopie staat in pip/_vendor en komt mee met pip 26.2.1, de nieuwste pip; onze
+      eigen lock staat op urllib3 2.8.0, de versie met de fix. Een regressie in onze eigen boom
+      valt op bij pip-audit --strict, dat de lock scant en niet deze lijst gebruikt.
+    expired_at: 2026-11-16
+  - id: CVE-2026-97689
+    statement: >-
+      HIGH in urllib3 2.7.0, via de vendor-map van pip in de python-slim base van
+      operations-manager en rig-backup. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: deze kopie staat in pip/_vendor en komt mee met pip 26.2.1, de nieuwste pip; onze
+      eigen lock staat op urllib3 2.8.0, de versie met de fix. Een regressie in onze eigen boom
+      valt op bij pip-audit --strict, dat de lock scant en niet deze lijst gebruikt.
+    expired_at: 2026-11-16
+  - id: CVE-2026-9795
+    statement: >-
+      HIGH in org.keycloak:keycloak-services, via keycloak-base. Niet weg te nemen met een
+      patch- of minor-bump in dit repo: quay.io/keycloak/keycloak:25.0.6 is de laatste
+      25.0-patch.
+    expired_at: 2026-11-16
+  - id: GHSA-6v7p-g79w-8964
+    statement: >-
+      HIGH in msgpack 1.1.2, via de vendor-map van pip in de python-slim base van
+      operations-manager en rig-backup. Niet weg te nemen met een patch- of minor-bump in dit
+      repo: deze kopie staat in pip/_vendor en komt mee met pip 26.2.1, de nieuwste pip; onze
+      eigen lock staat op msgpack 1.2.2. Een regressie in onze eigen boom valt op bij
+      pip-audit --strict, dat de lock scant en niet deze lijst gebruikt.
+    expired_at: 2026-11-16
+  - id: GHSA-hrxh-6v49-42gf
+    statement: >-
+      HIGH in google.golang.org/grpc, via argocd-base, argocd-rig, cmp-tools, kopia, mc. Niet
+      weg te nemen met een patch- of minor-bump in dit repo: argocd-rig v3.5.1-rig2 herbouwen op
+      v3.5.5 vraagt een rebase van de patches in images/argocd-rig/patches en een push naar
+      ghcr.io/minbzk/base-images, en is een eigen taak; de tools in cmp-kustomize-sops staan op
+      hun laatste release; kopia 0.23.1 is de laatste release; mc RELEASE.2025-08-13 is de
+      laatste release en MinIO publiceert niets meer; quay.io/argoproj/argocd:v2.14.21 is de
+      laatste 2.14-patch.
+    expired_at: 2026-11-16
+
+secrets:
+  - id: private-key
+    paths:
+      - /etc/ssl/private/ssl-cert-snakeoil.key
+    statement: >-
+      HIGH in postgresql-with-dictionaries, via de cloudnative-pg-base. Het Debian-pakket
+      ssl-cert legt dit bestand bij installatie neer als placeholder; het hoort bij geen
+      certificaat dat wij gebruiken en is niet weg te nemen met een bump in dit repo. Het pad
+      houdt de uitzondering bij dit ene bestand, zodat een sleutel die per ongeluk in een van
+      onze eigen lagen belandt de gate wel rood zet.
+    expired_at: 2026-11-16

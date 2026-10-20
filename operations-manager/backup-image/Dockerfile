@@ -15,8 +15,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=Europe/Amsterdam \
     DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install system dependencies. upgrade pulls Debian security updates to keep the container-scan gate green.
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     age \
