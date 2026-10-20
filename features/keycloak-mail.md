@@ -333,10 +333,19 @@ bevestigd was.
 - **Wel geraakt:** elke nieuw aangemaakte gebruiker met een adres, en, via `verifyEmail`,
   iedereen die zijn adres wijzigt op een realm die verifieert.
 
-**Eén uitzondering, en die staat zichtbaar bij de aanroeper**: de realm-admins in de
-master-realm (`keycloak_manager.py`, `keycloak_setup.py`) geven `skip_email_verification=True`
-mee. Hun adres is `{admin}@local.invalid` of `{username}@localhost` en bestaat niet, dus
-verificatie afdwingen sluit elke projectbeheerder buiten zijn eigen realm.
+**De uitzonderingen staan zichtbaar bij de aanroeper** en geven `skip_email_verification=True`
+mee. Het zijn accounts van het platform zelf, met een adres dat geen postbus is:
+
+- de realm-admins in de master-realm (`keycloak_manager.py`, `keycloak_setup.py`), met
+  `{admin}@local.invalid` of `{username}@localhost`. Verificatie afdwingen zou elke
+  projectbeheerder buiten zijn eigen realm sluiten.
+- de sandbox-beheerder in de realm `operations-manager` (`setup_operations_realm`), met
+  `admin@sandbox.rijksapp.dev`. Verificatie afdwingen zou hem op een verse sandbox bij de
+  eerste login tegenhouden.
+
+Dat het er precies deze zijn, meet
+`tests/test_keycloak_master_admins_slaan_verificatie_over.py` als AST-sweep over alle
+`create_user`-aanroepen in `opi/`.
 
 Wat dat voor de uitnodigingsweg betekent staat in `features/invites.md`.
 
@@ -444,5 +453,5 @@ aankomst**; kijk in de sink of in de postbus. Een bounce-postbus staat open in
 | Het geheim | `infrastructure/.../secrets/templates/keycloak-mail-secret.yaml` |
 | Het account op de relay | `MailManager.ensure_keycloak_account()` |
 | De minimale `smtpServer` en `verifyEmail` | `KeycloakYamlHandler._apply_realm_self_service()` |
-| Elke nieuwe gebruiker met een adres bevestigt het (master-admins uitgezonderd) | `KeycloakConnector.create_user()` |
+| Elke nieuwe gebruiker met een adres bevestigt het (de platformbeheerders uitgezonderd) | `KeycloakConnector.create_user()` |
 | De meting waaruit dit alles volgt | `docs/rc158-emailsender-spi-meting.md` |
