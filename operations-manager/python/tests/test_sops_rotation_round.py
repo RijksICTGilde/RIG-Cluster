@@ -32,6 +32,7 @@ import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
+from tests.conftest import write_private_file
 from tests.documented_commands import BARE_PYTHON, LAUNCHER, documented_lines, flags
 
 if TYPE_CHECKING:
@@ -441,8 +442,8 @@ def test_renaming_is_a_no_op_when_the_keys_already_sit_in_place(tmp_path: Path, 
     target_old = tmp_path / "security" / "old_key.txt"
     target_new = tmp_path / "security" / "key.txt"
     target_old.parent.mkdir()
-    target_old.write_text("old\n")
-    target_new.write_text("new\n")
+    write_private_file(target_old, "old")
+    write_private_file(target_new, "new")
 
     with (
         patch.object(tool, "CANONICAL_OLD", target_old),
@@ -457,8 +458,8 @@ def test_renaming_is_a_no_op_when_the_keys_already_sit_in_place(tmp_path: Path, 
 def test_renaming_moves_both_files_into_place(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     old = tmp_path / "elsewhere-old.txt"
     new = tmp_path / "elsewhere-new.txt"
-    old.write_text("old\n")
-    new.write_text("new\n")
+    write_private_file(old, "old")
+    write_private_file(new, "new")
     target_old = tmp_path / "security" / "old_key.txt"
     target_new = tmp_path / "security" / "key.txt"
     target_old.parent.mkdir()
@@ -486,9 +487,9 @@ def test_the_old_key_moves_aside_before_the_new_one_takes_the_fixed_name(tmp_pat
     security = tmp_path / "security"
     security.mkdir()
     answered_old = security / "key.txt"
-    answered_old.write_text("old\n")
+    write_private_file(answered_old, "old")
     answered_new = security / "nieuw.txt"
-    answered_new.write_text("new\n")
+    write_private_file(answered_new, "new")
 
     with (
         patch.object(tool, "CANONICAL_OLD", security / "old_key.txt"),
@@ -510,11 +511,11 @@ def test_a_second_round_refuses_to_land_on_the_previous_old_key(tmp_path: Path) 
     security = tmp_path / "security"
     security.mkdir()
     left_behind = security / "old_key.txt"
-    left_behind.write_text("the key of the previous round\n")
+    write_private_file(left_behind, "the key of the previous round")
     answered_old = security / "key.txt"
-    answered_old.write_text("old\n")
+    write_private_file(answered_old, "old")
     answered_new = security / "nieuw.txt"
-    answered_new.write_text("new\n")
+    write_private_file(answered_new, "new")
 
     with (
         patch.object(tool, "CANONICAL_OLD", left_behind),
@@ -540,13 +541,13 @@ async def test_the_rename_that_refuses_ends_the_run_with_a_failure(
     security = tmp_path / "security"
     security.mkdir()
     left_behind = security / "old_key.txt"
-    left_behind.write_text("the key of the previous round\n")
+    write_private_file(left_behind, "the key of the previous round")
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     old_key = security / "key.txt"
-    old_key.write_text(old_private)
+    write_private_file(old_key, old_private)
     new_key = security / "nieuw.txt"
-    new_key.write_text(new_private)
+    write_private_file(new_key, new_private)
 
     with (
         patch.object(tool, "CANONICAL_OLD", left_behind),
@@ -571,7 +572,7 @@ async def test_generating_the_new_key_makes_it_at_the_answered_path(tmp_path: Pa
     security = tmp_path / "security"
     security.mkdir()
     answered_old = security / "key.txt"
-    answered_old.write_text(f"{old_private}\n")
+    write_private_file(answered_old, old_private)
     answered_new = security / "nieuw.txt"
 
     with (
@@ -601,7 +602,7 @@ async def test_generating_refuses_to_write_over_a_key_that_is_already_there(
     security = tmp_path / "security"
     security.mkdir()
     answered_old = security / "key.txt"
-    answered_old.write_text(f"{old_private}\n")
+    write_private_file(answered_old, old_private)
 
     with (
         patch.object(tool, "CANONICAL_OLD", security / "old_key.txt"),
@@ -636,8 +637,8 @@ async def test_generating_a_key_without_the_rename_is_refused(tmp_path: Path, ca
 def test_renaming_does_nothing_without_a_yes(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     old = tmp_path / "elsewhere-old.txt"
     new = tmp_path / "elsewhere-new.txt"
-    old.write_text("old\n")
-    new.write_text("new\n")
+    write_private_file(old, "old")
+    write_private_file(new, "new")
     target_old = tmp_path / "security" / "old_key.txt"
     target_new = tmp_path / "security" / "key.txt"
     target_old.parent.mkdir()
@@ -659,7 +660,7 @@ async def test_the_same_key_twice_is_refused(tmp_path: Path, capsys: pytest.Capt
     """Rotating onto the same key would report success while changing nothing meaningful."""
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"{private}\n")
+    write_private_file(key_file, private)
 
     code = await tool.main(["--ja", "--old-key", str(key_file), "--new-key", str(key_file)])
 
@@ -680,8 +681,8 @@ async def test_verify_refuses_without_a_fingerprint(tmp_path: Path, capsys: pyte
     """--verify is meant to be runnable months later, so a missing baseline is a hard error."""
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
 
     code = await tool.main(
         [
@@ -708,8 +709,8 @@ async def test_removing_the_old_key_is_refused_without_the_project_files(
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
-    old_file.write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(old_file, old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
 
     with (
         patch.object(tool, "sops_files_for", return_value=[]),
@@ -740,8 +741,8 @@ async def test_removing_the_old_key_happens_once_the_check_is_clean(
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
-    old_file.write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(old_file, old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     projects = tmp_path / "projects"
     projects.mkdir()
     await _project_file(projects, "een", new_public)
@@ -788,8 +789,8 @@ async def test_the_documented_step_8_command_counts_the_projects_fingerprint_too
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
-    old_file.write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(old_file, old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "x"}, new_public)
     projects = tmp_path / "projects"
     projects.mkdir()
@@ -1353,8 +1354,8 @@ async def _two_place_tree(tmp_path: Path, old_public: str) -> tuple[Path, Path, 
 
 
 def _key_files(tmp_path: Path, old_private: str, new_private: str) -> list[str]:
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     return ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
 
 
@@ -2296,8 +2297,8 @@ async def test_the_old_key_does_not_go_away_while_the_argocd_secrets_are_unwalke
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
     old_file = tmp_path / "old_key.txt"
-    old_file.write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(old_file, old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     projects = tmp_path / "projects"
     projects.mkdir()
     await _project_file(projects, "een", new_public)
@@ -2498,9 +2499,9 @@ async def test_removing_the_old_key_follows_the_answered_path_not_the_default(
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
-    answered_old.write_text(f"{old_private}\n")
+    write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
-    answered_new.write_text(f"{new_private}\n")
+    write_private_file(answered_new, new_private)
     projects = tmp_path / "projects"
     projects.mkdir()
     await _project_file(projects, "een", new_public)
@@ -2543,9 +2544,9 @@ async def test_renaming_follows_the_answered_path_not_the_default(
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
-    answered_old.write_text(f"{old_private}\n")
+    write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
-    answered_new.write_text(f"{new_private}\n")
+    write_private_file(answered_new, new_private)
     target_old = tmp_path / "security" / "old_key.txt"
     target_new = tmp_path / "security" / "key.txt"
     target_old.parent.mkdir()
@@ -2629,7 +2630,7 @@ async def test_an_old_key_file_without_a_key_line_is_not_reported_as_an_absent_f
         patch.object(tool, "loose_paths", return_value=[env_path]),
     ):
         assert await tool.main(["--ja", *arguments]) == 0
-        (tmp_path / "old_key.txt").write_text("# a file of nothing but comments\n# no key line here\n")
+        write_private_file((tmp_path / "old_key.txt"), "# a file of nothing but comments\n# no key line here")
         capsys.readouterr()
         code = await tool.main(["--ja", "--verify", *arguments])
 
@@ -2737,7 +2738,7 @@ async def test_the_final_check_with_a_pat_file_catches_a_token_left_behind(
     new_private, _new_public = generate_sops_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "o" * 36}, old_public)
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
 
     with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
@@ -2766,7 +2767,7 @@ async def test_a_git_server_password_is_not_held_to_the_github_token(
     new_private, _new_public = generate_sops_key_pair()
     env_path = await _env_file(tmp_path / ".env", {"GIT_PROJECTS_SERVER_PASSWORD": "hunter2"}, old_public)
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
     arguments = [*_key_files(tmp_path, old_private, new_private), "--fingerprint", str(tmp_path / "f.json")]
 
     with _selecting_from(tmp_path / "nothing"), patch.object(tool, "loose_paths", return_value=[env_path]):
@@ -2801,7 +2802,7 @@ async def test_a_pat_file_outside_the_final_check_is_refused(
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
 
     code = await tool.main(["--ja", "--dry-run", flag, str(pat_file), *_key_files(tmp_path, old_private, new_private)])
 
@@ -2830,7 +2831,7 @@ async def test_the_final_check_catches_a_field_that_still_decrypts_to_the_curren
     projects.mkdir()
     project = await _project_file(projects, "een", new_public, token=current)
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
 
@@ -2868,7 +2869,7 @@ async def test_the_final_check_says_the_current_pat_is_gone_once_it_really_is(
     current = "the-old-pat-in-a-shape-no-rule-knows"
     env_path = await _env_file(tmp_path / ".env", {"PROJECT_REPO_PASSWORD": "ghp_" + "n" * 36}, new_public)
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     records = ["--fingerprint", str(tmp_path / "absent.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records]
 
@@ -2914,7 +2915,7 @@ async def test_a_plain_password_in_a_project_file_is_held_to_the_token_too(
         f"    password: plain:{current}\n"
     )
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
 
@@ -2969,9 +2970,9 @@ async def test_a_plain_password_in_this_repos_own_projects_is_held_to_the_token_
         f"    password: plain:{another}\n"
     )
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
     records = ["--fingerprint", str(tmp_path / "absent.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records]
 
@@ -3027,7 +3028,7 @@ async def test_a_plain_password_one_directory_down_in_own_projects_is_found_too(
         f"    password: plain:{current}\n"
     )
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     records = ["--fingerprint", str(tmp_path / "absent.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records]
 
@@ -3100,7 +3101,7 @@ async def test_a_stray_yaml_in_this_repos_own_projects_does_not_take_the_final_c
     )
     monkeypatch.setattr(tool, "OWN_PROJECTS", own)
     current_file = tmp_path / "pat_current.txt"
-    current_file.write_text(current + "\n")
+    write_private_file(current_file, current)
     records = ["--fingerprint", str(tmp_path / "absent.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records]
 
@@ -3135,7 +3136,7 @@ async def test_a_plain_password_is_held_to_the_token_shape_as_well(
     plain = projects / "twee.yaml"
     plain.write_text(f"name: twee\nrepositories:\n  - name: main-repo\n    password: plain:{another}\n")
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
     records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
 
@@ -3169,7 +3170,7 @@ async def test_the_final_check_holds_a_project_file_to_the_new_token_as_well(
     projects.mkdir()
     project = await _project_file(projects, "een", new_public, token="ghp_" + "o" * 36)
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_" + "n" * 36 + "\n")
+    write_private_file(pat_file, "ghp_" + "n" * 36)
     records = ["--fingerprint", str(tmp_path / "absent.json"), "--projects-fingerprint", str(tmp_path / "absent2.json")]
     arguments = [*_key_files(tmp_path, old_private, new_private), *records, "--projects", str(projects)]
 

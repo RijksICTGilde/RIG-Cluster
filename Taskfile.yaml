@@ -239,6 +239,29 @@ tasks:
         echo "✅ ArgoCD operator preparation complete"
     silent: true
 
+  _check-key-file:
+    internal: true
+    # Dezelfde regel die ssh op een privesleutel toepast: een sleutelbestand dat voor groep
+    # of anderen leesbaar is, weigeren we hier in plaats van het later te ontdekken.
+    requires:
+      vars: [KEY_FILE]
+    preconditions:
+      - sh: |
+          # Linux en macOS hebben verschillende vlaggen; `00` als laatste tak houdt een
+          # ontbrekend bestand bij de aanroeper, die het zelf al meldt.
+          MODE=$(stat -c %a "{{.KEY_FILE}}" 2>/dev/null || stat -f %Lp "{{.KEY_FILE}}" 2>/dev/null || echo 00)
+          # Geen `$((0$MODE & 077))`: de shell van task leest een leidende nul niet als
+          # octaal, dus 0600 werd 600 decimaal en een goed bestand werd afgewezen. De
+          # laatste twee cijfers ZIJN de rechten voor groep en anderen.
+          case "$MODE" in
+            0|*00) ;;
+            *)
+              echo "mode van {{.KEY_FILE}} is $MODE" >&2
+              exit 1
+              ;;
+          esac
+        msg: "{{.KEY_FILE}} is leesbaar of schrijfbaar buiten de eigenaar. Herstel met: chmod 600 {{.KEY_FILE}}"
+
   generate-age-key:
     desc: "Generate the AGE key of the selected cluster (AGE_KEY_FILE), only if it doesn't exist"
     vars:
@@ -293,6 +316,9 @@ tasks:
       VALUE: '{{.VALUE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -321,6 +347,9 @@ tasks:
       VALUE: '{{.VALUE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.VALUE}}" ]]; then
@@ -347,6 +376,9 @@ tasks:
       FILE: '{{.FILE | default ""}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -391,6 +423,9 @@ tasks:
     preconditions:
       - sh: '[ -n "{{.KEY}}" ]'
         msg: "Geen AGE-sleutel gekozen. Zet AGE_KEY_FILE in .env-taskfile-<cluster> en draai 'task select-cluster' opnieuw, of geef KEY=... mee."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -411,6 +446,9 @@ tasks:
       KEEP_ORIGINAL: '{{.KEEP_ORIGINAL | default "false"}}'
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [[ -z "{{.FILE}}" ]]; then
@@ -486,6 +524,9 @@ tasks:
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
 
@@ -598,6 +639,9 @@ tasks:
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
 
@@ -731,6 +775,9 @@ tasks:
       # geheimen staan dan daar en niet in de overlays van deze publieke repo.
       - sh: '[ -z "{{.SECRETS_DIR}}" ] || [ -d "{{.SECRETS_DIR}}/.git" ]'
         msg: "SECRETS_DIR={{.SECRETS_DIR}} is geen git-clone. Clone eerst de secrets-repo, zie features/zad-staging.md."
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         echo "Generating SOPS-encrypted secret for cluster: {{.CLUSTER}}"
@@ -812,7 +859,10 @@ tasks:
     vars:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
-    deps: [generate-env-secrets-for-operations-manager]
+    deps:
+      - generate-env-secrets-for-operations-manager
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     preconditions:
       - *age_key_file_guard
     cmds:
@@ -1309,6 +1359,9 @@ tasks:
       FIXED_PASSWORD: '{{default "" .FIXED_PASSWORD}}'  # If set, use this instead of random passwords (for sandbox/dev)
     preconditions:
       - *age_key_file_guard
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         if [ ! -f ".env-taskfile-current" ]; then
@@ -2629,6 +2682,9 @@ tasks:
 
   sandbox:decrypt-wildcard-cert:
     desc: "Decrypt AGE-encrypted wildcard TLS certificate using developer key"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/developer-key.txt'}
     cmds:
       - |
         CERT_DIR="security/tls/sandbox-wildcard"
@@ -2676,7 +2732,9 @@ tasks:
             echo "Invalid key format. Expected a key starting with AGE-SECRET-KEY-"
             exit 1
           fi
-          echo "$AGE_SECRET_KEY" > "$KEY_FILE"
+          # Een redirect maakt het bestand met de umask, dus leesbaar voor groep en
+          # anderen; de lezers hier weigeren dat.
+          (umask 077 && echo "$AGE_SECRET_KEY" > "$KEY_FILE")
           echo "Developer key saved to $KEY_FILE"
         fi
 
@@ -2688,6 +2746,9 @@ tasks:
 
   sandbox:encrypt-wildcard-cert:
     desc: "Re-encrypt the wildcard TLS cert PEMs to AGE after renewal"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/developer-key.txt'}
     cmds:
       - |
         CERT_DIR="security/tls/sandbox-wildcard"
@@ -2944,6 +3005,9 @@ tasks:
       OUTPUT_DIR: 'bootstrap/rig-system/kustomize/operations-manager/overlays/sandboxed-local'
       SECRET_NAME: 'operations-manager-env-secrets'
       NAMESPACE: '{{default "rig-system" .RIG_NAMESPACE}}'
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         if [ ! -f "security/sandbox-key.txt" ]; then
@@ -3150,6 +3214,9 @@ tasks:
 
   sandbox:create-sops-age-secret:
     desc: "Create sops-age-key Kubernetes secret from sandbox AGE key"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         if [ ! -f "security/sandbox-key.txt" ]; then
@@ -3247,6 +3314,9 @@ tasks:
 
   sandbox:deploy-postgresql-direct:
     desc: "Deploy minimal PostgreSQL directly (pre-ArgoCD, just enough for Forgejo)"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - |
         echo "Deploying minimal PostgreSQL cluster..."
@@ -3667,6 +3737,9 @@ tasks:
 
   sandbox:update-operations-manager:
     desc: "Build and deploy the operations-manager to the sandbox cluster"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       # Idempotent; faalt vroeg als het cluster de containerd-patch mist.
       - task: sandbox:setup-registry
@@ -3716,6 +3789,9 @@ tasks:
 
   sandbox:skaffold-dev:
     desc: "Start Skaffold with hot-reload for sandbox development"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       # Skaffold pusht naar localhost:5001; staat die registry er niet, dan is de fout
       # een kale push-timeout. Idempotent, net als in sandbox:update-operations-manager.
@@ -3729,6 +3805,9 @@ tasks:
 
   sandbox:skaffold-debug:
     desc: "Start Skaffold in debug mode for sandbox development (debugpy on port 5678)"
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: 'security/sandbox-key.txt'}
     cmds:
       - task: sandbox:setup-registry
       - echo "Starting Skaffold in debug mode (sandboxed-local)..."
@@ -3856,6 +3935,9 @@ tasks:
     vars:
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
       ENV_FILE: 'operations-manager/python/.env.{{.CLUSTER_TYPE}}.secrets'
+    deps:
+      - task: _check-key-file
+        vars: {KEY_FILE: '{{.KEY_FILE}}'}
     cmds:
       - |
         set -euo pipefail

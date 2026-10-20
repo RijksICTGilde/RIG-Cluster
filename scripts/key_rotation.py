@@ -37,6 +37,7 @@ import base64
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -145,6 +146,13 @@ class MissingKey(RuntimeError):
     """A key file is absent, or holds no AGE key. Always names the path."""
 
 
+class KeyFileTooOpen(MissingKey):
+    """Een sleutel- of tokenbestand is voor groep of anderen leesbaar of schrijfbaar.
+
+    Een subclass van ``MissingKey`` zodat foutmeldingen-entry's een sleutelprobleem in één regel rapporteren, niet in een traceback.
+    """
+
+
 class KeyExists(RuntimeError):
     """A new key was about to be written where a file already sits. Always names the path."""
 
@@ -154,6 +162,20 @@ class ConversionFailed(RuntimeError):
 
 
 # keys
+
+
+def require_private_file(path: str | Path) -> None:
+    """Weigeren als een sleutel- of tokenbestand voor groep of anderen leesbaar is.
+
+    De regel die ssh op een privésleutel toepast: te ruim is een bevinding nu, niet een verrassing later.
+    """
+    path = Path(path)
+    if os.name != "posix":
+        print(f"(POSIX-rechten niet van toepassing op dit platform; {path} niet gecontroleerd)")
+        return
+    mode = stat.S_IMODE(path.stat().st_mode)
+    if mode & 0o077:
+        raise KeyFileTooOpen(f"{path} is leesbaar of schrijfbaar buiten de eigenaar (mode {mode:04o}): chmod 600 {path}")
 
 
 def read_key(path: str | Path) -> str:
@@ -166,6 +188,7 @@ def read_key(path: str | Path) -> str:
     path = Path(path)
     if not path.is_file():
         raise MissingKey(f"key file does not exist: {path}")
+    require_private_file(path)
     for line in path.read_text().splitlines():
         if line.strip().startswith(AGE_KEY_MARKER):
             return line.strip()

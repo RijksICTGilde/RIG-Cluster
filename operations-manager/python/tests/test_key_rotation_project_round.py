@@ -26,6 +26,7 @@ import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path, save_yaml_to_path
+from tests.conftest import write_private_file
 from tests.documented_commands import FEATURE_DOC, documented_lines, flags
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ from key_rotation import (  # noqa: E402
     PROJECT_FIELD_PRIVATE_KEY,
     REPO,
     Fingerprint,
+    KeyFileTooOpen,
     MissingKey,
     ProjectRound,
     ask_for_path,
@@ -114,7 +116,7 @@ async def _pat_round(arguments: list[str], argo: Path, current: str = "ghp_repos
     """
     if "--pat-current-file" not in arguments:
         path = argo.parent / "pat-current.txt"
-        path.write_text(current + "\n")
+        write_private_file(path, current)
         arguments = [*arguments, "--pat-current-file", str(path)]
     return await main_replace_pat([*arguments, "--argo-applications", str(argo)])
 
@@ -466,7 +468,7 @@ async def test_the_key_entry_point_refuses_a_directory_that_is_not_one(
 async def test_the_key_entry_point_refuses_the_same_key_twice(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"{private}\n")
+    write_private_file(key_file, private)
     (tmp_path / "projects").mkdir()
 
     code = await main_rotate_keys(
@@ -492,8 +494,8 @@ async def test_the_key_entry_point_dry_run_writes_no_fingerprint(
     """A dry run must leave nothing behind, the fingerprint file included."""
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
     fingerprint = tmp_path / "fingerprint.json"
 
@@ -522,8 +524,8 @@ async def test_the_key_entry_point_exits_red_on_an_unreadable_file(projects_repo
     """A silent skip would read as success to whatever runs this next."""
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     path = await _write_project(projects_repo / "projects", "kapot", old_public)
     text = path.read_text()
     path.write_text(text.replace(text.split("password: ")[1].split("\n")[0], f"{BASE64_AGE_PREFIX}QUJDREVG"))
@@ -550,8 +552,8 @@ async def test_the_key_entry_point_writes_the_fingerprint_it_will_be_checked_aga
 ) -> None:
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -591,8 +593,8 @@ async def test_the_fingerprint_this_round_writes_is_the_count_the_final_check_ex
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     for name in ("een", "twee", "drie"):
         await _write_project(directory, name, old_public)
@@ -652,8 +654,8 @@ async def test_a_second_key_round_records_the_same_fields_as_the_first(projects_
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -681,14 +683,23 @@ async def test_a_second_key_round_records_the_same_fields_as_the_first(projects_
 
 
 def test_the_pat_is_read_from_a_file(tmp_path: Path) -> None:
-    (tmp_path / "pat.txt").write_text("ghp_from_a_file\n")
+    write_private_file((tmp_path / "pat.txt"), "ghp_from_a_file")
     assert read_pat(str(tmp_path / "pat.txt")) == "ghp_from_a_file"
 
 
 def test_an_empty_pat_file_is_refused(tmp_path: Path) -> None:
-    (tmp_path / "pat.txt").write_text("\n")
+    write_private_file((tmp_path / "pat.txt"), "")
     with pytest.raises(MissingKey):
         read_pat(str(tmp_path / "pat.txt"))
+
+
+def test_a_pat_file_that_is_too_open_is_refused(tmp_path: Path) -> None:
+    """A token is key material: the reader applies the same mode rule the key files get."""
+    path = tmp_path / "pat.txt"
+    write_private_file(path, "ghp_from_a_file")
+    path.chmod(0o644)
+    with pytest.raises(KeyFileTooOpen, match=str(path)):
+        read_pat(str(path))
 
 
 def test_a_pat_file_that_is_not_there_names_the_path(tmp_path: Path) -> None:
@@ -714,11 +725,11 @@ async def test_the_pat_round_refuses_a_current_and_a_new_token_that_are_the_same
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     await _write_project(directory, "een", old_public)
-    (tmp_path / "pat.txt").write_text("ghp_repository_token\n")
+    write_private_file((tmp_path / "pat.txt"), "ghp_repository_token")
 
     code = await _pat_round(
         [
@@ -746,9 +757,9 @@ async def test_the_pat_entry_point_replaces_the_password_and_keeps_the_key(
     """End to end over the entry point: the announced difference passes the content check."""
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -792,9 +803,9 @@ async def test_the_pat_round_still_replaces_after_the_key_round(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -868,9 +879,9 @@ async def test_a_second_pat_round_records_the_same_fields_as_the_first(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -924,9 +935,9 @@ async def test_a_project_without_a_repository_password_is_no_finding_in_the_pat_
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", old_public, passwords=(None,))
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -964,9 +975,9 @@ async def test_the_pat_dry_run_exits_clean_once_the_round_is_done(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     path = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -1083,8 +1094,8 @@ async def test_a_partial_round_and_its_repair_still_add_up_for_the_final_check(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     for name in ("aaa", "bbb", "ccc"):
         await _write_project(directory, name, old_public)
@@ -1153,8 +1164,8 @@ async def test_a_changed_plaintext_stops_the_next_round_instead_of_overwriting_t
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -1209,8 +1220,8 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -1219,9 +1230,9 @@ async def test_the_pat_round_expects_the_passwords_to_read_differently_and_the_k
     keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
 
     first = tmp_path / "first-pat.txt"
-    first.write_text("ghp_the_first_new_token\n")
+    write_private_file(first, "ghp_the_first_new_token")
     second = tmp_path / "second-pat.txt"
-    second.write_text("ghp_the_second_new_token\n")
+    write_private_file(second, "ghp_the_second_new_token")
     arguments = ["--ja", "--projects", str(directory), *keys, "--fingerprint", str(fingerprint)]
 
     assert await _pat_round([*arguments, "--pat-file", str(first)], argo_clone) == 0
@@ -1256,8 +1267,8 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -1266,7 +1277,7 @@ async def test_verify_still_stands_after_the_pat_round_because_both_rounds_share
     repo_record = tmp_path / "fingerprint.json"
     Fingerprint().save(repo_record)
     pat = tmp_path / "pat.txt"
-    pat.write_text("ghp_the_new_token\n")
+    write_private_file(pat, "ghp_the_new_token")
     keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
 
     with patch.object(round_tool, "KEY_FINGERPRINT", fingerprint):
@@ -1316,9 +1327,9 @@ async def test_the_combined_quarterly_round_leaves_the_final_check_everything_st
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_the_quarterly_token\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_the_quarterly_token")
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
@@ -1375,8 +1386,8 @@ async def test_a_project_that_left_the_collection_is_named_and_is_not_a_failure(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     for name in ("blijft", "verdwijnt"):
         await _write_project(directory, name, old_public)
@@ -1433,15 +1444,15 @@ async def test_the_record_names_the_resolved_path_so_the_other_tool_can_match_it
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
     fingerprint = tmp_path / "projects-fingerprint.json"
     pat_file = tmp_path / "pat.txt"
-    pat_file.write_text("ghp_the_new_token\n")
+    write_private_file(pat_file, "ghp_the_new_token")
     detour = directory / ".." / "projects"
     arguments = [
         "--ja",
@@ -1494,17 +1505,17 @@ async def test_the_pat_round_stops_when_a_field_it_does_not_replace_has_drifted(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
     fingerprint = tmp_path / "projects-pat-fingerprint.json"
     first = tmp_path / "first-pat.txt"
-    first.write_text("ghp_the_first_new_token\n")
+    write_private_file(first, "ghp_the_first_new_token")
     second = tmp_path / "second-pat.txt"
-    second.write_text("ghp_the_second_new_token\n")
+    write_private_file(second, "ghp_the_second_new_token")
     arguments = [
         "--ja",
         "--projects",
@@ -1545,8 +1556,8 @@ async def test_a_file_that_is_no_project_file_is_named_and_stays_out_of_the_coun
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     for name in ("een", "twee"):
         await _write_project(directory, name, old_public)
@@ -1603,8 +1614,8 @@ async def test_the_round_walks_a_project_file_in_a_subdirectory(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     (directory / "local-old").mkdir()
     await _write_project(directory, "hier", old_public)
@@ -1650,8 +1661,8 @@ async def test_a_flat_selection_is_stopped_by_the_coverage_guard(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     (directory / "local-old").mkdir()
     await _write_project(directory, "hier", old_public)
@@ -1693,8 +1704,8 @@ async def test_a_tracked_file_with_ciphertext_outside_the_selection_stops_the_ro
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     await _write_project(directory, "hier", old_public)
     block = await encrypt_age_content("ghp_token", old_public)
@@ -1736,8 +1747,8 @@ async def test_the_round_walks_the_work_tree_of_a_clone_and_not_its_git_director
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     live = await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -1780,8 +1791,8 @@ async def test_a_repository_password_in_a_block_scalar_goes_along_and_stays_one(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     directory = projects_repo / "projects"
     path = await _write_project(directory, "een", old_public, armored=True)
     _git(projects_repo, "add", "-A")
@@ -1825,9 +1836,9 @@ async def test_both_entry_points_refuse_a_directory_without_a_project_file(
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_new_token\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_new_token")
     clone = tmp_path / "zad-projects"
     (clone / "projects").mkdir(parents=True)
     keys = ["--old-key", str(tmp_path / "old_key.txt"), "--new-key", str(tmp_path / "key.txt")]
@@ -1854,8 +1865,8 @@ async def test_a_second_round_does_not_point_at_head_0(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
     await _write_project(projects_repo / "projects", "een", old_public)
     _git(projects_repo, "add", "-A")
     _git(projects_repo, "commit", "-q", "-m", "start")
@@ -2056,9 +2067,9 @@ async def test_the_dry_run_counts_replaced_kept_and_unreadable_apart(
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     directory = projects_repo / "projects"
     await _write_project(directory, "gewoon", old_public, passwords=("ghp_the_current_token",))
     older = await _write_project(directory, "ouder", old_public, passwords=("ghp_an_older_token",))
@@ -2111,9 +2122,9 @@ async def test_a_field_that_opens_with_neither_key_is_named_as_a_failure_and_cou
     new_private, _new_public = generate_sops_key_pair()
     stranger_private, stranger_public = generate_sops_key_pair()
     assert stranger_private not in (old_private, new_private)
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     directory = projects_repo / "projects"
     await _write_project(directory, "gewoon", old_public, passwords=("ghp_the_current_token",))
     kwijt = await _write_project(directory, "kwijt", stranger_public, passwords=("ghp_the_current_token",))
@@ -2158,9 +2169,9 @@ async def test_a_project_whose_password_is_not_the_current_pat_does_not_fail_the
     """
     old_private, old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text("ghp_brand_new\n")
+    write_private_file((tmp_path / "old_key.txt"), old_private)
+    write_private_file((tmp_path / "key.txt"), new_private)
+    write_private_file((tmp_path / "pat.txt"), "ghp_brand_new")
     directory = projects_repo / "projects"
     # Written on the NEW key from the start: the key round has already been here.
     path = await _write_project(directory, "ouder", new_public, passwords=("ghp_an_older_token",))

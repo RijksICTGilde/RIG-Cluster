@@ -41,6 +41,7 @@ from key_rotation import (  # noqa: E402
     FinalCheck,
     Fingerprint,
     Form,
+    KeyFileTooOpen,
     MissingKey,
     check_value,
     convert_value,
@@ -56,6 +57,7 @@ from key_rotation import (  # noqa: E402
     project_plain_passwords,
     public_key_of,
     read_key,
+    require_private_file,
     rotate_project_file,
     set_project_field,
     sha256_of,
@@ -95,7 +97,39 @@ def test_read_key_finds_the_marker_line_not_the_third_line(tmp_path: Path, key_p
     private, _public = key_pair_a
     path = tmp_path / "key.txt"
     path.write_text(f"# created: today\n# note: an extra line\n# public key: xxx\n{private}\n")
+    path.chmod(0o600)
     assert read_key(path) == private
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o400])
+def test_a_key_file_only_its_owner_can_read_passes(tmp_path: Path, mode: int) -> None:
+    path = tmp_path / "key.txt"
+    path.write_text("whatever\n")
+    path.chmod(mode)
+    require_private_file(path)
+
+
+@pytest.mark.parametrize("mode", [0o640, 0o644, 0o606])
+def test_a_key_file_others_can_reach_is_refused_with_the_path_and_the_mode(tmp_path: Path, mode: int) -> None:
+    """The same rule ssh applies: the message has to say which file and how to fix it."""
+    path = tmp_path / "key.txt"
+    path.write_text("whatever\n")
+    path.chmod(mode)
+    with pytest.raises(KeyFileTooOpen) as caught:
+        require_private_file(path)
+    assert str(path) in str(caught.value)
+    assert f"{mode:04o}" in str(caught.value)
+    assert f"chmod 600 {path}" in str(caught.value)
+
+
+def test_read_key_refuses_a_key_file_that_is_too_open(tmp_path: Path, key_pair_a: tuple[str, str]) -> None:
+    """The refusal has to sit in the reader, not only in the caller that remembers to ask."""
+    private, _public = key_pair_a
+    path = tmp_path / "key.txt"
+    path.write_text(f"{private}\n")
+    path.chmod(0o644)
+    with pytest.raises(KeyFileTooOpen):
+        read_key(path)
 
 
 def test_read_key_names_the_path_when_the_file_is_missing(tmp_path: Path) -> None:
@@ -107,6 +141,7 @@ def test_read_key_names_the_path_when_the_file_is_missing(tmp_path: Path) -> Non
 def test_read_key_names_the_path_when_there_is_no_key_in_it(tmp_path: Path) -> None:
     path = tmp_path / "key.txt"
     path.write_text("# only comments\n")
+    path.chmod(0o600)
     with pytest.raises(MissingKey) as caught:
         read_key(path)
     assert str(path) in str(caught.value)

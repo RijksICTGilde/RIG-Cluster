@@ -26,7 +26,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import age_keyring as keyring  # type: ignore[reportMissingImports]  # noqa: E402
-from key_rotation import public_key_of, read_key  # type: ignore[reportMissingImports]  # noqa: E402
+from key_rotation import KeyFileTooOpen, public_key_of, read_key  # type: ignore[reportMissingImports]  # noqa: E402
 
 needs_age = pytest.mark.skipif(shutil.which("age-keygen") is None, reason="vraagt age-keygen")
 
@@ -100,7 +100,9 @@ def test_de_entry_vindt_zijn_bron_en_alle_sleutels_in_een_bestand(tmp_path: Path
     second = _make_key(tmp_path / "b.txt")
     security = tmp_path / "security"
     security.mkdir()
-    (security / "combined.txt").write_text(read_key(first) + "\n" + read_key(second) + "\n", encoding="utf-8")
+    combined = security / "combined.txt"
+    combined.write_text(read_key(first) + "\n" + read_key(second) + "\n", encoding="utf-8")
+    combined.chmod(0o600)
 
     entry = keyring.private_key_for(public_key_of(read_key(second)), security_dir=security)
     assert entry.private == read_key(second)
@@ -183,3 +185,26 @@ def test_de_padregel_onderscheidt_sandbox_van_platform(tmp_path: Path) -> None:
     with pytest.raises(keyring.KeyringFailed, match="referentiebestand ontbreekt"):
         keyring.expected_recipient_for(repo / "config.py", repo)
     assert keyring.expected_recipient_for(anchor, repo) == "age1sandboxvoorbeeld"
+
+
+@needs_age
+def test_een_sleutelbestand_dat_te_ruim_staat_stopt_de_keyring(tmp_path: Path, clean_env: None) -> None:
+    """Een sleutel die ook voor anderen leesbaar is, is een bevinding en geen bron."""
+    security = tmp_path / "security"
+    security.mkdir()
+    _make_key(security / "key.txt").chmod(0o644)
+
+    with pytest.raises(KeyFileTooOpen) as caught:
+        keyring.load_keyring(security_dir=security)
+    assert str(security / "key.txt") in str(caught.value)
+
+
+@needs_age
+def test_een_txt_zonder_sleutel_wordt_niet_op_rechten_afgewezen(tmp_path: Path, clean_env: None) -> None:
+    """De keyring globt op `*.txt`, dus een leesmij ernaast mag de ronde niet stoppen."""
+    security = tmp_path / "security"
+    security.mkdir()
+    _make_key(security / "key.txt")
+    (security / "readme.txt").write_text("hier staan de sleutels\n", encoding="utf-8")
+
+    assert len(keyring.load_keyring(security_dir=security)) == 1

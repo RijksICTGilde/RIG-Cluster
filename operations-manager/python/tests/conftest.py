@@ -26,6 +26,18 @@ from tests.docker_runtime import DockerError, container_state, docker
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterator
+    from pathlib import Path
+
+
+def write_private_file(path: Path, content: str) -> Path:
+    """Write a key or token file the way ``age-keygen -o`` leaves one: owner-readable only.
+
+    ``require_private_file`` refuses anything wider, so a test that writes one with the
+    default umask is testing a file no tool here accepts.
+    """
+    path.write_text(f"{content}\n")
+    path.chmod(0o600)
+    return path
 
 
 @pytest.fixture(scope="session")

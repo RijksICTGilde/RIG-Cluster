@@ -68,6 +68,9 @@ def _omgeving(tmp_path: Path, cluster: str, secret_bestaat: bool) -> Path:
     (bin_dir / "kustomize").write_text('#!/bin/bash\necho "# gerenderd"\nexit 0\n')
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
+    # Geen stub: de taak leest de ron-namespace met yq uit het overlay-bestand, en een
+    # lege uitkomst zou het secret stil overslaan. De kale PATH hieronder bereikt hem niet.
+    (bin_dir / "yq").symlink_to(echt_programma("yq"))
     return bin_dir
 
 

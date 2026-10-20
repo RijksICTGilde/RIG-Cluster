@@ -55,7 +55,8 @@ def tools() -> None:
 
 
 def _cmds(taskfile: dict, name: str) -> str:
-    return "\n".join(str(cmd) for cmd in taskfile["tasks"][name]["cmds"])
+    # Een taak kan alleen preconditions of deps hebben, zoals _check-key-file.
+    return "\n".join(str(cmd) for cmd in taskfile["tasks"][name].get("cmds", []))
 
 
 def _called_tasks(taskfile: dict, name: str) -> list[str]:

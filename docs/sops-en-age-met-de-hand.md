@@ -22,7 +22,18 @@ age-keygen -o security/sops-key.txt
 ```
 
 Dat bestand bevat de private sleutel (de regel die met `AGE-SECRET-KEY-` begint) en de publieke
-helft als commentaar (`age1...`). De publieke helft kun je ook altijd afleiden:
+helft als commentaar (`age1...`). `age-keygen -o` zet het meteen op mode `600`; schrijf je het
+bestand op een andere manier (een redirect, een `echo`, een download), zet de rechten dan zelf:
+
+```bash
+chmod 600 security/sops-key.txt
+```
+
+De scripts en de Taskfile WEIGEREN een sleutel- of tokenbestand dat voor groep of anderen
+leesbaar of schrijfbaar is, en noemen dan het pad, de mode en dit commando. Dat is dezelfde
+regel die `ssh` op een privesleutel toepast.
+
+De publieke helft kun je ook altijd afleiden:
 
 ```bash
 grep -m1 '^AGE-SECRET-KEY-' security/sops-key.txt | age-keygen -y
@@ -79,6 +90,9 @@ SOPS_AGE_KEY="$(grep -m1 '^AGE-SECRET-KEY-' security/key.txt)" \
   gitignored -- zie hierboven waarom dat een tussenoplossing is en geen eindplek.
 - **Een `kind: Secret` telt als de sleutel zelf.** Base64 is geen versleuteling: `data.key`
   bevat het hele sleutelbestand.
+- **Alleen de eigenaar mag erbij.** Een sleutel- of tokenbestand staat op mode `600` (of `400`);
+  alles wat ruimer is wordt geweigerd met `chmod 600 <pad>` in de melding. Dat geldt ook voor
+  `~/.config/sops/age/keys.txt` en voor de PAT-bestanden van een rotatieronde.
 - De publieke helft is geen geheim en mag in documentatie en in de SOPS-metadata staan.
 - Gebruik per omgeving een eigen sleutelpaar: `security/key.txt` (platform),
   `security/sandbox-key.txt` (sandbox), `security/developer-key.txt` (het wildcard-certificaat).
