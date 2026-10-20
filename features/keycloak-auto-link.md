@@ -99,6 +99,50 @@ account for X. This is safe **because SSO-Rijk / BZK authoritatively verifies th
 `idp-create-user-if-unique` needs to match an existing account by email). For a low-trust IdP,
 auto-linking by email would be an account-takeover vector.
 
+### Geen lokale uitnodiging in een realm dat koppelt
+
+Het koppeldoel is elk account in het realm met hetzelfde adres, dus de vraag is niet alleen
+waar de SSO-identiteit vandaan komt maar ook waar dat bestaande account vandaan komt. De
+lokale uitnodigingsweg laat de uitgenodigde zijn adres zelf intypen (alleen een optionele
+domeinrestrictie eroverheen), en zo'n account staat daarna klaar als koppeldoel voor wie dat
+adres via SSO wel autoritatief aanlevert. Daarom staat die weg dicht zodra het realm
+`account-link` heeft:
+
+- `get_invite_auth_methods` geeft `local: False` zolang `account-link` op `automatic` of
+  `confirm` staat, wat de uitnodiging ook zegt. De lokale knop verdwijnt daarmee van de
+  uitnodigingspagina en beide `/invite/{key}/register`-routes weigeren met de bestaande
+  foutpagina, dus er wordt geen account aangemaakt.
+- `local` expliciet in `auth-methods` zetten wordt bij het opslaan geweigerd
+  (`InviteService.validate_project`, langs elke schrijfweg die `validate_project_structure`
+  doorloopt), en het formulier biedt de keuze niet aan.
+
+Een uitnodiging werkt in zo'n realm dus alleen via SSO. BIO2 5.16 en 8.05: een e-mailadres is
+pas een identiteit als de bron het autoritatief levert, en een zelf ingetypt adres is dat niet.
+Zie `features/invites.md`.
+
+### Twee voorwaarden voordat `automatic` verantwoord is
+
+`automatic` koppelt zonder tussenstap, dus het leunt er volledig op dat de gebruiker het
+e-mailadres van zijn account niet zelf kan zetten en dat hij niet buiten de IdP om kan
+inloggen. Dat is twee keer een aparte voorwaarde, en beide staan beschreven in
+`features/futures/keycloak-account-link-in-ui.md`:
+
+1. **De identity-field lock moet op het realm staan.** `KeycloakConnector._lock_identity_fields`
+   zet `email`, `firstName` en `lastName` in het user profile op `edit: ["admin"]`, zodat ze in
+   de account console read-only zijn. Die lock loopt alleen mee op de create-weg
+   (`create_realm`), en de reconcile-weg (`KeycloakYamlHandler.ensure_realm_self_service` via
+   `_apply_realm_self_service`) past hem niet toe. Een realm dat is aangemaakt voordat de lock
+   bestond heeft hem dus nog niet, en daar kan een gebruiker zijn eigen adres wijzigen: controleer
+   het user profile van het realm voordat je `automatic` aanzet.
+2. **De SSO-bypass moet dicht zijn.** Zonder die restricties zet een gebruiker in de account
+   console zelf een wachtwoord en verwijdert hij de koppeling met `rig-platform-oidc`, waarmee
+   hij SSO Rijk helemaal omzeilt. Fase 1 daarvan is gebouwd: `UPDATE_PASSWORD` uit en
+   `account:manage-account` uit de default roles, via `disabledRequiredActions` en
+   `removeFromDefaultRoles` op het `realms:`-item in `sso-only.yaml` en `sso-support.yaml`,
+   toegepast op de create-weg en op elke reconcile. Zie
+   `features/futures/keycloak-sso-bypass-voorkomen.md` voor de meting en voor wat er nog
+   openstaat.
+
 ## How it works
 
 `KeycloakConnector.ensure_auto_link_first_broker_login_flow` (idempotently) builds this flow:

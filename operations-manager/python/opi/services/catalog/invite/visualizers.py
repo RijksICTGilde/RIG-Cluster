@@ -107,7 +107,9 @@ INVITE_AUTH_METHODS = EditableVisualizer(
     help_text=(
         "Beperk waarmee de uitgenodigde gebruiker mag inloggen. Je kunt hier alleen kiezen uit "
         "wat de Keycloak-instelling van dit project toestaat. Niets aangevinkt betekent: alles "
-        "wat het project toestaat."
+        "wat het project toestaat. Koppelt het realm een SSO-identiteit automatisch op "
+        "e-mailadres, dan staat 'Lokaal account' er niet bij: in dat realm mag geen account "
+        "ontstaan met een zelf ingetypt adres."
     ),
 )
 

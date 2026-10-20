@@ -19,6 +19,7 @@ from opi.connectors.vpa import parse_k8s_cpu_to_m
 from opi.services import ServiceAdapter, ServiceType
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME
 from opi.services.catalog.image_registries.resolution import component_registry_name, project_registries
+from opi.services.catalog.keycloak.account_link import realm_links_on_email
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.resource_analyzer import _k8s_memory_to_mb
@@ -3707,6 +3708,10 @@ class ProjectFileHandler:
 
         Combines project-level settings with invite-specific overrides.
 
+        Koppelt het realm een SSO-identiteit op e-mailadres, dan is de lokale weg hier dicht,
+        wat de uitnodiging ook zegt: een account met een zelf ingetypt adres is daar het
+        koppeldoel van wie dat adres via SSO aanlevert (``features/keycloak-auto-link.md``).
+
         Args:
             project_data: The parsed project data
             invite: The specific invite configuration
@@ -3714,6 +3719,8 @@ class ProjectFileHandler:
         Returns:
             Dict with 'sso' and 'local' boolean values
         """
+        local_allowed = not realm_links_on_email(project_data)
+
         # Check invite-specific auth_methods override
         invite_auth_methods = invite.get("auth_methods")
 
@@ -3721,12 +3728,12 @@ class ProjectFileHandler:
             # Invite specifies exact methods
             return {
                 "sso": "sso" in invite_auth_methods,
-                "local": "local" in invite_auth_methods,
+                "local": local_allowed and "local" in invite_auth_methods,
             }
 
         # No per-invite restriction: fall back to "both allowed" (the project-level default;
         # the realm and the invite-level auth-methods are the actual restrictions).
-        return {"sso": True, "local": True}
+        return {"sso": True, "local": local_allowed}
 
     def get_invite_message(self, invite: dict[str, Any], language: str = "nl") -> str:
         """
