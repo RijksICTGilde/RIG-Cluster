@@ -151,6 +151,20 @@ spec:
                   name: keycloak-mail-credentials
                   key: smtp-password
                   optional: true
+            # HET SCRAPE-TOKEN VAN /realms/master/rig-metrics, hetzelfde token dat
+            # Prometheus meestuurt en dat OPI op zijn eigen /metrics controleert.
+            #
+            # optional: true om dezelfde reden als bij het mailwachtwoord hierboven: een
+            # cluster zonder dit secret moet WEL kunnen inloggen. Ontbreekt het, dan is het
+            # endpoint dicht (503) en niet open.
+            #
+            # ACHTERAAN DE LIJST, want de sandbox- en odcn-overlay patchen env/4 op index.
+            - name: RIG_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: prometheus-metrics-auth
+                  key: token
+                  optional: true
           resources:
             limits:
               memory: "1Gi"

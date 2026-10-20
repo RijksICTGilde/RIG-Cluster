@@ -15,6 +15,9 @@ These endpoints should **never** be publicly accessible and must be restricted t
 
 ### Current
 - **Keycloak** - `/metrics` endpoint on management port 9000 (separate from public UI on 8080) ✅ Secured by default
+- **Keycloak** - `/realms/master/rig-metrics` op poort 8080, de poort die de Ingress met
+  `path: /` publiceert, afgeschermd met hetzelfde scrape-token ✅ Zie
+  `features/keycloak-rig-metrics.md`
 - **Operations Manager (OPI)** - `/metrics` on port 8000, afgeschermd met het scrape-token (zie hieronder) ✅
 
 ### Future (applications deployed via platform)
@@ -43,6 +46,9 @@ middleware blijft `/metrics` overslaan.
 
 Bij 401 en 501 komt er geen enkele metriek terug en staat er geen hint over het token in het
 antwoord. Een mislukte poging komt als WARNING in de log, zonder de headerwaarde.
+
+Keycloak's `rig-metrics` doet hetzelfde met hetzelfde token, met 503 in plaats van 501 als de
+variabele ontbreekt.
 
 Met de hand opvragen:
 

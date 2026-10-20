@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -72,8 +73,8 @@ def test_alleen_grafana_schrijft_nog_het_env_bestand() -> None:
 
 
 def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
-    """ZAD leest postgresql/redis/minio/mail-relay/prometheus/grafana/keycloak-admin mee;
-    voor die componenten staat de OPI-pod in de herstartlijst, na de eigen component."""
+    """ZAD leest postgresql/redis/minio/mail-relay/prometheus/grafana/keycloak-admin/argocd-admin
+    mee; voor die componenten staat de OPI-pod in de herstartlijst, na de eigen component."""
     met_zad = {c.key for c in rotate.COMPONENTS if rotate.OPI_DEPLOYMENT in c.workloads}
     assert met_zad == {
         "postgresql",
@@ -84,11 +85,43 @@ def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
         "grafana",
         "keycloak-admin",
         "platform-repo-pat",
+        "argocd-admin",
     }
     minio = rotate.BY_KEY["minio"]
     assert minio.workloads.index("deploy/minio") < minio.workloads.index(rotate.OPI_DEPLOYMENT), (
         "eerst de app, dan de afnemer"
     )
+
+
+def test_elke_env_lezer_van_het_metrics_token_herstart_bij_de_rotatie() -> None:
+    """Wie het token via env leest, draagt het tot een herstart. Staat zo'n workload niet in
+    de herstartlijst, dan scrapet Prometheus na een rotatie met een token dat de app nog niet
+    kent (401 op keycloak-rig-metrics, target down tot de pod toevallig herstart)."""
+    workloads = set(rotate.BY_KEY["prometheus"].workloads)
+    for path in _manifesten_met("prometheus-metrics-auth"):
+        for doc in yaml.safe_load_all(path.read_text()):
+            if not isinstance(doc, dict) or doc.get("kind") not in ("Deployment", "StatefulSet"):
+                continue
+            if not _leest_secret_via_env(doc, "prometheus-metrics-auth"):
+                continue
+            soort = "deploy" if doc["kind"] == "Deployment" else "sts"
+            naam = f"{soort}/{doc['metadata']['name']}"
+            assert naam in workloads, f"{path}: {naam} leest het token via env maar herstart niet"
+
+
+def _manifesten_met(tekst: str) -> list[Path]:
+    wortels = (REPO / "infrastructure/bootstrap", REPO / "bootstrap")
+    return [p for wortel in wortels for p in wortel.rglob("*.yaml") if tekst in p.read_text()]
+
+
+def _leest_secret_via_env(doc: dict, secret: str) -> bool:
+    containers = doc["spec"]["template"]["spec"].get("containers", [])
+    for container in containers:
+        for entry in container.get("env", []):
+            ref = (entry.get("valueFrom") or {}).get("secretKeyRef") or {}
+            if ref.get("name") == secret:
+                return True
+    return False
 
 
 def test_keycloak_db_hoort_bij_cnpg_en_herstart_keycloak() -> None:
@@ -468,7 +501,7 @@ def test_de_dekking_poort_rapporteert_precies_wat_mist(tmp_path: Path, monkeypat
 
 def test_de_bewuste_uitsluitingen_zijn_en_blijven_benoemd() -> None:
     assert set(rotate.NON_ROTATABLE) >= {"vault-init-secret.yaml"}
-    assert set(rotate.TEMPLATELESS) == {"transip", "grafana", "platform-repo-pat"}
+    assert set(rotate.TEMPLATELESS) == {"transip", "grafana", "platform-repo-pat", "argocd-admin"}
 
 
 # --- seeding: de overlay van een cluster kanoniek maken -----------------------------------
