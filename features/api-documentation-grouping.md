@@ -1,8 +1,9 @@
 # How the API documents itself
 
-The OpenAPI document at `/openapi.json` (rendered at `/docs`) is what an API client reads
-and what a generated client is built from. Three rules keep it readable; each one is held
-by a test, because all three run back silently.
+The OpenAPI document at `/openapi.json` is what an API client reads and what a generated
+client is built from. The document is public (required by `zad-cli`); the rendered views at
+`/docs` (Swagger UI) and `/redoc` (ReDoc) require SSO (RC-321). Three rules keep the
+document readable; each one is held by a test, because all three run back silently.
 
 ## One group per operation
 

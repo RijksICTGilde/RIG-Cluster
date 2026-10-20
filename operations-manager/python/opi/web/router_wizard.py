@@ -6,6 +6,7 @@ import contextlib
 import copy
 import html
 import logging
+import re
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from fastapi import APIRouter, HTTPException, Request
@@ -1222,6 +1223,12 @@ def _list_contains_item(items: list[Any], candidate: Any) -> bool:
 # Service help modal
 # ---------------------------------------------------------------------------
 
+#: De bestanden die een dienstpakket als uitleg mag aanleveren.
+HELP_BESTANDSNAMEN = ("help.md", "guide.md", "help.html.j2")
+
+#: De vorm van een helpverwijzing: geen ``.`` in de mapnaam, dus geen pad naar buiten.
+HELP_TEMPLATE_VORM = re.compile(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9_-]+\.(?:html\.j2|md)")
+
 
 @wizard_router.get("/help/{template_name:path}", response_model=None)
 @requires_sso
@@ -1240,13 +1247,16 @@ async def service_help(request: Request, template_name: str) -> HTMLResponse:
     * ``<name>.html.j2`` -- a help text that belongs to no single service (the
       container-image note), still under ``templates/help/``.
 
-    The directory segment deliberately disallows ``.``, so no combination of these can
-    walk out of the search path.
+    De bestandsnaam is een vaste lijst: Jinja kent elke template en zou zonder die
+    controle ook beheerschermen renderen.
     """
-    import re
-
-    if not re.fullmatch(r"(?:[a-zA-Z0-9_-]+/)?[a-zA-Z0-9._-]+\.(?:html\.j2|md)", template_name):
+    if not HELP_TEMPLATE_VORM.fullmatch(template_name):
         raise HTTPException(status_code=400, detail="Invalid template name")
+
+    dienstmap, _, bestandsnaam = template_name.rpartition("/")
+    hoort_hier = bestandsnaam in HELP_BESTANDSNAMEN if dienstmap else bestandsnaam.endswith(".html.j2")
+    if not hoort_hier:
+        raise HTTPException(status_code=404, detail="Help template not found")
 
     if is_markdown_help(template_name):
         try:

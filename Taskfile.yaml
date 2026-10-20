@@ -2152,7 +2152,7 @@ tasks:
         echo "  - PostgreSQL: localhost:5432 (opi/devpassword)"
         echo ""
         echo "To start the operations manager:"
-        echo "  cd operations-manager/python && uv run python -m opi"
+        echo "  cd operations-manager/python && ENVIRONMENT=local uv run python -m opi"
     silent: false
 
   dev-full:

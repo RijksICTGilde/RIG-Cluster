@@ -241,7 +241,7 @@ def print_boot_banner():
 OPERATIONS MANAGER STARTING UP
 {"=" * 80}
 Boot Time: {boot_time}
-Environment: {os.environ.get("ENVIRONMENT", "development")}
+Environment: {os.environ.get("ENVIRONMENT", "production")}
 Debug Mode: {os.environ.get("DEBUG", "false")}
 Git Monitoring: {os.environ.get("ENABLE_GIT_MONITOR", "false")}
 {"=" * 80}

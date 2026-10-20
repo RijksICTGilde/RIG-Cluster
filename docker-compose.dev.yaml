@@ -44,7 +44,7 @@ services:
         condition: service_healthy
     environment:
       # Application settings
-      - ENVIRONMENT=development
+      - ENVIRONMENT=local
       - DEBUG=true
       - DEBUG_MODE=reload
 

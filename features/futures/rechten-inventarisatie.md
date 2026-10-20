@@ -10,7 +10,7 @@ De routetellingen komen uit een AST-analyse van `operations-manager/python/opi/`
 
 Er is precies één route die zo niet gevonden wordt, omdat hij niet via een decorator maar via `web_router.add_api_route("/subdomains/check", ...)` wordt geregistreerd (`opi/web/router.py:120`, handler in `opi/web/router_self_service.py:49`). Handmatig toegevoegd komt het totaal op **158 routes**. Dat dit maar met de hand te vinden was, is zelf een bevinding: elke inventaris die op decorators steunt, mist per definitie wat buiten die conventie wordt geregistreerd, en een inventaris die per functie telt in plaats van per decorator mist bovendien de tweede en volgende route van een gestapelde decorator, zoals `/health` hierboven.
 
-Drie routes zitten niet in die 158 omdat FastAPI ze zelf toevoegt: `/docs`, `/redoc` en `/openapi.json` (`opi/server.py:320-322`).
+Drie routes zitten niet in die 158 omdat FastAPI ze zelf toevoegt of OPI afbijt: `/docs`, `/redoc` en `/openapi.json`. Sinds RC-321 zijn `/docs` en `/redoc` niet meer standaard routes; ze worden door `opi/server.py` met een `@requires_sso` guard geregistreerd. `/openapi.json` blijft publiek (vereist door `zad-cli`).
 
 Waar dit document een gedragsclaim doet die niet uit lezen alleen volgt, is die claim uitgevoerd. Dat staat er dan bij.
 
@@ -148,7 +148,7 @@ Optelling ter controle: 12 + 4 + 8 + 6 + 6 + 6 + 3 + 8 + 21 + 38 + 46 = 158. De 
 | 1 | Prometheus-metingen van OPI zelf ophalen | `GET /metrics` | geen | - | `opi/api/prometheus_router.py:23` |
 | 4 | Landingspagina, uitleg, architectuur, weigeringspagina lezen | `GET /`, `/about`, `/architecture`, `/permission-denied` | geen | - | `opi/web/router.py:65, 2598, 2610, 76` |
 | 1 | Doorverwijzing naar de wizard volgen | `GET /projects/new` | geen | - | `opi/web/router.py:114` |
-| 3 | De volledige API-beschrijving lezen | `GET /docs`, `/redoc`, `/openapi.json` | geen | - | `opi/server.py:320-322` |
+| 3 | De volledige API-beschrijving lezen | `GET /docs` (SSO), `/redoc` (SSO), `/openapi.json` (publiek) | geen (SSO gebruiken sessiecookie, niet aparte poort) | - | `opi/server.py`: `/docs` en `/redoc` zijn met `@requires_sso` beveiligd sinds RC-321; `/openapi.json` is niet van routing, blijft publiek |
 
 ### 6.2 Object: sessie en identiteit
 

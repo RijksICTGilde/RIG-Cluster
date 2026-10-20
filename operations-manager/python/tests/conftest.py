@@ -12,6 +12,10 @@ import os
 # tests en in CI en niet in de productie-image.
 os.environ.setdefault("LOTC_STRICT", "1")
 
+# ENVIRONMENT valt zonder instelling terug op "production", en dan registreert create_app
+# de proef- en testroutes niet. De tests meten die routes, dus hier expliciet "local".
+os.environ.setdefault("ENVIRONMENT", "local")
+
 import time
 from datetime import UTC, datetime
 from functools import partial

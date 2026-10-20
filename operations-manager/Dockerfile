@@ -168,7 +168,6 @@ USER appuser
 
 # Expose ports
 EXPOSE 8000
-EXPOSE 5678
 
 # Use tini as PID 1 to properly reap zombie child processes
 ENTRYPOINT ["tini", "--"]

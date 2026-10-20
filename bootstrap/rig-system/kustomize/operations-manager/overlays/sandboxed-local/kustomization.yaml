@@ -27,3 +27,7 @@ patches:
   #   target:
   #     kind: Deployment
   #     name: operations-manager
+  # - path: patches/enable-debug-service.yaml
+  #   target:
+  #     kind: Service
+  #     name: operations-manager
