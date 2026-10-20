@@ -38,6 +38,10 @@ andere workflows, waardoor `ci.yml` niet op de Renovate-PR's zou draaien.
 
 Een nieuwe meting doe je met een dry-run, zie onderaan.
 
+De actions staan op een commit-SHA met de versie als commentaar erachter
+(`uses: actions/checkout@11d5960... # v4`). Renovate leest dat commentaar als de huidige
+versie en schrijft bij een update zowel de SHA als het commentaar mee.
+
 ## Hoe een update binnenkomt
 
 Patch en minor komen gegroepeerd per ecosysteem: een eigen PR voor python, go, maven,
