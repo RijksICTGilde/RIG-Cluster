@@ -439,6 +439,7 @@ class TaskWorker:
             try:
                 deleted = await self._task_service.cleanup_old_tasks(
                     retention_hours=settings.TASK_WORKER_CLEANUP_RETENTION_HOURS,
+                    header_retention_days=settings.TASK_WORKER_HEADER_RETENTION_DAYS,
                 )
                 if deleted > 0:
                     logger.info("Cleaned up %d old tasks", deleted)

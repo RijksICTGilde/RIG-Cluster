@@ -41,24 +41,9 @@
                 </c-table-head>
                 {% for item in items %}
                     <c-table-row>
-                        {# De cel Soort is de INGANG naar de voortgang van die ene taak:
-                           /projects/progress/<id> toont de balk, de huidige stap, de
-                           subtaken en de fouten per component. Die pagina bestond al maar
-                           was alleen bereikbaar direct na het aanmaken van een project.
-
-                           Twee voorwaarden, en allebei om een eigen reden.
-
-                           item.task_id: alleen een achtergrondTAAK heeft een
-                           voortgangspagina. Deze tabel toont twee bronnen door elkaar, en
-                           een run (databaseconsole, job) heeft er geen; _normalize_run zet
-                           task_id daarom expliciet op None.
-
-                           item.active: alleen een taak die nog LOOPT. Een afgeronde taak
-                           wordt opgeruimd, en dan wijst de link naar een pagina die "Taak
-                           niet beschikbaar" zegt - een dode link die er levend uitziet.
-                           Hier stond eerst dat juist een mislukte taak een link verdiende
-                           ("daar staat wat er misging"), maar dat gaat alleen op zolang hij
-                           er nog is. #}
+                        {# De cel Soort is de ingang naar /projects/progress/<id>. item.task_id
+                           voor achtergrondtaken (runs hebben geen id), item.active omdat de
+                           werkgegevens van afgeronde taken na een uur leeggemaakt worden (RC-282). #}
                         <c-td>
                             {% if item.task_id and item.active %}
                                 <c-link href="/projects/progress/{{ item.task_id }}">{{ item.soort }}</c-link>

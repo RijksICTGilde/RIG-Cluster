@@ -585,7 +585,7 @@ def task_response_from_dict(task: dict) -> dict:
         "task_type": task.get("task_type", ""),
         "status": task.get("status", ""),
         "progress_percent": task.get("progress_percent", 0),
-        "current_step": _waiting_step(waiting_for) or task.get("current_step", ""),
+        "current_step": _waiting_step(waiting_for) or task.get("current_step") or "",
         "subtasks": task.get("subtasks"),
         "result": _with_error_category(task.get("result")),
         "error_message": task.get("error_message"),

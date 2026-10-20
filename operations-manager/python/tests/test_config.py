@@ -8,6 +8,7 @@ import logging
 from unittest.mock import mock_open, patch
 
 from opi.core.config import (
+    Settings,
     _check_env_file_for_environment_var,
     _get_env_files,
     parse_sops_age_key_content,
@@ -190,3 +191,13 @@ class TestParseSopsAgeKeyContent:
         public, private = parse_sops_age_key_content(content)
         assert public == "age1abc123"
         assert private == "AGE-SECRET-KEY-1ABCDEF"
+
+
+class TestTaskCleanupRetentionWindows:
+    """RC-282: de kop blijft 90 dagen, de werkgegevens volgens het korte venster."""
+
+    def test_defaults_without_environment(self):
+        settings = Settings()
+
+        assert settings.TASK_WORKER_CLEANUP_RETENTION_HOURS == 1
+        assert settings.TASK_WORKER_HEADER_RETENTION_DAYS == 90

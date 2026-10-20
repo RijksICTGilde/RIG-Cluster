@@ -791,28 +791,63 @@ class AsyncTaskService:
             ),
         }
 
-    async def cleanup_old_tasks(self, retention_hours: int = 168) -> int:
-        """Delete old completed/failed/cancelled tasks beyond the retention period.
+    async def cleanup_old_tasks(self, retention_hours: int = 168, header_retention_days: int = 90) -> int:
+        """Twee vensters over een taak in een eindtoestand: eerst de werkgegevens leeg,
+        daarna de rij weg.
 
-        A deferred rollout that has not been rolled out yet is kept regardless of age: it
-        is the only record that the project file runs ahead of the cluster, and drift that
-        disappears after a week is exactly the silent drift this is meant to surface.
+        De kop (wie, wat, waar, wanneer, uitkomst) is vandaag de enige persistente
+        vastlegging van een projectwijziging en blijft ``header_retention_days`` staan. De
+        werkgegevens (``payload``, ``logs``, ``subtasks``, ``events``, ``result``,
+        ``error_message``, ``current_step``) kunnen groot zijn en invoer bevatten die niet
+        lang bewaard hoeft te worden, en gaan na ``retention_hours`` leeg. ``current_step``
+        hoort daarbij omdat de voortgangsschrijvers er vrije tekst in zetten.
+        ``details_purged_at`` houdt bij dat dat gebeurd is, zodat de lus dezelfde rijen
+        niet elk uur herschrijft.
+
+        A deferred rollout that has not been rolled out yet is kept whole regardless of
+        age: it is the only record that the project file runs ahead of the cluster, and
+        drift that disappears after a week is exactly the silent drift this is meant to
+        surface. Ook de werkgegevens blijven, want wat zo'n taak uitgesteld maakt staat in
+        zijn ``payload``: leegmaken zou hem even goed laten verdwijnen als verwijderen.
 
         Returns:
             The number of tasks deleted.
         """
-        # make_interval positional args: (years, months, weeks, days, hours, ...).
-        cutoff = func.now() - func.make_interval(0, 0, 0, 0, retention_hours)
+        keep_deferred = ~(_deferred() & _not_yet_reconciled())
         async with session_scope() as session:
-            result = await session.execute(
-                delete(AsyncTask).where(
+            # make_interval positional args: (years, months, weeks, days, hours, ...).
+            purged = await session.execute(
+                update(AsyncTask)
+                .where(
                     AsyncTask.status.in_(_TERMINAL_STATES),
-                    AsyncTask.completed_at < cutoff,
-                    ~(_deferred() & _not_yet_reconciled()),
+                    AsyncTask.completed_at < func.now() - func.make_interval(0, 0, 0, 0, retention_hours),
+                    AsyncTask.details_purged_at.is_(None),
+                    keep_deferred,
+                )
+                .values(
+                    payload={},
+                    logs=None,
+                    subtasks=[],
+                    events=None,
+                    result=None,
+                    error_message=None,
+                    current_step=None,
+                    details_purged_at=func.now(),
                 )
             )
-            deleted_count = result.rowcount
+            purged_count = purged.rowcount
 
+            deleted = await session.execute(
+                delete(AsyncTask).where(
+                    AsyncTask.status.in_(_TERMINAL_STATES),
+                    AsyncTask.completed_at < func.now() - func.make_interval(0, 0, 0, header_retention_days),
+                    keep_deferred,
+                )
+            )
+            deleted_count = deleted.rowcount
+
+        if purged_count > 0:
+            logger.info("Purged details of %d tasks (retention=%dh)", purged_count, retention_hours)
         if deleted_count > 0:
-            logger.info("Cleaned up %d old tasks (retention=%dh)", deleted_count, retention_hours)
+            logger.info("Cleaned up %d old tasks (retention=%dd)", deleted_count, header_retention_days)
         return deleted_count

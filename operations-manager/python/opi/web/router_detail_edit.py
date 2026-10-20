@@ -1692,7 +1692,10 @@ async def modal_wizard_progress_html(request: Request, project_name: str, task_i
     from opi.web.router import _require_task_of_project, _v2_task_to_template_context
 
     task_service = get_task_service(request)
+    # Dezelfde schermung als de andere voortgangsfragmenten (RC-29): de taak moet van dit
+    # project zijn, en de lezer moet er toegang toe hebben of hem zelf gestart hebben.
     task = await _require_task_of_project(request, task_service, project_name, task_id)
+
     if task is None:
         return HTMLResponse(content="<p>Taak niet gevonden</p>", status_code=404)
 

@@ -3007,14 +3007,22 @@ def _v2_task_to_template_context(task: dict, project_name: str) -> dict:
             if not error:
                 error = processing.get("error")
 
+    details_purged = bool(task.get("details_purged_at"))
+
     return {
         "progress": task.get("progress_percent", 0),
-        "current_step": stap_label(task.get("current_step")) or "Verwerking gestart...",
+        # Een leeggemaakte taak heeft geen stapregel meer; "Verwerking gestart..." zou die
+        # dan als lopend tonen.
+        "current_step": stap_label(task.get("current_step"))
+        or ("Details niet meer beschikbaar" if details_purged else "Verwerking gestart..."),
         "tasks": task_hierarchy,
         "status": template_status,
         "error": error,
         "component_failures": component_failures,
         "project_name": project_name,
+        # De werkgegevens van een afgeronde taak gaan na een uur leeg (RC-282), dus
+        # geen stappen/logboek meer te tonen zonder deze vlag.
+        "details_purged": details_purged,
     }
 
 

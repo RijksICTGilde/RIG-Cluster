@@ -387,7 +387,7 @@ async def test_cleanup_old_tasks(orm_db):
             .where(AsyncTask.id == uuid.UUID(created["task_id"]))
             .values(completed_at=func.now() - func.make_interval(0, 0, 0, 0, 200))
         )
-    deleted = await svc.cleanup_old_tasks(retention_hours=168)
+    deleted = await svc.cleanup_old_tasks(retention_hours=168, header_retention_days=7)
     assert deleted == 1
     assert await svc.get_task(created["task_id"]) is None
 
@@ -689,7 +689,7 @@ async def test_cleanup_keeps_a_deferred_rollout_that_was_never_rolled_out(orm_db
     row = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
     await _age(row["task_id"], 200)
 
-    assert await svc.cleanup_old_tasks(retention_hours=168) == 0
+    assert await svc.cleanup_old_tasks(retention_hours=168, header_retention_days=7) == 0
     assert (await svc.get_deferred_rollouts("p1"))["count"] == 1
 
 
@@ -699,7 +699,7 @@ async def test_cleanup_removes_a_deferred_rollout_once_it_was_reconciled(orm_db)
     await _age(deferred["task_id"], 200)
     await record_reconciliation("p1", [], project_wide=True, read_seconds_ago=0)
 
-    assert await svc.cleanup_old_tasks(retention_hours=168) == 1
+    assert await svc.cleanup_old_tasks(retention_hours=168, header_retention_days=7) == 1
 
 
 async def test_cleanup_keeps_a_deferred_rollout_whose_deployment_was_not_reconciled(orm_db):
@@ -710,5 +710,101 @@ async def test_cleanup_keeps_a_deferred_rollout_whose_deployment_was_not_reconci
     await _age(cleared["task_id"], 200)
     await record_reconciliation("p1", ["d1"], project_wide=False, read_seconds_ago=0)
 
-    assert await svc.cleanup_old_tasks(retention_hours=168) == 1
+    assert await svc.cleanup_old_tasks(retention_hours=168, header_retention_days=7) == 1
     assert await svc.get_task(kept["task_id"]) is not None
+
+
+# ---------------------------------------------------------------------------
+# Twee vensters (RC-282): de kop van een afgeronde taak blijft, zijn werkgegevens niet.
+# ---------------------------------------------------------------------------
+
+
+async def test_cleanup_empties_the_work_data_and_keeps_the_header(orm_db):
+    """Wie de wijziging startte moet na het korte venster nog te lezen zijn."""
+    svc = _svc()
+    created = await svc.create_task(
+        task_type="update_image",
+        project_name="p1",
+        deployment_name="d1",
+        cluster="c1",
+        payload={"image": "nginx:1"},
+        created_by="iemand@rijksoverheid.nl",
+    )
+    await svc.update_progress(
+        created["task_id"], subtasks=[{"id": "a", "name": "stap"}], logs=["regel"], events=[{"e": 1}]
+    )
+    await svc.complete_task(created["task_id"], result={"status": "succeeded"})
+    await _age(created["task_id"], 2)
+
+    assert await svc.cleanup_old_tasks(retention_hours=1, header_retention_days=90) == 0
+
+    task = await svc.get_task(created["task_id"])
+    assert task is not None
+    assert task["task_type"] == "update_image"
+    assert task["project_name"] == "p1"
+    assert task["deployment_name"] == "d1"
+    assert task["cluster"] == "c1"
+    assert task["created_by"] == "iemand@rijksoverheid.nl"
+    assert task["status"] == "completed"
+    assert task["completed_at"]
+    assert task["payload"] == {}
+    assert task["logs"] is None
+    assert task["subtasks"] == []
+    assert task["events"] is None
+    assert task["result"] is None
+    assert task["current_step"] is None
+    assert task["details_purged_at"]
+
+    # Tweede ronde: de markering houdt dezelfde rij buiten de pas, dus hij wordt niet
+    # elk uur opnieuw herschreven.
+    purged_at = task["details_purged_at"]
+    assert await svc.cleanup_old_tasks(retention_hours=1, header_retention_days=90) == 0
+    assert (await svc.get_task(created["task_id"]))["details_purged_at"] == purged_at
+
+
+async def test_cleanup_empties_the_error_message_of_a_failed_task(orm_db):
+    """De fouttekst is de exceptie van de handler en kan dus zijn invoer dragen.
+
+    Wat de kop over de uitkomst zegt is ``status``, en die blijft.
+    """
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(
+        created["task_id"],
+        error_message="restore naar postgres://u:geheim@db.extern/zad mislukt",
+        attempt_count=3,
+        max_attempts=3,
+    )
+    await _age(created["task_id"], 2)
+
+    assert await svc.cleanup_old_tasks(retention_hours=1, header_retention_days=90) == 0
+
+    task = await svc.get_task(created["task_id"])
+    assert task["status"] == "failed"
+    assert task["error_message"] is None
+    assert task["payload"] == {}
+    # fail_project zet dezelfde tekst ook in current_step, dus die hoort mee leeg.
+    assert task["current_step"] is None
+
+
+async def test_cleanup_deletes_the_header_after_the_long_window(orm_db):
+    svc = _svc()
+    created = await _completed(svc, project="p1", task_type="upsert_deployment", payload={"image": "nginx:1"})
+    await _age(created["task_id"], 91 * 24)
+
+    assert await svc.cleanup_old_tasks(retention_hours=1, header_retention_days=90) == 1
+    assert await svc.get_task(created["task_id"]) is None
+
+
+async def test_cleanup_keeps_the_work_data_of_a_deferred_rollout(orm_db):
+    """Wat een taak uitgesteld maakt staat in zijn payload, dus die blijft ook heel."""
+    svc = _svc()
+    row = await _completed(svc, project="p1", task_type="add_component", payload={"name": "web", "rollout": False})
+    await _age(row["task_id"], 91 * 24)
+
+    assert await svc.cleanup_old_tasks(retention_hours=1, header_retention_days=90) == 0
+
+    task = await svc.get_task(row["task_id"])
+    assert task["payload"] == {"name": "web", "rollout": False}
+    assert task["details_purged_at"] is None
+    assert (await svc.get_deferred_rollouts("p1"))["count"] == 1

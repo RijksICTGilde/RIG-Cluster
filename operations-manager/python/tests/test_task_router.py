@@ -679,3 +679,66 @@ class TestTaskServiceUnavailable:
         response = test_client_without_task_service.post(f"/api/tasks/{SAMPLE_TASK_ID}/:cancel")
 
         assert response.status_code == 503
+
+
+class TestOpgeruimdeWerkgegevens:
+    """Een taak waarvan de werkgegevens zijn leeggemaakt (RC-282).
+
+    De kop blijft 90 dagen staan, de werkgegevens gaan na een uur leeg. Het antwoord houdt
+    dus dezelfde sleutels, met niets erin.
+    """
+
+    def test_get_task_geeft_200_met_de_kop_en_lege_werkgegevens(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        task = _make_task(
+            status="completed",
+            progress_percent=100,
+            current_step="Done",
+            completed_at="2026-03-01T10:05:00+00:00",
+            subtasks=None,
+            result=None,
+            created_by="iemand@rijksoverheid.nl",
+        )
+        task["details_purged_at"] = "2026-03-01T11:05:00+00:00"
+        # De leegmaakpas zet ook de stapregel op NULL; het contract zegt daar een string.
+        task["current_step"] = None
+        mock_task_service.get_task.return_value = task
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == SAMPLE_TASK_ID
+        assert data["task_type"] == "upsert_deployment"
+        assert data["status"] == "completed"
+        assert data["completed_at"] == "2026-03-01T10:05:00+00:00"
+        assert data["current_step"] == ""
+        # Dezelfde sleutels als bij een verse taak, zodat een client niets extra hoeft te
+        # controleren.
+        for sleutel in ("subtasks", "result", "superseded_by", "error_message"):
+            assert sleutel in data, sleutel
+            assert data[sleutel] is None, sleutel
+
+    def test_een_mislukte_taak_houdt_zijn_foutregel_tot_de_opruiming(
+        self,
+        test_client_with_task_service: TestClient,
+        mock_task_service: AsyncMock,
+    ) -> None:
+        """De fouttekst gaat met de werkgegevens mee, dus zolang die er zijn is hij er ook."""
+        task = _make_task(
+            status="failed",
+            completed_at="2026-03-01T10:05:00+00:00",
+            result=None,
+            error_message="Keycloak gaf 500",
+        )
+        mock_task_service.get_task.return_value = task
+
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_with_task_service.get(f"/api/tasks/{SAMPLE_TASK_ID}", headers=AUTH_HEADERS)
+
+        assert response.status_code == 200
+        assert response.json()["error_message"] == "Keycloak gaf 500"
