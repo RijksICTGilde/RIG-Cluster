@@ -37,7 +37,7 @@ CONFIG_HASH_IGNORE_LABEL_VALUE = "ignore"
 logger = logging.getLogger(__name__)
 
 
-def yaml_scalar(value: str) -> str:
+def yaml_scalar(value: object) -> str:
     """Render ``value`` as a YAML double-quoted scalar that survives a round-trip.
 
     Tenant values reach a Secret manifest verbatim, so the quoting has to hold for
@@ -47,7 +47,17 @@ def yaml_scalar(value: str) -> str:
     fixes the backslash but writes an astral character as a surrogate pair, which
     SOPS rejects with "found invalid Unicode character escape code". Letting the
     YAML emitter do it escapes exactly what YAML requires and nothing else.
+
+    Alleen een ``str``. Een niet-string hier is een sjabloonfout: elke optionele waarde
+    staat in een ``{% if %}``, dus een ``None`` of een ontbrekende variabele betekent dat
+    die guard mist. De emitter maakt er anders ``!!null "null"`` of ``!!int "5"`` van, en
+    dat belandt ongemerkt in een manifest.
     """
+    if not isinstance(value, str):
+        raise TypeError(
+            f"yaml_scalar verwacht een str, kreeg {type(value).__name__}. Een ontbrekende of "
+            "optionele sjabloonvariabele hoort achter een if-blok, niet door dit filter."
+        )
     emitter = YAML(typ="safe", pure=True)
     emitter.default_style = '"'
     emitter.allow_unicode = True

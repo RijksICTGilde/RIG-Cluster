@@ -1046,6 +1046,16 @@ takes it from the previous ciphertext (auth-wall's cookie secret, see
 Rendered output is byte-locked by `tests/test_golden_manifests.py`. An intentional change is
 regenerated with `UPDATE_GOLDEN=1`, and the diff is part of the review.
 
+**Elke waarde uit het projectbestand of een service-config gaat door `| yaml_scalar`**
+(`opi/generation/manifests.py`) of `| tojson`: zonder dit kunnen regeleinden en aanhalingstekens
+een sleutel of een tweede YAML-document injecteren. `tests/test_template_injection_sweep.py`
+dwingt dit af; een nieuw sjabloon dat niet in die test staat faalt. Waarden die OPI zelf
+genereert hoeven dit niet.
+
+`yaml_scalar` weigert non-string-waarden. Een optionele waarde hoort dus altijd achter
+`{% if %}` (bijvoorbeeld `source_pvc_name` in `pvc.yaml.jinja`), anders geeft `None` een
+`TypeError` in plaats van `!!null`.
+
 ### Deployment-wide manifests
 
 `contribute_manifest_context` runs once per component. For a resource that belongs to the

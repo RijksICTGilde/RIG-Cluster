@@ -709,29 +709,34 @@ class TestRenderRealTemplates:
         assert doc["metadata"]["annotations"]["argocd.argoproj.io/sync-options"] == "Replace=true"
 
     def test_generic_secret_empty_value(self):
-        """Empty string values need special quoting to avoid YAML null."""
+        """An empty string stays an empty string instead of becoming YAML null."""
+        pairs = {"key": ""}
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",
-            {
-                "name": "s",
-                "namespace": "ns",
-                "secret_pairs": {"key": ""},
-            },
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
         )
-        assert 'key: ""' in result
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
 
     def test_generic_secret_multiline_value(self):
-        """Multiline values should use YAML literal block scalar."""
-        cert = "-----BEGIN CERT-----\nABC123\n-----END CERT-----"
+        """A multiline value comes back byte-identical, trailing newline or not.
+
+        No longer a literal block scalar: that form needs one fixed chomping indicator,
+        and whichever one it picks gives some values a trailing newline they never had.
+        """
+        pairs = {
+            "cert": "-----BEGIN CERT-----\nABC123\n-----END CERT-----",
+            "trailing_newline": "regel1\nregel2\n",
+            "leading_space": "  regel1\nregel2",
+        }
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",
-            {
-                "name": "s",
-                "namespace": "ns",
-                "secret_pairs": {"cert": cert},
-            },
+            {"name": "s", "namespace": "ns", "secret_pairs": pairs},
         )
-        assert "cert: |" in result
+        yaml = YAML()
+        doc = yaml.load(result)
+        assert doc["stringData"] == pairs
 
     def test_generic_secret_backslash_value(self):
         """Values with a backslash (passwords, connection strings) must be
@@ -752,9 +757,9 @@ class TestRenderRealTemplates:
         assert doc["stringData"] == pairs
 
     def test_generic_secret_carriage_return_value(self):
-        """A lone carriage return does not hit the block-scalar branch, and inside a
-        quoted scalar YAML folds it into a space. Unescaped it fails silently: the pod
-        gets a different value than the user typed, with nothing in the log."""
+        """Inside a quoted scalar YAML folds a lone carriage return into a space.
+        Unescaped it fails silently: the pod gets a different value than the user
+        typed, with nothing in the log."""
         pairs = {"folded": "regel1\rregel2", "trailing": "eind\r"}
         result = render_template(
             "generic-secret.yaml.to-sops.jinja",

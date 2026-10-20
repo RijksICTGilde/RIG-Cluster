@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from opi.generation.manifests import render_template
 from opi.handlers.project_file_handler import (
     USAGE_CERTIFICATE,
     ProjectFileHandler,
@@ -36,8 +36,6 @@ from opi.services.registry import (
     get_service,
 )
 from opi.services.services_enums import ServiceType
-
-_ENV = Environment(loader=FileSystemLoader("manifests"))
 
 #: Attachment content is AGE-encrypted in the file; the guard checks the envelope.
 _AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nx\n-----END AGE ENCRYPTED FILE-----"
@@ -220,7 +218,7 @@ def test_own_certificate_on_production_and_platform_on_staging() -> None:
             "issuer_name": None,
             "cluster_issuer": None,
         }
-        return _ENV.get_template("ingress.yaml.jinja").render({**base, **extra})
+        return render_template("ingress.yaml.jinja", {**base, **extra})
 
     # production: the customer's own secret, and no platform issuance for it
     productie = render(provided_tls_secret="productie-web-provided-tls")
@@ -229,7 +227,7 @@ def test_own_certificate_on_production_and_platform_on_staging() -> None:
 
     # staging: unchanged -- the platform issues, as it did before the override existed
     staging = render(cluster_issuer="letsencrypt-prod")
-    assert "cert-manager.io/cluster-issuer: letsencrypt-prod" in staging
+    assert 'cert-manager.io/cluster-issuer: "letsencrypt-prod"' in staging
     assert "provided-tls" not in staging
 
 

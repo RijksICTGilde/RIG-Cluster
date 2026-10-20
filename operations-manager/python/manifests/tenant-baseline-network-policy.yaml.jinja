@@ -1,8 +1,8 @@
 kind: NetworkPolicy
 apiVersion: networking.k8s.io/v1
 metadata:
-  name: "{{ name }}"
-  namespace: "{{ namespace }}"
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
 spec:
   # Per-deployment policy: selects only pods of this deployment so that
   # multiple deployments in the same project namespace stay isolated from
@@ -16,7 +16,7 @@ spec:
 {% if deployment_selector %}
   podSelector:
     matchLabels:
-      deployment: "{{ deployment_selector }}"
+      deployment: {{ deployment_selector | yaml_scalar }}
 {% else %}
   # No deployment selector: apply to every pod in the namespace. Used for
   # the project infrastructure namespace (CNPG cluster) where there is no
@@ -32,7 +32,7 @@ spec:
     - from:
         - podSelector:
             matchLabels:
-              deployment: "{{ deployment_selector }}"
+              deployment: {{ deployment_selector | yaml_scalar }}
 {% else %}
     - from:
         - podSelector: {}
@@ -78,7 +78,7 @@ spec:
 {% for ns in allowed_ingress_namespaces %}
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: "{{ ns }}"
+              kubernetes.io/metadata.name: {{ ns | yaml_scalar }}
 {% endfor %}
 {% endif %}
   egress:
@@ -98,7 +98,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              deployment: "{{ deployment_selector }}"
+              deployment: {{ deployment_selector | yaml_scalar }}
 {% else %}
     - to:
         - podSelector: {}
@@ -118,7 +118,7 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: "{{ project_infra_namespace }}"
+              kubernetes.io/metadata.name: {{ project_infra_namespace | yaml_scalar }}
 {% endif %}
     # Internet egress (HTTP/HTTPS) zodat tenant-apps externe APIs kunnen aanroepen.
     # Beide adresfamilies: het cluster is dual-stack, dus een pod krijgt naast zijn

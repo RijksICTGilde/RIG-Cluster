@@ -1,8 +1,8 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: {{ project_name }}-db
-  namespace: {{ infrastructure_namespace }}
+  name: {{ (project_name ~ "-db") | yaml_scalar }}
+  namespace: {{ infrastructure_namespace | yaml_scalar }}
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
@@ -16,7 +16,7 @@ spec:
   enablePDB: false
   {% endif %}
 
-  imageName: {{ database_config.image }}
+  imageName: {{ database_config.image | yaml_scalar }}
   {% if imagePullSecretsMap and database_config.image in imagePullSecretsMap %}
   # yaml_scalar: dezelfde secretnaam als in deployment.yaml.jinja, hier via de sleutel
   # 'registry' in de config van namespace-postgresql-database. Zie daar.
@@ -28,21 +28,21 @@ spec:
 
   # Use custom superuser password
   superuserSecret:
-    name: {{ project_name }}-postgres-superuser
+    name: {{ (project_name ~ "-postgres-superuser") | yaml_scalar }}
 
   # Storage configuration
   storage:
-    size: {{ database_config.storage }}
+    size: {{ database_config.storage | yaml_scalar }}
     storageClass: {{ storage_class }}
 
   # Resource limits
   resources:
     requests:
-      memory: {{ database_config.resources.requests.memory }}
-      cpu: {{ database_config.resources.requests.cpu }}
+      memory: {{ database_config.resources.requests.memory | yaml_scalar }}
+      cpu: {{ database_config.resources.requests.cpu | yaml_scalar }}
     limits:
-      memory: {{ database_config.resources.limits.memory }}
-      cpu: {{ database_config.resources.limits.cpu }}
+      memory: {{ database_config.resources.limits.memory | yaml_scalar }}
+      cpu: {{ database_config.resources.limits.cpu | yaml_scalar }}
 
   # Bootstrap initial database
   bootstrap:
@@ -50,12 +50,12 @@ spec:
       database: postgres
       owner: postgres
       secret:
-        name: {{ project_name }}-postgres-superuser
+        name: {{ (project_name ~ "-postgres-superuser") | yaml_scalar }}
       postInitApplicationSQL:
         - CREATE EXTENSION IF NOT EXISTS vector;
 {% if database_config.postInitSQL %}
 {% for sql in database_config.postInitSQL %}
-        - {{ sql }}
+        - {{ sql | yaml_scalar }}
 {% endfor %}
 {% endif %}
 

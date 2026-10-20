@@ -18,7 +18,7 @@ from opi.core.config import settings
 from opi.generation.manifests import ManifestGenerator, _gecompileerd, _omgeving, render_template
 
 _SJABLOON = "namespace.yaml.jinja"
-_WAARDEN = {"name": "rig-demo", "project_name": "demo", "deployment_name": "productie"}
+_WAARDEN = {"namespace": "rig-demo", "project_name": "demo", "deployment_name": "productie"}
 
 
 @pytest.fixture(autouse=True)

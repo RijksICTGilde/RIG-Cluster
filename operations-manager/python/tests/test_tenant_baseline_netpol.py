@@ -286,9 +286,24 @@ class TestDeploymentLabelOnPods:
     """
 
     def test_deployment_template_carries_deployment_label(self):
-        with open(os.path.join(MANIFESTS_DIR, "deployment.yaml.jinja")) as f:
-            source = f.read()
-        assert 'deployment: "{{ deployment_name }}"' in source, (
+        """Op het gerenderde manifest, niet op de sjabloontekst: de labelwaarde gaat
+        door een filter, dus de letterlijke vorm in het sjabloon zegt niets meer."""
+        rendered = render_template(
+            "deployment.yaml.jinja",
+            {
+                "name": "myapp-web",
+                "deployment_name": "myapp",
+                "namespace": "rig-myproject",
+                "project": {"name": "myproject"},
+                "cluster": "sandboxed-local",
+                "pod_replacement_mode": "RollingUpdate",
+                "application_port": 8080,
+                "imageURL": "ghcr.io/org/web:1",
+                "imagePullPolicy": "IfNotPresent",
+            },
+        )
+        pod_labels = YAML().load(rendered)["spec"]["template"]["metadata"]["labels"]
+        assert pod_labels["deployment"] == "myapp", (
             "pod template metadata must include a `deployment` label so the NetworkPolicy selector matches"
         )
 
