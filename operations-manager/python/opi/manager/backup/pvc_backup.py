@@ -518,8 +518,9 @@ class PVCBackupManager(BaseBackupManager):
         """
         List available Kopia snapshots for a namespace/PVC.
 
-        Uses the Kopia CLI directly to query the repository, which is much faster
-        than spawning a Kubernetes pod.
+        Returns [] when the repository cannot be reached, which is what the backup and
+        restore screens have always shown. A caller that has to tell "could not look"
+        from "nothing there" uses list_snapshots_or_raise.
 
         Args:
             cluster: Cluster name
@@ -530,7 +531,36 @@ class PVCBackupManager(BaseBackupManager):
         Returns:
             List of available snapshots
         """
-        from opi.connectors.kopia import KopiaConnector, KopiaRepositoryConfig
+        try:
+            return await self.list_snapshots_or_raise(cluster, namespace, pvc_name, project_name)
+        # Broad on purpose: this is the existing contract of the read path, which swallowed
+        # every failure into an empty list.
+        except Exception as e:
+            logger.warning(f"Failed to list snapshots via Kopia CLI: {e}")
+            return []
+
+    async def list_snapshots_or_raise(
+        self,
+        cluster: str,
+        namespace: str,
+        pvc_name: str | None = None,
+        project_name: str | None = None,
+    ) -> list[SnapshotInfo]:
+        """
+        List available Kopia snapshots for a namespace/PVC, failing loudly.
+
+        Uses the Kopia CLI directly to query the repository, which is much faster
+        than spawning a Kubernetes pod.
+
+        Returns [] only when the repository is reachable and holds no matching snapshot.
+
+        Raises:
+            KopiaConnectionError: Kopia is unavailable or the repository unreachable
+            KopiaExecutionError: the listing itself failed
+        """
+        # Local: opi.connectors.kopia imports from this package, so a module-level import
+        # is circular.
+        from opi.connectors.kopia import KopiaConnectionError, KopiaConnector, KopiaRepositoryConfig
 
         backup_prefix = generate_backup_prefix(cluster, namespace)
         kopia_password = await self._derive_backup_key(namespace)
@@ -540,8 +570,7 @@ class PVCBackupManager(BaseBackupManager):
         kopia = KopiaConnector()
 
         if not KopiaConnector.is_kopia_available:
-            logger.warning("Kopia CLI not available, cannot list snapshots")
-            return []
+            raise KopiaConnectionError("Kopia CLI not available, cannot list snapshots")
 
         repo_config = KopiaRepositoryConfig(
             s3_endpoint=self.config.s3_endpoint,
@@ -553,51 +582,46 @@ class PVCBackupManager(BaseBackupManager):
             use_tls=self.config.s3_use_tls,
         )
 
-        try:
-            kopia_snapshots = await kopia.list_snapshots(repo_config)
+        kopia_snapshots = await kopia.list_snapshots(repo_config)
 
-            # Convert to SnapshotInfo format and optionally filter by PVC name
-            snapshots: list[SnapshotInfo] = []
-            for ks in kopia_snapshots:
-                # Both read endpoints (backup runs and the snapshot listing) end up here,
-                # so this is the one place that decides which name a caller gets to see.
-                # It has to be the name the restore route accepts -- see restore_reference.
-                snapshot_pvc_name = ks.restore_reference
+        # Convert to SnapshotInfo format and optionally filter by PVC name
+        snapshots: list[SnapshotInfo] = []
+        for ks in kopia_snapshots:
+            # Both read endpoints (backup runs and the snapshot listing) end up here,
+            # so this is the one place that decides which name a caller gets to see.
+            # It has to be the name the restore route accepts -- see restore_reference.
+            snapshot_pvc_name = ks.restore_reference
 
-                # Apply filter if specified
-                if pvc_name and snapshot_pvc_name != pvc_name:
-                    continue
+            # Apply filter if specified
+            if pvc_name and snapshot_pvc_name != pvc_name:
+                continue
 
-                snapshots.append(
-                    SnapshotInfo(
-                        snapshot_id=ks.snapshot_id,
-                        pvc_name=snapshot_pvc_name,
-                        timestamp=ks.timestamp,
-                        size_bytes=ks.size_bytes,
-                        # Extended metadata from Kopia tags
-                        cluster=ks.cluster,
-                        namespace=ks.namespace,
-                        project_name=ks.project_name,
-                        deployment_name=ks.deployment_name,
-                        component_name=ks.component_name,
-                        storage_name=ks.storage_name,
-                        generation=ks.generation,
-                        backup_run_id=ks.backup_run_id,
-                        resource_type=ks.resource_type,
-                        trigger=ks.trigger,
-                        source_user=ks.source_user,
-                        source_host=ks.source_host,
-                        # Raw tags for debugging
-                        tags=ks.tags,
-                    )
+            snapshots.append(
+                SnapshotInfo(
+                    snapshot_id=ks.snapshot_id,
+                    pvc_name=snapshot_pvc_name,
+                    timestamp=ks.timestamp,
+                    size_bytes=ks.size_bytes,
+                    # Extended metadata from Kopia tags
+                    cluster=ks.cluster,
+                    namespace=ks.namespace,
+                    project_name=ks.project_name,
+                    deployment_name=ks.deployment_name,
+                    component_name=ks.component_name,
+                    storage_name=ks.storage_name,
+                    generation=ks.generation,
+                    backup_run_id=ks.backup_run_id,
+                    resource_type=ks.resource_type,
+                    trigger=ks.trigger,
+                    source_user=ks.source_user,
+                    source_host=ks.source_host,
+                    # Raw tags for debugging
+                    tags=ks.tags,
                 )
+            )
 
-            logger.debug(f"Found {len(snapshots)} snapshots for {namespace}")
-            return snapshots
-
-        except Exception as e:
-            logger.warning(f"Failed to list snapshots via Kopia CLI: {e}")
-            return []
+        logger.debug(f"Found {len(snapshots)} snapshots for {namespace}")
+        return snapshots
 
     async def delete_snapshots(
         self,

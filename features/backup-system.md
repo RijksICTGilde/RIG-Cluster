@@ -14,6 +14,7 @@ The backup system provides:
 - **Backup all mode** for Helm/external projects without labels
 - **Resource type tagging** for filtering snapshots by type (pvc, database, bucket)
 - **Scheduled backups** per deployment (daily/weekly/monthly) - see [scheduled-backups.md](scheduled-backups.md)
+- **Monitoring of scheduled backups**: two Prometheus gauges per deployment plus a daily ERROR line when a scheduled backup is not happening - see [scheduled-backups.md](scheduled-backups.md#monitoring-a-backup-that-does-not-happen)
 
 ## Architecture
 

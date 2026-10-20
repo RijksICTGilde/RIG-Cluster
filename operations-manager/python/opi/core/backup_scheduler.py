@@ -25,6 +25,11 @@ cannot serve as historical state).
 
 Manual snapshots (those tagged ``trigger:manual``) are ignored for purpose
 (3) so a user-triggered run does not suppress the next automatic one.
+
+Every tick also records the age of each deployment's last scheduled snapshot in
+``opi/services/backup_schedule_report.py`` (two gauges on ``/metrics``) and logs one
+ERROR per day for a backup that is not happening at all: see
+``features/scheduled-backups.md``.
 """
 
 from __future__ import annotations
@@ -44,6 +49,12 @@ from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.config import settings
 from opi.core.rrule_utils import parse_rrule
+from opi.services.backup_schedule_report import (
+    BackupScheduleState,
+    backup_schedule_states,
+    forget_missing,
+    record_schedule_check,
+)
 from opi.services.project_store import get_project_store
 
 if TYPE_CHECKING:
@@ -60,7 +71,15 @@ _SCHEDULE_TZ = ZoneInfo("Europe/Amsterdam")
 # a source.
 _SWEEP_AFTER_HOUR = 6
 
-_SUPPORTED_FREQS: set[str] = {"DAILY", "WEEKLY", "MONTHLY"}
+# How long a schedule may go without a scheduled snapshot before it is overdue. MONTHLY
+# uses the longest month, so a monthly backup is never reported a day early.
+_FREQ_PERIOD: dict[str, timedelta] = {
+    "DAILY": timedelta(days=1),
+    "WEEKLY": timedelta(days=7),
+    "MONTHLY": timedelta(days=31),
+}
+
+_SUPPORTED_FREQS: set[str] = set(_FREQ_PERIOD)
 
 _WEEKDAY_TO_INDEX: dict[str, int] = {
     "MO": 0,
@@ -129,6 +148,25 @@ def _is_freq_target_day(rrule: dict[str, str], now_local: datetime) -> bool:
     return False
 
 
+def _overdue_reason(state: BackupScheduleState, now_local: datetime, deadline: timedelta) -> str | None:
+    """Why this deployment's scheduled backup is overdue, or None when it is on time.
+
+    A schedule that never produced a snapshot counts from the first tick that saw it, so
+    a freshly configured schedule gets one full period before it is reported.
+    """
+    if state.unknown_streak >= 2:
+        return f"Kopia could not be queried for {state.unknown_streak} consecutive ticks"
+
+    age = now_local - (state.last_success or state.first_seen)
+    if age <= deadline:
+        return None
+
+    hours = age.total_seconds() / 3600
+    if state.last_success is None:
+        return f"no scheduled backup yet, {hours:.0f} hours after the schedule was first seen"
+    return f"last successful scheduled backup was {hours:.0f} hours ago"
+
+
 class BackupScheduler:
     """Periodically checks for deployments that need automatic backups."""
 
@@ -138,6 +176,7 @@ class BackupScheduler:
         self._running = False
         self._task: asyncio.Task | None = None
         self._last_sweep_date: date | None = None
+        self._last_overdue_log: dict[tuple[str, str], datetime] = {}
 
     async def start(self) -> None:
         """Start the scheduler loop as a background task."""
@@ -151,10 +190,15 @@ class BackupScheduler:
         )
 
     async def trigger_check(self) -> None:
-        """Run an immediate schedule check (e.g. after a schedule is saved)."""
+        """Run an immediate schedule check (e.g. after a schedule is saved).
+
+        This runs inside the save request, so it skips the overdue bookkeeping: the
+        next tick records it, and the user does not wait for a Kopia listing per
+        namespace.
+        """
         logger.info("Backup scheduler: immediate check triggered")
         try:
-            await self._check_and_schedule()
+            await self._check_and_schedule(record=False)
         except Exception:
             logger.exception("Error in triggered backup scheduler check")
 
@@ -213,15 +257,22 @@ class BackupScheduler:
 
         await BackupRetentionSweep(self._cluster).run()
 
-    async def _check_and_schedule(self) -> None:
-        """Check all projects for deployments that need backups."""
+    async def _check_and_schedule(self, record: bool = True) -> None:
+        """Check all projects for deployments that need backups.
+
+        With ``record`` the tick also refreshes the overdue bookkeeping, which costs a
+        Kopia listing per namespace. Callers on a request path pass False.
+        """
 
         projects = get_project_store().get_all()
+        now_local = datetime.now(_SCHEDULE_TZ)
 
         # Per-tick cache of Kopia snapshot listings, keyed by (cluster, k8s_namespace).
         # Multiple deployments in the same project usually share a namespace, so this
         # avoids redundant Kopia list calls within a single tick.
         snapshot_cache: dict[tuple[str, str], list[SnapshotInfo] | None] = {}
+
+        scheduled: set[tuple[str, str]] = set()
 
         for project in projects:
             if not project.data:
@@ -258,6 +309,29 @@ class BackupScheduler:
                     continue
                 app_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
+                scheduled.add((project_name, deployment_name))
+
+                # Record outside the catch-up window too: a backup that never fires has
+                # to be visible the other 20 hours of the day as well. That costs one
+                # Kopia listing per namespace per tick, which the due check alone would
+                # not make, so the request path leaves it to the next tick.
+                if record:
+                    status, last_success = await self._last_scheduled_snapshot_local(
+                        project_name=project_name,
+                        deployment_name=deployment_name,
+                        cluster=deployment_cluster,
+                        namespace=app_namespace,
+                        cache=snapshot_cache,
+                    )
+                    record_schedule_check(
+                        project=project_name,
+                        deployment=deployment_name,
+                        schedule=str(schedule),
+                        status=status,
+                        last_success=last_success,
+                        now=now_local,
+                    )
+
                 if await self._is_backup_due(
                     project_name=project_name,
                     deployment_name=deployment_name,
@@ -275,6 +349,46 @@ class BackupScheduler:
                         resource_types or "all",
                     )
                     await self._create_backup_task(project_name, deployment_name, resource_types)
+
+        forget_missing(scheduled)
+        if record:
+            self._log_overdue_backups(now_local)
+
+    def _log_overdue_backups(self, now_local: datetime) -> None:
+        """Log one ERROR per deployment whose scheduled backup is not happening.
+
+        The log watcher turns an ERROR into a notification, and the scheduler ticks every
+        few minutes, so each deployment is logged at most once per
+        BACKUP_OVERDUE_LOG_INTERVAL_HOURS.
+        """
+        states = backup_schedule_states()
+        grace = timedelta(seconds=settings.BACKUP_SCHEDULE_CATCH_UP_SECONDS)
+        interval = timedelta(hours=settings.BACKUP_OVERDUE_LOG_INTERVAL_HOURS)
+
+        # Only the FREQs of _FREQ_PERIOD reach the table: _SUPPORTED_FREQS is its keys.
+        for state in states:
+            period = _FREQ_PERIOD[parse_rrule(state.schedule).get("FREQ", "")]
+            reason = _overdue_reason(state, now_local, period + grace)
+            if reason is None:
+                continue
+
+            key = (state.project, state.deployment)
+            last_logged = self._last_overdue_log.get(key)
+            if last_logged is not None and now_local - last_logged < interval:
+                continue
+            self._last_overdue_log[key] = now_local
+            logger.error(
+                "Scheduled backup overdue for %s/%s (schedule %s): %s",
+                state.project,
+                state.deployment,
+                state.schedule,
+                reason,
+            )
+
+        # A deployment that is gone must not keep its entry: re-adding it later would
+        # otherwise be silent for a day.
+        known = {(state.project, state.deployment) for state in states}
+        self._last_overdue_log = {key: when for key, when in self._last_overdue_log.items() if key in known}
 
     async def _get_namespace_snapshots(
         self,
@@ -297,14 +411,17 @@ class BackupScheduler:
 
         try:
             backup_manager = create_backup_manager()
-            snapshots = await backup_manager.list_snapshots(
+            snapshots = await backup_manager.list_snapshots_or_raise(
                 cluster=cluster, namespace=namespace, project_name=project_name
             )
-        except Exception:
-            logger.exception(
-                "Failed to list Kopia snapshots for %s/%s — skipping scheduler check this tick",
+        except Exception as exc:
+            # Geen ERROR: deze regel loopt per namespace per tick, en een onbereikbare
+            # bestemming meldt _log_overdue_backups al eens per 24 uur per deployment.
+            logger.warning(
+                "Failed to list Kopia snapshots for %s/%s, skipping scheduler check this tick: %r",
                 cluster,
                 namespace,
+                exc,
             )
             cache[cache_key] = None
             return None

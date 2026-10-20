@@ -575,6 +575,10 @@ class Settings(BaseSettings):
     # without a wait, the second one fails immediately. 30 min is enough for
     # a typical PVC+DB+bucket run to finish.
     BACKUP_LOCK_WAIT_SECONDS: int = 1800
+    # How often a deployment whose scheduled backup is not happening may produce an
+    # ERROR line. The log watcher turns that line into a notification, and the scheduler
+    # sees the same overdue backup on every tick until it is fixed.
+    BACKUP_OVERDUE_LOG_INTERVAL_HOURS: int = 24
     # Daily retention sweep for orphaned backups. Kopia retention only runs
     # at the end of a backup, so snapshots of deployments that no longer get
     # backed up (deleted deployments, removed schedules, broken legacy source

@@ -373,7 +373,12 @@ class KopiaConnector:
                           If None, returns all snapshots.
 
         Returns:
-            List of KopiaSnapshot objects, optionally filtered by resource_type
+            List of KopiaSnapshot objects, optionally filtered by resource_type.
+            Empty when the storage holds no repository yet.
+
+        Raises:
+            KopiaConnectionError: the repository could not be reached
+            KopiaExecutionError: the repository answered but the listing failed
         """
         # Create a temporary config file for this connection
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -412,8 +417,10 @@ class KopiaConnector:
                 if _is_missing_repository(stderr):
                     logger.debug(f"No repository found at {config.s3_prefix}")
                     return []
-                logger.warning(f"Failed to connect to Kopia repository: {stderr}")
-                return []
+                # "Could not reach the repository" is not "there are no snapshots". Returning
+                # [] here made an unreachable destination read as "no backups exist", which
+                # the schedule monitoring cannot tell from a backup that never ran.
+                raise KopiaConnectionError(f"Failed to connect to Kopia repository: {stderr}")
 
             # List snapshots as JSON
             list_args = ["snapshot", "list", "--json", "--all"]
@@ -426,8 +433,7 @@ class KopiaConnector:
             )
 
             if code != 0:
-                logger.warning(f"Failed to list snapshots: {stderr}")
-                return []
+                raise KopiaExecutionError(f"Failed to list snapshots: {stderr}")
 
             # Parse JSON output
             snapshots = self._parse_snapshot_list(stdout)

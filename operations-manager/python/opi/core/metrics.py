@@ -344,6 +344,34 @@ class OPICollector(Collector):
         yield pull_by_reason
         yield pull_observed
 
+        # --- Scheduled backups that are not happening ---
+        #
+        # One series per deployment with a schedule, refreshed by the backup scheduler on
+        # every tick. The timestamp is 0 while no scheduled snapshot has ever been seen,
+        # in the shape of opi_image_pull_observed_timestamp above: a gauge that is simply
+        # absent cannot be told apart from a backup that is simply late.
+        backup_last_success = GaugeMetricFamily(
+            "opi_backup_last_scheduled_success_timestamp_seconds",
+            "Unix timestamp of the last successful scheduled backup per deployment (0: never seen one)",
+            labels=["project", "deployment"],
+        )
+        backup_unknown = GaugeMetricFamily(
+            "opi_backup_schedule_unknown",
+            "1 when the last scheduler tick could not ask Kopia about this deployment",
+            labels=["project", "deployment"],
+        )
+        try:
+            from opi.services.backup_schedule_report import backup_schedule_states
+
+            for state in backup_schedule_states():
+                labels = [state.project, state.deployment]
+                backup_last_success.add_metric(labels, state.last_success.timestamp() if state.last_success else 0.0)
+                backup_unknown.add_metric(labels, 1 if state.unknown_streak else 0)
+        except Exception:
+            logger.debug("Failed to collect backup schedule metrics", exc_info=True)
+        yield backup_last_success
+        yield backup_unknown
+
     def describe(self):
         """Return empty description; metrics are generated dynamically."""
         return []
