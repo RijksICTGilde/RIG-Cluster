@@ -12,36 +12,21 @@ from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
 
 REQUIRES_PROJECT_NAME = "zad_requires_project_name"
-"""Markering op een route die met een projectsleutel wordt afgeschermd.
+"""Markering op een route die met een projectsleutel wordt afgeschermd."""
 
-De controle legitimeert de sleutel TEGEN een project en leest dat project uit de
-routeparameters, dus een route zonder ``project_name`` kan hem per definitie niet doorstaan
-en antwoordt altijd 401 -- wat de aanroeper ook meestuurt, want FastAPI geeft een route
-alleen de parameters die in haar signatuur staan. Dat overkwam
-``GET /api/subdomains/check/{subdomain}``: het endpoint was onbereikbaar en het document
-noemde de ontbrekende parameter nergens.
 
-De markering staat hier zodat ``tests/test_subdomein_check_endpoint.py`` die eis uit de
-routes zelf kan lezen in plaats van uit een lijst met paden.
-"""
+REQUIRES_ADMIN_API_KEY = "zad_requires_admin_api_key"
+"""Markering op een route die met ADMIN_API_KEY wordt afgeschermd."""
+
+REQUIRES_MASTER_API_KEY = "zad_requires_master_api_key"
+"""Markering op een route die met MASTER_API_KEY wordt afgeschermd."""
+
+REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"
+"""Markering op een route die met PROMETHEUS_METRICS_AUTH_TOKEN wordt afgeschermd."""
 
 
 def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to validate API token for a route.
-
-    This decorator requires project-specific API key via X-API-Key header.
-    ALWAYS validates that the API key matches the project_name from the route.
-
-    The route must therefore be able to receive ``project_name`` -- in its path, or as a
-    REQUIRED query parameter; see :data:`REQUIRES_PROJECT_NAME`.
-
-    Args:
-        func: The route function to decorate
-
-    Returns:
-        The decorated function that requires a valid API token and project_name
-    """
+    """Eist project-specifieke X-API-Key, valideert tegen project_name in de route."""
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
@@ -136,18 +121,7 @@ def _require_shared_secret(
 
 
 def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to validate admin API key for maintenance operations.
-
-    This decorator requires the ADMIN_API_KEY via X-API-Key header.
-    Used for admin operations like cleanup, reconciliation, and resource management.
-
-    Args:
-        func: The route function to decorate
-
-    Returns:
-        The decorated function that requires a valid admin API key
-    """
+    """Eist ADMIN_API_KEY via X-API-Key header."""
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
@@ -160,22 +134,12 @@ def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
         )
         return await func(*args, request=request, **kwargs)
 
+    setattr(wrapper, REQUIRES_ADMIN_API_KEY, True)
     return wrapper
 
 
 def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
-    """
-    Decorator to validate master API key for admin operations.
-
-    This decorator requires the MASTER_API_KEY via X-API-Key header.
-    Used for operations that don't have a project context (e.g., namespace-based backups).
-
-    Args:
-        func: The route function to decorate
-
-    Returns:
-        The decorated function that requires a valid master API key
-    """
+    """Eist MASTER_API_KEY via X-API-Key header."""
 
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
@@ -188,6 +152,7 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
         )
         return await func(*args, request=request, **kwargs)
 
+    setattr(wrapper, REQUIRES_MASTER_API_KEY, True)
     return wrapper
 
 
@@ -214,4 +179,5 @@ def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any
         )
         return await func(*args, request=request, **kwargs)
 
+    setattr(wrapper, REQUIRES_METRICS_SCRAPE_TOKEN, True)
     return wrapper
