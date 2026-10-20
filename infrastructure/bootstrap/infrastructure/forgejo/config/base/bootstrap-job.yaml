@@ -28,7 +28,7 @@ spec:
       initContainers:
       # Wait for Forgejo to be healthy before attempting bootstrap
       - name: wait-for-forgejo
-        image: busybox:1.36
+        image: busybox:1.38
         command:
         - sh
         - -c

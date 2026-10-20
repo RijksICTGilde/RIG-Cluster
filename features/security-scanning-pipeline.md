@@ -9,7 +9,7 @@ Automated security scanning in GitHub Actions covering:
 - **Python dependency vulnerabilities** via pip-audit
 - **Container image vulnerabilities** via Trivy
 - **SBOM generation** for supply chain transparency
-- **Dependency updates** via Renovate (replaces Dependabot)
+- **Dependency updates** via Renovate (zie `features/renovate.md`)
 
 ## Docker Image CI/CD
 
@@ -50,23 +50,23 @@ baseline are in `features/sops-sleutel-roteren.md`.
 
 ## Dependency Management
 
-**Renovate** (`renovate.json`) replaces Dependabot. It manages:
+**Renovate** draait als GitHub Action (`.github/workflows/renovate.yml`) met de
+configuratie in `renovate.json`, en vervangt Dependabot. Elke maandagochtend maakt het
+PR's per ecosysteem voor Python, Go, Maven, npm, Dockerfiles, Kubernetes-manifesten,
+remote kustomize-resources, de Taskfile, `.tool-versions` en de GitHub Actions zelf.
+Majors komen alleen op het Dependency Dashboard en worden pas een PR na goedkeuring.
 
-- Python packages (uv/pyproject.toml)
-- GitHub Actions versions
-- Dockerfile base images and tool versions
-- Container image tags in Kubernetes manifests (`infrastructure/`, `bootstrap/`)
-- Helm chart versions
-
-Schedule: weekly, Monday before 9am.
+Zie `features/renovate.md` voor de dekking, de rcr-mapping, wat met opzet niet wordt
+bijgewerkt, en de handstap bij het inrichten.
 
 ## Setup
 
 ### TODO
 
-- [ ] Install the [Renovate GitHub App](https://github.com/apps/renovate) on the repository
+- [ ] Zet het repository secret `RENOVATE_TOKEN` en start `renovate.yml` een keer met
+      `workflow_dispatch` (zie `features/renovate.md`)
 - [ ] Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General > Workflow permissions`)
-- [ ] Review first Renovate onboarding PR (auto-created after app installation)
+- [ ] Loop de eerste ronde Renovate-PR's na
 - [ ] Check GitHub Security tab after first `security.yml` run for SARIF results
 - [ ] Migrate Taskfile publish tasks from `ghcr.io/minbzk/base-images/` to `ghcr.io/rijksictgilde/zad/`
 - [ ] Update image references in `bootstrap/` deployment patches (operations-manager, cmp-kustomize-sops)

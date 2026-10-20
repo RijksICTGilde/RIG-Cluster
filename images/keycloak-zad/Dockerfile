@@ -5,7 +5,7 @@
 
 # BUILDPLATFORM, want jars zijn architectuuronafhankelijk: zonder dit draait deze hele fase
 # per doelarchitectuur opnieuw, en de tweede keer onder emulatie.
-FROM --platform=$BUILDPLATFORM maven:3.9-eclipse-temurin-21 AS providers
+FROM --platform=$BUILDPLATFORM maven:3.10-eclipse-temurin-21 AS providers
 
 WORKDIR /bouw
 COPY keycloak-migration/relay-email-sender relay-email-sender

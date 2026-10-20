@@ -9,7 +9,7 @@ Read-only GET endpoints return deployment state directly (no task queue).
 import asyncio
 import logging
 from inspect import Parameter, Signature
-from typing import Annotated, Any, NamedTuple
+from typing import Annotated, Any, NamedTuple, cast
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
@@ -2815,8 +2815,9 @@ def _make_patch_body_model(config_model: type, spec: PatchableList) -> type[Base
     return create_model(
         _patch_model_name(config_model, spec),
         __base__=_ListConfigPatch,
-        add=(list[item_type] | None, Field(default=None, description=add_description)),
-        remove=(list[str] | None, Field(default=None, description=remove_description)),
+        # create_model typeert zijn velddefinities sinds pydantic 2.14 als TypeForm.
+        add=cast("Any", (list[item_type] | None, Field(default=None, description=add_description))),
+        remove=cast("Any", (list[str] | None, Field(default=None, description=remove_description))),
     )
 
 

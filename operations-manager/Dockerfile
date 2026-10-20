@@ -1,7 +1,7 @@
 # Multi-stage Docker build for operations-manager with optimized caching
 
 # uv krijgt een eigen stage, want buildkit expandeert geen variabele in `COPY --from=`.
-ARG UV_VERSION=0.12.15
+ARG UV_VERSION=0.13.1
 ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
