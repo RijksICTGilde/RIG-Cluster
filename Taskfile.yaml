@@ -2972,6 +2972,13 @@ tasks:
         stringData:
           OIDC_CLIENT_SECRET: ""
           KEYCLOAK_MASTER_OIDC_CLIENT_SECRET: ""
+          # Dezelfde waarden als de defaults in opi/core/config.py, dus voor OPI
+          # verandert hier niets. Ze staan hier omdat de nachtelijke back-up van de
+          # platformdatabase (postgresql/database/base/platform-backup-cronjob.yaml) ze
+          # met secretKeyRef uit dit geheim leest, net als op productie.
+          BACKUP_S3_ENDPOINT: "minio.rig-backup-destination.svc:9000"
+          BACKUP_S3_ACCESS_KEY: "backup-admin"
+          BACKUP_S3_SECRET_KEY: "backup-secret-key-local"
         EOF
 
         # Overlay values from secrets file if it exists and has content

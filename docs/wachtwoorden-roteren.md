@@ -10,7 +10,7 @@ Alles loopt één ingang: `scripts/edit-secret.py` (module `scripts/secret_rotat
 
 ## 0. Begrippen
 
-- **Categorie**: hoe het component zijn wachtwoord krijgt. Dat bepaalt de volgorde, niet andersom: `cnpg-secret` (postgres superuser en de managed roles keycloak-db / mail-db / forgejo-db: het bestand gaat eerst, de CNPG-operator past de rol dan zelf aan), `live-app` (redis / mail-relay / keycloak-mail / keycloak-admin: de app krijgt hem als eerste, het bestand volgt), `env-restart` (minio / prometheus / pgadmin: lezen alleen bij start), `external` (transip / grafana / platform-repo-pat: wijziging loopt buiten het cluster).
+- **Categorie**: hoe het component zijn wachtwoord krijgt. Dat bepaalt de volgorde, niet andersom: `cnpg-secret` (postgres superuser en de managed roles keycloak-db / mail-db / forgejo-db / platform-backup: het bestand gaat eerst, de CNPG-operator past de rol dan zelf aan), `live-app` (redis / mail-relay / keycloak-mail / keycloak-admin: de app krijgt hem als eerste, het bestand volgt), `env-restart` (minio / prometheus / pgadmin: lezen alleen bij start), `external` (transip / grafana / platform-repo-pat: wijziging loopt buiten het cluster).
 - **Gates**: drie metingen die de ronde dragen — de Argo-sync die als `Succeeded` terugkomt, het cluster-secret dat de nieuwe waarde draagt (poll met timeout), en bij cnpg de operator-reconcile (oude login faalt, nieuwe werkt). Pas daarna herstart een consumer.
 - **Keyring**: de AGE-sleutels komen uit `SOPS_AGE_KEY[_FILE]`, dan `~/.config/sops/age/keys.txt`, dan `security/*.txt` in deze repo. Het bestand is altijd leidend via zijn recipients; de uitvoer noemt welke bron leverde.
 
@@ -89,6 +89,7 @@ Keycloak-verbindingen, maar kunnen nieuwe logins even tegen de net aangepaste ro
 ## 4. Verwachte onderbrekingen
 
 - postgresql / mail-db / forgejo-db: geen downtime van de database; consumer-restarts zijn kort.
+- platform-backup: geen downtime en geen herstart; de nachtelijke CronJob leest het secret bij zijn volgende run. KOPIA_PASSWORD in dezelfde template roteert niet mee.
 - keycloak-db: de database zelf blijft up; Keycloak herstart (login-onderbreking van seconden tot een halve minuut).
 - minio/prometheus/pgadmin: de pod herstart kort. Bij prometheus herstart ook Keycloak, die
   hetzelfde token leest voor zijn rig-metrics-endpoint (dezelfde login-onderbreking als

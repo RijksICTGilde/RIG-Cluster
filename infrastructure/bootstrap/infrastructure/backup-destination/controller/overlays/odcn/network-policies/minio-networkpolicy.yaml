@@ -18,6 +18,20 @@ spec:
         - protocol: TCP
           port: 9000
 
+    # De nachtelijke back-up van de platformdatabase draait in de platformnamespace en
+    # niet in een tenant-namespace, dus het tenant-label hierboven dekt hem niet. Smal
+    # gehouden op het podlabel: alleen deze CronJob, niet de hele namespace.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rig-db-platform-backup
+      ports:
+        - protocol: TCP
+          port: 9000
+
   egress:
     # Allow DNS resolution
     - to:

@@ -3,3 +3,22 @@ kind: Kustomization
 namespace: rig-system
 resources:
 - ../../base
+
+patches:
+  # De UID van de back-uppod numeriek pinnen. De image zet `USER backupuser`, een naam, en
+  # dan weigert de kubelet de pod bij runAsNonRoot: "image has non-numeric user". Op
+  # OpenShift deelt de SCC zelf een UID uit en hoort die pin er juist NIET te staan, dus
+  # alleen hier. Zelfde splitsing als manifests/pod-security-context.yaml.jinja.
+  - target:
+      kind: CronJob
+      name: rig-db-platform-backup
+    patch: |-
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/runAsUser
+        value: 1001
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/runAsGroup
+        value: 1001
+      - op: add
+        path: /spec/jobTemplate/spec/template/spec/securityContext/fsGroup
+        value: 1001

@@ -289,6 +289,20 @@ COMPONENTS: list[Component] = [
         workloads=("statefulset/forgejo",),
     ),
     Component(
+        key="platform-backup",
+        title="Databaserol platform_backup (CNPG managed role, nachtelijke platformback-up)",
+        template="platform-backup-secret.yaml",
+        category="cnpg-secret",
+        rotate_fields=("password",),
+        database="postgres",  # deze rol bezit geen database; postgres staat op elk cluster
+        db_user_fallback="platform_backup",
+        workloads=(),  # de CronJob leest het secret bij elke run via secretKeyRef
+        note="KOPIA_PASSWORD staat in dezelfde template maar roteert NIET mee: dat is het "
+        "wachtwoord van de Kopia-repository, en een nieuwe waarde maakt de bestaande snapshots "
+        "onleesbaar in plaats van ze om te sleutelen. Die wissel hoort bij een nieuwe repository "
+        "en is dus geen stap in een gewone ronde.",
+    ),
+    Component(
         key="redis",
         title="Redis (rig-redis)",
         template="redis-admin-secret.yaml",
