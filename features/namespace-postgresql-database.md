@@ -59,12 +59,21 @@ services:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `image` | string | `ghcr.io/cloudnative-pg/postgresql:17` | CNPG-compatible PostgreSQL image |
+| `image` | string | `ghcr.io/cloudnative-pg/postgresql:17` | CNPG-compatible PostgreSQL image. Letters, digits and `. _ : / @ -` only |
 | `instances` | int | `1` | Number of PostgreSQL replicas |
-| `storage` | string | `10Gi` | Storage size for each instance |
+| `storage` | string | `1Gi` | Storage size for each instance. Between `50Mi` and `20Gi`, and it can only ever go UP: a PVC cannot shrink |
 | `privileges` | list | `[]` | PostgreSQL privileges for the app user |
 | `postInitSQL` | list | `[]` | SQL statements to run after database init |
-| `resources` | object | See below | CPU/memory requests and limits |
+| `resources` | object | See below | CPU/memory requests and limits. Memory 25Mi-1024Mi (requests) / 25Mi-4096Mi (limits), CPU 25m-250m / 25m-4000m |
+
+De grenzen op `storage` en `resources` zijn gedeclareerd met het mechanisme uit
+`speelruimte-van-een-dienst.md` (`shared/postgres_settings.py`), dus het formulier, de
+service-config-API en een met de hand bijgewerkt projectbestand geven dezelfde weigering.
+
+Het formulier biedt `storage` als keuzelijst aan: de maten van het platform (50Mi tot 1Gi)
+plus de opgeslagen waarde als die er niet in staat. Die laatste moet erbij, want de
+speelruimte loopt tot 20Gi en een volume mag niet krimpen: zonder de eigen waarde bood de
+select een project op 2Gi alleen kleinere maten aan.
 
 ### Resource Defaults
 

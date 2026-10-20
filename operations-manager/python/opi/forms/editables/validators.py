@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, Final, cast
 
 from pydantic import TypeAdapter, ValidationError
 
 from opi.forms.editables.converters import command_line_has_unbalanced_quote, split_command_line
 from opi.services.catalog.config_settings import ConfigSetting, SettingError
-from opi.utils.naming import SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
-from opi.utils.url_paths import normalize_logout_path
+from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
+from opi.utils.naming import CONTAINER_IMAGE_PATTERN, SCHEMA_POSTFIX_MAX_LENGTH, SCHEMA_POSTFIX_PATTERN
+from opi.utils.url_paths import normalize_logout_path, sanitize_path_value
 
 if TYPE_CHECKING:
     from pydantic import BaseModel
@@ -67,14 +68,22 @@ class SlugValidator:
         return []
 
 
+#: De vorm van een e-mailadres: lokaal deel, apenstaartje, domein met een punt. Deze
+#: constante is de enige bron; ``$defs/user.email`` in project_v2.json neemt de tekst over
+#: en test_project_schema_validation houdt de twee gelijk. ``\Z`` en niet ``$``, want ``$``
+#: laat in Python een afsluitende newline door.
+EMAIL_PATTERN: Final[str] = r"^[^@\s]+@[^@\s]+\.[^@\s]+\Z"
+
+
 class EmailValidator:
     """Validates basic email format."""
+
+    _PATTERN = re.compile(EMAIL_PATTERN)
 
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []  # Let RequiredValidator handle emptiness
-        value_str = str(value)
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", value_str):
+        if not self._PATTERN.match(str(value)):
             return ["Geen geldig e-mailadres"]
         return []
 
@@ -279,8 +288,7 @@ class ContainerImageValidator:
     instead of failing late during ``validate_project_schema``.
     """
 
-    # Mirrors the "image" pattern in opi/schemas/project_v2.json.
-    _PATTERN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\Z")
+    _PATTERN = re.compile(CONTAINER_IMAGE_PATTERN)
     _ALLOWED_CHAR = re.compile(r"[A-Za-z0-9._:/@-]")
 
     def validate(self, value: Any) -> list[str]:
@@ -322,7 +330,7 @@ class EnvNameValidator:
     enforces (``AttachmentUse._valid_env_name``), so an invalid name is caught at the
     field instead of only as a whole-config error at save time."""
 
-    _PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+    _PATTERN = re.compile(ENV_VAR_NAME_PATTERN)
 
     def validate(self, value: Any) -> list[str]:
         if not value:
@@ -345,6 +353,21 @@ class PathValidator:
             return ["Pad moet beginnen met /"]
         if " " in v:
             return ["Pad mag geen spaties bevatten"]
+        return []
+
+
+class SafePathValidator:
+    """Tenant path validation using sanitize_path_value, stricter than PathValidator.
+    The rule is shared with configmodel so form and API behave identically.
+    """
+
+    def validate(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        try:
+            sanitize_path_value(str(value), "path")
+        except ValueError as e:
+            return [str(e)]
         return []
 
 
@@ -538,12 +561,11 @@ class CustomDomainValidator:
     def validate(self, value: Any) -> list[str]:
         if not value:
             return []
+        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+
         domain = str(value).strip().lower()
-        if not re.match(
-            r"^[a-z0-9]([a-z0-9\-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]*[a-z0-9])?)+$",
-            domain,
-        ):
-            return ["Ongeldig domeinformaat. Gebruik een geldig domeinnaam zoals 'voorbeeld.nl'"]
+        if not DOMAIN_PATTERN.match(domain):
+            return [DOMAIN_FORMAT_MESSAGE]
         return []
 
 

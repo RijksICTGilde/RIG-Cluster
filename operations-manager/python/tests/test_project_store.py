@@ -455,6 +455,42 @@ async def test_enforce_validation_false_still_persists(harness: StoreHarness) ->
     assert result.committed is True
 
 
+async def test_a_forbidden_character_never_commits(harness: StoreHarness) -> None:
+    """The backstop (RC-327) runs for every string value, not only fields with a pattern."""
+    commits_before = len(harness.remote.commits)
+
+    def add_control_char(data: dict[str, Any]) -> dict[str, Any]:
+        data["display-name"] = "demo\x00evil"
+        return data
+
+    with pytest.raises(ProjectSchemaError, match="display-name"):
+        await harness.store.mutate(PROJECT_NAME, add_control_char, message="inject", actor="tester")
+
+    assert len(harness.remote.commits) == commits_before
+    assert "\x00" not in _current(harness)["display-name"]
+
+
+async def test_a_forbidden_character_with_enforce_false_still_persists_but_is_logged(
+    harness: StoreHarness, caplog
+) -> None:
+    """Non-enforcing writers tolerate it like any other pre-existing drift, but log it."""
+    import logging
+
+    def add_control_char(data: dict[str, Any]) -> dict[str, Any]:
+        data["display-name"] = "demo\x00evil"
+        return data
+
+    with caplog.at_level(logging.WARNING, logger="opi.services.project_store"):
+        result = await harness.store.mutate(
+            PROJECT_NAME, add_control_char, message="recovery write", actor="auto-tune", enforce_validation=False
+        )
+
+    assert result.committed is True
+    assert _current(harness)["display-name"] == "demo\x00evil"
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("display-name" in m for m in messages), messages
+
+
 # ----------------------------------------------------------------------------
 # external edits, retry and rollback
 # ----------------------------------------------------------------------------

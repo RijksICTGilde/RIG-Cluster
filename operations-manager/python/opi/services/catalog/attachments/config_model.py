@@ -23,10 +23,12 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
+from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
+
 #: How the component receives the attachment.
 ProvideAs = Literal["file", "env-var"]
 
-_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
+_ENV_NAME = re.compile(ENV_VAR_NAME_PATTERN)
 _REFERENCE = re.compile(r"^[a-z]([a-z0-9-]*[a-z0-9])?\Z")
 
 

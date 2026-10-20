@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from opi.services.catalog.publish_on_web.domain_config import DomainFormatId
 from opi.services.config_managed import PLATFORM_MANAGED
@@ -142,7 +142,8 @@ class PublishOnWebDeploymentConfig(BaseModel):
             "The subdomain under the base domain, for the hostname formats that use one. On a "
             "platform-managed domain it is a request an administrator approves, so two projects cannot "
             "claim the same name; on a domain of your own no approval is involved -- which names exist "
-            "there is your organisation's business."
+            "there is your organisation's business. A DNS label: lowercase letters, digits and hyphens, "
+            "at most 63 characters."
         ),
     )
     domain_format: DomainFormatId | None = Field(
@@ -178,6 +179,28 @@ class PublishOnWebDeploymentConfig(BaseModel):
             "subdomain format + subdomain. False/absent for none, which is the normal case."
         ),
     )
+
+    @field_validator("subdomain")
+    @classmethod
+    def _subdomain_form(cls, value: str | None) -> str | None:
+        # Use pattern, not validate_subdomain, which lowercases. Stored subdomains must be
+        # lowercase to match approval. Local import: subdomain imports this package back.
+        from opi.connectors.subdomain import SUBDOMAIN_FORMAT_MESSAGE, SUBDOMAIN_PATTERN
+
+        if value is not None and not SUBDOMAIN_PATTERN.match(value):
+            raise ValueError(SUBDOMAIN_FORMAT_MESSAGE)
+        return value
+
+    @field_validator("base_domain")
+    @classmethod
+    def _base_domain_form(cls, value: str | None) -> str | None:
+        # Don't normalize: adjusting a value after validation would differ from approval.
+        # Local import: subdomain imports this package back.
+        from opi.connectors.subdomain import DOMAIN_FORMAT_MESSAGE, DOMAIN_PATTERN
+
+        if value is not None and not DOMAIN_PATTERN.match(value):
+            raise ValueError(DOMAIN_FORMAT_MESSAGE)
+        return value
 
 
 class PublishOnWebComponentConfig(BaseModel):

@@ -502,6 +502,12 @@ def generate_database_schema(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(schema, 63)  # PostgreSQL schema limit
 
 
+#: De tekenset van een container-image-verwijzing. Eén bron voor de drie plekken die hem
+#: toetsen: ``$defs/component.image`` in project_v2.json (zelfde tekst),
+#: ``ContainerImageValidator`` op het formulier en het databasemodel van een eigen
+#: PostgreSQL-cluster.
+CONTAINER_IMAGE_PATTERN = r"^([A-Za-z0-9][A-Za-z0-9._:/@-]*)?\Z"
+
 #: The character shape of an extra-schema postfix (RC-17): lowercase letters, digits and
 #: underscores, starting with a letter. It becomes part of a PostgreSQL schema name and,
 #: uppercased, part of an environment-variable name, so both have to accept it. Declared

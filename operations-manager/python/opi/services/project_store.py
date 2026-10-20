@@ -70,6 +70,7 @@ from opi.services.project_service import ProjectSummary, ProjectUser, get_projec
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
 from opi.utils.age import decrypt_tree, get_decoded_project_private_key
+from opi.utils.forbidden_characters import find_forbidden_characters
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
 
 if TYPE_CHECKING:
@@ -714,6 +715,12 @@ class GitProjectStore(ProjectStore):
         that says it IS the approver's verdict may move an approval status to a decision.
         """
         try:
+            forbidden = find_forbidden_characters(data)
+            if forbidden:
+                raise ProjectSchemaError(
+                    f"Projectbestand '{data.get('name', '(onbekend)')}' is geweigerd: de volgende velden "
+                    f"bevatten een teken dat niet in een projectbestand hoort: {', '.join(forbidden)}."
+                )
             validate_project_schema(data)
             await validate_project_structure(data, previous=previous, approval_decision=approval_decision)
         except (ProjectSchemaError, ProjectIntegrityError) as e:

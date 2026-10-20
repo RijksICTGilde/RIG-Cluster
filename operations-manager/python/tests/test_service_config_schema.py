@@ -182,6 +182,18 @@ class TestMetricsScraperConfigModel:
         with pytest.raises(ValidationError):
             self._provider().validate_config({"port": "not-a-number"})
 
+    @pytest.mark.parametrize("path", ["/actuator/prometheus", "/metrics/v2"])
+    def test_other_safe_paths_validate(self, path: str) -> None:
+        model = self._provider().validate_config({"path": path})
+        assert model.path == path
+
+    @pytest.mark.parametrize("path", ['/metrics"', "/met rics", "/metrics\n"])
+    def test_an_unsafe_path_is_rejected(self, path: str) -> None:
+        # Same charset as a component match/rewrite path (RC-327 stap 6): a quote, a
+        # space or a trailing newline could escape the ServiceMonitor scrape config.
+        with pytest.raises(ValidationError):
+            self._provider().validate_config({"path": path})
+
 
 class TestKeycloakConfigModel:
     """Keycloak is polymorphic (internal template vs external connection) with

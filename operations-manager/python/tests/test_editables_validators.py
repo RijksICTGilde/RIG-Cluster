@@ -84,6 +84,16 @@ class TestEmailValidator:
         assert EmailValidator().validate("") == []
         assert EmailValidator().validate(None) == []
 
+    def test_trailing_newline_is_rejected(self):
+        # Regression (RC-327): "$" matches before a trailing newline in Python, so the
+        # old pattern let "user@example.nl\n" through. "\Z" does not.
+        errors = EmailValidator().validate("user@example.nl\n")
+        assert len(errors) == 1
+
+    def test_embedded_whitespace_is_rejected(self):
+        errors = EmailValidator().validate("user name@example.nl")
+        assert len(errors) == 1
+
 
 class TestMinMaxLengthValidator:
     def test_within_range(self):

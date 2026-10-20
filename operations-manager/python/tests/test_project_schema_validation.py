@@ -744,3 +744,126 @@ class TestWebAddressLeftTheDeploymentRoot:
         migrated, was_migrated = migrate_to_latest(project)
         assert was_migrated is True
         validate_project_schema(migrated)
+
+
+class TestHetSchemaEnDeConstantesZeggenHetzelfde:
+    """Elk pattern heeft een bron. JSON kan niet importeren, dus die gelijkheid is een toets.
+
+    Zonder deze guard lopen de twee stil uit elkaar: het formulier weigert dan iets wat het
+    schema doorlaat, of omgekeerd, en dat merk je pas op de schrijfweg die je niet gebruikte.
+    """
+
+    @staticmethod
+    def _defs() -> dict:
+        from opi.core.project_schema import _load_latest_schema
+
+        return _load_latest_schema()["$defs"]
+
+    def test_de_hoeveelheid(self) -> None:
+        from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN
+
+        assert self._defs()["k8s-quantity"]["pattern"] == K8S_QUANTITY_PATTERN
+
+    def test_de_variabelenaam(self) -> None:
+        from opi.utils.env_vars import ENV_VAR_NAME_PATTERN
+
+        assert self._defs()["env-var-map"]["propertyNames"]["pattern"] == ENV_VAR_NAME_PATTERN
+
+    def test_het_emailadres(self) -> None:
+        from opi.forms.editables.validators import EMAIL_PATTERN
+
+        assert self._defs()["user"]["properties"]["email"]["pattern"] == EMAIL_PATTERN
+
+    def test_de_image(self) -> None:
+        from opi.utils.naming import CONTAINER_IMAGE_PATTERN
+
+        assert self._defs()["component"]["properties"]["image"]["pattern"] == CONTAINER_IMAGE_PATTERN
+
+
+class TestDeHoeveelheidOpResources:
+    """``$defs/k8s-quantity`` op resources.cpu/memory (RC-327 stap 2): de pattern-gelijkheid
+
+    hierboven bewijst niet dat de validator de waarde ook echt toetst -- die bewering
+    staat hier.
+    """
+
+    @pytest.mark.parametrize("waarde", ["500m", "1", "256Mi", "1.5Gi"])
+    def test_geldige_hoeveelheden_passeren(self, waarde: str) -> None:
+        project = _valid_project()
+        project["components"][0]["resources"] = {"cpu": waarde, "memory": waarde}
+        validate_project_schema(project)
+
+    @pytest.mark.parametrize("waarde", ["1 Gi", "256Mi\n", " 256Mi", "256 Mi"])
+    def test_een_hoeveelheid_met_spatie_of_regeleinde_wordt_geweigerd(self, waarde: str) -> None:
+        project = _valid_project()
+        project["components"][0]["resources"] = {"memory": waarde}
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+
+class TestEmailPatternOpUsers:
+    """``$defs/user.email`` krijgt een ``pattern`` naast ``format: email`` (RC-327 stap 4):
+    ``format`` alleen toetst geen whitespace, ``pattern`` wel.
+    """
+
+    def test_een_adres_met_whitespace_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin @rijksoverheid.nl", "role": "admin"}]
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_adres_met_een_afsluitend_regeleinde_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin@rijksoverheid.nl\n", "role": "admin"}]
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_normaal_adres_passeert(self) -> None:
+        project = _valid_project()
+        project["users"] = [{"email": "admin@rijksoverheid.nl", "role": "admin"}]
+        validate_project_schema(project)
+
+
+class TestUserEnvVarsObjectvorm:
+    """``$defs/env-var-map`` op de objecttak van ``user-env-vars`` (RC-327 stap 3)."""
+
+    def _with_user_env_vars(self, value: dict) -> dict:
+        project = _valid_project()
+        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["components"][0]["user-env-vars"] = value
+        return project
+
+    def test_een_geldige_sleutel_passeert(self) -> None:
+        validate_project_schema(self._with_user_env_vars({"DATABASE_URL": "postgresql://x"}))
+
+    def test_een_sleutel_met_een_spatie_wordt_geweigerd(self) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with_user_env_vars({"MY KEY": "value"}))
+
+    def test_een_waarde_met_een_newline_wordt_geweigerd(self) -> None:
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(self._with_user_env_vars({"FOO": "line1\nline2"}))
+
+
+class TestDeploymentComponentReference:
+    """``deployment-component.reference`` deelt zijn pattern met ``component.name`` (issue #87,
+
+    RC-327 stap 8): een verwijzing moet dezelfde vorm hebben als de naam waarnaar hij wijst.
+    """
+
+    def test_een_reference_met_hoofdletter_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "Frontend"
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_een_reference_met_een_regeleinde_wordt_geweigerd(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "frontend\n"
+        with pytest.raises(ProjectSchemaError):
+            validate_project_schema(project)
+
+    def test_de_normale_vorm_passeert(self) -> None:
+        project = _valid_project()
+        project["deployments"][0]["components"][0]["reference"] = "frontend"
+        validate_project_schema(project)
