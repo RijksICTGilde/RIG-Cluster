@@ -12,8 +12,12 @@ Findings go to stdout and nowhere else. There is deliberately no flag that write
 file: a list of where secrets sit, and how many, is a map to what is not revoked yet. Redirect
 it yourself, to a path outside the repository. See ``scripts/README.md``.
 
+A history run subtracts ``scripts/secret-scan-baseline.json``: the findings whose material is
+retracted and whose blobs stay readable because the history is not rewritten. There is no flag for
+it, so a run cannot silently be made to pass with a baseline of someone's choosing.
+
 Why an AGE candidate only counts when ``age-keygen`` accepts it is in ``secret_scan.py``; the
-three layers of the guard are in ``features/sops-sleutel-roteren.md``.
+layers of the guard are in ``features/sops-sleutel-roteren.md``.
 """
 
 from __future__ import annotations
@@ -26,6 +30,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from secret_scan import (  # type: ignore[reportMissingImports]
+    BASELINE_FILE,
+    apply_baseline,
+    load_baseline,
     report,
     scan_files,
     scan_history,
@@ -57,8 +64,9 @@ def main(argv: list[str] | None = None) -> int:
 
     tree = Path(arguments.tree)
     if arguments.history:
-        findings = scan_history(tree, include_ciphertext=arguments.inventory)
-        return report(findings, what=f"the git history of {tree}")
+        baseline = load_baseline(tree / BASELINE_FILE)
+        findings, stale = apply_baseline(scan_history(tree, include_ciphertext=arguments.inventory), baseline)
+        return report(findings, what=f"the git history of {tree}", stale_baseline=stale)
 
     # "is not None" and not a truthiness test: "--files" with nothing after it would otherwise
     # fall through to the whole-tree scan, which is a surprise in a hook whose whole job is to be

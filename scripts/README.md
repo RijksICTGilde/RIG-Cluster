@@ -144,16 +144,26 @@ De logica zit in `secret_edit.py`; de sleutels, de recipients en het ontsleutele
 |---|---|
 | `scan-secrets.py` | de ingang: een boom, een lijst bestanden, of de hele historie |
 | `secret_scan.py` | de regels, en waarom een AGE-kandidaat pas telt als `age-keygen` hem accepteert |
+| `secret-scan-baseline.json` | de historietreffers waarvan het materiaal is ingetrokken: per regel de blob-SHA en de soort |
 
-Hangt aan drie plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de job `secret-scan`
-in `.github/workflows/security.yml`, en `tests/test_secret_scan.py`.
+Hangt aan vier plekken: de `secret-scan`-hook in `.pre-commit-config.yaml`, de jobs `secret-scan`
+en `secret-scan-history` in `.github/workflows/security.yml`, en `tests/test_secret_scan.py` (die
+de boomscan ook draait, zodat elke omgeving die de suite draait de guard heeft).
 
-De hele historie nalopen is een eigen gang, en die duurt lang:
+De hele historie nalopen is een eigen gang, en die duurt minuten:
 
 ```bash
 python3 scripts/scan-secrets.py --history                       # deze repo
 python3 scripts/scan-secrets.py --history --tree <andere repo>  # een andere clone
 ```
+
+Een volledige clone is daarvoor nodig; een shallow clone heeft geen historie om te lezen en meldt
+CLEAN over bijna niets. De job `secret-scan-history` draait dit wekelijks en op aanvraag, met
+`fetch-depth: 0`.
+
+**De baseline.** De geschiedenis wordt niet herschreven, dus een ingetrokken sleutel blijft leesbaar. `secret-scan-baseline.json` trekt die treffers af, zodat de wekelijkse job groen kan zijn. Een regel erbij zetten is een beslissing: alleen als het materiaal is ingetrokken en de reden staat in het bestand. Twijfel hoort bij de beheerder.
+
+Entries die niet meer voorkomen worden gemeld: ze kunnen weg. Dit faalt de run niet, het is huishouden.
 
 **De bevindingen van de scanner gaan nooit naar git.** Niet als document, niet als bijlage,
 ook niet samengevat tot aantallen en paden: dat is een routekaart naar geheimen die nog geldig
