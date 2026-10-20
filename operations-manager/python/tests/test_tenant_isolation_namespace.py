@@ -23,7 +23,7 @@ import pytest
 from fastapi import HTTPException
 from opi.api.restore_router import _require_namespace_owned_by_project
 from opi.core import git_monitor
-from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.cluster_config import get_pod_security_labels, get_prefixed_namespace, namespace_labels
 from opi.manager.backup import RestoreResult
 from opi.manager.project_manager import ProjectManager
 
@@ -124,7 +124,7 @@ class _SpyKubectl:
     def __init__(self):
         self.namespace_exists = AsyncMock(return_value=False)
         self.apply_manifest = AsyncMock(return_value=None)  # success = no raise
-        self.apply_label_to_resource = AsyncMock(return_value=True)
+        self.apply_labels_to_resource = AsyncMock(return_value=True)
 
 
 class TestGitMonitorNamespacePinning:
@@ -164,7 +164,7 @@ class TestGitMonitorNamespacePinning:
 
         self.kubectl.namespace_exists.assert_not_called()
         self.kubectl.apply_manifest.assert_not_called()
-        self.kubectl.apply_label_to_resource.assert_not_called()
+        self.kubectl.apply_labels_to_resource.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_absent_namespace_defaults_to_project_name(self, monkeypatch):
@@ -187,8 +187,13 @@ class TestGitMonitorNamespacePinning:
         result = await git_monitor.check_and_create_namespaces(project_data)
 
         assert result is True
-        applied_namespace = self.kubectl.apply_manifest.await_args.args[1]["namespace"]
-        assert applied_namespace == "my-project"
+        manifest_variables = self.kubectl.apply_manifest.await_args.args[1]
+        assert manifest_variables["namespace"] == "my-project"
+        assert manifest_variables["pod_security_labels"] == get_pod_security_labels("local"), (
+            "RC-316: the manifest must get the same Pod Security labels as the label-apply call"
+        )
+        applied_labels = self.kubectl.apply_labels_to_resource.await_args.kwargs["labels"]
+        assert applied_labels == namespace_labels("local")
 
 
 # ---------------------------------------------------------------------------

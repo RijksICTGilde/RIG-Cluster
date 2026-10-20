@@ -533,14 +533,20 @@ class KubectlConnector:
     async def get_namespace_label_map(self, label_key: str) -> dict[str, str]:
         """Every namespace in the cluster, mapped to its value for ``label_key``.
 
+        Namespaces without the label are present with an empty string, so a caller
+        can tell "missing label" from "missing namespace" (absent from the dict).
+        """
+        alle_labels = await self.get_namespace_labels_map()
+        return {namespace: labels.get(label_key, "") for namespace, labels in alle_labels.items()}
+
+    async def get_namespace_labels_map(self) -> dict[str, dict[str, str]]:
+        """Every namespace in the cluster, mapped to all of its labels.
+
         One call instead of one per namespace. Startup checks 45 projects across 44
         namespaces; asking per namespace meant 127 ``kubectl get`` invocations (a
         subprocess each) plus 127 unconditional ``kubectl label`` calls, together 70
         of the 83 seconds it took to boot. With this map both questions -- does it
-        exist, does it carry the right label -- are answered locally.
-
-        Namespaces without the label are present with an empty string, so a caller
-        can tell "missing label" from "missing namespace" (absent from the dict).
+        exist, does it carry the right labels -- are answered locally.
         """
         args = ["get", "namespaces", "-o", "json"]
         stdout, stderr, code = await self._run_kubectl_command(args)
@@ -552,13 +558,13 @@ class KubectlConnector:
             raise KubectlExecutionError(f"Failed to list namespaces: {stderr}")
 
         data = json.loads(stdout)
-        result: dict[str, str] = {}
+        result: dict[str, dict[str, str]] = {}
         for item in data.get("items", []):
             meta = item.get("metadata", {})
             name = meta.get("name")
             if name:
-                result[name] = (meta.get("labels", {}) or {}).get(label_key, "")
-        logger.debug(f"Listed {len(result)} namespaces with label '{label_key}'")
+                result[name] = meta.get("labels", {}) or {}
+        logger.debug(f"Listed {len(result)} namespaces with their labels")
         return result
 
     async def delete_namespace(self, namespace: str) -> bool:
@@ -1149,18 +1155,17 @@ class KubectlConnector:
             logger.error(f"Error encrypting file with SOPS: {e}")
             return False
 
-    async def apply_label_to_resource(
+    async def apply_labels_to_resource(
         self,
         resource_type: str,
         resource_name: str,
-        label_key: str,
-        label_value: str,
+        labels: dict[str, str],
         namespace: str | None = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> bool:
         """
-        Apply a label to a specific Kubernetes resource.
+        Apply one or more labels to a specific Kubernetes resource in a single call.
 
         Includes retry logic to handle transient failures from admission webhooks
         (e.g., Capsule) that may temporarily deny requests during reconciliation.
@@ -1168,19 +1173,24 @@ class KubectlConnector:
         Args:
             resource_type: The type of resource (e.g., 'namespace', 'pod', 'service')
             resource_name: The name of the resource
-            label_key: The label key to apply
-            label_value: The label value to apply
+            labels: The label keys and values to apply
             namespace: The namespace of the resource (not needed for cluster-scoped resources like namespaces)
             max_retries: Maximum number of retry attempts (default: 3)
             retry_delay: Delay in seconds between retry attempts (default: 1.0)
 
         Returns:
-            True if the label was applied successfully, False otherwise
+            True if the labels were applied successfully, False otherwise
         """
-        logger.debug(f"Applying label {label_key}={label_value} to {resource_type}/{resource_name}")
+        if not labels:
+            return True
+
+        beschrijving = ",".join(f"{key}={value}" for key, value in labels.items())
+        logger.debug(f"Applying labels {beschrijving} to {resource_type}/{resource_name}")
 
         # Build the kubectl label command with --overwrite to handle existing labels
-        args = ["label", resource_type, resource_name, f"{label_key}={label_value}", "--overwrite"]
+        args = ["label", resource_type, resource_name]
+        args.extend(f"{key}={value}" for key, value in labels.items())
+        args.append("--overwrite")
 
         # Add namespace flag if provided and not a cluster-scoped resource
         if namespace and resource_type.lower() != "namespace":
@@ -1192,15 +1202,13 @@ class KubectlConnector:
                 stdout, stderr, code = await self._run_kubectl_command(args)
 
                 if code == 0:
-                    logger.info(
-                        f"Successfully applied label {label_key}={label_value} to {resource_type}/{resource_name}"
-                    )
+                    logger.info(f"Successfully applied labels {beschrijving} to {resource_type}/{resource_name}")
                     return True
 
                 last_error = stderr
                 if attempt < max_retries:
                     logger.warning(
-                        f"Failed to apply label to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
+                        f"Failed to apply labels to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
                         f"{stderr}. Retrying in {retry_delay}s..."
                     )
                     await asyncio.sleep(retry_delay)
@@ -1209,13 +1217,13 @@ class KubectlConnector:
                 last_error = str(e)
                 if attempt < max_retries:
                     logger.warning(
-                        f"Error applying label to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
+                        f"Error applying labels to {resource_type}/{resource_name} (attempt {attempt}/{max_retries}): "
                         f"{e}. Retrying in {retry_delay}s..."
                     )
                     await asyncio.sleep(retry_delay)
 
         logger.error(
-            f"Failed to apply label to {resource_type}/{resource_name} after {max_retries} attempts: {last_error}"
+            f"Failed to apply labels to {resource_type}/{resource_name} after {max_retries} attempts: {last_error}"
         )
         return False
 

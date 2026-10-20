@@ -58,7 +58,9 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
     get_namespace,
+    get_pod_security_labels,
     get_prefixed_namespace,
+    namespace_labels,
     supports_vpa,
     uses_capsule,
 )
@@ -2081,7 +2083,7 @@ class ProjectManager:
         self,
         deployment_name: str | None = None,
         deployment_names: list[str] | None = None,
-        known_namespace_labels: dict[str, str] | None = None,
+        known_namespace_labels: dict[str, dict[str, str]] | None = None,
     ) -> bool:
         """
         Check and create namespaces for all deployments in the project for this cluster.
@@ -2090,11 +2092,11 @@ class ProjectManager:
             deployment_name: Optional single deployment to process
             deployment_names: Optional explicit set of deployments to process
                 (takes precedence over ``deployment_name``)
-            known_namespace_labels: namespace -> argocd managed-by value, as read in one
-                call by the caller. Given this, an existing namespace with the right
-                label costs no kubectl invocation at all. Startup passes it because it
-                walks every project; per-request callers leave it None and each check
-                talks to the cluster, which is what you want for a single deployment.
+            known_namespace_labels: namespace -> its labels, as read in one call by the
+                caller. Given this, an existing namespace with the right labels costs no
+                kubectl invocation at all. Startup passes it because it walks every
+                project; per-request callers leave it None and each check talks to the
+                cluster, which is what you want for a single deployment.
 
         Returns:
             True if all namespaces were checked/created successfully
@@ -2132,7 +2134,7 @@ class ProjectManager:
             namespace = get_prefixed_namespace(settings.CLUSTER_MANAGER, cast("str", deployment["namespace"]))
             namespaces.setdefault(namespace, []).append(cast("str", deployment["name"]))
 
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
+        wanted_labels = namespace_labels(settings.CLUSTER_MANAGER)
 
         for namespace, deployment_list in namespaces.items():
             logger.info(
@@ -2141,10 +2143,11 @@ class ProjectManager:
 
             if known_namespace_labels is not None:
                 namespace_exists = namespace in known_namespace_labels
-                label_is_correct = known_namespace_labels.get(namespace) == manager_value
+                present = known_namespace_labels.get(namespace, {})
+                labels_are_correct = all(present.get(key) == value for key, value in wanted_labels.items())
             else:
                 namespace_exists = await self._kubectl_connector.namespace_exists(namespace)
-                label_is_correct = False  # unknown, so apply it as before
+                labels_are_correct = False  # unknown, so apply them as before
 
             if namespace_exists:
                 logger.info(f"Namespace '{namespace}' already exists for project '{project_data['name']}'")
@@ -2152,11 +2155,11 @@ class ProjectManager:
                 logger.info(f"Creating namespace '{namespace}' for project '{project_data['name']}':")
                 # Create the namespace using shared function
                 await self._create_namespace_with_argocd_label(namespace)
-                label_is_correct = True  # applied as part of creation
+                labels_are_correct = True  # applied as part of creation
 
-            # Idempotent, but not free: skip it when we already read the right value.
-            if not label_is_correct:
-                await self._ensure_argocd_managed_by_label(namespace)
+            # Idempotent, but not free: skip it when we already read the right values.
+            if not labels_are_correct:
+                await self._ensure_namespace_labels(namespace)
 
             if progress_manager:
                 progress_manager.set_namespace(namespace)
@@ -2190,7 +2193,11 @@ class ProjectManager:
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "namespace.yaml.jinja")
 
         # Template variables
-        variables = {"namespace": namespace, "manager": get_argo_namespace(settings.CLUSTER_MANAGER)}
+        variables = {
+            "namespace": namespace,
+            "manager": get_argo_namespace(settings.CLUSTER_MANAGER),
+            "pod_security_labels": get_pod_security_labels(settings.CLUSTER_MANAGER),
+        }
 
         await self._kubectl_connector.apply_manifest(manifest_path, variables)
 
@@ -2206,48 +2213,24 @@ class ProjectManager:
                     "Cannot proceed with namespace configuration."
                 )
 
-        # Apply the argocd.argoproj.io/managed-by label after creating the namespace
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-        label_result = await self._kubectl_connector.apply_label_to_resource(
+        # Nog een keer labelen na het aanmaken: het manifest zet ze al, maar op een cluster
+        # met Capsule komt dit pas langs nadat de tenantlabel-wacht klaar is.
+        await self._ensure_namespace_labels(namespace)
+
+        logger.info(f"Successfully created namespace '{namespace}' with the managed-by and Pod Security labels")
+
+    async def _ensure_namespace_labels(self, namespace: str) -> None:
+        """Ensure the managed-by and Pod Security labels exist on this namespace (idempotent)."""
+        label_result = await self._kubectl_connector.apply_labels_to_resource(
             resource_type="namespace",
             resource_name=namespace,
-            label_key="argocd.argoproj.io/managed-by",
-            label_value=manager_value,
-        )
-
-        if not label_result:
-            raise RuntimeError(
-                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
-                "ArgoCD will not be able to manage resources in this namespace."
-            )
-
-        logger.info(f"Successfully created namespace '{namespace}' with ArgoCD managed-by label")
-
-    async def _ensure_argocd_managed_by_label(self, namespace: str) -> None:
-        """
-        Ensure the ArgoCD managed-by label exists on a namespace (idempotent).
-
-        This applies the label regardless of whether it already exists,
-        ensuring namespaces are always properly configured for ArgoCD management.
-
-        Args:
-            namespace: Full namespace name (with cluster prefix already applied)
-
-        Raises:
-            RuntimeError: If the label cannot be applied
-        """
-        manager_value = get_argo_namespace(settings.CLUSTER_MANAGER)
-        label_result = await self._kubectl_connector.apply_label_to_resource(
-            resource_type="namespace",
-            resource_name=namespace,
-            label_key="argocd.argoproj.io/managed-by",
-            label_value=manager_value,
+            labels=namespace_labels(settings.CLUSTER_MANAGER),
         )
         if label_result:
-            logger.info(f"Ensured ArgoCD managed-by label on namespace: {namespace}")
+            logger.info(f"Ensured ArgoCD managed-by and Pod Security labels on namespace: {namespace}")
         else:
             raise RuntimeError(
-                f"Failed to apply ArgoCD managed-by label to namespace '{namespace}'. "
+                f"Failed to apply the managed-by and Pod Security labels to namespace '{namespace}'. "
                 "ArgoCD will not be able to manage resources in this namespace."
             )
 
@@ -2407,8 +2390,8 @@ class ProjectManager:
                     f"Infrastructure namespace '{infrastructure_namespace}' already exists for project '{project_name}'"
                 )
 
-            # Always ensure ArgoCD managed-by label exists (idempotent)
-            await self._ensure_argocd_managed_by_label(infrastructure_namespace)
+            # Always ensure the managed-by and Pod Security labels exist (idempotent)
+            await self._ensure_namespace_labels(infrastructure_namespace)
 
             # Create SOPS secret in the infrastructure namespace (using shared function)
             await self._ensure_sops_secret_in_namespace(infrastructure_namespace, project_data)

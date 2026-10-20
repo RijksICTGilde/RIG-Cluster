@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from opi.core.cluster_config import namespace_labels
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
 
@@ -48,7 +49,7 @@ def manager(monkeypatch: pytest.MonkeyPatch) -> ProjectManager:
 def _kubectl(monkeypatch: pytest.MonkeyPatch, manager: ProjectManager) -> AsyncMock:
     kubectl = AsyncMock()
     kubectl.namespace_exists = AsyncMock(return_value=True)
-    kubectl.apply_label_to_resource = AsyncMock(return_value=True)
+    kubectl.apply_labels_to_resource = AsyncMock(return_value=True)
     monkeypatch.setattr(manager, "_kubectl_connector", kubectl)
     return kubectl
 
@@ -61,7 +62,7 @@ async def test_one_namespace_is_checked_once_not_once_per_deployment(
     assert await manager.check_and_create_namespaces() is True
 
     assert kubectl.namespace_exists.await_count == 1, "three deployments share one namespace"
-    assert kubectl.apply_label_to_resource.await_count == 1
+    assert kubectl.apply_labels_to_resource.await_count == 1
 
 
 async def test_a_pre_read_label_map_removes_the_cluster_calls_entirely(
@@ -69,27 +70,24 @@ async def test_a_pre_read_label_map_removes_the_cluster_calls_entirely(
 ) -> None:
     """What startup does: it already knows the namespace exists and is labelled."""
     kubectl = _kubectl(monkeypatch, manager)
-    from opi.core.cluster_config import get_argo_namespace
-    from opi.core.config import settings
-
-    known = {f"{_prefix()}demo": get_argo_namespace(settings.CLUSTER_MANAGER)}
+    known = {f"{_prefix()}demo": namespace_labels(settings.CLUSTER_MANAGER)}
 
     assert await manager.check_and_create_namespaces(known_namespace_labels=known) is True
 
     assert kubectl.namespace_exists.await_count == 0
-    assert kubectl.apply_label_to_resource.await_count == 0, "the label was already correct"
+    assert kubectl.apply_labels_to_resource.await_count == 0, "the labels were already correct"
 
 
 async def test_a_missing_label_is_still_applied(manager: ProjectManager, monkeypatch: pytest.MonkeyPatch) -> None:
     """The check may be cheap, but it may not become a no-op."""
     kubectl = _kubectl(monkeypatch, manager)
 
-    known = {f"{_prefix()}demo": ""}  # namespace exists, label missing
+    known: dict[str, dict[str, str]] = {f"{_prefix()}demo": {}}  # namespace exists, labels missing
 
     assert await manager.check_and_create_namespaces(known_namespace_labels=known) is True
 
     assert kubectl.namespace_exists.await_count == 0
-    assert kubectl.apply_label_to_resource.await_count == 1
+    assert kubectl.apply_labels_to_resource.await_count == 1
 
 
 async def test_a_namespace_missing_from_the_map_is_created(
@@ -107,7 +105,7 @@ async def test_a_namespace_missing_from_the_map_is_created(
     assert await manager.check_and_create_namespaces(known_namespace_labels={}) is True
 
     created.assert_awaited_once()
-    assert kubectl.apply_label_to_resource.await_count == 0, "creation applies the label itself"
+    assert kubectl.apply_labels_to_resource.await_count == 0, "creation applies the labels itself"
 
 
 async def test_the_sops_secret_is_checked_once_per_namespace(
