@@ -239,11 +239,28 @@ class KeycloakSetup:
         logger.info(f"Created OPI realm '{OPERATIONS_REALM_NAME}' using template '{template_name}'")
 
         # Create default users from project file (if defined)
-        users = keycloak_config.get("users", [])
-        if users:
-            variables = {**context, "project_realm_name": OPERATIONS_REALM_NAME}
-            await handler._process_users(users, variables)
-            logger.info(f"Created {len(users)} default user(s) in realm '{OPERATIONS_REALM_NAME}'")
+        for item in keycloak_config.get("users", []):
+            username = item["username"]
+            password = next(
+                (cred.get("value") for cred in item.get("credentials", []) if cred.get("type") == "password"), None
+            )
+            if not password:
+                msg = f"User '{username}' in realm '{OPERATIONS_REALM_NAME}' has no password credential"
+                raise ValueError(msg)
+
+            await keycloak.create_user(
+                # Letterlijke realm, de guard eist dat.
+                realm_name="operations-manager",
+                username=username,
+                password=password,
+                email=item.get("email"),
+                first_name=item.get("firstName"),
+                last_name=item.get("lastName"),
+                enabled=item.get("enabled", True),
+                # Adres bestaat niet als postbus; verificatie houdt hem tegen.
+                skip_email_verification=True,
+            )
+            logger.info(f"Created user '{username}' in realm '{OPERATIONS_REALM_NAME}'")
 
     def _extract_keycloak_service_config(self, project_data: dict) -> dict:
         """Extract keycloak config from project file services section.
