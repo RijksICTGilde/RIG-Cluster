@@ -14,6 +14,7 @@ from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.services import CloneFromType, ServiceType
 from opi.services.project import Project
+from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
 from opi.utils.secrets import MinIOSecret
@@ -1489,9 +1490,8 @@ class MinioManager:
             return {"bucket_exists": bucket_exists, "object_count": None}
 
         except Exception as e:
-            raise Exception(
-                f"Failed to validate external source {source_host}:{source_port}/{source_bucket}: {e!s}"
-            ) from e
+            logger.warning(f"Failed to validate external source {source_host}:{source_port}/{source_bucket}: {e!s}")
+            raise Exception(UNREACHABLE_SOURCE_REASON) from e
         finally:
             # Cleanup temporary alias
             if minio_connector and temp_alias:
@@ -1687,6 +1687,17 @@ class MinioManager:
             ...     force_clone=True
             ... )
         """
+        refusal = await clone_source_refusal(source_host, chisel_config.get("server-url") if chisel_config else None)
+        if refusal:
+            return {
+                "project": project_name,
+                "deployment": deployment_name,
+                "source": {"host": source_host, "port": source_port, "bucket": source_bucket},
+                "operations": [],
+                "success": False,
+                "errors": [refusal],
+            }
+
         if chisel_config:
             # Use Chisel tunnel for the connection
             return await self._clone_bucket_with_chisel_tunnel(

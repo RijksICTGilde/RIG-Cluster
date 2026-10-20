@@ -287,6 +287,9 @@ deployments:
 
 ## Security Considerations
 
+`chisel.server-url` must resolve to a public address, and so must the `host` of a service
+that is reached without a tunnel; see `features/externe-kloonbron-op-een-publiek-adres.md`.
+
 1. All remote source credentials should be AGE-encrypted
 2. Use read-only credentials for source databases when possible
 3. Chisel provides encrypted tunnels, but ensure your Chisel server is properly secured

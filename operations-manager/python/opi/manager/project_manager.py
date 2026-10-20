@@ -30,7 +30,6 @@ from ruamel.yaml.scalarstring import LiteralScalarString
 from sqlalchemy.exc import SQLAlchemyError
 
 from opi.connectors import create_argo_connector
-from opi.connectors.chisel_connector import ChiselConnector
 from opi.connectors.git import (
     GitConnector,
     create_git_connector_for_argocd,
@@ -9804,6 +9803,8 @@ class ProjectManager:
         Clone a database from a remote source via Chisel tunnel.
 
         This method is for manual API operations, not project-file-based cloning.
+        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
+        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
         """
 
         logger.info(
@@ -9811,48 +9812,23 @@ class ProjectManager:
             f"<- {tunnel_remote_host}:{tunnel_remote_port} (via {tunnel_server_url})"
         )
 
-        connector = ChiselConnector(
-            server_url=tunnel_server_url,
-            username=tunnel_username,
-            password=tunnel_password,
+        db_manager = await self._ensure_database_manager()
+        return await db_manager.clone_database_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=tunnel_remote_host,
+            source_port=tunnel_remote_port,
+            source_username=source_username,
+            source_password=source_password,
+            source_database=source_database,
+            source_schema=source_schema,
+            force_clone=force_clone,
+            chisel_config={
+                "server-url": tunnel_server_url,
+                "username": tunnel_username,
+                "password": tunnel_password,
+            },
         )
-
-        try:
-            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
-            _ = await asyncio.to_thread(
-                connector.start_tunnel,
-                remote_host=tunnel_remote_host,
-                remote_port=tunnel_remote_port,
-            )
-
-            endpoint = connector.get_local_endpoint()
-            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
-
-            db_manager = await self._ensure_database_manager()
-            result = await db_manager.clone_database_from_external_source(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=endpoint["host"],
-                source_port=endpoint["port"],
-                source_username=source_username,
-                source_password=source_password,
-                source_database=source_database,
-                source_schema=source_schema,
-                force_clone=force_clone,
-            )
-
-            result["tunnel"] = {
-                "used": True,
-                "server": tunnel_server_url,
-                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
-                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
-            }
-
-            return result
-
-        finally:
-            await asyncio.to_thread(connector.stop_tunnel)
-            logger.info("Tunnel cleaned up")
 
     async def clone_database_from_external_direct(
         self,
@@ -9908,53 +9884,30 @@ class ProjectManager:
         Clone a MinIO bucket from a remote source via Chisel tunnel.
 
         This method is for manual API operations, not project-file-based cloning.
+        De tunnel wordt door de gedeelde kloonfunctie opgezet, zodat de guard de
+        chisel-server-url toetst in plaats van het lokale tunnel-endpoint.
         """
         logger.info(
             f"Manual MinIO clone via tunnel: {project_name}/{deployment_name} "
             f"<- {tunnel_remote_host}:{tunnel_remote_port}/{source_bucket} (via {tunnel_server_url})"
         )
 
-        connector = ChiselConnector(
-            server_url=tunnel_server_url,
-            username=tunnel_username,
-            password=tunnel_password,
+        return await self._minio_manager.clone_bucket_from_external_source(
+            project_name=project_name,
+            deployment_name=deployment_name,
+            source_host=tunnel_remote_host,
+            source_port=tunnel_remote_port,
+            source_access_key=source_access_key,
+            source_secret_key=source_secret_key,
+            source_bucket=source_bucket,
+            source_secure=source_secure,
+            force_clone=force_clone,
+            chisel_config={
+                "server-url": tunnel_server_url,
+                "username": tunnel_username,
+                "password": tunnel_password,
+            },
         )
-
-        try:
-            # In een thread: start_tunnel pollt tot 30 s op een synchrone socket-connect.
-            _ = await asyncio.to_thread(
-                connector.start_tunnel,
-                remote_host=tunnel_remote_host,
-                remote_port=tunnel_remote_port,
-            )
-
-            endpoint = connector.get_local_endpoint()
-            logger.info(f"Tunnel established: {endpoint['host']}:{endpoint['port']}")
-
-            result = await self._minio_manager.clone_bucket_from_external_source(
-                project_name=project_name,
-                deployment_name=deployment_name,
-                source_host=endpoint["host"],
-                source_port=endpoint["port"],
-                source_access_key=source_access_key,
-                source_secret_key=source_secret_key,
-                source_bucket=source_bucket,
-                source_secure=source_secure,
-                force_clone=force_clone,
-            )
-
-            result["tunnel"] = {
-                "used": True,
-                "server": tunnel_server_url,
-                "local_endpoint": f"{endpoint['host']}:{endpoint['port']}",
-                "remote_endpoint": f"{tunnel_remote_host}:{tunnel_remote_port}",
-            }
-
-            return result
-
-        finally:
-            await asyncio.to_thread(connector.stop_tunnel)
-            logger.info("Tunnel cleaned up")
 
     async def clone_minio_bucket_from_external_direct(
         self,

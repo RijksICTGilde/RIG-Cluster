@@ -579,6 +579,25 @@ def get_service_namespaces(cluster_name: str) -> list[str]:
     return list(cluster_config.get("service_namespaces", []))
 
 
+def get_external_clone_allowed_private_networks(cluster_name: str) -> list[str]:
+    """De private bereiken waarnaar een externe kloon van dit cluster wel mag verbinden.
+
+    Standaard geen: een kloonbron hoort op een publiek adres te staan. Een cluster dat een
+    bereik nodig heeft, zet het hier met de reden erbij. Een project kan dit niet zetten.
+
+    Args:
+        cluster_name: Name of the cluster
+
+    Returns:
+        De toegestane CIDR's, of een lege lijst.
+
+    Raises:
+        ValueError: If cluster is not found in configuration
+    """
+    cluster_config = get_cluster_config(cluster_name)
+    return list(cluster_config.get("external_clone_allowed_private_networks", []))
+
+
 def get_argo_namespace(cluster_name: str) -> str:
     """
     Get the ArgoCD namespace for a specific cluster.

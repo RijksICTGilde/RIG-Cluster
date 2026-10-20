@@ -438,6 +438,89 @@ def test_repository_url_normal_values_are_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
+# remote-sources: chisel server-url and service host (RC-326)
+# ---------------------------------------------------------------------------
+
+
+def _remote_source(**overrides: object) -> dict:
+    source: dict = {
+        "name": "odcn-production",
+        "chisel": {
+            "server-url": "https://chisel-server.prd.example.com",
+            "username": "admin",
+            "password": "plain:secret",
+        },
+        "services": {
+            "postgresql-database": {
+                "host": "amt-cluster-db-r",
+                "port": 5432,
+                "username": "tad",
+                "password": "plain:secret",
+                "database": "tad",
+                "schema": "public",
+            }
+        },
+    }
+    source.update(overrides)
+    return source
+
+
+def test_remote_source_server_url_requires_https() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [_remote_source(chisel={"server-url": "http://chisel.example.com", "username": "a"})]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_server_url_with_shell_metacharacters_is_rejected() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [
+        _remote_source(chisel={"server-url": "https://chisel.example.com; rm -rf /", "username": "a"})
+    ]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_server_url_normal_value_is_accepted() -> None:
+    project = _valid_project()
+    project["remote-sources"] = [_remote_source()]
+    validate_project_schema(project)
+
+
+def test_remote_source_service_host_with_shell_metacharacters_is_rejected() -> None:
+    project = _valid_project()
+    source = _remote_source()
+    source["services"]["postgresql-database"]["host"] = "db.example.com; rm -rf /"
+    project["remote-sources"] = [source]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_service_host_with_newline_is_rejected() -> None:
+    project = _valid_project()
+    source = _remote_source()
+    source["services"]["postgresql-database"]["host"] = "db.example.com\ninjected: yes"
+    project["remote-sources"] = [source]
+    with pytest.raises(ProjectSchemaError):
+        validate_project_schema(project)
+
+
+def test_remote_source_service_host_normal_values_are_accepted() -> None:
+    """A cluster-internal short name and a full hostname both still pass the pattern.
+
+    The guard that keeps the connection itself from reaching a private address is
+    ``opi/utils/egress_guard.py``, not this schema pattern.
+    """
+    valid_hosts = ["amt-cluster-db-r", "db.example.com", "10.20.1.5"]
+    for host in valid_hosts:
+        project = _valid_project()
+        source = _remote_source()
+        source["services"]["postgresql-database"]["host"] = host
+        project["remote-sources"] = [source]
+        validate_project_schema(project)
+
+
+# ---------------------------------------------------------------------------
 # Per-component security override (hidden YAML-only feature)
 # ---------------------------------------------------------------------------
 

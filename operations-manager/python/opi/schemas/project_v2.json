@@ -581,7 +581,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "server-url": { "type": "string" },
+            "server-url": { "type": "string", "pattern": "^https://[^\\s\\u0000\"]+\\Z", "maxLength": 512 },
             "username": { "type": "string" },
             "password": { "$ref": "#/$defs/age-encrypted-or-plain" }
           }
@@ -596,7 +596,7 @@
     "remote-source-service": {
       "type": "object",
       "properties": {
-        "host": { "type": ["string", "integer"] },
+        "host": { "type": ["string", "integer"], "pattern": "^[A-Za-z0-9]([A-Za-z0-9.:-]*[A-Za-z0-9])?\\Z", "maxLength": 253 },
         "port": { "type": "integer" },
         "username": { "type": "string" },
         "password": { "$ref": "#/$defs/age-encrypted-or-plain" },
