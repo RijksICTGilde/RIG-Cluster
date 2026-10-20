@@ -94,6 +94,10 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
+        # CA van argocd-server. Per cluster anders (service-CA op ODCN, eigen CA op sandbox).
+        - name: argocd-ca-bundle
+          mountPath: /etc/ssl/argocd
+          readOnly: true
         - name: git-signing-key
           mountPath: /etc/opi/git-signing
           readOnly: true
@@ -184,6 +188,9 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 500Mi
+      - name: argocd-ca-bundle
+        configMap:
+          name: argocd-ca-bundle
       - name: git-signing-key
         secret:
           secretName: operations-manager-git-signing-key

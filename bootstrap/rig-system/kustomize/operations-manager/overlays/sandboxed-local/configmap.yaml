@@ -35,6 +35,11 @@ data:
     MINIO_HOST=minio:9000
     ARGOCD_HOST=argocd-server
     ARGOCD_PASSWORD=admin1234
+    # TLS: certificaat en bundel van `task sandbox:generate-argocd-tls`.
+    ARGOCD_PORT=443
+    ARGOCD_USE_TLS=true
+    ARGOCD_VERIFY_SSL=true
+    ARGOCD_CA_BUNDLE=/etc/ssl/argocd/ca.crt
 
     KEYCLOAK_URL=https://keycloak.sandbox.rijksapp.dev
     # OIDC credentials are set dynamically by OPI after creating its own realm

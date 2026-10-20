@@ -24,8 +24,8 @@ These tests pin what makes riding that out safe:
   - a caller that did ask to ride out a restart does wait for that login, even when it
     outlasts its own budget, because giving up there kills the deployment task,
   - the login branches that moved out of the old try still hold: an answer without a
-    usable token reports False and caches nothing, and a redirect to HTTPS switches the
-    connector over.
+    usable token reports False and caches nothing, and an answer that arrives over HTTPS
+    no longer switches the connector over (RC-315: the protocol is a setting, not a guess).
 """
 
 import asyncio
@@ -507,12 +507,12 @@ async def test_a_login_answer_that_carries_no_usable_token_reports_false(status:
 
 
 @pytest.mark.asyncio
-async def test_a_login_redirected_to_https_switches_the_connector_over() -> None:
-    """ArgoCD redirects plain HTTP to HTTPS, and the connector follows for every later call.
+async def test_a_login_answered_over_https_does_not_switch_the_connector_over() -> None:
+    """The protocol is a setting, not a guess (RC-315).
 
-    This block moved into _login_once as well. It rewrites the base URL, which is also
-    half of the token cache key, so losing it would send every later request back to the
-    port that redirected.
+    The connector used to rewrite its base URL to https on an answer that arrived there.
+    That URL is half of the token cache key, and it silently undid a configured http,
+    so TLS looked configured where it was not. ARGOCD_USE_TLS decides, and nothing else.
     """
     answer = _FakeResponse(200, '{"token": "token-fresh"}')
     answer.url = "https://argocd-server:443/api/v1/session"
@@ -523,9 +523,9 @@ async def test_a_login_redirected_to_https_switches_the_connector_over() -> None
     with session_patch, connector_patch, sleep_patch:
         assert await connector.login() is True
 
-    assert connector.base_url == "https://argocd-server:443", "a later call would go back to the plain port"
-    assert connector._actual_base_url == "https://argocd-server:443"
-    assert argo_module._token_cache == {("https://argocd-server:443", "admin"): "token-fresh"}
+    assert connector.base_url == "http://argocd-server:80"
+    assert connector._actual_base_url == "http://argocd-server:80"
+    assert argo_module._token_cache == {("http://argocd-server:80", "admin"): "token-fresh"}
     assert len(h.calls) == 1
 
 

@@ -27,12 +27,16 @@ spec:
     timeout.hard.reconciliation: "0s"
   server:
     logLevel: debug
-    insecure: true
+    # TLS met certificaat uit het secret argocd-server-tls (van `task sandbox:generate-argocd-tls`).
+    insecure: false
     host: argo.sandbox.rijksapp.dev
     ingress:
       enabled: true
       path: /
       ingressClassName: nginx
+      annotations:
+        # insecure: false zegt nginx om TLS te verwachten; anders krijgt de UI een 502.
+        nginx.ingress.kubernetes.io/backend-protocol: HTTPS
       tls:
       - hosts:
         - argo.sandbox.rijksapp.dev

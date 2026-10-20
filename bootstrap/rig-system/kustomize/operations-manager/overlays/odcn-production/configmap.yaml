@@ -56,8 +56,13 @@ data:
     PROMETHEUS_URL=http://prometheus.rig-prd-operations:9090
     PROMETHEUS_EXTERNAL_URL=https://prometheus.rig.prd1.gn2.quattro.rijksapps.nl
 
-    ARGOCD_HOST=argocd-server
-    ARGOCD_PORT=80
+    # De volledige servicenaam (SAN in het certificaat)
+    ARGOCD_HOST=argocd-server.rig-prd-operations.svc
+    # TLS met service-CA-bundel
+    ARGOCD_PORT=443
+    ARGOCD_USE_TLS=true
+    ARGOCD_VERIFY_SSL=true
+    ARGOCD_CA_BUNDLE=/etc/ssl/argocd/service-ca.crt
 
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false

@@ -257,6 +257,9 @@ class Settings(BaseSettings):
     ARGOCD_PASSWORD: str = "admin"
     ARGOCD_USE_TLS: bool = False
     ARGOCD_VERIFY_SSL: bool = False
+    # Pad van de gemounte CA-bundel van de ArgoCD-server. Verplicht zodra TLS en
+    # certificaatcontrole aan staan: de CA erachter is per cluster een andere.
+    ARGOCD_CA_BUNDLE: str | None = None
 
     # Manifests path
     MANIFESTS_PATH: str = "manifests"
