@@ -41,6 +41,10 @@ data:
     ARGOCD_VERIFY_SSL=true
     ARGOCD_CA_BUNDLE=/etc/ssl/argocd/ca.crt
 
+    # Hier aan en op productie nog niet: de sandbox is waar de afsluiting gemeten wordt
+    # (tests/e2e/test_sandbox_database_isolatie.py). Standaard is dry-run.
+    DATABASE_RESTRICT_PUBLIC_CONNECT=on
+
     KEYCLOAK_URL=https://keycloak.sandbox.rijksapp.dev
     # OIDC credentials are set dynamically by OPI after creating its own realm
 

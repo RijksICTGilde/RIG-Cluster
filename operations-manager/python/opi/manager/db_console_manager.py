@@ -174,8 +174,8 @@ class DbConsoleManager:
     ) -> tuple[str, int, list[str], dict[str, str]]:
         """Return (image, container_port, args, connection_secret_data) per tool.
 
-        The console connects with the deployment's own database credentials; the
-        access level is whatever those credentials already have (read-write).
+        The caller passes the deployment's read-only role, so the console is read-only
+        server-side; the read-write password never reaches the console pod.
         """
         port = _TOOL_PORTS[tool]
         if tool == DbConsoleTool.PGWEB:
@@ -362,6 +362,16 @@ class DbConsoleManager:
         )
         if not db_secret:
             raise DbConsoleError("Geen database om mee te verbinden.")
+        # De console verbindt met de read-only rol van de deployment, zodat schrijven
+        # serverkant onmogelijk is. Geen terugval op de read-write gebruiker: een console
+        # die read-only heet en wel kan schrijven is erger dan een console die niet opent.
+        # De controle staat hier, dus voordat de eerste resource is aangemaakt.
+        if not (db_secret.ro_username and db_secret.ro_password):
+            raise DbConsoleError(
+                "Deze deployment heeft nog geen read-only databaserol. Verwerk de deployment "
+                "opnieuw, dan maakt ZAD die rol aan."
+            )
+        conn_user, conn_password = db_secret.ro_username, db_secret.ro_password
         name = generate_db_console_name(project_name, deployment_name, session_id)
         hostname = generate_db_console_hostname(project_name, session_id, get_ingress_postfix(cluster))
         client_id = generate_db_console_client_id(session_id)
@@ -382,19 +392,6 @@ class DbConsoleManager:
             raise DbConsoleError("Failed to obtain OIDC client secret for the database console.")
         # Protect this fresh client from the reaper's orphan GC until its pod is visible.
         mark_client_created(client_id)
-
-        # Connect with the deployment's persistent read-only role so writes are
-        # impossible server-side. Deployments not yet reprocessed since the
-        # read-only role was introduced have no ro credentials; fall back to the
-        # read-write user so the console keeps working until the next reprocess.
-        if db_secret.ro_username and db_secret.ro_password:
-            conn_user, conn_password = db_secret.ro_username, db_secret.ro_password
-        else:
-            logger.warning(
-                f"No read-only database credentials for deployment '{deployment_name}'; "
-                f"falling back to read-write user. Reprocess the deployment to provision the read-only role."
-            )
-            conn_user, conn_password = db_secret.username, db_secret.password
 
         tool_image, application_port, tool_args, conn_secret = self._tool_config(
             tool, db_secret, conn_user, conn_password

@@ -790,6 +790,99 @@ class PostgresConnector:
             logger.exception(f"Failed to create database {database_name} on {self._host}")
             raise PostgresExecutionError(f"Database creation failed: {e}") from e
 
+    async def restrict_database_to_roles(self, database: str, roles: list[str]) -> dict[str, Any]:
+        """Sluit een database af voor ``PUBLIC`` en geef alleen ``roles`` CONNECT.
+
+        PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan ``PUBLIC``, dus zonder
+        deze REVOKE kan elke rol op de server met elke database verbinden en de catalogus
+        lezen. De eigenaar houdt zijn rechten los van de GRANT-lijst, want een REVOKE van
+        ``PUBLIC`` raakt hem niet.
+
+        Herhaalbaar: REVOKE en GRANT zijn in PostgreSQL idempotent, dus elke verwerking mag
+        dit opnieuw doen. Welke standen er zijn en waarom ``dry-run`` de standaard is staat
+        bij ``DATABASE_RESTRICT_PUBLIC_CONNECT`` in ``opi/core/config.py``.
+
+        Args:
+            database: Database die wordt afgesloten
+            roles: Rollen die expliciet CONNECT krijgen
+
+        Returns:
+            Dictionary met de stand, de statements en bij ``dry-run`` wie er verbonden is
+
+        Raises:
+            PostgresExecutionError: If revoking or granting fails
+            PostgresValidationError: If input validation fails
+        """
+        try:
+            validated_database = self._validate_identifier(database, "database")
+            validated_roles = [self._validate_identifier(role, "role") for role in roles]
+
+            mode = settings.DATABASE_RESTRICT_PUBLIC_CONNECT
+            if mode == "off":
+                logger.debug(f"DATABASE_RESTRICT_PUBLIC_CONNECT=off, {validated_database} blijft open voor PUBLIC")
+                return {"status": "disabled", "database": validated_database}
+
+            quoted_database = self._quote_identifier(validated_database)
+            statements = [
+                f"REVOKE CONNECT, TEMPORARY ON DATABASE {quoted_database} FROM PUBLIC",
+                *(
+                    f"GRANT CONNECT ON DATABASE {quoted_database} TO {self._quote_identifier(role)}"
+                    for role in validated_roles
+                ),
+            ]
+
+            conn = await self._get_or_create_connection("postgres")
+
+            database_exists = await conn.fetchval("SELECT 1 FROM pg_database WHERE datname = $1", validated_database)
+            if not database_exists:
+                logger.debug(f"Database {validated_database} does not exist on {self._host}, nothing to restrict")
+                return {"status": "not_found", "database": validated_database}
+
+            if mode == "dry-run":
+                connected = [
+                    row["usename"]
+                    for row in await conn.fetch(
+                        "SELECT DISTINCT usename FROM pg_stat_activity "
+                        "WHERE datname = $1 AND usename IS NOT NULL ORDER BY usename",
+                        validated_database,
+                    )
+                ]
+                # De rollen die NIET op de lijst staan zijn wat `on` gaat afsluiten; dat is
+                # de regel waar een beheerder naar zoekt voordat hij omzet.
+                afgesloten = [role for role in connected if role not in validated_roles]
+                logger.info(
+                    f"dry-run voor database {validated_database} op {self._host}: "
+                    f"{len(statements)} statement(s) {statements}, nu verbonden {connected}, "
+                    f"zou de toegang verliezen {afgesloten}"
+                )
+                return {
+                    "status": "dry-run",
+                    "database": validated_database,
+                    "statements": statements,
+                    "connected_roles": connected,
+                }
+
+            for statement in statements:
+                await conn.execute(statement)
+
+            logger.info(
+                f"Database {validated_database} op {self._host} is afgesloten voor PUBLIC, "
+                f"CONNECT voor {validated_roles}"
+            )
+            return {
+                "status": "restricted",
+                "database": validated_database,
+                "statements": statements,
+                "roles": validated_roles,
+            }
+
+        except PostgresValidationError:
+            logger.exception("Validation failed for database restriction")
+            raise
+        except Exception as e:
+            logger.exception(f"Failed to restrict database {database} on {self._host}")
+            raise PostgresExecutionError(f"Database restriction failed: {e}") from e
+
     async def execute_init_sql(self, database_name: str, sql_statements: list[str]) -> dict[str, Any]:
         """Execute initialization SQL statements on a specific database.
 

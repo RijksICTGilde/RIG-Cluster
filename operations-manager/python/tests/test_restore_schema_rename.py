@@ -375,6 +375,7 @@ class TestTheGenerationRestorePassesThePreviousGeneration:
         postgres = MagicMock()
         postgres.create_user = AsyncMock(return_value={"status": "exists"})
         postgres.create_database = AsyncMock(return_value={"status": "created"})
+        postgres.restrict_database_to_roles = AsyncMock(return_value={"status": "restricted"})
         postgres.create_schema = AsyncMock(return_value={"status": "created"})
         postgres.close = AsyncMock()
 

@@ -19,10 +19,38 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from opi.utils.naming import CONTAINER_IMAGE_PATTERN
+
+#: Een identifier zoals PostgreSQL hem schrijft: kaal, of tussen dubbele aanhalingstekens
+#: omdat een extensienaam een streepje mag dragen (``"uuid-ossp"``, zie
+#: ``_precreate_extensions_for_clone`` in de postgres-connector).
+#:
+#: De gequote vorm somt zijn tekens op in plaats van ze uit te sluiten. Een uitsluitende
+#: klasse liet een carriage return door, en ``postgresql-cluster.yaml.jinja`` zet deze
+#: waarde ongequote onder ``postInitApplicationSQL``: elke YAML-regelovergang in de naam
+#: wordt daar een eigen regel, dus een extra sleutel in de ``Cluster`` naast
+#: ``imageName``.
+_PG_NAME = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"[A-Za-z0-9_$-]+")'
+
+#: ``postInitSQL`` draait als SUPERUSER van het eigen CNPG-cluster, dus een vrije SQL-regel
+#: is daar een superuser-shell. Alleen de vorm die het veld bedoeld is: een extensie, met
+#: eventueel het schema erachter (RC-285).
+#:
+#: De sleutelwoorden in hoofdletters en niet case-insensitief: ``(?i:...)`` bestaat niet in
+#: de ECMA-262-regex die een JSON-schema belooft, en dit patroon komt in het
+#: schemafragment terecht dat clients lezen. Elk bekend gebruik schrijft ze al zo.
+#:
+#: ``$`` en niet ``\Z``: de rust-engine waar pydantic op draait kent ``\Z`` niet. In die
+#: engine laat ``$`` geen afsluitende newline door; wie dit patroon uit het schemafragment
+#: met de Python-engine gaat gebruiken, zet er ``\Z`` bij. Zelfde afweging als
+#: ``UPSTREAM_PATTERN`` in ``image_registries/config_model.py``.
+POST_INIT_SQL_PATTERN = rf"^CREATE EXTENSION IF NOT EXISTS {_PG_NAME}(?: SCHEMA {_PG_NAME})?;?$"
+
+PostInitStatement = Annotated[str, Field(pattern=POST_INIT_SQL_PATTERN)]
 
 
 class DatabasePrivilege(StrEnum):
@@ -115,9 +143,13 @@ class DedicatedPostgresFields(BaseModel):
         default_factory=list,
         description="Extra PostgreSQL role privileges for the project's database user, from the allowed set.",
     )
-    postInitSQL: list[str] = Field(
+    postInitSQL: list[PostInitStatement] = Field(
         default_factory=list,
-        description="SQL statements run once, when the database is first created (extensions, dictionaries).",
+        description=(
+            "Extensies die de database nodig heeft, elk als "
+            "'CREATE EXTENSION IF NOT EXISTS <naam> [SCHEMA <schema>];'. Een andere vorm wordt "
+            "geweigerd: deze statements draaien als superuser van het cluster."
+        ),
     )
     resources: DatabaseResources = Field(
         default=DatabaseResources(), description="CPU and memory requests and limits for the database pods."

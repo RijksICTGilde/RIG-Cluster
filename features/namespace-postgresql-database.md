@@ -63,7 +63,7 @@ services:
 | `instances` | int | `1` | Number of PostgreSQL replicas |
 | `storage` | string | `1Gi` | Storage size for each instance. Between `50Mi` and `20Gi`, and it can only ever go UP: a PVC cannot shrink |
 | `privileges` | list | `[]` | PostgreSQL privileges for the app user |
-| `postInitSQL` | list | `[]` | SQL statements to run after database init |
+| `postInitSQL` | list | `[]` | PostgreSQL extensions to create: each as `CREATE EXTENSION IF NOT EXISTS <name> [SCHEMA <schema>];` |
 | `resources` | object | See below | CPU/memory requests and limits. Memory 25Mi-1024Mi (requests) / 25Mi-4096Mi (limits), CPU 25m-250m / 25m-4000m |
 
 De grenzen op `storage` en `resources` zijn gedeclareerd met het mechanisme uit
@@ -98,7 +98,7 @@ resources:
 
 ### postInitSQL
 
-Use `postInitSQL` to create extensions or run setup SQL during database initialization:
+Use `postInitSQL` to create PostgreSQL extensions during database initialization. Each statement must be in the form `CREATE EXTENSION IF NOT EXISTS <name> [SCHEMA <schema>];`. Other SQL statements are not allowed: this field runs as the PostgreSQL superuser, so it accepts extensions only.
 
 ```yaml
 postInitSQL:

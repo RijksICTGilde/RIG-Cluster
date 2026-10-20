@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
@@ -369,6 +369,16 @@ class Settings(BaseSettings):
     # versleutelt zonder het servercertificaat te toetsen (CNPG's interne CA). Local dev:
     # zet op disable. Zie features/postgresql-tls.md.
     DATABASE_SSLMODE: str = "require"
+
+    # PostgreSQL geeft een nieuwe database CONNECT en TEMPORARY aan PUBLIC, dus op de
+    # gedeelde server kan elke rol met elke database verbinden. Dit sluit dat af.
+    #
+    # ``dry-run`` is de standaard om dezelfde reden als bij RECONCILIATION_DRY_RUN: de
+    # REVOKE raakt elke database op de server in een keer, en een rol die nu stil op PUBLIC
+    # leunt valt dan om. In deze stand logt elke verwerking welke REVOKE en GRANT hij zou
+    # doen en wie er op dat moment verbonden is, zodat een volledige nachtelijke
+    # reconciliatie zichtbaar maakt wat ``on`` gaat afsluiten.
+    DATABASE_RESTRICT_PUBLIC_CONNECT: Literal["off", "dry-run", "on"] = "dry-run"
 
     # Deletion grace period (days before marked resources are purged by reconciliation)
     DELETION_GRACE_PERIOD_DAYS: int = 7
