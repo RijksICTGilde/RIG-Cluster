@@ -255,6 +255,155 @@ class TestPathSanitizationAtSource:
             _normalize_path_config({"match": "/api", "rewrite": '/"\nproxy_pass http://evil;'})
 
 
+# ---------------------------------------------------------------------------
+# De backup- en terugzetsjablonen (RC-339, issue #86)
+# ---------------------------------------------------------------------------
+
+#: De tien sjablonen die een backup- of restore-pod of -PVC beschrijven. Issue #86 noemde
+#: ze als nog kaal; sinds RC-339 gaat elke niet-constante waarde erin door ``yaml_scalar``.
+BACKUP_EN_RESTORE_SJABLONEN = [
+    "backup-pod.yaml.jinja",
+    "backup-database-pod.yaml.jinja",
+    "backup-bucket-pod.yaml.jinja",
+    "backup-bucket-mirror-pod.yaml.jinja",
+    "backup-snapshot.yaml.jinja",
+    "backup-clone-pvc.yaml.jinja",
+    "restore-pod.yaml.jinja",
+    "restore-database-pod.yaml.jinja",
+    "restore-bucket-pod.yaml.jinja",
+    "restore-target-pvc.yaml.jinja",
+]
+
+#: De velden die een aanroeper aan een terugzet-endpunt meegeeft, en die de sjablonen dus
+#: van buiten kunnen bereiken. Elk sjabloon kent er een deel van; een sjabloon dat een veld
+#: niet gebruikt, rendert er simpelweg hetzelfde van.
+AANROEPERVELDEN = [
+    "namespace",
+    "pvc_name",
+    "target_pvc_name",
+    "reference_name",
+    "snapshot_id",
+    "size",
+    "storage_class_name",
+    "target_db_name",
+    "target_db_host",
+    "target_bucket_name",
+    "target_minio_endpoint",
+]
+
+#: Alles wat de tien sjablonen samen nodig hebben. De waarden zijn plausibel, zodat de
+#: gerenderde manifesten ook zonder injectiewaarde geldig zijn.
+BACKUP_CTX: dict = {
+    "pod_name": "wies-production-backup",
+    "namespace": "rig-wies",
+    "service_account_name": "wies-sa",
+    "timestamp": "20260520-073000",
+    "backup_run_id": "20260520073000",
+    "s3_endpoint": "minio.example:9000",
+    "s3_bucket": "backups",
+    "s3_disable_tls": True,
+    "backup_prefix": "local/rig-wies",
+    "credentials_secret": "wies-production-backup-credentials",
+    "repository_unusable_exit_code": 21,
+    "target_unusable_exit_code": 22,
+    "kopia_hostname": "wies-production-pvc-data",
+    "kopia_source": "opi-backup@wies-production-pvc-data",
+    "timeout_seconds": 3600,
+    "retention_keep_latest": 30,
+    "retention_keep_daily": 30,
+    "retention_keep_weekly": 4,
+    "retention_keep_monthly": 12,
+    "retention_keep_annual": 0,
+    "cluster": "local",
+    "project_name": "wies",
+    "deployment_name": "production",
+    "component_name": "frontend",
+    "storage_name": "data",
+    "pvc_name": "production-frontend-data-pvc",
+    "target_pvc_name": "production-frontend-data-pvc-v2",
+    "clone_pvc_name": "production-frontend-data-pvc-clone",
+    "source_pvc_name": "production-frontend-data-pvc",
+    "snapshot_name": "production-frontend-data-snap",
+    "snapshot_class": "csi-hostpath-snapclass",
+    "snapshot_id": "k1234567890",
+    "reference_name": "production-postgresql",
+    "size": "10Gi",
+    "storage_class_name": "standard",
+    "access_modes": ["ReadWriteOnce"],
+    "backup_enabled": True,
+    "generation": 2,
+    "pvc_generation": 2,
+    "source_type": "minio",
+    "db_host": "postgresql.rig-wies.svc.cluster.local",
+    "db_port": 5432,
+    "db_name": "wies_production",
+    "db_user": "wies_production",
+    "target_db_host": "postgresql.rig-other.svc.cluster.local",
+    "target_db_port": 5432,
+    "target_db_name": "wies_production",
+    "target_db_user": "wies_production",
+    "source_schema": "wies_production",
+    "source_minio_endpoint": "http://minio.rig-system.svc.cluster.local:9000",
+    "source_bucket_name": "wies-production",
+    "backup_minio_endpoint": "http://minio.rig-system.svc.cluster.local:9000",
+    "backup_bucket": "backups",
+    "backup_path": "backups/wies/production/gen-2",
+    "target_minio_endpoint": "http://minio.rig-other.svc.cluster.local:9000",
+    "target_bucket_name": "wies-production-restored",
+    "clear_target": False,
+    "staging_size_limit": "5Gi",
+    "trigger": "scheduled",
+}
+
+
+def _keys(node) -> set[str]:
+    """Elke mapping-sleutel in een geparst document, op elke diepte."""
+    if isinstance(node, dict):
+        return set(node) | {k for v in node.values() for k in _keys(v)}
+    if isinstance(node, list):
+        return {k for v in node for k in _keys(v)}
+    return set()
+
+
+def _pod_script(doc) -> str:
+    """Het shellscript van de pod, of leeg voor een sjabloon dat geen pod beschrijft."""
+    containers = (doc.get("spec") or {}).get("containers") or []
+    if not containers:
+        return ""
+    return "".join(containers[0].get("command") or []) + "".join(containers[0].get("args") or [])
+
+
+class TestBackupEnRestoreSjablonen:
+    """De payload komt er als scalar in en nergens in het script terecht."""
+
+    @pytest.mark.parametrize("template", BACKUP_EN_RESTORE_SJABLONEN)
+    def test_normale_waarden_renderen_geldig(self, template):
+        doc = _yaml().load(render_template(template, BACKUP_CTX))
+
+        assert doc["kind"] in {"Pod", "PersistentVolumeClaim", "VolumeSnapshot"}
+        assert doc["metadata"]["namespace"] == "rig-wies"
+
+    @pytest.mark.parametrize("template", BACKUP_EN_RESTORE_SJABLONEN)
+    @pytest.mark.parametrize("field", AANROEPERVELDEN)
+    def test_injectie_breekt_niet_uit_de_scalar(self, template, field):
+        doc = _yaml().load(render_template(template, {**BACKUP_CTX, field: MALICIOUS}))
+
+        assert not {"privileged", "x"} & _keys(doc)
+        assert doc["kind"] in {"Pod", "PersistentVolumeClaim", "VolumeSnapshot"}
+
+    @pytest.mark.parametrize("template", BACKUP_EN_RESTORE_SJABLONEN)
+    @pytest.mark.parametrize("field", AANROEPERVELDEN)
+    def test_aanroeperwaarde_staat_niet_in_het_shellscript(self, template, field):
+        """Een naam die de pod print of tagt, komt via ``env`` binnen.
+
+        YAML-quoting is geen shell-quoting: een waarde die veilig in een scalar staat kan
+        in een script nog altijd een commando afsluiten.
+        """
+        doc = _yaml().load(render_template(template, {**BACKUP_CTX, field: MALICIOUS}))
+
+        assert "pwned" not in _pod_script(doc)
+
+
 # --------------------------------------------------------------------------- #
 # De sweep over alle manifestsjablonen                                        #
 # --------------------------------------------------------------------------- #

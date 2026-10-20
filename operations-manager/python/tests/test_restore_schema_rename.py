@@ -46,6 +46,7 @@ from urllib.parse import urlparse
 import pytest
 import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, SnapshotInfo
 from opi.manager.backup.database_backup import DatabaseBackupManager
 
@@ -82,8 +83,16 @@ _RENDER_CONTEXT: dict[str, Any] = {
 }
 
 
+def _strict_render(content: str, variables: dict[str, Any]) -> str:
+    """Render zoals de connector doet, maar stuit op een ontbrekende variabele."""
+    env = Environment(undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
+    return env.from_string(content).render(**variables)
+
+
 def _render(**overrides: Any) -> dict[str, Any]:
     env = Environment(loader=FileSystemLoader(str(_MANIFESTS_DIR)), undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
     rendered = env.get_template(_TEMPLATE).render(**{**_RENDER_CONTEXT, **overrides})
     return yaml.safe_load(rendered)
 
@@ -189,9 +198,7 @@ def _manager() -> DatabaseBackupManager:
     kubectl = MagicMock()
     kubectl.run_command = AsyncMock(return_value=("", "", 0))
     # The one piece of the connector the restore path really uses: Jinja rendering.
-    kubectl.template_manifest = lambda content, variables: (
-        Environment(undefined=StrictUndefined).from_string(content).render(**variables)
-    )
+    kubectl.template_manifest = _strict_render
 
     with patch("opi.manager.backup.base.KubectlConnector", return_value=kubectl):
         manager = DatabaseBackupManager(

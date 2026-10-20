@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import yaml
 from jinja2 import Environment, StrictUndefined
+from opi.generation.manifests import MANIFEST_FILTERS
 from opi.manager.backup.base import BackupConfig, BaseBackupManager
 from opi.manager.backup.bucket_backup import BucketBackupManager
 from opi.manager.backup.database_backup import DatabaseBackupManager
@@ -39,12 +40,17 @@ _BUCKET_TARGET = {
 _COMMON = {"namespace": "rig-amt", "pod_name": "pod", "kopia_password": "kp", "backup_prefix": "local/rig-amt"}
 
 
+def _strict_render(content: str, variables: dict[str, Any]) -> str:
+    """Render zoals de connector doet, maar stuit op een ontbrekende variabele."""
+    env = Environment(undefined=StrictUndefined)
+    env.filters.update(MANIFEST_FILTERS)
+    return env.from_string(content).render(**variables)
+
+
 def _manager[M: BaseBackupManager](cls: type[M]) -> M:
     kubectl = MagicMock()
     kubectl.run_command = AsyncMock(return_value=("", "", 0))
-    kubectl.template_manifest = lambda content, variables: (
-        Environment(undefined=StrictUndefined).from_string(content).render(**variables)
-    )
+    kubectl.template_manifest = _strict_render
     with patch("opi.manager.backup.base.KubectlConnector", return_value=kubectl):
         return cls(BackupConfig(s3_endpoint="http://minio:9000", s3_bucket="b", s3_access_key="a", s3_secret_key="s"))
 
