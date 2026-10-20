@@ -33,6 +33,7 @@ _OPI_ROOT = Path(__file__).resolve().parents[1] / "operations-manager" / "python
 if str(_OPI_ROOT) not in sys.path:
     sys.path.insert(0, str(_OPI_ROOT))
 
+from key_rotation import KeyFileTooOpen, require_private_file  # type: ignore[reportMissingImports]  # noqa: E402
 from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap above)
     decrypt_age_block_to_bytes,
     decrypt_age_content,
@@ -57,6 +58,10 @@ def read_key(argument: str) -> str:
     path = Path(argument)
     if not path.is_file():
         raise SystemExit(f"Sleutel is geen bestand en ziet er niet uit als een AGE-sleutel: {argument}")
+    try:
+        require_private_file(path)
+    except KeyFileTooOpen as te:
+        raise SystemExit(str(te)) from te
 
     for line in path.read_text().splitlines():
         if line.strip().startswith(AGE_KEY_MARKER):

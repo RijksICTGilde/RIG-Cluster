@@ -62,6 +62,7 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     public_key_of,
     read_key,
     replace_record,
+    require_private_file,
     rotate_project_file,
     sha256_of,
     update_record,
@@ -730,6 +731,7 @@ def read_pat(path: str | Path) -> str:
     A file and not a prompt, and never an argument, for the reason ``ask_for_path`` gives: the
     two PATs are answered the way ``old_key.txt`` and ``key.txt`` are.
     """
+    require_private_file(path)
     value = Path(path).read_text().strip()
     if not value:
         raise MissingKey(f"no PAT in {path}")
