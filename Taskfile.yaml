@@ -650,6 +650,33 @@ tasks:
         kubectl -n {{.RIG_NAMESPACE}} cp operations-manager/python/scripts/transip_delete_dns.py "$POD:/tmp/transip_delete_dns.py"
         kubectl -n {{.RIG_NAMESPACE}} exec "$POD" -- python /tmp/transip_delete_dns.py --zone "{{.ZONE}}" --name "{{.NAME}}" --type "{{.TYPE}}" {{.CLI_ARGS}}
 
+  secrets-overview:
+    desc: "Schrijf de geheimen van het geselecteerde cluster leesbaar naar secrets-overview-<cluster>.yaml (gitignored); ruim het daarna op"
+    silent: true
+    vars:
+      KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      OUT: '{{default (printf "secrets-overview-%s.yaml" .CLUSTER_TYPE) .OUT}}'
+    preconditions:
+      - *age_key_file_guard
+    cmds:
+      - |
+        # Uit de versleutelde bestanden zelf, dus ook als het overzicht van de generatie al
+        # weg is. Met SECRETS_DIR uit de secrets-repo, anders uit de overlays.
+        if [ -n "{{.SECRETS_DIR}}" ]; then
+          FILES="$(find "{{.SECRETS_DIR}}" -path '*/.git' -prune -o \( -name '*.sops.yaml' -o -name 'operations-manager-env-secrets.yaml' \) -print | sort)"
+        else
+          FILES="$(ls infrastructure/bootstrap/infrastructure/secrets/config/overlays/{{.INFRASTRUCTURE_CLUSTER_FOLDER}}/*.sops.yaml bootstrap/rig-system/kustomize/overlays/{{.BOOTSTRAP_CLUSTER_FOLDER}}/*.sops.yaml 2>/dev/null)"
+        fi
+        : > "{{.OUT}}" && chmod 600 "{{.OUT}}"
+        echo "# Geheimen van {{.CLUSTER_TYPE}}, $(date). Platte tekst: weggooien na gebruik." >> "{{.OUT}}"
+        export SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})"
+        for f in $FILES; do
+          echo "" >> "{{.OUT}}"
+          echo "# === $f ===" >> "{{.OUT}}"
+          sops --decrypt "$f" | yq '{"name": .metadata.name, "namespace": .metadata.namespace, "values": ((.stringData // {}) * ((.data // {}) | map_values(@base64d)))}' >> "{{.OUT}}"
+        done
+        echo "✅ {{.OUT}} geschreven ($(echo "$FILES" | wc -l | tr -d ' ') bestanden). Gooi het weg zodra je het niet meer nodig hebt."
+
   wait-namespace-rights:
     desc: "Wacht tot je in een (nieuwe) namespace secrets mag aanmaken, maximaal 60 s"
     silent: true
@@ -1373,8 +1400,12 @@ tasks:
         # gewoon bij. De oude map-brede stop kon dat alleen door ALLES weg te gooien, en
         # dat roteert Keycloak, MinIO en PostgreSQL mee.
 
-        # Initialize overview file (overwrite if it exists from a previous incomplete run)
-        OVERVIEW_FILE="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        # Het overzicht gaat eerst naar een tijdelijk bestand en komt alleen in het echte
+        # overzicht als er een nieuw geheim is, en dan erachteraan. Vroeger begon elke run
+        # het overzicht leeg, dus een run zonder nieuwe geheimen wiste de wachtwoorden van
+        # de eerste.
+        OVERVIEW_TARGET="secrets-overview-{{.MODE}}-{{.CLUSTER_TYPE}}.yaml"
+        OVERVIEW_FILE="$(mktemp)"
 
         echo "# {{.MODE | title}} Secrets Overview - {{.CLUSTER_TYPE}}" > "$OVERVIEW_FILE"
         echo "# Generated on $(date)" >> "$OVERVIEW_FILE"
@@ -1549,9 +1580,16 @@ tasks:
           echo "  ✅ Created kustomization.yaml"
         fi
 
+        if grep -q '^# === ' "$OVERVIEW_FILE"; then
+          cat "$OVERVIEW_FILE" >> "$OVERVIEW_TARGET"
+          chmod 600 "$OVERVIEW_TARGET"
+        fi
+        rm -f "$OVERVIEW_FILE"
+        OVERVIEW_FILE="$OVERVIEW_TARGET"
+
         echo ""
         echo "✅ {{.MODE | title}} secrets generated successfully!"
-        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore)"
+        echo "📄 Overview file: $OVERVIEW_FILE (added to .gitignore; alleen nieuwe geheimen komen erbij)"
         echo "🗂️  Encrypted secrets: {{.OUTPUT_DIR}}/{{.CLUSTER_FOLDER}}/"
         if [ "{{.MODE}}" = "infrastructure" ]; then
           echo "📝 Configuration files: kustomization.yaml, decrypt-sops.yaml"
