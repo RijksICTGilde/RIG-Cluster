@@ -48,6 +48,7 @@ from opi.core.startup import run_startup_tasks, warm_connector_singletons
 from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
+from opi.middleware.body_limit import BodyLimitMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
@@ -715,6 +716,9 @@ def create_app() -> FastAPI:
         prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
     )
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
+    # Buiten sessie, CSRF en autorisatie: een te grote bijlage-upload wordt geweigerd
+    # voordat de multipart-parser zijn body ontvangt.
+    app.add_middleware(BodyLimitMiddleware)
 
     # Flow ID middleware - runs first (outermost) to tag all log lines for this request
     from opi.core.flow_id import set_flow_id

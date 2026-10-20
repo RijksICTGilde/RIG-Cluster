@@ -99,6 +99,15 @@ class TestTheDeclarationRefusesToBeSloppy:
         with pytest.raises(ValueError, match="no description"):
             ActionField(name="thing", description="", no_editable_reason="none applies")
 
+    def test_a_file_field_without_max_bytes_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="requires max_bytes"):
+            ActionField(
+                name="thing",
+                description="A thing.",
+                no_editable_reason="none applies",
+                kind=ActionFieldKind.FILE,
+            )
+
     def test_an_action_without_an_example_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="no usage example"):
             ServiceAction(

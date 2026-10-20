@@ -47,8 +47,9 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
 )
 from opi.services import upload_staging
-from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_KB
+from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
+from opi.utils.uploads import read_capped, too_large_detail
 
 logger = logging.getLogger(__name__)
 
@@ -236,13 +237,11 @@ async def stage_attachment(
         if replace_error:
             return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
-    raw = await file.read()
-    if len(raw) > MAX_ATTACHMENT_BYTES:
-        # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES):
-        # a limit only one road honours just moves the problem to the other one.
-        return _attachments_list_response(
-            request, state, wizard_token, error=f"Bestand te groot (max {MAX_ATTACHMENT_KB} KB)"
-        )
+    # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES): a
+    # limit only one road honours just moves the problem to the other one.
+    raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
+    if raw is None:
+        return _attachments_list_response(request, state, wizard_token, error=too_large_detail(MAX_ATTACHMENT_BYTES))
     try:
         token = upload_staging.stage_file(raw, file.filename or attachment_id)
     except ValueError as exc:

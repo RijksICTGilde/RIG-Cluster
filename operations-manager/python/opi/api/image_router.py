@@ -18,13 +18,12 @@ from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
+from opi.utils.uploads import UploadTooLargeError, iter_capped
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
 image_router = APIRouter(prefix="/api/v1/projects", tags=["images"])
-
-CHUNK_SIZE = 64 * 1024  # 64 KB
 
 
 @image_router.post("/{project_name}/images/push")
@@ -78,17 +77,15 @@ async def push_image(
     try:
         bytes_written = 0
         with os.fdopen(fd, "wb") as tmp:
-            while True:
-                chunk = await file.read(CHUNK_SIZE)
-                if not chunk:
-                    break
-                bytes_written += len(chunk)
-                if bytes_written > max_bytes:
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File exceeds maximum size of {settings.IMAGE_UPLOAD_MAX_SIZE_MB} MB",
-                    )
-                tmp.write(chunk)
+            try:
+                async for chunk in iter_capped(file, max_bytes):
+                    bytes_written += len(chunk)
+                    tmp.write(chunk)
+            except UploadTooLargeError:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File exceeds maximum size of {settings.IMAGE_UPLOAD_MAX_SIZE_MB} MB",
+                )
 
         if bytes_written == 0:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")

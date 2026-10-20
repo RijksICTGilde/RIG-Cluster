@@ -163,6 +163,7 @@ from opi.utils.naming import (
 )
 from opi.utils.project_names import ensure_unique_project_name
 from opi.utils.project_utils import ProjectApiKeyError, generate_base_project_file, validate_project_name
+from opi.utils.uploads import read_capped, too_large_detail
 from opi.utils.yaml_util import dump_yaml_to_string
 from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 
@@ -3818,8 +3819,13 @@ def _make_action_endpoint(action: ServiceAction, verbs: tuple[ActionVerb, ...]):
                 raw = getattr(body, _param_name(action_field.name), None)
                 if action_field.kind is ActionFieldKind.FILE:
                     if raw is not None:
+                        # Met het plafond van het veld mee, zodat een te groot bestand
+                        # afbreekt in plaats van eerst volledig in het geheugen te komen.
+                        content = await read_capped(raw, action_field.max_bytes)
+                        if content is None:
+                            raise HTTPException(status_code=413, detail=too_large_detail(action_field.max_bytes))
                         uploads[action_field.name] = UploadedFile(
-                            filename=raw.filename or action_field.name, content=await raw.read()
+                            filename=raw.filename or action_field.name, content=content
                         )
                     continue
                 if raw is not None:

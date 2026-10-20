@@ -80,7 +80,9 @@ left out" is the endpoint's business, and `editables_for(verb)` sets exactly tha
 
 A field with genuinely no editable states why (`no_editable_reason`). There is one today:
 the uploaded file. Its bytes are not a form field; the only rule that applies is its size,
-and that lives once in `catalog/attachments/catalog_model.MAX_ATTACHMENT_BYTES`.
+and that lives once in `catalog/attachments/catalog_model.MAX_ATTACHMENT_BYTES`. A FILE
+field carries that ceiling as `max_bytes` (required for that kind), which is what lets the
+generic route enforce it without naming a service.
 
 ### Combinations and disjunctions
 
@@ -226,6 +228,30 @@ someone makes at that constant, not something they discover.
 
 It holds on **every** road in: the API upload (413) and the wizard upload (an error in the
 form). A limit only one road honours just moves the problem to the other one.
+
+Both roads read the upload with the ceiling in hand (`read_capped` in
+`opi/utils/uploads.py`): the read stops at the first block that passes it, so an upload far
+over the limit never reaches the pod's memory in full. A route that handles the blocks
+itself rather than buffering them uses `iter_capped` from that same module, which is what
+`read_capped` is built on; the image upload reads its tarball that way.
+
+Around those routes sits a wider upper bound. `BodyLimitMiddleware`
+(`opi/middleware/body_limit.py`) refuses a request to a path containing `/attachments`
+whose body passes `MAX_ATTACHMENT_BODY_BYTES` (1 MB, ample room for 64 KB plus multipart
+overhead) with a 413. A declared `Content-Length` over the bound is refused before
+anything is read; a chunked body is counted as it arrives and cut off at the block that
+passes the bound, so the multipart parser never receives the rest.
+
+The 413 on that second road comes from the middleware itself, and that is deliberate. An
+exception raised from inside `receive` does not survive the trip: the task group in a
+`BaseHTTPMiddleware` wraps it, and FastAPI turns whatever then comes out of
+`await request.form()` into a 400 "There was an error parsing the body". So instead of
+raising, the middleware hands the app a disconnect, drops the answer the app gives to that
+half request, and sends the 413 itself.
+
+It is not app-wide: the image upload has its own, much higher ceiling
+(`IMAGE_UPLOAD_MAX_SIZE_MB`) and streams to a temp file, so it carries the ceiling itself
+through `iter_capped` instead.
 
 ## Adding an action to another service
 

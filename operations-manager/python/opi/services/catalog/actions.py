@@ -129,6 +129,9 @@ class ActionField:
     #: rule is a decision on the record rather than an omission nobody notices.
     no_editable_reason: str = ""
     kind: ActionFieldKind = ActionFieldKind.TEXT
+    #: Bytes ceiling for FILE fields (required for that kind). The route reads the file up
+    #: to this limit and rejects with 413 if it exceeds it.
+    max_bytes: int = 0
     #: The verbs that insist on this field. A verb not listed accepts it as optional.
     required_for: tuple[ActionVerb, ...] = ()
     #: A value that shows what this field looks like, for the OpenAPI example.
@@ -142,6 +145,10 @@ class ActionField:
             )
         if not self.description:
             raise ValueError(f"Action field '{self.name}' has no description")
+        if self.kind is ActionFieldKind.FILE and self.max_bytes <= 0:
+            raise ValueError(
+                f"Action field '{self.name}' is a file and requires max_bytes: the route reads up to that ceiling."
+            )
 
     def is_required_for(self, verb: ActionVerb) -> bool:
         return verb in self.required_for
