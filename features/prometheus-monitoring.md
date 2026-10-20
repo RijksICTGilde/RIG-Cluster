@@ -129,7 +129,7 @@ These custom metrics help identify which internal component is consuming memory.
 | `opi_gc_objects{generation="2"}` | Python GC gen-2 objects (long-lived, potential leaks) |
 | `opi_container_memory_bytes` | Total container memory from cgroup (Python + subprocesses) |
 | `opi_child_process_count` | Number of active child processes |
-| `opi_child_process_rss_bytes` | RSS per active child process (labeled by pid and command) |
+| `opi_child_process_rss_bytes` | RSS per active child process (labeled by pid and comm) |
 
 #### Database connection pools
 
@@ -174,7 +174,7 @@ These metrics bridge that gap:
 | Query | What it shows |
 |-------|---------------|
 | `opi_container_memory_bytes{job="operations-manager"}` | Total container memory from cgroup (Python + all subprocesses) - **this is what Kubernetes measures for OOM** |
-| `opi_child_process_rss_bytes{job="operations-manager"}` | RSS of each active child process (labeled by pid and command) |
+| `opi_child_process_rss_bytes{job="operations-manager"}` | RSS of each active child process (labeled by pid and comm) |
 | `opi_child_process_count{job="operations-manager"}` | Number of active child processes at scrape time |
 
 #### Key queries for OOM investigation

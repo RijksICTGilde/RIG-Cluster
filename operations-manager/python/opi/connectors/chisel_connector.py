@@ -6,6 +6,7 @@ This infrastructure layer handles tunnel lifecycle, authentication, and port man
 """
 
 import logging
+import os
 import socket
 import subprocess
 import time
@@ -102,8 +103,6 @@ class ChiselConnector:
         cmd = [
             "chisel",
             "client",
-            "--auth",
-            self.auth,
             self.server_url,
             tunnel_spec,
         ]
@@ -113,11 +112,14 @@ class ChiselConnector:
             f"local=localhost:{local_port} -> remote={remote_host}:{remote_port}"
         )
 
+        # AUTH in plaats van --auth: een commandoregel is leesbaar voor elk proces in
+        # de container via /proc/<pid>/cmdline.
         self.process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env={**os.environ, "AUTH": self.auth},
         )
 
         # Wait for tunnel to be ready
