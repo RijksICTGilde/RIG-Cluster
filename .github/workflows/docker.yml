@@ -12,8 +12,7 @@ on:
       - 'operations-manager/python/**'
 
 permissions:
-  contents: write  # needed to push the CalVer git tag
-  packages: write
+  contents: read
 
 env:
   REGISTRY: ghcr.io
@@ -22,16 +21,21 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    outputs:
+      calver_tag: ${{ steps.calver.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # needed for CalVer tag calculation
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -51,38 +55,46 @@ jobs:
       - name: Generate image tags
         id: tags
         run: |
-          SHA_SHORT="${GITHUB_SHA::7}"
           TAGS="${{ env.IMAGE_NAME }}:sha-${GITHUB_SHA}"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:${{ steps.calver.outputs.tag }}"
             TAGS="${TAGS},${{ env.IMAGE_NAME }}:latest"
-          else
-            PR_NUMBER="${{ github.event.pull_request.number }}"
-            TAGS="${TAGS},${{ env.IMAGE_NAME }}:pr-${PR_NUMBER}-sha-${SHA_SHORT}"
           fi
 
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
+      # Zonder push kan multi-arch niet: single-platform build voor PR's.
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: operations-manager/Dockerfile
           target: application
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.tags.outputs.tags }}
-          provenance: false
-          sbom: false
+          provenance: ${{ github.event_name != 'pull_request' && 'mode=max' || 'false' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  # Een eigen job, omdat alleen het zetten van de git-tag contents: write nodig heeft.
+  tag:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
       - name: Create CalVer git tag
-        if: github.ref == 'refs/heads/main'
+        env:
+          CALVER_TAG: ${{ needs.build.outputs.calver_tag }}
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git tag "${{ steps.calver.outputs.tag }}"
-          git push origin "${{ steps.calver.outputs.tag }}"
+          git tag "${CALVER_TAG}"
+          git push origin "${CALVER_TAG}"

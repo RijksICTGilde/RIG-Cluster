@@ -19,8 +19,10 @@ Automated build on push to main and PRs.
 
 - **Workflow**: `.github/workflows/docker.yml`
 - **Registry**: `ghcr.io/rijksictgilde/zad/operations-manager`
-- **Versioning**: CalVer (`YYYY.M.PATCH`) on main, `pr-N-sha-X` on PRs
-- **Platforms**: linux/amd64, linux/arm64
+- **Versioning**: CalVer (`YYYY.M.PATCH`) + `sha-X` + `latest`, alleen op main
+- **Platforms**: linux/amd64, linux/arm64 op main, alleen linux/amd64 op een PR
+- **PR's pushen niet**: pull requests bouwen images maar publiceren niet
+- **Provenance en SBOM**: gepushte images dragen SLSA-provenance (`mode=max`) en SBOM
 
 ### Supporting Images
 
@@ -29,6 +31,7 @@ Manual trigger via GitHub Actions UI.
 - **Workflow**: `.github/workflows/docker-images.yml`
 - **Images**: rig-backup, cmp-kustomize-sops, postgresql-with-dictionaries, keycloak-zad
 - **Versioning**: CalVer on dispatch
+- **Provenance en SBOM**: idem als de operations-manager
 
 ## Security Scanning
 
@@ -47,6 +50,24 @@ output stays in the job log and goes nowhere else, because a list of where secre
 what is not revoked yet. The same tree scan also runs as `test_this_repository_is_clean_right_now`
 in `tests/test_secret_scan.py`, so a build outside GitHub has the guard too. The layers and the
 baseline are in `features/sops-sleutel-roteren.md`.
+
+De job `sbom` bewaart bovendien een CycloneDX-SBOM als workflow-artefact (90 dagen), los
+van de SBOM-attestatie aan gepushte images.
+
+## Rechten en pins
+
+De workflows volgen de OpenSSF Scorecard-checks "Pinned-Dependencies" en
+"Token-Permissions", en BIO2 5.21 en 8.32.
+
+- **Elke externe action staat op een volledige commit-SHA**, met de versie als
+  commentaar erachter (`uses: actions/checkout@11d5960... # v4`). Een tag kan onder
+  dezelfde naam van inhoud veranderen, een SHA niet. Renovate houdt de pins bij: het
+  leest het versiecommentaar en schrijft SHA plus commentaar mee.
+  `tests/test_workflows_actions_op_sha.py` bewaakt dat er geen losse tag terugsluipt.
+- **Het workflowtoken staat op `contents: read`.** Per job komt erbij wat die job nodig
+  heeft: `packages: write` voor de build-job van `docker.yml`, `contents: write` alleen
+  voor de job `tag`, die niets anders doet dan de CalVer-tag zetten en alleen op main
+  draait.
 
 ## Dependency Management
 
