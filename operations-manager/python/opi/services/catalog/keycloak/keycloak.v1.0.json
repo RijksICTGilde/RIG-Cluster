@@ -11,16 +11,38 @@
     },
     "KeycloakClientEntry": {
       "additionalProperties": true,
-      "description": "An ``additional-clients`` item. Only ``name`` is guardrailed; the rest\n(redirect-uris, ...) is advanced pass-through -- the hard 10% the plan leaves\nhand-authored -- so extras are allowed.",
+      "description": "An ``additional-clients`` item with guardrailed ``name`` and ``redirect-uris``.\n\nPass-through keys are allowed for advanced configurations.",
       "properties": {
+        "direct-access-grants": {
+          "default": false,
+          "description": "Allow the password grant (ROPC) on this client. Only set it when the application has no browser.",
+          "title": "Direct-Access-Grants",
+          "type": "boolean"
+        },
         "name": {
           "description": "Client id of the extra client to create in the realm.",
           "title": "Name",
           "type": "string"
+        },
+        "redirect-uris": {
+          "description": "Callback URLs this client accepts; https:// with a concrete host, or http:// to a loopback address.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Redirect-Uris",
+          "type": "array"
+        },
+        "service-accounts": {
+          "default": false,
+          "description": "Allow this client to get a token for itself (client credentials).",
+          "title": "Service-Accounts",
+          "type": "boolean"
         }
       },
       "required": [
-        "name"
+        "name",
+        "redirect-uris"
       ],
       "title": "KeycloakClientEntry",
       "type": "object"
@@ -196,6 +218,12 @@
       "title": "Additional Redirect Uris",
       "type": "array"
     },
+    "direct-access-grants": {
+      "default": false,
+      "description": "Allow the password grant (ROPC) on the deployment client. Only set it when the application has no browser to send the user to Keycloak with.",
+      "title": "Direct-Access-Grants",
+      "type": "boolean"
+    },
     "logout-path": {
       "anyOf": [
         {
@@ -237,6 +265,12 @@
       ],
       "default": null,
       "description": "Limit sign-in to users holding a given role."
+    },
+    "service-accounts": {
+      "default": false,
+      "description": "Allow the deployment client to get a token for itself (client credentials).",
+      "title": "Service-Accounts",
+      "type": "boolean"
     },
     "template": {
       "default": "sso-only",

@@ -29,6 +29,7 @@ from typing import Any
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from opi.services.config_managed import PLATFORM_MANAGED
+from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.url_paths import normalize_logout_path
 
 
@@ -102,13 +103,35 @@ class RestrictAccessConfig(BaseModel):
 
 
 class KeycloakClientEntry(BaseModel):
-    """An ``additional-clients`` item. Only ``name`` is guardrailed; the rest
-    (redirect-uris, ...) is advanced pass-through -- the hard 10% the plan leaves
-    hand-authored -- so extras are allowed."""
+    """An ``additional-clients`` item with guardrailed ``name`` and ``redirect-uris``.
 
+    Pass-through keys are allowed for advanced configurations."""
+
+    # Geen ``populate_by_name``, anders dan op ``KeycloakConfig``: alleen de schrijfwijze met
+    # koppeltekens valideert, want dat is de sleutel die ``_create_additional_clients`` leest.
     model_config = ConfigDict(extra="allow")
 
     name: str = Field(description="Client id of the extra client to create in the realm.")
+    redirect_uris: list[str] = Field(
+        alias="redirect-uris",
+        min_length=1,
+        description="Callback URLs this client accepts; https:// with a concrete host, or http:// to a loopback address.",
+    )
+    direct_access_grants: bool = Field(
+        default=False,
+        alias="direct-access-grants",
+        description="Allow the password grant (ROPC) on this client. Only set it when the application has no browser.",
+    )
+    service_accounts: bool = Field(
+        default=False,
+        alias="service-accounts",
+        description="Allow this client to get a token for itself (client credentials).",
+    )
+
+    @field_validator("redirect_uris")
+    @classmethod
+    def _toets_redirect_uris(cls, waarde: list[str]) -> list[str]:
+        return validate_redirect_uris(waarde, "additional-clients.redirect-uris")
 
 
 class KeycloakRealmRoleEntry(BaseModel):
@@ -179,6 +202,19 @@ class KeycloakConfig(BaseModel):
         validation_alias=AliasChoices("additional_redirect_uris", "additional-redirect-uris"),
         description="Extra redirect URIs the client accepts, on top of the deployment URLs (e.g. localhost for development).",
     )
+    direct_access_grants: bool = Field(
+        default=False,
+        alias="direct-access-grants",
+        description=(
+            "Allow the password grant (ROPC) on the deployment client. Only set it when the application has no "
+            "browser to send the user to Keycloak with."
+        ),
+    )
+    service_accounts: bool = Field(
+        default=False,
+        alias="service-accounts",
+        description="Allow the deployment client to get a token for itself (client credentials).",
+    )
     restrict_access: RestrictAccessConfig | None = Field(
         default=None, alias="restrict-access", description="Limit sign-in to users holding a given role."
     )
@@ -206,6 +242,12 @@ class KeycloakConfig(BaseModel):
             "automatic or confirm. Leave it out for Keycloak's own flow (verification by email)."
         ),
     )
+
+    @field_validator("additional_redirect_uris")
+    @classmethod
+    def _toets_extra_redirect_uris(cls, waarde: list[str]) -> list[str]:
+        """Dezelfde regel als op de extra clients; het formulier leest hem via dezelfde functie."""
+        return validate_redirect_uris(waarde, "additional_redirect_uris")
 
     @field_validator("logout_path", mode="before")
     @classmethod

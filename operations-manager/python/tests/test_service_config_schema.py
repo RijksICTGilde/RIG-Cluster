@@ -219,8 +219,7 @@ class TestKeycloakConfigModel:
         assert model.restrict_access is not None
         assert model.restrict_access.realm_role == "allowed-user"
         assert model.additional_clients[0].name == "mb-grist-helmfile-production"
-        # advanced pass-through preserved (the hard 10% left hand-authored)
-        assert model.additional_clients[0].model_extra["redirect-uris"] == ["https://grist.rijksapp.nl/*"]
+        assert model.additional_clients[0].redirect_uris == ["https://grist.rijksapp.nl/*"]
 
     def test_external_polymorphic_config_is_accepted(self) -> None:
         # mb-grist-helmfile.yaml type: external -> different key set must not be rejected.

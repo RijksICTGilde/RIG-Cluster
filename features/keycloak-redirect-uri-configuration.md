@@ -49,6 +49,10 @@ deployments:
   - Each URI should include protocol and `/*` wildcard suffix
   - Commonly used for localhost URLs during local development
 
+### Validation
+
+Redirect URIs must be `https://` with a concrete host, or `http://` to a loopback address (`localhost`, `127.0.0.1`, `::1`). Wildcards are allowed in the path but not in the hostname; `*` alone is not valid. Fragments, whitespace, userinfo before the host (`https://name@host/...`), and non-HTTP(S) schemes are rejected.
+
 ### Protocol Support
 
 **Local clusters** (e.g., `kind`):
@@ -106,6 +110,10 @@ services:
 additional_redirect_uris:
   - "http://localhost:YOUR_PORT/*"
 ```
+
+**Issue**: URI is rejected when saving
+
+**Solution**: Ensure the URI follows the validation rules above. Use `https://` for public hosts or `http://` for localhost only.
 
 **Issue**: "additional_redirect_uris must be a list" error
 

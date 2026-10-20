@@ -695,6 +695,26 @@ class TestConfigureServiceFlow:
         assert response.status_code == 422
         mock_task_service.create_task.assert_not_called()
 
+    def test_a_wildcard_redirect_uri_is_rejected_before_enqueue(
+        self, v2_client: TestClient, mock_task_service: AsyncMock
+    ) -> None:
+        # De API is de tweede weg naar additional_redirect_uris, naast het formulier:
+        # dezelfde regel, en een afwijzing voordat er een taak staat.
+        response = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "sso-only", "additional_redirect_uris": ["*"]},
+        )
+        assert response.status_code == 422
+        mock_task_service.create_task.assert_not_called()
+
+        ok = v2_client.put(
+            "/api/v2/projects/test-project/services/keycloak/config/project",
+            headers=HEADERS,
+            json={"template": "sso-only", "additional_redirect_uris": ["https://app.rijksapps.nl/*"]},
+        )
+        assert ok.status_code == 202
+
     def test_unsupported_target_has_no_route(self, v2_client: TestClient) -> None:
         # keycloak carries no config at the component layer, so no such route exists.
         response = v2_client.put(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from opi.forms.editables.converters import EmptyToNoneConverter, LogoutPathConverter
 from opi.forms.editables.editable import SERVICE_VIRTUALIZE, Editable
-from opi.forms.editables.validators import LogoutPathValidator, RealmRoleValidator, UrlValidator
+from opi.forms.editables.validators import LogoutPathValidator, RealmRoleValidator, RedirectUriValidator
 
 #: GEEN default, en dat is de hele reparatie.
 #:
@@ -31,7 +31,7 @@ KEYCLOAK_TEMPLATE_EDITABLE = Editable(
 
 KEYCLOAK_REDIRECT_URI_ITEM_EDITABLE = Editable(
     yaml_path="services/keycloak/config/additional_redirect_uris[*]",
-    validator=UrlValidator(),
+    validator=RedirectUriValidator(),
     virtualize=SERVICE_VIRTUALIZE,
 )
 
@@ -98,7 +98,7 @@ KEYCLOAK_CLIENT_NAME_EDITABLE = Editable(
 
 KEYCLOAK_CLIENT_REDIRECT_URI_EDITABLE = Editable(
     yaml_path="services/keycloak/config/additional-clients[*]/redirect-uris[*]",
-    validator=UrlValidator(),
+    validator=RedirectUriValidator(),
     virtualize=SERVICE_VIRTUALIZE,
 )
 
