@@ -518,6 +518,9 @@ tasks:
       CLUSTER: '{{.CLUSTER_TYPE}}'
       DRY_RUN: '{{default "false" .DRY_RUN}}'
       KEY_FILE: '{{default .AGE_KEY_FILE .KEY_FILE}}'
+      # Stap 1 van de uitrol van de AppProjects (features/argocd-appprojects.md): de
+      # dichte default uit git overslaan, zodat de Applications eerst kunnen omschakelen.
+      KEEP_DEFAULT_APPPROJECT: '{{default "false" .KEEP_DEFAULT_APPPROJECT}}'
     preconditions:
       - *age_key_file_guard
       # SECRETS_DIR (alleen odcn-staging): een clone van de private secrets-repo. De
@@ -540,7 +543,11 @@ tasks:
         fi
 
         # Build and apply
-        SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone | kubectl apply $KUBECTL_FLAGS -f -
+        RENDERED="$(SOPS_AGE_KEY="$(sed -n '3p' {{.KEY_FILE}})" kustomize build --enable-alpha-plugins --enable-exec bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}} --load-restrictor LoadRestrictionsNone)"
+        if [[ "{{.KEEP_DEFAULT_APPPROJECT}}" == "true" ]]; then
+          RENDERED="$(printf '%s\n' "$RENDERED" | yq 'select(.kind != "AppProject" or .metadata.name != "default")')"
+        fi
+        printf '%s\n' "$RENDERED" | kubectl apply $KUBECTL_FLAGS -f -
 
         # De repo-credentials van ArgoCD uit de secrets-repo, na de overlay omdat die de
         # namespace aanmaakt. ArgoCD pakt een repository-secret op zodra het er staat.

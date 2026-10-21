@@ -70,6 +70,45 @@ De drie handgeschreven AppProjects gaan mee met de bootstrap-overlay, die met
 AppProject per project landt bij de eerstvolgende verwerking van dat project; tot die tijd
 houdt het bestaande bestand in de argo-repo zijn `sourceRepos: ['*']`.
 
+### In twee stappen, op een cluster dat al draait
+
+Een cluster waar de Applications nog op `default` staan, krijgt deze wijziging in twee
+applies. Als `default` en de omschakeling in één apply gebeuren, mogen Applications die nog
+op `default` staan niets. Daarom gaat `default` als laatste dicht.
+
+Bewaar eerst de huidige toestand als terugvaloptie, met de namespace van het cluster
+(`rig-prd-operations` op productie, `rig-staging-operations` op staging):
+
+```bash
+kubectl get applications,appprojects -n rig-staging-operations -o yaml > terugval.yaml
+```
+
+Stap 1, de nieuwe AppProjects en de omgezette Applications, met `default` nog zoals hij in
+het cluster staat:
+
+```bash
+task bootstrap-argo-system CLUSTER_TYPE=odcn-staging KEEP_DEFAULT_APPPROJECT=true
+```
+
+`KEEP_DEFAULT_APPPROJECT=true` laat alleen het AppProject `default` uit de gerenderde
+overlay weg; de rest gaat gewoon mee. Controleer daarna dat elke Application Synced en
+Healthy is, en dat geen enkele een `ComparisonError` over zijn project meldt:
+
+```bash
+kubectl get applications -n rig-staging-operations \
+  -o custom-columns=NAAM:.metadata.name,PROJECT:.spec.project,SYNC:.status.sync.status,HEALTH:.status.health.status
+```
+
+Stap 2, `default` dichtzetten, pas als stap 1 groen is:
+
+```bash
+task bootstrap-argo-system CLUSTER_TYPE=odcn-staging
+```
+
+Op productie is het dezelfde volgorde met `CLUSTER_TYPE=odcn-production` en
+`rig-prd-operations`. Op een cluster dat van nul af wordt opgebouwd is de tweede stap genoeg:
+daar is nog geen Application die op `default` staat.
+
 ## Hangt samen met
 
 - `features/futures/argocd-applicationset-migration.md`: dat ontwerp geeft de AppProjects een
