@@ -49,3 +49,48 @@ flows:
     )
     with pytest.raises(ValueError, match="onbekend endpoint"):
         load_matrix(path)
+
+
+def test_zonder_allow_all_valt_terug_op_verwacht_als_hij_ontbreekt(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+endpoints:
+  a: {namespace: ns}
+  b: {namespace: ns}
+flows:
+  - {van: a, naar: b, poort: 80, verwacht: dicht}
+""",
+    )
+    _, flows = load_matrix(path)
+    assert flows[0].zonder_allow_all == "dicht"
+
+
+def test_zonder_allow_all_met_een_eigen_waarde_overschrijft_verwacht(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+endpoints:
+  a: {namespace: ns}
+  b: {namespace: ns}
+flows:
+  - {van: a, naar: b, poort: 80, verwacht: open, zonder_allow_all: dicht}
+""",
+    )
+    _, flows = load_matrix(path)
+    assert flows[0].zonder_allow_all == "dicht"
+
+
+def test_een_onbekende_zonder_allow_all_waarde_geeft_een_duidelijke_fout(tmp_path):
+    path = _write(
+        tmp_path,
+        """
+endpoints:
+  a: {namespace: ns}
+  b: {namespace: ns}
+flows:
+  - {van: a, naar: b, poort: 80, verwacht: open, zonder_allow_all: misschien}
+""",
+    )
+    with pytest.raises(ValueError, match="open of dicht"):
+        load_matrix(path)

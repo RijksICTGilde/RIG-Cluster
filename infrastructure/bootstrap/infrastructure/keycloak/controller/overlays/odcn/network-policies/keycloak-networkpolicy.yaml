@@ -1,0 +1,92 @@
+# Keycloak had geen policy tot nu toe, wat de onderbreking van 10 juni 2026 veroorzaakte;
+# zie issue #105. podSelector + policyTypes maakt deny-by-default.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-keycloak-access
+  namespace: rig-prd-operations
+spec:
+  podSelector:
+    matchLabels:
+      app: keycloak
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # De router: de OIDC-flow van end-users loopt publiek over keycloak.rijksapp.nl
+    # (ingress-postfix en ip_whitelist 0.0.0.0/0 in ../kustomization.yaml). Ook
+    # tenant-pods komen hier binnen, want die kennen Keycloak alleen op die hostnaam
+    # (keycloak_discovery_url in opi/core/cluster_config.py).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-ingress
+          podSelector:
+            matchLabels:
+              ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig
+      ports:
+        - protocol: TCP
+          port: 8080
+    # De platform-namespace: OPI beheert realms en clients, en Prometheus scrapet
+    # /realms/master/rig-metrics (keycloak-rig-metrics-job in
+    # ../../../../prometheus/controller/overlays/odcn/configmap-patch.yaml).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+      ports:
+        - protocol: TCP
+          port: 8080
+    # De management-poort van Keycloak, alleen voor Prometheus: de pod draagt
+    # prometheus.io/port 9000 (../../base/deployment.yaml), dus de kubernetes-pods-job
+    # scrapet die poort.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
+        - protocol: TCP
+          port: 9000
+  egress:
+    # DNS.
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # De gedeelde PostgreSQL: KC_DB_URL in ../../base/deployment.yaml.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-operations
+          podSelector:
+            matchLabels:
+              cnpg.io/cluster: rig-db
+      ports:
+        - protocol: TCP
+          port: 5432
+    # De mailrelay, voor de eigen verzender (ZAD_MAIL_RELAY_* in ../../base/deployment.yaml).
+    # 2525 en niet 587: dat is de podpoort, en een NetworkPolicy kijkt naar de poort van
+    # de pod (zie allow-mail-relay-access in de mail-overlay).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: rig-prd-ron
+      ports:
+        - protocol: TCP
+          port: 2525
+    # Naar buiten op 443, voor de identity provider SSO-Rijk. De pod-CIDR staat niet in
+    # except, dus deze regel dekt ook bestemmingen binnen het cluster op 443; het cluster
+    # levert die CIDR niet aan, en de tenant-baseline heeft dezelfde grens.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+      ports:
+        - protocol: TCP
+          port: 443

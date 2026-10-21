@@ -47,10 +47,14 @@ PLATFORM_POLICY_SOURCES: dict[str, str | None] = {
     "infrastructure/bootstrap/infrastructure/postgresql/database/overlays/odcn/network-policies/postgresql-networkpolicy.yaml": OPS_NAMESPACE,
     "infrastructure/bootstrap/infrastructure/minio/config/overlays/odcn/network-policies/minio-networkpolicy.yaml": OPS_NAMESPACE,
     "infrastructure/bootstrap/infrastructure/redis/controller/overlays/odcn/network-policies/redis-networkpolicy.yaml": OPS_NAMESPACE,
+    "infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/odcn/network-policies/keycloak-networkpolicy.yaml": OPS_NAMESPACE,
+    "infrastructure/bootstrap/infrastructure/prometheus/controller/overlays/odcn/network-policies/prometheus-networkpolicy.yaml": OPS_NAMESPACE,
+    "infrastructure/bootstrap/infrastructure/external-dns/controller/overlays/odcn/network-policies/external-dns-networkpolicy.yaml": OPS_NAMESPACE,
     # Eigen Application met destination rig-prd-ron.
     "infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn/network-policies/mail-relay-networkpolicy.yaml": MAIL_NAMESPACE,
     # De rig-system bootstrap-overlay, die zelf namespace: rig-prd-operations zet.
     "bootstrap/rig-system/kustomize/overlays/odcn-production/network-policies/argocd-network-policy.yaml": OPS_NAMESPACE,
+    "bootstrap/rig-system/kustomize/overlays/odcn-production/network-policies/acme-solver-network-policy.yaml": OPS_NAMESPACE,
     "bootstrap/rig-system/kustomize/overlays/odcn-production/network-policies/emergency-restore-allow-all.yaml": OPS_NAMESPACE,
     "bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/network-policy.yaml": OPS_NAMESPACE,
     # In clusters/odcn uitgecommentarieerd, dus niet op productie.

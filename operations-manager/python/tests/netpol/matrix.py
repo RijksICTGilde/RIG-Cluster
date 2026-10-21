@@ -19,6 +19,10 @@ MATRIX_PATH = Path(__file__).parent / "flows_odcn.yaml"
 TENANT_NAMESPACE = "rig-prd-demo"
 TENANT_PROJECT = "demo"
 
+# De tijdelijke allow-all over rig-prd-operations. De matrix evalueert ook zonder dit
+# bestand, want dat is de toestand waar de uitsluitlijst erin naartoe krimpt.
+ALLOW_ALL_NAME = "emergency-restore-allow-all"
+
 
 @dataclass(frozen=True)
 class Flow:
@@ -27,6 +31,13 @@ class Flow:
     poort: int
     verwacht: str
     waarom: str
+    # Weggelaten betekent: gelijk aan `verwacht`. Zo hoeft een regel die niet op de
+    # allow-all leunt de kolom niet te herhalen.
+    zonder_allow_all: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.zonder_allow_all:
+            object.__setattr__(self, "zonder_allow_all", self.verwacht)
 
 
 def load_matrix(path: Path = MATRIX_PATH) -> tuple[dict[str, Endpoint], list[Flow]]:
@@ -44,8 +55,10 @@ def load_matrix(path: Path = MATRIX_PATH) -> tuple[dict[str, Endpoint], list[Flo
 
     flows = []
     for entry in document["flows"]:
-        if entry["verwacht"] not in ("open", "dicht"):
-            raise ValueError(f"verwacht moet open of dicht zijn, niet {entry['verwacht']!r}")
+        for key in ("verwacht", "zonder_allow_all"):
+            waarde = entry.get(key, entry["verwacht"])
+            if waarde not in ("open", "dicht"):
+                raise ValueError(f"{key} moet open of dicht zijn, niet {waarde!r}")
         for role in ("van", "naar"):
             if entry[role] not in endpoints:
                 raise ValueError(f"onbekend endpoint {entry[role]!r} in {role}")
@@ -56,6 +69,7 @@ def load_matrix(path: Path = MATRIX_PATH) -> tuple[dict[str, Endpoint], list[Flo
                 poort=int(entry["poort"]),
                 verwacht=entry["verwacht"],
                 waarom=entry.get("waarom", ""),
+                zonder_allow_all=entry.get("zonder_allow_all", ""),
             )
         )
     return endpoints, flows
@@ -78,6 +92,11 @@ def odcn_policies() -> list[dict[str, Any]]:
         )
         policies.append(acme_http(namespace=TENANT_NAMESPACE, deployment_name=deployment_name))
     return policies
+
+
+def odcn_policies_zonder_allow_all() -> list[dict[str, Any]]:
+    """Dezelfde policies, zonder de tijdelijke allow-all over rig-prd-operations."""
+    return [p for p in odcn_policies() if p["metadata"]["name"] != ALLOW_ALL_NAME]
 
 
 def evaluate_flow(flow: Flow, endpoints: dict[str, Endpoint], policies: list[dict[str, Any]]) -> Verdict:

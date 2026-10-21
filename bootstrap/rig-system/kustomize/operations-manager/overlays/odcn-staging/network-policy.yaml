@@ -31,21 +31,21 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
-    # De mailrelay. Twee poorten met twee doelen: 587 om zelf post aan te bieden (ZAD
+    # De mailrelay. Twee poorten met twee doelen: 2525 om zelf post aan te bieden (ZAD
     # verstuurt uitnodigingen en meldingen als gewoon account), 8080 om via de management-API
     # accounts voor projecten aan te maken en in te trekken.
     #
-    # De relaykant laat OPI al binnen (mail-relay-networkpolicy in rig-staging-ron); zonder deze
-    # regel blokkeert OPI's eigen beleid het alsnog aan de uitgaande kant, want die kent
-    # alleen 443, 53 en backup:9000. Dat het vandaag toch zou werken komt door de
-    # emergency-restore-allow-all die live over de namespace ligt, en daar mag niets op
-    # leunen.
+    # 2525 en NIET 587: 587 is de poort van de Service, de container luistert op 2525
+    # (config.toml van de relay, [server.listener.submission]) en een NetworkPolicy kijkt
+    # naar de poort van de pod. Met 587 hier was deze regel dood zodra de allow-all over de
+    # namespace weg is; de relaykant (allow-mail-relay-access in rig-staging-ron) noemt daarom
+    # ook 2525.
     - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: rig-staging-ron
       ports:
         - protocol: TCP
-          port: 587
+          port: 2525
         - protocol: TCP
           port: 8080

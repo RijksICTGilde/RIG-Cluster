@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 
 import pytest
-from tests.netpol.matrix import evaluate_flow, load_matrix, odcn_policies
+from tests.netpol.matrix import evaluate_flow, load_matrix, odcn_policies, odcn_policies_zonder_allow_all
 
 ENDPOINTS, FLOWS = load_matrix()
 
@@ -18,6 +18,11 @@ ENDPOINTS, FLOWS = load_matrix()
 @pytest.fixture(scope="module")
 def policies():
     return odcn_policies()
+
+
+@pytest.fixture(scope="module")
+def policies_zonder_allow_all():
+    return odcn_policies_zonder_allow_all()
 
 
 @pytest.mark.parametrize("flow", FLOWS, ids=lambda f: f"{f.van}->{f.naar}:{f.poort}")
@@ -42,6 +47,28 @@ def test_geen_matrixregel_rust_op_een_onbeoordeelbaar_verdict(policies):
         )
 
 
+@pytest.mark.parametrize("flow", FLOWS, ids=lambda f: f"{f.van}->{f.naar}:{f.poort}")
+def test_de_matrix_beschrijft_het_beleid_zonder_de_allow_all(flow, policies_zonder_allow_all):
+    """De eindtoestand: wat er geldt als de uitsluitlijst elke workload bevat.
+
+    Deze test is de toets voor een nieuwe per-component policy. Faalt hij op een regel
+    die open hoort te zijn, dan mist die workload een regel en zou hij breken zodra hij
+    buiten de allow-all valt.
+    """
+    verdict = evaluate_flow(flow, ENDPOINTS, policies_zonder_allow_all)
+    gemeten = "open" if verdict.allowed else "dicht"
+    assert gemeten == flow.zonder_allow_all, (
+        f"zonder emergency-restore-allow-all is {flow.van} -> {flow.naar} op poort "
+        f"{flow.poort} {gemeten}, de matrix verwacht {flow.zonder_allow_all} "
+        f"({flow.waarom}). Reden: {verdict.reason}"
+    )
+
+
+def test_de_allow_all_maakt_verschil():
+    """Anders zegt de tweede kolom niets: er moet minstens een regel omslaan."""
+    assert any(f.verwacht != f.zonder_allow_all for f in FLOWS)
+
+
 def test_de_matrix_dekt_beide_adresfamilies():
     """De internetregel moet op IPv4 en IPv6 getoetst zijn: het cluster is dual-stack."""
     doelen = {flow.naar for flow in FLOWS}
@@ -64,7 +91,9 @@ class TestDeMatrixMerktEenWijziging:
             if policy["metadata"]["name"].endswith("tenant-baseline-network-policy"):
                 _internetregel(policy)["ports"].append({"protocol": "TCP", "port": 25})
 
-        dichte_smtp = [f for f in FLOWS if f.naar.startswith("internet") and f.poort == 25]
+        dichte_smtp = [
+            f for f in FLOWS if f.van.startswith("tenant") and f.naar.startswith("internet") and f.poort == 25
+        ]
         assert dichte_smtp, "de matrix moet een dichte SMTP-regel houden"
         for flow in dichte_smtp:
             assert evaluate_flow(flow, ENDPOINTS, gemuteerd).allowed, (
@@ -78,7 +107,9 @@ class TestDeMatrixMerktEenWijziging:
                 spec = policy["spec"]
                 spec["egress"] = [r for r in spec["egress"] if r is not _internetregel(policy)]
 
-        open_internet = [f for f in FLOWS if f.naar.startswith("internet") and f.verwacht == "open"]
-        assert open_internet, "de matrix moet een open internetregel houden"
+        open_internet = [
+            f for f in FLOWS if f.van.startswith("tenant") and f.naar.startswith("internet") and f.verwacht == "open"
+        ]
+        assert open_internet, "de matrix moet een open internetregel van een tenant houden"
         for flow in open_internet:
             assert not evaluate_flow(flow, ENDPOINTS, gemuteerd).allowed
