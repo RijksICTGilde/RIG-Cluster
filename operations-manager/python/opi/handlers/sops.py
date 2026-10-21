@@ -14,6 +14,7 @@ import os
 import tempfile
 from typing import TYPE_CHECKING, Any
 
+from opi.core.cluster_config import is_platform_namespace
 from opi.core.config import settings
 from opi.utils.subprocess_env import child_env
 
@@ -204,6 +205,15 @@ class SopsHandler:
         Returns:
             True if successful, False otherwise
         """
+        # Tweede laag naast de weigering van een gereserveerde projectnaam: de
+        # projectsleutel hier overschrijft de platformsleutel, waarna ArgoCD de
+        # platformapplicaties niet meer rendert.
+        if is_platform_namespace(namespace):
+            raise ValueError(
+                f"Weigert een projectsleutel 'sops-age-key' te schrijven in namespace '{namespace}': "
+                f"dat is een namespace van het platform zelf."
+            )
+
         if not self.kubectl:
             self.logger.error("KubectlConnector not available for storing SOPS key")
             return False

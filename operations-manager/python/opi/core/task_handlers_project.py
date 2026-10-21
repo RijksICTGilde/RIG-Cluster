@@ -10,6 +10,7 @@ import logging
 import time
 from typing import Any
 
+from opi.core.cluster_config import is_reserved_project_name
 from opi.core.task_errors import CLIENT_ERROR_TYPES, platform_failure_fields
 from opi.core.task_rollout import note_rollout_skipped, rollout_requested, skipped_processing
 from opi.services.oom_watcher import reset_oom_tune_attempts
@@ -33,7 +34,11 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
     from opi.core.simple_background import _monitor_argocd_and_deployment
     from opi.manager.project_manager import ProjectManager
     from opi.services.project_store import ConflictError, get_project_store
-    from opi.utils.project_utils import generate_self_service_project_yaml, validate_project_name
+    from opi.utils.project_utils import (
+        RESERVED_PROJECT_NAME_MESSAGE,
+        generate_self_service_project_yaml,
+        validate_project_name,
+    )
 
     start_time = time.time()
     project_name: str = payload["project_name"]
@@ -54,6 +59,17 @@ async def handle_create_project(payload: dict, progress: Any) -> dict:
 
     if not validate_project_name(project_name):
         error_msg = f"Invalid project name format: {project_name}"
+        progress.fail_task(validate_task, error_msg)
+        progress.fail_project(error_msg)
+        return {
+            "project_name": project_name,
+            "status": "failed",
+            "error": error_msg,
+            "error_type": "invalid_project_name",
+        }
+
+    if payload.get("is_new_project", False) and is_reserved_project_name(project_name):
+        error_msg = RESERVED_PROJECT_NAME_MESSAGE.format(name=project_name)
         progress.fail_task(validate_task, error_msg)
         progress.fail_project(error_msg)
         return {

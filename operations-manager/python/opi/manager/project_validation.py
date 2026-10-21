@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
-from opi.core.cluster_config import CLUSTER_CONFIG
+from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -49,7 +49,11 @@ from opi.utils.naming import (
     registry_tag_owner,
     split_image_reference,
 )
-from opi.utils.project_utils import ComponentValidationError, validate_root_component
+from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    ComponentValidationError,
+    validate_root_component,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -884,12 +888,19 @@ async def validate_project_structure(
     rules that judge a CHANGE rather than a value need it (see
     ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
     so a caller without a previous version -- a create, a replay -- loses nothing else.
+    The reserved-name rule runs the other way around: only without a previous version,
+    because it judges a name that is being introduced.
 
     ``approval_decision`` marks an approver's decision; only the approval route sets True.
     """
     project_name = project_data.get("name", "(onbekend)")
     components = project_data.get("components", []) or []
     deployments = project_data.get("deployments", []) or []
+
+    # Alleen bij een create (geen vorige versie): een bestaand project moet opgeslagen
+    # kunnen blijven worden, ook al zou zijn naam vandaag geweigerd worden.
+    if previous is None and is_reserved_project_name(str(project_name)):
+        raise ProjectIntegrityError(RESERVED_PROJECT_NAME_MESSAGE.format(name=project_name))
 
     # Component names unique
     seen_components: set[str] = set()

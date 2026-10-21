@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.utils.sops import generate_sops_key_pair
+from tests.conftest import write_private_file
 from tests.documented_commands import documented_lines, flags
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -143,7 +144,7 @@ async def test_the_secret_keeps_the_whole_key_file_as_its_value(tmp_path: Path) 
     """sops-plugin.sh greps ``^AGE-SECRET-KEY-`` out of the value, so the file shape must survive."""
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"# created: today\n# public key: x\n{private}\n")
+    write_private_file(key_file, f"# created: today\n# public key: x\n{private}")
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("rendered: yaml", "", 0))
 
@@ -171,7 +172,7 @@ async def test_the_manifest_never_travels_through_argv(tmp_path: Path) -> None:
     """
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"# created: today\n{private}\n")
+    write_private_file(key_file, f"# created: today\n{private}")
     manifest = f"apiVersion: v1\nkind: Secret\ndata:\n  key: {base64.b64encode(private.encode()).decode()}\n"
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=(manifest, "", 0))
@@ -195,7 +196,7 @@ async def test_the_rendered_manifest_lands_in_a_private_file_outside_the_reposit
     """
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"# created: today\n{private}\n")
+    write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
 
     async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
@@ -221,7 +222,7 @@ async def test_a_failing_apply_still_takes_the_manifest_with_it(tmp_path: Path) 
     """Without the ``finally`` the one run that goes wrong is the one that leaves the key behind."""
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"# created: today\n{private}\n")
+    write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
 
     async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
@@ -250,7 +251,7 @@ async def test_an_interrupt_during_the_apply_still_takes_the_manifest_with_it(tm
     """
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"# created: today\n{private}\n")
+    write_private_file(key_file, f"# created: today\n{private}")
     seen: list[Path] = []
 
     async def run_command(args: list[str], **_kwargs: object) -> tuple[str, str, int]:
@@ -315,8 +316,8 @@ async def test_a_wrong_cluster_name_changes_nothing(tmp_path: Path, capsys: pyte
     """The confirmation is the only guard on an irreversible step, so it has to bite."""
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("", "", 0))
 
@@ -349,8 +350,8 @@ async def test_a_wrong_cluster_name_changes_nothing(tmp_path: Path, capsys: pyte
 async def test_a_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
     connector.run_command = AsyncMock(return_value=("", "", 0))
 
@@ -383,8 +384,8 @@ async def test_a_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFi
 @pytest.mark.asyncio
 async def test_the_same_key_twice_is_refused(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
     private, _public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{private}\n")
-    (tmp_path / "key.txt").write_text(f"{private}\n")
+    write_private_file(tmp_path / "old_key.txt", private)
+    write_private_file(tmp_path / "key.txt", private)
 
     code = await tool.main(
         [
@@ -431,9 +432,9 @@ async def test_the_run_writes_only_where_the_old_platform_key_sits(
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     _project_private, project_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
     key_file = tmp_path / "key.txt"
-    key_file.write_text(f"{new_private}\n")
+    write_private_file(key_file, new_private)
     holders = [
         tool.SecretHolder("rig-prd-operations", old_public),
         tool.SecretHolder("rig-prd-ron", old_public),
@@ -494,9 +495,9 @@ async def test_the_secret_is_written_from_the_answered_key_file_not_the_default(
     old_private, old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
     answered_old = tmp_path / "mijn-oude-sleutel.txt"
-    answered_old.write_text(f"{old_private}\n")
+    write_private_file(answered_old, old_private)
     answered_new = tmp_path / "mijn-nieuwe-sleutel.txt"
-    answered_new.write_text(f"{new_private}\n")
+    write_private_file(answered_new, new_private)
     written: list[tuple[str, Path]] = []
 
     async def record_write(namespace: str, path: Path) -> None:
@@ -524,8 +525,8 @@ async def test_a_second_run_finds_nothing_to_do_and_writes_nothing(
     """Rerun safety at the entry point: every namespace already on the new key is a no-op."""
     old_private, _old_public = generate_sops_key_pair()
     new_private, new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
     write = AsyncMock()
 
     with (
@@ -562,8 +563,8 @@ async def test_an_unreachable_cluster_stops_before_anything_is_touched(
     """
     old_private, _old_public = generate_sops_key_pair()
     new_private, _new_public = generate_sops_key_pair()
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
     connector = AsyncMock()
     # The context lookup succeeds, the secret listing does not.
     connector.run_command = AsyncMock(side_effect=[("odcn-production", "", 0), ("", "connection refused", 1)])

@@ -24,6 +24,7 @@ from opi.connectors.subdomain import (
     SubdomainNotAvailableError,
     SubdomainValidationError,
 )
+from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.task_handlers_operations import terminated_sync_fields
 from opi.core.task_helpers import build_accepted_response, create_async_task
@@ -39,7 +40,12 @@ from opi.services.project_store import get_project_store
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
-from opi.utils.project_utils import generate_self_service_project_yaml, normalize_container_image, validate_project_name
+from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
+    generate_self_service_project_yaml,
+    normalize_container_image,
+    validate_project_name,
+)
 from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
@@ -3111,6 +3117,11 @@ async def create_self_service_project(
             raise HTTPException(
                 status_code=400,
                 detail="Project name must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+            )
+        if is_reserved_project_name(project_data.project_name):
+            raise HTTPException(
+                status_code=400,
+                detail=RESERVED_PROJECT_NAME_MESSAGE.format(name=project_data.project_name),
             )
 
         # Validate domain fields using editable validators

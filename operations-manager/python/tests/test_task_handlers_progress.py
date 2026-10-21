@@ -429,6 +429,7 @@ class TestHandleRefreshDeployment:
             force_clone=False,
             force_reenable=True,
             reset_running_sync=False,
+            rotate_credentials=frozenset(),
         )
 
         assert progress.add_task.call_count == 2
