@@ -46,14 +46,16 @@ spec:
       requests:
         cpu: 250m
         memory: 384Mi
-    insecure: true
+    # TLS met certificaat uit het secret argocd-server-tls (gevuld door OpenShift service-CA).
+    insecure: false
     route:
       annotations:
         # limit access to within VPN of ODCN
         haproxy.router.openshift.io/ip_whitelist: 147.181.15.230
       enabled: true
       tls:
-        termination: edge
+        # reencrypt: de router zet TLS opnieuw op naar de server (versleuteld tot in het cluster).
+        termination: reencrypt
         insecureEdgeTerminationPolicy: Redirect
     service:
       type: ''

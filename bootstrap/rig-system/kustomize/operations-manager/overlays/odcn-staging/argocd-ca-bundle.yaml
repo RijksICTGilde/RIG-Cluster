@@ -1,0 +1,7 @@
+# Leeg in git: de service-CA-operator van OpenShift vult service-ca.crt en roteert hem mee.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-ca-bundle
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"

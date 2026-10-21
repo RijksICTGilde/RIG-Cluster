@@ -44,8 +44,18 @@ def _ssl_context_voor(verify_ssl: bool, ca_bundle: str | None) -> ssl.SSLContext
     """Een ssl-context per (verify_ssl, ca_bundle), gedeeld over het hele proces.
 
     Voorkomt dat ssl.create_default_context() de CA-bundel per request van schijf leest.
+
+    Raises:
+        ArgoTLSConfiguratieError: de bundel op dit pad ontbreekt of bevat geen certificaat
     """
-    context = ssl.create_default_context(cafile=ca_bundle)
+    try:
+        context = ssl.create_default_context(cafile=ca_bundle)
+    except (OSError, ssl.SSLError) as fout:
+        # De bundel is een optionele mount, dus een cluster zonder ConfigMap komt hier
+        # met een melding die het pad niet noemt. Terugvallen op plain HTTP is geen uitweg.
+        raise ArgoTLSConfiguratieError(
+            f"ARGOCD_CA_BUNDLE={ca_bundle} is niet te lezen als CA-bundel: {_exc_text(fout)}"
+        ) from fout
     if not verify_ssl:
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
