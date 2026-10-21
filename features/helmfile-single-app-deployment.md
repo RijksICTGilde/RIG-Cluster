@@ -161,6 +161,50 @@ The ArgoCD CMP plugin was updated to support running **both** kustomize and helm
 
 The CMP script detects both and runs them sequentially, combining the output.
 
+### Wat de renderketen niet meer doet
+
+De CMP start geen programma's die in een kustomization of een helmfile staan. Dat betekent
+concreet:
+
+- `kustomize build` draait zonder `--enable-exec` en zonder `--enable-alpha-plugins`. De
+  `decrypt-sops.yaml` blijft staan en wordt nog steeds geschreven, maar de plugin
+  ontsleutelt de bestanden die hij noemt nu zelf (met de sleutel die hij al had) en zet ze
+  als `resources` in de kustomization voordat hij bouwt. De uitvoer is dezelfde; wat
+  verdwijnt is de mogelijkheid om via een eigen exec-functie een binary te laten draaien.
+  Lokaal werkt `kustomize build --enable-exec` nog gewoon, met ksops.
+- Helmfile draait met `HELMFILE_DISABLE_INSECURE_FEATURES=true` en
+  `HELMFILE_DISABLE_HOOKS=true`. De templatefuncties `exec`, `envExec`, `readFile`,
+  `readDir` en `readDirEntries` geven een fout in plaats van een resultaat, en een state met
+  `hooks` rendert niet.
+- `postRenderer` valt onder geen van die vlaggen (het laat helm een programma starten), dus
+  de plugin weigert een helmfile-state die hem noemt. De melding noemt alleen de sleutel,
+  niet de waarden.
+- Een fout IN een ontsleuteld bestand meldt alleen de bestandsnaam. De stderr van kustomize
+  citeert de regel waarop hij struikelde, en die inhoud is geheim.
+
+### Allowlist voor bronnen
+
+OPI kloont een helmfile- of chartbron alleen als de URL onder `RENDER_SOURCE_ALLOWLIST`
+valt: een komma-gescheiden lijst URL-prefixen per cluster. De vergelijking kijkt naar
+schema, host en pad (zonder userinfo of `.git`, met het pad opgelost omdat git
+`/toegestaan/../../elders` als `/elders` opvraagt), en vereist een padgrens: een prefix mag
+eronder liggen (`https://github.com/MinBZK/mijn-bureau-infra/sub`) maar niet ernaast
+(`.../mijn-bureau-infra-ander`). Een bron buiten de lijst geeft een fout. Leeg betekent:
+geen enkele bron toegestaan.
+
+`chart-path`, `helmfile[].path`, `helmfile[].entry` en een `file://`-dependency uit de
+`Chart.yaml` van een gekloonde chart worden binnen de clone opgelost: een absoluut pad, een
+`..` of een symlink die eruit wijst geeft een fout, zodat er geen inhoud van de container in
+de deploymentmap belandt.
+
+### Gereserveerde bestandsnamen
+
+`helmfile[].files` mag geen bestandsnaam gebruiken die de renderketen zelf kent:
+`kustomization.yaml`, `kustomization.yml`, `decrypt-sops.yaml`, `.cmp-env`,
+`cmp-env.to-sops.yaml`, `cmp-env.sops.yaml`, `.helmfile-entry`, `values.to-sops.yaml` en
+`values.sops.yaml`, op elk niveau van het pad. Zo'n naam geeft een fout bij de gebruiker,
+in plaats van een waarschuwing in de logs.
+
 ### Services Integration
 
 The docs application uses RIG platform services:
@@ -236,20 +280,11 @@ no plain-text env-var reaches `zad-deployments` again.
 - A value is one line. An AGE-encrypted value may span lines in the project file; OPI
   decrypts it before encrypting the map with SOPS, and the decrypted value must be
   single-line too.
-- Variables the plugin reads itself are reserved and refused: anything starting with
-  `ARGOCD_`, `SOPS_`, `KUSTOMIZE_`, `HELM_`, `HELMFILE_`, `KUBE`, `BASH`, `LD_` or `GIT_`,
-  plus `PATH`, `HOME`, `IFS`, `ENV`, `SHELL`, `PS4` and `PROMPT_COMMAND`. The list lives
-  in `CMP_ENV_RESERVED_PREFIXES`/`CMP_ENV_RESERVED_NAMES` (`opi/generation/manifests.py`)
-  and in the plugin script; `tests/test_cmp_env_contract.py` pins the two together.
-- `ENVIRONMENT` is the one variable a deployment may set that the plugin itself uses: it
-  becomes `helmfile -e <value>`, as a single argument. A value with spaces is one
-  environment name, never an extra helmfile flag.
-
-OPI applies the same rules when it writes the file, so a bad pair fails at save time with
-the key named, not at render time. Without any env-vars no file is written, and an
-existing `cmp-env.sops.yaml` is removed, so a deleted variable also leaves the render.
-The keys are written in a fixed order, so an unchanged map keeps its existing ciphertext
-(see `sops-skip-unchanged-reencryption.md`) and does not churn `zad-deployments`.
+- Variables starting with `ARGOCD_`, `SOPS_`, `KUSTOMIZE_`, `HELM_`, `HELMFILE_`, `KUBE`,
+  `BASH`, `LD_` or `GIT_` are reserved and refused, as are `PATH`, `HOME`, `IFS`, `ENV`,
+  `SHELL`, `PS4` and `PROMPT_COMMAND`.
+- `ENVIRONMENT` is the one variable the plugin uses: it becomes `helmfile -e <value>`, as
+  a single argument.
 
 ### Deployment Flow
 

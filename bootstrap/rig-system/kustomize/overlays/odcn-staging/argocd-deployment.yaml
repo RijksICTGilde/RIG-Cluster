@@ -127,7 +127,7 @@ spec:
       requests:
         cpu: 250m
         memory: 256Mi
-    serviceaccount: argocd-argocd-server
+    serviceaccount: argocd-cmp
     sidecarContainers:
       - name: cmp-server
         command:
@@ -137,8 +137,6 @@ spec:
         env:
           - name: ARGOCD_EXEC_TIMEOUT
             value: "180s"
-          - name: KUSTOMIZE_PLUGIN_HOME
-            value: /etc/kustomize/plugin
         resources:
           limits:
             cpu: 500m

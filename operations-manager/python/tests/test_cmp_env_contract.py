@@ -31,10 +31,8 @@ import pytest
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.generation.manifests import CMP_ENV_RESERVED_NAMES, CMP_ENV_RESERVED_PREFIXES
 from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
-from ruamel.yaml import YAML
+from tests.cmp_plugin import render_script
 from tests.programma import echt_programma
-
-_PLUGIN = Path(__file__).parent.parent.parent.parent / "bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml"
 
 #: Variabelen die een deployment juist WEL via .cmp-env mag zetten. ``ENVIRONMENT`` kiest
 #: de helmfile-environment en is de reden dat het bestand bestaat.
@@ -47,10 +45,19 @@ _AGE_BLOCK = "-----BEGIN AGE ENCRYPTED FILE-----\nY2lwaGVydGV4dA==\n-----END AGE
 
 
 def _generate_script() -> str:
-    """Het bash-script uit de ``generate``-stap van de ConfigManagementPlugin."""
-    configmap = YAML(typ="safe").load(_PLUGIN.read_text())
-    plugin = YAML(typ="safe").load(configmap["data"]["plugin.yaml"])
-    return plugin["spec"]["generate"]["args"][-1]
+    """Het bash-script dat beide plugins draaien."""
+    return render_script()
+
+
+def _script_functions(script: str) -> str:
+    """Alle functiedefinities uit het pluginscript, in de volgorde van het script.
+
+    Een runner die een enkele functie uitlicht valt om zodra die een nieuwe hulpfunctie
+    aanroept, dus neemt hij ze allemaal mee. Definieren voert niets uit.
+    """
+    functions = re.findall(r"^[a-z_]+\(\) \{\n.*?^\}$", script, re.DOTALL | re.MULTILINE)
+    assert functions, "het pluginscript heeft geen functies meer waar de test ze zoekt"
+    return "\n".join(functions)
 
 
 def _load_cmp_env_function(script: str) -> str:
@@ -248,22 +255,27 @@ def test_een_gewone_regel_levert_hetzelfde_op_als_source_deed(paar: str, tmp_pat
 def _helmfile_argv(environment: str | None, tmp_path: Path) -> list[str]:
     """De argumenten waarmee het pluginscript ``helmfile`` aanroept.
 
-    Draait ``process_helmfile_folder`` uit de ConfigMap met stubs voor de stappen die
-    een cluster nodig hebben, en vangt de argv op.
+    Draait ``process_helmfile_folder`` uit de ConfigMap met stubs voor ``helm`` en
+    ``helmfile``, en vangt de argv van de template-aanroep op.
     """
     bash = echt_programma("bash")
-    script = _generate_script()
-    functie = re.search(r"^process_helmfile_folder\(\) \{\n.*?^\}$", script, re.DOTALL | re.MULTILINE)
-    assert functie, "process_helmfile_folder staat niet meer waar de test hem zoekt"
+    # yq moet op PATH staan met zijn echte pad: de guard op postRenderer leest de state ermee.
+    yq = Path(echt_programma("yq")).parent
 
     (tmp_path / "helmfile.yaml").write_text("releases: []\n")
     runner = tmp_path / "runner.sh"
     runner.write_text(
         "set -e\nset -o pipefail\n"
-        "decrypt_helmfile_values() { :; }\n"
+        f"{_script_functions(_generate_script())}\n"
+        # Alleen de programma's buiten het script worden gestubd. De guard rendert de state
+        # met 'helmfile build'; deze test meet de template-aanroep.
         "helm() { echo diff; }\n"
-        'helmfile() { printf "%s\\n" "$@" > argv.txt; }\n'
-        f"{functie.group(0)}\n"
+        "helmfile() {\n"
+        '  case " $* " in\n'
+        '    *" build "*) ;;\n'
+        '    *) printf "%s\\n" "$@" > argv.txt ;;\n'
+        "  esac\n"
+        "}\n"
         'process_helmfile_folder "." "/dev/null" "helmfile.yaml"\n'
     )
     result = subprocess.run(
@@ -271,7 +283,7 @@ def _helmfile_argv(environment: str | None, tmp_path: Path) -> list[str]:
         cwd=tmp_path,
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin", "ARGOCD_APP_NAMESPACE": "rig-prd-mb-docs"}
+        env={"PATH": f"{yq}:/usr/bin:/bin", "ARGOCD_APP_NAMESPACE": "rig-prd-mb-docs"}
         | ({} if environment is None else {"ENVIRONMENT": environment}),
     )
     assert result.returncode == 0, result.stderr

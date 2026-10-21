@@ -29,6 +29,11 @@ data:
     PROJECT_REPO_USERNAME=git
     PROJECT_REPO_BRANCH=main
 
+    # Van welke bronnen de renderketen een helmfile of helm chart mag klonen. Leeg betekent
+    # geen enkele, dus een nieuwe bron moet hier eerst bij. Gemeten in de projectrepo: de
+    # twee helmfile-projecten halen allebei hieruit.
+    RENDER_SOURCE_ALLOWLIST=https://github.com/MinBZK/mijn-bureau-infra.git
+
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
 

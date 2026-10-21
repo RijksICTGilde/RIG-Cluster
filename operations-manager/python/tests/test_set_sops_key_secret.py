@@ -141,7 +141,7 @@ def test_an_unreadable_secret_is_not_reported_as_a_project_key(capsys: pytest.Ca
 
 @pytest.mark.asyncio
 async def test_the_secret_keeps_the_whole_key_file_as_its_value(tmp_path: Path) -> None:
-    """sops-plugin.sh greps ``^AGE-SECRET-KEY-`` out of the value, so the file shape must survive."""
+    """The CMP plugin greps ``^AGE-SECRET-KEY-`` out of the value, so the file shape must survive."""
     private, _public = generate_sops_key_pair()
     key_file = tmp_path / "key.txt"
     write_private_file(key_file, f"# created: today\n# public key: x\n{private}")

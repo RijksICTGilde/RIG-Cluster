@@ -211,6 +211,7 @@ from opi.utils.project_utils import (
     project_level_deployment,
     validate_root_component,
 )
+from opi.utils.render_sources import path_inside_clone, require_allowed_render_source
 from opi.utils.secrets import (
     BaseSecret,
     DatabaseSecret,
@@ -239,6 +240,20 @@ if TYPE_CHECKING:
     from opi.core.persistent_task_progress import AnyTaskProgressManager
     from opi.manager.database_manager import DatabaseManager
     from opi.services.catalog.image_registries.rules import ResolvedImage
+
+# Bestandsnamen waar de renderketen zelf betekenis aan geeft: een helmfile-bron die er een
+# van meebrengt, zou de gegenereerde deployment overschrijven.
+HELMFILE_RESERVED_FILENAMES = frozenset(
+    {
+        "kustomization.yaml",
+        "kustomization.yml",
+        "decrypt-sops.yaml",
+        CMP_ENV_PLAINTEXT_FILENAME,
+        ".helmfile-entry",
+        *sops_filenames("values"),
+        *sops_filenames(CMP_ENV_NAME),
+    }
+)
 
 # TypeVar for generic secret types
 T = TypeVar("T", bound=BaseSecret)
@@ -4640,6 +4655,8 @@ class ProjectManager:
         if not chart_name:
             raise ValueError("Helm chart missing required 'name' field")
 
+        require_allowed_render_source(git_url, f"helm chart '{chart_name}'")
+
         logger.info(f"Cloning helm chart '{chart_name}' from {git_url}#{git_ref}")
 
         # Create a temporary git connector to clone the chart repo
@@ -4661,7 +4678,7 @@ class ProjectManager:
             await git_connector.clone()
 
             # Get the chart source path
-            source_chart_path = safe_join(temp_dir, chart_path)
+            source_chart_path = path_inside_clone(temp_dir, chart_path, f"helm chart '{chart_name}'")
 
             if not os.path.exists(source_chart_path):
                 raise FileNotFoundError(f"Chart path not found: {chart_path} in {git_url}")
@@ -4695,7 +4712,11 @@ class ProjectManager:
                     # Handle local file:// dependencies
                     if dep_repo.startswith("file://"):
                         rel_path = dep_repo.replace("file://", "")
-                        dep_source = safe_join(temp_dir, chart_path, rel_path)
+                        dep_source = path_inside_clone(
+                            temp_dir,
+                            os.path.join(chart_path, rel_path),
+                            f"dependency '{dep_name}' of helm chart '{chart_name}'",
+                        )
 
                         if os.path.exists(dep_source):
                             reject_escaping_symlinks(dep_source)
@@ -4982,6 +5003,13 @@ class ProjectManager:
                 logger.warning(f"Skipping file '{filename}': path traversal not allowed")
                 continue
 
+            reserved = [part for part in filename.split("/") if part in HELMFILE_RESERVED_FILENAMES]
+            if reserved:
+                raise ValueError(
+                    f"Bestand '{filename}' mag niet: '{reserved[0]}' is voorbehouden aan de renderketen "
+                    "en zou de gegenereerde deployment overschrijven."
+                )
+
             file_path = os.path.join(target_path, filename)
 
             # Create parent directories if needed
@@ -5024,6 +5052,8 @@ class ProjectManager:
         if not source_url:
             raise ValueError(f"Helmfile '{helmfile_name}' missing required 'url' field")
 
+        require_allowed_render_source(source_url, f"helmfile '{helmfile_name}'")
+
         # Create a temporary directory for cloning the source
         with tempfile.TemporaryDirectory() as temp_dir:
             git_connector = GitConnector(
@@ -5034,7 +5064,7 @@ class ProjectManager:
             await git_connector.clone()
 
             # Determine source path within the cloned repo
-            full_source_path = safe_join(temp_dir, source_path) if source_path else temp_dir
+            full_source_path = path_inside_clone(temp_dir, source_path, f"helmfile '{helmfile_name}'")
 
             if not os.path.exists(full_source_path):
                 await git_connector.close()
@@ -5044,7 +5074,7 @@ class ProjectManager:
 
             # If entry is specified, verify it exists within the source path
             if entry_path:
-                full_entry_path = safe_join(full_source_path, entry_path)
+                full_entry_path = path_inside_clone(full_source_path, entry_path, f"helmfile '{helmfile_name}'")
                 if not os.path.exists(full_entry_path):
                     await git_connector.close()
                     raise ValueError(

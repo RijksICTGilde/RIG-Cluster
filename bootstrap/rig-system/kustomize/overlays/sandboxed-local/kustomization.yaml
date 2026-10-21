@@ -71,7 +71,7 @@ patches:
         - name: ARGOCD_REPO_SERVER_PLUGIN_USE_MANIFEST_GENERATE_PATHS
           value: "true"
 
-  # Idem voor de cmp-sidecar: de component zet alleen KUSTOMIZE_PLUGIN_HOME, waardoor
+  # Idem voor de cmp-sidecar: de component zet zelf geen env, waardoor
   # ARGOCD_EXEC_TIMEOUT uit argocd-deployment.yaml verdween.
   - target:
       kind: ArgoCD
@@ -82,5 +82,14 @@ patches:
         value:
         - name: ARGOCD_EXEC_TIMEOUT
           value: "180s"
-        - name: KUSTOMIZE_PLUGIN_HOME
-          value: /etc/kustomize/plugin
+
+  # Idem voor de platform-sidecar.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: add
+        path: /spec/repo/sidecarContainers/1/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180s"

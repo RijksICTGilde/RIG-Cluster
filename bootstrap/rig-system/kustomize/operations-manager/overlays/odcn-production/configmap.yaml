@@ -22,6 +22,11 @@ data:
     GIT_ARGO_APPLICATIONS_PASSWORD=base64+age:LS0tLS1CRUdJTiBBR0UgRU5DUllQVEVEIEZJTEUtLS0tLQpZV2RsTFdWdVkzSjVjSFJwYjI0dWIzSm5MM1l4Q2kwK0lGZ3lOVFV4T1NCS2IwWTFhbW9yVjFwYVRUQjBORE5TClFtWnZTM05aU2twRVkxQkpja1EyZFZCa01YRldNREJ2WXpOWkNuSjVNbXR1UldwSkwwUk5ZMmMxYWtSV2RHeDIKVUVod1ozUjZkRmRqZEcxd05tVnVTMUJyWkcxblV6Z0tMUzB0SURnclFYWTRNalJ1VVhscFQwMVRXVWd4TDBGQwpXVEowTjBKd1prUkxia2RuTlZodFFUbDFSVnBpTTJNS2p6dXRTbWlnaGY4RzdLWDZQOGZYZ3djRHRZcXhqaGYyCjliS2xBbXNGcUtpeUFiRDJQcjhsQXJBakh5SWdNUVRZSjE4aStwSmJkSm80dDMxNU95U3dXdTZlOFpsQzdTcmcKLS0tLS1FTkQgQUdFIEVOQ1JZUFRFRCBGSUxFLS0tLS0=
     GIT_ARGO_APPLICATIONS_BRANCH=main
 
+    # Van welke bronnen de renderketen een helmfile of helm chart mag klonen. Leeg betekent
+    # geen enkele, dus een nieuwe bron moet hier eerst bij. Gemeten in de projectrepo: de
+    # twee helmfile-projecten halen allebei hieruit.
+    RENDER_SOURCE_ALLOWLIST=https://github.com/MinBZK/mijn-bureau-infra.git
+
     DATABASE_HOST=rig-db-rw
     MINIO_HOST=minio:9000
 

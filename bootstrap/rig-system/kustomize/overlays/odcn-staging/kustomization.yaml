@@ -36,6 +36,17 @@ components:
 - ../../components/sops-plugin
 
 patches:
+  # De eigen SA van de repo-server heeft hetzelfde pull-secret nodig als de SA's die de
+  # operator aanmaakt (zie argocd-pull-secrets.yaml): spec.image komt uit rcr.rijksapps.nl
+  # en die proxy vraagt een inlog, anders komt de repo-server in ImagePullBackOff.
+  - target:
+      kind: ServiceAccount
+      name: argocd-cmp
+    patch: |-
+      - op: add
+        path: /imagePullSecrets
+        value:
+          - name: ghcr-rig-robot-pull-secret
   # Set ARGOCD_EXEC_TIMEOUT on repo-server to allow longer manifest generation
   # NB: this patch REPLACES spec.repo.env wholesale: repo-server env vars
   # must be added HERE, not in argocd-deployment.yaml (the patch wins).
@@ -86,8 +97,6 @@ patches:
         value:
         - name: ARGOCD_EXEC_TIMEOUT
           value: "180s"
-        - name: KUSTOMIZE_PLUGIN_HOME
-          value: /etc/kustomize/plugin
         - name: KUBERNETES_SERVICE_HOST
           value: cluster-api.apps.prd1.gn2.quattro.rijksapps.nl
         - name: HELM_CONFIG_HOME
@@ -131,3 +140,35 @@ patches:
       - op: add
         path: /spec/repo/replicas
         value: 2
+  # Dezelfde OpenShift-specifieke instellingen voor de platform-sidecar als hierboven
+  # voor cmp-server: het image uit de registry die ODCN wel kan bereiken, de userid uit
+  # het SCC-bereik, en de helm-paden onder /tmp. KUBERNETES_SERVICE_HOST hoort hier niet:
+  # deze sidecar praat niet met de API-server.
+  - target:
+      kind: ArgoCD
+      name: argocd
+    patch: |-
+      - op: replace
+        path: /spec/repo/sidecarContainers/1/image
+        value: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest
+      - op: replace
+        path: /spec/repo/sidecarContainers/1/securityContext/runAsUser
+        value: 1003110000
+      - op: add
+        path: /spec/repo/sidecarContainers/1/env
+        value:
+        - name: ARGOCD_EXEC_TIMEOUT
+          value: "180s"
+        - name: HELM_CONFIG_HOME
+          value: /tmp/.helm/config
+        - name: HELM_CACHE_HOME
+          value: /tmp/.helm/cache
+      - op: add
+        path: /spec/repo/sidecarContainers/1/resources
+        value:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 512Mi

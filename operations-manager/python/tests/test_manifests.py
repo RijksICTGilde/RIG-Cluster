@@ -10,7 +10,7 @@ import os
 from unittest.mock import patch
 
 import pytest
-from opi.generation.manifests import ManifestGenerator, render_template
+from opi.generation.manifests import ManifestGenerator, cmp_env_rejection, render_template
 from ruamel.yaml import YAML
 
 MANIFESTS_DIR = os.path.join(os.path.dirname(__file__), "..", "manifests")
@@ -32,6 +32,40 @@ class TestDuurInSeconden:
     def test_elke_eenheid_die_oauth2_proxy_leest(self, duur: str, seconden: int) -> None:
         """De ordeningsgrendel hieronder vergelijkt deze getallen, dus ze moeten kloppen."""
         assert _duur_in_seconden(duur) == seconden
+
+
+class TestCmpEnvRejection:
+    """Rechtstreeks op ``cmp_env_rejection``: het schema blokkeert een ongeldige sleutel al
+    bij het opslaan, dus die tak van de functie wordt via de schrijfkant niet geraakt
+    (``tests/test_helmfile_env_vars_decrypt.py`` dekt de gereserveerde naam en het
+    regeleinde na ontsleuteling, beide via de echte processtap)."""
+
+    def test_een_gewoon_paar_mag(self) -> None:
+        assert cmp_env_rejection("ENVIRONMENT", "production") is None
+
+    def test_een_sleutel_die_geen_variabelenaam_is_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("1FOUT", "waarde")
+
+        assert rejection is not None
+        assert "1FOUT" in rejection
+
+    def test_een_gereserveerde_sleutel_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("ARGOCD_APP_NAMESPACE", "waarde")
+
+        assert rejection is not None
+        assert "reserved" in rejection
+
+    def test_een_waarde_met_regeleinde_wordt_geweigerd(self) -> None:
+        rejection = cmp_env_rejection("MELDING", "eerste\nARGOCD_APP_NAMESPACE=kaper")
+
+        assert rejection is not None
+        assert "newline" in rejection
+
+    def test_de_melding_noemt_nooit_de_waarde(self) -> None:
+        """De waarde is configuratie van de tenant en kan een secret zijn."""
+        rejection = cmp_env_rejection("MELDING", "geheime-waarde\nmet-tweede-regel")
+
+        assert "geheime-waarde" not in rejection
 
 
 @pytest.fixture

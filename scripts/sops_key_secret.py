@@ -8,12 +8,17 @@ name typed out in full.
 
 **``sops-age-key`` is NOT one secret in one namespace, and this is the trap.** The plan names
 ``rig-prd-operations``. Measured on the sandbox cluster: **12 namespaces** hold a secret by that
-name. Two of them (``rig-system`` and ``rig-ron``) carry the platform key -- ``sops-plugin.sh``
-reads the secret in ``${ARGOCD_APP_NAMESPACE}``, the namespace of the application being rendered,
-so the RON renderer needs its own copy -- and the other ten each carry a DIFFERENT one, because
-OPI writes a per-project SOPS key into every project namespace
-(``store_project_sops_key_in_namespace``). Overwriting every ``sops-age-key`` would therefore
-replace ten projects' own keys with the platform key and make their secrets unreadable.
+name. One of them (``rig-system``, on production ``rig-prd-operations``) carries the platform key,
+and every other one carries a DIFFERENT key, because OPI writes a per-project SOPS key into every
+project namespace (``store_project_sops_key_in_namespace``) and the tenant CMP sidecar reads the
+secret in ``${ARGOCD_APP_NAMESPACE}``, the namespace of the application being rendered.
+Overwriting every ``sops-age-key`` would therefore replace those projects' own keys with the
+platform key and make their secrets unreadable.
+
+Until RC-351 ``rig-ron`` held a second copy of the platform key, because the RON renderer read it
+from its own destination namespace. The platform apps now render in the ``cmp-platform`` sidecar
+with the key as a mount, so that copy is gone; see
+``instructions/sops-sleutel-in-het-cluster.md``.
 
 So the selection is by KEY and not by name, exactly like the file side selects by recipient: this
 tool reads each secret, derives its public half, and only replaces the ones that currently hold
@@ -21,7 +26,7 @@ the OLD platform key. Everything else is listed as left alone, with its own publ
 it, so the operator can see what was skipped and why.
 
 **The secret holds the whole key file, not just the key line.** ``--from-file=key=<path>``, and
-``sops-plugin.sh`` greps ``^AGE-SECRET-KEY-`` out of it. This tool keeps that shape.
+``configmap-sops-plugin.yaml`` greps ``^AGE-SECRET-KEY-`` out of it. This tool keeps that shape.
 """
 
 from __future__ import annotations

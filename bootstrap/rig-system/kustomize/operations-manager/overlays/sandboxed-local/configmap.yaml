@@ -63,6 +63,10 @@ data:
     ALLOWED_EMAILS=admin@sandbox.rijksapp.dev
     ADMIN_EMAILS=admin@sandbox.rijksapp.dev
 
+    # Van welke bronnen de renderketen een helmfile of helm chart mag klonen. Leeg
+    # betekent geen enkele, dus een nieuwe bron moet hier eerst bij.
+    RENDER_SOURCE_ALLOWLIST=https://github.com/MinBZK/mijn-bureau-infra.git,https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
+
     PROJECT_REPO_URL=https://forgejo.sandbox.rijksapp.dev/rig-admin/zad-deployments.git
     PROJECT_REPO_USERNAME=rig-admin
     PROJECT_REPO_PASSWORD=plain:admin1234

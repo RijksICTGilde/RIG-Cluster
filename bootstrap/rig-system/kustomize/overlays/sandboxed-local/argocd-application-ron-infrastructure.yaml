@@ -9,10 +9,10 @@
 # namespace vergt dus een eigen Application, met destination rig-ron: de namespace die
 # de CMP dan injecteert is gelijk aan de namespace die de overlay zelf al zet.
 #
-# Twee dingen moeten er zijn VOORDAT deze app rendert; de CMP stopt er anders mee:
-# de namespace rig-ron zelf, en daarin het secret sops-age-key (de CMP haalt daar de
-# AGE-sleutel uit om de relay-credentials te ontsleutelen). De syncOptions hieronder
-# laten CreateNamespace bewust uit: de overlay levert zelf de Namespace-resource.
+# De namespace rig-ron moet er zijn VOORDAT deze app rendert; de syncOptions hieronder
+# laten CreateNamespace bewust uit, want de overlay levert zelf de Namespace-resource.
+# Een sops-age-key in rig-ron is sinds RC-351 niet meer nodig: deze app rendert op de
+# platform-plugin, die de sleutel uit de mount in de cmp-platform-sidecar leest.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -25,7 +25,7 @@ spec:
     path: bootstrap/infrastructure/mail/controller/overlays/sandboxed-local
     targetRevision: main
     plugin:
-      name: kustomize-sops-v1.0
+      name: kustomize-sops-platform-v1.0
       env:
         - name: SOPS_KEY_SECRET
           value: "sops-age-key"
