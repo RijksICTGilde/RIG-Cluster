@@ -1,8 +1,9 @@
 # Restrictive Network Policies
 
-**Status**: Planned
-**Priority**: Future Enhancement
+**Status**: Testing Infrastructure Ready (Phase 1 Complete)
+**Priority**: In Progress
 **Created**: 2026-02-17
+**Testing Added**: 2026-10-17
 
 ## Problem Statement
 
@@ -448,6 +449,91 @@ NETWORK_POLICY_ALLOW_EXTERNAL_HTTPS: bool = True
 6. **External HTTPS works**: Pods can reach external APIs on port 443
 7. **Ingress works**: External traffic reaches pods via NGINX ingress controller
 8. **Legacy mode**: `network-policy-mode: permissive` still generates the old allow-all policy
+
+## De toets: de flowmatrix
+
+Elke stap hierboven zet verbindingen dicht, en tot nu toe bleek pas bij het toepassen
+welke. Dat heeft op 2026-06-10 de operations-namespace onderbroken. De toets staat in
+`operations-manager/python/tests/netpol/`: een flowmatrix met een evaluator en een
+meting op een echt cluster.
+
+**De unit test** evalueert een YAML-lijst verbindingen tegen de policies uit git:
+
+```bash
+cd operations-manager/python
+uv run pytest tests/netpol -q --noconftest
+```
+
+De matrix beschrijft de huidige toestand. Een PR die een policy aanraakt zet hier de
+regels om die hij bedoelt te veranderen. Namespace-labels mag je weglaten; de evaluator
+vult `kubernetes.io/metadata.name` zelf aan.
+
+**Wat de matrix dekt.** `PLATFORM_POLICY_SOURCES` in `tests/netpol/policies.py` noemt elk
+policy-bestand in de repo met de namespace waarin productie het krijgt, en
+`TEMPLATE_SOURCES` elke netpol-template. Van de templates rendert de matrix de
+tenant-baseline en `network-policy.yaml.jinja`: die laatste levert de acme-http-policy
+(`podSelector: {}` op de hele tenant-namespace, poorten 80 en 8089 voor de
+HTTP-01-solver), en omdat alle drie de productiedomeinen `issuer: letsencrypt` dragen
+krijgt elk gepubliceerd deployment hem. `service-network-policy.yaml.jinja` valt erbuiten:
+die hangt aan de config van cross-domain-access, send-email of vlam. Twee tests in
+`test_policy_sources.py` grendelen beide lijsten, dus een nieuw bestand of een nieuwe
+template geeft rood tot je hem erin zet.
+
+De odcn-staging-overlays staan wel in de registry, met `None` als namespace: ze draaien op
+dezelfde cluster in de Capsule-tenant rig-staging, selecteren alleen pods in de
+rig-staging-namespaces, en de matrix toetst odcn-production. Een nieuwe staging-policy moet
+er dus ook in, maar verandert de matrix niet.
+
+Eén grens: een endpoint in het cluster heeft geen IP, dus een `ipBlock` dat niet alles
+dekt (een smal blok, of `0.0.0.0/0` met `except`) is niet tegen een pod-doel te leggen.
+Dan zegt de evaluator wat niet te beoordelen is. Zo'n regel bewijs je met `task
+netpol:meet`, waar de pods een adres hebben.
+
+Drie dingen die belangrijk zijn:
+- `emergency-restore-allow-all` maakt rig-prd-operations open. MinIO 9001 staat daarom
+  open voor tenants, terwijl `allow-minio-access` dat bewust beperkt. Beide staan in de
+  matrix, zodat wijzigingen zichtbaar zijn.
+- De internetregel van de tenant-baseline (`0.0.0.0/0` en `::/0`) opent aan de
+  egress-kant ook intra-cluster verkeer op 80 en 443. Dat de matrix daar geen open regel
+  voor heeft, komt van de ingress-kant: de acme-http-policy selecteert elke pod in de
+  tenant-namespace en laat alleen 80 en 8089 toe, dus ook een helm-pod zonder
+  deployment-label is op 443 niet te bereiken.
+- Een test muteert de internet-regel en controleert dat rood wordt. Zonder die test zegt
+  groen niets.
+
+**De meting** is dezelfde matrix op een echt cluster:
+
+```bash
+task netpol:meet              # standaard: kindnet
+task netpol:meet CNI=calico   # voor de regels hieronder
+```
+
+De task maakt een dual-stack wegwerpcluster, rolt de policies uit, zet per endpoint een
+pod neer en probeert per regel een TCP-verbinding. Draai dit bij elke policy-wijziging,
+voordat je een PR opent. Wijkt een regel af, dan klopt de evaluator, de matrix of de CNI
+niet.
+
+**Waarom kindnet standaard is.** Kindnet handhaaft NetworkPolicies; dat is twee keer
+gemeten op de sandbox (2026-07-28, zie
+`features/bio-network-access-no-vpn-compliance.md`, en RC-144 op 2026-08-20, zie
+`features/cross-domain-access.md`). Er is tot nu toe geen enkele constructie uit deze
+matrix waarvan is aangetoond dat kindnet hem mist. Calico is daarom niet de standaard,
+maar de tweede meting voor de regels waar het antwoord van de CNI afhangt en nog niet
+gemeten is:
+
+- `tenant-app -> internet-v6:443` en `:25` hangen aan `::/0`, en een CNI hoeft de twee
+  adresfamilies niet gelijk te behandelen.
+- De poorten in de policies staan zonder protocol, wat volgens de API TCP betekent. Een
+  CNI die dat anders invult, laat dat op elke regel zien.
+
+Een derde constructie staat wel in de policies maar hangt aan geen enkele matrixregel
+meer: de `0.0.0.0/0` zonder `except` van de internetregel tegen een pod-IP. Sinds
+`tenant-app -> tenant-helm-pod:443` op de ingress-kant dicht gaat, bepaalt de CNI die
+uitkomst niet. Geeft acme-http ooit een `podSelector` mee, dan komt die regel terug als
+CNI-afhankelijk.
+
+Komt uit zo'n meting een verschil tussen de twee CNIs, zet het hier neer met de regel en
+de datum erbij, zodat Calico alleen nodig blijft voor wat aantoonbaar afwijkt.
 
 ## Related
 

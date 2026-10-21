@@ -2539,6 +2539,83 @@ tasks:
   # Kind Cluster Management for Testing
   # ========================================
 
+  netpol:meet:
+    desc: "Meet de flowmatrix op een wegwerpcluster"
+    summary: |
+      Rolt het netwerkbeleid van odcn-production uit op een vers kind-cluster, zet
+      per endpoint een pod met de juiste labels neer, en probeert per regel een
+      TCP-verbinding. Draai dit bij elke wijziging aan een NetworkPolicy.
+
+      CNI=kindnet (standaard, en het handhaaft NetworkPolicies), CNI=calico als
+      tweede meting voor de regels in features/restrictive-network-policies.md.
+      Het cluster is een wegwerpcluster; je eigen kubectl-context blijft onaangeroerd.
+    vars:
+      CNI: '{{default "kindnet" .CNI}}'
+      NETPOL_CLUSTER: '{{default "rig-netpol-meting" .NETPOL_CLUSTER}}'
+      CALICO_VERSION: '{{default "v3.28.2" .CALICO_VERSION}}'
+    preconditions:
+      - sh: command -v envsubst
+        msg: |
+          envsubst ontbreekt. Het zit in gettext: 'brew install gettext' op MacOS of 'apt-get install gettext-base' op Linux. Zonder het wordt de kind-config leeg.
+    cmds:
+      - |
+        set -e
+        KUBECONFIG_FILE=$(mktemp -d)/kubeconfig
+        export KUBECONFIG="$KUBECONFIG_FILE"
+        export NETPOL_KIND_VERSION="{{.KIND_VERSION}}"
+        export NETPOL_CLUSTER="{{.NETPOL_CLUSTER}}"
+
+        if [ "{{.CNI}}" = "calico" ]; then
+          export NETPOL_DISABLE_DEFAULT_CNI=true
+          # Zonder default-CNI wordt de node pas Ready nadat Calico er staat, en dat
+          # gebeurt hierna. --wait zou dus altijd zijn timeout halen; de kubectl wait
+          # na de Calico-installatie dekt dezelfde conditie.
+          CREATE_WAIT=""
+        else
+          export NETPOL_DISABLE_DEFAULT_CNI=false
+          CREATE_WAIT="--wait 180s"
+        fi
+
+        # De trap hieronder verwijdert het cluster, ook als `kind create` afbreekt omdat
+        # de naam al bestaat. Zonder deze guard wist `NETPOL_CLUSTER=rig-sandbox` dus de
+        # sandbox van iemand anders.
+        if kind get clusters 2>/dev/null | grep -qx "{{.NETPOL_CLUSTER}}"; then
+          echo "WEIGERT: er bestaat al een kind-cluster {{.NETPOL_CLUSTER}}. Is dat een" >&2
+          echo "achtergebleven meetcluster, dan ruimt 'task netpol:meet-opruimen' het op;" >&2
+          echo "is het een ander cluster, kies dan een naam met NETPOL_CLUSTER=." >&2
+          exit 1
+        fi
+
+        cleanup() {
+          echo "Opruimen van cluster {{.NETPOL_CLUSTER}}..."
+          kind delete cluster --name "{{.NETPOL_CLUSTER}}" >/dev/null 2>&1 || true
+          rm -rf "$(dirname "$KUBECONFIG_FILE")"
+        }
+        trap cleanup EXIT
+
+        echo "Cluster {{.NETPOL_CLUSTER}} aanmaken (dual-stack, CNI={{.CNI}})..."
+        envsubst < operations-manager/python/tests/netpol/kind-config.yaml \
+          | kind create cluster --name "{{.NETPOL_CLUSTER}}" --config - $CREATE_WAIT
+
+        if [ "{{.CNI}}" = "calico" ]; then
+          echo "Calico {{.CALICO_VERSION}} installeren..."
+          kubectl apply -f "https://raw.githubusercontent.com/projectcalico/calico/{{.CALICO_VERSION}}/manifests/calico.yaml"
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=300s
+        fi
+
+        kubectl wait --for=condition=Ready node --all --timeout=180s
+
+        cd operations-manager/python
+        uv run python -m tests.netpol.measure
+
+  netpol:meet-opruimen:
+    desc: "Verwijder een achtergebleven meetcluster van netpol:meet"
+    vars:
+      NETPOL_CLUSTER: '{{default "rig-netpol-meting" .NETPOL_CLUSTER}}'
+    cmds:
+      - kind delete cluster --name "{{.NETPOL_CLUSTER}}"
+    silent: true
+
   test-kind-create:
     desc: "Create Kind cluster for integration testing"
     cmds:
