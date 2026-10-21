@@ -25,6 +25,11 @@ KUBERNETES_QUANTITY = r"^\d+(\.\d+)?(Ki|Mi|Gi|Ti|Pi|k|M|G|T|P)?$"
 #: ``PostgresConnector._validate_identifier`` leest hem hier.
 POSTGRES_IDENTIFIER = r"^[a-zA-Z_][a-zA-Z0-9_$]*$"
 
+#: Een schemanaam die een kloon mag overnemen uit een brondatabase (RC-360). Strenger dan
+#: ``POSTGRES_IDENTIFIER``: de ``psql -c``-statements van de kloon quoten niet, dus een
+#: hoofdletter of een ``$`` komt daar niet door.
+POSTGRES_CLONEABLE_SCHEMA = r"^[a-z_][a-z0-9_]*$"
+
 #: Een S3-bucketnaam volgens de regels van AWS: 3 tot 63 tekens, kleine letters, cijfers,
 #: streepjes en punten, beginnend en eindigend op een letter of cijfer.
 S3_BUCKET_NAME = r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$"

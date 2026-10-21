@@ -37,6 +37,7 @@ from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.naming import generate_argocd_repository_secret_name, get_output_filename_from_template
 from opi.utils.sops import SOPSEncryptionError, encrypt_to_sops_files_or_fail, generate_sops_key_pair
 from opi.utils.yaml_util import dump_yaml_to_string, load_yaml_from_string
+from tests.conftest import write_private_file
 
 _SCRIPTS_DIR = Path(__file__).resolve().parents[3] / "scripts"
 if str(_SCRIPTS_DIR) not in sys.path:
@@ -992,10 +993,10 @@ async def a_round_to_run(
     )
     loose = tmp_path / "config.py"
     loose.write_text(f'PROJECT_REPO_PASSWORD = "{await _encrypted(in_all_three, old_public)}"\n')
-    (tmp_path / "old_key.txt").write_text(f"{old_private}\n")
-    (tmp_path / "key.txt").write_text(f"{new_private}\n")
-    (tmp_path / "pat.txt").write_text(f"{NEW_TOKEN}\n")
-    (tmp_path / "pat-current.txt").write_text(f"{OLD_TOKEN}\n")
+    write_private_file(tmp_path / "old_key.txt", old_private)
+    write_private_file(tmp_path / "key.txt", new_private)
+    write_private_file(tmp_path / "pat.txt", NEW_TOKEN)
+    write_private_file(tmp_path / "pat-current.txt", OLD_TOKEN)
     record = Fingerprint()
     record.set(f"{loose}#PROJECT_REPO_PASSWORD", sha256_of(in_all_three))
     record.save(tmp_path / "repo-fingerprint.json")
