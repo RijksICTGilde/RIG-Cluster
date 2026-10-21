@@ -535,6 +535,53 @@ CNI-afhankelijk.
 Komt uit zo'n meting een verschil tussen de twee CNIs, zet het hier neer met de regel en
 de datum erbij, zodat Calico alleen nodig blijft voor wat aantoonbaar afwijkt.
 
+## De operations-namespace: per component, en de allow-all krimpt
+
+`rig-prd-operations` liep tot 10 juni 2026 onder een allow-all over elke pod, en dat
+maskeerde elke restrictieve policy in die namespace. Het beleid staat nu per workload in
+de overlay van zijn component:
+
+| workload | policy |
+|---|---|
+| OPI | `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/network-policy.yaml` |
+| ArgoCD | `bootstrap/rig-system/kustomize/overlays/odcn-production/network-policies/argocd-network-policy.yaml` |
+| cert-manager-solver | `bootstrap/rig-system/kustomize/overlays/odcn-production/network-policies/acme-solver-network-policy.yaml` |
+| rig-db | `infrastructure/bootstrap/infrastructure/postgresql/database/overlays/odcn/network-policies/` |
+| Redis, MinIO | de gelijknamige overlays onder `infrastructure/bootstrap/infrastructure/` |
+| Keycloak | `infrastructure/bootstrap/infrastructure/keycloak/controller/overlays/odcn/network-policies/` |
+| Prometheus, kube-state-metrics | `infrastructure/bootstrap/infrastructure/prometheus/controller/overlays/odcn/network-policies/` |
+| external-dns | `infrastructure/bootstrap/infrastructure/external-dns/controller/overlays/odcn/network-policies/` |
+
+`emergency-restore-allow-all.yaml` selecteert niet langer elke pod, maar alleen de pods die
+nog niet zijn overgezet: een `matchExpressions`-regel met `NotIn` per labelsleutel. `NotIn`
+matcht ook een pod zonder dat label, dus een onbekende workload valt nog onder de allow-all.
+
+**De uitsluitlijst is de volgorde.** Elke stap is een eigen PR van EEN regel in die lijst,
+uitgerold via ArgoCD, met daarna een dag waarnemen op de bestaande signalen:
+
+| stap | workload | waar je op let |
+|---|---|---|
+| a | kube-state-metrics, external-dns | ArgoCD-health van production-infrastructure, en of de DNS-records van nieuwe Ingresses nog verschijnen |
+| b | Prometheus | de scrape-doelen op `/targets`, en de resource- en facturatiepagina's van OPI |
+| c | MinIO, Redis | de readiness van beide pods, en de OPI-logs op S3- en sessionfouten |
+| d | Keycloak | een echte login op keycloak.rijksapp.nl, en de OPI-logs op realmbeheer |
+| e | ArgoCD | de sync- en health-status van elke Application |
+| f | OPI | de readiness van de pod, de portal zelf, en het waker-endpoint van sleep-mode |
+| g | rig-db | de readiness van het CNPG-cluster en de logs van OPI en Keycloak |
+
+Na (g) selecteert de allow-all niets bekends meer en mag het bestand weg, in een eigen PR,
+na een week zonder afwijking. Terugdraaien is de regel weer uit de uitsluitlijst halen.
+
+Twee dingen die bij deze volgorde horen:
+- De operations-namespace draagt opzettelijk niet het label `created-by: operations-manager`
+  (issue #83 wordt daarom afgewezen): dat label is de selector waarmee policies
+  tenant-namespaces herkennen, dus met dat label zou de namespace zichzelf als tenant
+  toelaten. Een policy die deze namespace als bron nodig heeft, selecteert op
+  `kubernetes.io/metadata.name`.
+- De ingress van OPI is versmald tot de router, Prometheus en het waker-endpoint voor
+  tenants. Dat is stap 3 van
+  `features/futures/client-ip-vertrouwen-achter-de-router.md` (issue #195).
+
 ## Related
 
 - [`features/cross-domain-access.md`](cross-domain-access.md) - The cross-domain-access service writes an **additive** per-component NetworkPolicy next to this baseline, so a project can explicitly open named cross-project peers on named ports without touching the baseline itself.

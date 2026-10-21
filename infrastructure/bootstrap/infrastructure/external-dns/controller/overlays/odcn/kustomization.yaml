@@ -5,6 +5,7 @@ namespace: rig-prd-operations
 
 resources:
   - ../../base
+  - network-policies/external-dns-networkpolicy.yaml
 
 patches:
   - target:

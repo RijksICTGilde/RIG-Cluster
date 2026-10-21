@@ -36,6 +36,15 @@ PROBE_TIMEOUT_SECONDS = 3
 # kind noemt de context van een cluster kind-<naam>.
 MEETCLUSTER_CONTEXT = f"kind-{os.environ.get('NETPOL_CLUSTER', 'rig-netpol-meting')}"
 
+# Namespaces van het cluster zelf. Hier zet de meting geen pod neer: de matrix noemt
+# kube-dns met de labels van coredns, en zo'n pod zou in de kube-dns-Service belanden en
+# de DNS van het meetcluster overnemen. Regels die zo'n endpoint raken worden overgeslagen.
+SYSTEEM_NAMESPACES = {"kube-system"}
+
+
+def _is_systeem(endpoint: Pod | External) -> bool:
+    return isinstance(endpoint, Pod) and endpoint.namespace in SYSTEEM_NAMESPACES
+
 
 def kubectl(*args: str, input_text: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -69,7 +78,9 @@ def _listener_command(ports: list[int]) -> str:
 
 
 def apply_namespaces(endpoints: dict[str, Pod | External]) -> set[str]:
-    namespaces = {e.namespace: e.namespace_labels for e in endpoints.values() if isinstance(e, Pod)}
+    namespaces = {
+        e.namespace: e.namespace_labels for e in endpoints.values() if isinstance(e, Pod) and not _is_systeem(e)
+    }
     for namespace, labels in namespaces.items():
         manifest = {
             "apiVersion": "v1",
@@ -82,7 +93,7 @@ def apply_namespaces(endpoints: dict[str, Pod | External]) -> set[str]:
 
 def apply_probe_pods(endpoints: dict[str, Pod | External], flows: list[Flow]) -> None:
     for name, endpoint in endpoints.items():
-        if not isinstance(endpoint, Pod):
+        if not isinstance(endpoint, Pod) or _is_systeem(endpoint):
             continue
         ports = _listen_ports(name, flows)
         manifest = {
@@ -108,7 +119,7 @@ def apply_probe_pods(endpoints: dict[str, Pod | External], flows: list[Flow]) ->
         kubectl("apply", "-f", "-", input_text=json.dumps(manifest))
 
     for name, endpoint in endpoints.items():
-        if isinstance(endpoint, Pod):
+        if isinstance(endpoint, Pod) and not _is_systeem(endpoint):
             kubectl(
                 "wait",
                 "--for=condition=Ready",
@@ -197,8 +208,13 @@ def main() -> int:
 
     afwijkingen = 0
     print(f"{'bron':26s} {'doel':24s} {'poort':>6s}  {'berekend':9s} {'gemeten':9s} uitkomst")
+    overgeslagen = 0
     for flow in flows:
         berekend = "open" if evaluate_flow(flow, endpoints, policies).allowed else "dicht"
+        if _is_systeem(endpoints[flow.van]) or _is_systeem(endpoints[flow.naar]):
+            overgeslagen += 1
+            print(f"{flow.van:26s} {flow.naar:24s} {flow.poort:>6d}  {berekend:9s} {'-':9s} OVERGESLAGEN")
+            continue
         gemeten = "open" if measure_flow(flow, endpoints) else "dicht"
         eens = berekend == gemeten
         if not eens:
@@ -208,6 +224,8 @@ def main() -> int:
         )
 
     print()
+    if overgeslagen:
+        print(f"{overgeslagen} regel(s) overgeslagen: een endpoint zit in {', '.join(sorted(SYSTEEM_NAMESPACES))}")
     if afwijkingen:
         print(
             f"{afwijkingen} regel(s) wijken af: de evaluator of de matrix klopt niet, deze CNI mist de "

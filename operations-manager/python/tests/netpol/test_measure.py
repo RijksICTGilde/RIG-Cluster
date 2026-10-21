@@ -34,6 +34,12 @@ class FakeKubectl:
         return subprocess.CompletedProcess(args, returncode=0, stdout="", stderr="")
 
 
+def _endpoints(*namen: str) -> dict[str, Pod | External]:
+    """load_matrix weigert een flow met een onbekend endpoint, dus een stub ervan moet
+    elk endpoint uit zijn flows noemen."""
+    return {naam: Pod(namespace="rig-prd-demo") for naam in namen}
+
+
 def _voltooid(stdout: str = "", returncode: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess([], returncode=returncode, stdout=stdout, stderr="")
 
@@ -124,6 +130,19 @@ class TestApplyNamespaces:
         assert manifest["metadata"]["name"] == "rig-prd-demo"
         assert manifest["metadata"]["labels"] == {"created-by": "operations-manager"}
 
+    def test_een_systeem_pod_levert_geen_namespace(self, monkeypatch):
+        """Anders zet de meting een eigen Namespace-manifest over kube-system heen."""
+        fake = FakeKubectl()
+        monkeypatch.setattr(measure, "kubectl", fake)
+        endpoints = {
+            "kube-dns": Pod(namespace="kube-system", labels={"k8s-app": "kube-dns"}),
+            "tenant": Pod(namespace="rig-prd-demo"),
+        }
+
+        namespaces = measure.apply_namespaces(endpoints)
+
+        assert namespaces == {"rig-prd-demo"}
+
 
 class TestApplyProbePods:
     def test_external_endpoints_krijgen_geen_pod(self, monkeypatch):
@@ -131,6 +150,18 @@ class TestApplyProbePods:
         monkeypatch.setattr(measure, "kubectl", fake)
         endpoints = {"internet": External(ip="93.184.216.34")}
         measure.apply_probe_pods(endpoints, flows=[])
+
+        assert fake.aanroepen == []
+
+    def test_een_systeem_pod_krijgt_geen_probe_pod(self, monkeypatch):
+        """Een probe-pod op kube-dns zou in de bestaande Service belanden en de DNS
+        van het meetcluster overnemen (zie measure.py SYSTEEM_NAMESPACES)."""
+        fake = FakeKubectl()
+        monkeypatch.setattr(measure, "kubectl", fake)
+        endpoints = {"kube-dns": Pod(namespace="kube-system", labels={"k8s-app": "kube-dns"})}
+        flows = [Flow(van="tenant", naar="kube-dns", poort=53, verwacht="open", waarom="")]
+
+        measure.apply_probe_pods(endpoints, flows)
 
         assert fake.aanroepen == []
 
@@ -267,7 +298,7 @@ class TestMain:
         monkeypatch.setattr(measure, "odcn_policies", list)
 
         flow = Flow(van="a", naar="b", poort=1, verwacht="open", waarom="")
-        monkeypatch.setattr(measure, "load_matrix", lambda: ({}, [flow]))
+        monkeypatch.setattr(measure, "load_matrix", lambda: (_endpoints("a", "b"), [flow]))
         monkeypatch.setattr(
             measure, "evaluate_flow", lambda flow, endpoints, policies: type("V", (), {"allowed": True})()
         )
@@ -287,7 +318,7 @@ class TestMain:
         monkeypatch.setattr(measure, "odcn_policies", list)
 
         flow = Flow(van="a", naar="b", poort=1, verwacht="open", waarom="")
-        monkeypatch.setattr(measure, "load_matrix", lambda: ({}, [flow]))
+        monkeypatch.setattr(measure, "load_matrix", lambda: (_endpoints("a", "b"), [flow]))
         monkeypatch.setattr(
             measure, "evaluate_flow", lambda flow, endpoints, policies: type("V", (), {"allowed": True})()
         )
@@ -309,7 +340,7 @@ class TestMain:
             Flow(van="a", naar="b", poort=1, verwacht="open", waarom=""),
             Flow(van="a", naar="c", poort=1, verwacht="open", waarom=""),
         ]
-        monkeypatch.setattr(measure, "load_matrix", lambda: ({}, flows))
+        monkeypatch.setattr(measure, "load_matrix", lambda: (_endpoints("a", "b", "c"), flows))
         gemeten_flows = []
 
         def fake_measure_flow(flow, endpoints):
@@ -324,3 +355,47 @@ class TestMain:
 
         assert measure.main() == 0
         assert [f.naar for f in gemeten_flows] == ["b"]
+
+    def test_een_flow_met_een_systeem_endpoint_wordt_overgeslagen(self, monkeypatch, capsys):
+        """measure_flow zou op zo'n flow een probe-pod in kube-system zoeken die er
+        nooit komt (TestApplyProbePods hierboven); main() moet die flow dus niet meten."""
+        contextcall = _voltooid(stdout=f"{measure.MEETCLUSTER_CONTEXT}\n")
+        fake = FakeKubectl(uitkomsten=[contextcall])
+        monkeypatch.setattr(measure, "kubectl", fake)
+        monkeypatch.setattr(measure, "apply_namespaces", lambda endpoints: {"rig-prd-demo"})
+        monkeypatch.setattr(measure, "apply_probe_pods", lambda endpoints, flows: None)
+        monkeypatch.setattr(measure, "apply_policies", lambda policies, namespaces: [])
+        monkeypatch.setattr(measure, "odcn_policies", list)
+
+        endpoints = {
+            "tenant": Pod(namespace="rig-prd-demo"),
+            "kube-dns": Pod(namespace="kube-system", labels={"k8s-app": "kube-dns"}),
+        }
+        flow = Flow(van="tenant", naar="kube-dns", poort=53, verwacht="open", waarom="")
+        monkeypatch.setattr(measure, "load_matrix", lambda: (endpoints, [flow]))
+        monkeypatch.setattr(
+            measure, "evaluate_flow", lambda flow, endpoints, policies: type("V", (), {"allowed": True})()
+        )
+
+        def boom(flow, endpoints):
+            raise AssertionError("mag niet gemeten worden: er is geen probe-pod in kube-system")
+
+        monkeypatch.setattr(measure, "measure_flow", boom)
+        monkeypatch.setattr("sys.argv", ["measure.py"])
+
+        assert measure.main() == 0
+        assert "OVERGESLAGEN" in capsys.readouterr().out
+
+
+class TestIsSysteem:
+    """Een pod in een systeemnamespace krijgt geen eigen probe-pod: die zou in de
+    bestaande Service belanden en het verkeer van het echte onderdeel overnemen."""
+
+    def test_een_pod_in_een_systeemnamespace_is_systeem(self):
+        assert measure._is_systeem(Pod(namespace="kube-system", labels={"k8s-app": "kube-dns"}))
+
+    def test_een_pod_in_een_gewone_namespace_is_geen_systeem(self):
+        assert not measure._is_systeem(Pod(namespace="rig-prd-operations", labels={"app": "operations-manager"}))
+
+    def test_een_extern_adres_is_geen_systeem(self):
+        assert not measure._is_systeem(External(ip="93.184.216.34"))
