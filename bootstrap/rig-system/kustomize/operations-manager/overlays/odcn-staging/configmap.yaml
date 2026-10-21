@@ -57,9 +57,10 @@ data:
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    # Alleen wie staging beheert. Wie via ZAD zelf wordt toegevoegd of lid is van een
-    # project, komt daarnaast vanzelf in de allowlist.
-    ALLOWED_EMAILS=robbert.uittenbroek@rijksoverheid.nl,robbertuittenbroek@gmail.com
+    # Een bootstrapwaarde, geen toegangsbeheer: gebruikers horen in de gebruikerslijst van
+    # ZAD, of hebben toegang omdat ze lid zijn van een project. Dit zijn alleen de
+    # beheerders die er vanaf de eerste start in moeten kunnen.
+    ALLOWED_EMAILS=robbert.uittenbroek@rijksoverheid.nl,robbertuittenbroek@gmail.com,robbert.bos@rijksoverheid.nl
     ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-staging-operations
