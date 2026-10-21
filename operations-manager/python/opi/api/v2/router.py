@@ -1220,7 +1220,7 @@ async def list_projects_v2(request: Request, response: Response) -> ProjectListR
 
     projects = []
     for project in sorted(store.get_all(), key=lambda p: p.name):
-        if not is_user_authorized_for_project(project.name, caller_email):
+        if not is_user_authorized_for_project(project.name, caller_email, audit=False):
             continue
         role = get_user_role_for_project(project.name, caller_email)
         projects.append(

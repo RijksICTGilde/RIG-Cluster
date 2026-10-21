@@ -30,7 +30,7 @@ async def validate_oidc_credentials() -> bool:
 
     logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_ID = {settings.OIDC_CLIENT_ID}")
     logger.info(f"Validating existing OIDC credentials: OIDC_OIDC_DISCOVERY_URL = {settings.OIDC_DISCOVERY_URL}")
-    logger.info(f"Validating existing OIDC credentials: OIDC_CLIENT_SECRET = {settings.OIDC_CLIENT_SECRET[:4]}***")
+    logger.info("Validating existing OIDC credentials: OIDC_CLIENT_SECRET is set")
 
     try:
         from opi.bootstrap.keycloak_setup import extract_realm_from_discovery_url

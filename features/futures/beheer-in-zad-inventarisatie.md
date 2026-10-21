@@ -323,9 +323,9 @@ de platformbeheerderstak is `return "admin"` en verder niets. Van de 36 doorwerk
 dus 23 een regel achter en 13 niets.
 
 **Die 23 regels landen wel degelijk ergens, en dat is precies het punt.** De stdout-handler
-wordt onvoorwaardelijk toegevoegd op `DEBUG` (`opi/utils/logging_config.py:65-69`) en de
-`opi`-logger staat op `DEBUG` (`:59`); er is geen `LOG_LEVEL`-instelling in
-`opi/core/config.py`. `LOG_TO_FILE` (`opi/core/config.py:282`) schakelt alleen een **extra**
+wordt onvoorwaardelijk toegevoegd op `DEBUG` (`opi/utils/logging_config.py:65-69`); de
+`opi`-logger staat op `LOG_LEVEL` (zie `features/logniveau-en-redactie.md`), wat in productie
+op INFO staat. `LOG_TO_FILE` (`opi/core/config.py:282`) schakelt alleen een **extra**
 filehandler in, "Enable file logging alongside stdout", en die tak begint pas op
 `opi/utils/logging_config.py:71`. Op productie staat die vlag op `false`
 (`bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml:42`),

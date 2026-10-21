@@ -21,6 +21,27 @@ from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
+# Tokens zonder aanhalingsteken, dollar of ander scheidingsteken: een SQL-literal is altijd
+# gequoteerd, dus zo'n token kan geen wachtwoord zijn.
+_SQL_PLAIN_TOKEN = re.compile(r"^[A-Za-z0-9_.]+$")
+
+
+def _summarize_sql_statement(sql: str) -> str:
+    """Secret-free summary of a SQL statement for logging: the statement kind and its target.
+
+    Houdt de eerste drie ongequoteerde tokens over, dus "CREATE ROLE app_user" voor een
+    CREATE ROLE met een PASSWORD erachter. Het wachtwoord in zo'n statement mag niet in de
+    log staan, en de SQL komt uit het projectbestand, dus elke vorm kan voorkomen.
+    """
+    tokens: list[str] = []
+    for token in sql.split():
+        if not _SQL_PLAIN_TOKEN.match(token):
+            break
+        tokens.append(token)
+        if len(tokens) == 3:
+            break
+    return " ".join(tokens) if tokens else "unrecognised statement"
+
 
 @dataclass(frozen=True)
 class SchemaInventory:
@@ -945,9 +966,12 @@ class PostgresConnector:
                 try:
                     await conn.execute(sql)
                     executed.append(sql)
-                    logger.debug(f"Executed init SQL on {validated_database_name}: {sql[:100]}...")
+                    logger.debug(f"Executed init SQL on {validated_database_name}: {_summarize_sql_statement(sql)}")
                 except Exception as e:
-                    logger.error(f"Failed to execute init SQL on {validated_database_name}: {sql[:100]}... - {e}")
+                    logger.error(
+                        f"Failed to execute init SQL on {validated_database_name}: "
+                        f"{_summarize_sql_statement(sql)} - {e}"
+                    )
                     raise PostgresExecutionError(f"Init SQL failed on {validated_database_name}: {e}") from e
 
             logger.info(f"Executed {len(executed)} init SQL statement(s) on database {validated_database_name}")

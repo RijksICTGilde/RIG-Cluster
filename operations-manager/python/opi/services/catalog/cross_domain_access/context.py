@@ -42,7 +42,7 @@ def build_cross_domain_context(user_email: str) -> dict[str, Any]:
     labels: dict[str, str] = {}
     display_names: dict[str, str] = {}
     for summary in get_project_store().get_all():
-        if not is_user_authorized_for_project(summary.name, user_email):
+        if not is_user_authorized_for_project(summary.name, user_email, audit=False):
             continue
         display_name = str((summary.data or {}).get("display-name") or "").strip()
         display_names[summary.name] = display_name or summary.name

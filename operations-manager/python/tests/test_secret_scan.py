@@ -1176,6 +1176,20 @@ def test_the_committed_development_token_is_only_handed_out_behind_the_unsafe_fl
     assert generate_api_key() == settings.API_TOKEN
 
 
+def test_the_unsafe_api_key_does_not_land_in_the_debug_log(monkeypatch: pytest.MonkeyPatch, caplog) -> None:
+    """De DEBUG-regel in ``generate_api_key`` toonde de volledige onveilige sleutel; die regel
+    gaat met ``LOG_LEVEL=DEBUG`` naar de logstroom. Geen scan ziet dat terug, want de waarde
+    zelf is geen vaste string.
+    """
+    monkeypatch.setattr(settings, "USE_UNSAFE_API_KEY", True)
+
+    with caplog.at_level("DEBUG", logger="opi.utils.api_keys"):
+        key = generate_api_key()
+
+    assert key == settings.API_TOKEN
+    assert all(key not in record.getMessage() for record in caplog.records)
+
+
 def test_nothing_that_configures_a_running_opi_turns_the_unsafe_flag_on() -> None:
     """And the flag is off in every place that actually sets it, not just in the one the doc names.
 

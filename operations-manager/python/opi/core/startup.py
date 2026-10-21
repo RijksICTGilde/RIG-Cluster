@@ -377,9 +377,7 @@ async def register_oauth_client_after_keycloak_setup(app) -> None:
 
     logger.info("Registering OAuth client with discovered credentials:")
     logger.info(f"  - client_id: {settings.OIDC_CLIENT_ID}")
-    logger.info(
-        f"  - client_secret: {'***' + settings.OIDC_CLIENT_SECRET[-4:] if settings.OIDC_CLIENT_SECRET else 'None'}"
-    )
+    logger.info(f"  - client_secret: {'set' if settings.OIDC_CLIENT_SECRET else 'not set'}")
     logger.info(f"  - discovery_url: {settings.OIDC_DISCOVERY_URL}")
 
     oauth.register(  # type: ignore

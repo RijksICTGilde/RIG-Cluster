@@ -1238,7 +1238,7 @@ async def dashboard(request: Request):
 
         for project in all_projects:
             project_name = project.name
-            if not is_user_authorized_for_project(project_name, user_email):
+            if not is_user_authorized_for_project(project_name, user_email, audit=False):
                 continue
             project_data = project.data or {}
             deployments = project_data.get("deployments", [])
@@ -2192,7 +2192,7 @@ async def dashboard_resource_usage_fragment(request: Request) -> HTMLResponse:
     all_namespaces: list[str] = []
     user_projects: list[dict] = []
     for project in get_project_store().get_all():
-        if not is_user_authorized_for_project(project.name, user_email):
+        if not is_user_authorized_for_project(project.name, user_email, audit=False):
             continue
 
         project_data = project.data or {}
@@ -2665,7 +2665,7 @@ def _projects_for_user(user: dict) -> list[dict]:
     user_projects: list[dict] = []
     for project in get_project_store().get_all():
         project_name = project.name
-        if not is_user_authorized_for_project(project_name, user_email):
+        if not is_user_authorized_for_project(project_name, user_email, audit=False):
             continue
         try:
             project_data = project.data or {}
