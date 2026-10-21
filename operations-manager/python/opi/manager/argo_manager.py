@@ -12,6 +12,7 @@ from opi.core.config import settings
 from opi.core.task_supersede import raise_if_superseded
 from opi.services.event_interpreter import condense_render_error
 from opi.utils.age import decrypt_password_smart
+from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.naming import (
     generate_argocd_application_name,
     generate_argocd_appproject_prefix,
@@ -595,6 +596,10 @@ class ArgoManager:
         # Path to the ArgoCD AppProject manifest template
         manifest_path = os.path.join(settings.MANIFESTS_PATH, "argocd-appproject.yaml.jinja")
 
+        # Zonder signing key rendert de template geen signatureKeys, zodat een cluster waar
+        # OPI niet ondertekent blijft werken.
+        signing = get_git_signing_identity()
+
         # Prepare variables for template
         variables = {
             "name": name,
@@ -602,6 +607,7 @@ class ArgoManager:
             "destination": {"namespace": destination_namespace},
             "labels": {"project": project_label},
             "source_repos": source_repos,
+            "signature_key_id": signing.key_id if signing else None,
         }
 
         # Read and process the manifest template

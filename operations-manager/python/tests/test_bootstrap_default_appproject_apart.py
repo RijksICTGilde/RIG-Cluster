@@ -50,7 +50,8 @@ spec:
 @pytest.fixture(scope="module")
 def taakshell() -> str:
     taskfile = yaml.safe_load(TASKFILE.read_text())
-    return "\n".join(str(cmd) for cmd in taskfile["tasks"][TAAK]["cmds"])
+    # Alleen de shell-stappen: een `- task:`-stap is een dict en geen script.
+    return "\n".join(cmd for cmd in taskfile["tasks"][TAAK]["cmds"] if isinstance(cmd, str))
 
 
 def _render(shell: str, keep_default: str) -> str:

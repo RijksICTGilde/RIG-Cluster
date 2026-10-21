@@ -28,8 +28,14 @@ TAAK = "bootstrap-argo-system"
 
 @pytest.fixture(scope="module")
 def taakshell() -> str:
+    """De shell-stappen van de taak, zonder de aanroepen naar een andere taak.
+
+    ``bootstrap-argo-system`` roept sinds RC-349 ook ``argocd:trust-git-signing-key``
+    aan; die ``task:``-vermelding is een dict, geen shell, en hoort hier niet in mee
+    te joinen.
+    """
     taskfile = yaml.safe_load(TASKFILE.read_text())
-    return "\n".join(str(cmd) for cmd in taskfile["tasks"][TAAK]["cmds"])
+    return "\n".join(cmd for cmd in taskfile["tasks"][TAAK]["cmds"] if isinstance(cmd, str))
 
 
 def _render(shell: str, cluster: str, dry_run: str = "false") -> str:

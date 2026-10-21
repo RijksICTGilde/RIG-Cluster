@@ -108,8 +108,8 @@ Vanaf hieronder worden de wijzigingen daadwerkelijk doorgevoerd!
 NS=rig-prd-operations; INFRA=production-infrastructure   # productie
 # NS=rig-system;       INFRA=sandbox-infrastructure      # sandbox
 
-# 5. pushen, alle drie de repo's. Dan de configmap van OPI, en dan pas het secret:
-#    die volgorde luistert, zie hieronder
+# 5. pushen, alle drie de repo's. De commit in de argo-clone moet ONDERTEKEND zijn, zie
+#    hieronder. Dan de configmap van OPI, en dan pas het secret: die volgorde luistert
 SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)" kustomize build --enable-alpha-plugins --enable-exec \
   bootstrap/rig-system/kustomize/overlays/odcn-production --load-restrictor LoadRestrictionsNone |
   yq 'select(.kind == "ConfigMap" and .metadata.name == "operations-manager-config")' |
@@ -144,6 +144,8 @@ De handmatige sync is er omdat de tenant-sidecar het secret bij ELKE render lees
 kubectl -n $NS rollout restart deployment/argocd-repo-server
 kubectl -n $NS rollout status deployment/argocd-repo-server
 ```
+
+**Onderteken de commit in de argo-clone met een sleutel die ArgoCD vertrouwt.** Het AppProject van het app-of-apps eist een handtekening (`features/ondertekende-gitops-commits.md`); zodra ArgoCD die eis afdwingt, blokkeert een ongetekende commit op `main` van die repo de sync van ALLE project-Applications tot er een ondertekende commit op staat. Commit met `commit.gpgsign` aan en een `user.signingkey` die je eerst met `task argocd:trust-public-key KEY_FILE=<je publieke sleutel>` hebt laten vertrouwen; `git log --format='%G?' -1` is de controle voor je pusht.
 
 **Waarom de configmap vóór het secret moet, en waarom hij altijd mee moet.** De twee git-wachtwoorden staan in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml` als `base64+age:`-waarden, en OPI ontsleutelt ze TIJDENS HET DRAAIEN met de sleutel uit `sops-age-key` (`opi/connectors/git.py:134`). Die map wordt door niemand gesynct; hij komt het cluster in via `kubectl apply`.
 

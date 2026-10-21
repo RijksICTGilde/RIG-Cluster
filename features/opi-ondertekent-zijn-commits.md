@@ -6,7 +6,8 @@ commit, maar dat is tekst die iedereen kan zetten. Met een GPG-handtekening is d
 aantoonbaar, wat BIO2 8.32 (wijzigingsbeheer) en 8.04 (toegang tot broncode) vragen.
 
 Elke commit die OPI maakt draagt een handtekening van een sleutel per cluster. Het afdwingen
-in ArgoCD (`signatureKeys` op het AppProject) is een vervolgstap en zit hier nog niet in.
+in ArgoCD (`signatureKeys` op het AppProject) staat in
+`features/ondertekende-gitops-commits.md`.
 
 ## Hoe het werkt
 

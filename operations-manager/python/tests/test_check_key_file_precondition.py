@@ -28,6 +28,10 @@ GEEN_GUARD_NODIG: dict[str, str] = {
     "generate-age-key": "leest alleen de publieke tweede regel (sed -n '2p'), of maakt de sleutel aan",
     "sandbox:generate-age-key": "leest alleen de publieke tweede regel (sed -n '2p'), of maakt de sleutel aan",
     "sandbox:destroy": "verwijdert het sleutelbestand (rm -f), leest de inhoud niet",
+    "argocd:trust-public-key": (
+        "KEY_FILE is daar een PUBLIEKE GPG-sleutel en geen geheim; de guard zou een"
+        " publieke sleutel met de gebruikelijke 644 juist afwijzen"
+    ),
     "upgrade-safety-identity": (
         "leest de sleutel zelf via compare_service_identity.py --key-file, buiten de lijst van het plan;"
         " draait met dir: operations-manager/python, waardoor een dep-taak in de root het verkeerde pad krijgt"
