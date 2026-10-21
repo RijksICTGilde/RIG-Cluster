@@ -62,7 +62,10 @@ data:
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    # Een bootstrapwaarde, geen toegangsbeheer: gebruikers horen in de gebruikerslijst van
+    # ZAD, of hebben toegang omdat ze lid zijn van een project. Dit zijn alleen de
+    # beheerders die er vanaf de eerste start in moeten kunnen.
+    ALLOWED_EMAILS=robbert.uittenbroek@rijksoverheid.nl,robbertuittenbroek@gmail.com,robbert.bos@rijksoverheid.nl
     ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
     GRAFANA_DATASOURCE_UID=mimir-prd
     GRAFANA_BILLING_DATASOURCE_UID=mimir-billing
