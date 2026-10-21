@@ -29,7 +29,13 @@ from opi.services.catalog.config_settings import SettingError, check_setting_cha
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.catalog.shared.storage import STORED_CONTEXT_KEY
 from opi.services.project import Project
-from opi.services.registry import SERVICES, get_service, project_validating_services, property_owning_services
+from opi.services.registry import (
+    SERVICES,
+    change_validating_services,
+    get_service,
+    project_validating_services,
+    property_owning_services,
+)
 from opi.services.services import (
     service_entry_config,
     service_entry_data,
@@ -1018,3 +1024,12 @@ async def validate_project_structure(
         validate_service_setting_changes(previous, project_data)
         if not approval_decision:
             validate_approval_decisions(previous, project_data)
+
+    # Dezelfde vraag, maar voor een regel die geen declaratie is
+    # (``Service.validate_project_change``). Draait ook zonder vorige versie: een bestand
+    # dat niets vervangt heeft niets opgeslagen staan, dus daarin is elke waarde nieuw.
+    change_errors: list[str] = []
+    for service in change_validating_services():
+        change_errors.extend(service.validate_project_change(previous or {}, project_data))
+    if change_errors:
+        raise ProjectIntegrityError(f"Project '{project_name}': {'; '.join(change_errors)}")

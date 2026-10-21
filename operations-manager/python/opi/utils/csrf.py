@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, Request
+from opi.utils.logging_redact import redact_invite_key_in_path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
@@ -157,7 +158,7 @@ def reject_misfired_form_get(request: Request) -> None:
         if "[" in key or "/" in key:
             logger.warning(
                 "Refused wizard step GET with form-data-style query params on %s (key=%r)",
-                request.url.path,
+                redact_invite_key_in_path(request.url.path),
                 key,
             )
             raise HTTPException(
@@ -205,11 +206,14 @@ def _validate_double_submit(request: Request, submitted_token: str | None) -> No
         HTTPException: 403 if the token is missing or does not match.
     """
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
+    # bearer-geheim, en deze twee regels zijn bereikbaar zodra het CSRF-cookie weg is.
+    path = redact_invite_key_in_path(request.url.path)
     if not cookie_token or not submitted_token:
-        logger.warning("CSRF check failed: token missing on %s %s", request.method, request.url.path)
+        logger.warning("CSRF check failed: token missing on %s %s", request.method, path)
         raise HTTPException(status_code=403, detail="CSRF token missing")
     if not secrets.compare_digest(cookie_token, submitted_token):
-        logger.warning("CSRF check failed: token mismatch on %s %s", request.method, request.url.path)
+        logger.warning("CSRF check failed: token mismatch on %s %s", request.method, path)
         raise HTTPException(status_code=403, detail="CSRF token invalid")
 
 

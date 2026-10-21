@@ -1627,6 +1627,21 @@ class Service(ABC):
         """
         return []
 
+    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+        """This service's rules on what the save CHANGES, as messages (default none).
+
+        The sibling of ``validate_project`` for a rule that can only be judged with the
+        version being replaced in hand: a stricter bound on a NEW value, where a value that
+        has been in the project file for a year must keep validating or its owner can no
+        longer save at all. ``ConfigSetting``'s ``grow_only`` covers that for a scalar with
+        a numeric bound (see ``validate_service_setting_changes``); this is for a rule that
+        does not fit a declaration.
+
+        ``previous`` is the committed version, and ``{}`` on a create: a file that replaces
+        nothing has nothing stored, so every value in it is new.
+        """
+        return []
+
     def contribute_project_manifests(self, ctx: ProjectManifestContext) -> list[ProjectManifestSpec]:
         """Project-wide manifests this service contributes (default none).
 

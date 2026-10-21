@@ -54,6 +54,7 @@ from opi.middleware.body_limit import BodyLimitMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
+from opi.utils.logging_redact import redact_invite_key_in_path
 from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
@@ -671,7 +672,7 @@ def create_app() -> FastAPI:
         om te melden. Starlette gooit na dit antwoord alsnog opnieuw op, dus de server
         blijft de fout zien; alleen de aanroeper krijgt nu een pagina in plaats van niets.
         """
-        logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+        logger.exception("Unhandled exception on %s %s", request.method, redact_invite_key_in_path(request.url.path))
         return _fout_antwoord(request, 500, None)
 
     @app.exception_handler(StarletteHTTPException)

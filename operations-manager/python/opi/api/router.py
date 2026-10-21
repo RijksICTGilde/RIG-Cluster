@@ -1,4 +1,5 @@
 import logging
+import math
 import threading
 import time
 from collections import defaultdict
@@ -68,6 +69,11 @@ def sanitize_for_log(value: str | None, max_length: int = 64) -> str:
     return sanitized
 
 
+def _refill_seconds(burst: int, rate: float) -> float:
+    """Hoe lang een lege emmer erover doet om weer op zijn volle burst te staan."""
+    return burst / rate if rate > 0 else math.inf
+
+
 # Robust rate limiter for subdomain check endpoint with anti-spoofing measures
 class IPRateLimiter:
     """Token bucket rate limiter with multi-factor client identification.
@@ -101,11 +107,13 @@ class IPRateLimiter:
 
     def __init__(
         self,
-        requests_per_minute: int = 30,
+        requests_per_minute: float = 30,
         burst: int = 10,
         cleanup_interval: float = 60.0,
-        per_ip_requests_per_minute: int | None = None,
+        per_ip_requests_per_minute: float | None = None,
     ):
+        # float, niet int: een grens per UUR is minder dan een verzoek per minuut
+        # (de uitnodigingsroutes), en de rekensom hieronder deelt al door 60.0.
         self.rate = requests_per_minute / 60.0  # requests per second
         self.burst = burst
         self._tokens: dict[str, float] = defaultdict(lambda: float(burst))
@@ -121,6 +129,13 @@ class IPRateLimiter:
         self._per_ip_burst = burst * 3
         self._ip_tokens: dict[str, float] = defaultdict(lambda: float(self._per_ip_burst))
         self._ip_last_update: dict[str, float] = defaultdict(time.monotonic)
+
+        # Een bucket mag niet worden opgeruimd voordat hij zichzelf toch had bijgevuld,
+        # anders houdt een per-uur grens geen uur (zie _min_retention_seconds).
+        self._min_retention_seconds = max(
+            _refill_seconds(burst, self.rate),
+            _refill_seconds(self._per_ip_burst, self._per_ip_rate),
+        )
 
         # Track new client creation rate to detect flooding attacks
         self._new_client_timestamps: list[float] = []
@@ -284,21 +299,27 @@ class IPRateLimiter:
     def cleanup_old_entries(self, max_age_seconds: int = 600) -> None:
         """Remove entries older than max_age_seconds to prevent memory leak. Thread-safe.
 
-        Default reduced to 10 minutes (was 1 hour) for more aggressive cleanup.
+        Default reduced to 10 minutes (was 1 hour) for more aggressive cleanup. Het
+        vulvenster van de emmer geldt als ondergrens, zie ``_cleanup_old_entries_unlocked``.
         """
         with self._lock:
             self._cleanup_old_entries_unlocked(max_age_seconds)
 
     def _cleanup_old_entries_unlocked(self, max_age_seconds: int = 600) -> None:
-        """Internal cleanup method. Must be called while holding self._lock."""
+        """Internal cleanup method. Must be called while holding self._lock.
+
+        Een emmer blijft minstens zijn vulvenster staan, ook als ``max_age_seconds`` korter
+        is. Met ``MAX_NEW_CLIENTS_PER_MINUTE`` erbij blijft dat onder ``CLEANUP_THRESHOLD``.
+        """
         now = time.monotonic()
-        to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age_seconds]
+        max_age = max(max_age_seconds, self._min_retention_seconds)
+        to_remove = [ip for ip, last in self._last_update.items() if now - last > max_age]
         for ip in to_remove:
             del self._tokens[ip]
             del self._last_update[ip]
 
         # Also cleanup per-IP tracking
-        ip_to_remove = [ip for ip, last in self._ip_last_update.items() if now - last > max_age_seconds]
+        ip_to_remove = [ip for ip, last in self._ip_last_update.items() if now - last > max_age]
         for ip in ip_to_remove:
             del self._ip_tokens[ip]
             del self._ip_last_update[ip]

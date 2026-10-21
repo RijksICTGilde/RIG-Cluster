@@ -1,8 +1,8 @@
-# Invite System
+# Invite System ⚠ VEROUDERD
+
+**OP: Dit document beschrijft een verouderde configuratie (`invites:` topconfiguratie en velden als `expires_at` die niet zijn geimplementeerd).** Zie in plaats daarvan **[features/invites.md](invites.md)** voor de huidige implementatie (`services/invite/config` via de service-catalog).
 
 The invite system allows project administrators to invite users to their project's Keycloak realm through shareable invite links. Users can join via SSO or by creating a local account.
-
-**Sample Configuration**: See `projects/amt-136.yaml` for a working example with two invite configurations.
 
 ## Overview
 

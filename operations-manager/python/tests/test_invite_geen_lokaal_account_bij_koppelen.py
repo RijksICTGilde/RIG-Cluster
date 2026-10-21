@@ -18,7 +18,10 @@ from opi.forms.visualizers.providers import InviteAuthMethodOptionsProvider
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.project_validation import validate_project_structure
 
-INVITE = {"key": "sleutel", "realm-roles": ["allowed-user"]}
+#: Zestien tekens of meer, want de ondergrens van ``InviteService`` keurt een nieuwe
+#: kortere sleutel af en deze toetsen gaan niet over de sleutel.
+INVITE_KEY = "koppel-fixture-example"
+INVITE = {"key": INVITE_KEY, "realm-roles": ["allowed-user"]}
 
 
 def _project(account_link: str | None, auth_methods: list[str] | None = None) -> dict[str, Any]:
@@ -91,7 +94,7 @@ class TestDeUitnodigingswegZelf:
             ),
             patch("opi.manager.invite_manager.create_keycloak_connector", AsyncMock(return_value=keycloak)),
         ):
-            response = await invite_register_submit(request, "sleutel")
+            response = await invite_register_submit(request, INVITE_KEY)
 
         assert response.status_code == 200
         assert "Authenticatiemethode niet beschikbaar" in response.body.decode()

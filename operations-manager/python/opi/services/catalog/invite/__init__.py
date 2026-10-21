@@ -63,6 +63,20 @@ from opi.services.services_enums import ServiceType, UIEvent
 logger = logging.getLogger(__name__)
 
 
+#: De ondergrens voor een ZELFGEKOZEN sleutel. De link is de enige barriere, dus een korte
+#: sleutel is te raden; een gegenereerde sleutel is er 22. Geldt alleen voor een sleutel die
+#: nog niet in het projectbestand stond: zie :meth:`InviteService.validate_project_change`.
+INVITE_KEY_MIN_LENGTH = 16
+
+
+def _invite_keys(project_data: dict[str, Any]) -> set[str]:
+    """De sleutels van de actieve uitnodigingen, via de ene lezer van dat veld."""
+    from opi.handlers.project_file_handler import ProjectFileHandler
+
+    invites = ProjectFileHandler().get_all_active_invites(project_data)
+    return {str(invite["key"]) for invite in invites if isinstance(invite, dict) and invite.get("key")}
+
+
 def _generate_invite_key() -> str:
     """A 128-bit URL-safe key that also passes ``InviteKeyValidator``.
 
@@ -218,6 +232,29 @@ class InviteService(Service):
             for stale in ("application-url", "application_url"):
                 entry.pop(stale, None)
 
+    def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
+        """Een NIEUWE uitnodigingssleutel is minstens ``INVITE_KEY_MIN_LENGTH`` tekens lang.
+
+        Alleen nieuw: een sleutel die al in de vorige versie stond blijft geldig. De vier
+        projectbestanden die ouder zijn dan deze dienst dragen zelfgekozen sleutels, en die
+        afkeuren zou hun bestand onopslaanbaar maken terwijl de eigenaar niet kan voldoen
+        (de sleutel verlengen maakt de link die al rondgaat ongeldig). Dezelfde valkuil als
+        het opslagplafond, zie ``STORED_CONTEXT_KEY``.
+
+        De sleutel zelf komt NIET in de melding: die gaat naar een gebruiker en een waarde
+        die iemand ergens vandaan plakte hoort niet teruggeciteerd te worden.
+        """
+        stored = _invite_keys(previous)
+        too_short = sum(
+            1 for key in _invite_keys(project_data) if key not in stored and len(key) < INVITE_KEY_MIN_LENGTH
+        )
+        if not too_short:
+            return []
+        return [
+            f"een nieuwe uitnodigingssleutel moet minstens {INVITE_KEY_MIN_LENGTH} tekens lang zijn "
+            f"({too_short} te kort). Laat de sleutel leeg om er een veilige te laten genereren"
+        ]
+
     def validate_project(self, project_data: dict[str, Any]) -> list[str]:
         """Geen uitnodiging met een lokaal account in een realm dat op e-mailadres koppelt.
 
@@ -237,8 +274,10 @@ class InviteService(Service):
         if mode is None:
             return []
 
+        # De sleutel staat NIET in de melding: deze gaat als ProjectIntegrityError langs
+        # een logger.warning op de schrijfwegen, en de sleutel is een bearer-geheim.
         return [
-            f"uitnodiging '{invite.get('key', '')}' staat een lokaal account toe, maar het "
+            "een uitnodiging staat een lokaal account toe, maar het "
             f"keycloak-realm van dit project koppelt automatisch op e-mailadres "
             f"(account-link: {mode}); lokale accounts zijn daar niet toegestaan"
             for invite in ProjectFileHandler().get_all_active_invites(project_data)

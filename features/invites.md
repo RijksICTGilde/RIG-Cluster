@@ -46,6 +46,39 @@ The link becomes semi-secret (like an unlisted video: unguessable, but permanent
 is no expiry). A self-chosen key is kept exactly as typed. Keys allow letters, digits,
 hyphens and underscores, 3-64 characters, and must start with a letter or digit.
 
+### A NEW self-chosen key is at least 16 characters
+
+The link is the only barrier, so a short key is a guessable one. A key that is not already in
+the project file has to be at least 16 characters (`INVITE_KEY_MIN_LENGTH`); leaving the field
+blank gives you 22. The rule is judged against the version the save replaces
+(`InviteService.validate_project_change`), so a shorter key that is already in a project file
+stays valid and its owner can keep editing the invite. Lengthening an existing key is not a
+fix anyway: it invalidates the link that is already going around.
+
+## The invite pages are rate limited
+
+The redemption routes are public and `POST /invite/<key>/register` creates a Keycloak user and
+sends a confirmation mail per call, so they are capped. All of it reuses `IPRateLimiter` (the
+same limiter as the subdomain check); over the limit you get the invite error page with status
+429.
+
+| Route | Limit |
+|---|---|
+| `GET /invite/<key>`, `/sso`, `/idp/<alias>`, `/register`, `/success`, `/error` | 30 per minute per client, burst 10 |
+| `POST /invite/<key>/register` | 5 per minute and 20 per hour per client |
+| `POST /invite/<key>/register` | 20 per hour per invite key |
+
+The per-key bucket is the one that holds while `IPRateLimiter` still reads the leftmost
+`X-Forwarded-For` address (issue #195): a client can choose that address per request, and
+cannot choose someone else's invite key. It is keyed on the key's fingerprint, not the key
+itself.
+
+For the per-hour buckets to hold a full hour, a bucket must outlive its own refill window (see `_min_retention_seconds` in `IPRateLimiter`).
+
+## The key stays out of the log
+
+The key is a bearer secret and does not appear in log files. The invite routes log a fingerprint (`fingerprint_for_log`) instead of the key itself, and all log lines that include a request path go through `redact_invite_key_in_path` to scrub the key from the URL.
+
 ## Configuration
 
 Invites live under the invite service config in the project file:
@@ -250,7 +283,9 @@ If a realm role that an invite grants is later removed from the Keycloak config:
 
 - Removing an invite does **not** delete the realm users it already created -- once they
   exist, they are legitimate users independent of the invitation.
-- There is no expiry: an invite link is valid until the invite is removed.
+- There is no expiry: an invite link is valid until the invite is removed. The rate limit above
+  caps what an unexpiring link can be used for; an optional expiry date is a separate decision
+  (it revises decision 7.4 in `plans/invite-service.md`) and was deliberately left out of RC-313.
 - Migration: projects that used the old top-level `invites:` block are moved to
   `services/invite/config` automatically (schema v2.5 -> v2.6).
 - The invite service's own config schema is at **v1.1** (`invite.v1.1.json`). v1.1 added
