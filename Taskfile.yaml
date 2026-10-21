@@ -508,6 +508,88 @@ tasks:
     cmds:
       - uv run --project operations-manager/python python scripts/edit-secret.py {{.CLI_ARGS}}
 
+  cmp-sops-role-backfill:
+    desc: "Eenmalig: zet de Role die de CMP het sleutel-secret laat lezen in elke bestaande namespace die er een heeft"
+    summary: |
+      OPI zet de Role cmp-sops-key-reader voortaan naast elk sleutel-secret dat hij
+      plaatst, maar in namespaces waar dat secret al stond gebeurt dat niet: OPI schrijft
+      daar bij een verwerking niets. Deze taak haalt die achterstand in.
+
+      Draai hem op productie VOOR de bootstrap die de repo-server op de eigen
+      ServiceAccount zet: daarna leest die alleen nog wat deze Roles toestaan.
+
+      DRY_RUN=true telt alleen, en schrijft niets. Op de sandbox hoort
+      ARGO_NAMESPACE=rig-system erbij, anders wijst de RoleBinding naar
+      rig-prd-operations.
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+      ARGO_NAMESPACE: '{{default "rig-prd-operations" .ARGO_NAMESPACE}}'
+      SERVICE_ACCOUNT: '{{default "argocd-cmp" .SERVICE_ACCOUNT}}'
+      # De platformnamespaces houden de platformsleutel, en die leest de platform-sidecar
+      # uit zijn mount. De tenant-sidecar hoort daar niets te mogen.
+      SKIP_NAMESPACES: '{{default "rig-prd-operations rig-prd-ron rig-system rig-ron" .SKIP_NAMESPACES}}'
+    cmds:
+      - |
+        # Op naam zoeken gaat met een field-selector: 'get secret <naam> --all-namespaces' weigert kubectl.
+        NAMESPACES=$(kubectl get secret --all-namespaces --field-selector metadata.name=sops-age-key -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}')
+        if [ -z "$NAMESPACES" ]; then
+          echo "geen namespace met een sops-age-key gevonden"
+          exit 0
+        fi
+
+        for OVER in {{.SKIP_NAMESPACES}}; do
+          NAMESPACES=$(printf '%s\n' "$NAMESPACES" | grep -v "^${OVER}$" || true)
+        done
+        if [ -z "$NAMESPACES" ]; then
+          echo "geen projectnamespace met een sops-age-key gevonden"
+          exit 0
+        fi
+
+        AANTAL=$(printf '%s\n' "$NAMESPACES" | wc -l | tr -d ' ')
+        echo "$AANTAL projectnamespaces met een sops-age-key"
+
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          printf '%s\n' "$NAMESPACES"
+          echo "dry-run: niets geschreven"
+          exit 0
+        fi
+
+        for NS in $NAMESPACES; do
+          kubectl apply -f - <<EOF
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: Role
+        metadata:
+          name: cmp-sops-key-reader
+          namespace: $NS
+          labels:
+            created-by: operations-manager
+        rules:
+          - apiGroups: [""]
+            resources: ["secrets"]
+            resourceNames: ["sops-age-key"]
+            verbs: ["get"]
+        ---
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: cmp-sops-key-reader
+          namespace: $NS
+          labels:
+            created-by: operations-manager
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: Role
+          name: cmp-sops-key-reader
+        subjects:
+          - kind: ServiceAccount
+            name: {{.SERVICE_ACCOUNT}}
+            namespace: {{.ARGO_NAMESPACE}}
+        EOF
+        done
+
+        echo "Role en RoleBinding staan in $AANTAL namespaces"
+    silent: true
+
   bootstrap-argo-system:
     desc: "Apply minimal bootstrap (namespace + ArgoCD) to start the GitOps process"
     requires:
@@ -584,24 +666,12 @@ tasks:
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
           RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
+          # Geen sleutelsecret in deze namespace: ron-infrastructure rendert sinds RC-351
+          # op de platform-plugin, die de sleutel uit zijn mount leest. Een tweede plek met
+          # de platformsleutel is een plek die bij een rotatie wordt vergeten
+          # (instructions/sops-sleutel-in-het-cluster.md).
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
-
-            # Het sleutelsecret in diezelfde namespace: de CMP leest de AGE-sleutel in de
-            # namespace van de app, dus zonder hem rendert ron-infrastructure niet en komt
-            # de mailrelay er niet. Alleen aanmaken als hij er nog niet is: een apply met
-            # de sleutel uit {{.KEY_FILE}} zou op een cluster dat al een andere
-            # platformsleutel draagt een rotatie zijn, en die loopt langs
-            # scripts/set-sops-key-secret.py (instructions/sops-sleutel-in-het-cluster.md).
-            if kubectl get secret sops-age-key -n "$RON_NAMESPACE" >/dev/null 2>&1; then
-              echo "secret sops-age-key staat al in $RON_NAMESPACE, ongemoeid gelaten"
-            else
-              kubectl create secret generic sops-age-key \
-                --from-file=key={{.KEY_FILE}} \
-                -n "$RON_NAMESPACE" \
-                --dry-run=client -o yaml | kubectl apply -f -
-              echo "secret sops-age-key aangemaakt in $RON_NAMESPACE"
-            fi
           fi
         fi
 
@@ -3429,13 +3499,11 @@ tasks:
 
         echo "sops-age-key secret created in rig-system"
 
-        # De RON-namespace (mailrelay) krijgt hetzelfde geheim: de CMP-plugin die de
-        # ron-infrastructure-app rendert, controleert op de namespace en leest dit secret
-        # in de namespace van de app. De namespace zelf kan NIET via GitOps (de ArgoCD op
-        # dit clustertype draait in namespaced mode en weigert Namespace-resources), dus
-        # hij wordt hier handmatig aangemaakt, met het label dat de argocd-operator de
-        # beheer-RBAC voor de namespace laat aanmaken. Zonder deze twee blijft de app
-        # hangen op "Namespace 'rig-ron' does not exist" / "SOPS secret not found".
+        # De RON-namespace (mailrelay) kan NIET via GitOps (de ArgoCD op dit clustertype
+        # draait in namespaced mode en weigert Namespace-resources), dus hij wordt hier
+        # handmatig aangemaakt, met het label dat de argocd-operator de beheer-RBAC voor de
+        # namespace laat aanmaken. Een sops-age-key hoort er sinds RC-351 niet meer bij:
+        # ron-infrastructure rendert op de platform-plugin, met de gemounte sleutel.
         kubectl apply -f - <<'EOF'
         apiVersion: v1
         kind: Namespace
@@ -3448,12 +3516,7 @@ tasks:
             argocd.argoproj.io/managed-by: rig-system
         EOF
 
-        kubectl create secret generic sops-age-key \
-          --from-file=key=security/sandbox-key.txt \
-          -n rig-ron \
-          --dry-run=client -o yaml | kubectl apply -f -
-
-        echo "namespace rig-ron en sops-age-key secret created"
+        echo "namespace rig-ron created"
     silent: true
 
   sandbox:create-git-signing-key-secret:

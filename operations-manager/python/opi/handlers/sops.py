@@ -14,7 +14,7 @@ import os
 import tempfile
 from typing import TYPE_CHECKING, Any
 
-from opi.core.cluster_config import is_platform_namespace
+from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
 from opi.utils.subprocess_env import child_env
 
@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 # failure as a real, alert-worthy error.
 _SOPS_STORE_MAX_ATTEMPTS = 4
 _SOPS_STORE_RETRY_DELAY_SECONDS = 1.5
+
+#: Secret en Role voor het sleutel-secret. De Role gaat alleen mee bij plaatsen, niet
+#: bij reprocess (het secret klopt al).
+SOPS_SECRET_NAME = "sops-age-key"
+CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
+CMP_SERVICE_ACCOUNT = "argocd-cmp"
 
 
 # TODO: maybe this handler has to go.. it conflicts with the utils/sops.py
@@ -113,8 +119,6 @@ class SopsHandler:
         self.logger.debug("Encrypting content with SOPS")
 
         try:
-            from opi.core.config import settings
-
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
@@ -160,8 +164,6 @@ class SopsHandler:
         self.logger.debug("Decrypting content with SOPS")
 
         try:
-            from opi.core.config import settings
-
             with tempfile.NamedTemporaryFile(
                 mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
@@ -228,7 +230,7 @@ class SopsHandler:
             # Create secret using the generic secret template
             template_path = "manifests/generic-secret.yaml.to-sops.jinja"
             variables = {
-                "name": "sops-age-key",
+                "name": SOPS_SECRET_NAME,
                 "namespace": namespace,
                 "secret_type": "sops",
                 "secret_k8s_type": "Opaque",
@@ -241,12 +243,14 @@ class SopsHandler:
             from opi.connectors.kubectl import KubectlExecutionError
 
             last_error = ""
+            stored = False
             for attempt in range(1, _SOPS_STORE_MAX_ATTEMPTS + 1):
                 try:
                     await self.kubectl.apply_manifest(template_path, variables, namespace)
                     self.logger.info(f"Successfully stored SOPS key in namespace: {namespace}")
                     self.logger.debug(f"Public key for project: {public_key}")
-                    return True
+                    stored = True
+                    break
                 except KubectlExecutionError as apply_error:
                     last_error = str(apply_error)
                     is_transient = "forbidden" in last_error.lower()
@@ -260,12 +264,45 @@ class SopsHandler:
                         continue
                     break
 
+            if stored:
+                # Buiten de lus, zodat een falende Role het secret niet opnieuw laat
+                # schrijven, en met een eigen melding: het secret staat er wel.
+                try:
+                    await self._apply_cmp_key_reader_role(namespace)
+                except KubectlExecutionError as role_error:
+                    self.logger.error(
+                        f"SOPS key stored, but failed to apply the CMP key reader role "
+                        f"({CMP_SOPS_ROLE_NAME}) in namespace {namespace}: {role_error}"
+                    )
+                    return False
+                return True
+
             self.logger.error(f"Failed to store SOPS key (secret sops-age-key) in namespace {namespace}: {last_error}")
             return False
 
         except Exception as e:
             self.logger.error(f"Error storing SOPS key in namespace {namespace}: {e}")
             return False
+
+    async def _apply_cmp_key_reader_role(self, namespace: str) -> None:
+        """
+        Laat de CMP-sidecar precies het sleutel-secret van deze namespace lezen.
+
+        Raises:
+            KubectlExecutionError: als de Role of RoleBinding niet toegepast kan worden
+        """
+        if not self.kubectl:
+            raise RuntimeError("KubectlConnector not available for applying the CMP key reader role")
+
+        variables = {
+            "role_name": CMP_SOPS_ROLE_NAME,
+            "namespace": namespace,
+            "secret_name": SOPS_SECRET_NAME,
+            "service_account": CMP_SERVICE_ACCOUNT,
+            "argo_namespace": get_argo_namespace(settings.CLUSTER_MANAGER),
+        }
+        await self.kubectl.apply_manifest("manifests/cmp-sops-key-reader.yaml.jinja", variables, namespace)
+        self.logger.info(f"Applied CMP key reader role in namespace: {namespace}")
 
     async def store_project_sops_key_in_gitops(
         self, project_name: str, private_key: str, public_key: str, git_connector

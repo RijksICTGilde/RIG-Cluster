@@ -21,7 +21,9 @@ def _handler_with(apply_side_effect):
 
 @pytest.mark.asyncio
 async def test_transient_forbidden_then_success_does_not_error():
-    handler, kubectl = _handler_with([KubectlExecutionError("... secrets is forbidden: cannot get resource ..."), None])
+    handler, kubectl = _handler_with(
+        [KubectlExecutionError("... secrets is forbidden: cannot get resource ..."), None, None]
+    )
     with (
         patch("opi.handlers.sops.asyncio.sleep", new=AsyncMock()) as sleep,
         patch.object(handler, "logger") as log,
@@ -29,7 +31,9 @@ async def test_transient_forbidden_then_success_does_not_error():
         ok = await handler.store_project_sops_key_in_namespace("rig-prd-x", "AGE-SECRET-KEY-1x", "age1x")
 
     assert ok is True
-    assert kubectl.apply_manifest.await_count == 2  # retried once
+    sjablonen = [call.args[0] for call in kubectl.apply_manifest.await_args_list]
+    assert sjablonen.count("manifests/generic-secret.yaml.to-sops.jinja") == 2  # retried once
+    assert sjablonen.count("manifests/cmp-sops-key-reader.yaml.jinja") == 1  # de Role gaat met het secret mee
     sleep.assert_awaited()  # backed off between attempts
     log.error.assert_not_called()  # the transient race is not an error
 
@@ -60,3 +64,22 @@ async def test_non_transient_error_fails_fast_without_retry():
     assert ok is False
     assert kubectl.apply_manifest.await_count == 1  # no retry on a non-transient error
     log.error.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_role_apply_does_not_retry_the_secret():
+    handler, kubectl = _handler_with(
+        [None, KubectlExecutionError("... roles.rbac.authorization.k8s.io is forbidden ...")]
+    )
+    with (
+        patch("opi.handlers.sops.asyncio.sleep", new=AsyncMock()),
+        patch.object(handler, "logger") as log,
+    ):
+        ok = await handler.store_project_sops_key_in_namespace("rig-prd-x", "k", "p")
+
+    assert ok is False  # the Role failed, even though the Secret itself was stored
+    assert kubectl.apply_manifest.await_count == 2  # secret once, role once, no retry of either
+    log.error.assert_called_once()
+    melding = log.error.call_args.args[0]
+    assert "CMP key reader role" in melding  # de melding gaat over de Role, niet over het secret
+    assert "SOPS key stored" in melding

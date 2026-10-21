@@ -3,6 +3,7 @@ kind: Component
 
 resources:
 - ../../configmap-sops-plugin.yaml
+- serviceaccount-cmp.yaml
 
 patches:
 - target:
@@ -11,13 +12,35 @@ patches:
     - op: replace
       path: /spec/repo
       value:
-        serviceaccount: argocd-argocd-server
+        # Eigen SA voor het renderproces; rechten staan in de Roles die OPI per
+        # projectnamespace naast het sleutel-Secret zet.
+        serviceaccount: argocd-cmp
         volumes:
           - name: cmp-plugin
             configMap:
               name: cmp-plugin
+              items:
+                - key: plugin.yaml
+                  path: plugin.yaml
+                - key: render.sh
+                  path: render.sh
+          - name: cmp-plugin-platform
+            configMap:
+              name: cmp-plugin
+              items:
+                - key: plugin-platform.yaml
+                  path: plugin.yaml
+                - key: render.sh
+                  path: render.sh
           - name: cmp-tmp
             emptyDir: {}
+          - name: cmp-platform-tmp
+            emptyDir: {}
+          # De platformsleutel, optioneel, zodat tenant-apps renderen zonder hem.
+          - name: sops-age-key
+            secret:
+              secretName: sops-age-key
+              optional: true
           - name: kube-api-access
             projected:
               sources:
@@ -34,6 +57,8 @@ patches:
                         fieldRef:
                           fieldPath: metadata.namespace
         sidecarContainers:
+          # Tenant-apps: de sleutel komt uit het Secret in de bestemmingsnamespace, dus
+          # deze sidecar heeft het SA-token nodig en de gemounte platformsleutel niet.
           - name: cmp-server
             # Op digest en niet op een tag: deze container leest bij het renderen de
             # SOPS-sleutel, en een tag in de registry is te overschrijven. Ophogen met
@@ -41,9 +66,6 @@ patches:
             image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops@sha256:0f82b84e5dd99ddd61897e31e5edcf333a5aa21b43b384189411783734cc0a26
             imagePullPolicy: IfNotPresent
             command: ["/var/run/argocd/argocd-cmp-server"]
-            env:
-              - name: KUSTOMIZE_PLUGIN_HOME
-                value: /etc/kustomize/plugin
             securityContext:
               runAsNonRoot: true
               runAsUser: 999
@@ -58,4 +80,27 @@ patches:
                 mountPath: /tmp
               - name: kube-api-access
                 mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                readOnly: true
+          # Platform-apps: sleutel uit mount, geen SA-token. Elk Secret uit SOPS_KEY_SECRET
+          # moet hier onder /sops/ staan.
+          - name: cmp-platform
+            # Op digest om dezelfde reden als cmp-server hierboven, en met meer gewicht:
+            # deze sidecar heeft de platformsleutel gemount. Ophogen met `task pin-cmp-image`.
+            image: ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops@sha256:0f82b84e5dd99ddd61897e31e5edcf333a5aa21b43b384189411783734cc0a26
+            imagePullPolicy: IfNotPresent
+            command: ["/var/run/argocd/argocd-cmp-server"]
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 999
+            volumeMounts:
+              - name: var-files
+                mountPath: /var/run/argocd
+              - name: plugins
+                mountPath: /home/argocd/cmp-server/plugins
+              - name: cmp-plugin-platform
+                mountPath: /home/argocd/cmp-server/config
+              - name: cmp-platform-tmp
+                mountPath: /tmp
+              - name: sops-age-key
+                mountPath: /sops/sops-age-key
                 readOnly: true

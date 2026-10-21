@@ -1,9 +1,10 @@
-"""RC-261: de bootstrap van ODCN zet het sleutelsecret zelf in rig-prd-ron.
+"""De bootstrap van ODCN zet de RON-namespace neer, en geen sleutel erin.
 
-Zonder `sops-age-key` in die namespace weigert de CMP de ron-infrastructure-app te
-renderen, en dan komt de mailrelay er niet. Dat was handwerk naast de bootstrap
-(`instructions/sops-sleutel-in-het-cluster.md`), dus het ontbrak op elk cluster waar
-niemand die stap deed.
+RC-261 kopieerde de platformsleutel nog naar `rig-prd-ron`, omdat de CMP de sleutel uit
+de bestemmingsnamespace las. Sinds RC-351 rendert ron-infrastructure op de
+platform-plugin, die de sleutel uit een mount leest, en hoort die kopie er juist niet
+meer te staan: een tweede plek met de platformsleutel is een plek die bij een rotatie
+wordt vergeten (`instructions/sops-sleutel-in-het-cluster.md`).
 
 De shell uit de Taskfile wordt echt gedraaid, met een `kubectl` die zijn aanroepen
 opschrijft. Een test op de TEKST van de taak zou niet zien dat de aanroep achter de
@@ -41,7 +42,7 @@ def _render(shell: str, cluster: str, dry_run: str = "false") -> str:
     )
 
 
-def _omgeving(tmp_path: Path, cluster: str, secret_bestaat: bool) -> Path:
+def _omgeving(tmp_path: Path, cluster: str) -> Path:
     """Een werkmap met de overlay-bestanden, de sleutel, en stubs voor kubectl en kustomize."""
     overlay = tmp_path / "bootstrap/rig-system/kustomize/overlays" / cluster
     overlay.mkdir(parents=True)
@@ -54,22 +55,14 @@ def _omgeving(tmp_path: Path, cluster: str, secret_bestaat: bool) -> Path:
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
-    # Exit 1 op de lees-check van het secret betekent "bestaat niet"; de taak hoort hem dan
-    # aan te maken en anders juist niet.
     (bin_dir / "kubectl").write_text(
-        "#!/bin/bash\n"
-        'printf "%s\\n" "$*" >> "$KUBECTL_LOG"\n'
-        'if [[ "$*" == "get secret sops-age-key -n rig-prd-ron" ]]; then\n'
-        f"  exit {0 if secret_bestaat else 1}\n"
-        "fi\n"
-        "cat >/dev/null 2>&1 || true\n"
-        "exit 0\n"
+        '#!/bin/bash\nprintf "%s\\n" "$*" >> "$KUBECTL_LOG"\ncat >/dev/null 2>&1 || true\nexit 0\n'
     )
     (bin_dir / "kustomize").write_text('#!/bin/bash\necho "# gerenderd"\nexit 0\n')
     for stub in bin_dir.iterdir():
         stub.chmod(0o755)
-    # yq leest de naam van de ron-namespace. Zonder hem blijft RON_NAMESPACE stil leeg en
-    # meet de test iets anders dan de taak doet.
+    # yq is geen stub: de taak leest de naam van de RON-namespace er echt mee uit
+    # namespace-ron.yaml, en een leeg antwoord zou het label naar niets laten wijzen.
     (bin_dir / "yq").symlink_to(echt_programma("yq"))
     return bin_dir
 
@@ -92,38 +85,46 @@ def _draai(shell: str, tmp_path: Path, bin_dir: Path) -> list[str]:
 
 @pytest.fixture(autouse=True)
 def _gereedschap() -> None:
-    if shutil.which("bash") is None:
-        pytest.skip("bash ontbreekt")
+    for programma in ("bash", "yq"):
+        if shutil.which(programma) is None:
+            pytest.skip(f"{programma} ontbreekt")
 
 
-class TestHetSecretKomtUitDeBootstrap:
-    def test_odcn_maakt_het_secret_in_rig_prd_ron(self, taakshell: str, tmp_path: Path) -> None:
-        bin_dir = _omgeving(tmp_path, "odcn-production", secret_bestaat=False)
+class TestDeRonNamespaceUitDeBootstrap:
+    def test_odcn_zet_de_namespace_met_zijn_managed_by_label(self, taakshell: str, tmp_path: Path) -> None:
+        bin_dir = _omgeving(tmp_path, "odcn-production")
         regels = _draai(_render(taakshell, "odcn-production"), tmp_path, bin_dir)
 
-        aanmaak = [r for r in regels if r.startswith("create secret generic sops-age-key")]
-        assert len(aanmaak) == 1, regels
-        assert "--from-file=key=security/key.txt" in aanmaak[0]
-        assert "-n rig-prd-ron" in aanmaak[0]
+        assert [r for r in regels if r.startswith("apply -f bootstrap") and "namespace-ron.yaml" in r], regels
+        assert [
+            r
+            for r in regels
+            if r == "label namespace rig-prd-ron argocd.argoproj.io/managed-by=rig-prd-operations --overwrite"
+        ], regels
 
-    def test_een_tweede_run_laat_een_bestaand_secret_staan(self, taakshell: str, tmp_path: Path) -> None:
-        """Idempotent EN geen rotatie: een apply met de lokale sleutel zou op een cluster dat
-        een andere platformsleutel draagt elk projectgeheim onleesbaar maken."""
-        bin_dir = _omgeving(tmp_path, "odcn-production", secret_bestaat=True)
+    def test_er_gaat_geen_sleutel_in_de_ron_namespace(self, taakshell: str, tmp_path: Path) -> None:
+        """De platform-plugin leest de sleutel uit zijn mount, dus een tweede houder van de
+        platformsleutel hoort hier niet meer aangemaakt te worden.
+
+        De sleutel in de operations-namespace blijft wel: dat is de houder die de
+        cmp-platform-sidecar mount.
+        """
+        bin_dir = _omgeving(tmp_path, "odcn-production")
         regels = _draai(_render(taakshell, "odcn-production"), tmp_path, bin_dir)
 
-        assert not [r for r in regels if r.startswith("create secret generic sops-age-key")], regels
+        assert not [r for r in regels if "sops-age-key" in r and "rig-prd-ron" in r], regels
+        assert [r for r in regels if r == "get secret sops-age-key -n rig-prd-operations"], regels
 
     def test_een_dry_run_schrijft_niets(self, taakshell: str, tmp_path: Path) -> None:
-        bin_dir = _omgeving(tmp_path, "odcn-production", secret_bestaat=False)
+        bin_dir = _omgeving(tmp_path, "odcn-production")
         regels = _draai(_render(taakshell, "odcn-production", dry_run="true"), tmp_path, bin_dir)
 
-        assert not [r for r in regels if r.startswith("create secret generic")], regels
+        assert not [r for r in regels if r.startswith("label namespace")], regels
 
     def test_sandboxed_local_raakt_rig_prd_ron_niet_aan(self, taakshell: str, tmp_path: Path) -> None:
-        """Daar heet de namespace rig-ron en komt het secret uit sandbox:create-sops-age-secret;
+        """Daar heet de namespace rig-ron en komt hij uit sandbox:create-sops-age-secret;
         de guard hier is het bestaan van namespace-ron.yaml, dat alleen odcn heeft."""
-        bin_dir = _omgeving(tmp_path, "sandboxed-local", secret_bestaat=False)
+        bin_dir = _omgeving(tmp_path, "sandboxed-local")
         regels = _draai(_render(taakshell, "sandboxed-local"), tmp_path, bin_dir)
 
         assert not [r for r in regels if "rig-prd-ron" in r], regels

@@ -250,6 +250,10 @@ class Settings(BaseSettings):
     PROJECT_REPO_PASSWORD: str | None = None
     PROJECT_REPO_BRANCH: str = "main"
 
+    # Komma-gescheiden lijst URL-prefixen van helmfile- en chartbronnen die OPI kloont.
+    # Zie features/helmfile-single-app-deployment.md voor details.
+    RENDER_SOURCE_ALLOWLIST: str = ""
+
     # ArgoCD Applications Git repository - simplified to just URL and credentials
     GIT_ARGO_APPLICATIONS_URL: str = "ssh://git@localhost:2222/srv/git/argo-applications.git"
     GIT_ARGO_APPLICATIONS_PASSWORD: str | None = None

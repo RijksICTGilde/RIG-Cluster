@@ -89,8 +89,8 @@ uv run --project operations-manager/python python scripts/rotate-sops-key.py --a
 git -C /tmp/zad-projects log --oneline | head
 git -C /tmp/zad-projects diff --stat origin/HEAD
 
-# en de argo-clone moet een VOLLEDIGE render geven, met dezelfde vlaggen en dezelfde
-# mappenkeuze als de plugin gebruikt
+# en de argo-clone moet een VOLLEDIGE render geven, met dezelfde mappenkeuze als de plugin
+# gebruikt. De vlaggen zijn hier wel nodig: met de hand draait ksops, de plugin niet meer
 export SOPS_AGE_KEY="$(sed -n '3p' security/key.txt)"
 find /tmp/zad-argo -mindepth 2 -name kustomization.yaml -exec dirname {} \; | sort -u |
   while read -r folder; do
@@ -134,9 +134,16 @@ kubectl annotate application ron-infrastructure -n $NS argocd.argoproj.io/refres
 | de mailrelay deployt naar | `rig-ron` | `rig-prd-ron` |
 
 
-**Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie dragen er twee de platformsleutel: `rig-prd-operations` en `rig-prd-ron`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
+**Lees de dry-run van stap 5 regel voor regel: het zijn er MEER dan een.** `sops-age-key` is geen secret in een vaste namespace maar een naam die in veel namespaces voorkomt, want de plugin leest hem uit de namespace waar de applicatie naartoe deployt. Op productie draagt er sinds RC-351 een de platformsleutel: `rig-prd-operations`. Alle andere dragen een eigen projectsleutel en moeten met rust blijven. Draait er nog een cluster met de oude kopie in `rig-prd-ron`, dan komt die in de dry-run ook langs; die mag na de rotatie weg. Het script bepaalt dat verschil door te meten welke de OUDE publieke sleutel dragen; die twee lijsten zijn je controle. Het contract erachter staat in `instructions/sops-sleutel-in-het-cluster.md`.
 
-De handmatige sync is er omdat de plugin het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
+De handmatige sync is er omdat de tenant-sidecar het secret bij ELKE render leest: de eerste render na de wissel is het bewijs dat het goed staat.
+
+**De drie platform-apps hierboven renderen niet uit dat secret maar uit een mount** (de `cmp-platform`-sidecar, sinds RC-351). Een gemount Secret komt pas in de container aan nadat kubelet hem heeft ververst, dus een hard refresh direct na de wissel kan daar nog op de OUDE sleutel draaien. Herstart de repo-server voordat je die drie weegt:
+
+```bash
+kubectl -n $NS rollout restart deployment/argocd-repo-server
+kubectl -n $NS rollout status deployment/argocd-repo-server
+```
 
 **Waarom de configmap vóór het secret moet, en waarom hij altijd mee moet.** De twee git-wachtwoorden staan in `bootstrap/rig-system/kustomize/operations-manager/overlays/odcn-production/configmap.yaml` als `base64+age:`-waarden, en OPI ontsleutelt ze TIJDENS HET DRAAIEN met de sleutel uit `sops-age-key` (`opi/connectors/git.py:134`). Die map wordt door niemand gesynct; hij komt het cluster in via `kubectl apply`.
 

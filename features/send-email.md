@@ -432,21 +432,19 @@ plek om te kijken als de dienst niets doet.
    `infrastructure/bootstrap/infrastructure/postgresql/database/base/`, dus CNPG maakt
    ze ook op een al draaiend cluster aan zodra de wijziging synct.
 2. **De RON-namespace komt uit de bootstrap (ODCN).** De ArgoCD op ODCN draait in
-   namespaced mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert zelfs te
-   renderen zolang de doelnamespace of het sleutelsecret ontbreekt. De namespace staat
+   namespaced mode: hij kan geen Namespace-resource aanmaken, en de CMP weigert te
+   renderen zolang de doelnamespace ontbreekt. De namespace staat
    daarom als `namespace-ron.yaml` in de bootstrap-overlay
    (`bootstrap/rig-system/kustomize/overlays/odcn-production/`), met de RON-annotatie
    (`egress.projectcalico.org/egressGatewayPolicy: rig-ron`) en het
    `argocd.argoproj.io/managed-by`-label erop; `task bootstrap-argo-system CLUSTER_TYPE=odcn-production` past hem met
    kubectl toe, buiten ArgoCD om.
 
-   **Diezelfde taak zet sinds RC-261 ook het sleutelsecret in die namespace**: de CMP
-   leest `sops-age-key` in de namespace van de app, dus zonder hem rendert
-   `ron-infrastructure` niet en komt de relay er niet. Dat was handwerk en ontbrak dus op
-   elk cluster waar niemand die stap deed. De taak heeft de sleutel al in de hand
-   (`KEY_FILE`) en maakt het secret alleen aan als het er nog NIET is: een apply met de
-   lokale sleutel zou op een cluster met een andere platformsleutel een rotatie zijn, en
-   die loopt langs `scripts/set-sops-key-secret.py` (zie
+   **Een `sops-age-key` in die namespace is sinds RC-351 niet meer nodig.**
+   `ron-infrastructure` rendert op de platform-plugin, die de sleutel uit de mount in de
+   `cmp-platform`-sidecar leest in plaats van uit de bestemmingsnamespace. RC-261 zette
+   die kopie nog vanuit de bootstrap; die stap is vervallen, en een cluster dat het
+   secret nog heeft staan mag het na de uitrol met de hand weghalen (zie
    `instructions/sops-sleutel-in-het-cluster.md`).
 
 2b. **De eigen Application**: `- argocd-application-ron-infrastructure.yaml` in

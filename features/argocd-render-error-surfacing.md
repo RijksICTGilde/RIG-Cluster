@@ -61,6 +61,13 @@ the real error survives ArgoCD's truncation of long plugin output and is easy to
 env-vars (which hold secrets) are no longer dumped to the logs: the plugin logs only that
 it read them from `cmp-env.sops.yaml`, never the values.
 
+Noemt die stderr een bestand dat de plugin zelf heeft ontsleuteld (`zz-ksops-*.yaml` uit een
+ksops-generator, of een `*-helm-values.yaml`), dan meldt de eindregel alleen de bestandsnaam:
+`KUSTOMIZE BUILD FAILED in <folder>: fout in ontsleuteld bestand <naam>`. Kustomize citeert
+namelijk de regel waarop hij struikelde, en die inhoud is geheim. In alle andere gevallen gaat
+de stderr integraal mee, zoals hiervoor. Zie `features/helmfile-single-app-deployment.md` voor
+waarom de plugin die bestanden zelf ontsleutelt.
+
 ## Files
 
 | File | Purpose |

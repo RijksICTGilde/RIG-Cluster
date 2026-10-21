@@ -19,6 +19,12 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, get, list, patch, delete]
+  # De Role cmp-sops-key-reader die OPI naast elk sleutel-secret zet
+  # (sops.py, _apply_cmp_key_reader_role). Zonder deze regel geeft elke
+  # plaatsing van een sleutel Forbidden en faalt een nieuw project.
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, rolebindings]
+    verbs: [create, get, patch, update]
   # Prometheus kubelet scrape: role:node service-discovery + de kubelet
   # autoriseert /metrics en /metrics/cadvisor via een resource-SAR op
   # nodes/metrics (nonResourceURLs dekt dat NIET). Per ongeluk verwijderd in

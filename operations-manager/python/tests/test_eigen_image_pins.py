@@ -265,10 +265,13 @@ class TestDeSedRaaktElkeVerwijzing:
         subprocess.run(["sed", "-i", "-E", expressie, str(kopie)], check=True)
 
         na = [r.strip() for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r]
-        gepind = [r for r in na if r.endswith(f":{PROEFTAG}@{PROEFDIGEST}")]
-        assert len(gepind) == 1, na
+        # Elke verwijzing, niet alleen de eerste: de component en de odcn-overlay noemen de
+        # sidecar twee keer, voor cmp-server en voor cmp-platform.
+        assert [r for r in na if r.endswith(f":{PROEFTAG}@{PROEFDIGEST}")] == na
         # Het voorvoegsel blijft: de sandbox houdt ghcr.io, productie de rcr-spiegel.
-        assert gepind[0].split()[1].rsplit(":", 2)[0] == voor[0].split()[1].split("@")[0].rsplit(":", 1)[0]
+        assert [r.split()[1].rsplit(":", 2)[0] for r in na] == [
+            r.split()[1].split("@")[0].rsplit(":", 1)[0] for r in voor
+        ]
 
     def test_hij_laat_een_ander_image_in_hetzelfde_bestand_staan(self, tmp_path: Path) -> None:
         """De ArgoCD-CR draagt ook argocd-rig; die hoort deze pin niet mee te krijgen."""
@@ -290,4 +293,5 @@ class TestDeSedRaaktElkeVerwijzing:
         for _ in range(2):
             subprocess.run(["sed", "-i", "-E", expressie, str(kopie)], check=True)
 
-        assert kopie.read_text().count("@sha256:") == 1
+        verwijzingen = [r for r in kopie.read_text().splitlines() if "rig-cmp-argo-kustomize-sops" in r]
+        assert [r.count("@sha256:") for r in verwijzingen] == [1] * len(verwijzingen)

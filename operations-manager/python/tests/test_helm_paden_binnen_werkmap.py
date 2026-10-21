@@ -19,11 +19,18 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.config import settings
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.utils.fs_paths import reject_escaping_symlinks, safe_join, single_segment
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+@pytest.fixture(autouse=True)
+def _allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De clone-routes toetsen hun bron tegen de allowlist, en deze fixtures klonen van example.test."""
+    monkeypatch.setattr(settings, "RENDER_SOURCE_ALLOWLIST", "https://example.test", raising=False)
 
 
 def _manager() -> Any:
@@ -145,7 +152,7 @@ async def test_chart_dependency_buiten_de_clone_wordt_geweigerd(tmp_path: Path) 
     manager = _manager()
     with (
         patch("opi.connectors.git.GitConnector", _fake_git_connector(fill)),
-        pytest.raises(ValueError, match="valt buiten"),
+        pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
         await manager._clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "chart"},
@@ -203,7 +210,7 @@ async def test_chartpad_buiten_de_clone_wordt_geweigerd(tmp_path: Path) -> None:
     manager = _manager()
     with (
         patch("opi.connectors.git.GitConnector", _fake_git_connector(lambda root: _chart(root, "name: app\n"))),
-        pytest.raises(ValueError, match="valt buiten"),
+        pytest.raises(ValueError, match="buiten de gekloonde bron"),
     ):
         await manager._clone_helm_chart(
             {"name": "app", "git-url": "https://example.test/app.git", "chart-path": "/etc"},
@@ -287,7 +294,10 @@ async def test_helmfilepad_buiten_de_clone_wordt_geweigerd(tmp_path: Path) -> No
 
     manager = _manager()
     fake = _fake_git_connector(lambda root: (root / "helmfile.yaml").write_text("releases: []\n"))
-    with patch("opi.manager.project_manager.GitConnector", fake), pytest.raises(ValueError, match="valt buiten"):
+    with (
+        patch("opi.manager.project_manager.GitConnector", fake),
+        pytest.raises(ValueError, match="buiten de gekloonde bron"),
+    ):
         await manager._clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git", "path": "../../etc"},
             str(target),
@@ -302,7 +312,10 @@ async def test_helmfile_entry_buiten_het_pad_wordt_geweigerd(tmp_path: Path) -> 
 
     manager = _manager()
     fake = _fake_git_connector(lambda root: (root / "helmfile.yaml").write_text("releases: []\n"))
-    with patch("opi.manager.project_manager.GitConnector", fake), pytest.raises(ValueError, match="valt buiten"):
+    with (
+        patch("opi.manager.project_manager.GitConnector", fake),
+        pytest.raises(ValueError, match="buiten de gekloonde bron"),
+    ):
         await manager._clone_helmfile_source(
             {"name": "docs", "url": "https://example.test/infra.git", "entry": "/etc"},
             str(target),
