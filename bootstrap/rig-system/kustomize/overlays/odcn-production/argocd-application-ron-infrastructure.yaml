@@ -24,7 +24,7 @@ metadata:
   name: ron-infrastructure
   namespace: rig-system
 spec:
-  project: default
+  project: zad-platform
   source:
     repoURL: https://infrastructure@github.com/RijksICTGilde/RIG-Cluster.git
     path: infrastructure/bootstrap/infrastructure/mail/controller/overlays/odcn

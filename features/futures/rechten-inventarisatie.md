@@ -289,7 +289,7 @@ Aanvullende feiten:
 - `ADMIN_API_KEY` en `MASTER_API_KEY` worden nergens in `bootstrap/` of `infrastructure/` gezet. Zonder waarde antwoorden de bijbehorende 9 routes met 501 (`opi/api/endpoint_util.py:106-111` en `:147-152`). Waar ze in productie vandaan komen is buiten deze repository geregeld en is hier niet vastgesteld.
 - Een mislukte sleutelpoging levert één `logger.warning` met de routenaam en verder niets: geen aanroeper, geen adres, geen teller (`opi/api/endpoint_util.py:36, 49, 114, 155`). Een geslaagde poging levert een `logger.debug`.
 - De projectsleutel is leesbaar op de projectdetailpagina, achter een rolcontrole in de template (`opi/templates/project-details/section-config.html.j2:2` en `:38`). De handler ontsleutelt hem echter voor elk lid, ongeacht rol (`opi/web/router.py:1010-1015`), samen met de private AGE-sleutel van het project en de Keycloak-beheerderswachtwoorden.
-- Er is één bestaand, declaratief autorisatieobject dat ZAD zelf uitrolt: de ArgoCD `AppProject` per project (`operations-manager/python/manifests/argocd-appproject.yaml.jinja`). Die pint de bestemming op één namespace en één cluster, laat cluster-scoped resources helemaal niet toe, en laat namespaced resources onbeperkt toe binnen die namespace. `sourceRepos` staat op `'*'`.
+- Er is één bestaand, declaratief autorisatieobject dat ZAD zelf uitrolt: de ArgoCD `AppProject` per project (`operations-manager/python/manifests/argocd-appproject.yaml.jinja`). Die pint de bestemming op één namespace en één cluster, laat cluster-scoped resources helemaal niet toe, en laat namespaced resources onbeperkt toe binnen die namespace. `sourceRepos` draagt sinds RC-301 de repo-URL's van het project zelf in plaats van `'*'` (`features/argocd-appprojects.md`).
 
 ## 8. De gaten
 

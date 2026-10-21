@@ -11,8 +11,14 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   description: {{ ("Project for " ~ labels.project) | yaml_scalar }}
+  # Alleen de repo's van dit project, in dezelfde vorm als de Application ernaast ze
+  # noemt: de uitvoer van make_argocd_repository_url_unique, userinfo incluis.
   sourceRepos:
-    - '*'
+{% for source_repo in source_repos %}
+    - {{ source_repo | yaml_scalar }}
+{% else %}
+    []
+{% endfor %}
   destinations:
     - namespace: {{ destination.namespace | yaml_scalar }}
       server: "https://kubernetes.default.svc"

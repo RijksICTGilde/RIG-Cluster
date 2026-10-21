@@ -17,6 +17,11 @@ resources:
 - network-policies/argocd-network-policy.yaml
 - network-policies/emergency-restore-allow-all.yaml
 - ../../operations-manager/overlays/odcn-staging
+# De AppProjects: default dicht, en een begrensd project voor het app-of-apps en een voor
+# de platform-apps. De Applications hieronder verwijzen ernaar.
+- ../../appprojects
+- argocd-appproject-zad-app-of-apps.yaml
+- argocd-appproject-zad-platform.yaml
 - argocd-application-staging-infrastructure.yaml
 - argocd-application-user-applications.yaml
 # De geheimen uit de private repo zad-staging-secrets: de infrasecrets in deze namespace

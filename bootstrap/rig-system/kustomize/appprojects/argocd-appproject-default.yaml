@@ -1,0 +1,13 @@
+# AppProject default dicht: alle bronrepo's, bestemmingen en resource-soorten leeg.
+# Afwezig namespaceResourceWhitelist zou alles toestaan; leeg weigert alles (ArgoCD v3.5.1).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: rig-system
+spec:
+  description: Dicht. Elke Application hoort op een eigen, begrensd AppProject.
+  sourceRepos: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist: []

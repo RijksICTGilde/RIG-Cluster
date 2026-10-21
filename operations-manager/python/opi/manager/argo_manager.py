@@ -518,6 +518,16 @@ class ArgoManager:
             base_namespace = deployment.get("namespace")
             base_namespaces.add(base_namespace)
 
+        # De bronrepo's komen van ALLE deployments van dit cluster, niet van de gefilterde
+        # selectie hierboven: een AppProject wordt overschreven, en met alleen de repo van
+        # de ene deployment kan de Application van een andere in dezelfde namespace niet
+        # meer syncen.
+        source_repos_per_namespace = self._source_repos_per_namespace(
+            await self.project_manager.get_deployments(cluster_filter=True),
+            project_data.get("repositories", []),
+            project_name,
+        )
+
         git_connector_for_argocd = await self.project_manager.get_git_connector_for_argocd()
         working_dir = await git_connector_for_argocd.get_working_dir()
 
@@ -535,6 +545,7 @@ class ArgoManager:
                 namespace=get_argo_namespace(cluster_name),
                 destination_namespace=get_prefixed_namespace(cluster_name, base_destination_namespace),
                 project_label=project_name,
+                source_repos=source_repos_per_namespace.get(base_destination_namespace, []),
             )
 
             template_filename = "argocd-appproject.yaml.jinja"
@@ -548,8 +559,25 @@ class ArgoManager:
                 f"namespace {base_destination_namespace}: {appproject_file_path}"
             )
 
+    @staticmethod
+    def _source_repos_per_namespace(
+        deployments: list[dict[str, Any]], repositories: list[dict[str, Any]], project_name: str
+    ) -> dict[str, list[str]]:
+        """De bronrepo's per deployment-namespace, in de vorm die de Application gebruikt."""
+        found: dict[str, set[str]] = {}
+        for deployment in deployments:
+            repo_name = deployment.get("repository")
+            repo_info = next((r for r in repositories if r.get("name") == repo_name), None)
+            if not repo_info:
+                logger.error(f"Repository not found for AppProject sourceRepos: {repo_name}")
+                continue
+            namespace = str(deployment.get("namespace"))
+            unique_url = make_argocd_repository_url_unique(repo_info["url"], project_name)
+            found.setdefault(namespace, set()).add(unique_url)
+        return {namespace: sorted(urls) for namespace, urls in found.items()}
+
     def generate_appproject_manifest(
-        self, name: str, namespace: str, destination_namespace: str, project_label: str
+        self, name: str, namespace: str, destination_namespace: str, project_label: str, source_repos: list[str]
     ) -> str:
         """
         Generate an ArgoCD AppProject manifest using the template file.
@@ -559,6 +587,7 @@ class ArgoManager:
             namespace: ArgoCD namespace
             destination_namespace: Target namespace pattern (e.g., "project-*")
             project_label: Project label
+            source_repos: Repository URLs the project may deploy from
 
         Returns:
             String containing the YAML manifest
@@ -572,6 +601,7 @@ class ArgoManager:
             "namespace": namespace,
             "destination": {"namespace": destination_namespace},
             "labels": {"project": project_label},
+            "source_repos": source_repos,
         }
 
         # Read and process the manifest template
@@ -892,6 +922,7 @@ class ArgoManager:
                     namespace=get_argo_namespace(cluster_name),
                     destination_namespace=infrastructure_namespace,
                     project_label=project_name,
+                    source_repos=[repo_url],
                 )
 
                 appproject_filename = generate_infrastructure_argocd_appproject_filename(project_name)
