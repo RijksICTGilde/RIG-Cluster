@@ -350,20 +350,31 @@ class DomainConfigEnforcer:
                 "Een subdomein is vereist voor het gekozen URL-formaat",
             )
 
-        # Check if domain format (with dots) is compatible with the selected domain
-        if actual_domain and "." in domain_format:
+        # Beide (URL-formaat en subdomein) vallen onder dezelfde dots-regel per domein.
+        supports_dots = False
+        if actual_domain:
             supports_dots = get_domain_supports_dots(cluster, actual_domain)
             # For custom domains not in cluster config, check project-level config
             if not supports_dots and actual_domain.lower() not in supported:
                 custom_config = get_project_allowed_domain_config(value, actual_domain)
                 if custom_config:
                     supports_dots = custom_config.get("supports-dots", False)
-            if not supports_dots:
-                raise ValueError(
-                    f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
-                    f"Dit domein ({actual_domain}) ondersteunt punten niet. "
-                    f"Kies een ander URL-formaat of een ander domein."
-                )
+
+        if actual_domain and "." in domain_format and not supports_dots:
+            raise ValueError(
+                f"Het gekozen URL-formaat ondersteunt geen punten in de domeinnaam. "
+                f"Dit domein ({actual_domain}) ondersteunt punten niet. "
+                f"Kies een ander URL-formaat of een ander domein."
+            )
+
+        # Dezelfde guard als de reserveringscheck hieronder: een formaat zonder
+        # ``{subdomain}`` gebruikt de waarde niet, en een restwaarde hoort niets te blokkeren.
+        if subdomain and "." in subdomain and "{subdomain}" in template and not supports_dots:
+            raise FieldError(
+                domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index),
+                f"Dit domein ({resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))}) ondersteunt "
+                f"geen punten in het subdomein. Kies een subdomein zonder punten of een ander domein.",
+            )
 
         # De reserveringslijst hangt aan het domein, en alleen hier is dat bekend: de
         # veldvalidator krijgt het basisdomein niet mee. Twee valkuilen: een leeg
@@ -373,7 +384,9 @@ class DomainConfigEnforcer:
         # niet-blokkerende FieldWarning heft en de enforcer daarmee afsluit.
         if subdomain and "{subdomain}" in template:
             reserved_domain = resolve_domain_tail(actual_domain, get_ingress_postfix(cluster))
-            is_valid, error_msg = validate_subdomain_for_domain(subdomain, reserved_domain, cluster)
+            is_valid, error_msg = validate_subdomain_for_domain(
+                subdomain, reserved_domain, cluster, allow_dots=supports_dots
+            )
             if not is_valid and error_msg:
                 raise FieldError(domain_setting_path(DomainSetting.SUBDOMAIN, self.deployment_index), error_msg)
 
