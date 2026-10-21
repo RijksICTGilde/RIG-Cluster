@@ -40,7 +40,7 @@ live workloads).
 - ArgoCD operator-managed in `rig-prd-operations`; 1 application-controller, 2
   repo-servers, applicationset-controller **deployed but unused** (no webhook
   flags), 0 ApplicationSets.
-- Umbrella `user-applications`: project `default`, source
+- Umbrella `user-applications`: project `zad-app-of-apps` (as of RC-301), source
   `github.com/RijksICTGilde/argo-applications.git` path `odcn-production`, plugin
   `kustomize-sops-v1.0` env `KUSTOMIZE_FOLDERS=subfolders`,
   `automated.prune=true, selfHeal=true`. No `manifest-generate-paths`.

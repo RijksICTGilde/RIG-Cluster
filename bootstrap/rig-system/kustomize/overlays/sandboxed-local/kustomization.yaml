@@ -13,6 +13,11 @@ resources:
 - namespace.yaml
 - argocd-deployment.yaml
 - argocd-repo-forgejo-secret.yaml
+# De AppProjects: default dicht, en een begrensd project voor het app-of-apps en een voor
+# de platform-apps. De Applications hieronder verwijzen ernaar.
+- ../../appprojects
+- argocd-appproject-zad-app-of-apps.yaml
+- argocd-appproject-zad-platform.yaml
 - argocd-application-infrastructure.yaml
 - argocd-application-user-applications.yaml
 - argocd-application-ron-infrastructure.yaml

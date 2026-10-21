@@ -19,7 +19,7 @@ metadata:
   name: ron-infrastructure
   namespace: rig-system
 spec:
-  project: default
+  project: zad-platform
   source:
     repoURL: http://forgejo.rig-system.svc.cluster.local:3000/rig-admin/zad-argo-infrastructure.git
     path: bootstrap/infrastructure/mail/controller/overlays/sandboxed-local
