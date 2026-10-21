@@ -15,6 +15,7 @@ import tempfile
 from typing import TYPE_CHECKING, Any
 
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from opi.connectors.kubectl import KubectlConnector
@@ -114,7 +115,7 @@ class SopsHandler:
             from opi.core.config import settings
 
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.TEMP_DIR
+                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
                 temp_file.write(content)
                 temp_file_path = temp_file.name
@@ -161,15 +162,14 @@ class SopsHandler:
             from opi.core.config import settings
 
             with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".yaml", delete=False, dir=settings.TEMP_DIR
+                mode="w", suffix=".yaml", delete=False, dir=settings.SECRET_TEMP_DIR
             ) as temp_file:
                 temp_file.write(encrypted_content)
                 temp_file_path = temp_file.name
 
             try:
                 # Set the age key in environment for SOPS
-                env = os.environ.copy()
-                env["SOPS_AGE_KEY"] = private_key
+                env = child_env({"SOPS_AGE_KEY": private_key})
 
                 # Decrypt the file using SOPS
                 cmd = ["sops", "--decrypt", temp_file_path]
@@ -437,7 +437,7 @@ class SopsHandler:
             CompletedProcess result
         """
         if env is None:
-            env = os.environ.copy()
+            env = child_env()
 
         try:
             self.logger.debug(f"Running command: {' '.join(cmd)}")

@@ -11,7 +11,8 @@ Dit onderbouwt BIO2 v1.3 control 8.24: 8.24.01 vraagt registratie van waar welke
 ## Wat de sleutel vasthoudt
 
 ```
-platformsleutel  (security/key.txt = k8s secret `sops-age-key` = SOPS_AGE_KEY_CONTENT)
+platformsleutel  (security/key.txt = k8s secret `sops-age-key`, in de OPI-pod gemount
+                  op /var/run/secrets/zad/sops-age/key)
    |
    +-- elk SOPS-bestand dat deze sleutel als recipient heeft, in bootstrap/ en infrastructure/
    |

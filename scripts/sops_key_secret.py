@@ -150,10 +150,10 @@ async def write_secret(namespace: str, key_file: Path) -> None:
 
 
 async def restart_operations_manager(namespace: str) -> bool:
-    """Restart the operations-manager so it rereads its env var. Returns False when absent.
+    """Restart the operations-manager so it rereads the key. Returns False when absent.
 
-    The key arrives as an env var from ``secretKeyRef``, which is resolved once when the pod
-    starts, so without this it keeps using the old key until something else restarts it.
+    The key arrives as a mounted file that OPI reads once at startup, so without this it
+    keeps using the old key even after kubelet has refreshed the file.
     """
     kubectl = create_kubectl_connector()
     _out, _err, code = await kubectl.run_command(["get", "deployment", DEPLOYMENT, "-n", namespace])

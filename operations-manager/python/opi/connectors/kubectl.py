@@ -8,7 +8,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import re
 from datetime import UTC
 from typing import Any
@@ -21,6 +20,7 @@ from opi.core.config import settings
 from opi.generation.manifests import render_template_source
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
 from opi.utils.argocd_tracking import TrackedResource, tracked_resource_from_item
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ class KubectlConnector:
         logger.debug("Initializing KubectlConnector")
 
         # Setup env variables for kubectl
-        self.env = os.environ.copy()
+        self.env = child_env()
 
         # Test connection synchronously during initialization
         # This ensures isConnected is set before any commands are run
@@ -1131,7 +1131,7 @@ class KubectlConnector:
             args = ["sops", "--encrypt", "--age", public_key, file_path]
 
             process = await asyncio.create_subprocess_exec(
-                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=self.env
             )
 
             stdout, stderr = await process.communicate()

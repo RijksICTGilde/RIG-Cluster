@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -1396,6 +1397,7 @@ def _compute_ca_hash(cert_path: str) -> str | None:
             capture_output=True,
             text=True,
             check=True,
+            env=child_env(),
         )
     except subprocess.CalledProcessError, FileNotFoundError:
         return None

@@ -18,6 +18,7 @@ from typing import Any, ClassVar
 from urllib.parse import quote
 
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class MinioConnector:
         logger.debug("Initializing MinioConnector")
 
         # Setup environment variables for mc
-        self.env = os.environ.copy()
+        self.env = child_env()
 
         # Set MC_CONFIG_DIR if not already set via environment
         # This allows ConfigMap/env overrides while providing a sensible default

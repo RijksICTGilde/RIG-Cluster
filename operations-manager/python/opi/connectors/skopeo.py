@@ -20,6 +20,7 @@ from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.egress_guard import host_is_public
 from opi.utils.naming import REGISTRY_TAG_OWNER_RE, build_registry_tag, upstream_host
 from opi.utils.secrets import RegistrySecret
+from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -125,6 +126,7 @@ class SkopeoConnector:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=child_env(),
             )
             if result.returncode == 0:
                 self.is_skopeo_available = True
@@ -240,7 +242,7 @@ class SkopeoConnector:
             logger.info(f"Verifying registry access: {' '.join(cmd)}")
             try:
                 process = await asyncio.create_subprocess_exec(
-                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=child_env()
                 )
                 _stdout, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
             except TimeoutError:
@@ -306,6 +308,7 @@ class SkopeoConnector:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=child_env(),
             )
 
             stdout_bytes, stderr_bytes = await process.communicate()

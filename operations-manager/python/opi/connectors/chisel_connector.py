@@ -6,12 +6,13 @@ This infrastructure layer handles tunnel lifecycle, authentication, and port man
 """
 
 import logging
-import os
 import socket
 import subprocess
 import time
 from contextlib import contextmanager
 from typing import TypedDict
+
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ class ChiselConnector:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={**os.environ, "AUTH": self.auth},
+            env=child_env({"AUTH": self.auth}),
         )
 
         # Wait for tunnel to be ready

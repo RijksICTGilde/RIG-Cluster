@@ -25,6 +25,9 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: namespace-manager
+      # fsGroup: 1001 voor secret-mount; mode 0400 kan niet (kubelet beperking).
+      securityContext:
+        fsGroup: 1001
       containers:
       - name: operations-manager
         image: operations-manager:latest
@@ -94,6 +97,11 @@ spec:
           mountPath: /tmp
         - name: tmp
           mountPath: /var/tmp
+        - name: sops-age-key
+          mountPath: /var/run/secrets/zad/sops-age
+          readOnly: true
+        - name: secret-tmp
+          mountPath: /var/run/zad/secret-tmp
         # CA van argocd-server. Per cluster anders (service-CA op ODCN, eigen CA op sandbox).
         - name: argocd-ca-bundle
           mountPath: /etc/ssl/argocd
@@ -124,11 +132,12 @@ spec:
           value: "kubernetes.default.svc"
         - name: KUBERNETES_SERVICE_PORT
           value: "443"
-        - name: SOPS_AGE_KEY_CONTENT
-          valueFrom:
-            secretKeyRef:
-              name: sops-age-key
-              key: key
+        # De platformsleutel komt als bestand binnen en niet meer als env: een
+        # omgevingsvariabele staat in /proc/<pid>/environ van elk kindproces dat OPI start.
+        - name: SOPS_AGE_KEY_FILE
+          value: "/var/run/secrets/zad/sops-age/key"
+        - name: SECRET_TEMP_DIR
+          value: "/var/run/zad/secret-tmp"
         # Eén bron per wachtwoord: rechtstreeks uit het secret van de component zelf en niet uit een kopie die stil kan afwijken. Expliciete env wint van envFrom.
         - name: DATABASE_ADMIN_PASSWORD
           valueFrom:
@@ -188,6 +197,19 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 500Mi
+      - name: sops-age-key
+        secret:
+          secretName: sops-age-key
+          defaultMode: 0440
+          items:
+          - key: key
+            path: key
+      # Platte SOPS-inhoud gaat hier langs, dus in geheugen en niet op de schijf van de
+      # node zoals TEMP_DIR. Klein: er staat per keer een enkel document in.
+      - name: secret-tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Mi
       - name: argocd-ca-bundle
         configMap:
           name: argocd-ca-bundle
