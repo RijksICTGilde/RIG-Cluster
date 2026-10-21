@@ -41,10 +41,17 @@ def get_project_users(project_name: str) -> list[ProjectUser] | None:
     return project.users
 
 
-def is_user_authorized_for_project(project_name: str, user_email: str) -> bool:
-    """Check whether a user may access a project. Platform admins always may."""
+def is_user_authorized_for_project(project_name: str, user_email: str, audit: bool = True) -> bool:
+    """Check whether a user may access a project. Platform admins always may.
+
+    Geef ``audit=False`` mee in een lijst die dit per project vraagt: de INFO-regel moet
+    het spoor zijn van een geopend project, niet van elk project op het platform.
+    """
     if get_user_service().is_platform_admin(user_email):
-        logger.debug(f"User {user_email} authorized for project {project_name} (admin)")
+        if audit:
+            # INFO, anders is er met LOG_LEVEL=INFO in productie geen spoor van een
+            # platformbeheerder die een project opent waar hij geen lid van is.
+            logger.info(f"User {user_email} authorized for project {project_name} (admin)")
         return True
 
     users = get_project_users(project_name)

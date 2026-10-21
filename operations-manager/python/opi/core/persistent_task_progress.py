@@ -20,6 +20,7 @@ from opi.core.task_manager import (
     clamp_step_text,
     format_step_line,
 )
+from opi.utils.logging_redact import redact_text
 
 if TYPE_CHECKING:
     from opi.core.async_task_service import AsyncTaskService
@@ -105,13 +106,16 @@ class PersistentTaskProgressManager:
             raise
 
     async def _flush_to_db(self) -> None:
-        """Write the current local state to the database."""
+        """Write the current local state to the database; redact secrets in current_step and errors.
+
+        Dit is het enige punt waar die velden de manager verlaten naar de database en client.
+        """
         subtask_list = [
             {
                 "id": subtask_id,
                 "name": info["name"],
                 "status": info["status"],
-                "error": info.get("error"),
+                "error": redact_text(info["error"]) if info.get("error") else None,
                 "parent_id": info.get("parent_id"),
                 "subject": info.get("subject"),
             }
@@ -131,7 +135,7 @@ class PersistentTaskProgressManager:
 
         await self._task_service.update_progress(
             task_id=self._task_id,
-            current_step=self._current_step,
+            current_step=redact_text(self._current_step),
             progress_percent=progress_percent,
             subtasks=subtask_list or None,
             logs=self._logs or None,
@@ -349,6 +353,8 @@ class PersistentTaskProgressManager:
 
         Schedules the DB failure call as a fire-and-forget task.
         """
+        # Redactie hier: deze waarde gaat ook direct naar _fail_in_db, niet alleen via _flush_to_db.
+        error = redact_text(error)
         self._project_failure = error
         self.mark_legacy_failed(error)
 

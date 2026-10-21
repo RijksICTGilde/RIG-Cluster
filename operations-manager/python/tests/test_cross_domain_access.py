@@ -680,7 +680,9 @@ class TestSharedFormContext:
             "get_project_store",
             lambda: type("S", (), {"get_all": lambda self: projects})(),
         )
-        monkeypatch.setattr(context_mod, "is_user_authorized_for_project", lambda name, email: name != "verboden")
+        monkeypatch.setattr(
+            context_mod, "is_user_authorized_for_project", lambda name, email, audit=True: name != "verboden"
+        )
         return context_mod.build_cross_domain_context("u@example.com")
 
     def test_lists_authorized_peers(self, monkeypatch) -> None:

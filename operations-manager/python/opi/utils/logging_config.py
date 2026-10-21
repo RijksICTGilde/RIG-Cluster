@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from opi.core.flow_id import get_flow_id
-from opi.utils.logging_redact import redact_invite_key_in_path
+from opi.utils.logging_redact import SecretRedactionFilter, redact_invite_key_in_path
 
 # Replace the default LogRecord factory so that every record — regardless of
 # which logger, handler, or third-party library creates it — carries flow_id.
@@ -28,6 +28,14 @@ class HealthEndpointFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         return not any(f'"GET {path}' in message or f'"HEAD {path}' in message for path in self.EXCLUDED_PATHS)
+
+
+def _resolve_level(level: str) -> tuple[int, str | None]:
+    """Return the numeric level for ``level``, plus a warning when the name is unusable."""
+    resolved = logging.getLevelNamesMapping().get(level.strip().upper())
+    if resolved is None:
+        return logging.INFO, f"Unknown LOG_LEVEL '{level}', falling back to INFO"
+    return resolved, None
 
 
 class InviteKeyPathFilter(logging.Filter):
@@ -57,6 +65,7 @@ def setup_logging(
     log_file_path: str = "log.txt",
     log_errors_to_file: bool = False,
     log_errors_file_path: str = "/data/logs/errors.log",
+    level: str = "DEBUG",
 ) -> None:
     """
     Configure logging to output to stdout and optionally to file(s).
@@ -66,6 +75,7 @@ def setup_logging(
         log_file_path: Path to log file when file logging is enabled
         log_errors_to_file: Whether to write WARNING+ to a separate error log file
         log_errors_file_path: Path to error log file (should be on persistent storage)
+        level: Level name for the ``opi`` logger; an unknown name falls back to INFO
     """
     # Create logger configuration
     log_format = "%(asctime)s - %(name)s - %(levelname)s - [%(flow_id)s] %(message)s"
@@ -77,9 +87,15 @@ def setup_logging(
     # Set global log level to INFO to reduce noise from external packages
     root_logger.setLevel(logging.INFO)
 
-    # Set all OPI modules to DEBUG level for detailed application logging
+    # Het niveau van de opi-logger bepaalt wat er uit de applicatie komt; de handlers staan
+    # op DEBUG zodat deze instelling de enige grens is.
+    opi_level, level_warning = _resolve_level(level)
     opi_logger = logging.getLogger("opi")
-    opi_logger.setLevel(logging.DEBUG)
+    opi_logger.setLevel(opi_level)
+
+    # Tweede verdedigingslaag naast redact_sensitive_headers: maskeert een geheim dat toch
+    # in een bericht belandt, ook in dat van een bibliotheek.
+    redaction_filter = SecretRedactionFilter()
 
     # Filter out health endpoint requests from uvicorn access logs
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
@@ -90,7 +106,11 @@ def setup_logging(
     stdout_handler = logging.StreamHandler()
     stdout_handler.setLevel(logging.DEBUG)
     stdout_handler.setFormatter(logging.Formatter(log_format))
+    stdout_handler.addFilter(redaction_filter)
     root_logger.addHandler(stdout_handler)
+
+    if level_warning:
+        logging.warning(level_warning)  # noqa: LOG015
 
     # Add file handler if requested
     if log_to_file:
@@ -107,6 +127,7 @@ def setup_logging(
             )
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(logging.Formatter(log_format))
+            file_handler.addFilter(redaction_filter)
             root_logger.addHandler(file_handler)
 
             logging.info(f"File logging enabled: {log_file_path}")  # noqa: LOG015
@@ -131,6 +152,7 @@ def setup_logging(
             )
             error_file_handler.setLevel(logging.WARNING)
             error_file_handler.setFormatter(logging.Formatter(log_format))
+            error_file_handler.addFilter(redaction_filter)
             root_logger.addHandler(error_file_handler)
 
             logging.info(f"Error file logging enabled: {log_errors_file_path}")  # noqa: LOG015

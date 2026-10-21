@@ -21,6 +21,7 @@ from opi.core.task_rollout import PROCESSING_TASK_TYPES
 from opi.core.task_supersede import Scope, covers, scope_of
 from opi.services.persistence.async_tasks import AsyncTask
 from opi.services.persistence.project_reconciliation import ProjectReconciliation
+from opi.utils.logging_redact import redact_structure, redact_text
 
 logger = logging.getLogger(__name__)
 
@@ -411,6 +412,10 @@ class AsyncTaskService:
         the work that did succeed; a retry does not store it, because the next attempt
         writes its own.
         """
+        # De fouttekst komt uit een exceptie en gaat naar de database en naar de client,
+        # dus hij loopt langs hetzelfde filter als de logstroom.
+        error_message = redact_text(error_message)
+
         # Er is geen kolombreedte om voor af te knippen: ``error_message`` is TEXT, in de
         # baseline-migratie en in het ORM-model. Het commentaar dat hier stond ("varchar
         # 255") beschreef een kolom die er niet is, en de 255 tekens knipten een zin
@@ -448,7 +453,8 @@ class AsyncTaskService:
                     "completed_at": func.now(),
                 }
                 if result is not None:
-                    values["result"] = result
+                    # result en error_message staan beiden in het antwoord op GET /tasks/{id}.
+                    values["result"] = redact_structure(result)
                 # Prevent duplicate log entry: only first write logs.
                 overgang = await session.execute(
                     update(AsyncTask)

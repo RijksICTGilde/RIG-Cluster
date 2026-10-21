@@ -5,6 +5,8 @@ stayed there (now inside ProjectStore), the authorization checks moved to
 opi.services.project_authorization, and the platform-admin allowlist to UserService.
 """
 
+import logging
+
 import pytest
 from opi.services.project_authorization import (
     get_user_role_for_project,
@@ -79,3 +81,31 @@ class TestAdminEmails:
         get_user_service().add_platform_admins(["admin@example.com"])
         service.register("proj", "k", "f.yaml")
         assert get_user_role_for_project("proj", "admin@example.com") == "admin"
+
+
+class TestAdminAccessIsLogged:
+    """De INFO-regel is in productie het enige spoor van een platformbeheerder die een
+    project opent waar hij geen lid van is."""
+
+    def _info_lines(self, caplog) -> list[str]:
+        return [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "opi.services.project_authorization" and record.levelno == logging.INFO
+        ]
+
+    def test_admin_access_is_logged_at_info(self, service, caplog):
+        get_user_service().add_platform_admins(["admin@example.com"])
+        service.register("proj", "k", "f.yaml")
+        with caplog.at_level(logging.INFO, logger="opi.services.project_authorization"):
+            assert is_user_authorized_for_project("proj", "admin@example.com") is True
+        assert self._info_lines(caplog) == ["User admin@example.com authorized for project proj (admin)"]
+
+    def test_a_listing_logs_nothing_per_project(self, service, caplog):
+        # Anders levert een platformbeheerder die het overzicht opent een regel per project
+        # op het hele platform, zonder dat er een project geopend is.
+        get_user_service().add_platform_admins(["admin@example.com"])
+        service.register("proj", "k", "f.yaml")
+        with caplog.at_level(logging.INFO, logger="opi.services.project_authorization"):
+            assert is_user_authorized_for_project("proj", "admin@example.com", audit=False) is True
+        assert self._info_lines(caplog) == []

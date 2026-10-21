@@ -173,6 +173,43 @@ async def test_fail_permanent(orm_db):
     assert task["completed_at"]
 
 
+async def test_fail_task_maskeert_een_geheim_in_de_foutmelding(orm_db):
+    """De fouttekst van een exceptie gaat naar de database en naar de client, dus moet
+    hetzelfde filter passeren als de logstroom (RC-282)."""
+    svc = _svc()
+    created = await _create(svc)
+    await svc.fail_task(
+        created["task_id"],
+        error_message="Kan niet verbinden: postgresql://u@h/db?password=geheimwachtwoord",
+        attempt_count=3,
+        max_attempts=3,
+    )
+    task = await svc.get_task(created["task_id"])
+    assert "geheimwachtwoord" not in task["error_message"]
+    assert "***REDACTED***" in task["error_message"]
+
+
+async def test_fail_task_maskeert_een_geheim_in_het_resultaat(orm_db):
+    """``result`` draagt dezelfde fouttekst als ``error_message`` (de worker haalt die
+    juist uit ``result["error"]``) en staat ernaast in het antwoord van GET /tasks/{id},
+    dus zonder redactie loopt het geheim langs het veld ernaast weg."""
+    svc = _svc()
+    created = await _create(svc)
+    fout = "kubectl apply mislukt: password=geheimwachtwoord"
+    await svc.fail_task(
+        created["task_id"],
+        error_message=fout,
+        attempt_count=3,
+        max_attempts=3,
+        result={"status": "failed", "error": fout, "error_type": "kubectl_failed", "stappen": [fout]},
+    )
+    task = await svc.get_task(created["task_id"])
+    assert "geheimwachtwoord" not in str(task["result"])
+    assert "***REDACTED***" in task["result"]["error"]
+    assert "***REDACTED***" in task["result"]["stappen"][0]
+    assert task["result"]["error_type"] == "kubectl_failed"
+
+
 async def test_een_definitieve_fout_geeft_precies_een_regel(orm_db, caplog):
     """Een mislukte taak kwam twee keer langs ``fail_task``: eerst via ``fail_project``
     (persistent_task_progress, max_attempts=1), dan via de worker (max_attempts=0). Dat gaf

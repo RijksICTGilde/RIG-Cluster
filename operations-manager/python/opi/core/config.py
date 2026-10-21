@@ -299,6 +299,7 @@ class Settings(BaseSettings):
     EVENT_LOOP_LAG_WARNING_SECONDS: float = 1.0
 
     # Logging configuration
+    LOG_LEVEL: str = "DEBUG"  # Level van de opi-logger; productie staat op INFO
     LOG_TO_FILE: bool = False  # Enable file logging alongside stdout
     LOG_FILE_PATH: str = "log.txt"  # Path to log file when LOG_TO_FILE is enabled
     LOG_ERRORS_TO_FILE: bool = False  # Write WARNING+ to a separate persistent error log
@@ -708,9 +709,9 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
 
         logger.debug("Parsed SOPS age keys from environment content")
         if public_key:
-            logger.debug(f"Public key: {public_key[:10]}...")
+            logger.debug("Public key parsed")
         if private_key:
-            logger.debug(f"Private key: {private_key[:2]}...{private_key[-2:]}")
+            logger.debug("Private key parsed")
 
         return public_key, private_key
 
@@ -797,6 +798,7 @@ def _get_settings() -> Settings:
         log_file_path=settings.LOG_FILE_PATH,
         log_errors_to_file=settings.LOG_ERRORS_TO_FILE,
         log_errors_file_path=settings.LOG_ERRORS_FILE_PATH,
+        level=settings.LOG_LEVEL,
     )
 
     # Detailed logging for SOPS key configuration
@@ -822,7 +824,7 @@ def _get_settings() -> Settings:
             logger.info(f"Parsed public key: {public_key}")
         if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
             settings.SOPS_AGE_PRIVATE_KEY = private_key
-            logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
+            logger.info("Parsed private key")
 
         logger.info("Successfully parsed SOPS age keys from content")
     elif settings.SOPS_AGE_KEY_CONTENT:
@@ -845,14 +847,13 @@ def _get_settings() -> Settings:
                 logger.info(f"Parsed public key: {public_key}")
             if private_key and not settings.SOPS_AGE_PRIVATE_KEY:
                 settings.SOPS_AGE_PRIVATE_KEY = private_key
-                logger.info(f"Parsed private key: {private_key[:2]}...{private_key[-2:]}")
+                logger.info("Parsed private key")
 
             logger.info("Successfully parsed SOPS age keys from local file content")
 
-    # Log the API token for debugging
-    logger.debug(f"Settings loaded with API_TOKEN: {settings.API_TOKEN[:5]}... (first 5 chars)")
+    logger.debug(f"Settings loaded with API_TOKEN: {'SET' if settings.API_TOKEN else 'NOT SET'}")
     if settings.SOPS_AGE_PUBLIC_KEY:
-        logger.debug(f"SOPS public key available: {settings.SOPS_AGE_PUBLIC_KEY[:10]}...")
+        logger.debug("SOPS public key available")
     if settings.SOPS_AGE_PRIVATE_KEY:
         logger.debug("SOPS private key available")
 

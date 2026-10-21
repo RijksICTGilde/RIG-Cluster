@@ -338,9 +338,9 @@ class TestDeExitcodeWordtEenTaakfout:
 
 class TestMcHostUrl:
     def test_de_sleutels_worden_gecodeerd(self) -> None:
-        url = mc_host_url("http://minio:9000", "ak/with slash", "sk+with:colon@at")
+        url = mc_host_url("http://minio:9000", "ak/with slash", "secret+with:colon@at")
 
-        assert url == "http://ak%2Fwith%20slash:sk%2Bwith%3Acolon%40at@minio:9000"
+        assert url == "http://ak%2Fwith%20slash:secret%2Bwith%3Acolon%40at@minio:9000"
 
     def test_een_endpoint_zonder_schema_wordt_geweigerd(self) -> None:
         with pytest.raises(ValueError, match="scheme"):
