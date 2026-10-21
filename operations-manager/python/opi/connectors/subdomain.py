@@ -12,6 +12,7 @@ from typing import Any
 
 from opi.core.cluster_config import (
     CLUSTER_CONFIG,
+    get_domain_supports_dots,
     get_ingress_postfix,
     is_domain_subdomain_restricted,
     is_platform_domain,
@@ -567,9 +568,16 @@ SUBDOMAIN_MAX_LENGTH = 63
 SUBDOMAIN_MIN_LENGTH = 1
 SUBDOMAIN_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?\Z")
 
-#: Message for subdomains that don't match SUBDOMAIN_PATTERN. Used by validate_subdomain
-#: and configmodel; stored subdomains must be lowercase, or the manifest hostname differs.
+#: Message for subdomains that don't match SUBDOMAIN_PATTERN. Used by validate_subdomain;
+#: stored subdomains must be lowercase, or the manifest hostname differs.
 SUBDOMAIN_FORMAT_MESSAGE = "Subdomein mag alleen kleine letters (a-z), cijfers (0-9) en koppeltekens (-) bevatten"
+
+#: De melding bij de vormtoets van configmodel, die punten toelaat: of ze op een bepaald
+#: domein mogen, beslist de regel per domein (``supports-dots``) en niet de vorm (RC-362).
+DOTTED_SUBDOMAIN_FORMAT_MESSAGE = (
+    "Subdomein mag alleen kleine letters (a-z), cijfers (0-9), koppeltekens (-) en punten (.) bevatten, "
+    f"met per punt-gescheiden deel maximaal {SUBDOMAIN_MAX_LENGTH} tekens"
+)
 
 #: Domain name: two or more DNS-1123-labels separated by dots. Used by
 #: CustomDomainValidator and configmodel. Form validation only; support/approval is
@@ -905,7 +913,7 @@ def validate_subdomain(subdomain: str, language: str = "nl") -> tuple[bool, str 
 
 
 def validate_subdomain_for_domain(
-    subdomain: str, base_domain: str, cluster: str, language: str = "nl"
+    subdomain: str, base_domain: str, cluster: str, language: str = "nl", *, allow_dots: bool | None = None
 ) -> tuple[bool, str | None]:
     """Validate a subdomain for the base domain it is asked for.
 
@@ -917,13 +925,22 @@ def validate_subdomain_for_domain(
         base_domain: The base domain it is asked for (e.g., "rijks.app")
         cluster: The cluster deciding, whose managed zones define "ours"
         language: Language for error messages ("nl" for Dutch, "en" for English)
+        allow_dots: Override for the per-domain dots rule, for a caller that knows more
+            about the domain than the cluster config does (a project's own domain entry).
+            None asks the cluster config (RC-362)
 
     Returns:
         Tuple of (is_valid, error_message). If valid, error_message is None.
     """
-    is_valid, error_message = validate_subdomain(subdomain, language)
-    if not is_valid:
-        return False, error_message
+    if allow_dots is None:
+        allow_dots = get_domain_supports_dots(cluster, base_domain)
+
+    # Met punten heeft elk punt-gescheiden deel de vorm van een subdomein; de
+    # reserveringslijst hieronder geldt voor de naam als geheel.
+    for part in subdomain.split(".") if allow_dots else [subdomain]:
+        is_valid, error_message = validate_subdomain(part, language)
+        if not is_valid:
+            return False, error_message
 
     if subdomain.lower() in RESERVED_SUBDOMAINS and is_platform_domain(cluster, base_domain.lower()):
         message = RESERVED_MESSAGE_NL if language == "nl" else RESERVED_MESSAGE_EN

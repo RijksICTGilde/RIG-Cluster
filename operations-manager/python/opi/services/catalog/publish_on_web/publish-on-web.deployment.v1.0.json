@@ -93,7 +93,7 @@
         }
       ],
       "default": null,
-      "description": "The subdomain under the base domain, for the hostname formats that use one. On a platform-managed domain it is a request an administrator approves, so two projects cannot claim the same name; on a domain of your own no approval is involved -- which names exist there is your organisation's business. A DNS label: lowercase letters, digits and hyphens, at most 63 characters.",
+      "description": "The subdomain under the base domain, for the hostname formats that use one. On a platform-managed domain it is a request an administrator approves, so two projects cannot claim the same name; on a domain of your own no approval is involved; which names exist there is your organisation's business. One or more DNS labels separated by dots: lowercase letters, digits and hyphens, at most 63 characters per label. Dots only on a domain whose 'supports-dots' says so; a wildcard certificate covers one level only.",
       "title": "Subdomain"
     }
   },

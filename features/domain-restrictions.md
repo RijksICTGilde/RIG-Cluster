@@ -114,6 +114,8 @@ When a custom domain has an `issuer` field in its project config, that issuer is
 
 The `supports-dots` field controls whether dot-separated domain formats (like `component.deployment.domain`) are available. This is checked during both form rendering (format options) and validation (enforcer).
 
+It also decides whether the `subdomain` ITSELF may carry dots (`amt.bzk` under `rijksapp.nl`). The shape check accepts dots and the per-domain rule decides whether they are allowed, so both places (URL format and subdomain) follow one answer. Typing a dotted subdomain in the form is still refused: `SubdomainValidator` sees one label and never the domain. Wildcard certificates cover one level only, which is why the default is false.
+
 ## How it works technically
 
 1. **Cluster config** (`cluster_config.py`): Each domain entry has `restricted_subdomains: true/false`. Helper functions: `is_domain_subdomain_restricted()`, `get_restricted_subdomain_domains()`.
