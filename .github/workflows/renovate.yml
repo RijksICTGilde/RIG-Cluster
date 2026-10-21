@@ -31,5 +31,8 @@ jobs:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_REPOSITORIES: RijksICTGilde/RIG-Cluster
           RENOVATE_PLATFORM: github
+          # Het enige commando dat postUpgradeTasks mag draaien. Het schrijft de sha256-sommen
+          # bij een opgehoogde versie mee, want anders faalt de bouw op `sha256sum -c`.
+          RENOVATE_ALLOWED_COMMANDS: '["^python3 scripts/renovate_checksums\\.py$"]'
         with:
           token: ${{ secrets.RENOVATE_TOKEN }}

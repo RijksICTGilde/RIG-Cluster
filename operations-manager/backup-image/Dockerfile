@@ -27,6 +27,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 # Install Kopia - for encrypted backup/restore operations
 # Architectuur: was hardgecodeerd op "x64" terwijl deze image voor amd64 en arm64 gebouwd
 # wordt, dus arm64 kreeg een amd64-binary. Nu per TARGETARCH.
+# renovate: datasource=github-releases depName=kopia/kopia extractVersion=^v(?<version>.+)$
 ARG KOPIA_VERSION=0.23.1
 ARG TARGETARCH
 ARG KOPIA_SHA256_AMD64=416d0f84a3dbb321a8b2d8f0997b1a0a6e915babe79ee76fa6e4d2bd1e1c5178

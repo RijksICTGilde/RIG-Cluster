@@ -32,6 +32,15 @@ Toetsen: `operations-manager/python/tests/test_key_rotation_*.py`,
 `test_sops_rotation_round.py`, `test_argo_repository_secrets.py`, `test_pat_loose_values.py`,
 `test_set_sops_key_secret.py`.
 
+## De checksums bij een versie-ophoging
+
+`renovate_checksums.py` zet elke `ARG <TOOL>_SHA256_<ARCH>` in de Dockerfiles gelijk aan de versie
+die ernaast staat, zodat een PR die een binary ophoogt niet omvalt op `sha256sum -c`. Renovate
+draait het als `postUpgradeTasks`; met de hand kan ook. Het raakt alleen de sommen van een
+versie die in deze werkboom wijzigt, `--alles` rekent alles door. Zie `features/renovate.md` en
+`images/README.md`. Alleen de standaardbibliotheek, want op de Renovate-runner draait het als
+`python3`. Toets: `operations-manager/python/tests/test_renovate_checksums.py`.
+
 ## Een wachtwoord in een secret vervangen
 
 `task edit-secret`, of rechtstreeks:

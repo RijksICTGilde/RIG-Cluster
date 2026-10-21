@@ -59,6 +59,19 @@ build faalt en versiewijzigingen in een diff zichtbaar zijn. De volledige richtl
 
 Ophogen gaat altijd in één diff: een nieuwe versie zonder nieuwe sommen faalt de build.
 
+Meestal hoef je dat niet zelf te doen: Renovate stelt de nieuwe versie voor en draait
+`scripts/renovate_checksums.py` in dezelfde branch, zodat de sommen in dezelfde PR staan.
+Zie `features/renovate.md`. Hoog je zelf op, dan is datzelfde script de snelste weg, en
+hieronder staat wat het doet, zodat je het ook met de hand kunt nalopen:
+
+```bash
+python3 scripts/renovate_checksums.py images/mc/Dockerfile
+```
+
+Het script toetst geen handtekening. Punt 1 hieronder blijft dus handwerk: bij een
+Renovate-PR voor sops, kopia of helm-diff hoort de reviewer de handtekening bij die release
+te toetsen en in de PR te noemen welke, net als wie zelf ophoogt.
+
 1. Haal de sommen uit het checksumbestand dat het project zelf publiceert, bijvoorbeeld
    `checksums.txt` of `<artefact>.sha256sum` bij de release. Publiceert het project een
    handtekening (sops een sigstore-bundel, kopia een `checksums.txt.sig`, helm-diff een
@@ -70,6 +83,7 @@ Ophogen gaat altijd in één diff: een nieuwe versie zonder nieuwe sommen faalt 
 3. Bouw voor al die platforms en kijk of elke `sha256sum -c` er `OK` van maakt.
 
 `operations-manager/python/tests/test_dockerfile_downloads_hebben_een_checksum.py` bewaakt
-dat er geen download zonder checksum of zonder vaste versie bijkomt. De sleutel van een
-gesigneerde apt-repository staat daar in de uitzonderingslijst: apt toetst de pakketten
-daarna zelf tegen die sleutel.
+dat er geen download zonder checksum of zonder vaste versie bijkomt, en dat elke
+`ARG <NAAM>_VERSION` een `# renovate:`-annotatie heeft. De sleutel van een gesigneerde
+apt-repository staat daar in de uitzonderingslijst: apt toetst de pakketten daarna zelf
+tegen die sleutel.

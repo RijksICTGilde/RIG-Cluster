@@ -15,8 +15,11 @@ FROM python:3.14-slim AS base-system
 
 # Pin tool versions for deterministic builds and optimal layer caching.
 # Bump these ARGs when you need a newer version.
+# renovate: datasource=github-releases depName=getsops/sops
 ARG SOPS_VERSION=v3.13.3
+# renovate: datasource=github-releases depName=kopia/kopia extractVersion=^v(?<version>.+)$
 ARG KOPIA_VERSION=0.23.1
+# renovate: datasource=github-releases depName=jpillora/chisel extractVersion=^v(?<version>.+)$
 ARG CHISEL_VERSION=1.12.0
 
 # Set environment variables
