@@ -96,7 +96,8 @@ reden: zonder die regel toetst hij tegen de publieke roots en weigert hij de ver
 | `opi/manager/database_manager.py` | de toets of de opgeslagen credentials van een deployment nog werken |
 
 De waarden zijn die van libpq (`disable`, `allow`, `prefer`, `require`, `verify-ca`,
-`verify-full`). Een lokale ontwikkeldatabase zonder TLS zet hem op `disable`.
+`verify-full`). Een lokale ontwikkeldatabase zonder TLS zet hem op `disable`;
+`docker-compose.dev.yaml` doet dat voor de Postgres in die compose.
 
 Let op het verschil in parameternaam bij de URL-vormen: asyncpg leest `?ssl=`, psycopg2
 (Alembic) leest `?sslmode=`. De waarde is dezelfde.

@@ -48,8 +48,13 @@ services:
       - DEBUG=true
       - DEBUG_MODE=reload
 
-      # Database connection
-      - DATABASE_URL=postgresql://opi:devpassword@postgres:5432/opi
+      # Database connection. OPI leest deze vier settings.
+      - DATABASE_HOST=postgres
+      - DATABASE_NAME=opi
+      - DATABASE_ADMIN_NAME=opi
+      - DATABASE_ADMIN_PASSWORD=devpassword
+      # Deze compose-Postgres heeft geen TLS; in clusters doet CNPG dat met zijn interne CA.
+      - DATABASE_SSLMODE=disable
 
       # Authentication (disabled for local dev)
       - OIDC_DISABLED=true
