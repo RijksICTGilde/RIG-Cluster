@@ -15,6 +15,7 @@ Covers:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.postgres import SchemaInventory
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.minio_manager import MinioManager
@@ -263,6 +264,9 @@ class TestDatabaseCloneGenerationTracking:
         mock_postgres.create_database = AsyncMock(return_value={"status": "created"})
         mock_postgres.clone_schema = AsyncMock(return_value={"status": "success"})
         mock_postgres.execute_init_sql = AsyncMock(return_value={"status": "success"})
+        mock_postgres.describe_schemas = AsyncMock(
+            return_value=SchemaInventory(schemas=["public"], extension_namespaces=set(), public_objects=[])
+        )
 
         db_manager = DatabaseManager(
             mock_project_manager,
@@ -311,6 +315,9 @@ class TestDatabaseCloneGenerationTracking:
         mock_postgres.create_database = AsyncMock(return_value={"status": "created"})
         mock_postgres.clone_schema = AsyncMock(return_value={"status": "success"})
         mock_postgres.execute_init_sql = AsyncMock(return_value={"status": "success"})
+        mock_postgres.describe_schemas = AsyncMock(
+            return_value=SchemaInventory(schemas=["public"], extension_namespaces=set(), public_objects=[])
+        )
 
         db_manager = DatabaseManager(
             mock_project_manager,

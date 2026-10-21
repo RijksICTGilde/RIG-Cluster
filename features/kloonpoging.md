@@ -50,6 +50,11 @@ doelschema wordt geweigerd (`postgres.py:1842`) en zo'n schema droppen is niet v
 kan de enige kopie van de data zijn. Daarom houdt die staat de failover: dat kost een generatie,
 maar het alternatief is een deployment die elke run op dezelfde weigering stilstaat.
 
+De schema's die de applicatie zelf aanmaakte (RC-360) heten in de bron en in het doel
+hetzelfde, dus ze staan al onder hun doelnaam zodra pg_dump ze aanmaakt en zeggen niets over
+hoe ver de kloon kwam. De staat hierboven rekent daarom alleen met de schema's die hernoemen.
+Zo'n gelijknamig schema dat er nog staat gaat weg als kloonpuin, net als een bronnaam.
+
 Bij `type: deployment` gaat een schema onder de BRONnaam eerst weg bij het opnieuw klonen in
 dezelfde database (zonder dat weigert de volgende kloon op die naam, `postgres.py:1359` en
 `:1809`). Zo'n naam is afgeleid van een brondeployment en kan hier nooit live data zijn. Bij
@@ -66,6 +71,11 @@ voorkomen. De kloon wordt er alleen via `report_clone_performed` gemeld, zonder 
 
 ## Een half schema blijft niet liggen
 
+"De schema's van de kloon" zijn sinds RC-360 ook de schema's die de applicatie zelf in de
+brondatabase aanmaakte, want die gaan bij `type: deployment` mee
+(`features/kloon-alle-schemas.md`). De staat hieronder en de opruiming rekenen met
+dezelfde lijst, dus ze komen er vanzelf bij.
+
 Faalt een kloon in een database die er al stond, dan worden de schema's die deze poging
 aanmaakte weer weggegooid (ook het tussenschema onder de bronnaam). Alleen de namen van deze
 kloon komen in aanmerking: dit is een levende tenantdatabase, en de schemalijst bevat ook wat
@@ -79,7 +89,9 @@ Een proces dat halverwege hard stopt (OOM, pod weg) ruimt niets op. Heet het bro
 dan het doelschema, dan krijgt het doelschema zijn naam pas bij de laatste stap van de kloon en
 wordt een half gekopieerd schema ook dan niet voor afgerond aangezien. Heten ze hetzelfde (een
 `remote-source` met een bronschema met de doelnaam), dan is dat na een harde stop niet uit te
-sluiten: dan telt het schema als afgerond.
+sluiten: dan telt het schema als afgerond. De gelijknamige schema's van RC-360 vallen daarbuiten:
+die tellen nooit als afgerond, want er is altijd een schema dat wel hernoemt om de staat aan af
+te lezen.
 
 ## Wat niet verandert
 

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.postgres import PostgresExecutionError
+from opi.connectors.postgres import PostgresConnector, PostgresExecutionError, SchemaInventory
 from opi.core.config import settings
 from opi.handlers.project_file_handler import ProjectFileHandler
 from opi.manager.database_manager import DatabaseManager
@@ -78,6 +78,16 @@ class FakePostgres:
 
     async def list_schemas(self, database: str) -> list[dict[str, str]]:
         return [{"schema_name": name, "schema_owner": "x"} for name in sorted(self.schemas[database])]
+
+    async def describe_schemas(self, database: str) -> SchemaInventory:
+        return SchemaInventory(
+            schemas=[row["schema_name"] for row in await self.list_schemas(database)],
+            extension_namespaces=set(),
+            public_objects=[],
+        )
+
+    def validate_cloneable_schema_name(self, schema_name: str) -> str:
+        return PostgresConnector.validate_cloneable_schema_name(schema_name)
 
     async def create_schema(self, schema_name: str, database: str, owner: str) -> dict[str, str]:
         status = "exists" if schema_name in self.schemas[database] else "created"
@@ -456,6 +466,35 @@ async def test_an_interrupted_clone_into_a_database_without_its_schema_clones_in
     manager.project_manager.mark_clone_started.assert_awaited_once_with("staging")
 
 
+async def test_clone_source_validation_runs_before_app_schema_discovery() -> None:
+    """Een ontbrekende brondeployment moet de melding van _validate_clone_source geven, niet
+    de I/O-fout van het ontdekken van app-schema's (database_manager.py, RC-360): die loopt
+    over dezelfde bron en faalt voor dezelfde reden, maar met een onduidelijke melding."""
+    pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public"}})
+    manager, _ = _db_manager(pg)
+    manager._validate_clone_source = AsyncMock(side_effect=RuntimeError("source missing"))  # type: ignore[method-assign]
+    describe_schemas = AsyncMock(side_effect=pg.describe_schemas)
+    pg.describe_schemas = describe_schemas  # type: ignore[method-assign]
+    project = _project()
+
+    with pytest.raises(RuntimeError, match="source missing"):
+        await manager._ensure_database_state(
+            project_name="demo",
+            deployment_name="staging",
+            deployment=project["deployments"][1],
+            db_database=TARGET_DB,
+            db_schema=TARGET_DB,
+            db_username=TARGET_DB,
+            db_password="secret",
+            project_data=project,
+            force_clone_override=False,
+            generation=None,
+            clone_interrupted=False,
+        )
+
+    describe_schemas.assert_not_awaited()
+
+
 async def test_force_clone_still_gets_a_new_generation_during_an_interrupted_attempt() -> None:
     pg = FakePostgres({"demo_production": {"public"}, TARGET_DB: {"public", TARGET_DB}})
     manager, pm = _db_manager(pg)
@@ -530,6 +569,26 @@ async def test_an_interrupted_clone_drops_a_leftover_source_schema_and_clones_ag
     assert result.database == TARGET_DB, "geen nieuwe generatie"
     assert pg.clone_calls == [TARGET_DB]
     assert leftovers.isdisjoint(pg.schemas[TARGET_DB]), "de bronnamen zijn opgeruimd"
+    pm.mark_clone_started.assert_awaited_once_with("staging")
+
+
+@pytest.mark.parametrize(
+    "leftovers",
+    [{"peers"}, {"peers", "demo_production"}],
+    ids=["alleen-het-app-schema", "ook-het-bronschema"],
+)
+async def test_an_interrupted_clone_with_an_app_schema_resumes_in_the_same_database(leftovers: set[str]) -> None:
+    """Een app-schema (RC-360) heet in bron en doel hetzelfde, dus het staat al onder zijn
+    doelnaam zodra pg_dump het aanmaakt. Dat mag geen halve staat lijken: anders krijgt een
+    onderbroken kloon een nieuwe generatie, of loopt hij vast op het schema dat hij zelf liet staan."""
+    pg = FakePostgres({"demo_production": {"public", "peers"}, TARGET_DB: {"public", *leftovers}})
+    manager, pm = _db_manager(pg)
+
+    result = await _ensure(manager, interrupted=True)
+
+    assert result.database == TARGET_DB, "geen nieuwe generatie"
+    assert pg.clone_calls == [TARGET_DB]
+    assert pg.schemas[TARGET_DB] == {"public", TARGET_DB, "peers"}
     pm.mark_clone_started.assert_awaited_once_with("staging")
 
 

@@ -51,17 +51,15 @@ async def test_pgdump_clone_does_not_execute_injected_command(tmp_path: Path) ->
             source_username="src",
             source_password="Srcpass123",
             source_database="srcdb",
-            source_schema="public",
             target_host="target-host",
             target_port=5432,
             target_username="admin",
             target_password="Adminpass123",
             target_database="tgtdb",
-            target_schema="public",
             target_owner="owner",
             target_owner_password="Ownerpass123",
+            schema_pairs=[("public", "public")],
             force_clone=True,
-            schema_precreated=False,
         )
 
     assert not sentinel.exists(), (
@@ -87,17 +85,15 @@ async def test_pgdump_clone_injection_via_password(tmp_path: Path) -> None:
             source_username="src",
             source_password=payload,
             source_database="srcdb",
-            source_schema="public",
             target_host="target-host",
             target_port=5432,
             target_username="admin",
             target_password="Adminpass123",
             target_database="tgtdb",
-            target_schema="public",
             target_owner="owner",
             target_owner_password="Ownerpass123",
+            schema_pairs=[("public", "public")],
             force_clone=True,
-            schema_precreated=False,
         )
 
     assert not sentinel.exists(), "Command injection via source_password reached a shell"

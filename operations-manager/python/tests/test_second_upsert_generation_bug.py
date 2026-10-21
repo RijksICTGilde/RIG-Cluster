@@ -10,6 +10,7 @@ reusing the existing one.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.connectors.postgres import SchemaInventory
 from opi.manager.database_manager import DatabaseManager
 from opi.manager.revision_manager import RevisionManager
 from opi.utils.naming import generate_database_name
@@ -56,6 +57,9 @@ def mock_postgres_connector() -> MagicMock:
     connector.create_database = AsyncMock(return_value={"status": "created"})
     connector.clone_schema = AsyncMock(return_value={"status": "success"})
     connector.execute_init_sql = AsyncMock(return_value={"status": "success"})
+    connector.describe_schemas = AsyncMock(
+        return_value=SchemaInventory(schemas=["public"], extension_namespaces=set(), public_objects=[])
+    )
     return connector
 
 

@@ -396,6 +396,68 @@ class DatabaseManager:
             for entry in get_postgres_schemas(project_data)
         ]
 
+    async def _resolve_application_schemas(
+        self, *, source_database: str, platform_sources: set[str], platform_targets: set[str]
+    ) -> list[tuple[str, str]]:
+        """Discover and validate app-created schemas from the clone source to preserve them (RC-360).
+
+        Excludes: public, pg_*, extension namespaces (postInitSQL owns those in the target).
+        """
+        inventory = await self.postgres_connector.describe_schemas(source_database)
+        discovered = [
+            name
+            for name in inventory.schemas
+            if name != "public"
+            and not name.startswith("pg_")
+            and name not in platform_sources
+            and name not in inventory.extension_namespaces
+        ]
+
+        for name in sorted(inventory.extension_namespaces - platform_sources - {"public"}):
+            logger.info(f"Clone leaves schema {name} of {source_database} to postInitSQL: it holds an extension")
+
+        # Before the target gets anything: a name the platform cannot handle, or one that
+        # collides with a schema of this deployment, has to fail the whole clone. A half
+        # clone is the problem this solves.
+        for name in discovered:
+            try:
+                self.postgres_connector.validate_cloneable_schema_name(name)
+            except PostgresValidationError as err:
+                raise PostgresValidationError(
+                    f"Cannot clone {source_database}: {err}. Rename the schema in the source deployment, "
+                    "then clone again."
+                ) from err
+            if name in platform_targets:
+                raise PostgresValidationError(
+                    f"Cannot clone {source_database}: schema '{name}' has the same name as a schema this "
+                    "deployment gets of its own. Rename it in the source deployment, then clone again."
+                )
+
+        self._report_cloned_application_schemas(source_database, discovered, inventory.public_objects)
+        return [(name, name) for name in discovered]
+
+    def _report_cloned_application_schemas(
+        self, source_database: str, discovered: list[str], public_objects: list[str]
+    ) -> None:
+        """Say in the task progress which schemas ride along, and what public leaves behind."""
+        progress_manager = self.project_manager.get_progress_manager()
+        if discovered:
+            logger.info(f"Clone takes along the application schemas of {source_database}: {', '.join(discovered)}")
+            if progress_manager:
+                progress_manager.complete_task(
+                    progress_manager.add_task("Kloon", subject=f"ook {', '.join(discovered)}")
+                )
+        if public_objects:
+            objects = ", ".join(public_objects)
+            logger.warning(
+                f"Clone does not take the public schema of {source_database} along, so these objects stay "
+                f"behind: {objects}"
+            )
+            if progress_manager:
+                progress_manager.complete_task(
+                    progress_manager.add_task("Kloon", subject=f"public gaat niet mee: {objects}")
+                )
+
     async def _ensure_readonly_user(
         self,
         deployment_name: str,
@@ -835,6 +897,14 @@ class DatabaseManager:
             # STEP 1: Validate that source database and schema exist before cloning
             await self._validate_clone_source(source_database, source_schema)
 
+            # Schemas the application created itself (RC-360) ride along too, or the clone
+            # yields a database whose migration table claims work that is not there.
+            extra_clone_pairs += await self._resolve_application_schemas(
+                source_database=source_database,
+                platform_sources={source_schema, *(source for source, _ in extra_clone_pairs)},
+                platform_targets={db_schema, *(target for _, target in extra_clone_pairs)},
+            )
+
             # Check if target database exists by attempting to create it
             database_result = await self.postgres_connector.create_database(
                 database_name=db_database,
@@ -854,16 +924,18 @@ class DatabaseManager:
             resume_in_place = False
             leftover_source_schemas: set[str] = set()
             if target_db_exists and clone_interrupted and not force_clone:
-                target_schemas = {db_schema, *(target for _, target in extra_clone_pairs)}
+                clone_pairs = [(source_schema, db_schema), *extra_clone_pairs]
+                # Alleen de paren die hernoemen zeggen hoe ver de kloon kwam: een gelijknamig
+                # app-schema (RC-360) staat al na CREATE SCHEMA onder zijn doelnaam.
+                renamed_targets = {target for source, target in clone_pairs if source != target}
                 schemas_present = await self._schema_names(db_database)
-                clone_finished = target_schemas <= schemas_present
-                resume_in_place = target_schemas.isdisjoint(schemas_present)
+                clone_finished = renamed_targets <= schemas_present
+                resume_in_place = renamed_targets.isdisjoint(schemas_present)
                 if resume_in_place:
-                    # Een harde stop laat het bronschema liggen (pg_dump hernoemt pas aan het
-                    # eind, postgres.py:2046) en dat weigert de volgende kloon (:1809). Droppen
-                    # mag: zo'n naam hoort bij de brondeployment, hier nooit live data.
-                    source_names = {source_schema, *(source for source, _ in extra_clone_pairs)}
-                    leftover_source_schemas = (source_names - target_schemas) & schemas_present
+                    # Harde stop laat bronschema's staan (pg_dump hernoemt pas aan het eind); droppen
+                    # is veilig want ze horen bij de brondeployment, niet live data.
+                    source_names = {source for source, _ in clone_pairs}
+                    leftover_source_schemas = (source_names - renamed_targets) & schemas_present
 
             if target_db_exists and (
                 force_clone or (generation is None and not clone_finished and not resume_in_place)
