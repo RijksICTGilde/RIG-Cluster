@@ -57,9 +57,9 @@ data:
     LOG_TO_FILE=false
     USE_UNSAFE_API_KEY=false
 
-    # Dezelfde lijsten als productie; wie er tijdens de pentest bij mag, is een keuze die
-    # nog gemaakt moet worden.
-    ALLOWED_EMAILS=ravi.meijer@rijksoverheid.nl,maurits.mink@rijksoverheid.nl,sander.tervoert@odc-noord.nl,anne.schuth@rijksoverheid.nl,matthijs.beekman@rijksoverheid.nl,robbert.bos@rijksoverheid.nl
+    # Alleen wie staging beheert. Wie via ZAD zelf wordt toegevoegd of lid is van een
+    # project, komt daarnaast vanzelf in de allowlist.
+    ALLOWED_EMAILS=robbert.uittenbroek@rijksoverheid.nl,robbertuittenbroek@gmail.com
     ADMIN_EMAILS=robbert.bos@rijksoverheid.nl
     ENABLE_TRACEMALLOC=false
     ARGOCD_MANAGER=rig-staging-operations
