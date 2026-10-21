@@ -10,6 +10,7 @@ number directly.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from opi.core.project_schema import SchemaVersion, parse_schema_version, version_key
 from opi.services.catalog.image_registries.upstream import normalize_upstream
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
@@ -28,9 +29,17 @@ logger = logging.getLogger(__name__)
 #: patch in ``opi/schemas/project_legacy/``. ``check_schema_versions`` enforces that
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
-SCHEMA_VERSIONS: tuple[int | float, ...] = (1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9)
+SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
+    parse_schema_version(text) for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9")
+)
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
+
+#: De vorm waarin een versie in een projectbestand wordt weggeschreven: een string, zodat
+#: YAML er geen float van maakt en "2.10" niet als 2.1 terugkomt.
+LATEST_SCHEMA_VERSION_VALUE = version_key(LATEST_SCHEMA_VERSION)
+
+_V1, _V2 = SCHEMA_VERSIONS[0], SCHEMA_VERSIONS[1]
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -68,33 +77,36 @@ _STORAGE_SERVICE_TO_TYPE = {
 _STORAGE_TYPE_TO_SERVICE = {v: k for k, v in _STORAGE_SERVICE_TO_TYPE.items()}
 
 
-def detect_schema_version(project_data: dict[str, Any]) -> int | float:
+def detect_schema_version(project_data: dict[str, Any]) -> SchemaVersion:
     """
     Detect the schema version of a project file.
 
     Checks for an explicit `schema-version` field first. Falls back to
     structure detection: presence of `uses-services` on any component,
     helm-chart, helmfile, or deployment indicates v1.
+
+    Raises:
+        ProjectSchemaError: if `schema-version` is present but not MAJOR.MINOR.
     """
     if "schema-version" in project_data:
-        return project_data["schema-version"]
+        return parse_schema_version(project_data["schema-version"])
 
     # Structure detection for v1: check for uses-services on any entity
     for comp in project_data.get("components", []):
         if isinstance(comp, dict) and "uses-services" in comp:
-            return 1
+            return _V1
 
     for chart in project_data.get("helm-charts", []):
         if isinstance(chart, dict) and "uses-services" in chart:
-            return 1
+            return _V1
 
     for hf in project_data.get("helmfile", []):
         if isinstance(hf, dict) and "uses-services" in hf:
-            return 1
+            return _V1
 
     for dep in project_data.get("deployments", []):
         if isinstance(dep, dict) and "uses-services" in dep:
-            return 1
+            return _V1
 
     # No version field and no uses-services found - assume latest (v2).
     # Only files with explicit uses-services are v1.
@@ -116,7 +128,7 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     version = detect_schema_version(project_data)
     migrated = False
 
-    if version < 2:
+    if version < _V2:
         project_data = _migrate_v1_to_v2(project_data)
         migrated = True
     else:
@@ -132,7 +144,7 @@ def migrate_to_latest(project_data: dict[str, Any]) -> tuple[dict[str, Any], boo
     # elke stap een no-op was voldoet het bestand nu aan de nieuwste versie, dus dat hoort de
     # stamp te zeggen.
     if migrated or version < LATEST_SCHEMA_VERSION:
-        project_data["schema-version"] = LATEST_SCHEMA_VERSION
+        project_data["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
         migrated = True
 
     # Always run v2 fixups to clean up corruption from past bugs
@@ -182,7 +194,7 @@ def _migrate_v1_to_v2(project_data: dict[str, Any]) -> dict[str, Any]:
             continue
         _merge_uses_services_into_services(dep)
 
-    project_data["schema-version"] = LATEST_SCHEMA_VERSION
+    project_data["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
 
     logger.info(f"Migration to v2 complete for project '{project_name}'")
     return project_data
@@ -1280,16 +1292,16 @@ def _set_service_config(project_data: dict[str, Any], service_name: str, config:
 #: runs every step whose version is newer than the file's. Declaring it here rather than
 #: as a run of ``if version < X`` lines is what lets the schema check compare the chain
 #: against the schemas on disk, so a migration without a schema cannot slip through.
-MIGRATION_STEPS: tuple[tuple[int | float, Callable[[dict[str, Any]], bool]], ...] = (
-    (2.1, _migrate_v2_to_v2_1),
-    (2.2, _migrate_v2_1_to_v2_2),
-    (2.3, _migrate_v2_2_to_v2_3),
-    (2.4, normalize_service_entries),
-    (2.5, normalize_domains_location),
-    (2.6, relocate_invites_to_service),
-    (2.7, relocate_domain_settings_to_service),
-    (2.8, remove_domain_mode),
-    (2.9, relocate_registries_to_service),
+MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], ...] = (
+    (parse_schema_version("2.1"), _migrate_v2_to_v2_1),
+    (parse_schema_version("2.2"), _migrate_v2_1_to_v2_2),
+    (parse_schema_version("2.3"), _migrate_v2_2_to_v2_3),
+    (parse_schema_version("2.4"), normalize_service_entries),
+    (parse_schema_version("2.5"), normalize_domains_location),
+    (parse_schema_version("2.6"), relocate_invites_to_service),
+    (parse_schema_version("2.7"), relocate_domain_settings_to_service),
+    (parse_schema_version("2.8"), remove_domain_mode),
+    (parse_schema_version("2.9"), relocate_registries_to_service),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and
