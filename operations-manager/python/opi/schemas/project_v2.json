@@ -3,7 +3,7 @@
   "$id": "https://zad.rijksapp.dev/schemas/project-v2.json",
   "title": "ZAD Project File (v2.9)",
   "description": "Schema for ZAD self-service project definition files at the LATEST schema version. Older versions are not described here: they are composed from this file plus the legacy patches in schemas/project_legacy/ (see opi/core/project_schema.py). Anything an existing migration already removes belongs in the patch of the version that still carried it, not here.",
-  "x-zad-schema-version": 2.9,
+  "x-zad-schema-version": "2.9",
   "type": "object",
   "required": ["name"],
   "additionalProperties": false,
@@ -11,7 +11,11 @@
     "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*\\Z", "maxLength": 30 },
     "display-name": { "type": "string" },
     "description": { "type": "string" },
-    "schema-version": { "type": "number" },
+    "schema-version": {
+      "type": ["number", "string"],
+      "pattern": "^[0-9]+(\\.[0-9]+)?$",
+      "description": "De schemaversie als MAJOR.MINOR. Een nieuwe versie wordt als string geschreven, zodat 2.10 niet als het getal 2.1 terugkomt."
+    },
     "clusters": {
       "type": "array",
       "items": { "type": "string" }

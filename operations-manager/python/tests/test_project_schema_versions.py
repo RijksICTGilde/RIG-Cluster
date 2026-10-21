@@ -28,21 +28,28 @@ from opi.core.project_schema import (
     LEGACY_PATCH_DIR,
     SCHEMA_PATH,
     ProjectSchemaError,
+    SchemaVersion,
     check_schema_versions,
     known_schema_versions,
     latest_schema_version,
+    parse_schema_version,
     validate_declared_project_schema,
     validate_project_schema,
     version_key,
 )
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, MIGRATION_STEPS, SCHEMA_VERSIONS
+from opi.services.schema_migration import (
+    LATEST_SCHEMA_VERSION,
+    LATEST_SCHEMA_VERSION_VALUE,
+    MIGRATION_STEPS,
+    SCHEMA_VERSIONS,
+)
 
 
 def _project(**extra: object) -> dict:
     """Minimal project that validates at every version."""
     base: dict = {
         "name": "voorbeeld",
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "users": [{"email": "admin@rijksoverheid.nl", "role": "admin"}],
         "components": [{"name": "frontend", "type": "deployment"}],
     }
@@ -58,7 +65,7 @@ class TestSchemaSetCompleteness:
         assert latest_schema_version() == LATEST_SCHEMA_VERSION
 
     def test_known_versions_are_exactly_the_migration_chain(self) -> None:
-        assert known_schema_versions() == tuple(float(v) for v in SCHEMA_VERSIONS)
+        assert known_schema_versions() == SCHEMA_VERSIONS
 
     def test_a_new_migration_without_a_schema_fails_loudly(self) -> None:
         # The situation this guards: someone adds the next migration and forgets the
@@ -66,18 +73,17 @@ class TestSchemaSetCompleteness:
         # nobody noticing; instead startup stops here. The version used is deliberately one
         # past the real chain, so this test does not have to be touched again when a
         # migration lands (which is exactly what happened when 2.7 became real).
-        next_version = round(float(SCHEMA_VERSIONS[-1]) + 0.1, 1)
-        # Op de naam zoals de code hem schrijft, niet zoals Python hem afdrukt: bij 3.0
-        # zijn dat twee verschillende dingen ("3" tegen "3.0").
+        latest = SCHEMA_VERSIONS[-1]
+        next_version = SchemaVersion(latest.major, latest.minor + 1)
         with pytest.raises(ProjectSchemaError, match=re.escape(version_key(next_version))):
             check_schema_versions((*SCHEMA_VERSIONS, next_version))
 
     def test_a_gap_in_the_chain_fails_loudly(self) -> None:
         with pytest.raises(ProjectSchemaError, match=r"2\.15"):
-            check_schema_versions((*SCHEMA_VERSIONS[:-1], 2.15, SCHEMA_VERSIONS[-1]))
+            check_schema_versions((*SCHEMA_VERSIONS[:-1], parse_schema_version("2.15"), SCHEMA_VERSIONS[-1]))
 
     def test_a_schema_without_a_migration_fails_loudly(self) -> None:
-        chain = tuple(v for v in SCHEMA_VERSIONS if v != 2.4)
+        chain = tuple(v for v in SCHEMA_VERSIONS if v != parse_schema_version("2.4"))
         with pytest.raises(ProjectSchemaError, match=r"2\.4"):
             check_schema_versions(chain)
 
@@ -85,14 +91,14 @@ class TestSchemaSetCompleteness:
         assert tuple(v for v, _ in MIGRATION_STEPS) == SCHEMA_VERSIONS[2:]
 
     @pytest.mark.parametrize("version", [v for v in SCHEMA_VERSIONS if v != LATEST_SCHEMA_VERSION])
-    def test_each_legacy_patch_is_a_json_object(self, version: float) -> None:
+    def test_each_legacy_patch_is_a_json_object(self, version: SchemaVersion) -> None:
         patch = json.loads((LEGACY_PATCH_DIR / f"v{version_key(version)}.json").read_text(encoding="utf-8"))
         assert isinstance(patch, dict)
         assert patch.get("$comment"), "a patch must say which migration it is the schema side of"
 
     @pytest.mark.parametrize("version", SCHEMA_VERSIONS)
-    def test_a_minimal_project_validates_at_every_version(self, version: float) -> None:
-        validate_project_schema(_project(**{"schema-version": version}), schema_version=float(version))
+    def test_a_minimal_project_validates_at_every_version(self, version: SchemaVersion) -> None:
+        validate_project_schema(_project(**{"schema-version": version_key(version)}), schema_version=version)
 
 
 class TestDeclaredVersionGate:
@@ -108,9 +114,9 @@ class TestDeclaredVersionGate:
         with pytest.raises(ProjectSchemaError, match="onbekend"):
             validate_declared_project_schema(_project(**{"schema-version": 99}))
 
-    def test_non_numeric_version_is_refused(self) -> None:
+    def test_malformed_version_is_refused(self) -> None:
         with pytest.raises(ProjectSchemaError, match="schema-version"):
-            validate_declared_project_schema(_project(**{"schema-version": "2.6"}))
+            validate_declared_project_schema(_project(**{"schema-version": "2.x"}))
 
     def test_boolean_version_is_refused(self) -> None:
         # bool is an int subclass; a YAML `schema-version: true` must not pass for 1.
@@ -142,45 +148,45 @@ class TestMigrationsCanBeFinished:
 
     def test_keycloak_config_block_accepted_at_2_2_rejected_at_2_3(self) -> None:
         data = _project(config={"keycloak": [{"host": "https://kc", "realm": "r", "username": "u"}]})
-        validate_project_schema(data, schema_version=2.2)
+        validate_project_schema(data, schema_version=parse_schema_version("2.2"))
         with pytest.raises(ProjectSchemaError, match="config"):
-            validate_project_schema(data, schema_version=2.3)
+            validate_project_schema(data, schema_version=parse_schema_version("2.3"))
 
     def test_string_path_accepted_at_2_1_rejected_at_2_2(self) -> None:
         data = _project(components=[{"name": "frontend", "path": "/api", "rewrite-path": "/"}])
-        validate_project_schema(data, schema_version=2.1)
+        validate_project_schema(data, schema_version=parse_schema_version("2.1"))
         with pytest.raises(ProjectSchemaError, match="path"):
-            validate_project_schema(data, schema_version=2.2)
+            validate_project_schema(data, schema_version=parse_schema_version("2.2"))
 
     def test_component_root_flag_accepted_at_2_rejected_at_2_1(self) -> None:
         data = _project(components=[{"name": "frontend", "root": True}])
-        validate_project_schema(data, schema_version=2)
+        validate_project_schema(data, schema_version=parse_schema_version("2"))
         with pytest.raises(ProjectSchemaError, match="root"):
-            validate_project_schema(data, schema_version=2.1)
+            validate_project_schema(data, schema_version=parse_schema_version("2.1"))
 
     def test_root_domains_block_accepted_at_2_4_rejected_at_2_5(self) -> None:
         data = _project(domains={"allowed-domains": [{"domain": "rijksapps.nl", "status": "approved"}]})
-        validate_project_schema(data, schema_version=2.4)
+        validate_project_schema(data, schema_version=parse_schema_version("2.4"))
         with pytest.raises(ProjectSchemaError, match="domains"):
-            validate_project_schema(data, schema_version=2.5)
+            validate_project_schema(data, schema_version=parse_schema_version("2.5"))
 
     def test_root_invites_block_accepted_at_2_5_rejected_at_2_6(self) -> None:
         data = _project(invites={"settings": {"default_language": "nl"}, "active": []})
-        validate_project_schema(data, schema_version=2.5)
+        validate_project_schema(data, schema_version=parse_schema_version("2.5"))
         with pytest.raises(ProjectSchemaError, match="invites"):
-            validate_project_schema(data, schema_version=2.6)
+            validate_project_schema(data, schema_version=parse_schema_version("2.6"))
 
     def test_uses_services_accepted_at_v1_rejected_at_v2(self) -> None:
         data = _project(components=[{"name": "frontend", "uses-services": ["publish-on-web"]}])
-        validate_project_schema(data, schema_version=1)
+        validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="uses-services"):
-            validate_project_schema(data, schema_version=2)
+            validate_project_schema(data, schema_version=parse_schema_version("2"))
 
     def test_v0_publish_on_web_boolean_accepted_at_v1_rejected_at_v2(self) -> None:
         data = _project(components=[{"name": "frontend", "publish-on-web": True}])
-        validate_project_schema(data, schema_version=1)
+        validate_project_schema(data, schema_version=parse_schema_version("1"))
         with pytest.raises(ProjectSchemaError, match="publish-on-web"):
-            validate_project_schema(data, schema_version=2)
+            validate_project_schema(data, schema_version=parse_schema_version("2"))
 
     def test_the_newest_schema_is_the_newest_shape_only(self) -> None:
         # The regression this locks: someone re-adds a legacy form to the newest

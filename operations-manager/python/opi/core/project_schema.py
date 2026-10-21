@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from dataclasses import dataclass
 from functools import cache, lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -86,9 +88,49 @@ class ProjectIntegrityError(Exception):
     """
 
 
-def version_key(version: int | float) -> str:
+#: Een schemaversie als tekst: MAJOR, of MAJOR.MINOR. Het aantal cijfers is begrensd omdat
+#: int() boven 4300 cijfers een ValueError geeft, en dit pad hoort altijd ProjectSchemaError
+#: te geven: de gate in git_monitor vangt alleen die, en de waarde komt uit een projectbestand.
+_VERSION_TEXT = re.compile(r"^(\d{1,9})(?:\.(\d{1,9}))?$")
+
+
+@dataclass(frozen=True, order=True)
+class SchemaVersion:
+    """Een schemaversie als MAJOR.MINOR, vergeleken per deel: 2.10 is nieuwer dan 2.9.
+
+    Een float wordt via zijn tekstvorm gelezen, dus de float ``2.1`` is altijd (2, 1) en
+    alleen de string ``"2.10"`` is (2, 10). Daarom schrijft OPI een nieuwe versie als
+    string weg: als getal zou 2.10 gelijk zijn aan 2.1.
+    """
+
+    major: int
+    minor: int = 0
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}" if self.minor else str(self.major)
+
+
+def parse_schema_version(version: SchemaVersion | int | float | str) -> SchemaVersion:
+    """Lees een schemaversie uit een getal, een float of tekst.
+
+    Raises:
+        ProjectSchemaError: bij een waarde die geen MAJOR of MAJOR.MINOR is. De waarde
+            zelf komt niet in de melding: hij komt uit een projectbestand.
+    """
+    if isinstance(version, SchemaVersion):
+        return version
+    text = f"{version:g}" if isinstance(version, float) else str(version)
+    match = None if isinstance(version, bool) else _VERSION_TEXT.match(text)
+    if match is None:
+        raise ProjectSchemaError(
+            "Een schemaversie moet de vorm MAJOR of MAJOR.MINOR hebben, met hoogstens negen cijfers per deel."
+        )
+    return SchemaVersion(int(match.group(1)), int(match.group(2) or 0))
+
+
+def version_key(version: SchemaVersion | int | float | str) -> str:
     """Canonical file-name key for a schema version: 2.0 -> "2", 2.6 -> "2.6"."""
-    return f"{float(version):g}"
+    return str(parse_schema_version(version))
 
 
 @lru_cache(maxsize=1)
@@ -98,23 +140,23 @@ def _load_latest_schema() -> dict[str, Any]:
     return schema
 
 
-def latest_schema_version() -> float:
+def latest_schema_version() -> SchemaVersion:
     """The version the committed latest schema describes."""
     version = _load_latest_schema().get(SCHEMA_VERSION_KEY)
-    if not isinstance(version, int | float):
+    if not isinstance(version, int | float | str) or isinstance(version, bool):
         raise ProjectSchemaError(
             f"Het projectschema mist de annotatie '{SCHEMA_VERSION_KEY}'; de schemaversie is niet vast te stellen."
         )
-    return float(version)
+    return parse_schema_version(version)
 
 
 @lru_cache(maxsize=1)
-def _legacy_patch_versions() -> tuple[float, ...]:
+def _legacy_patch_versions() -> tuple[SchemaVersion, ...]:
     """Versions that have a legacy patch on disk, oldest first."""
-    return tuple(sorted(float(path.stem[1:]) for path in LEGACY_PATCH_DIR.glob("v*.json")))
+    return tuple(sorted(parse_schema_version(path.stem[1:]) for path in LEGACY_PATCH_DIR.glob("v*.json")))
 
 
-def known_schema_versions() -> tuple[float, ...]:
+def known_schema_versions() -> tuple[SchemaVersion, ...]:
     """Every schema version this build can validate against, oldest first."""
     return (*_legacy_patch_versions(), latest_schema_version())
 
@@ -135,7 +177,7 @@ def _merge_patch(target: Any, patch: Any) -> Any:
 
 
 @cache
-def _get_validator(version: float | None = None) -> Draft202012Validator:
+def _get_validator(version: SchemaVersion | None = None) -> Draft202012Validator:
     """Validator for one schema version. ``None`` means the latest.
 
     An older version is composed by applying every legacy patch from the latest
@@ -145,7 +187,7 @@ def _get_validator(version: float | None = None) -> Draft202012Validator:
     if version is not None and version != latest_schema_version():
         if version not in _legacy_patch_versions():
             raise ProjectSchemaError(
-                f"Onbekende schemaversie '{version}': er is geen schema voor deze versie. "
+                f"Onbekende schemaversie '{version_key(version)}': er is geen schema voor deze versie. "
                 f"Bekende versies: {', '.join(version_key(v) for v in known_schema_versions())}."
             )
         for patch_version in sorted(_legacy_patch_versions(), reverse=True):
@@ -160,7 +202,7 @@ def _get_validator(version: float | None = None) -> Draft202012Validator:
     return Draft202012Validator(schema, format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
-def check_schema_versions(migration_versions: tuple[int | float, ...]) -> None:
+def check_schema_versions(migration_versions: tuple[SchemaVersion, ...]) -> None:
     """Fail loudly when a migration exists without a schema for its version.
 
     ``migration_versions`` is the full chain a project file can be stamped with
@@ -173,19 +215,19 @@ def check_schema_versions(migration_versions: tuple[int | float, ...]) -> None:
         ProjectSchemaError: if the chain and the schemas on disk disagree.
     """
     latest = latest_schema_version()
-    if float(migration_versions[-1]) != latest:
+    if migration_versions[-1] != latest:
         raise ProjectSchemaError(
             f"Het projectschema beschrijft versie {version_key(latest)} maar de migratieketen eindigt op "
             f"{version_key(migration_versions[-1])}; werk project_v2.json bij of voeg de ontbrekende migratie toe."
         )
     known = set(known_schema_versions())
-    missing = [version_key(v) for v in migration_versions if float(v) not in known]
+    missing = [version_key(v) for v in migration_versions if v not in known]
     if missing:
         raise ProjectSchemaError(
             f"Geen schema voor schemaversie(s) {', '.join(missing)}: voeg "
             f"opi/schemas/project_legacy/v<versie>.json toe voor elke migratie."
         )
-    extra = [version_key(v) for v in sorted(known) if v not in {float(m) for m in migration_versions}]
+    extra = [version_key(v) for v in sorted(known) if v not in set(migration_versions)]
     if extra:
         raise ProjectSchemaError(
             f"Schema aanwezig voor onbekende versie(s) {', '.join(extra)}: die staan niet in de migratieketen."
@@ -221,7 +263,7 @@ def _describe_violation(error: ValidationError) -> str:
     return reasons.get(keyword, f"de waarde is afgekeurd door schemaregel '{keyword}'")
 
 
-def validate_project_schema(project_data: dict[str, Any], *, schema_version: float | None = None) -> None:
+def validate_project_schema(project_data: dict[str, Any], *, schema_version: SchemaVersion | None = None) -> None:
     """Validate a parsed project dict against the project schema.
 
     Args:
@@ -273,7 +315,7 @@ def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
     the file declares removes that pressure without opening the gate.
 
     The declared version comes from the same untrusted file, so it is treated as
-    input, not as a hint: a missing, non-numeric or unknown ``schema-version``
+    input, not as a hint: a missing, malformed or unknown ``schema-version``
     is a rejection. There is deliberately no fallback to the newest schema (that
     would let an old file through against rules it never had to meet) and none to
     the loosest (that would let anything through by declaring version 1).
@@ -283,18 +325,23 @@ def validate_declared_project_schema(project_data: dict[str, Any]) -> None:
     """
     project_name = project_data.get("name", "(onbekend)") if isinstance(project_data, dict) else "(onbekend)"
     declared = project_data.get("schema-version") if isinstance(project_data, dict) else None
-    if not isinstance(declared, int | float) or isinstance(declared, bool):
+    invalid = ProjectSchemaError(
+        f"Projectbestand '{project_name}' is afgekeurd: het declareert geen geldige 'schema-version'. "
+        f"Een projectbestand moet zijn schemaversie noemen, zodat het tegen het schema van die versie "
+        f"gecontroleerd kan worden."
+    )
+    if not isinstance(declared, int | float | str) or isinstance(declared, bool):
+        raise invalid
+    try:
+        version = parse_schema_version(declared)
+    except ProjectSchemaError:
+        raise invalid from None
+    if version not in known_schema_versions():
         raise ProjectSchemaError(
-            f"Projectbestand '{project_name}' is afgekeurd: het declareert geen geldige 'schema-version'. "
-            f"Een projectbestand moet zijn schemaversie noemen, zodat het tegen het schema van die versie "
-            f"gecontroleerd kan worden."
-        )
-    if float(declared) not in known_schema_versions():
-        raise ProjectSchemaError(
-            f"Projectbestand '{project_name}' is afgekeurd: schemaversie {version_key(declared)} is onbekend. "
+            f"Projectbestand '{project_name}' is afgekeurd: schemaversie {version_key(version)} is onbekend. "
             f"Bekende versies: {', '.join(version_key(v) for v in known_schema_versions())}."
         )
-    validate_project_schema(project_data, schema_version=float(declared))
+    validate_project_schema(project_data, schema_version=version)
 
 
 # The marker of the schema's age-encrypted $defs pattern. Detection is derived from

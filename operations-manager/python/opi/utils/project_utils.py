@@ -473,10 +473,10 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
         config_section["contact-email"] = project_data.contact_email
 
     # Create project structure
-    from opi.services.schema_migration import LATEST_SCHEMA_VERSION
+    from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE
 
     project_config = {
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": project_data.project_name,
         "display-name": project_data.display_name,
         "description": project_data.project_description or "Project created via self-service portal",

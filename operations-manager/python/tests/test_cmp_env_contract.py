@@ -30,7 +30,7 @@ from pathlib import Path
 import pytest
 from opi.core.project_schema import ProjectSchemaError, validate_project_schema
 from opi.generation.manifests import CMP_ENV_RESERVED_NAMES, CMP_ENV_RESERVED_PREFIXES
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from ruamel.yaml import YAML
 from tests.programma import echt_programma
 
@@ -206,7 +206,7 @@ def _helmfile_project(env_vars: dict[str, str]) -> dict[str, object]:
 
 def test_de_vorm_van_een_bestaand_helmfile_project_blijft_valide() -> None:
     project = _helmfile_project({"ENVIRONMENT": "production", "MASTER_PASSWORD": _AGE_BLOCK})
-    project["schema-version"] = LATEST_SCHEMA_VERSION
+    project["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
 
     gemigreerd, _ = migrate_to_latest(copy.deepcopy(project))
 

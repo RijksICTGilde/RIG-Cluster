@@ -19,7 +19,7 @@ from opi.core.project_schema import (
 )
 from opi.manager.project_validation import validate_service_configs
 from opi.services.catalog.shared.storage import StorageEntry
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 from ruamel.yaml import YAML
 
@@ -85,7 +85,7 @@ class TestBothAliasShapes:
     @staticmethod
     def _validate(aliases) -> None:
         project = _valid_project()
-        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
         project["components"][0]["aliases"] = aliases
         migrated, _ = migrate_to_latest(copy.deepcopy(project))
         validate_project_schema(migrated)
@@ -912,7 +912,7 @@ class TestUserEnvVarsObjectvorm:
 
     def _with_user_env_vars(self, value: dict) -> dict:
         project = _valid_project()
-        project["schema-version"] = LATEST_SCHEMA_VERSION
+        project["schema-version"] = LATEST_SCHEMA_VERSION_VALUE
         project["components"][0]["user-env-vars"] = value
         return project
 
