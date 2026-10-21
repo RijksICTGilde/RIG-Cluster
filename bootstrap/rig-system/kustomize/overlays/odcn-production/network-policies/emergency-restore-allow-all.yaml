@@ -13,8 +13,9 @@
 # Removal plan (in this order, nothing skipped):
 #   1. Write per-component NetworkPolicies for EVERY workload in this
 #      namespace (keycloak, external-dns, minio, redis, rig-db, OPI, argocd).
-#   2. Test them on a cluster that actually ENFORCES policies — the kind
-#      sandbox runs kindnet, which ignores NetworkPolicies entirely.
+#   2. Toets ze voordat ze naar productie gaan (zie tests/netpol/). Deze policy
+#      staat in de flowmatrix met poort 9001 open, dus het weghalen is een
+#      zichtbare wijziging.
 #   3. Apply the per-component policies to production.
 #   4. Only then delete this file and the live object.
 apiVersion: networking.k8s.io/v1

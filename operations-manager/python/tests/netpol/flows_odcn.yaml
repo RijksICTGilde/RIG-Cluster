@@ -1,0 +1,163 @@
+# Welke verbindingen het netwerkbeleid van odcn-production vandaag toelaat.
+#
+# Dit bestand legt de HUIDIGE toestand vast, niet de gewenste. Elke PR die een
+# NetworkPolicy aanraakt zet hier de regels om die hij bedoelt te veranderen, en ziet
+# in de diff welke verbindingen hij verder dicht of open zet.
+#
+# `verwacht: dicht` betekent niet dat het beleid klaar is: de egress van de
+# tenant-baseline staat bewust ruim open (poort 80 en 443 naar elke bestemming), en
+# emergency-restore-allow-all maakt rig-prd-operations in beide richtingen open. Beide
+# staan hier als open regels in, zodat het omzetten ervan een zichtbare wijziging is.
+
+endpoints:
+  tenant-app:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: web, project: demo}
+
+  tenant-andere-deployment:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: api, project: demo}
+
+  # Een pod zonder het deployment-label, zoals een helm- of helmfile-workload in een
+  # projectnamespace. Geen tenant-baseline selecteert hem, dus zijn egress is open; het
+  # template noemt dat zelf ("falls through to default-allow"). Zijn ingress is dat niet:
+  # de acme-http-policy selecteert met podSelector {} elke pod in de namespace.
+  tenant-helm-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+
+  rig-db:
+    namespace: rig-prd-operations
+    labels: {cnpg.io/cluster: rig-db}
+
+  redis:
+    namespace: rig-prd-operations
+    labels: {app: rig-redis}
+
+  minio:
+    namespace: rig-prd-operations
+    labels: {app: minio}
+
+  backup-minio:
+    namespace: rig-prd-backup
+    labels: {app.kubernetes.io/name: minio}
+
+  rig-db-platform-backup:
+    namespace: rig-prd-operations
+    labels: {app.kubernetes.io/name: rig-db-platform-backup}
+
+  router:
+    namespace: openshift-ingress
+    labels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig}
+
+  internet-v4:
+    ip: 93.184.216.34
+
+  internet-v6:
+    ip: "2606:2800:220:1:248:1893:25c8:1946"
+
+flows:
+  - van: tenant-app
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: de gedeelde PostgreSQL; allow-postgres-access laat tenant-namespaces toe op created-by
+
+  - van: tenant-app
+    naar: redis
+    poort: 6379
+    verwacht: open
+    waarom: de gedeelde Redis voor cache en sessions
+
+  - van: tenant-app
+    naar: minio
+    poort: 9000
+    verwacht: open
+    waarom: de S3-API; de console op 9001 is alleen voor de platform-namespace
+
+  # allow-minio-access opent 9001 alleen voor de platform-namespace, maar
+  # emergency-restore-allow-all selecteert elke pod in rig-prd-operations met een lege
+  # ingress-regel en maakt die beperking daarmee ongedaan. Zet die policy weg, dan is
+  # dit de eerste regel die omslaat naar dicht.
+  - van: tenant-app
+    naar: minio
+    poort: 9001
+    verwacht: open
+    waarom: emergency-restore-allow-all maskeert de console-beperking van allow-minio-access
+
+  # task bootstrap-backup-destination applied deze overlay buiten ArgoCD om; allow-minio-
+  # access in rig-prd-backup laat alleen de Capsule-tenant rig-prd en de platform-backup-
+  # pod toe. Zonder deze regel bleef dat ongetoetst (RC-304).
+  - van: tenant-app
+    naar: backup-minio
+    poort: 9000
+    verwacht: open
+    waarom: tenant-backups schrijven hun S3-object via de Capsule-tenantnamespace-selector
+
+  - van: tenant-app
+    naar: backup-minio
+    poort: 9001
+    verwacht: dicht
+    waarom: allow-minio-access in rig-prd-backup heeft geen regel voor de console
+
+  - van: rig-db-platform-backup
+    naar: backup-minio
+    poort: 9000
+    verwacht: open
+    waarom: de nachtelijke back-up van de platformdatabase draait in rig-prd-operations, smal op het podlabel
+
+  - van: rig-db
+    naar: backup-minio
+    poort: 9000
+    verwacht: dicht
+    waarom: allow-minio-access selecteert alleen pods met het rig-db-platform-backup-label
+
+  - van: tenant-app
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: tenant-apps mogen externe APIs aanroepen
+
+  - van: tenant-app
+    naar: internet-v6
+    poort: 443
+    verwacht: open
+    waarom: het cluster is dual-stack, dus de regel moet ook ::/0 dekken
+
+  - van: tenant-app
+    naar: internet-v4
+    poort: 25
+    verwacht: dicht
+    waarom: SMTP gaat via de mailrelay, niet rechtstreeks naar buiten
+
+  - van: tenant-app
+    naar: internet-v6
+    poort: 25
+    verwacht: dicht
+    waarom: dezelfde grens op de andere adresfamilie
+
+  - van: router
+    naar: tenant-app
+    poort: 8000
+    verwacht: open
+    waarom: gepubliceerde webapps blijven bereikbaar van buiten
+
+  - van: tenant-andere-deployment
+    naar: tenant-app
+    poort: 8000
+    verwacht: dicht
+    waarom: twee deployments in dezelfde namespace blijven van elkaar gescheiden
+
+  # De egress-kant is open: de internetregel is een ipBlock op 0.0.0.0/0 en ::/0 zonder
+  # except, en een CNI legt die CIDR tegen het echte bestemmingsadres, dus elk pod-IP
+  # valt erbinnen. De ingress-kant sluit hem: de acme-http-policy van elk gepubliceerd
+  # deployment selecteert met podSelector {} ook deze pod, en laat alleen 80 en 8089 toe.
+  # Haal de acme-http-policy weg of geef hem een podSelector op het deployment-label,
+  # dan slaat deze regel om naar open.
+  - van: tenant-app
+    naar: tenant-helm-pod
+    poort: 443
+    verwacht: dicht
+    waarom: acme-http selecteert elke pod in de namespace voor ingress en laat alleen 80 en 8089 toe
