@@ -114,9 +114,14 @@ For paths into a service's config use `smart_get_value` / `smart_set_value`
 `config_model` is a Pydantic model and doubles as the guardrail and the schema source.
 
 - `config_schema_version` is a quoted `major.minor` string, stored next to `config` in the
-  file. `migrate_config(config, from_version)` is forward-only: an old file is migrated to
-  the current version before validation, because ZAD only ever reads a possibly-old file and
-  writes the current one.
+  file. MINOR counts up as a whole number, so the version after `1.9` is `1.10`, and every
+  comparison runs through `SchemaVersion` (`opi/core/project_schema.py`): as text or as a
+  float `1.10` would land before `1.9`.
+- `migrate_config(config, from_version)` is forward-only: an old file is migrated to the
+  current version before validation, because ZAD only ever reads a possibly-old file and
+  writes the current one. Declare the steps in `config_migration_steps`, in order, each
+  stamped with the version it brings the config TO; the base class applies the ones the
+  stored version has not had yet and `__init_subclass__` rejects a wrong order.
 - The global `opi/schemas/project_v2.json` validates only the entry envelope
   (`{name|reference, schema-version?, config?}`). Per-service config is validated against the
   model, and the committed fragment `catalog/<name>/<name>.v<version>.json` is drift-locked by

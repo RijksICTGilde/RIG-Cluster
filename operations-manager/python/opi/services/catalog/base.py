@@ -24,12 +24,14 @@ config models are wired into the read path in Phase 3.
 from __future__ import annotations
 
 from abc import ABC
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, overload
 
 from pydantic import ValidationError
 
+from opi.core.project_schema import parse_schema_version
 from opi.services.catalog.events import collect_event_handlers
 from opi.services.config_managed import platform_managed_keys
 from opi.services.services import ServiceDefinition, service_entry_name
@@ -153,6 +155,10 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
 #: A service's raw config as it appears in the project file: a dict for most
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
+
+#: One forward migration step: it takes a config at the previous version and returns the
+#: same config at the version the step is stamped with.
+ConfigMigrationStep = Callable[[ServiceConfigData], ServiceConfigData]
 
 
 @dataclass
@@ -732,7 +738,10 @@ class Service(ABC):
       project file is validated against it; the global ``project_v2.json`` validates
       only the envelope and stays stable as service configs evolve.
     * ``config_schema_version`` -- the service's *current* ("hub"/storage) schema
-      version as a ``major.minor`` string. Each service versions independently.
+      version as a ``major.minor`` string. Each service versions independently, and
+      every comparison of one runs through ``SchemaVersion``, so 1.10 is newer than 1.9.
+    * ``config_migration_steps`` -- the ordered forward steps, each stamped with the
+      version it brings the config to.
     * ``migrate_config`` -- forward-only conversion (spoke -> hub). ZAD never serves
       old versions to clients; it only ever reads a possibly-old file and writes the
       current version, so no down-conversion is needed. Convert-then-validate: an
@@ -757,6 +766,10 @@ class Service(ABC):
     #: had a versioned contract; the pairing with config_model is enforced by
     #: tests/test_service_config_schema.py.
     config_schema_version: ClassVar[str | None] = None
+    #: Forward migration steps in ascending order, each stamped with the version it brings
+    #: the config TO; the last one lands on ``config_schema_version``. ``__init_subclass__``
+    #: holds a subclass to that, comparing the stamps as ``SchemaVersion``.
+    config_migration_steps: ClassVar[tuple[tuple[str, ConfigMigrationStep], ...]] = ()
 
     #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
     #: service has no config UI. The FormSection object itself lives in the forms
@@ -863,6 +876,7 @@ class Service(ABC):
     def __init_subclass__(cls, **kwargs: object) -> None:
         super().__init_subclass__(**kwargs)
         cls.event_handlers = collect_event_handlers(cls)
+        cls._check_config_migration_steps()
         # A concrete provider must declare which service it is AND what that service
         # is (its definition), both in its own package. Abstract intermediate
         # subclasses (no service_type) are allowed and simply skipped.
@@ -877,6 +891,29 @@ class Service(ABC):
             )
         if not isinstance(definition, ServiceDefinition):
             raise TypeError(f"{cls.__name__}.definition must be a ServiceDefinition, got {type(definition).__name__}")
+
+    @classmethod
+    def _check_config_migration_steps(cls) -> None:
+        """Hold the declared steps to ascending order, landing on the current version.
+
+        A string sort would put 1.10 before 1.9, so the stamps are compared as
+        ``SchemaVersion``; an unreadable stamp fails here, at import, instead of on the
+        first project file that carries it.
+        """
+        versions = [parse_schema_version(version) for version, _ in cls.config_migration_steps]
+        if versions != sorted(set(versions)):
+            raise TypeError(
+                f"{cls.__name__}.config_migration_steps must be in ascending version order "
+                f"without repeats, got {[str(version) for version in versions]}"
+            )
+        if not versions:
+            return
+        current = None if cls.config_schema_version is None else parse_schema_version(cls.config_schema_version)
+        if versions[-1] != current:
+            raise TypeError(
+                f"{cls.__name__}: the last config migration step lands on {versions[-1]}, "
+                f"but config_schema_version is {cls.config_schema_version!r}"
+            )
 
     def config_model_for(self, layer: ConfigLayer) -> type[BaseModel] | None:
         """The model that validates this service's config *at ``layer``*.
@@ -941,14 +978,18 @@ class Service(ABC):
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
         """Convert an older config forward to ``config_schema_version`` (hub).
 
-        Forward-only (spoke -> hub); the default is identity, correct for a service
-        still at its first version. A service that bumps its version overrides this
-        and applies the ordered steps ``from_version -> ... -> current``. Keep each
-        step simple and lossless where possible (the Kubernetes conversion rule).
+        Forward-only (spoke -> hub): applies every ``config_migration_steps`` entry the
+        stored version has not had yet, in order. A service still at its first version
+        declares no steps and this is identity. Keep each step simple and lossless where
+        possible (the Kubernetes conversion rule).
 
         ``config`` is a dict for most services, or a list for services whose config
         is a sequence (e.g. storage mounts).
         """
+        stored = parse_schema_version(from_version)
+        for step_version, step in self.config_migration_steps:
+            if stored < parse_schema_version(step_version):
+                config = step(config)
         return config
 
     def validate_config(

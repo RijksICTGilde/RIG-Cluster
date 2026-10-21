@@ -54,12 +54,15 @@ carries config on.
 - [ ] A service that carries genuinely different content per layer overrides
       `config_model_for(layer)`. Example: the storage services hold mount specs on the component
       but per-mount clone state on the deployment-component.
-- [ ] Bumping `config_schema_version` means overriding `migrate_config` with the ordered steps
-      from the old version to the current one. The machinery is there and wired
+- [ ] Bumping `config_schema_version` means declaring the ordered steps from the old version
+      to the current one in `config_migration_steps`; the base class applies them and
+      `__init_subclass__` rejects a wrong order. The machinery is there and wired
       (`validate_config` passes the version stamped on the entry through
-      `service_entry_schema_version`), but no service has used it yet: every model is still at
-      1.0. The first service to bump sets the pattern, so treat that step as new ground and
-      test it against a real old-version block, not a synthetic one.
+      `service_entry_schema_version`), but no service declares a step yet: the two models at
+      1.1 (`invite`, `cross-domain-access`) bumped without a shape change. The first service
+      that needs a real step sets the pattern, so treat it as new ground and test it against a
+      real old-version block, not a synthetic one. MINOR counts up as a whole number: after
+      `1.9` comes `1.10`, and every comparison runs through `SchemaVersion`.
 - [ ] Config shapes that recur across services live in `catalog/shared/` (`storage.py`,
       `revisions.py`), not copied into each package.
 
