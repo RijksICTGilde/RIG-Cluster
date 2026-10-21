@@ -16,27 +16,35 @@ WORKDIR /tools
 #
 # kubectl volgde eerder stable.txt, dus elke bouw een andere versie. Nu dezelfde minor als
 # de OPI-image (operations-manager/Dockerfile) en als het sandbox-cluster: v1.32.
+# renovate: datasource=github-releases depName=kubernetes/kubernetes
 ARG KUBECTL_VERSION=v1.32.13
 ARG KUBECTL_SHA256_AMD64=db2ae479a63f3665d7f704ab18c0d4d4050144237980763221835b7305703c4c
 ARG KUBECTL_SHA256_ARM64=b1f87f196633a89208546d79bfa4e2470bda70e7bf42c4d3adb008ec208da9d1
+# renovate: datasource=github-releases depName=kubernetes-sigs/kustomize extractVersion=^kustomize/v(?<version>.+)$
 ARG KUSTOMIZE_VERSION=5.8.3
 ARG KUSTOMIZE_SHA256_AMD64=cb9e31198d3f63b44848bd0afc4c8efc56e6cfef9c93a4a39a211940e6decd61
 ARG KUSTOMIZE_SHA256_ARM64=9867b76482cfc6d25b546abc1d2b5a32bd137505aba640649b4b378f64f6d68f
+# renovate: datasource=github-releases depName=getsops/sops
 ARG SOPS_VERSION=v3.13.3
 ARG SOPS_SHA256_AMD64=e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
 ARG SOPS_SHA256_ARM64=53b0abacd38ef1b12a66d6c100956691b9cefce018d91f81e73ddf7438b94d77
+# renovate: datasource=github-releases depName=mikefarah/yq
 ARG YQ_VERSION=v4.54.1
 ARG YQ_SHA256_AMD64=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
 ARG YQ_SHA256_ARM64=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b
+# renovate: datasource=github-releases depName=helm/helm
 ARG HELM_VERSION=v3.21.4
 ARG HELM_SHA256_AMD64=61f88ab166748cb19604d7884cb100ae9ccb13804ddeb98e08af167eacbb6a14
 ARG HELM_SHA256_ARM64=b54c04b4e0b2540bbdc08c17a121dab70e9a2ed0de5705528fec68a5fd3b85a7
+# renovate: datasource=github-releases depName=helmfile/helmfile extractVersion=^v(?<version>.+)$
 ARG HELMFILE_VERSION=1.8.2
 ARG HELMFILE_SHA256_AMD64=f179485c5bb9f8e20fbd8ea16d8807915988aba4d60131ee864fb3232452716e
 ARG HELMFILE_SHA256_ARM64=9163f0d7ad088d243d7305ba09c3465aac02dfebd658d46c62dbdaa11c224b16
+# renovate: datasource=github-releases depName=databus23/helm-diff extractVersion=^v(?<version>.+)$
 ARG HELM_DIFF_VERSION=3.15.15
 ARG HELM_DIFF_SHA256_AMD64=504e99410611daa70702362e1b10dc74929df8a912cb3f6b5d21d1ee9d0cb7d9
 ARG HELM_DIFF_SHA256_ARM64=fc046bf3c3f63a435741fe8c37a9d740dfa17ea7f5f0c2a9da2c0222bb4384e6
+# renovate: datasource=github-releases depName=viaduct-ai/kustomize-sops extractVersion=^v(?<version>.+)$
 ARG KSOPS_VERSION=4.5.1
 ARG KSOPS_SHA256_AMD64=9641e03a301bf2fc4b98d0e837a0351e1ca443ecd7a68b25e6af2149fbb2ef30
 ARG KSOPS_SHA256_ARM64=c7bb562cc2d580a1decc6c77a35e4d35575fb01ca003425726004ecd13dc1cb5

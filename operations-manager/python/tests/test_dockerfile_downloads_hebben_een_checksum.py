@@ -3,6 +3,9 @@
 BIO2 8.19 en 5.21 vragen dat wat in een image komt vastligt en controleerbaar is. Een
 vaste versie plus een `sha256sum -c` tegen een literaal in het Dockerfile maakt de bouw
 herhaalbaar en laat een gewijzigd artefact omvallen. De vorm staat in images/mc/Dockerfile.
+
+Een vaste versie die niemand ophoogt veroudert, dus hier staat er ook dat elke
+`ARG <NAAM>_VERSION` zichtbaar is voor Renovate. Zie features/renovate.md.
 """
 
 import re
@@ -25,6 +28,25 @@ UITZONDERINGEN: dict[tuple[str, str], str] = {
 
 HAALT_OP = re.compile(r"\b(curl|wget)\b")
 URL = re.compile(r"https?://[^\s\"'\\|)]+")
+
+ARG_VERSIE = re.compile(r"^ARG ([A-Za-z0-9_]+_VERSION)=")
+ARG_VERWIJZING = re.compile(r"\$\{?([A-Za-z0-9_]+)\}?")
+
+# Een versie die Renovate niet kan opzoeken, met de reden. Zie features/renovate.md.
+ZONDER_ANNOTATIE: dict[tuple[str, str], str] = {
+    (
+        "operations-manager/Dockerfile",
+        "ZAD_VERSION",
+    ): "onze eigen versie, er is geen upstream om hem bij op te zoeken",
+    (
+        "images/jupyterhub-user/Dockerfile",
+        "PYTHON_EXTENSION_VERSION",
+    ): "Renovate heeft geen datasource voor de extensiemarktplaats",
+    (
+        "images/jupyterhub-user/Dockerfile",
+        "BASEDPYRIGHT_VERSION",
+    ): "Renovate heeft geen datasource voor de extensiemarktplaats",
+}
 
 
 def _dockerfiles() -> list[str]:
@@ -61,9 +83,49 @@ def _bezwaren(pad: str, inhoud: str) -> list[str]:
     return bezwaren
 
 
+def _renovate_bezwaren(pad: str, inhoud: str) -> list[str]:
+    """Welke `ARG <NAAM>_VERSION` in dit Dockerfile buiten het zicht van Renovate valt."""
+    regels = inhoud.splitlines()
+    in_from = {naam for regel in regels if regel.startswith("FROM ") for naam in ARG_VERWIJZING.findall(regel)}
+    bezwaren: list[str] = []
+    for nummer, regel in enumerate(regels):
+        treffer = ARG_VERSIE.match(regel)
+        if treffer is None:
+            continue
+        naam = treffer.group(1)
+        if naam in in_from or (pad, naam) in ZONDER_ANNOTATIE:
+            continue
+        if nummer == 0 or not regels[nummer - 1].startswith("# renovate:"):
+            bezwaren.append(f"{pad}:{nummer + 1}: {naam} zonder `# renovate:`-annotatie erboven")
+    return bezwaren
+
+
 @pytest.mark.parametrize("pad", _dockerfiles())
 def test_elke_download_heeft_een_vaste_versie_en_een_checksum(pad: str) -> None:
     assert _bezwaren(pad, (REPO_ROOT / pad).read_text()) == []
+
+
+@pytest.mark.parametrize("pad", _dockerfiles())
+def test_elke_versie_is_zichtbaar_voor_renovate(pad: str) -> None:
+    assert _renovate_bezwaren(pad, (REPO_ROOT / pad).read_text()) == []
+
+
+def test_de_meting_ziet_een_ontbrekende_annotatie(tmp_path: Path) -> None:
+    pad = "images/cmp-kustomize-sops/Dockerfile"
+    origineel = (REPO_ROOT / pad).read_text()
+    zonder = origineel.replace("# renovate: datasource=github-releases depName=getsops/sops\n", "")
+    kopie = tmp_path / "Dockerfile"
+    kopie.write_text(zonder)
+
+    bezwaren = _renovate_bezwaren(pad, kopie.read_text())
+
+    assert any("SOPS_VERSION zonder" in bezwaar for bezwaar in bezwaren), bezwaren
+
+
+def test_een_versie_in_een_FROM_hoeft_geen_annotatie() -> None:
+    inhoud = "ARG UV_VERSION=0.13.1\nFROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv\n"
+
+    assert _renovate_bezwaren("test/Dockerfile", inhoud) == []
 
 
 def test_de_meting_ziet_een_ontbrekende_checksum(tmp_path: Path) -> None:

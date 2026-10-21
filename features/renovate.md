@@ -31,10 +31,12 @@ andere workflows, waardoor `ci.yml` niet op de Renovate-PR's zou draaien.
 | Kubernetes-manifesten | `image:` in `infrastructure/`, `bootstrap/` | `kubernetes` |
 | Kustomize-overlays | `newName` + `newTag` in `infrastructure/`, `bootstrap/` | `kustomize` |
 | GitHub Actions | `.github/workflows/*.yml` | `github-actions` |
-| Tools | `.tool-versions` | `asdf` + custom manager voor `task` |
+| Tools | `.tool-versions` | `asdf` + custom managers voor `task` en `mc` |
 | Remote kustomize-resources | versies in de raw.githubusercontent-URL's | custom manager |
-| Taskfile | de CNPG- en snapshot-CRD-URL's, de argocd-operator-versie | custom manager |
+| Taskfile | de CNPG-URL (patch en het `release-X.Y`-segment), de snapshot-CRD-URL, de argocd-operator-versie | custom manager |
 | kind-node | `sandboxed-local/kind-config.yaml` | custom manager |
+| Versies in een Dockerfile-ARG | `ARG <NAAM>_VERSION` met een `# renovate:`-annotatie | preset `customManagers:dockerfileVersions` |
+| De themajar van keycloak-zad | de versie in de download-URL | custom manager |
 
 Een nieuwe meting doe je met een dry-run, zie onderaan.
 
@@ -55,6 +57,83 @@ PR. Dat is de goedkeuringsstap: een major vraagt om een migratie, en die hoort e
 te plannen.
 
 Er is geen automerge. Mergen is altijd mensenwerk.
+
+## Een versie in een Dockerfile-ARG
+
+Een `ARG SOPS_VERSION=v3.13.2` die daarna in een `curl`-URL belandt, ziet Renovate niet:
+hij kent `FROM`, `image:` en lockfiles. De annotatie erboven maakt hem wel zichtbaar.
+
+```dockerfile
+# renovate: datasource=github-releases depName=getsops/sops
+ARG SOPS_VERSION=v3.13.2
+```
+
+De vorm komt van de preset `customManagers:dockerfileVersions`, die in `extends` staat:
+
+```
+# renovate: datasource=<ds> depName=<naam> [versioning=<v>] [extractVersion=<regex>]
+ARG <NAAM>_VERSION=<versie>
+```
+
+- `extractVersion` haalt de versie uit een tag met een voorvoegsel, zoals
+  `^kustomize/v(?<version>.+)$` of `^v(?<version>.+)$` als de ARG de `v` niet meeschrijft.
+- `versioning` is nodig als de versie geen semver is. `minio/mc` tagt met
+  `RELEASE.<datum>`, dus daar staat een `regex:`-versioning op de regel.
+- `.tool-versions` kent dezelfde annotatie, via een eigen custom manager.
+
+Een tool dat in meer dan een bestand staat (sops, kopia, mc) gaat via `packageRules` in een
+enkele PR, want een halve ophoging laat de checksumcontrole in het andere bestand omvallen.
+
+`operations-manager/python/tests/test_dockerfile_downloads_hebben_een_checksum.py` bewaakt
+dat elke `ARG <NAAM>_VERSION` een annotatie heeft, in een `FROM` wordt gebruikt, of met een
+reden in de uitzonderingslijst staat.
+
+## De sommen gaan in dezelfde PR mee
+
+Sinds RC-294 staat naast elke binary-download een literale sha256 per architectuur.
+Renovate werkt die niet bij, dus een PR die alleen de versie ophoogt zou falen op
+`sha256sum -c`. `scripts/renovate_checksums.py` schrijft ze mee: Renovate draait het als
+`postUpgradeTasks` over de branch, en `RENOVATE_ALLOWED_COMMANDS` in `renovate.yml` laat
+precies dat ene commando toe.
+
+Het script leest per gereedschap het checksumbestand dat het project zelf bij de release
+publiceert (`checksums.txt`, `<artefact>.sha256sum`, een `.sha256` met alleen de som, of de
+hashtabel van yq). Publiceert een project niets (helm-diff, code-server, de themajar van
+keycloak-zad), dan rekent het de som uit over het artefact en zegt dat in zijn uitvoer. De
+bronnen staan in de tabel `RELEASES` bovenin het script; een nieuw gereedschap met een
+checksum-ARG hoort daar een regel te krijgen.
+
+### Alleen de som van een gewijzigde versie
+
+Het script raakt alleen de sommen aan van een gereedschap waarvan de `ARG <NAAM>_VERSION`
+in deze werkboom wijzigt, gemeten met `git diff HEAD`. Renovate schrijft de ophoging in de
+werkboom voordat het de postUpgradeTasks draait en commit pas daarna, dus dat is precies
+wat deze branch ophoogt.
+
+Die afbakening is er om de grendel van RC-294 niet te ontwapenen. Voor helm-diff,
+code-server en de themajar is er geen tweede bron, dus rekent het script de som uit over de
+bytes die het downloadt. Zou het dat op elke branch voor elk gereedschap doen, dan werd een
+upstream dat zijn artefact onder een bestaande tag vervangt stil opnieuw gepind in plaats
+van luid gestopt door `sha256sum -c`. Het scheelt ook de honderden MB's die het anders op
+elke branch zou downloaden.
+
+`postUpgradeTasks` staat daarom bewust op het hoogste niveau en niet in een
+`packageRules`-regel met `matchFileNames`. Dat laatste zou de poort op de verkeerde plek
+leggen: Renovate neemt de branch-config uit `upgrades[0]`
+(`workers/repository/updates/generate.js`), dus in een gegroepeerde branch zoals die van
+`minio/mc` (`.tool-versions` plus `images/mc/Dockerfile`) hangt het van de sorteerorde af of
+de regel meekomt, en dan blijven de sommen stil achter. Bovendien dekt het niets binnen een
+Dockerfile-branch: een sops-ophoging zou de som van code-server nog steeds herpinnen.
+
+Met de hand draaien kan ook, en is de snelste controle na een ophoging:
+
+```bash
+python3 scripts/renovate_checksums.py images/mc/Dockerfile # na je eigen wijziging
+python3 scripts/renovate_checksums.py --alles              # alles doorrekenen
+```
+
+Het script toetst geen handtekening bij de release. Dat blijft handwerk, zie
+`images/README.md`.
 
 ## De rcr-paden
 
@@ -98,16 +177,15 @@ Renovate kan hier niets zinnigs voorstellen; elk van deze punten is een eigen ve
   `rig-cmp-argo-kustomize-sops` en `rig-backup` stonden hier ook in en zijn met RC-348
   gepind; `jpillora/chisel:latest` draait nergens, want geen clusterkustomization neemt
   `infrastructure/bootstrap/infrastructure/chisel/` op.
-- Tools die een Dockerfile met `ARG ..._VERSION` en een curl binnenhaalt: `SOPS_VERSION`,
-  `KOPIA_VERSION`, `CHISEL_VERSION`, `KUSTOMIZE_VERSION`, `KSOPS_VERSION`, en de
-  jupyterhub-extensies. Die vragen per regel een `# renovate:`-annotatie.
+- De twee VS Code-extensies in `images/jupyterhub-user/Dockerfile`
+  (`PYTHON_EXTENSION_VERSION`, `BASEDPYRIGHT_VERSION`). Renovate heeft geen datasource voor
+  de extensiemarktplaats, dus die blijven handwerk. Ze staan met die reden in de
+  uitzonderingslijst van de test.
 - `mc` in `.tool-versions`: volgt `MC_VERSION` uit `images/mc/Dockerfile`, en dat is een
   MinIO RELEASE-datum.
 - `aquasecurity/trivy-action` in `security.yml` is op een kale SHA gepind, zonder
   `# vX.Y.Z` erachter. Renovate meldt `unversioned-reference` en laat hem staan. Zet de
   versie in een commentaar achter de SHA en hij gaat wel mee.
-- Het segment `release-X.Y` in de CNPG-URL in `Taskfile.yaml` schrijft Renovate niet mee.
-  Controleer dat met de hand bij een minor.
 - **external-dns staat met een `allowedVersions` op `<v0.22.0`.** Versie 0.22 haalde de
   ingebouwde transip-provider eruit, en `--provider=transip` geeft op v0.23.0 een fatal bij
   het parsen van de vlaggen. Verder dan 0.21 vraagt dus een migratie naar de

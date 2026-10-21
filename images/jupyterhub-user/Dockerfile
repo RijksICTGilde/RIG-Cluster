@@ -1,10 +1,16 @@
 # De pod per gebruiker van JupyterHub: JupyterLab plus VS Code.
 FROM quay.io/jupyter/minimal-notebook:2026-10-12
 
+# renovate: datasource=github-releases depName=coder/code-server extractVersion=^v(?<version>.+)$
 ARG CODE_SERVER_VERSION=4.141.0
+# renovate: datasource=pypi depName=jupyter-vscode-proxy
 ARG VSCODE_PROXY_VERSION=0.7
+# renovate: datasource=pypi depName=jupyter-server-proxy
 ARG SERVER_PROXY_VERSION=4.6.0
+# renovate: datasource=pypi depName=jupyter-collaboration
 ARG COLLABORATION_VERSION=5.0.4
+# Geen datasource voor VS Code-extensiemarktplaats; handwerk.
+# Uitzonderingslijst in tests/test_dockerfile_downloads_hebben_een_checksum.py.
 ARG PYTHON_EXTENSION_VERSION=2026.4.0
 ARG BASEDPYRIGHT_VERSION=1.40.2
 
