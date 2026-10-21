@@ -113,5 +113,7 @@ daar is nog geen Application die op `default` staat.
 
 - `features/futures/argocd-applicationset-migration.md`: dat ontwerp geeft de AppProjects een
   eigen Application, want een ApplicationSet kan ze niet genereren.
-- De plannen over ondertekende commits: `signatureKeys` op deze AppProjects is daar het werk.
-  Zonder dat kan een AppProject dat via de argo-repo binnenkomt zichzelf nog ruim zetten.
+- `features/ondertekende-gitops-commits.md`: `signatureKeys` op `zad-app-of-apps` en op de
+  AppProjects per project, bedoeld om een AppProject dat buiten OPI om in de argo-repo
+  belandt zichzelf niet ruim te laten zetten. Die eis staat op de AppProjects, maar de
+  ArgoCD van dit cluster dwingt hem nog niet af: zie de status in dat document.

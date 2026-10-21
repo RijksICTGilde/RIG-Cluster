@@ -702,6 +702,10 @@ tasks:
         fi
 
         echo "✅ Bootstrap applied successfully!"
+      # Bootstrap herstelt signatureKeys naar git; deze taak zet de sleutel in het cluster.
+      - task: argocd:trust-git-signing-key
+        vars:
+          DRY_RUN: '{{.DRY_RUN}}'
     silent: true
 
   bootstrap-backup-destination:
@@ -3554,7 +3558,7 @@ tasks:
     cmds:
       - |
         SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
-          -o jsonpath='{.data.signing-key\.asc}' 2>/dev/null)
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
         if [ -z "$SECRET" ]; then
           echo "No operations-manager-git-signing-key secret in {{.RIG_NAMESPACE}}: this cluster signs nothing."
           exit 1
@@ -3571,6 +3575,117 @@ tasks:
         echo "fingerprint: $FINGERPRINT"
         echo ""
         gpg --batch --armor --export "$FINGERPRINT"
+    silent: true
+
+  argocd:trust-public-key:
+    desc: "Trust an armored GPG public key in ArgoCD and require it on the app-of-apps AppProject"
+    requires:
+      vars:
+        - KEY_FILE
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    cmds:
+      - |
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          echo "🔍 Dry run: zou {{.KEY_FILE}} vertrouwen in argocd-gpg-keys-cm en in signatureKeys zetten"
+          exit 0
+        fi
+
+        if ! kubectl get appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} >/dev/null 2>&1; then
+          echo "Geen AppProject zad-app-of-apps in {{.RIG_NAMESPACE}}: draai eerst 'task bootstrap-argo-system'."
+          exit 1
+        fi
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft er geen keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        # Een mislukte import valt door naar de fingerprint-guard, die de melding geeft.
+        gpg --batch --quiet --import "{{.KEY_FILE}}" || true
+
+        FINGERPRINT=$(gpg --batch --list-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        # Guard: onbruikbare KEY_FILE zou signatureKeys wissen met exitcode 0.
+        if [[ ! "$FINGERPRINT" =~ ^[0-9A-F]{40}$ ]]; then
+          echo "Geen bruikbare GPG-sleutel in {{.KEY_FILE}}: niets te vertrouwen."
+          exit 1
+        fi
+        # ArgoCD valideert keyID als key ID (8 of 16 hex) en weigert een hele fingerprint.
+        KEY_ID="${FINGERPRINT: -16}"
+        # Een armored sleutel bevat geen aanhalingsteken of backslash, dus escapen van de
+        # regeleindes volstaat voor de JSON-merge-patch hieronder.
+        ARMORED=$(gpg --batch --armor --export "$FINGERPRINT" | awk '{printf "%s\\n", $0}')
+
+        # ArgoCD leest vertrouwde sleutels uit deze ConfigMap; de operator laat hem staan.
+        kubectl get configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}} >/dev/null 2>&1 ||
+          kubectl create configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}}
+        kubectl patch configmap argocd-gpg-keys-cm -n {{.RIG_NAMESPACE}} --type merge \
+          -p "{\"data\":{\"$KEY_ID\":\"$ARMORED\"}}"
+
+        # Voeg toe zonder anderen weg te gooien (beheerderssleutel en OPI-sleutel samen).
+        # Lege CURRENT -> destructieve patch; stoppen in plaats van patchen.
+        if ! CURRENT=$(kubectl get appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} \
+          -o jsonpath='{.spec.signatureKeys[*].keyID}'); then
+          echo "Kan de huidige signatureKeys van zad-app-of-apps niet lezen: niets gepatcht."
+          exit 1
+        fi
+        IDS=""
+        for ID in $CURRENT $KEY_ID; do
+          case " $IDS " in *" $ID "*) continue;; esac
+          IDS="${IDS:+$IDS }$ID"
+        done
+        ENTRIES=$(echo "$IDS" | tr ' ' '\n' | awk 'NF {printf "%s{\"keyID\":\"%s\"}", (n++ ? "," : ""), $0}')
+        kubectl patch appproject zad-app-of-apps -n {{.RIG_NAMESPACE}} --type merge \
+          -p "{\"spec\":{\"signatureKeys\":[$ENTRIES]}}"
+
+        echo "ArgoCD vertrouwt $KEY_ID en eist hem op AppProject zad-app-of-apps"
+    silent: true
+
+  argocd:trust-git-signing-key:
+    desc: "Trust OPI's own git signing key in ArgoCD (reads the secret in the cluster)"
+    vars:
+      DRY_RUN: '{{default "false" .DRY_RUN}}'
+    # Geen signing-key-secret: Task slaat de taak dan over. Via status, niet met exit 0: dat
+    # stopt alleen de eerste stap, en de tweede faalt dan op het ontbrekende sleutelbestand.
+    status:
+      - |
+        [ "{{.DRY_RUN}}" = "true" ] && exit 1
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
+        [ -z "$SECRET" ]
+    cmds:
+      - |
+        if [[ "{{.DRY_RUN}}" == "true" ]]; then
+          echo "🔍 Dry run: zou de sleutel uit secret operations-manager-git-signing-key vertrouwen"
+          exit 0
+        fi
+
+        # Het ontbrekende secret is de status hierboven; komt de taak toch hier (task --force),
+        # dan blijft FINGERPRINT leeg en kapt de guard daarop het af.
+        SECRET=$(kubectl get secret operations-manager-git-signing-key -n {{.RIG_NAMESPACE}} \
+          --ignore-not-found -o jsonpath='{.data.signing-key\.asc}')
+
+        # security/ staat niet in git en bepaalt welke sleutel het cluster vertrouwt.
+        mkdir -p security
+        PUBLIC_FILE=security/opi-git-signing-public.asc
+
+        GNUPGHOME=$(mktemp -d)
+        export GNUPGHOME
+        chmod 700 "$GNUPGHOME"
+        # In een trap: breekt gpg af, dan blijft de privesleutel niet in de keyring staan.
+        trap 'rm -rf "$GNUPGHOME"' EXIT
+        # Zie de import in argocd:trust-public-key: de fingerprint-guard doet de melding.
+        echo "$SECRET" | base64 -d | gpg --batch --quiet --import || true
+        FINGERPRINT=$(gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+        if [[ ! "$FINGERPRINT" =~ ^[0-9A-F]{40}$ ]]; then
+          echo "Het secret operations-manager-git-signing-key bevat geen bruikbare GPG-sleutel."
+          exit 1
+        fi
+        gpg --batch --armor --export "$FINGERPRINT" > "$PUBLIC_FILE"
+      - task: argocd:trust-public-key
+        vars:
+          KEY_FILE: security/opi-git-signing-public.asc
+          DRY_RUN: '{{.DRY_RUN}}'
     silent: true
 
   sandbox:deploy-postgresql-direct:

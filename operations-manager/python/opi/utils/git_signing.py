@@ -27,6 +27,11 @@ class GitSigningIdentity:
     fingerprint: str
     gnupg_home: str
 
+    @property
+    def key_id(self) -> str:
+        """De long key ID: de vorm die ArgoCD in ``signatureKeys`` eist, een fingerprint weigert het."""
+        return self.fingerprint[-16:]
+
 
 _identity: GitSigningIdentity | None = None
 

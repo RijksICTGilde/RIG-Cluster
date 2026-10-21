@@ -164,6 +164,13 @@ live workloads).
   restarted.
 - **3-env bootstrap:** parallel changes; set appset `template.metadata.namespace`
   explicitly (kustomize namespace xform won't rewrite it). Sandbox first.
+- **Handtekeningcontrole beschermt de Application-laag niet meer:** bij optie B komen de
+  child-Applications niet meer uit een gesynchroniseerde commit, dus de `signatureKeys` op
+  het app-of-apps-AppProject beschermen ze niet meer. De ApplicationSet-controller leest de
+  `config.json`-bestanden van de `files`-generator zonder handtekeningcontrole.
+  Wie deze migratie bouwt, zet `signatureKeys` over naar het AppProject van de
+  `_appprojects`-Application en weegt de Application-laag afzonderlijk. Zie
+  `features/ondertekende-gitops-commits.md`.
 
 ## Verification (sandbox before prod)
 

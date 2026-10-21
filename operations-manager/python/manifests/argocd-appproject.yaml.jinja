@@ -27,3 +27,9 @@ spec:
   namespaceResourceWhitelist:
     - group: '*'
       kind: '*'
+{% if signature_key_id %}
+  # ArgoCD synct alleen een revisie waarvan de commit door deze sleutel is ondertekend: de
+  # sleutel waarmee OPI commit. Zie features/ondertekende-gitops-commits.md.
+  signatureKeys:
+    - keyID: {{ signature_key_id | yaml_scalar }}
+{% endif %}
