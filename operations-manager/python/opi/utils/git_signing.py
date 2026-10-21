@@ -8,6 +8,7 @@ import tempfile
 from dataclasses import dataclass
 
 from opi.core.config import settings
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,7 @@ def _run_gpg(args: list[str], gnupg_home: str) -> subprocess.CompletedProcess[st
             capture_output=True,
             text=True,
             check=False,
+            env=child_env(),
         )
     except FileNotFoundError as fout:
         raise GitSigningKeyError("gpg staat niet in dit image, dus er kan niet ondertekend worden") from fout

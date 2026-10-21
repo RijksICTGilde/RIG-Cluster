@@ -279,7 +279,8 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str | None = None  # Admin API key for cleanup, reconciliation, and maintenance operations
 
     # SOPS age key settings (from Kubernetes secret)
-    SOPS_AGE_KEY_CONTENT: str | None = None  # Full SOPS age key content from secret
+    SOPS_AGE_KEY_FILE: str | None = None  # Pad naar de gemounte platformsleutel in de pod
+    SOPS_AGE_KEY_CONTENT: str | None = None  # Terugval voor lokale ontwikkeling, zie load_sops_age_key_content
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
@@ -305,6 +306,9 @@ class Settings(BaseSettings):
 
     # Temporary directory configuration
     TEMP_DIR: str = "/tmp"  # Default temp directory, can be overridden by TMPDIR env var
+    # Tijdelijke bestanden met platte geheimen. In de pod een tmpfs, zodat platte
+    # SOPS-inhoud niet op de schijf van de node landt zoals in TEMP_DIR.
+    SECRET_TEMP_DIR: str = "/tmp"
 
     # GPG-privésleutel (ASCII-armored, zonder passphrase) voor commits in de GitOps-repo's.
     # Zie features/opi-ondertekent-zijn-commits.md.
@@ -715,6 +719,31 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
         return None, None
 
 
+def load_sops_age_key_content(key_file: str | None, key_content: str | None) -> str | None:
+    """De inhoud van de platformsleutel, uit het gemounte bestand of uit de env-terugval.
+
+    Een gezet maar onleesbaar of leeg bestand is een harde opstartfout: stil terugvallen op
+    de omgeving zou een verkeerd gemounte sleutel verbergen tot de eerste ontsleuteling.
+    """
+    if key_file:
+        try:
+            content = pathlib.Path(key_file).read_text().strip()
+        except OSError as e:
+            raise RuntimeError(f"Platformsleutel niet leesbaar: {key_file}") from e
+        if not content:
+            raise RuntimeError(f"Platformsleutel is leeg: {key_file}")
+        return content
+
+    if key_content:
+        logger.warning(
+            "SOPS_AGE_KEY_CONTENT is in gebruik; die terugval verdwijnt na een release. "
+            "Mount de sleutel en zet SOPS_AGE_KEY_FILE."
+        )
+        return key_content
+
+    return None
+
+
 def _load_sops_key_from_local_file() -> str | None:
     """
     Load SOPS key content from local file for development environments.
@@ -773,11 +802,12 @@ def _get_settings() -> Settings:
     # Detailed logging for SOPS key configuration
     logger.info("=== SOPS Age Key Configuration Debug ===")
 
-    logger.info(f"Environment SOPS_AGE_KEY_CONTENT: {'SET' if os.environ.get('SOPS_AGE_KEY_CONTENT') else 'NOT SET'}")
-    if os.environ.get("SOPS_AGE_KEY_CONTENT"):
-        content_length = len(os.environ.get("SOPS_AGE_KEY_CONTENT", ""))
-        logger.info(f"SOPS_AGE_KEY_CONTENT length: {content_length} characters")
+    settings.SOPS_AGE_KEY_CONTENT = load_sops_age_key_content(settings.SOPS_AGE_KEY_FILE, settings.SOPS_AGE_KEY_CONTENT)
+    # De sleutel hoort na het lezen niet in de omgeving te blijven staan: dan erft elk
+    # kindproces hem alsnog. child_env() weert hem ook, dit is de bron zelf.
+    os.environ.pop("SOPS_AGE_KEY_CONTENT", None)
 
+    logger.info(f"Settings SOPS_AGE_KEY_FILE: {settings.SOPS_AGE_KEY_FILE or 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_KEY_CONTENT: {'SET' if settings.SOPS_AGE_KEY_CONTENT else 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_PUBLIC_KEY: {'SET' if settings.SOPS_AGE_PUBLIC_KEY else 'NOT SET'}")
     logger.info(f"Settings SOPS_AGE_PRIVATE_KEY: {'SET' if settings.SOPS_AGE_PRIVATE_KEY else 'NOT SET'}")

@@ -234,8 +234,8 @@ class KopiaConnector:
 
         logger.debug("Initializing KopiaConnector")
 
-        # Alleen de variabelen die kopia nodig heeft, niet de hele omgeving van OPI:
-        # /proc/<pid>/environ is leesbaar voor elk proces in de container.
+        # Een allow-list in plaats van child_env(), want kopia heeft een korte,
+        # bekende lijst nodig: dat laat ook een variabele weg die nog geen geheim is.
         # HOME op /tmp omdat kopia anders naar het niet-bestaande /home/appuser schrijft.
         self.env = {name: os.environ[name] for name in _KOPIA_ENV_PASSTHROUGH if name in os.environ}
         self.env["HOME"] = os.environ.get("TMPDIR", "/tmp")

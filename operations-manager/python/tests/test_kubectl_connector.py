@@ -124,6 +124,30 @@ async def test_a_namespace_without_the_label_is_present_with_an_empty_value(conn
         }
 
 
+async def test_encrypt_file_with_sops_gebruikt_de_gefilterde_omgeving(connector, tmp_path, monkeypatch):
+    """RC-279: deze aanroep had geen env, en erfde dus de volle omgeving van OPI zelf."""
+    monkeypatch.setenv("DATABASE_ADMIN_PASSWORD", "geheim")
+    connector.env = {"PATH": "/usr/bin", "HOME": "/home/opi"}
+
+    source = tmp_path / "plain.yaml"
+    source.write_text("key: value\n")
+    output = tmp_path / "encrypted.yaml"
+
+    mock_process = MagicMock()
+    mock_process.communicate = AsyncMock(return_value=(b"versleuteld", b""))
+    mock_process.returncode = 0
+
+    with patch(
+        "opi.connectors.kubectl.asyncio.create_subprocess_exec", new=AsyncMock(return_value=mock_process)
+    ) as mock_exec:
+        result = await connector.encrypt_file_with_sops(str(source), "age1publiek", str(output))
+
+    assert result is True
+    assert output.read_text() == "versleuteld"
+    assert mock_exec.call_args.kwargs["env"] == connector.env
+    assert "DATABASE_ADMIN_PASSWORD" not in mock_exec.call_args.kwargs["env"]
+
+
 async def test_apply_labels_to_resource_sets_all_labels_in_one_call(connector):
     """RC-316: namespace creation sets managed-by and Pod Security labels together."""
     with patch.object(connector, "_run_kubectl_command", new_callable=AsyncMock) as mock_run_cmd:

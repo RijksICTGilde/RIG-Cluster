@@ -15,6 +15,7 @@ import asyncpg
 
 from opi.core.config import settings
 from opi.utils.patterns import POSTGRES_IDENTIFIER
+from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
 
@@ -1874,7 +1875,6 @@ class PostgresConnector:
             Exception: If clone operation fails
         """
         import asyncio
-        import os
 
         logger.info(
             f"Starting pg_dump streaming clone from {source_host}:{source_database}.{source_schema} "
@@ -1883,7 +1883,7 @@ class PostgresConnector:
 
         try:
             # Set environment for target connection (used in multiple steps)
-            env = os.environ.copy()
+            env = child_env()
             env.update(
                 {
                     "PGHOST": target_host,
@@ -1996,7 +1996,7 @@ class PostgresConnector:
             # extensions are pre-created in the target schema before pg_dump runs
             # (pg_dump -n omits CREATE EXTENSION), so without it the duplicate
             # CREATE SCHEMA would fail under ON_ERROR_STOP=1.
-            source_env = os.environ.copy()
+            source_env = child_env()
             source_env.update(
                 {
                     "PGHOST": source_host,
@@ -2005,7 +2005,7 @@ class PostgresConnector:
                     "PGPASSWORD": source_password,
                 }
             )
-            target_env = os.environ.copy()
+            target_env = child_env()
             target_env.update(
                 {
                     "PGHOST": target_host,
@@ -2073,6 +2073,7 @@ class PostgresConnector:
                         ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],
                         stdin=dump.stdout,
                         stdout=subprocess.PIPE,
+                        env=child_env(),
                     )
                     # Close our handle so sed sees EOF when pg_dump exits.
                     if dump.stdout is None:

@@ -20,6 +20,7 @@ from opi.generation.manifests import CMP_ENV_NAME, CMP_ENV_PLAINTEXT_FILENAME
 from opi.utils.age import decrypt_password_smart_auto_sync
 from opi.utils.git_signing import get_git_signing_identity
 from opi.utils.sops import TO_SOPS_SUFFIX, sops_filenames
+from opi.utils.subprocess_env import child_env
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -446,7 +447,7 @@ class GitConnector:
         logger.debug(f"Running Git command: {_obfuscate_git_command(cmd_str)} in {working_dir}")
 
         # Set up environment
-        cmd_env = os.environ.copy()
+        cmd_env = child_env()
         # Geen interactieve vraag om een wachtwoord: een ontbrekende credential moet
         # falen, niet wachten op een terminal die er niet is.
         cmd_env["GIT_TERMINAL_PROMPT"] = "0"
