@@ -192,6 +192,11 @@ def project_validating_services() -> list[Service]:
     return [s for s in SERVICES.values() if type(s).validate_project is not Service.validate_project]
 
 
+def change_validating_services() -> list[Service]:
+    """Services that override ``validate_project_change``, in registry order."""
+    return [s for s in SERVICES.values() if type(s).validate_project_change is not Service.validate_project_change]
+
+
 def approval_services() -> list[Service]:
     """Services that declare at least one ApprovalSpec, in registry order (RC-5).
 

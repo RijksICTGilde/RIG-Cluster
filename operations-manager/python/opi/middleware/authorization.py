@@ -17,6 +17,7 @@ from starlette.routing import Match
 from opi.core.actor import set_actor, user_actor
 from opi.core.session_guard import drop_refused_session, valid_session_user
 from opi.services.user_service import get_user_service
+from opi.utils.logging_redact import redact_invite_key_in_path
 
 if typing.TYPE_CHECKING:
     from fastapi import FastAPI
@@ -111,7 +112,7 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         route_requires_sso = self._route_requires_sso(request)
 
         if route_requires_sso and not user:
-            logger.info(f"Redirecting unauthenticated user to login from: {path}")
+            logger.info(f"Redirecting unauthenticated user to login from: {redact_invite_key_in_path(path)}")
             return RedirectResponse(url="/auth/login", status_code=302)
 
         # Store/update user information in the user service if authenticated
@@ -152,6 +153,10 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
         # Get the FastAPI app from the request
         app: FastAPI = request.app
 
+        # Het pad door de omzetting: een uitnodigingssleutel staat in het pad en is een
+        # bearer-geheim, en deze twee regels draaien op elk verzoek.
+        gelogd_pad = redact_invite_key_in_path(request.url.path)
+
         # Find the matching route by iterating through routes
         for route in app.router.routes:
             match, _ = route.matches({"type": "http", "path": request.url.path, "method": request.method})
@@ -161,9 +166,9 @@ class AuthorizationMiddleware(BaseHTTPMiddleware):
                 if endpoint:
                     # Check for our custom SSO requirement attribute
                     requires_sso = getattr(endpoint, "_requires_sso", False)  # Default to False
-                    logger.debug(f"Route {request.url.path} SSO requirement: {requires_sso}")
+                    logger.debug(f"Route {gelogd_pad} SSO requirement: {requires_sso}")
                     return requires_sso
 
         # Default behavior for unmatched routes or routes without annotations
-        logger.debug(f"Could not determine SSO requirement for {request.url.path}, defaulting to require SSO")
+        logger.debug(f"Could not determine SSO requirement for {gelogd_pad}, defaulting to require SSO")
         return True

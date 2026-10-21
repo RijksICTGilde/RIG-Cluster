@@ -423,3 +423,43 @@ class TestIPRateLimiterClientIdentification:
         assert "2.2.2.2" in id2
         # The fingerprint portion should be the same
         assert id1.split("|")[1] == id2.split("|")[1] == id3.split("|")[1]
+
+
+class TestIPRateLimiterRetention:
+    """Een emmer blijft minstens zijn vulvenster staan (RC-313)."""
+
+    def test_een_uurgrens_overleeft_het_opruimen(self):
+        """Het opruimen gooide elke emmer weg die 600 seconden niet was aangeraakt.
+
+        Een weggegooide emmer begint op de volle burst, dus een grens van 20 per uur hield
+        geen uur: elf minuten stil, een verzoek van een ander client-id dat het opruimen
+        opwekt, en er konden opnieuw 20 verzoeken in hetzelfde uur.
+        """
+        limiter = IPRateLimiter(requests_per_minute=20 / 60, burst=20)  # 20 per uur
+        client = "10.0.0.1|fingerprint|"
+
+        for _ in range(20):
+            assert limiter.is_allowed(client) is True
+        assert limiter.is_allowed(client) is False
+
+        # Elf minuten later: ouder dan de 600 seconden van het opruimen, binnen het uur.
+        now = time.monotonic()
+        limiter._last_update[client] = now - 660
+        limiter._ip_last_update["10.0.0.1"] = now - 660
+        limiter._last_cleanup = now - limiter._cleanup_interval - 1
+        limiter._new_client_timestamps.clear()
+
+        limiter.is_allowed("10.0.0.2|fingerprint|")  # ander client-id, wekt het opruimen op
+
+        assert client in limiter._last_update
+        assert limiter._tokens[client] < limiter.burst
+
+    def test_een_grens_per_minuut_wordt_nog_wel_opgeruimd(self):
+        """De ondergrens is het vulvenster, dus een korte grens ruimt op zoals eerst."""
+        limiter = IPRateLimiter(requests_per_minute=30, burst=10)
+        limiter._tokens["oud.ip"] = 0.0
+        limiter._last_update["oud.ip"] = time.monotonic() - 700
+
+        limiter.cleanup_old_entries()
+
+        assert "oud.ip" not in limiter._last_update

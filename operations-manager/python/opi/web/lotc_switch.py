@@ -24,13 +24,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def render(request: Request, *, template: str, context: dict[str, Any]) -> Response:
+def render(request: Request, *, template: str, context: dict[str, Any], status_code: int = 200) -> Response:
     """Render ``context`` met ``template`` uit ``opi/templates_lotc/``.
 
     Args:
         request: het binnenkomende verzoek.
         template: de template, in ``opi/templates_lotc/``.
         context: de gegevens.
+        status_code: de HTTP-status, voor een pagina die een weigering IS (429).
 
     De import staat binnenin en niet bovenaan om een kringloop te vermijden: de
     templateomgeving leunt op de formulierlaag, en die wordt door de routes geimporteerd
@@ -38,7 +39,7 @@ def render(request: Request, *, template: str, context: dict[str, Any]) -> Respo
     """
     from opi.core.templates_lotc import templates_lotc
 
-    return templates_lotc.TemplateResponse(request, template, context)
+    return templates_lotc.TemplateResponse(request, template, context, status_code=status_code)
 
 
 def render_fragment(request: Request, *, template: str, context: dict[str, Any]) -> str:

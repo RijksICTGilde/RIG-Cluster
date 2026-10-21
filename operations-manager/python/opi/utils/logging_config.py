@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from opi.core.flow_id import get_flow_id
+from opi.utils.logging_redact import redact_invite_key_in_path
 
 # Replace the default LogRecord factory so that every record — regardless of
 # which logger, handler, or third-party library creates it — carries flow_id.
@@ -27,6 +28,28 @@ class HealthEndpointFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         message = record.getMessage()
         return not any(f'"GET {path}' in message or f'"HEAD {path}' in message for path in self.EXCLUDED_PATHS)
+
+
+class InviteKeyPathFilter(logging.Filter):
+    """Houdt de uitnodigingssleutel uit de access-log van uvicorn.
+
+    De sleutel staat in het PAD (``/invite/<sleutel>``), en de access-regel schrijft dat pad
+    letterlijk, dus zonder dit filter zet elk verzoek in de uitnodigingsflow het geheim in
+    Loki. Het pad is een van de ``args`` van de regel, dus die worden omgezet en niet de al
+    opgemaakte tekst.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(redact_invite_key_in_path(arg) if isinstance(arg, str) else arg for arg in record.args)
+        return True
+
+
+#: Een instantie, want dit filter SCHRIJFT in de regel en ``setup_logging`` wordt twee keer
+#: aangeroepen (early_logging en config). ``addFilter`` slaat een filter over dat er al staat,
+#: dus een nieuwe instantie per aanroep zou het pad twee keer omzetten en de vingerafdruk in
+#: de access-log een andere maken dan die in de regels van de routes.
+_INVITE_KEY_PATH_FILTER = InviteKeyPathFilter()
 
 
 def setup_logging(
@@ -61,6 +84,7 @@ def setup_logging(
     # Filter out health endpoint requests from uvicorn access logs
     uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addFilter(HealthEndpointFilter())
+    uvicorn_access_logger.addFilter(_INVITE_KEY_PATH_FILTER)
 
     # Always add stdout handler
     stdout_handler = logging.StreamHandler()
