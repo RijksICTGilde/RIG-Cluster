@@ -12,7 +12,7 @@ from opi.core import config as opi_config
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_validation import ProjectIntegrityError, validate_project_structure
 from opi.services.catalog.publish_on_web.config_model import PublishOnWebDeploymentConfig
-from opi.services.schema_migration import LATEST_SCHEMA_VERSION, migrate_to_latest
+from opi.services.schema_migration import LATEST_SCHEMA_VERSION_VALUE, migrate_to_latest
 from pydantic import ValidationError
 
 
@@ -69,7 +69,7 @@ def test_ongeldige_subdomains_worden_geweigerd(value: str) -> None:
 def _project_met_subdomein(subdomain: str, *, cluster: str, base_domain: str) -> dict:
     """De vorm van ``amtbz-2m9``: publish-on-web op de deployment, met een basisdomein."""
     return {
-        "schema-version": LATEST_SCHEMA_VERSION,
+        "schema-version": LATEST_SCHEMA_VERSION_VALUE,
         "name": "amtbz-2m9",
         "description": "Project created via self-service portal",
         "clusters": [cluster],

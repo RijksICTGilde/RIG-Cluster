@@ -642,6 +642,52 @@ def get_prefixed_namespace(cluster_name: str, namespace: str) -> str:
     return f"{prefix}{namespace}"
 
 
+# Vaste voorvoegsels van namespaces die niet van ons zijn, maar waar een project evenmin
+# in mag landen.
+RESERVED_NAMESPACE_PREFIXES = ("kube-", "openshift-", "cnpg-")
+
+# De sleutels in CLUSTER_CONFIG die een platformnamespace aanwijzen.
+_PLATFORM_NAMESPACE_KEYS = (
+    "namespace",
+    "argo_namespace",
+    "backup_namespace",
+    "mail_relay_namespace",
+    "database_operator_namespace",
+)
+
+
+def get_platform_namespaces() -> frozenset[str]:
+    """De namespaces waarin het platform zelf draait, over ALLE clusters.
+
+    Afgeleid uit CLUSTER_CONFIG, niet uit een tweede lijst: een platformnamespace die
+    daar bijkomt is zo meteen gereserveerd in plaats van pas na een bewerking hier.
+    """
+    namespaces: set[str] = set()
+    for cluster_config in CLUSTER_CONFIG.values():
+        for key in _PLATFORM_NAMESPACE_KEYS:
+            value = cluster_config.get(key)
+            if isinstance(value, str) and value:
+                namespaces.add(value)
+        namespaces.update(str(ns) for ns in cluster_config.get("service_namespaces", []))
+    return frozenset(namespaces)
+
+
+def is_platform_namespace(namespace: str) -> bool:
+    """True als deze namespace van het platform is en dus nooit van een project."""
+    return namespace in get_platform_namespaces() or namespace.startswith(RESERVED_NAMESPACE_PREFIXES)
+
+
+def is_reserved_project_name(name: str) -> bool:
+    """True als de namespace van dit project op enig cluster een platformnamespace is.
+
+    De namespace is de clusterprefix plus de projectnaam, dus een naam als ``operations``
+    of ``system`` komt uit op de namespace van het platform zelf.
+    """
+    if not name:
+        return False
+    return any(is_platform_namespace(get_prefixed_namespace(cluster, name)) for cluster in CLUSTER_CONFIG)
+
+
 def get_storage_config(cluster_name: str) -> dict:
     """
     Get the storage configuration for a specific cluster.

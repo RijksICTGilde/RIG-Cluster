@@ -15,7 +15,7 @@ from typing import Any
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from opi.connectors.vpa import VpaContainerRecommendation, parse_vpa_status
-from opi.core.cluster_config import get_argo_namespace
+from opi.core.cluster_config import get_argo_namespace, is_platform_namespace
 from opi.core.config import settings
 from opi.generation.manifests import render_template_source
 from opi.services.catalog.base import APPLICATION_CONTAINER_NAME, deployment_pod_selector
@@ -572,8 +572,18 @@ class KubectlConnector:
 
         Returns:
             True if the namespace was successfully deleted or didn't exist, False otherwise
+
+        Raises:
+            KubectlExecutionError: If the namespace belongs to the platform itself
         """
         logger.debug(f"Deleting namespace: {namespace}")
+
+        # Tweede laag naast de weigering van een gereserveerde projectnaam: een
+        # projectverwijdering mag de namespace van het platform zelf nooit meenemen.
+        if is_platform_namespace(namespace):
+            raise KubectlExecutionError(
+                f"Weigert namespace '{namespace}' te verwijderen: dat is een namespace van het platform zelf."
+            )
 
         # Delete the namespace with ignore-not-found to handle cases where it doesn't exist
         args = ["delete", "namespace", namespace, "--ignore-not-found=true"]

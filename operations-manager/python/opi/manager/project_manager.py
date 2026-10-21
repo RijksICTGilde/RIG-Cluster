@@ -60,6 +60,7 @@ from opi.core.cluster_config import (
     get_namespace,
     get_pod_security_labels,
     get_prefixed_namespace,
+    is_reserved_project_name,
     namespace_labels,
     supports_vpa,
     uses_capsule,
@@ -203,6 +204,7 @@ from opi.utils.naming import (
     get_component_ingress_map,
 )
 from opi.utils.project_utils import (
+    RESERVED_PROJECT_NAME_MESSAGE,
     ComponentValidationError,
     build_component_config,
     normalize_container_image,
@@ -3203,6 +3205,13 @@ class ProjectManager:
                 # migrate cleanly would be written to zad-projects with our ops-
                 # manager identity *before* validation rejected it. Fails closed.
                 validate_project_schema(current_yaml)
+
+                # Een projectbestand dat hier voor het eerst opduikt is een create, ook
+                # als het rechtstreeks naar zad-projects is gecommit.
+                if analysis["previous_yaml"] is None and is_reserved_project_name(str(current_yaml.get("name", ""))):
+                    raise ProjectIntegrityError(
+                        RESERVED_PROJECT_NAME_MESSAGE.format(name=current_yaml.get("name", "(onbekend)"))
+                    )
             except Exception as e:
                 self._end_step(read_step, str(e))
                 raise

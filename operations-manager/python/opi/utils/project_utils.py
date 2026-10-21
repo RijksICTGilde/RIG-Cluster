@@ -300,6 +300,14 @@ def project_level_deployment(deployments: list[dict[str, Any]]) -> dict[str, Any
     return min(on_cluster, key=lambda d: str(d["name"]))
 
 
+#: De melding bij een gereserveerde projectnaam, zodat wizard, API en git dezelfde zin
+#: geven. Zie is_reserved_project_name in opi.core.cluster_config.
+RESERVED_PROJECT_NAME_MESSAGE = (
+    "Projectnaam '{name}' is niet beschikbaar: de namespace van dit project zou samenvallen "
+    "met een namespace van het platform zelf. Kies een andere naam."
+)
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
