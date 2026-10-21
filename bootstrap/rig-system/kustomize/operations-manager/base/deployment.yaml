@@ -213,6 +213,9 @@ spec:
       - name: argocd-ca-bundle
         configMap:
           name: argocd-ca-bundle
+          # Zonder dit blijft de pod in ContainerCreating hangen op een cluster zonder
+          # bundel; OPI weigert dan met een ArgoTLSConfiguratieError die het pad noemt.
+          optional: true
       - name: git-signing-key
         secret:
           secretName: operations-manager-git-signing-key

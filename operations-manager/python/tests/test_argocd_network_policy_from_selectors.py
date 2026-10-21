@@ -1,30 +1,26 @@
-"""The `allow-argo` NetworkPolicy on odcn-production must scope its server ports (RC-315).
+"""The `allow-argo` NetworkPolicy on the ODCN overlays must scope its server ports (RC-315).
 
 Before this, the ingress rule on 8080/8443 carried no `from`, so any pod anywhere in the
 cluster could reach the ArgoCD server. This pins that only OPI, the router namespace, and
 Prometheus (for metrics) are allowed in, and that an arbitrary pod is not.
+
+Both ODCN overlays are checked: staging got the same policy in RC-357.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
-_POLICY_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "bootstrap"
-    / "rig-system"
-    / "kustomize"
-    / "overlays"
-    / "odcn-production"
-    / "network-policies"
-    / "argocd-network-policy.yaml"
-)
+_OVERLAYS = Path(__file__).resolve().parents[3] / "bootstrap" / "rig-system" / "kustomize" / "overlays"
+_OVERLAY_NAMEN = ("odcn-production", "odcn-staging")
 
 
-def _load_policy() -> dict:
-    return yaml.safe_load(_POLICY_PATH.read_text())
+def _load_policy(overlay: str) -> dict:
+    pad = _OVERLAYS / overlay / "network-policies" / "argocd-network-policy.yaml"
+    return yaml.safe_load(pad.read_text())
 
 
 def _rule_for_port(ingress: list[dict], port: int) -> dict:
@@ -34,8 +30,9 @@ def _rule_for_port(ingress: list[dict], port: int) -> dict:
     raise AssertionError(f"no ingress rule carries port {port}")
 
 
-def test_server_port_rule_restricts_to_opi_and_router() -> None:
-    ingress = _load_policy()["spec"]["ingress"]
+@pytest.mark.parametrize("overlay", _OVERLAY_NAMEN)
+def test_server_port_rule_restricts_to_opi_and_router(overlay: str) -> None:
+    ingress = _load_policy(overlay)["spec"]["ingress"]
     rule = _rule_for_port(ingress, 8080)
 
     peers = rule["from"]
@@ -44,9 +41,10 @@ def test_server_port_rule_restricts_to_opi_and_router() -> None:
     assert len(peers) == 2, "an extra peer here is a widened allow-list that nobody asked for"
 
 
-def test_server_port_rule_does_not_allow_an_arbitrary_pod() -> None:
+@pytest.mark.parametrize("overlay", _OVERLAY_NAMEN)
+def test_server_port_rule_does_not_allow_an_arbitrary_pod(overlay: str) -> None:
     """A pod with neither label matches neither podSelector, so it stays outside this rule."""
-    ingress = _load_policy()["spec"]["ingress"]
+    ingress = _load_policy(overlay)["spec"]["ingress"]
     rule = _rule_for_port(ingress, 8080)
 
     arbitrary_pod_labels = {"app": "some-other-workload"}
@@ -56,15 +54,17 @@ def test_server_port_rule_does_not_allow_an_arbitrary_pod() -> None:
             assert not pod_selector.get("matchLabels", {}).items() <= arbitrary_pod_labels.items()
 
 
-def test_metrics_port_is_restricted_to_prometheus() -> None:
-    ingress = _load_policy()["spec"]["ingress"]
+@pytest.mark.parametrize("overlay", _OVERLAY_NAMEN)
+def test_metrics_port_is_restricted_to_prometheus(overlay: str) -> None:
+    ingress = _load_policy(overlay)["spec"]["ingress"]
     rule = _rule_for_port(ingress, 8083)
 
     assert rule["from"] == [{"podSelector": {"matchLabels": {"app": "prometheus"}}}]
 
 
-def test_8443_no_longer_carries_a_blanket_allow() -> None:
+@pytest.mark.parametrize("overlay", _OVERLAY_NAMEN)
+def test_8443_no_longer_carries_a_blanket_allow(overlay: str) -> None:
     """8443 used to sit next to 8080 under the same unscoped rule. The operator Service points
     both 80 and 443 at targetPort 8080, so nothing ever listened on 8443."""
-    ingress = _load_policy()["spec"]["ingress"]
+    ingress = _load_policy(overlay)["spec"]["ingress"]
     assert not any(p.get("port") == 8443 for rule in ingress for p in rule.get("ports", []))

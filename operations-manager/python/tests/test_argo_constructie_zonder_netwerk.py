@@ -123,3 +123,32 @@ def test_tls_met_controle_zonder_bundel_weigert() -> None:
     """De CA van de ArgoCD-server zit niet in de systeemtrust, dus dit faalt toch."""
     with pytest.raises(ArgoTLSConfiguratieError):
         ArgoConnector(use_tls=True, verify_ssl=True)
+
+
+def test_een_ontbrekende_bundel_noemt_het_pad(tmp_path: Path) -> None:
+    """De mount is optional, dus een cluster zonder ConfigMap levert geen bestand."""
+    argo_module._ssl_context_voor.cache_clear()
+    ontbreekt = str(tmp_path / "service-ca.crt")
+
+    with pytest.raises(ArgoTLSConfiguratieError, match=ontbreekt):
+        ArgoConnector(use_tls=True, verify_ssl=True, ca_bundle=ontbreekt)._ssl_context()
+
+
+def test_een_lege_bundel_noemt_het_pad(tmp_path: Path) -> None:
+    """De ConfigMap bestaat, maar de service-CA heeft service-ca.crt nog niet gevuld."""
+    argo_module._ssl_context_voor.cache_clear()
+    leeg = tmp_path / "service-ca.crt"
+    leeg.write_text("")
+
+    with pytest.raises(ArgoTLSConfiguratieError, match=str(leeg)):
+        ArgoConnector(use_tls=True, verify_ssl=True, ca_bundle=str(leeg))._ssl_context()
+
+
+def test_zonder_bundel_valt_de_connector_niet_terug_op_plain_http(tmp_path: Path) -> None:
+    """De basis-URL blijft https: het protocol is een instelling en geen gok."""
+    argo_module._ssl_context_voor.cache_clear()
+    connector = ArgoConnector(use_tls=True, verify_ssl=True, ca_bundle=str(tmp_path / "service-ca.crt"))
+
+    assert connector.base_url.startswith("https://")
+    with pytest.raises(ArgoTLSConfiguratieError):
+        connector._ssl_context()

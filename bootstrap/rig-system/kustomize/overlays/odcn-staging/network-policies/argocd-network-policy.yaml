@@ -20,21 +20,24 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/part-of: argocd
-    # ArgoCD server UI/API reachable from within the cluster.
-    # NOTE on ports: the argocd-operator Service maps service port 80 ->
-    # container targetPort 8080 and 443 -> 8443. NetworkPolicy matches the
-    # CONTAINER port, not the Service port. OPI talks to argocd-server on
-    # service port 80 (ARGOCD_PORT), arriving at the pod on 8080. With
-    # `insecure: true` (argocd-deployment.yaml) the server serves plain HTTP
-    # on 8080 and does not redirect to HTTPS. 8443 is allowed too as
-    # defense-in-depth so flipping `insecure` or an operator default change
-    # cannot silently sever OPI -> argocd-server with no policy escape.
-    # 8083 is the server metrics port.
-    - ports:
+    # OPI en de router; de componenten onderling staan in de regel hierboven.
+    # NetworkPolicy kijkt naar containerpoort 8080, niet naar servicepoort 443.
+    - from:
+        - podSelector:
+            matchLabels:
+              app: operations-manager
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
         - protocol: TCP
           port: 8080
-        - protocol: TCP
-          port: 8443
+    # De metrics-poort van de server, alleen voor Prometheus (zelfde namespace).
+    - from:
+        - podSelector:
+            matchLabels:
+              app: prometheus
+      ports:
         - protocol: TCP
           port: 8083
   egress:
@@ -50,11 +53,11 @@ spec:
             matchLabels:
               app.kubernetes.io/part-of: argocd
     # Outbound HTTPS for Git and the Kubernetes API server.
-    # Production ArgoCD pulls from external GitHub over https://
-    # (argocd-application-*.yaml repoURLs, odcn-production configmap) and
+    # Staging ArgoCD pulls from external GitHub over https://
+    # (argocd-application-*.yaml repoURLs, odcn-staging configmap) and
     # talks to the Capsule-Proxy kube-API on 443 (no KUBERNETES_SERVICE_PORT
     # override -> in-cluster default 443). No in-cluster Forgejo, no ssh://,
-    # no non-443 registries in production. 6443 is intentionally not allowed.
+    # no non-443 registries on staging. 6443 is intentionally not allowed.
     - ports:
         - protocol: TCP
           port: 443
