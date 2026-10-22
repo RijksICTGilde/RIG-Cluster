@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-zad-regels
+data:
+  # Drie signalen die op dit platform niets te zoeken hebben in een draaiende workload.
+  # Ze staan naast de upstream-regelset van Falco, niet in plaats daarvan.
+  zad_regels.yaml: |
+    - macro: zad_namespace
+      condition: (k8s.ns.name startswith "rig-")
+
+    - rule: Shell in een ZAD-container
+      desc: >-
+        Een interactieve shell in een tenant- of platformcontainer. De pods draaien een
+        applicatie, geen beheerterminal: een shell hier betekent of handwerk dat buiten
+        GitOps omgaat, of iemand die binnen is.
+      condition: >
+        spawned_process and container and zad_namespace
+        and proc.name in (shell_binaries)
+      output: >-
+        Shell gestart in een ZAD-container (gebruiker=%user.name commando=%proc.cmdline
+        container=%container.name namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [zad, shell, mitre_execution]
+
+    - rule: Service-account-token gelezen in een ZAD-container
+      desc: >-
+        Iets leest het gemounte service-account-token. De applicaties van een tenant
+        praten niet met de kube-api; wie dat token leest, zoekt rechten in het cluster.
+      condition: >
+        open_read and container and zad_namespace
+        and fd.name startswith /var/run/secrets/kubernetes.io/serviceaccount
+        and not proc.name in (pause)
+      output: >-
+        Service-account-token gelezen (bestand=%fd.name commando=%proc.cmdline
+        container=%container.name namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: WARNING
+      tags: [zad, secrets, mitre_credential_access]
+
+    - rule: Pakketbeheerder in een ZAD-container
+      desc: >-
+        apt, apk of pip tijdens runtime betekent dat de container iets binnenhaalt dat niet
+        in het image zat, en dus niet door de containerscan is gegaan.
+      condition: >
+        spawned_process and container and zad_namespace
+        and proc.name in (apt, apt-get, apk, pip, pip3, npm, curl, wget)
+        and not proc.pname in (entrypoint.sh)
+      output: >-
+        Pakketbeheerder of downloader gestart (commando=%proc.cmdline
+        container=%container.name namespace=%k8s.ns.name pod=%k8s.pod.name)
+      priority: NOTICE
+      tags: [zad, supply_chain, mitre_execution]

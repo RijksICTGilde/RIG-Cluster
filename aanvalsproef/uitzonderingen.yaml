@@ -1,0 +1,79 @@
+# Uitzonderingen op de gates van de aanvalsproef.
+#
+# Een regel hier zet een bevinding stil. Dat mag alleen met een reden (statement) en een
+# vervaldatum (expired_at), dezelfde vorm als .trivyignore.yaml: zo blijft de afweging
+# vastgelegd zoals BIO2 8.08.02 vraagt, en komt de bevinding vanzelf terug in plaats van
+# stil te verdwijnen. opi/tools/aanvalsproef.py negeert een verlopen of onvolledige regel,
+# en tests/test_aanvalsproef.py weigert hem.
+#
+# Een sectie per scanner; de naam is ook het subcommando van de gate. De id's zijn
+# template-id (nuclei), check-naam (kube-linter), check_id (checkov) en rule-id (semgrep).
+# Een uitzondering geldt voor die id in het hele gescande oppervlak, niet per plek: dat is
+# grof, maar het houdt de lijst leesbaar en de afweging op een plek.
+
+nuclei: []
+
+kube-linter:
+  - id: no-read-only-root-fs
+    statement: >-
+      De tenant-deployments draaien een image van het project zelf. Een read-only rootfs
+      afdwingen breekt elke applicatie die naar /tmp of een cache schrijft, en ZAD kent die
+      images niet. Dezelfde keuze staat als CKV_K8S_22 in de checkov-sectie. De
+      Kyverno-policy zad-securitycontext rapporteert hem in audit-modus, zodat de omvang
+      zichtbaar blijft; afdwingen vraagt per component een beslissing.
+    expired_at: 2027-04-01
+  - id: non-isolated-pod
+    statement: >-
+      De golden-snapshots bevatten per scenario alleen de workload, niet de NetworkPolicy
+      die ZAD er in hetzelfde proces bij genereert (features/restrictive-network-policies.md). De
+      bevinding gaat over de omvang van de snapshot, niet over wat er op het cluster staat.
+      Dezelfde keuze staat als CKV2_K8S_6 in de checkov-sectie.
+    expired_at: 2027-04-01
+
+checkov:
+  - id: CKV_K8S_22
+    statement: >-
+      Zie no-read-only-root-fs in de kube-linter-sectie: het image van de tenant is niet van
+      ons, en read-only rootfs is niet generiek af te dwingen.
+    expired_at: 2027-04-01
+  - id: CKV2_K8S_6
+    statement: >-
+      Zie non-isolated-pod in de kube-linter-sectie: de NetworkPolicy zit niet in de
+      golden-snapshot van de workload.
+    expired_at: 2027-04-01
+  - id: CKV_K8S_153
+    statement: >-
+      De gegenereerde ingress zet de internet.nl-headers ook via een
+      nginx-configuration-snippet. Het snippet zelf is ons sjabloon; de twee waarden die
+      erin komen (het pad en de rewrite-basis van een component) zijn wel tenant-invoer en
+      worden daarom aan de bron op charset getoetst met SAFE_PATH_PATTERN in
+      opi/utils/url_paths.py, dat geen aanhalingsteken, witruimte of newline doorlaat. De
+      annotatie werkt alleen zolang de controller snippets toestaat, en dat staat
+      cluster-breed aan. Dat laatste is de echte vraag en hoort bij de ingress-configuratie,
+      niet bij deze gate; de bevinding staat op de PR van RC-372.
+    expired_at: 2027-01-21
+
+semgrep:
+  - id: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+    statement: >-
+      De negen treffers loggen geen waarde maar een naam of een geredigeerd pad; de
+      redactielaag en tests/test_logging_redact.py dekken dit af. De regel kijkt naar de
+      naam van de variabele, niet naar wat er in de regel terechtkomt.
+    expired_at: 2027-04-01
+  - id: python.lang.security.audit.network.bind.avoid-bind-to-all-interfaces
+    statement: >-
+      Dezelfde afweging als ruff S104, dat in pyproject.toml al als bewuste serverconfig
+      staat: een server in een pod bindt op alle interfaces van die pod.
+    expired_at: 2027-04-01
+  - id: python.jinja2.security.audit.autoescape-disabled-false.incorrect-autoescape-disabled
+    statement: >-
+      De manifest-environment in opi/generation/manifests.py zet autoescape bewust uit: de
+      sjablonen zijn YAML en geen HTML, en HTML-escaping zou de manifests stuk maken. De
+      docstring daar legt het uit; de HTML-kant heeft autoescape wel aan.
+    expired_at: 2027-04-01
+  - id: python.django.security.nan-injection.nan-injection
+    statement: >-
+      float() op de prijsparameter van de gebruikspagina, achter requires_sso en
+      require_platform_admin. Een NaN maakt de berekende kosten NaN op het scherm van de
+      beheerder die hem zelf meegaf; er gaat geen beslissing of opslag door.
+    expired_at: 2027-04-01

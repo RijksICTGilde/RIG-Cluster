@@ -1,0 +1,1064 @@
+# Ons oordeel per ASVS-eis: gedekt door een automatische toets, gedekt door een plan, of
+# handwerk. De eisen zelf staan in asvs-5.0-eisen.yaml, letterlijk uit de standaard.
+#
+# docs/asvs-zelfbeoordeling.md volgt hieruit met `task asvs-afvinklijst`, en `task asvs-check`
+# faalt zodra een eis geen oordeel heeft of een genoemde toets niet bestaat. Zie
+# features/asvs-zelfbeoordeling.md voor hoe je een regel bijwerkt.
+#
+# status: toets (met een bestaande toets), plan (met een RC-nummer), handwerk (met een
+# eigenaar) of nvt (met de reden waarom de eis hier niet geldt).
+niveau: L2
+oordelen:
+- id: V1.1.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Decoderen gebeurt in FastAPI en Pydantic; dat het eenmalig is, is nog niet getoetst. te
+    doen in de handmatige ronde voor de externe audit
+- id: V1.1.2
+  status: toets
+  toets: operations-manager/python/tests/e2e/test_gedragsoppervlak.py
+  toelichting: De HTML-kant rendert met autoescape aan; de meting staat op de gebouwde app en niet op
+    een eigen Jinja-environment.
+- id: V1.2.1
+  status: toets
+  toets: operations-manager/python/tests/e2e/test_gedragsoppervlak.py operations-manager/python/tests/test_security_headers.py
+- id: V1.2.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: URL's worden met urlencode opgebouwd, zonder eigen toets daarop. te doen in de handmatige
+    ronde voor de externe audit
+- id: V1.2.3
+  status: toets
+  toets: operations-manager/python/tests/e2e/test_gedragsoppervlak.py
+  toelichting: tojson plus forceescape is de conventie voor een JS-tekenreeks in een attribuut; de gedragstoets
+    meet het op de gerenderde pagina.
+- id: V1.2.4
+  status: toets
+  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toelichting: SQLAlchemy 2.0 met gebonden parameters; de SAST-gate is wat een rauwe query zou vangen.
+- id: V1.2.5
+  status: toets
+  toets: operations-manager/python/tests/test_pgdump_command_injection.py aanvalsproef/semgrep-zad.yaml
+    .github/workflows/security.yml#sast-codeql
+  toelichting: De connectors geven een argumentenlijst mee; de semgrep-regels zad-subprocess-buiten-connector
+    en zad-subprocess-via-een-shell en de taint-analyse van CodeQL houden dat vast.
+- id: V1.2.6
+  status: nvt
+  toelichting: 'ZAD doet geen eigen LDAP-queries: de koppeling met SSO-Rijk loopt via Keycloak over OIDC.'
+- id: V1.2.7
+  status: nvt
+  toelichting: Er wordt geen XPath gebruikt.
+- id: V1.2.8
+  status: nvt
+  toelichting: Er is geen LaTeX-verwerking.
+- id: V1.2.9
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De reguliere expressies in de validators staan vast en verwerken geen gebruikersinvoer
+    als patroon. te doen in de handmatige ronde voor de externe audit
+- id: V1.3.1
+  status: nvt
+  toelichting: Er is geen WYSIWYG-editor; vrije tekst wordt als tekst gerenderd.
+- id: V1.3.2
+  status: toets
+  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toelichting: Geen eval of dynamische codeuitvoering; de SAST-gate is wat dat zou vangen.
+- id: V1.3.3
+  status: toets
+  toets: operations-manager/python/tests/test_template_injection_sweep.py operations-manager/python/tests/test_authwall_banner_yaml_injection.py
+  toelichting: 'De manifest- en sidecar-sjablonen zijn het gevaarlijke pad: tenant-waarden gaan daar als
+    gequote scalar in.'
+- id: V1.3.4
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Bijlagen kunnen SVG bevatten; dat die niet scriptbaar wordt uitgeleverd is nog niet getoetst.
+    te doen in de handmatige ronde voor de externe audit
+- id: V1.3.5
+  status: nvt
+  toelichting: Gebruikersinvoer wordt niet als sjabloon, Markdown of stylesheet verwerkt.
+- id: V1.3.6
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De repository-URL en de registry-host van een project zijn invoer die OPI zelf aanroept;
+    een allowlist daarop is handwerk. te doen in de handmatige ronde voor de externe audit
+- id: V1.3.7
+  status: toets
+  toets: operations-manager/python/tests/test_template_injection_sweep.py
+  toelichting: Sjablonen worden nooit uit invoer opgebouwd, alleen uit de meegeleverde manifest-sjablonen.
+- id: V1.3.8
+  status: nvt
+  toelichting: Er is geen Java-component met JNDI in het verwerkingspad van ZAD.
+- id: V1.3.9
+  status: nvt
+  toelichting: Er is geen memcache; de cache is Redis, zonder invoer in de sleutels.
+- id: V1.3.10
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Format strings komen niet uit invoer; niet apart getoetst. te doen in de handmatige ronde
+    voor de externe audit
+- id: V1.3.11
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De mail-afzender zet onderwerp en inhoud samen uit projectvelden. te doen in de handmatige
+    ronde voor de externe audit
+- id: V1.4.1
+  status: nvt
+  toelichting: Python beheert geheugen zelf; er is geen eigen onbeheerde code.
+- id: V1.4.2
+  status: nvt
+  toelichting: Python heeft gehele getallen van willekeurige grootte; integer-overflow bestaat hier niet.
+- id: V1.4.3
+  status: nvt
+  toelichting: Python beheert geheugen zelf; er zijn geen pointers vrij te geven.
+- id: V1.5.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: XML wordt niet verwerkt in het OPI-pad; de SAML-kant zit in Keycloak. te doen in de handmatige
+    ronde voor de externe audit
+- id: V1.5.2
+  status: toets
+  toets: aanvalsproef/semgrep-zad.yaml .github/workflows/security.yml#sast-codeql
+  toelichting: Deserialisatie gaat via Pydantic en yaml.safe_load; de SAST-gate vangt een pickle of een
+    onveilige loader.
+- id: V2.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_editable_processor.py
+  toelichting: De validatieregels per veld staan in de editables, en instructions/services.md beschrijft
+    die vorm.
+- id: V2.1.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Samenhang tussen velden (dienst plus component plus deployment) wordt gevalideerd, maar
+    is niet als regelverzameling gedocumenteerd. te doen in de handmatige ronde voor de externe audit
+- id: V2.1.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De limieten per project (quota, aantal componenten) staan in de code, niet in een document.
+    te doen in de handmatige ronde voor de externe audit
+- id: V2.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_domain_format.py operations-manager/python/tests/test_editable_processor.py
+  toelichting: Positieve validatie met een gesloten verzameling waar dat kan.
+- id: V2.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_editable_processor.py
+  toelichting: 'Formulier en API lopen hetzelfde logicapad: de validatie zit in de editables, niet in
+    de pagina.'
+- id: V2.2.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: te doen in de handmatige ronde voor de externe audit
+- id: V2.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_wizardtoken_eigenaar_en_project.py
+  toelichting: De wizard-stappen hangen aan een token dat de eigenaar en het project vastlegt.
+- id: V2.3.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: te doen in de handmatige ronde voor de externe audit
+- id: V2.3.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De verwerking van een projectbestand is niet transactioneel over alle connectors; de taakstatus
+    maakt zichtbaar waar hij strandde. te doen in de handmatige ronde voor de externe audit
+- id: V2.3.4
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Subdomeinen worden via het subdomain-register uniek gehouden; een eigen toets op gelijktijdigheid
+    ontbreekt. te doen in de handmatige ronde voor de externe audit
+- id: V2.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_rate_limiter.py operations-manager/python/tests/test_web_subdomain_rate_limiter.py
+  toelichting: De IP-rate-limiter en de subdomeinlimiet zijn de anti-automatiseringsgrenzen op het portaal.
+- id: V3.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: X-Content-Type-Options en de CSP komen uit de security-headers-middleware.
+- id: V3.2.2
+  status: toets
+  toets: operations-manager/python/tests/e2e/test_gedragsoppervlak.py
+  toelichting: Autoescape op de HTML-kant; tekst blijft tekst.
+- id: V3.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_session_cookie_max_age.py operations-manager/python/tests/test_secret_key_failclosed.py
+  toelichting: De sessiecookie staat op Secure en HttpOnly; nuclei meldt het ontbreken van Secure alleen
+    op het http-doelwit van de aanvalsproef.
+- id: V3.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_session_cookie_max_age.py
+- id: V3.3.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De cookienaam heeft geen __Host-voorvoegsel. Dat is een wijziging in de sessielaag met
+    gevolgen voor bestaande sessies. te doen in de handmatige ronde voor de externe audit
+- id: V3.3.4
+  status: toets
+  toets: operations-manager/python/tests/test_session_cookie_max_age.py
+- id: V3.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: HSTS komt zowel uit de middleware als uit de gegenereerde ingress.
+- id: V3.4.2
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: Er is geen CORS-middleware met een echo van Origin.
+- id: V3.4.3
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: De CSP staat in de middleware; nuclei meldt hem als zwak, zie de bevindingen op de PR van
+    RC-372.
+- id: V3.4.4
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+- id: V3.4.5
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+- id: V3.4.6
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+- id: V3.5.1
+  status: toets
+  toets: operations-manager/python/tests/test_csrf_enforcement.py
+  toelichting: Elke muterende route vraagt een CSRF-token; de middleware weigert zonder.
+- id: V3.5.2
+  status: toets
+  toets: operations-manager/python/tests/test_csrf_enforcement.py
+- id: V3.5.3
+  status: toets
+  toets: operations-manager/python/tests/test_csrf_enforcement.py
+  toelichting: Muteren gaat per POST of DELETE, nooit per GET.
+- id: V3.5.4
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: Elke tenant krijgt een eigen subdomein; dat het portaal en de tenants niet dezelfde origin
+    delen is een eigenschap van de DNS-indeling. te doen in de handmatige ronde voor de externe audit
+- id: V3.5.5
+  status: nvt
+  toelichting: Er is geen postMessage-koppeling in het portaal.
+- id: V3.7.1
+  status: toets
+  toets: .github/workflows/security.yml#dependency-audit .github/workflows/security.yml#container-scan
+  toelichting: De frontend is lord-of-the-components met het NLDD-thema; de afhankelijkheden lopen mee
+    in de dependency- en containerscan.
+- id: V3.7.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De doorverwijzingen na inloggen en na een actie gaan naar eigen paden; een open-redirect-toets
+    ontbreekt. te doen in de handmatige ronde voor de externe audit
+- id: V4.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_delete_attachment_response_class.py
+  toelichting: FastAPI zet het Content-Type per response-class; de toets bewaakt de afwijkende gevallen.
+- id: V4.1.2
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: HSTS en de ingress dwingen HTTPS af; de API-paden verwijzen niet zelf door.
+- id: V4.1.3
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: X-Forwarded-For komt van de ingress; dat een client die header niet zelf kan zetten is
+    clusterconfiguratie. te doen in de handmatige ronde voor de externe audit
+- id: V4.2.1
+  status: nvt
+  toelichting: Request smuggling hangt aan de ingress-controller en de proxy, niet aan ZAD-code; het valt
+    onder de clusterconfiguratie.
+- id: V4.3.1
+  status: nvt
+  toelichting: Er is geen GraphQL-API.
+- id: V4.3.2
+  status: nvt
+  toelichting: Er is geen GraphQL-API.
+- id: V4.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_logs_websocket_router.py
+  toelichting: De logstroom loopt over de ingress met TLS, dus wss.
+- id: V4.4.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De Origin-controle op de websocket-handshake is niet apart getoetst. te doen in de handmatige
+    ronde voor de externe audit
+- id: V4.4.3
+  status: toets
+  toets: operations-manager/python/tests/test_logs_websocket_router.py
+  toelichting: De websocket gebruikt de gewone portaalsessie, geen eigen token.
+- id: V4.4.4
+  status: toets
+  toets: operations-manager/python/tests/test_logs_websocket_router.py
+- id: V5.1.1
+  status: toets
+  toets: features/attachments-getting-started.md
+  toelichting: De toegestane soorten en de maximale grootte van een bijlage staan in de feature-documentatie.
+- id: V5.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_attachment_upsert_manager.py
+  toelichting: De maximale grootte wordt bij het opslaan afgedwongen.
+- id: V5.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_attachment_catalog_model.py
+  toelichting: De catalogus bepaalt per soort welke extensies mogen.
+- id: V5.2.3
+  status: nvt
+  toelichting: 'Er worden geen archieven uitgepakt: een bijlage wordt opgeslagen zoals hij is.'
+- id: V5.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_attachment_crypto.py
+  toelichting: Bijlagen gaan versleuteld naar de opslag en worden nooit als code uitgevoerd.
+- id: V5.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_attachment_upsert_manager.py
+  toelichting: De naam op schijf wordt zelf gegenereerd, niet overgenomen uit de upload.
+- id: V5.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_delete_attachment_response_class.py
+- id: V5.4.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De Content-Disposition van een bijlage-download is niet apart getoetst op RFC 6266. te
+    doen in de handmatige ronde voor de externe audit
+- id: V5.4.3
+  status: nvt
+  toelichting: Er is geen virusscanner op het platform; bijlagen zijn projectdocumentatie van de eigen
+    beheerders en worden niet aan derden uitgeleverd.
+- id: V6.1.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: De brute-force-instellingen staan in het Keycloak-realm; de rate-limiter van het portaal
+    zit in opi/middleware. te doen in de handmatige ronde voor de externe audit
+- id: V6.1.2
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.1.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Er zijn twee paden: SSO-Rijk en de lokale beheeraccounts per dienst. Die zijn niet samen
+    gedocumenteerd. te doen in de handmatige ronde voor de externe audit'
+- id: V6.2.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.2
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.5
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.6
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.7
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.8
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.9
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.10
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.11
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.2.12
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.3.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_keycloak_platform_zonder_ontwikkelresten.py
+  toelichting: Het platformrealm wordt zonder ontwikkelaccounts opgeleverd.
+- id: V6.3.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: MFA komt van SSO-Rijk; voor de lokale beheeraccounts is het een Keycloak-instelling. te
+    doen in de handmatige ronde voor de externe audit
+- id: V6.3.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_passwords.py
+  toelichting: De wachtwoorden die OPI zelf uitdeelt (database, MinIO, Keycloak-client) komen uit secrets.token_urlsafe.
+- id: V6.4.2
+  status: nvt
+  toelichting: Er zijn geen wachtwoordhints of geheime vragen.
+- id: V6.4.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.4.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V6.5.1
+  status: nvt
+  toelichting: ZAD deelt geen lookup secrets, out-of-band codes of TOTP-zaden uit; die keten zit volledig
+    bij de identiteitsleverancier.
+- id: V6.5.2
+  status: nvt
+  toelichting: ZAD deelt geen lookup secrets, out-of-band codes of TOTP-zaden uit; die keten zit volledig
+    bij de identiteitsleverancier.
+- id: V6.5.3
+  status: nvt
+  toelichting: ZAD deelt geen lookup secrets, out-of-band codes of TOTP-zaden uit; die keten zit volledig
+    bij de identiteitsleverancier.
+- id: V6.5.4
+  status: nvt
+  toelichting: ZAD deelt geen lookup secrets, out-of-band codes of TOTP-zaden uit; die keten zit volledig
+    bij de identiteitsleverancier.
+- id: V6.5.5
+  status: nvt
+  toelichting: ZAD deelt geen lookup secrets, out-of-band codes of TOTP-zaden uit; die keten zit volledig
+    bij de identiteitsleverancier.
+- id: V6.6.1
+  status: nvt
+  toelichting: Er is geen authenticatie via de telefoon of een ander out-of-band kanaal in ZAD.
+- id: V6.6.2
+  status: nvt
+  toelichting: Er is geen authenticatie via de telefoon of een ander out-of-band kanaal in ZAD.
+- id: V6.6.3
+  status: nvt
+  toelichting: Er is geen authenticatie via de telefoon of een ander out-of-band kanaal in ZAD.
+- id: V6.8.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Er is een identiteitsleverancier (SSO-Rijk via Keycloak); spoofing via een tweede leverancier
+    kan niet zolang dat zo blijft. te doen in de handmatige ronde voor de externe audit
+- id: V6.8.2
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+  toelichting: De tokenlaag controleert de handtekening tegen de JWKS van de uitgever.
+- id: V6.8.3
+  status: nvt
+  toelichting: Er worden geen SAML-assertions verwerkt; de keten is OIDC.
+- id: V6.8.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V7.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_portaalsessie_levensduur.py features/portaalsessie-levensduur.md
+  toelichting: De inactiviteits- en maximumduur staan vast in de code en in de documentatie.
+- id: V7.1.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Parallelle sessies zijn toegestaan en niet begrensd; dat is niet vastgelegd. te doen in
+    de handmatige ronde voor de externe audit
+- id: V7.1.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: De sessieduur van het portaal en die van Keycloak staan los van elkaar. te doen in de handmatige
+    ronde voor de externe audit
+- id: V7.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py
+  toelichting: De sessie wordt server-side geverifieerd in de autorisatie-middleware.
+- id: V7.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_secret_key_failclosed.py
+  toelichting: De sessie is een getekend cookie met een eigen SECRET_KEY; zonder sleutel start de app
+    niet.
+- id: V7.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_secret_key_failclosed.py
+- id: V7.2.4
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Of de sessie bij herauthenticatie een nieuw token krijgt is niet apart getoetst. te doen
+    in de handmatige ronde voor de externe audit
+- id: V7.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_portaalsessie_levensduur.py
+- id: V7.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_portaalsessie_levensduur.py
+- id: V7.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_sessies_intrekken.py
+  toelichting: Uitloggen en intrekken maken de sessie onbruikbaar.
+- id: V7.4.2
+  status: toets
+  toets: operations-manager/python/tests/test_sessies_intrekken.py
+- id: V7.4.3
+  status: toets
+  toets: operations-manager/python/tests/test_sessies_intrekken.py
+- id: V7.4.4
+  status: toets
+  toets: operations-manager/python/tests/test_keycloak_logout_path.py
+  toelichting: Elke ingelogde pagina heeft de uitloglink in de schil.
+- id: V7.4.5
+  status: toets
+  toets: operations-manager/python/tests/test_sessies_intrekken.py
+  toelichting: Een platformbeheerder kan de sessies van een gebruiker intrekken.
+- id: V7.5.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Herauthenticatie voor een gevoelige wijziging bestaat niet; rolwijzigingen lopen via een
+    projectbeheerder. te doen in de handmatige ronde voor de externe audit
+- id: V7.5.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Een gebruiker kan zijn eigen actieve sessies niet inzien. te doen in de handmatige ronde
+    voor de externe audit
+- id: V7.6.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: De samenhang tussen de sessie van het portaal en die van de identiteitsleverancier is niet
+    vastgelegd. te doen in de handmatige ronde voor de externe audit
+- id: V7.6.2
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py
+  toelichting: Een sessie ontstaat alleen na een expliciete inlogactie.
+- id: V8.1.1
+  status: toets
+  toets: features/authorization-wall.md features/rollen-voor-operationele-handelingen.md
+  toelichting: De rollen en wat ze mogen staan in de feature-documentatie.
+- id: V8.1.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Toegang per veld (welke rol welk geheim ziet) is in code geregeld en niet als regelverzameling
+    beschreven. te doen in de handmatige ronde voor de externe audit
+- id: V8.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py operations-manager/python/tests/test_wizard_role_gate.py
+  toelichting: Toegang per functie komt uit requires_sso en de rolcontroles; de semgrep-regel zad-webroute-zonder-sso
+    bewaakt dat geen route de muur mist.
+- id: V8.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_project_operate_access.py
+  toelichting: Toegang per project komt uit de projectleden en wordt per verzoek opnieuw bepaald.
+- id: V8.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_projectpagina_geheimen_per_rol.py
+  toelichting: Welke rol de geheimen van een project ziet, is per veld getoetst.
+- id: V8.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py aanvalsproef/semgrep-zad.yaml
+  toelichting: De autorisatie zit in de middleware en de routes, niet in de pagina.
+- id: V8.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_tenant_baseline_netpol.py operations-manager/python/tests/test_database_publieke_toegang.py
+    operations-manager/python/tests/test_project_operate_access.py
+  toelichting: 'Tenant-isolatie op drie lagen: namespace-netwerkbeleid, een eigen database-rol per project,
+    en de projectcontrole per verzoek.'
+- id: V9.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V9.1.2
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+  toelichting: De toegestane algoritmes staan vast in de tokenlaag.
+- id: V9.1.3
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+  toelichting: De sleutels komen uit de JWKS van de eigen Keycloak.
+- id: V9.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V9.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V9.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V9.2.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V10.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py
+  toelichting: Het toegangstoken blijft bij de server; de browser krijgt alleen het sessiecookie.
+- id: V10.1.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De state-controle komt uit authlib; een eigen toets erop ontbreekt. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.2.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Dezelfde state-controle van authlib. te doen in de handmatige ronde voor de externe audit
+- id: V10.2.2
+  status: nvt
+  toelichting: 'Er is een autorisatieserver: de eigen Keycloak.'
+- id: V10.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V10.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V10.3.3
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V10.3.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: 'Dit is Keycloak-configuratie, niet ZAD-code: ZAD is relying party en ziet geen wachtwoorden.
+    De instelling hoort in het Keycloak-realmbeleid.'
+- id: V10.4.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.2
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.3
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.4
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.5
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.6
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.7
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.8
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.9
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.10
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.4.11
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de autorisatieserver (Keycloak), niet van ZAD-code. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.5.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De nonce-controle komt uit authlib; een eigen toets erop ontbreekt. te doen in de handmatige
+    ronde voor de externe audit
+- id: V10.5.2
+  status: toets
+  toets: operations-manager/python/tests/test_authorization.py
+  toelichting: De gebruiker wordt op het sub-claim en het e-mailadres uit het ID-token geidentificeerd.
+- id: V10.5.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Er is een uitgever, en die staat vast in de configuratie. te doen in de handmatige ronde
+    voor de externe audit
+- id: V10.5.4
+  status: toets
+  toets: operations-manager/python/tests/test_user_token_auth.py
+- id: V10.5.5
+  status: nvt
+  toelichting: Er is geen back-channel logout ingericht.
+- id: V10.6.1
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de OpenID Provider. te doen in de handmatige ronde voor de externe audit
+- id: V10.6.2
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Instelling van de OpenID Provider. te doen in de handmatige ronde voor de externe audit
+- id: V10.7.1
+  status: nvt
+  toelichting: Alle clients zijn van het platform zelf; er is geen derde partij die om toestemming vraagt.
+- id: V10.7.2
+  status: nvt
+  toelichting: 'Idem: geen toestemmingsscherm voor derden.'
+- id: V10.7.3
+  status: nvt
+  toelichting: 'Idem: er zijn geen gegeven toestemmingen om in te trekken.'
+- id: V11.1.1
+  status: toets
+  toets: features/sops-sleutel-roteren.md operations-manager/python/tests/test_sops_rotation_round.py
+  toelichting: Het sleutelbeleid en de rotatie staan beschreven en worden getoetst.
+- id: V11.1.2
+  status: plan
+  plan: RC-370
+  toelichting: De cryptografische inventaris hoort bij de component-inventaris uit dat plan; de sleutelsoorten
+    staan in features/sops-sleutel-roteren.md.
+- id: V11.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+  toelichting: AGE, SOPS en de Python-bibliotheken zijn de implementaties; er is geen eigen cryptografie.
+- id: V11.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_sops_rotation_round.py
+  toelichting: 'De rotatieronde is wat crypto-agility hier betekent: sleutels zijn te vervangen zonder
+    de data opnieuw op te bouwen.'
+- id: V11.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+  toelichting: AGE gebruikt X25519 en ChaCha20-Poly1305, ruim boven 128 bits.
+- id: V11.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+- id: V11.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+- id: V11.3.3
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+  toelichting: AGE en SOPS leveren authenticated encryption.
+- id: V11.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+- id: V11.4.2
+  status: handwerk
+  eigenaar: platformbeheer, Keycloak-configuratie
+  toelichting: Wachtwoordhashing zit in Keycloak; ZAD bewaart geen gebruikerswachtwoorden. te doen in
+    de handmatige ronde voor de externe audit
+- id: V11.4.3
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py
+- id: V11.4.4
+  status: nvt
+  toelichting: 'Er worden geen sleutels uit wachtwoorden afgeleid: elke sleutel wordt willekeurig gegenereerd.'
+- id: V11.5.1
+  status: toets
+  toets: operations-manager/python/tests/test_passwords.py
+  toelichting: Alles wat niet te raden mag zijn komt uit secrets, dus uit een CSPRNG.
+- id: V11.6.1
+  status: toets
+  toets: operations-manager/python/tests/test_age_encryption.py operations-manager/python/tests/test_publish_tls_zonder_bijlage.py
+  toelichting: De sleutelparen komen uit age-keygen en cert-manager (ECDSA P-384).
+- id: V12.1.1
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: De TLS-versies komen van de ingress-controller en de OpenShift-router. te doen in de handmatige
+    ronde voor de externe audit
+- id: V12.1.2
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: 'Idem: de cipher suites staan in de ingress-configuratie. te doen in de handmatige ronde
+    voor de externe audit'
+- id: V12.1.3
+  status: nvt
+  toelichting: Er is geen mTLS-clientauthenticatie in ZAD.
+- id: V12.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_security_headers.py
+  toelichting: HSTS plus de gegenereerde ingress met TLS.
+- id: V12.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_publish_tls_zonder_bijlage.py
+  toelichting: De certificaten komen van Let's Encrypt via cert-manager.
+- id: V12.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_staging_praat_met_argocd_over_tls.py
+  toelichting: De verbinding met ArgoCD loopt over TLS met certificaatcontrole.
+- id: V12.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_staging_praat_met_argocd_over_tls.py
+- id: V12.3.3
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: Niet alle interne verbindingen (database, Redis, MinIO) lopen over TLS; ze zitten binnen
+    het namespace-netwerkbeleid. te doen in de handmatige ronde voor de externe audit
+- id: V12.3.4
+  status: toets
+  toets: operations-manager/python/tests/test_staging_praat_met_argocd_over_tls.py
+  toelichting: De CA-bundel van de ArgoCD-server wordt gemount en gecontroleerd.
+- id: V13.1.1
+  status: plan
+  plan: RC-370
+  toelichting: De communicatiebehoefte per component hoort bij de component-inventaris uit dat plan; het
+    netwerkbeleid legt hem nu al vast.
+- id: V13.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_metrics_scrape_token.py operations-manager/python/tests/test_tenant_baseline_netpol.py
+  toelichting: Achtergrondverbindingen dragen een eigen token en zitten binnen het netwerkbeleid.
+- id: V13.2.2
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: De verbindingen naar database, Redis en MinIO zijn per project met eigen inloggegevens
+    gescheiden, maar niet overal versleuteld. te doen in de handmatige ronde voor de externe audit
+- id: V13.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_passwords.py operations-manager/python/tests/test_keycloak_platform_zonder_ontwikkelresten.py
+  toelichting: Elk project krijgt eigen, willekeurig gegenereerde inloggegevens.
+- id: V13.2.4
+  status: toets
+  toets: operations-manager/python/tests/test_tenant_baseline_netpol.py
+  toelichting: Het egress-beleid per namespace is die allowlist.
+- id: V13.2.5
+  status: toets
+  toets: operations-manager/python/tests/test_tenant_baseline_netpol.py
+- id: V13.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_plaintext_secret_guard.py operations-manager/python/tests/test_productie_overlay_geen_platte_secrets.py
+    operations-manager/python/tests/test_sops_rotation_round.py
+  toelichting: SOPS plus AGE is de secretsoplossing; de drie toetsen houden platte geheimen uit de repo
+    en uit de overlays.
+- id: V13.3.2
+  status: plan
+  plan: RC-345
+  toelichting: Least privilege op de secrets hangt aan de RBAC-beperking uit dat plan; de platformsleutel
+    komt als bestand in de pod (RC-279).
+- id: V13.4.1
+  status: toets
+  toets: .github/workflows/security.yml#container-scan
+  toelichting: De images bevatten geen .git; de containerscan en de Dockerfile-opbouw houden dat zo.
+- id: V13.4.2
+  status: toets
+  toets: operations-manager/python/tests/test_productie_overlay_geen_platte_secrets.py
+  toelichting: De productie-overlay zet DEBUG niet aan.
+- id: V13.4.3
+  status: toets
+  toets: operations-manager/python/tests/test_static_cache_headers.py
+  toelichting: De statische route levert geen maplijsten uit.
+- id: V13.4.4
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: TRACE wordt niet door de app behandeld; dat de ingress hem weigert is clusterconfiguratie.
+    te doen in de handmatige ronde voor de externe audit
+- id: V13.4.5
+  status: toets
+  toets: .github/workflows/aanvalsproef.yml#nuclei operations-manager/python/tests/test_openapi_security_schemes.py
+  toelichting: De aanvalsproef meldt /docs, /redoc en /openapi.json als vindbaar; ze staan achter de inlogmuur,
+    en de bevinding met de afweging staat op de PR van RC-372.
+- id: V14.1.1
+  status: plan
+  plan: RC-370
+  toelichting: De gegevensclassificatie is de BIV-inventaris uit dat plan.
+- id: V14.1.2
+  status: plan
+  plan: RC-370
+  toelichting: De beschermingseisen per niveau horen bij dezelfde inventaris.
+- id: V14.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_invite_manager.py operations-manager/python/tests/test_logging_redact.py
+  toelichting: Een uitnodigingssleutel in het pad wordt uit de logregels geredigeerd; geheimen gaan in
+    de body.
+- id: V14.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_static_cache_headers.py
+  toelichting: De cache-headers houden gevoelige pagina's uit de cache.
+- id: V14.2.3
+  status: nvt
+  toelichting: Er zitten geen trackers of derde partijen in het portaal.
+- id: V14.2.4
+  status: plan
+  plan: RC-370
+  toelichting: De eisen per gegevenssoort horen bij de inventaris uit dat plan.
+- id: V14.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_sessies_intrekken.py
+  toelichting: Na uitloggen blijft er niets in de browser staan dat nog geldig is.
+- id: V14.3.2
+  status: toets
+  toets: operations-manager/python/tests/test_static_cache_headers.py
+- id: V14.3.3
+  status: toets
+  toets: operations-manager/python/tests/test_wizard_session_secrets.py
+  toelichting: De wizard bewaart geheimen server-side, niet in de browser.
+- id: V15.1.1
+  status: toets
+  toets: operations-manager/python/tests/test_trivyignore.py
+  toelichting: De uitzonderingen op de containerscan verlopen binnen 90 dagen; dat is het afgesproken
+    venster.
+- id: V15.1.2
+  status: toets
+  toets: .github/workflows/security.yml#sbom
+  toelichting: De SBOM wordt per build gegenereerd en bewaard.
+- id: V15.1.3
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Welke verwerking lang duurt (een projectverwerking, een backup) is bekend maar niet gedocumenteerd
+    als zodanig. te doen in de handmatige ronde voor de externe audit
+- id: V15.2.1
+  status: toets
+  toets: .github/workflows/security.yml#dependency-audit .github/workflows/security.yml#container-scan
+    operations-manager/python/tests/test_trivyignore.py
+  toelichting: pip-audit en de containerscan zijn de poort; Renovate levert de bumps.
+- id: V15.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_connection_limit.py operations-manager/python/tests/test_rate_limiter.py
+  toelichting: De verbindingslimiet en de rate-limiter zijn de verdediging tegen uitputting.
+- id: V15.2.3
+  status: toets
+  toets: .github/workflows/security.yml#container-scan
+  toelichting: De productie-image bevat alleen wat de app nodig heeft; de containerscan ziet wat er in
+    zit.
+- id: V15.3.1
+  status: toets
+  toets: operations-manager/python/tests/test_project_read_api.py
+  toelichting: De lees-API levert alleen de velden die bij de rol horen, en nooit een geheim.
+- id: V15.3.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: De uitgaande aanroepen (git, registry) volgen de doorverwijzingen van de bibliotheek; dat
+    is niet begrensd. te doen in de handmatige ronde voor de externe audit
+- id: V15.3.3
+  status: toets
+  toets: operations-manager/python/tests/test_editable_processor.py
+  toelichting: De editables bepalen welke velden een verzoek mag zetten; de rest wordt niet overgenomen.
+- id: V15.3.4
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: Het clientadres komt van de ingress; de rate-limiter leest het uit de header. te doen in
+    de handmatige ronde voor de externe audit
+- id: V15.3.5
+  status: toets
+  toets: .github/workflows/ci.yml#test
+  toelichting: Pyright in de CI is wat typen hier vastlegt.
+- id: V15.3.6
+  status: nvt
+  toelichting: ZAD rendert server-side HTML met Jinja; er is geen eigen JavaScript-applicatie die deze
+    constructie gebruikt.
+- id: V15.3.7
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: HTTP-parameter-pollution is niet apart getoetst; FastAPI bindt per naam met een expliciet
+    type. te doen in de handmatige ronde voor de externe audit
+- id: V16.1.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Er is geen inventaris van wat per laag wordt gelogd. te doen in de handmatige ronde voor
+    de externe audit
+- id: V16.2.1
+  status: toets
+  toets: operations-manager/python/tests/test_change_analysis_logging.py
+  toelichting: De logregels dragen de actor, het project en de actie.
+- id: V16.2.2
+  status: toets
+  toets: operations-manager/python/tests/test_logging_redact.py
+  toelichting: De tijdstempels staan in UTC; de redactielaag zit in dezelfde formatter.
+- id: V16.2.3
+  status: toets
+  toets: operations-manager/python/tests/test_client_error_logging.py
+- id: V16.2.4
+  status: toets
+  toets: operations-manager/python/tests/test_client_error_logging.py
+  toelichting: Een vaste formatter voor alle logregels.
+- id: V16.2.5
+  status: toets
+  toets: operations-manager/python/tests/test_logging_redact.py
+  toelichting: De redactielaag houdt geheimen uit de logregels.
+- id: V16.3.1
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Inloggen en mislukt inloggen worden door Keycloak gelogd, niet door OPI. te doen in de
+    handmatige ronde voor de externe audit
+- id: V16.3.2
+  status: handwerk
+  eigenaar: OPI-ontwikkelteam
+  toelichting: Een geweigerde autorisatie geeft een 403 en een logregel, maar niet elke beslissing wordt
+    gelogd. te doen in de handmatige ronde voor de externe audit
+- id: V16.3.3
+  status: toets
+  toets: .github/workflows/aanvalsproef.yml#falco-regels
+  toelichting: 'De Falco-regels loggen wat een poging tot omzeilen op het cluster betekent: een shell
+    in een container, het lezen van een service-account-token.'
+- id: V16.3.4
+  status: toets
+  toets: operations-manager/python/tests/test_client_error_logging.py
+- id: V16.4.1
+  status: toets
+  toets: operations-manager/python/tests/test_logging_redact.py
+  toelichting: De logregels worden geformatteerd, niet samengeplakt uit invoer.
+- id: V16.4.2
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: De pod-logs zijn alleen met clusterrechten te lezen; onveranderlijkheid hangt aan de logverzameling.
+    te doen in de handmatige ronde voor de externe audit
+- id: V16.4.3
+  status: handwerk
+  eigenaar: platformbeheer, clusterconfiguratie
+  toelichting: Er is nog geen aparte logverzameling buiten het cluster. te doen in de handmatige ronde
+    voor de externe audit
+- id: V16.5.1
+  status: toets
+  toets: operations-manager/python/tests/test_client_error_logging.py
+  toelichting: Een onverwachte fout geeft een algemene melding; de reden gaat naar de log.
+- id: V16.5.2
+  status: toets
+  toets: operations-manager/python/tests/test_argo_connect_retry.py
+  toelichting: De connectors vallen terug en proberen opnieuw in plaats van open te vallen.
+- id: V16.5.3
+  status: toets
+  toets: operations-manager/python/tests/test_secret_key_failclosed.py operations-manager/python/tests/test_sops_fail_abort.py
+  toelichting: 'Fail-closed: zonder sleutel start de app niet, en een mislukte SOPS-stap breekt de verwerking
+    af.'
+- id: V17.1.1
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.2.1
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.2.2
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.2.3
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.2.4
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.3.1
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'
+- id: V17.3.2
+  status: nvt
+  toelichting: 'Er is geen WebRTC op dit platform: geen TURN-server, geen mediaserver en geen signaleringsserver.'

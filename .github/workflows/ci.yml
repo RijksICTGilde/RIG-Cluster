@@ -133,6 +133,30 @@ jobs:
         working-directory: keycloak-migration/${{ matrix.module }}
         run: mvn -B test
 
+  asvs-meetlat:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: operations-manager/python
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "latest"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Install dependencies
+        run: uv sync
+      # Toetst of elke ASVS-eis een oordeel heeft, of elke genoemde toets bestaat, en of het
+      # afvinkdocument niet achterloopt. Zie features/asvs-zelfbeoordeling.md.
+      - name: ASVS-zelfbeoordeling
+        run: uv run python -m opi.tools.asvs_render --check
+
   biv-inventaris:
     runs-on: ubuntu-latest
     defaults:

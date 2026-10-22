@@ -1,0 +1,271 @@
+name: Aanvalsproef
+
+# De dynamische helft van de aanvalsproef, plus de twee schotten op het cluster. De
+# statische scanners staan in security.yml. Zie features/aanvalsproef-harnas.md.
+#
+# Veiligheidsgrendel: elke scanner vuurt op een doelwit dat deze run zelf heeft opgezet, op
+# de loopback van de runner. opi/tools/aanvalsproef.py weigert elk ander adres, dus een
+# verschrijving kan nooit op productie of op de gedeelde sandbox landen.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '30 6 * * 1'  # wekelijks, net na de scans in security.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+  # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+  # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  #
+  # Waarom elk endpoint erbij hoort:
+  #   agent.api.stepsecurity.io   harden-runner zelf, anders meldt hij niets
+  #   github.com, objects./release-assets.githubusercontent.com, codeload.github.com
+  #                               de release-downloads: nuclei, de Kyverno CLI, kind, en de
+  #                               nuclei-templates
+  #   api.github.com              setup-python en setup-uv zoeken hun release op, en nuclei
+  #                               vraagt op welke versie de templates staan
+  #   raw.githubusercontent.com   losse template- en manifestbestanden
+  #   api.projectdiscovery.io     de versiecontrole van nuclei bij de start
+  #   astral.sh                   setup-uv haalt uv daar op
+  #   pypi.org, files.pythonhosted.org   uv sync voor de testserver
+  #   kind.sigs.k8s.io            de kind-binary (doorverwijzing naar github.com)
+  #   registry-1.docker.io, auth.docker.io, index.docker.io,
+  #   production.cloudflare.docker.com   het kind-node-image en het Falco-image
+  #   ghcr.io, pkg-containers.githubusercontent.com   de Kyverno-images uit install.yaml
+  #   registry.k8s.io             de images die het Kind-cluster zelf trekt
+  #   *.actions.githubusercontent.com, *.blob.core.windows.net,
+  #   results-receiver.actions.githubusercontent.com   de artefact-upload van de rapporten
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.github.com:443
+    api.projectdiscovery.io:443
+    astral.sh:443
+    auth.docker.io:443
+    codeload.github.com:443
+    files.pythonhosted.org:443
+    ghcr.io:443
+    github.com:443
+    index.docker.io:443
+    kind.sigs.k8s.io:443
+    objects.githubusercontent.com:443
+    pkg-containers.githubusercontent.com:443
+    production.cloudflare.docker.com:443
+    pypi.org:443
+    raw.githubusercontent.com:443
+    registry-1.docker.io:443
+    registry.k8s.io:443
+    release-assets.githubusercontent.com:443
+    results-receiver.actions.githubusercontent.com:443
+  # renovate: datasource=github-releases depName=projectdiscovery/nuclei
+  NUCLEI_VERSION: 3.11.1
+  # Kyverno 1.19.2 draagt nog drie advisories waarvoor geen enkele release een fix heeft:
+  # GHSA-459x-q9hg-4gpq, GHSA-cvq5-hhx3-f99p en GHSA-qr4g-8hrp-c4rw. Dat is de vorm van
+  # .trivyignore.yaml: wat niet op te lossen is, krijgt een reden en een vervaldatum.
+  # reden: alle drie vragen dat de aanvaller zelf een (Cluster)Policy kan aanmaken met een
+  #        apiCall- of configMap-context erin. Kyverno staat vandaag alleen op het wegwerp-
+  #        Kind-cluster van deze job en op wat `task schotten:kyverno` met de hand raakt; in
+  #        geen enkele ArgoCD-bootstrap, dus op geen cluster met tenants. De twee
+  #        ZAD-policies gebruiken zelf geen van beide contexten. Een nieuwere versie bestaat
+  #        niet, en downgraden maakt het slechter: tot 1.15.3 staat GHSA-8p9x-46gm-qfx2
+  #        (CRITICAL) er nog bij.
+  #        Let op voor wie dit schot naar een tenantcluster brengt: install.yaml levert
+  #        kyverno:rbac:admin:policies met aggregate-to-admin, dus een namespace-admin mag
+  #        dan een Policy aanmaken, en daarmee is GHSA-cvq5-hhx3-f99p wel bereikbaar. Die
+  #        ClusterRole hoort er dan uit. tests/test_aanvalsproef.py laat deze regel verlopen.
+  # vervalt: 2027-04-01
+  # renovate: datasource=github-releases depName=kyverno/kyverno
+  KYVERNO_VERSION: 1.19.2
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
+  KIND_VERSION: 0.24.0
+
+jobs:
+  nuclei:
+    name: Template-scan tegen een eigen doelwit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        working-directory: operations-manager/python
+        run: uv sync --all-groups
+
+      - name: Install nuclei
+        run: |
+          curl -sSLo nuclei.zip \
+            "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_amd64.zip"
+          unzip -q nuclei.zip nuclei -d /usr/local/bin
+          nuclei -version
+
+      # Dezelfde testserver als de E2E-suite: de echte app met gemockte externe systemen,
+      # zonder cluster, database of Keycloak. Auth staat AAN, zodat de ongeauthenticeerde
+      # scan het echte oppervlak achter de inlogmuur ziet.
+      - name: Zet het doelwit op
+        working-directory: operations-manager/python
+        env:
+          OIDC_DISABLED: "false"
+          TEST_SERVER_PORT: "8111"
+          PROJECT_REPO_PASSWORD: plain:repo-secret
+        run: |
+          nohup uv run python -m tests.e2e.testserver > /tmp/doelwit.log 2>&1 &
+          timeout 300 bash -c 'until curl -sf -o /dev/null http://127.0.0.1:8111/healthz; do sleep 3; done'
+
+      - name: Grendel op het doelwit
+        working-directory: operations-manager/python
+        run: uv run python -m opi.tools.aanvalsproef grendel http://127.0.0.1:8111
+
+      - name: Scan ongeauthenticeerd
+        run: |
+          nuclei -u http://127.0.0.1:8111 -jsonl-export "$GITHUB_WORKSPACE/nuclei-anoniem.jsonl" \
+            -no-interactsh -timeout 5 -stats -silent
+
+      - name: Scan met een sessie
+        working-directory: operations-manager/python
+        run: |
+          COOKIE=$(uv run python -c "from tests.e2e.conftest import TEST_USER, _sign_session; print(_sign_session({'user': TEST_USER}))")
+          nuclei -u http://127.0.0.1:8111 -H "Cookie: session=$COOKIE" \
+            -jsonl-export "$GITHUB_WORKSPACE/nuclei-sessie.jsonl" -no-interactsh -timeout 5 -stats -silent
+
+      - name: Toets beide uitkomsten tegen de uitzonderingslijst
+        working-directory: operations-manager/python
+        run: |
+          uv run python -m opi.tools.aanvalsproef nuclei "$GITHUB_WORKSPACE/nuclei-anoniem.jsonl"
+          uv run python -m opi.tools.aanvalsproef nuclei "$GITHUB_WORKSPACE/nuclei-sessie.jsonl"
+
+      # De rapporten gaan als artefact mee en niet naar het Security-tabblad: een lijst van
+      # wat er op een doelwit open staat hoort niet breder te staan dan nodig.
+      - name: Bewaar de rapporten
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nuclei-rapporten
+          path: |
+            nuclei-anoniem.jsonl
+            nuclei-sessie.jsonl
+          retention-days: 30
+          if-no-files-found: ignore
+
+  admission-audit:
+    name: Admission control in waarschuwmodus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install de Kyverno CLI
+        run: |
+          curl -sSL "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/kyverno-cli_v${KYVERNO_VERSION}_linux_x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin kyverno
+          kyverno version
+
+      # Eerst zonder cluster: de twee validate-policies tegen een overtreder, een tagloze en
+      # een nette pod.
+      # Dit is de snelle poort, en hij faalt zodra een policy niet meer doet wat hij belooft.
+      - name: Policies tegen een overtreder en een nette pod
+        run: |
+          UITKOMST=$(kyverno apply \
+            infrastructure/bootstrap/infrastructure/kyverno/policies/base/geen-latest-tag.yaml \
+            infrastructure/bootstrap/infrastructure/kyverno/policies/base/securitycontext.yaml \
+            --resource .github/aanvalsproef/overtreder-pod.yaml \
+            --resource .github/aanvalsproef/tagloze-pod.yaml \
+            --resource .github/aanvalsproef/nette-pod.yaml)
+          echo "$UITKOMST"
+          echo "$UITKOMST" | grep -q "pass: 5, fail: 4" \
+            || { echo "verwacht 5 geslaagd en 4 gefaald: de policies meten niet meer wat ze beloven"; exit 1; }
+
+      - name: Install Kind
+        run: |
+          curl -sSLo ./kind "https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Maak het cluster
+        run: kind create cluster --name rig-admission-audit --wait 120s
+
+      - name: Install Kyverno
+        run: |
+          kubectl apply -f "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/install.yaml"
+          kubectl -n kyverno rollout status deployment/kyverno-admission-controller --timeout=300s
+          kubectl -n kyverno rollout status deployment/kyverno-reports-controller --timeout=300s
+
+      - name: Zet de policies erop
+        run: |
+          kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base
+          kubectl wait --for=condition=Ready clusterpolicy/zad-geen-latest-tag --timeout=120s
+          kubectl wait --for=condition=Ready clusterpolicy/zad-securitycontext --timeout=120s
+
+      # De kern van de toets: de overtreder MAG erin (waarschuwmodus) en staat in het rapport.
+      - name: De overtreder komt erin en staat in het PolicyReport
+        run: |
+          kubectl create namespace rig-testproject
+          kubectl apply -f .github/aanvalsproef/overtreder-pod.yaml
+          kubectl wait --for=condition=PodScheduled pod/overtreder -n rig-testproject --timeout=120s
+          timeout 180 bash -c 'until kubectl get policyreport -n rig-testproject -o json | grep -q zad-geen-latest-tag; do sleep 5; done'
+          kubectl get policyreport -n rig-testproject -o wide
+          kubectl get policyreport -n rig-testproject -o json \
+            | python3 -c "
+          import json, sys
+          rapporten = json.load(sys.stdin)['items']
+          gefaald = [r for rapport in rapporten for r in rapport['results'] if r['result'] == 'fail']
+          beleid = {r['policy'] for r in gefaald}
+          print('gefaalde regels:', [(r['policy'], r['rule']) for r in gefaald])
+          assert 'zad-geen-latest-tag' in beleid, 'de :latest-overtreding staat niet in het rapport'
+          assert 'zad-securitycontext' in beleid, 'de securityContext-overtreding staat niet in het rapport'
+          "
+
+      - name: Ruim het cluster op
+        if: always()
+        run: kind delete cluster --name rig-admission-audit
+
+  falco-regels:
+    name: Runtime-detectieregels
+    runs-on: ubuntu-latest
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Falco valideert zijn eigen regelbestand. Dat een regel ook vuurt op een echte
+      # syscall is op een runner niet te meten (dat vraagt eBPF op de host); die meting
+      # staat als handmatige stap in features/falco-runtime-detectie.md.
+      - name: Valideer de ZAD-regels
+        run: |
+          # De Falco-versie staat alleen in de DaemonSet, die het cluster ook echt draait.
+          # Een tweede pin hier zou stil uiteen kunnen lopen met het cluster.
+          python3 -c "
+          import yaml, pathlib
+          base = pathlib.Path('infrastructure/bootstrap/infrastructure/falco/controller/base')
+          regels = yaml.safe_load(yaml.safe_load((base / 'regels.yaml').read_text())['data']['zad_regels.yaml'])
+          pathlib.Path('zad_regels.yaml').write_text(yaml.safe_dump(regels))
+          daemonset = yaml.safe_load((base / 'daemonset.yaml').read_text())
+          image = daemonset['spec']['template']['spec']['containers'][0]['image']
+          pathlib.Path('falco-image.txt').write_text(image)
+          print(f'{len(regels)} regels en macros, valideren met {image}')
+          "
+          docker run --rm -v "$PWD/zad_regels.yaml:/zad_regels.yaml:ro" \
+            "$(cat falco-image.txt)" \
+            falco --validate /etc/falco/falco_rules.yaml --validate /zad_regels.yaml

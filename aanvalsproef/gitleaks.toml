@@ -1,0 +1,168 @@
+# Configuratie van de gitleaks-stage in .github/workflows/security.yml.
+#
+# gitleaks staat naast scripts/scan-secrets.py, niet in plaats daarvan. De eigen scanner
+# kent de vormen van dit platform (AGE, SOPS, projectsleutels) en is de poort op de boom;
+# gitleaks brengt de entropie- en vendorregels mee en leest wekelijks de hele historie,
+# dus ook blobs die niet meer in de boom staan.
+#
+# Elke allowlist hieronder noemt een reden en een vervaldatum, net als .trivyignore.yaml.
+# gitleaks kent die twee zelf niet, dus ze staan als commentaar in het blok zelf, en
+# operations-manager/python/tests/test_aanvalsproef.py weigert een blok zonder die twee en
+# laat een verlopen blok falen.
+#
+# Gemeten op 21 oktober 2026 met gitleaks 8.30.1: zonder deze lijst 177 treffers op de boom,
+# allemaal voorbeeldwaarden in documentatie, OpenAPI-voorbeelden en testfixtures.
+
+title = "ZAD gitleaks"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Voorbeeldwaarden die als zodanig te lezen zijn"
+# reden: de curl-voorbeelden in de API-docstrings en de documentatie zetten een
+#        plaatshouder in de Authorization-header; 66 van de 177 treffers zijn dit.
+# vervalt: 2027-04-01
+regexTarget = "match"
+regexes = [
+  '''(?i)your[-_][a-z0-9-]*(key|token|secret|password)''',
+  '''(?i)YOUR_(ACCESS_TOKEN|API_KEY)''',
+  '''(?i)\b(example|changeme|placeholder|dummy|redacted)\b''',
+]
+
+[[allowlists]]
+description = "De ontwikkeldefault van API_TOKEN"
+# reden: opi/core/config.py draagt deze waarde als default, en hij wordt alleen uitgedeeld
+#        met USE_UNSAFE_API_KEY aan. tests/test_secret_scan.py bewaakt precies dat.
+# vervalt: 2027-04-01
+regexTarget = "match"
+regexes = ['''d68d6aebd694d636e5eb4784a952b9c3''']
+
+[[allowlists]]
+description = "Testfixtures en functionele tests"
+# reden: de fixtures zetten sleutelvormige tekst neer om de redactie en de foutpaden te
+#        meten; een echte sleutel in deze paden vangt scripts/scan-secrets.py wel. In de
+#        historie zit security_tests/ om dezelfde reden: test_web_payloads.py draagt een
+#        verzonnen AGE-SECRET-KEY om de regel te meten die een gelekte projectsleutel vangt.
+# vervalt: 2027-04-01
+paths = [
+  '''operations-manager/python/tests/''',
+  '''operations-manager/python/functional_tests/''',
+  '''operations-manager/python/security_tests/''',
+]
+
+[[allowlists]]
+description = "Versietags en hostnamen die als hoge entropie lezen"
+# reden: een CalVer-tag met commit-sha (2026.10.13.1948-72684cb4) en een registry-hostnaam
+#        halen de entropiedrempel van generic-api-key, maar zijn publieke waarden.
+# vervalt: 2027-04-01
+regexTarget = "match"
+regexes = [
+  '''\b20\d{2}\.\d{1,2}\.\d{1,2}\.\d{4}-[0-9a-f]{8}\b''',
+  '''\b[a-z0-9.-]+\.(rijksapps\.nl|rijksapp\.dev|k8s\.rijksapps\.nl)\b''',
+]
+
+[[allowlists]]
+description = "De voorbeeldsleutels uit de API-documentatie en de OpenAPI-voorbeelden"
+# reden: dezelfde twee verzonnen sleutels staan in opi/api/v2/models.py, opi/api/task_models.py
+#        en de features-documentatie als voorbeeldwaarde bij een api_key-veld.
+# vervalt: 2027-04-01
+stopwords = ["Xk3mQ9vP", "Xk3pQ7rL", "ENABLE_TRACEMALLOC"]
+
+[[allowlists]]
+description = "Een sandbox-waarde in een doorloopverslag"
+# reden: docs/generale-doorloop-rc118.md is het logboek van een doorloop op de lokale
+#        sandbox; die instantie bestaat niet meer en was van buiten niet bereikbaar, dus er
+#        is niets in te trekken. Nieuwe verslagen horen de waarde niet meer op te nemen.
+#        targetRules om dezelfde reden als bij het RC-108-verslag: onder docs/ is gitleaks
+#        de enige laag, dus het pad blijft in de poort voor elke andere regel.
+# vervalt: 2027-01-21
+targetRules = ["generic-api-key"]
+paths = ['''docs/generale-doorloop-rc118\.md''']
+
+# -- De historie ---------------------------------------------------------------------------
+#
+# De blokken hierboven gaan over de boom; deze over de blobs die alleen nog in de historie
+# staan. Gemeten op 22 oktober 2026 met gitleaks 8.30.1: `gitleaks git .` geeft zonder deze
+# blokken 55 treffers over 9885 commits, in twaalf bestanden. Elk blok hieronder noemt welke
+# dat zijn en waarom de waarde vandaag niets meer opent.
+#
+# Een pad dat uit de boom verdwenen is, is op pad uitgezonderd; voor een bestand dat nog
+# bestaat zet een stopword alleen die ene waarde stil, zodat het pad zelf in de poort blijft.
+
+[[allowlists]]
+description = "De ontwikkelsleutel van de oude lokale git-daemon"
+# reden: dezelfde ed25519-sleutel stond in keys/git-server-key, in de local-overlay
+#        argo-local-test-git-repo.yaml en hard in manifests/argo-repository.yaml.jinja. Hij
+#        hoorde bij de Docker-git-daemon op host.docker.internal:2222 en is eruit gehaald in
+#        0a46ff6cc; de aanmaakcode voor die host zelf in 13451b3ea. Het enige bestand dat de
+#        sleutel ooit autoriseerde was keys/authorized_keys, dat in dezelfde commits weg is,
+#        en de publieke helft komt in geen enkel bestand in de boom voor. Het stopword is een
+#        fragment van die publieke helft, dus het zet deze sleutel stil en geen andere.
+# vervalt: 2027-04-01
+stopwords = ["PaPRSC82Y+5KKt4GCqrqSqhu0ipYnisQPvARVfZyMA"]
+
+[[allowlists]]
+description = "De AGE-sleutels van de eerste sandbox"
+# reden: sources/agekey.txt (recipient age1x5t5rxg...) en sops-sandbox/ (recipient
+#        age1fdup3p8...) zijn de ontwikkelsleutels uit 2025. Geen van beide recipients komt
+#        nog in een bestand in de boom voor, dus ze ontsleutelen vandaag niets; de commits
+#        die ze eruit haalden heten "de ingetrokken ontwikkelsleutel eruit". De paden bestaan
+#        niet meer, dus deze uitzondering maakt niets in de boom blind.
+# vervalt: 2027-04-01
+paths = [
+  '''operations-manager/python/sources/agekey\.txt''',
+  '''sops-sandbox/''',
+]
+
+[[allowlists]]
+description = "De sandboxsessie die een keer is meegecommit"
+# reden: scripts/kijk_sandbox.py bewaarde zijn ingelogde sessie in dit bestand, dat in
+#        11e3a176 is meegegaan en in 7ce17441a uit versiebeheer is gehaald en op .gitignore
+#        gezet. Het zijn Keycloak-sessiekoekjes van de lokale sandbox met een houdbaarheid
+#        van minuten; die sandbox is sindsdien tientallen keren opnieuw opgezet, met een
+#        nieuwe realm en nieuwe sleutels.
+# vervalt: 2027-04-01
+paths = ['''operations-manager/python/scripts/\.sandbox-sessie\.json''']
+
+[[allowlists]]
+description = "Het ArgoCD-projecttoken in de oude HOW.md"
+# reden: een token voor de rol automation-service op project default, uitgegeven 2025-07-01
+#        voor de lokale ArgoCD. Geen enkele AppProject in de boom kent die rol nog, en ArgoCD
+#        toetst een projecttoken tegen de rol in het AppProject, dus het authenticeert
+#        nergens. HOW.md staat nu als archive/HOW.md in de boom, met een plaatshouder in
+#        plaats van de waarde.
+# vervalt: 2027-04-01
+paths = ['''^HOW\.md$''']
+
+[[allowlists]]
+description = "De projectsleutel in het doorloopverslag van RC-108"
+# reden: de api-key van een sandboxproject, in 9f8ae0672 in de boom geredigeerd met de
+#        toelichting "het project is verwijderd, maar een sleutel hoort niet in main". Een
+#        projectsleutel geldt alleen voor dat ene project, en dat bestaat niet meer. De
+#        huidige versie van het bestand draagt "<geredigeerd: 32 tekens>", dus de boomscan
+#        heeft hier niets meer te vinden.
+#        targetRules omdat secret-scan alles onder docs/ als voorbeeldpad trieert
+#        (VOORBEELDPAD matcht (^|/)docs?/): gitleaks is daar de enige laag, en een blok op
+#        pad alleen zou dit bestand voor elke regel blind zetten in plaats van voor deze ene.
+# vervalt: 2027-04-01
+targetRules = ["generic-api-key"]
+paths = ['''docs/doorloop-rc108/api-doorloop\.log''']
+
+[[allowlists]]
+description = "De lokale sandboxbeheerder in een curl-voorbeeld"
+# reden: rig-admin:admin1234 is de vaste beheerder van de lokale Kind-sandbox, die niet van
+#        buiten bereikbaar is; Taskfile.yaml zet dezelfde waarde als default voor
+#        FORGEJO_PASSWORD en sandbox-gegevens drukt hem af. Er is niets in te trekken, en als
+#        stopword blijft Taskfile.yaml voor elke andere waarde in de poort.
+# vervalt: 2027-04-01
+stopwords = ["rig-admin:admin1234"]
+
+[[allowlists]]
+description = "Een regelstuk dat de entropieregel voor een sleutel aanziet"
+# reden: generic-api-key vuurt acht keer op "verify_ssl=not" in
+#        keycloak-migration/sso-migration/migrate_sso_idp.py, waar de regel
+#        KeycloakClient(..., args.admin_password, verify_ssl=not args.insecure) aanroept. Er
+#        staat geen waarde in die regel, alleen de naam van een parameter.
+# vervalt: 2027-04-01
+stopwords = ["verify_ssl=not"]

@@ -1449,6 +1449,40 @@ tasks:
       - uv run python -m opi.tools.biv_render --check
     silent: true
 
+  asvs-afvinklijst:
+    desc: "Genereer docs/asvs-zelfbeoordeling.md uit de ASVS-zelfbeoordeling"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.asvs_render
+    silent: true
+
+  asvs-check:
+    desc: "Toets of elke ASVS-eis een oordeel heeft en de genoemde toetsen bestaan"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.asvs_render --check
+    silent: true
+
+  schotten:kyverno:
+    desc: "Install Kyverno en zet de ZAD-policies in waarschuwmodus op het huidige cluster"
+    cmds:
+      - |
+        # De versie staat alleen in .github/workflows/aanvalsproef.yml, zodat de CI-toets en
+        # een handmatige uitrol dezelfde Kyverno draaien.
+        KYVERNO_VERSION=$(yq '.env.KYVERNO_VERSION' .github/workflows/aanvalsproef.yml)
+        kubectl apply -f "https://github.com/kyverno/kyverno/releases/download/v${KYVERNO_VERSION}/install.yaml"
+        kubectl -n kyverno rollout status deployment/kyverno-admission-controller --timeout=300s
+        kubectl apply -k infrastructure/bootstrap/infrastructure/kyverno/policies/base
+        kubectl get clusterpolicy
+    silent: true
+
+  schotten:falco:
+    desc: "Zet Falco met de ZAD-regels op het huidige cluster (runtime-detectie)"
+    cmds:
+      - kubectl apply -n rig-system -k infrastructure/bootstrap/infrastructure/falco/controller/base
+      - kubectl -n rig-system rollout status daemonset/falco --timeout=300s
+    silent: true
+
   publish-e2e-allservices:
     desc: "Build and publish the e2e-allservices test workload to GitHub Container Registry"
     deps: [requirements-check]

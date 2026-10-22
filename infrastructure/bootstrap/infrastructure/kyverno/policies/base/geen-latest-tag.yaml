@@ -1,0 +1,30 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: zad-geen-latest-tag
+  annotations:
+    policies.kyverno.io/title: Geen :latest en geen tagloze image
+    policies.kyverno.io/category: Supply chain
+    policies.kyverno.io/description: >-
+      Een image zonder tag of op :latest maakt niet reproduceerbaar wat er draait: dezelfde
+      naam levert morgen andere bits op, en een rollback heeft niets om naar terug te gaan.
+spec:
+  # Waarschuwmodus: de policy rapporteert in een PolicyReport en blokkeert niets. Afdwingen
+  # hangt aan het besluit over image-signing en admission, zie features/aanvalsproef-harnas.md.
+  background: true
+  rules:
+    - name: image-heeft-een-eigen-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      validate:
+        failureAction: Audit
+        message: "image {{ request.object.spec.containers[].image }} heeft geen eigen tag of staat op :latest"
+        # Een tagloze image matcht geen *:*, dus die eis vangt beide gevallen. De vorm
+        # "!*:latest | !*" leek dat ook te doen, maar !* is altijd onwaar.
+        pattern:
+          spec:
+            containers:
+              - image: "*:* & !*:latest"

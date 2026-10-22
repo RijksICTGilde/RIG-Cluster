@@ -53,6 +53,17 @@ Manual trigger via GitHub Actions UI.
 | `container-scan` | Trivy | The five images CI builds plus `argocd-rig` (HIGH/CRITICAL), en de configuratie van hun Dockerfile | Push, PR, weekly |
 | `manifest-scan` | Trivy | De Kubernetes-manifesten in `bootstrap/` en `infrastructure/`, rapporterend | Push, PR, weekly |
 | `sbom` | Trivy | CycloneDX SBOM | Main only |
+| `gitleaks` | gitleaks | sleutelvormen in de boom, met de vendorregels | Push, PR, weekly |
+| `gitleaks-history` | gitleaks | elke blob die ooit bestond, met de vendorregels | Weekly and on demand |
+| `sast-semgrep` | semgrep | `p/python`, `p/owasp-top-ten` plus de eigen ZAD-regels | Push, PR, weekly |
+| `sast-codeql` | CodeQL | taint-analyse van invoer naar de argumentenlijst van een extern programma | Push, PR, weekly |
+| `manifest-posture` | kube-linter, checkov | de manifests die ZAD voor elke tenant genereert | Push, PR, weekly |
+
+De onderste vijf jobs, de dynamische scan in `.github/workflows/aanvalsproef.yml` en de
+poort waarachter hun uitkomst staat (`aanvalsproef/uitzonderingen.yaml`) staan beschreven in
+`features/aanvalsproef-harnas.md`. De dekkingskaart over alle toetsen heen is
+`features/asvs-zelfbeoordeling.md`; de twee schotten op het cluster zijn
+`features/kyverno-admission-audit.md` en `features/falco-runtime-detectie.md`.
 
 Results appear in the **GitHub Security tab** (SARIF upload). The secret scan is the exception: its
 output stays in the job log and goes nowhere else, because a list of where secrets sit is a map to
