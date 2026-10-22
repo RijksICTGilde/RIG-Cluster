@@ -10,9 +10,9 @@ cross-tenant traffic: it allows the deployment's own pods to talk to each
 other, the platform/operations namespace, the backup destination, and the
 ingress controller, plus internet egress (without restriction beyond blocking
 the cloud-metadata IP). It is emitted ONCE per deployment, selecting pods via
-the `deployment: <name>` label so multiple components share one policy and
-helm/helmfile workloads (which do not carry that label) fall through to
-Kubernetes' default-allow until a separate baseline is added.
+the `deployment: <name>` label so multiple components share one policy. Pods
+zonder dat label (helm, helmfile) krijgen een tweede render van hetzelfde
+template; zie tests/test_namespace_network_policies.py.
 
 The wider test suite fails at collection on this interpreter (pre-existing
 Python 3.14 beta + pydantic + fastapi import break). This module deliberately

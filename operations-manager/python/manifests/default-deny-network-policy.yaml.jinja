@@ -1,0 +1,13 @@
+kind: NetworkPolicy
+apiVersion: networking.k8s.io/v1
+metadata:
+  name: {{ name | yaml_scalar }}
+  namespace: {{ namespace | yaml_scalar }}
+spec:
+  # Namespace-breed en zonder regels: elke pod in deze namespace valt onder beleid,
+  # ook een helm- of helmfile-pod zonder deployment-label. Wat wel mag staat in de
+  # baselines ernaast; policies zijn additief, dus die openen wat hier dichtgaat.
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

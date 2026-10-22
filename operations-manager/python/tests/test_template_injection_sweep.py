@@ -550,6 +550,16 @@ def _sjabloon_fixtures(waarde: str) -> dict[str, dict[str, Any]]:
             "service_account": waarde,
             "argo_namespace": waarde,
         },
+        "default-deny-network-policy.yaml.jinja": {
+            "name": waarde,
+            "namespace": waarde,
+        },
+        "dedicated-database-network-policy.yaml.jinja": {
+            "name": waarde,
+            "namespace": waarde,
+            # Platform: de namespace van de database-operator komt uit de clusterconfig.
+            "database_operator_namespace": "cnpg-system",
+        },
         "network-policy.yaml.jinja": {
             "name": waarde,
             "namespace": waarde,

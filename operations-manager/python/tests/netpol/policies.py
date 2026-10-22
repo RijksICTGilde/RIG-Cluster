@@ -22,6 +22,7 @@ from typing import Any
 from opi.core.cluster_config import (
     get_backup_namespace,
     get_cluster_cidrs,
+    get_database_operator_namespace,
     get_infrastructure_namespace,
     get_ingress_controller_selector,
     get_namespace,
@@ -95,6 +96,9 @@ PLATFORM_POLICY_SOURCES: dict[str, str | None] = {
 TEMPLATE_SOURCES: dict[str, bool] = {
     # Geldt voor elk deployment, dus odcn_policies() rendert hem.
     "tenant-baseline-network-policy.yaml.jinja": True,
+    # Namespace-breed, dus namespace_policies() rendert ze voor elke projectnamespace.
+    "default-deny-network-policy.yaml.jinja": True,
+    "dedicated-database-network-policy.yaml.jinja": True,
     # De acme-http-policy: sinds RC-336 alleen de HTTP-01-solver op 8089, en alleen vanaf
     # de router. Alle drie de productiedomeinen dragen issuer letsencrypt, dus elk
     # gepubliceerd deployment krijgt hem; odcn_policies() rendert hem daarom mee.
@@ -151,6 +155,45 @@ def tenant_baseline(
         },
     )
     return _load_documents(rendered)[0]
+
+
+def namespace_policies(*, namespace: str, project_name: str) -> list[dict[str, Any]]:
+    """De namespace-brede policies, met de variabelen van ``_emit_namespace_network_policies``.
+
+    Een default-deny, de baseline voor pods zonder deployment-label en de toegang tot
+    een toegewijd databasecluster in dezelfde namespace.
+    """
+    rendered = [
+        render_template(
+            "default-deny-network-policy.yaml.jinja",
+            {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
+        ),
+        render_template(
+            "tenant-baseline-network-policy.yaml.jinja",
+            {
+                "name": generate_network_policy_name("unlabeled-baseline"),
+                "namespace": namespace,
+                "deployment_selector": None,
+                "unlabeled_selector": True,
+                "ops_namespace": OPS_NAMESPACE,
+                "backup_namespace": BACKUP_NAMESPACE,
+                "ingress_controller_selector": get_ingress_controller_selector(CLUSTER),
+                "ops_egress": get_ops_egress(CLUSTER),
+                "cluster_cidrs": get_cluster_cidrs(CLUSTER),
+                "database_operator_namespace": None,
+                "project_infra_namespace": get_infrastructure_namespace(CLUSTER, project_name),
+            },
+        ),
+        render_template(
+            "dedicated-database-network-policy.yaml.jinja",
+            {
+                "name": generate_network_policy_name("dedicated-database"),
+                "namespace": namespace,
+                "database_operator_namespace": get_database_operator_namespace(CLUSTER),
+            },
+        ),
+    ]
+    return [_load_documents(text)[0] for text in rendered]
 
 
 def acme_http(

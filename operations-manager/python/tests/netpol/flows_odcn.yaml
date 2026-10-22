@@ -32,12 +32,21 @@ endpoints:
     labels: {deployment: api, project: demo}
 
   # Een pod zonder het deployment-label, zoals een helm- of helmfile-workload in een
-  # projectnamespace. Geen tenant-baseline selecteert hem, dus hij is in beide richtingen
-  # open; het template noemt dat zelf ("falls through to default-allow"). Sinds RC-336
-  # selecteert de acme-http-policy alleen de solverpod, dus die dekt hem ook niet meer.
+  # projectnamespace. De default-deny van de namespace selecteert hem, en de baseline
+  # zonder label geeft hem dezelfde rechten als een deployment. De acme-http-policy dekt
+  # hem niet: die selecteert sinds RC-336 alleen de solverpod.
   tenant-helm-pod:
     namespace: rig-prd-demo
     namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+
+  # Een chart-pod die zelf een deployment-label zet met een waarde die geen deployment
+  # van dit project is. Beide baselines missen hem: de per-deployment baseline selecteert
+  # op de echte naam, de baseline zonder label op het ONTBREKEN van het label. Alleen de
+  # default-deny houdt hem dicht, en een tenant kiest dit label zelf in zijn chart.
+  tenant-vreemd-label-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: nietbestaand}
 
   # Een pod in een namespace die het tenant-label NIET draagt, zoals de
   # operations-namespace zelf (zie de reden in
@@ -46,12 +55,31 @@ endpoints:
   vreemde-pod:
     namespace: rig-prd-vreemd
 
-  # Dezelfde soort pod in de namespace van een ANDER project: geen baseline selecteert
-  # hem, dus ook zijn egress is default-allow en hij is de bron die bij de twee regels
-  # onderaan hoort.
+  # Dezelfde soort pod in de namespace van een ANDER project, met dus zijn eigen
+  # namespace-brede policies.
   vreemde-helm-pod:
     namespace: rig-prd-ander
     namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+
+  # Een restorepod, met de labels uit manifests/restore-database-pod.yaml.jinja. Ook
+  # een pod zonder deployment-label, dus de baseline zonder label is zijn beleid.
+  restore-pod:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels:
+      app.kubernetes.io/name: database-restore
+      app.kubernetes.io/component: restore-job
+
+  # Het toegewijde PostgreSQL-cluster van het project, in de projectnamespace.
+  project-db:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {cnpg.io/cluster: demo-db}
+
+  # De CNPG-operator, die de instance-status van dat cluster ophaalt.
+  cnpg-operator:
+    namespace: cnpg-system
+    labels: {app.kubernetes.io/name: cloudnative-pg}
 
   rig-db:
     namespace: rig-prd-operations
@@ -242,11 +270,17 @@ flows:
     verwacht: dicht
     waarom: twee deployments in dezelfde namespace blijven van elkaar gescheiden
 
-  # tenant-app -> tenant-helm-pod:443 stond hier tot odcn zijn cluster_cidrs kreeg. De
-  # except op de internetregel sluit dat pod-IP nu uit, maar dit model kent geen pod-IP
-  # en kan de regel dus niet beoordelen; zo'n regel hoort niet in de matrix. De
-  # berekening staat in TestDeExceptSluitHetClusterUit; meten kan alleen op een cluster
-  # met de pod-CIDR van odcn, en het wegwerpcluster heeft die van Kind.
+  # Tot RC-343 stond deze op open: de egress kwam langs de internetregel (een ipBlock
+  # op 0.0.0.0/0 zonder except dekt ook elk pod-IP) en aan de andere kant selecteerde
+  # geen policy de helm-pod. Sinds odcn zijn cluster_cidrs kreeg is die egress-kant niet
+  # te beoordelen (dit model kent geen pod-IP), maar de ingress van de baseline zonder
+  # label beslist de regel wel. De berekening van de except staat in
+  # TestDeExceptSluitHetClusterUit.
+  - van: tenant-app
+    naar: tenant-helm-pod
+    poort: 443
+    verwacht: dicht
+    waarom: de baseline zonder label laat alleen pods zonder dat label, de router en de platformnamespaces toe
 
   # -------------------------------------------------------------------- OPI, uitgaand
   - van: opi
@@ -617,8 +651,9 @@ flows:
     verwacht: dicht
     waarom: de ops-egress noemt de solverpod niet, dus de tenant komt er aan de uitgaande kant niet uit
 
-  # De HTTP-01-solver in de projectnamespace draagt geen deployment-label, dus geen
-  # tenant-baseline selecteert hem: de acme-http-policy is het enige beleid op die pod.
+  # De HTTP-01-solver in de projectnamespace draagt geen deployment-label, dus naast de
+  # acme-http-policy selecteren sinds RC-343 ook de default-deny en de baseline zonder
+  # label hem. Beide laten de router toe, dus de challenge blijft open.
   - van: router
     naar: tenant-acme-solver
     poort: 8089
@@ -631,19 +666,108 @@ flows:
     verwacht: dicht
     waarom: de acme-http-policy laat alleen de router toe, en de bron mag er ook niet uit
 
-  # Wat RC-336 openlaat. Tot deze taak selecteerde de acme-http-policy elke pod in een
-  # namespace met een Let's Encrypt-issuer (podSelector {}, ingress 80 en 8089), en
-  # beperkte daarmee ook de pods zonder deployment-label. Nu de policy alleen de solver
-  # selecteert, valt zo'n pod terug op default-allow en staat hij op elke poort open.
-  # Dat gat sluit de default-deny per projectnamespace, niet deze taak.
+  # Het gat dat RC-336 openliet en RC-343 sluit. Tot RC-336 selecteerde de
+  # acme-http-policy elke pod in een namespace met een Let's Encrypt-issuer
+  # (podSelector {}, ingress 80 en 8089), en beperkte daarmee ook de pods zonder
+  # deployment-label. Nu die policy alleen de solver selecteert, viel zo'n pod terug op
+  # default-allow; de default-deny per projectnamespace sluit dat.
   - van: vreemde-helm-pod
     naar: tenant-helm-pod
     poort: 5432
-    verwacht: open
-    waarom: geen policy selecteert een pod zonder deployment-label, aan geen van beide kanten
+    verwacht: dicht
+    waarom: de default-deny van zijn eigen namespace laat deze egress niet toe, en de ingress aan de andere kant ook niet
 
   - van: vreemde-helm-pod
     naar: tenant-app
     poort: 5432
     verwacht: dicht
     waarom: een pod MET het deployment-label heeft zijn baseline, en die laat deze bron niet toe
+
+  # De rechten van een pod zonder deployment-label: dezelfde als die van een deployment.
+  # De default-deny als enige beleid: een pod met een deployment-label dat geen
+  # deployment is valt buiten beide baselines. Zonder de default-deny staat hij op
+  # Kubernetes' default-allow en bereikt hij het platform.
+  - van: tenant-vreemd-label-pod
+    naar: opi
+    poort: 8000
+    verwacht: dicht
+    waarom: geen baseline selecteert hem, dus alleen de default-deny van de namespace geldt
+
+  - van: tenant-vreemd-label-pod
+    naar: rig-db
+    poort: 5432
+    verwacht: dicht
+    waarom: idem; de ops-egress hangt aan de baselines en die selecteren hem niet
+
+  - van: tenant-vreemd-label-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: dicht
+    waarom: idem; de internetregel staat in de baselines
+
+  - van: router
+    naar: tenant-vreemd-label-pod
+    poort: 8080
+    verwacht: dicht
+    waarom: de default-deny sluit ook de ingress, dus zo'n pod is niet van buiten te publiceren
+
+  - van: tenant-helm-pod
+    naar: rig-db
+    poort: 5432
+    verwacht: open
+    waarom: de baseline zonder label erft dezelfde ops-egress als die van een deployment
+
+  - van: tenant-helm-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: een helm-workload roept externe APIs aan, net als een deployment
+
+  - van: router
+    naar: tenant-helm-pod
+    poort: 8080
+    verwacht: open
+    waarom: een chart die zelf een ingress rendert blijft van buiten bereikbaar
+
+  - van: tenant-helm-pod
+    naar: tenant-app
+    poort: 8000
+    verwacht: dicht
+    waarom: een helm-pod en een deployment in dezelfde namespace blijven van elkaar gescheiden
+
+  - van: restore-pod
+    naar: tenant-helm-pod
+    poort: 8080
+    verwacht: open
+    waarom: twee pods zonder deployment-label in dezelfde namespace blijven elkaar bereiken, net als een deployment zijn eigen pods
+
+  - van: restore-pod
+    naar: internet-v4
+    poort: 443
+    verwacht: open
+    waarom: een restore naar een externe bestemming houdt 80 en 443, een bewuste keuze
+
+  # Het toegewijde databasecluster: bereikbaar voor de eigen namespace en de operator.
+  - van: tenant-app
+    naar: project-db
+    poort: 5432
+    verwacht: open
+    waarom: de enige uitzondering op de scheiding, een deployment bereikt zijn eigen database
+
+  - van: tenant-helm-pod
+    naar: project-db
+    poort: 5432
+    verwacht: open
+    waarom: een helmfile-deployment gebruikt diezelfde database
+
+  - van: vreemde-helm-pod
+    naar: project-db
+    poort: 5432
+    verwacht: dicht
+    waarom: de database is van dit project, niet van de buren
+
+  - van: cnpg-operator
+    naar: project-db
+    poort: 8000
+    verwacht: open
+    waarom: zonder de operator erbij komt het cluster nooit Ready

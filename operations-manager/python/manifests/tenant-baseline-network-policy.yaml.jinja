@@ -6,8 +6,8 @@ metadata:
 spec:
   # Per-deployment policy: selects only pods of this deployment so that
   # multiple deployments in the same project namespace stay isolated from
-  # each other and from helm/helmfile workloads (which do not carry this
-  # label and therefore fall through to Kubernetes' default-allow).
+  # each other and from helm/helmfile workloads (which carry no such label
+  # and get the unlabeled render of this same template instead).
   #
   # This is a permissive baseline: it blocks cross-tenant traffic via the
   # explicit allow-list (own deployment plus the shared services) and leaves
@@ -17,6 +17,14 @@ spec:
   podSelector:
     matchLabels:
       deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+  # Pods zonder deployment-label: helm- en helmfile-workloads, cronjobs uit een
+  # chart, backup- en restorepods. Dezelfde rechten als een deployment, maar van
+  # de deployments in de namespace gescheiden.
+  podSelector:
+    matchExpressions:
+      - key: deployment
+        operator: DoesNotExist
 {% else %}
   # No deployment selector: apply to every pod in the namespace. Used for
   # the project infrastructure namespace (CNPG cluster) where there is no
@@ -33,6 +41,12 @@ spec:
         - podSelector:
             matchLabels:
               deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: deployment
+                operator: DoesNotExist
 {% else %}
     - from:
         - podSelector: {}
@@ -99,10 +113,26 @@ spec:
         - podSelector:
             matchLabels:
               deployment: {{ deployment_selector | yaml_scalar }}
+{% elif unlabeled_selector %}
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: deployment
+                operator: DoesNotExist
 {% else %}
     - to:
         - podSelector: {}
 {% endif %}
+    # Een toegewijd PostgreSQL-cluster in dezelfde namespace: de enige uitzondering
+    # op de scheiding hierboven, want die pods dragen geen deployment-label.
+    - to:
+        - podSelector:
+            matchExpressions:
+              - key: cnpg.io/cluster
+                operator: Exists
+      ports:
+        - protocol: TCP
+          port: 5432
     # Gedeelde services per poort, niet per namespace.
 {% for service in ops_egress %}
     - to:
