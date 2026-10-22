@@ -265,8 +265,12 @@ class Settings(BaseSettings):
     # ArgoCD Server Configuration
     ARGOCD_HOST: str = "argocd-server"
     ARGOCD_PORT: int = 80
-    ARGOCD_USERNAME: str = "admin"
-    ARGOCD_PASSWORD: str = "admin"
+    # Geen default; vergeten instelling moet een fout zijn, niet admin/admin.
+    ARGOCD_USERNAME: str | None = None
+    ARGOCD_PASSWORD: str | None = None
+    # API-token van het account `opi` (Secret opi-argocd-token). Is hij gezet, dan slaat de
+    # connector /api/v1/session over en stuurt hij dit token als bearer.
+    ARGOCD_TOKEN: str | None = None
     ARGOCD_USE_TLS: bool = False
     ARGOCD_VERIFY_SSL: bool = False
     # Pad van de gemounte CA-bundel van de ArgoCD-server. Verplicht zodra TLS en

@@ -47,6 +47,13 @@ ARGOCD_CM_KEYS = {
     # op odcn-production en op sandboxed-local.
     "timeout.reconciliation",
     "timeout.hard.reconciliation",
+    # Lokale accounts naast admin, met hun toegestane capabilities. ArgoCD leest ze als
+    # `accounts.<naam>` uit argocd-cm (upstream user-management/index.md); `opi` staat er
+    # met alleen apiKey, dus er is geen wachtwoord om mee in te loggen.
+    "accounts.opi",
+    # RBAC-logging: argocd-server logt elke geweigerde aanroep met subject, resource en
+    # actie. Een server-key uit argocd-cm, niet uit argocd-cmd-params-cm.
+    "server.rbac.log.enforce.enable",
 }
 
 #: ``resource.customizations.*`` is een familie en geen vaste key: de staart is

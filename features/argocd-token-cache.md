@@ -24,6 +24,11 @@ Een cache op moduleniveau in `opi/connectors/argo.py`, met sleutel `(server, geb
 - `ensure_authenticated()` logt async in als er nog geen token is;
 - dat login-pad schrijft het token terug in de cache.
 
+Sinds RC-345 komt OPI met een API-token binnen (`ARGOCD_TOKEN`, zie
+`features/argocd-least-privilege.md`). Dan is er geen login en dus ook geen cache nodig: het
+token is voor elke connector dezelfde en verloopt niet per sessie. De cache hieronder geldt
+voor de loginweg, die blijft bestaan voor lokale ontwikkeling.
+
 Twee locks: een `threading.Lock` om de cache-dict zelf, want draden lezen hem ook, en een
 `asyncio.Lock` om de login, zodat een stoot aanroepers met een lege cache er een doet in plaats
 van elk een eigen.
@@ -38,7 +43,7 @@ opnieuw of iemand anders het token al heeft opgehaald, en neemt dat dan over.
 Op één uitzondering: een connector die met `connect_retry_seconds=0` gebouwd is (de interactieve
 paden) gaat niet in die rij staan en geeft `False` terug zodra de lock bezet is. De login erachter
 kan een herstart van argocd-server uitzitten, en die wacht hoort niet in een pagina of een
-HTMX-poll. Is de lock vrij, dan logt hij gewoon in. Zie
+HTMX-poll. Is de lock vrij, dan logt hij in. Zie
 `docs/argocd-server-herstart-elke-40-minuten.md`.
 
 **Compare-and-clear bij een 401.** Een request dat een 401 krijgt mag alleen het token wissen dát

@@ -91,7 +91,7 @@ task bootstrap-argo-system CLUSTER_TYPE=odcn-staging KEEP_DEFAULT_APPPROJECT=tru
 ```
 
 `KEEP_DEFAULT_APPPROJECT=true` laat alleen het AppProject `default` uit de gerenderde
-overlay weg; de rest gaat gewoon mee. Controleer daarna dat elke Application Synced en
+overlay weg; de rest gaat mee. Controleer daarna dat elke Application Synced en
 Healthy is, en dat geen enkele een `ComparisonError` over zijn project meldt:
 
 ```bash

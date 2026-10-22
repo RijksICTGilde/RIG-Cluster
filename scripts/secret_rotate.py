@@ -116,9 +116,9 @@ class Kube:
     @staticmethod
     def _redact(arg: str) -> str:
         """Wachtwoorden horen niet in een foutmelding of scrollback. Alles dat als
-        omgevingspaar doorgaat (W=, PGPASSWORD=, REDISCLI_AUTH=, T=, A=) wordt vervangen
+        omgevingspaar doorgaat (W=, PGPASSWORD=, REDISCLI_AUTH=, T=, A=, S=) wordt vervangen
         door zijn naam; de structuur van het commando blijft leesbaar."""
-        if re.match(r"^(W|P|PGPASSWORD|REDISCLI_AUTH|T|A|N)=", arg):
+        if re.match(r"^(W|P|PGPASSWORD|REDISCLI_AUTH|T|A|N|S)=", arg):
             return arg.split("=", 1)[0] + "=<weggehaald>"
         return arg
 
@@ -200,6 +200,9 @@ def backup_ns_for(cluster_name: str) -> str:
 
 OPI_DEPLOYMENT = "deploy/operations-manager"
 
+# Het Secret waaruit de OPI-deployment ARGOCD_TOKEN leest (base/deployment.yaml).
+OPI_TOKEN_SECRET = "opi-argocd-token"  # noqa: S105 - de naam van het Secret, niet de inhoud
+
 # Het envsecret van ZAD: één Secret per cluster, dat `task
 # generate-env-secrets-for-operations-manager` uit `.env.<cluster>.secrets` schrijft.
 ZAD_ENV_SECRET = "operations-manager-env-secrets"  # noqa: S105 - de naam van het Secret, niet de inhoud
@@ -235,6 +238,13 @@ class Component:
     # er nergens een tweede exemplaar te staan dat stil kan afwijken.
     current_from_secret: tuple[str, ...] = ()
     gen_without_template: tuple[str, int] = ()  # (kind, lengte) generatie-hint voor rijen zonder template
+    # De nieuwe waarde komt van het systeem zelf (ArgoCD geeft het API-token uit), dus niet
+    # genereren en niet vragen: een stap vult hem. Een huidige waarde mag ook ontbreken, want
+    # de eerste uitgifte heeft er nog geen.
+    issued_by_system: bool = False
+    # De huidige waarde mag ontbreken: bij de eerste uitgifte staat de key nog niet in het
+    # secret. De nieuwe waarde komt hier wel gewoon van buiten, dus die wordt nog gevraagd.
+    current_may_be_absent: bool = False
     note: str = ""
 
 
@@ -466,15 +476,43 @@ COMPONENTS: list[Component] = [
         template="",  # geen generatie-template: het secret is operator-owned en kan niet in git
         category="bootstrap",
         rotate_fields=("ARGOCD_PASSWORD",),
-        workloads=(OPI_DEPLOYMENT,),  # ZAD leest ARGOCD_PASSWORD via secretKeyRef, dus bij start
-        # Geen zad_env: ZAD leest dit wachtwoord rechtstreeks uit argocd-cluster, hetzelfde
-        # secret dat de operator naar argocd-secret hasht. Daarmee is dat secret de enige
-        # bron en hoeft er geen kopie in het ZAD-envbestand bijgewerkt te worden.
+        # Geen workloads: sinds RC-345 leest OPI dit wachtwoord niet meer (hij werkt met het
+        # account opi en zijn API-token), dus er is geen afnemer om te herstarten. Geen
+        # zad_env: de waarde leeft alleen in argocd-cluster, het secret dat de operator naar
+        # argocd-secret hasht.
         current_from_secret=("argocd-cluster", "admin.password"),
         gen_without_template=("random", 24),
         note="De operator is hier de schrijver: hij hasht admin.password uit <cr>-cluster naar "
         "argocd-secret. Drie stappen die alle drie moeten, anders komt de wissel niet aan; de "
         "stappen leggen uit waarom. Het cluster-secret zelf raakt hij nooit aan.",
+    ),
+    Component(
+        key="argocd-opi-token",
+        title="ArgoCD API-token van het account opi",
+        template="",  # ArgoCD geeft het token uit; het leeft in het Secret van OPI
+        category="bootstrap",
+        rotate_fields=("ARGOCD_TOKEN",),
+        workloads=(OPI_DEPLOYMENT,),  # ZAD leest ARGOCD_TOKEN via secretKeyRef, dus bij start
+        current_from_secret=(OPI_TOKEN_SECRET, "token"),
+        issued_by_system=True,
+        note="Het token waarmee OPI bij ArgoCD komt, met de rol role:zad-opi (alleen "
+        "applications get en sync). Aanmaken en intrekken gaat met het admin-account via de "
+        "CLI in de argocd-server-pod; de rol van admin is daarmee de rotatie zelf en niet het "
+        "dagelijks werk. Buiten de ronde om een token aanmaken kan ook, maar dan trekt niemand "
+        "het oude in.",
+    ),
+    Component(
+        key="argocd-webhook-github",
+        title="GitHub-webhookgeheim van ArgoCD",
+        template="",  # leeft in argocd-secret, dat de operator bezit en dus niet in git kan
+        category="external",
+        rotate_fields=("webhook.github.secret",),
+        current_from_secret=("argocd-secret", "webhook.github.secret"),
+        current_may_be_absent=True,  # vandaag staat de key er nog niet: de eerste ronde zet hem
+        note="Zonder dit geheim neemt ArgoCD elke webhook-POST aan, van wie dan ook. De "
+        "waarde zet je in de webhook-instellingen van de repo's die ArgoCD een webhook sturen; "
+        "de wissel in argocd-secret doet de tool. Tussen die twee stappen valt de webhook even "
+        "weg: OPI vraagt zelf een refresh aan, de webhook is de tweede trigger.",
     ),
     Component(
         key="keycloak-admin",
@@ -516,6 +554,10 @@ TEMPLATELESS: dict[str, str] = {
     "registry": "het token leeft in het ZAD-envbestand; host, organisatie en robotnaam staan in de OPI-configmap",
     "argocd-admin": "leeft in het cluster-secret van de operator, dat met een ownerReference "
     "aan de ArgoCD-CR hangt en daarom niet in git kan",
+    "argocd-opi-token": "ArgoCD geeft het token uit; het leeft in het Secret van OPI en nergens "
+    "anders, want een kopie in git zou stil kunnen afwijken van wat ArgoCD nog accepteert",
+    "argocd-webhook-github": "leeft in argocd-secret, dat de operator bezit; een tweede exemplaar "
+    "in git zou drift zijn, en een GitOps-apply op dat secret zou met de operator vechten",
 }
 
 # Dekking: het envsecret van ZAD. Een sleutel zonder rotatierij moet hier staan
@@ -1297,33 +1339,53 @@ def _mc_check(ctx: Ctx, endpoint: str, user: str, password: str) -> str:
 # vaste naam in de operator (common.ArgoCDSecretName).
 ARGOCD_CR = "argocd"
 
+# Het lokale ArgoCD-account van OPI (accounts.opi in argocd-cm) en de Service van
+# argocd-server, waar de webhook-proef op aanklopt.
+OPI_ACCOUNT = "opi"
+ARGOCD_SERVICE = "argocd-server"
+WEBHOOK_KEY = "webhook.github.secret"  # de naam van de key, niet de inhoud
+
+
+# Waar de CLI in de argocd-server-pod aanklopt: de eigen Service, niet localhost:8080.
+# argocd-server serveert TLS, en `argocd login` test dat zelf (--skip-test-tls zet die test
+# uit, niet de uitkomst): bij TLS valt --plaintext weg en wordt het certificaat tegen de
+# dial-naam gecontroleerd. localhost staat niet in de SAN, argocd-server wel.
+ARGOCD_CLI_SERVER = f"{ARGOCD_SERVICE}:443"
+
+# De CLI-vlaggen van elke aanroep. --insecure blijft nodig: de CA van het
+# servercertificaat zit niet in de trust store van de pod. De eigen config-dir in /tmp houdt
+# de fatale `mkdir /.config` weg op een read-only rootfs (odcn) en laat geen sessietoken in
+# de pod achter.
+ARGOCD_CLI_FLAGS = "--insecure --grpc-web --config /tmp/argocd-rot.config"
+
+
+def argocd_as_admin(kube: Kube, password: str, command: str = "") -> subprocess.CompletedProcess[str]:
+    """Log als admin in op ArgoCD en draai daarna optioneel één CLI-commando.
+
+    De CLI zit in de argocd-server-pod; OPI heeft hem niet. Het wachtwoord gaat als env-paar
+    mee, zodat `Kube._redact` het uit elke foutmelding en scrollback houdt. Uit een
+    proceslijst houdt dat het niet: `kubectl exec -- env W=...` draagt het in zijn eigen argv,
+    en de `sh` in de pod expandeert `"$W"` naar de argv van `argocd`. Wie dat kan lezen heeft
+    al kubectl op deze machine of exec op die pod.
+    """
+    script = (
+        f'argocd login {ARGOCD_CLI_SERVER} --username admin --password "$W" {ARGOCD_CLI_FLAGS} 2>&1; '
+        + (f"argocd {command} {ARGOCD_CLI_FLAGS} 2>&1; " if command else "")
+        + "rm -f /tmp/argocd-rot.config"
+    )
+    return kube.exec("deploy/argocd-server", ["env", f"W={password}", "sh", "-c", script], check=False)
+
 
 def argocd_login(kube: Kube, password: str) -> bool:
     """Of ArgoCD dit wachtwoord accepteert voor de gebruiker admin.
-
-    De CLI zit in de argocd-server-pod; OPI heeft hem niet. Het wachtwoord gaat via een
-    env-variabele en niet via argv, zodat het niet in een proceslijst of foutmelding opduikt.
 
     De uitslag staat in de TEKST en niet in de exitcode. Op odcn is het rootfs van die pod
     read-only, en dan meldt de CLI eerst "logged in successfully" en valt daarna alsnog
     fataal om op `mkdir /.config`, met exitcode 20. Een toets op de returncode las een
     geslaagde login dus als afgewezen (gemeten 16-10-2026, en op de sandbox viel het niet op
-    omdat het rootfs daar schrijfbaar is). De eigen config-dir in /tmp houdt die fout weg en
-    wordt daarna opgeruimd, zodat er geen sessietoken in de pod achterblijft.
+    omdat het rootfs daar schrijfbaar is).
     """
-    result = kube.exec(
-        "deploy/argocd-server",
-        [
-            "env",
-            f"W={password}",
-            "sh",
-            "-c",
-            'argocd login localhost:8080 --username admin --password "$W" '
-            "--plaintext --insecure --grpc-web --config /tmp/argocd-rot.config 2>&1; "
-            "rm -f /tmp/argocd-rot.config",
-        ],
-        check=False,
-    )
+    result = argocd_as_admin(kube, password)
     return "logged in successfully" in (result.stdout + result.stderr)
 
 
@@ -1424,7 +1486,10 @@ def argocd_admin_steps(component: Component, cluster: Cluster, kube: Kube, ctx: 
         Step(
             "Huidige waarde testen (argocd login als admin)",
             "check",
-            ["kubectl exec deploy/argocd-server -- argocd login localhost:8080 --username admin --password <HUIDIG>"],
+            [
+                f"kubectl exec deploy/argocd-server -- argocd login {ARGOCD_CLI_SERVER} "
+                "--username admin --password <HUIDIG>"
+            ],
             _check,
         ),
         Step(
@@ -1449,6 +1514,281 @@ def argocd_admin_steps(component: Component, cluster: Cluster, kube: Kube, ctx: 
             "Verifiëren: operator zet de hash terug, nieuwe waarde werkt, oude is afgewezen",
             "verify",
             ["poll argocd-secret.admin.password tot hij terug is; daarna login met <NIEUW> en met <HUIDIG>"],
+            _verify,
+        ),
+    ]
+
+
+# Geldigheidsduur van een vers OPI-token. Een jaar: lang genoeg om niet tussen twee
+# rotatierondes te verlopen, kort genoeg dat een token dat buiten de ronde om bleef staan
+# niet eeuwig geldig is.
+OPI_TOKEN_EXPIRES_IN = "8760h"  # noqa: S105 - een geldigheidsduur, geen geheim
+
+
+def argocd_with_token(kube: Kube, token: str, command: str) -> subprocess.CompletedProcess[str]:
+    """Eén CLI-commando met een API-token in plaats van een login.
+
+    Het token gaat als env-paar mee, zodat het uit foutmeldingen en scrollback blijft. Niet
+    uit een proceslijst: zie `argocd_as_admin`.
+    """
+    script = (
+        f'argocd {command} --server {ARGOCD_CLI_SERVER} --auth-token "$T" {ARGOCD_CLI_FLAGS} 2>&1; '
+        "rm -f /tmp/argocd-rot.config"
+    )
+    return kube.exec("deploy/argocd-server", ["env", f"T={token}", "sh", "-c", script], check=False)
+
+
+def token_id_of(token: str) -> str:
+    """De `jti`-claim van een ArgoCD-API-token: het id waarmee je hem intrekt.
+
+    ArgoCD geeft het id alleen terug bij het aanmaken, en wie het niet bewaart kan het oude
+    token niet intrekken. In het token zelf staat het wel.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise EditFailed("dit is geen JWT, dus er is geen token-id uit te lezen")
+    payload = parts[1] + "=" * (-len(parts[1]) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+    identifier = claims.get("jti")
+    if not identifier:
+        raise EditFailed("het token draagt geen jti-claim, dus intrekken kan niet")
+    return str(identifier)
+
+
+def argocd_opi_token_steps(component: Component, cluster: Cluster, kube: Kube, ctx: Ctx) -> list[Step]:
+    """Het API-token van het ArgoCD-account `opi`.
+
+    ArgoCD geeft tokens zelf uit, dus de nieuwe waarde wordt niet gegenereerd maar opgehaald:
+    stap 2 vult `ctx.new`. Aanmaken en intrekken vraagt accounts-rechten, en die heeft alleen
+    admin; daarmee is het admin-account nog voor de rotatie en niet voor het dagelijks werk.
+    """
+    namespace = kube.namespace
+
+    def _admin_password(ctx2: Ctx) -> str:
+        password = ctx2.kube.secret_value(f"{ARGOCD_CR}-cluster", "admin.password")
+        if not password:
+            raise EditFailed(
+                f"{ARGOCD_CR}-cluster.admin.password is niet te lezen in {namespace}; zonder het "
+                "adminwachtwoord kan niemand een token aanmaken of intrekken"
+            )
+        return password
+
+    def _probe(ctx2: Ctx, token: str) -> str:
+        result = argocd_with_token(ctx2.kube, token, "app list -o name")
+        output = (result.stdout + result.stderr).strip()
+        if any(marker in output for marker in ("FATA", "PermissionDenied", "Unauthenticated", "invalid session")):
+            raise EditFailed(f"ArgoCD wijst dit token af: {output[:160]}")
+        return "argocd app list: OK"
+
+    def _check(ctx2: Ctx) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        current = ctx2.current.get(ctx2.rotating)
+        if not current:
+            return f"geen token in {OPI_TOKEN_SECRET}: dit is de eerste uitgifte"
+        return "huidig token: " + _probe(ctx2, current)
+
+    def _issue(ctx2: Ctx) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        result = argocd_as_admin(
+            ctx2.kube,
+            _admin_password(ctx2),
+            f"account generate-token --account {OPI_ACCOUNT} --expires-in {OPI_TOKEN_EXPIRES_IN}",
+        )
+        output = (result.stdout + result.stderr).strip()
+        token = next((line.strip() for line in reversed(output.splitlines()) if line.count(".") == 2), "")
+        if not token:
+            raise EditFailed(
+                f"geen token in het antwoord van `account generate-token`: {output[:200]}. "
+                f"Bestaat `accounts.{OPI_ACCOUNT}: apiKey` in argocd-cm al?"
+            )
+        ctx2.new[ctx2.rotating] = token
+        return f"token {token_id_of(token)} aangemaakt (geldig {OPI_TOKEN_EXPIRES_IN})"
+
+    def _write_secret(ctx2: Ctx) -> str:
+        manifest = (
+            "apiVersion: v1\nkind: Secret\nmetadata:\n"
+            f"  name: {OPI_TOKEN_SECRET}\n  namespace: {namespace}\n"
+            "type: Opaque\nstringData:\n"
+            f"  token: {ctx2.new[ctx2.rotating]}\n"
+        )
+        ctx2.kube.run(["apply", "-n", namespace, "-f", "-"], input_text=manifest)
+        return f"{OPI_TOKEN_SECRET}.token bijgewerkt"
+
+    def _verify_new(ctx2: Ctx) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        return "nieuw token: " + _probe(ctx2, ctx2.new[ctx2.rotating])
+
+    def _revoke_old(ctx2: Ctx) -> str:
+        if ctx2.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        current = ctx2.current.get(ctx2.rotating)
+        if not current:
+            return "niets in te trekken (eerste uitgifte)"
+        identifier = token_id_of(current)
+        # De jti komt uit het Secret en gaat een `sh -c` in waar het adminwachtwoord als $W
+        # in de omgeving staat, dus quoten zoals bij de mc-aanroep hierboven.
+        result = argocd_as_admin(
+            ctx2.kube, _admin_password(ctx2), f"account delete-token --account {OPI_ACCOUNT} {shlex.quote(identifier)}"
+        )
+        output = result.stdout + result.stderr
+        if "FATA" in output:
+            raise EditFailed(f"intrekken van token {identifier} mislukte: {output.strip()[:160]}")
+        stale = _reject_stale(ctx2, lambda: _probe(ctx2, current), label="argocd-opi-token")
+        return f"token {identifier} ingetrokken; {stale}"
+
+    return [
+        Step(
+            "Huidig token testen (argocd app list met het token van OPI)",
+            "check",
+            [f"kubectl exec deploy/argocd-server -- argocd app list --auth-token <HUIDIG>  (uit {OPI_TOKEN_SECRET})"],
+            _check,
+        ),
+        Step(
+            f"Nieuw token aanmaken voor het account {OPI_ACCOUNT} (met het admin-account)",
+            "apply",
+            [
+                f"kubectl exec deploy/argocd-server -- argocd account generate-token --account {OPI_ACCOUNT} "
+                f"--expires-in {OPI_TOKEN_EXPIRES_IN}"
+            ],
+            _issue,
+        ),
+        Step(
+            f"Token in {OPI_TOKEN_SECRET} zetten (via stdin, nooit via argv)",
+            "apply",
+            [f"kubectl apply -n {namespace} -f -   (Secret {OPI_TOKEN_SECRET}, key token)"],
+            _write_secret,
+        ),
+        Step(
+            "Verifiëren dat het nieuwe token werkt",
+            "verify",
+            ["kubectl exec deploy/argocd-server -- argocd app list --auth-token <NIEUW>"],
+            _verify_new,
+        ),
+        Step(
+            "Oud token intrekken en bewijzen dat hij dood is (OPI draait erop tot de herstart hieronder)",
+            "verify",
+            [f"kubectl exec deploy/argocd-server -- argocd account delete-token --account {OPI_ACCOUNT} <jti HUIDIG>"],
+            _revoke_old,
+        ),
+    ]
+
+
+def argocd_webhook_github_steps(kube: Kube, values: Ctx) -> list[Step]:
+    """Het gedeelde geheim onder de GitHub-webhook van ArgoCD.
+
+    ArgoCD controleert een webhook alleen als `webhook.github.secret` in `argocd-secret`
+    staat; zonder die key neemt hij elke POST aan. Dat secret bezit de operator (hij hangt
+    het met een ownerReference aan de CR), dus het kan niet in git en de tool patcht alleen
+    deze key erin. De operator laat een eigen key staan: hij schrijft `admin.password`,
+    `server.secretkey` en de TLS-velden en kijkt niet naar de rest.
+
+    Verificatie is een echte webhook-POST met een HMAC-handtekening, vanuit de OPI-pod (die
+    heeft python en de CA-bundel van argocd-server). ArgoCD antwoordt 200 op een geldige
+    handtekening en een 4xx op een verkeerde, ook als er geen Application bij de payload hoort.
+    """
+
+    def _probe(ctx: Ctx, secret: str) -> str:
+        snippet = (
+            "import hashlib,hmac,json,os,ssl,urllib.error,urllib.request\n"
+            "body=json.dumps({'ref':'refs/heads/main','repository':{"
+            "'html_url':'https://github.com/rotatie/probe','default_branch':'main'}}).encode()\n"
+            "sig='sha256='+hmac.new(os.environ['S'].encode(),body,hashlib.sha256).hexdigest()\n"
+            "req=urllib.request.Request(os.environ['U'],data=body)\n"
+            "req.add_header('Content-Type','application/json')\n"
+            "req.add_header('X-GitHub-Event','push')\n"
+            "req.add_header('X-Hub-Signature-256',sig)\n"
+            # Geen certificaatcontrole: deze proef meet de handtekening, niet de TLS-keten.
+            # En beide poorten, want of 8080 TLS spreekt hangt aan spec.server.insecure van
+            # de CR: op de sandbox (gemeten 18-10-2026) gaf 443 een reset en antwoordde 80.
+            "tls=ssl._create_unverified_context()\n"
+            "for url in os.environ['U'].split(','):\n"
+            "    req.full_url=url\n"
+            "    try:\n"
+            "        print(urllib.request.urlopen(req,timeout=20,context=tls).status)\n"
+            "        break\n"
+            "    except urllib.error.HTTPError as e:\n"
+            "        print(e.code)\n"
+            "        break\n"
+            "    except urllib.error.URLError as e:\n"
+            "        laatste=e\n"
+            "else:\n"
+            "    print('onbereikbaar', laatste)\n"
+        )
+        host = f"{ARGOCD_SERVICE}.{ctx.kube.namespace}.svc"
+        url = f"https://{host}:443/api/webhook,http://{host}:80/api/webhook"
+        result = ctx.kube.exec(
+            OPI_DEPLOYMENT, ["env", f"S={secret}", f"U={url}", "python3", "-c", snippet], check=False
+        )
+        output = (result.stdout + result.stderr).strip()
+        last = output.splitlines()[-1].strip() if output else ""
+        if result.returncode != 0 or last != "200":
+            _ok(f"webhook met dit geheim: rc={result.returncode} {output[:160]}")
+        return "HTTP 200"
+
+    def _patch(ctx: Ctx) -> str:
+        patch = json.dumps({"stringData": {WEBHOOK_KEY: ctx.new[ctx.rotating]}})
+        ctx.kube.run(
+            [
+                "patch",
+                "secret",
+                "argocd-secret",
+                "-n",
+                ctx.kube.namespace,
+                "--type=merge",
+                "--patch-file",
+                "/dev/stdin",
+            ],
+            input_text=patch,
+        )
+        return f"argocd-secret.{WEBHOOK_KEY} gezet"
+
+    def _check(ctx: Ctx) -> str:
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        if not ctx.current.get(ctx.rotating):
+            return "geen huidig geheim in argocd-secret: ArgoCD neemt nu elke webhook aan"
+        return "huidig geheim: " + _probe(ctx, ctx.current[ctx.rotating])
+
+    def _verify(ctx: Ctx) -> str:
+        if ctx.kube.dry_run:
+            return "overgeslagen (dry-run)"
+        fresh = _probe(ctx, ctx.new[ctx.rotating])
+        if not ctx.current.get(ctx.rotating):
+            return f"nieuw geheim: {fresh}; geen oud geheim om af te wijzen"
+        stale = _reject_stale(ctx, lambda: _probe(ctx, ctx.current[ctx.rotating]), label="argocd-webhook-github")
+        return f"nieuw geheim: {fresh}; {stale}"
+
+    return [
+        Step(
+            "Huidig geheim testen (webhook-POST met handtekening vanuit de OPI-pod)",
+            "check",
+            [f"kubectl exec {OPI_DEPLOYMENT} -- python3 -c '<POST /api/webhook met X-Hub-Signature-256>'"],
+            _check,
+        ),
+        Step(
+            "EXTERN: zet het nieuwe geheim in de webhook-instellingen in GitHub",
+            "manual",
+            [
+                "Per repo die ArgoCD een webhook stuurt: Settings -> Webhooks -> het ArgoCD-endpoint,",
+                "veld Secret. Doe dit NA de patch hieronder, of accepteer dat de webhook tussen de",
+                "twee stappen even niets doet; OPI vraagt zelf een refresh aan, dus een gemiste",
+                "webhook kost alleen snelheid.",
+            ],
+            None,
+        ),
+        Step(
+            f"Nieuw geheim in argocd-secret zetten ({WEBHOOK_KEY}, via stdin)",
+            "apply",
+            [f"kubectl patch secret argocd-secret --type=merge  ({WEBHOOK_KEY})"],
+            _patch,
+        ),
+        Step(
+            "Verifiëren: nieuwe handtekening wordt aangenomen, oude afgewezen",
+            "verify",
+            ["twee webhook-POSTs vanuit de OPI-pod: met <NIEUW> en met <HUIDIG>"],
             _verify,
         ),
     ]
@@ -2321,6 +2661,7 @@ def steps_for(
             "platform-repo-pat": github_pat_steps,
             "keycloak-master-oidc": keycloak_master_oidc_steps,
             "registry": registry_steps,
+            "argocd-webhook-github": argocd_webhook_github_steps,
         }
         builder = builders.get(component.key)
         if builder is None:
@@ -2361,6 +2702,8 @@ def steps_for(
         # toe. Daarom returnt deze tak vroeg.
         if component.key == "argocd-admin":
             steps = argocd_admin_steps(component, cluster, kube, ctx)
+        elif component.key == "argocd-opi-token":
+            steps = argocd_opi_token_steps(component, cluster, kube, ctx)
         else:
             steps = bootstrap_component_steps(component, cluster, kube, ctx)
         if component.zad_env:
@@ -2884,7 +3227,15 @@ def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_chan
     if component.template:
         current = read_current(component, cluster)
     elif component.current_from_secret:
-        current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
+        # Bij de eerste uitgifte bestaat het secret nog niet; dan is er geen oude waarde en
+        # ook niets in te trekken. De stappen melden dat zelf.
+        try:
+            current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
+        except EditFailed as failure:
+            if not (component.issued_by_system or component.current_may_be_absent):
+                raise
+            print(f"(let op: {failure})")
+            current = {}
     else:
         values = read_env_file(env_file_for(cluster.name))
         if not values:
@@ -2903,10 +3254,14 @@ def gather_ctx(component: Component, cluster: Cluster, kube: Kube, *, apply_chan
                 current[field] = values[env_name]
 
     new: dict[str, str] = {}
-    fields = template_fields_of(component)
-    print(f"\nNieuwe waarden voor {component.title}:")
-    for name in component.rotate_fields:
-        new[name] = new_value_for(component, name, fields)
+    if component.issued_by_system:
+        # Het systeem geeft de waarde uit, dus hier valt niets te genereren of te vragen.
+        new = dict.fromkeys(component.rotate_fields, "")
+    else:
+        fields = template_fields_of(component)
+        print(f"\nNieuwe waarden voor {component.title}:")
+        for name in component.rotate_fields:
+            new[name] = new_value_for(component, name, fields)
 
     return Ctx(
         cluster=cluster,
@@ -2949,7 +3304,8 @@ def check_component(component: Component, cluster: Cluster, kube: Kube) -> list[
         try:
             ctx.current = {component.rotate_fields[0]: read_current_from_secret(component, kube)}
         except EditFailed as failure:
-            return [f"  -  {component.key}: overgeslagen ({failure})"]
+            if not (component.issued_by_system or component.current_may_be_absent):
+                return [f"  -  {component.key}: overgeslagen ({failure})"]
     else:
         current = read_env_file(env_file_for(cluster.name))
         if component.rotate_fields[0] not in current:
@@ -3006,20 +3362,28 @@ def workload_report(component: Component, cluster: Cluster, kube: Kube) -> list[
     return lines
 
 
-def execute(ctx: Ctx, steps: list[Step]) -> bool:
+def execute(ctx: Ctx, steps: list[Step], *, assume_yes: bool = False) -> bool:
     """Voer het plan uit, per stap een bevestiging. Bij een gefaalde check mag de
-    gebruiker het HUIDIGE wachtwoord invoeren (drift) en probeert de check opnieuw."""
+    gebruiker het HUIDIGE wachtwoord invoeren (drift) en probeert de check opnieuw.
+
+    `assume_yes` slaat elke vraag over, voor een ronde die uit een taak draait
+    (`task sandbox:setup` geeft de verse sandbox zijn eerste OPI-token). Een handmatige
+    stap kan dan niemand uitvoeren, dus die meldt zich en de ronde faalt.
+    """
     for step in steps:
         print(f"\n[{step.phase}] {step.title}")
         if step.run is None:
             for line in step.dry_text:
                 print(f"    {line}")
             if step.phase == "manual":
+                if assume_yes:
+                    print("    ❌ deze stap vraagt een mens; non-interactief kan dit component niet.")
+                    return False
                 input("    Zet dit klaar en druk op enter om door te gaan...")
             continue
         # Default JA: dit is een rotatieronde waar je in één keer door wil, en elke stap
         # bewijst zichzelf of faalt hard. Alleen een expliciete 'n' slaat over.
-        if input("    Uitvoeren? [J/n] ").strip().lower() in ("n", "nee", "no"):
+        if not assume_yes and input("    Uitvoeren? [J/n] ").strip().lower() in ("n", "nee", "no"):
             print("    Overgeslagen.")
             continue
         try:
@@ -3027,6 +3391,8 @@ def execute(ctx: Ctx, steps: list[Step]) -> bool:
         except EditFailed as failure:
             if step.phase == "check":
                 print(f"    ❌ {failure}")
+                if assume_yes:
+                    return False
                 value = input("    Bestand en app lopen uiteen. Huidige app-wachtwoord: ").strip()
                 if not value:
                     return False

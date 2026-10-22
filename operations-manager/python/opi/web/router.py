@@ -2350,7 +2350,7 @@ async def argocd_status_fragment(
     request: Request, project_name: str, deployment_name: str, prefix: str = ""
 ) -> HTMLResponse:
     """ArgoCD status HTML fragment for a single deployment (HTMX lazy-load)."""
-    from opi.connectors.argo import create_argo_connector
+    from opi.connectors.argo import ArgoAuthConfigurationError, create_argo_connector
     from opi.connectors.kubectl import create_kubectl_connector
     from opi.core.config import settings
     from opi.utils.naming import generate_argocd_application_name
@@ -2381,8 +2381,14 @@ async def argocd_status_fragment(
     # Fail fast, om dezelfde reden als op /dashboard: dit fragment laadt in een pagina,
     # dus het uitzitten van een ArgoCD-herstart houdt een gebruiker op in plaats van een
     # taak. Zie docs/argocd-server-herstart-elke-40-minuten.md.
-    argo = create_argo_connector(connect_retry_seconds=0)
-    if not await argo.ensure_authenticated():
+    # Zonder ARGOCD_TOKEN en zonder wachtwoord is er geen connector te maken. Dat hoort
+    # dezelfde kaart te geven als een ArgoCD die niet antwoordt, niet een 500 in dit fragment.
+    argo = None
+    try:
+        argo = create_argo_connector(connect_retry_seconds=0)
+    except ArgoAuthConfigurationError as auth_error:
+        logger.warning(f"Geen ArgoCD-credentials voor dit fragment: {auth_error}")
+    if argo is None or not await argo.ensure_authenticated():
         status = _argocd_unavailable_result(
             generate_argocd_application_name(project_name, deployment_name), "ArgoCD niet beschikbaar"
         )
