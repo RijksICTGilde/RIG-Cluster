@@ -295,7 +295,7 @@ is dit de checklist voor de nieuwe overlay.
 
 Regel 12 is de image-pin (`rcr.rijksapps.nl/ghcr-rig/.../operations-manager:...`), regel 53 zet
 `cluster-api.apps.prd1.gn2.quattro.rijksapps.nl` als env-waarde. Dezelfde API-host staat ook in
-`bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml:71`,
+`bootstrap/rig-system/kustomize/components/cmp-odcn/kustomization.yaml:67`,
 `infrastructure/.../external-dns/controller/overlays/odcn/kustomization.yaml:33` en
 `infrastructure/.../prometheus/controller/overlays/odcn/kustomization.yaml:31`.
 

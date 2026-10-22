@@ -1271,16 +1271,16 @@ tasks:
       publish-cmp-kustomize-sops roept dit aan met de tag die hij net gepusht heeft. Los
       aanroepen kan ook, bijvoorbeeld om terug te rollen naar een eerdere tag.
 
-      Drie bestanden, want de sidecar staat drie keer in git: de component (die de sandbox
-      gebruikt), de image-patch van de odcn-overlay (die op productie telt) en de ArgoCD-CR
-      zelf. Elk bestand houdt zijn eigen registrypad.
+      Drie bestanden, want de sidecar staat drie keer in git: de component sops-plugin (die
+      de sandbox gebruikt), de component cmp-odcn (die op elk ODCN-cluster telt) en de
+      ArgoCD-CR zelf. Elk bestand houdt zijn eigen registrypad.
 
       Dit is geen uitrol: de ArgoCD-CR gaat buiten ArgoCD om en is een handeling van een mens.
     vars:
       IMAGE_TAG: '{{.IMAGE_TAG | default ""}}'
       PIN_FILES: >-
         bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml
-        bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml
+        bootstrap/rig-system/kustomize/components/cmp-odcn/kustomization.yaml
         bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
     preconditions:
       - sh: '[ -n "{{.IMAGE_TAG}}" ]'
