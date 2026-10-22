@@ -58,7 +58,7 @@ from opi.utils.logging_redact import redact_invite_key_in_path
 from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Mapping
 
     from starlette.requests import Request
     from starlette.responses import Response
@@ -630,13 +630,19 @@ def create_app() -> FastAPI:
             return False
         return "text/html" in request.headers.get("accept", "")
 
-    def _fout_antwoord(request: Request, status_code: int, detail: object) -> Response:
+    def _fout_antwoord(
+        request: Request, status_code: int, detail: object, headers: Mapping[str, str] | None = None
+    ) -> Response:
         """Het antwoord op een 5xx: een pagina voor een browser, een envelop voor de rest.
 
         Wat hier NIET in komt is de uitzondering. Die stond tot nu toe kaal op het scherm
         van de gebruiker -- inclusief het interne IP-adres en de databasepoort van de
         server die niet antwoordde -- en staat vanaf nu alleen in de log. Het kenmerk is
         de koppeling: dezelfde tekens op het scherm en op elke logregel van dit verzoek.
+
+        De headers van de uitzondering gaan mee, zodat een belofte als de ``Retry-After``
+        van het uploadslot de client bereikt. Alleen de headers over de body zelf niet,
+        want die body wordt hier opnieuw gemaakt.
         """
         tekst = detail if isinstance(detail, str) and detail.strip() else GENERIEKE_FOUTTEKST
         if tekst == statusomschrijving(status_code):
@@ -644,8 +650,13 @@ def create_app() -> FastAPI:
             # en zeker niet wat hij eraan kan doen, dus vervangen door de zin die dat wel doet.
             tekst = GENERIEKE_FOUTTEKST
         kenmerk = kenmerk_van(request)
+        door_te_geven = {
+            naam: waarde
+            for naam, waarde in (headers or {}).items()
+            if naam.lower() not in ("content-length", "content-type")
+        } or None
         if _wil_een_pagina(request):
-            return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code)
+            return HTMLResponse(server_error_page(tekst, kenmerk), status_code=status_code, headers=door_te_geven)
         probleem = ProblemDetail(
             title=statusomschrijving(status_code),
             status=status_code,
@@ -658,6 +669,7 @@ def create_app() -> FastAPI:
             content=probleem.model_dump(),
             status_code=status_code,
             media_type="application/problem+json",
+            headers=door_te_geven,
         )
 
     # Log all unhandled exceptions through Python logging so they appear in
@@ -690,7 +702,7 @@ def create_app() -> FastAPI:
         Elke andere 4xx blijft onveranderd: daar leest een client op wat er staat.
         """
         if exc.status_code >= 500:
-            return _fout_antwoord(request, exc.status_code, exc.detail)
+            return _fout_antwoord(request, exc.status_code, exc.detail, exc.headers)
         if exc.status_code != 404 or not _wil_een_pagina(request):
             return await http_exception_handler(request, exc)
         return HTMLResponse(NOT_FOUND_PAGE, status_code=404)

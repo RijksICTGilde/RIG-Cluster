@@ -327,6 +327,17 @@ class Settings(BaseSettings):
     REGISTRY_VERIFY_TLS: bool = True
     IMAGE_UPLOAD_MAX_SIZE_MB: int = 5120  # Safety cap (5 GB)
 
+    # Uploads. Het functionele plafond per route staat elders (MAX_ATTACHMENT_BYTES voor
+    # een bijlage, IMAGE_UPLOAD_MAX_SIZE_MB hierboven); dit begrenst wat de pod ervan draagt.
+    MAX_CONCURRENT_UPLOADS: int = 4  # gelijktijdige uploads over alle uploadroutes samen
+    UPLOAD_QUEUE_SIZE: int = 10  # uploads die mogen wachten op een plek; daarboven direct 503
+    UPLOAD_QUEUE_WAIT_SECONDS: float = 30.0  # hoe lang een upload in de wachtrij mag staan
+    UPLOAD_SLOT_RETRY_AFTER_SECONDS: int = 5  # wat die 503 als Retry-After meegeeft
+    UPLOAD_SPILL_AFTER_BYTES: int = 1024 * 1024  # hierboven gaat een upload naar een tempbestand
+    # De body-grens van een bijlageroute is MAX_ATTACHMENT_BYTES maal dit getal: de
+    # multipart-omlijsting komt bovenop het bestand, en 64 KB laat daarvoor weinig ruimte.
+    ATTACHMENT_BODY_LIMIT_FACTOR: int = 16
+
     # Keycloak configuration
     KEYCLOAK_URL: str = "https://keycloak.kind"
     KEYCLOAK_ADMIN_USERNAME: str = "admin"

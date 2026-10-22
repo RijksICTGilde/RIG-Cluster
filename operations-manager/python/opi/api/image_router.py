@@ -8,8 +8,6 @@ Optionally updates a deployment's component image reference after a successful p
 """
 
 import logging
-import os
-import tempfile
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
@@ -18,7 +16,7 @@ from opi.api.params import ProjectNamePath
 from opi.connectors.skopeo import SkopeoConnectionError, SkopeoConnector, SkopeoExecutionError, SkopeoValidationError
 from opi.core.config import settings
 from opi.manager.project_manager import ProjectManager
-from opi.utils.uploads import UploadTooLargeError, iter_capped
+from opi.utils.uploads import spill_capped, upload_slot
 from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
@@ -58,7 +56,6 @@ async def push_image(
         )
 
     max_bytes = settings.IMAGE_UPLOAD_MAX_SIZE_MB * 1024 * 1024
-    upload_dir = settings.TEMP_DIR
 
     connector = SkopeoConnector()
 
@@ -72,29 +69,25 @@ async def push_image(
     if not settings.REGISTRY_URL:
         raise HTTPException(status_code=501, detail="Container registry is not configured")
 
-    # Stream the upload to a temp file
-    fd, tarball_path = tempfile.mkstemp(suffix=".tar", dir=upload_dir)
-    try:
-        bytes_written = 0
-        with os.fdopen(fd, "wb") as tmp:
-            try:
-                async for chunk in iter_capped(file, max_bytes):
-                    bytes_written += len(chunk)
-                    tmp.write(chunk)
-            except UploadTooLargeError:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File exceeds maximum size of {settings.IMAGE_UPLOAD_MAX_SIZE_MB} MB",
-                )
+    # BodyLimitMiddleware already took the slot before the parser, so this call is a no-op.
+    async with upload_slot(request.scope):
+        staged = await spill_capped(file, max_bytes, spill_after=0)
+    if staged is None:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds maximum size of {settings.IMAGE_UPLOAD_MAX_SIZE_MB} MB",
+        )
 
-        if bytes_written == 0:
+    try:
+        # spill_after=0 writes every chunk to disk, so bytes received means a path.
+        if staged.size == 0 or staged.path is None:
             raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
         logger.info(
-            f"Received image tarball for {project_name}/{image_name}:{tag} ({bytes_written / (1024 * 1024):.1f} MB)"
+            f"Received image tarball for {project_name}/{image_name}:{tag} ({staged.size / (1024 * 1024):.1f} MB)"
         )
 
-        image_ref = await connector.push_image(tarball_path, project_name, image_name, tag)
+        image_ref = await connector.push_image(staged.path, project_name, image_name, tag)
 
         response_data: dict[str, object] = {
             "status": "success",
@@ -129,7 +122,7 @@ async def push_image(
             detail="Het image kon niet naar het register worden gepusht. Probeer het over een minuut opnieuw.",
         ) from e
     finally:
-        # Always clean up the tarball
-        if os.path.exists(tarball_path):
-            os.unlink(tarball_path)
-            logger.debug(f"Cleaned up tarball: {tarball_path}")
+        tarball = staged.path
+        staged.cleanup()
+        if tarball:
+            logger.debug(f"Cleaned up tarball: {tarball}")
