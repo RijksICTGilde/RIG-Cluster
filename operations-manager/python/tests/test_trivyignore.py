@@ -14,6 +14,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 UITZONDERINGEN = REPO_ROOT / ".trivyignore.yaml"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "security.yml"
+POORT = REPO_ROOT / ".github" / "actions" / "image-gate" / "action.yml"
 
 MAX_GELDIGHEID = timedelta(days=90)
 
@@ -64,6 +65,25 @@ def test_de_trivy_stappen_pinnen_hun_versie() -> None:
     assert trivy, "geen trivy-action in container-scan"
     zonder = [stap["name"] for stap in trivy if not stap.get("with", {}).get("version")]
     assert not zonder, f"trivy-stappen zonder version, die draaien de default van de action: {zonder}"
+
+
+def test_de_poort_voor_de_push_draait_dezelfde_scanner() -> None:
+    """De poort in de publicatiepad en de scan in security.yml meten tegen dezelfde lijst.
+
+    Lopen hun versies uiteen, dan onderbouwt de meting in de kop van .trivyignore.yaml maar
+    een van de twee, en kan de een rood zijn waar de ander groen staat.
+    """
+    in_workflow = yaml.safe_load(WORKFLOW.read_text())["env"]["TRIVY_SCANNER_VERSION"]
+    in_poort = yaml.safe_load(POORT.read_text())["inputs"]["trivy-version"]["default"]
+    assert in_poort == in_workflow, f"poort draait {in_poort}, security.yml {in_workflow}"
+
+
+def test_de_poort_geeft_de_uitzonderingslijst_mee() -> None:
+    stappen = yaml.safe_load(POORT.read_text())["runs"]["steps"]
+    trivy = [stap for stap in stappen if "trivy-action" in str(stap.get("uses", ""))]
+    assert trivy, "geen trivy-action in de poort"
+    zonder = [stap["name"] for stap in trivy if stap["with"].get("trivyignores") != UITZONDERINGEN.name]
+    assert not zonder, f"trivy-stappen in de poort zonder {UITZONDERINGEN.name}: {zonder}"
 
 
 def test_elke_uitzondering_heeft_een_reden_en_verloopt() -> None:

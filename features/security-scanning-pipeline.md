@@ -21,8 +21,16 @@ Automated build on push to main and PRs.
 - **Registry**: `ghcr.io/rijksictgilde/zad/operations-manager`
 - **Versioning**: CalVer (`YYYY.M.PATCH`) + `sha-X` + `latest`, alleen op main
 - **Platforms**: linux/amd64, linux/arm64 op main, alleen linux/amd64 op een PR
-- **PR's pushen niet**: pull requests bouwen images maar publiceren niet
-- **Provenance en SBOM**: gepushte images dragen SLSA-provenance (`mode=max`) en SBOM
+- **PR's pushen niet**: pull requests bouwen images, gatet ze, maar publiceren niet
+- **Provenance en SBOM**: gepushte images dragen SLSA-provenance (`mode=max`) en SBOM, zijn
+  keyless getekend met cosign en dragen een build-provenance-attestatie in de registry
+- **Nachtelijke herbouw**: een `schedule` bouwt zonder laagcache op een `nightly-<datum>`-tag.
+  Een `workflow_dispatch` is dezelfde herbouw met de hand: geen CalVer-nummer en geen git-tag
+- **Alleen main publiceert**: zowel de push als het tekenen hangen aan `refs/heads/main`, dus
+  een dispatch op een tak bouwt en gatet maar laat niets ongetekend achter in de registry
+- **Tekenen staat in een eigen job**: `build` draait ook op een pull request en heeft daarom
+  geen OIDC-token; de job `publish` tekent, attesteert en promoveert de tags, en draait
+  alleen op main. Zie hieronder bij "Rechten en pins"
 
 ### Supporting Images
 
@@ -30,8 +38,8 @@ Manual trigger via GitHub Actions UI.
 
 - **Workflow**: `.github/workflows/docker-images.yml`
 - **Images**: rig-backup, cmp-kustomize-sops, postgresql-with-dictionaries, keycloak-zad
-- **Versioning**: CalVer on dispatch
-- **Provenance en SBOM**: idem als de operations-manager
+- **Versioning**: CalVer on dispatch, `nightly-<datum>` op de nachtelijke herbouw
+- **Provenance, SBOM, handtekening en nachtelijke herbouw**: idem als de operations-manager
 
 ## Security Scanning
 
@@ -42,7 +50,8 @@ Manual trigger via GitHub Actions UI.
 | `dependency-audit` | pip-audit | Python deps against PyPI/OSV | Push, PR, weekly |
 | `secret-scan` | `scripts/scan-secrets.py` | Every tracked file in the branch tree | Push, PR, weekly |
 | `secret-scan-history` | `scripts/scan-secrets.py --history` | Every blob that ever existed, minus `scripts/secret-scan-baseline.json` | Weekly and on demand |
-| `container-scan` | Trivy | The five images CI builds plus `argocd-rig` (HIGH/CRITICAL) | Push, PR, weekly |
+| `container-scan` | Trivy | The five images CI builds plus `argocd-rig` (HIGH/CRITICAL), en de configuratie van hun Dockerfile | Push, PR, weekly |
+| `manifest-scan` | Trivy | De Kubernetes-manifesten in `bootstrap/` en `infrastructure/`, rapporterend | Push, PR, weekly |
 | `sbom` | Trivy | CycloneDX SBOM | Main only |
 
 Results appear in the **GitHub Security tab** (SARIF upload). The secret scan is the exception: its
@@ -64,10 +73,50 @@ De workflows volgen de OpenSSF Scorecard-checks "Pinned-Dependencies" en
   dezelfde naam van inhoud veranderen, een SHA niet. Renovate houdt de pins bij: het
   leest het versiecommentaar en schrijft SHA plus commentaar mee.
   `tests/test_workflows_actions_op_sha.py` bewaakt dat er geen losse tag terugsluipt.
+- **Elke job begint met `step-security/harden-runner` op `egress-policy: block`**, met de
+  allowlist in `env.HARDEN_ENDPOINTS` van die workflow. Dat is de vangrail achter de pins:
+  een pin houdt tegen dat een action van inhoud verandert, niet wat hij doet zodra hij
+  draait. Een geblokkeerd endpoint komt als annotatie in de run te staan; dat is de plek om
+  te lezen wat er nog in de lijst hoort. `tests/test_workflows_harden_runner.py` bewaakt het.
 - **Het workflowtoken staat op `contents: read`.** Per job komt erbij wat die job nodig
   heeft: `packages: write` voor de build-job van `docker.yml`, `contents: write` alleen
   voor de job `tag`, die niets anders doet dan de CalVer-tag zetten en alleen op main
   draait.
+- **Het OIDC-token zit niet in een job die op een PR draait.** Bij een `pull_request`
+  draait de workflowdefinitie van de PR-head met de rechten van die job, dus een extra stap
+  in een PR zou met `id-token: write` een willekeurige image keyless kunnen tekenen op naam
+  van deze repo. Het certificaat noemt dan een `refs/pull/N/merge`-ref, en een reviewer die
+  alleen op het repo-voorvoegsel toetst ziet geen verschil. Daarom staan `id-token: write`
+  en `attestations: write` in `docker.yml` bij de job `publish`, die aan main hangt, en
+  heeft `build` ze niet. `docker-images.yml` kent geen `pull_request`-trigger en houdt ze
+  bij de bouwende jobs. `tests/test_workflows_actions_op_sha.py` bewaakt het, en het
+  verificatierecept in `SECURITY.md` ankert dezelfde grens in de regexp.
+
+### De poort voor de push
+
+`.github/actions/image-gate` is dezelfde poort, maar in het publicatiepad: `docker.yml` en
+`docker-images.yml` roepen hem aan VOOR ze pushen. Hij bouwt de image lokaal (`load: true`)
+en weigert op een oplosbare HIGH of CRITICAL en op een misconfiguratie in de Dockerfile.
+Faalt hij, dan is er geen digest gepusht en dus niets om een tag naar te laten wijzen.
+
+De poort staat apart van `security.yml` omdat die twee verschillende dingen doen: de poort
+blokkeert in het publicatiepad, `security.yml` rapporteert naar het Security-tabblad en
+dekt ook `argocd-rig`, dat niemand hier bouwt. Wat ze delen staat op een plek:
+`.trivyignore.yaml` en de scannerversie, die `tests/test_trivyignore.py` gelijkhoudt aan
+`TRIVY_SCANNER_VERSION` in `security.yml`.
+
+### De config-gate
+
+Naast de CVE's van de image meet `container-scan` de configuratie van de Dockerfile
+(`scan-type: config`), met dezelfde severity en dezelfde uitzonderingslijst. Dat vindt wat
+een CVE-scan niet ziet: een container zonder niet-root `USER`, een `apt-get install` zonder
+`--no-install-recommends`. `argocd-rig` valt af, die heeft geen Dockerfile.
+
+De Kubernetes-manifesten in `bootstrap/` en `infrastructure/` gaan door de job
+`manifest-scan`, die RAPPORTEERT en niet gatet. De bevindingen daar zijn platformbesluiten
+(OPI beheert secrets en namespaces, dat is zijn taak) en ontbrekende
+`readOnlyRootFilesystem` per component. Elk daarvan afwegen is eigen werk; ze tegenhouden
+zou de poort met tientallen uitzonderingen moeten openzetten, en dan meet hij niets meer.
 
 ### De container-gate
 
@@ -190,6 +239,11 @@ Majors komen alleen op het Dependency Dashboard en worden pas een PR na goedkeur
 Zie `features/renovate.md` voor de dekking, de rcr-mapping, wat met opzet niet wordt
 bijgewerkt, en de handstap bij het inrichten.
 
+Een update wacht 7 dagen voor hij een PR wordt (`minimumReleaseAge`), zodat een
+gecompromitteerde of ingetrokken release de kans krijgt om op te vallen. Alleen het
+bouwgereedschap (GitHub Actions en `.tool-versions`) mergt zichzelf, en alleen op patch en
+minor. De twee patchlagen staan in `SECURITY.md`.
+
 ## Setup
 
 ### TODO
@@ -198,6 +252,11 @@ bijgewerkt, en de handstap bij het inrichten.
       `workflow_dispatch` (zie `features/renovate.md`)
 - [ ] Verify GHCR packages write permission for GitHub Actions (`Settings > Actions > General > Workflow permissions`)
 - [ ] Loop de eerste ronde Renovate-PR's na
+- [ ] Zet branch protection op main met de buildpoort als required check, zet auto-merge
+      aan en force-push uit (zie `SECURITY.md`); zonder die drie kan laag B van de
+      patchstrategie langs een rode poort mergen
+- [ ] Draai de eerste run met `egress-policy: block` na en vul `HARDEN_ENDPOINTS` aan met
+      wat de harden-runner-annotatie als geblokkeerd meldt
 - [ ] Check GitHub Security tab after first `security.yml` run for SARIF results
 - [ ] Migrate Taskfile publish tasks from `ghcr.io/minbzk/base-images/` to `ghcr.io/rijksictgilde/zad/`
 - [ ] Update image references in `bootstrap/` deployment patches (operations-manager, cmp-kustomize-sops)

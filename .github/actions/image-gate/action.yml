@@ -1,0 +1,72 @@
+name: Image gate
+description: Bouwt een image lokaal en gatet hem op kwetsbaarheden en misconfiguratie.
+
+# Gedeelde gate vóór elke push: bouwt lokaal, gatet op CVE en config, blokkeert alleen.
+# SARIF rapporteren gebeurt in security.yml.
+
+inputs:
+  name:
+    description: Naam van de lokale tag die gescand wordt.
+    required: true
+  context:
+    description: Buildcontext.
+    required: true
+  file:
+    description: Pad naar de Dockerfile, ook het doel van de config-scan.
+    required: true
+  target:
+    description: Buildfase, leeg voor een Dockerfile met een enkele fase.
+    required: false
+    default: ""
+  cache-scope:
+    description: Scope van de gha-buildcache, default de naam.
+    required: false
+    default: ""
+  no-cache:
+    description: Bouw zonder laagcache, voor de nachtelijke herbouw die verse OS-pakketten wil.
+    required: false
+    default: "false"
+  trivy-version:
+    # De versie waarmee .trivyignore.yaml is gemeten; tests/test_trivyignore.py houdt hem
+    # gelijk aan TRIVY_SCANNER_VERSION in security.yml.
+    description: Trivy-versie, gepind zodat de gate hetzelfde meet als de uitzonderingslijst.
+    required: false
+    default: v0.76.0
+
+runs:
+  using: composite
+  steps:
+    - name: Bouw ${{ inputs.name }} voor de poort
+      uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        target: ${{ inputs.target }}
+        platforms: linux/amd64
+        load: true
+        no-cache: ${{ inputs.no-cache }}
+        tags: ${{ inputs.name }}:gate
+        cache-from: type=gha,scope=${{ inputs.cache-scope || inputs.name }}
+        cache-to: type=gha,scope=${{ inputs.cache-scope || inputs.name }},mode=max
+
+    - name: Weiger op oplosbare HIGH of CRITICAL
+      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+      with:
+        image-ref: ${{ inputs.name }}:gate
+        version: ${{ inputs.trivy-version }}
+        format: table
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
+        trivyignores: .trivyignore.yaml
+
+    - name: Weiger op misconfiguratie in de Dockerfile
+      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+      with:
+        scan-type: config
+        scan-ref: ${{ inputs.file }}
+        version: ${{ inputs.trivy-version }}
+        format: table
+        severity: HIGH,CRITICAL
+        exit-code: '1'
+        trivyignores: .trivyignore.yaml

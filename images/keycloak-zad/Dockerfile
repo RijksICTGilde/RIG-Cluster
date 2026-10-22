@@ -38,3 +38,7 @@ RUN /opt/keycloak/bin/kc.sh build \
       --metrics-enabled=true \
       --features=admin-api \
       --spi-email-sender-provider=zad-relay
+
+# De base zet deze uid zelf al; expliciet hier omdat de config-scan alleen de Dockerfile
+# leest en een image zonder USER-regel als root-image beoordeelt (DS-0002).
+USER 1000

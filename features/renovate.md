@@ -46,6 +46,10 @@ versie en schrijft bij een update zowel de SHA als het commentaar mee.
 
 ## Hoe een update binnenkomt
 
+Een net gepubliceerde versie wacht eerst zeven dagen (`minimumReleaseAge`), zodat een
+ingetrokken of gecompromitteerde release de kans krijgt om op te vallen voordat wij hem
+binnenhalen.
+
 Patch en minor komen gegroepeerd per ecosysteem: een eigen PR voor python, go, maven,
 npm, dockerfile, kubernetes, github actions, tool-versions en remote manifests. Dat is
 met opzet geen enkele grote PR, want dan blokkeert een rode Python-update een
@@ -56,7 +60,10 @@ Approval" met een checkbox. Zet je dat vinkje, dan maakt Renovate bij de volgend
 PR. Dat is de goedkeuringsstap: een major vraagt om een migratie, en die hoort een mens
 te plannen.
 
-Er is geen automerge. Mergen is altijd mensenwerk.
+Auto-merge geldt sinds RC-369 alleen voor het bouwgereedschap: patch en minor op de GitHub
+Actions en op `.tool-versions`, en pas nadat de required checks groen zijn. Dat is laag B van
+de patchstrategie in `SECURITY.md`. Een digest-update is een verplaatste tag en gaat niet
+mee. Al het andere, en elke major, blijft een merge die een mens doet.
 
 ## Een versie in een Dockerfile-ARG
 

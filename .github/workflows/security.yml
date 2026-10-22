@@ -12,6 +12,53 @@ permissions:
   contents: read
   security-events: write
 
+env:
+  # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
+  # achter, en dan onderbouwt de meting in de kop van die lijst de gate niet.
+  TRIVY_SCANNER_VERSION: 'v0.76.0'
+  # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+  # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+  # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.adoptium.net:443
+    api.github.com:443
+    api.osv.dev:443
+    archive.ubuntu.com:80
+    astral.sh:443
+    auth.docker.io:443
+    azure.archive.ubuntu.com:80
+    cdn01.quay.io:443
+    cdn02.quay.io:443
+    cdn03.quay.io:443
+    codeload.github.com:443
+    deb.debian.org:443
+    deb.debian.org:80
+    esm.ubuntu.com:443
+    files.pythonhosted.org:443
+    ghcr.io:443
+    github.com:443
+    index.docker.io:443
+    mirror.gcr.io:443
+    motd.ubuntu.com:443
+    objects.githubusercontent.com:443
+    pkg-containers.githubusercontent.com:443
+    pkgs.k8s.io:443
+    production.cloudflare.docker.com:443
+    pypi.org:443
+    quay.io:443
+    raw.githubusercontent.com:443
+    registry-1.docker.io:443
+    registry.k8s.io:443
+    release-assets.githubusercontent.com:443
+    repo.maven.apache.org:443
+    repo1.maven.org:443
+    results-receiver.actions.githubusercontent.com:443
+    security.debian.org:80
+    security.ubuntu.com:80
+
 jobs:
   dependency-audit:
     name: Python dependency audit
@@ -20,6 +67,10 @@ jobs:
       run:
         working-directory: operations-manager/python
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
@@ -40,6 +91,10 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # De scan roept age-keygen aan om een sleutelvormige string op geldigheid te toetsen.
@@ -60,6 +115,10 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0  # een shallow clone heeft geen historie om te scannen
@@ -79,10 +138,6 @@ jobs:
   container-scan:
     name: Container scan - ${{ matrix.image.name }}
     runs-on: ubuntu-latest
-    # De versie waarmee .trivyignore.yaml is gemeten. De default van de gepinde action loopt
-    # achter, en dan onderbouwt de meting in de kop van die lijst de gate niet.
-    env:
-      TRIVY_SCANNER_VERSION: 'v0.76.0'
     strategy:
       fail-fast: false
       matrix:
@@ -113,6 +168,10 @@ jobs:
             registry: ghcr.io/minbzk/base-images/argocd-rig
             pin: bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
@@ -173,11 +232,84 @@ jobs:
           sarif_file: 'trivy-${{ matrix.image.name }}.sarif'
           category: 'trivy-${{ matrix.image.name }}'
 
+      # De configuratie van de Dockerfile naast de CVE's van de image: een container die als
+      # root draait of een pakket binnenhaalt dat niemand nodig heeft is een misconfiguratie
+      # die de CVE-scan niet ziet. argocd-rig valt af, die heeft geen Dockerfile.
+      - name: Scan de Dockerfile op misconfiguratie
+        if: ${{ !matrix.image.pin }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.image.dockerfile }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'sarif'
+          output: 'trivy-config-${{ matrix.image.name }}.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Fail on Dockerfile misconfiguration
+        if: ${{ !matrix.image.pin }}
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.image.dockerfile }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          trivyignores: '.trivyignore.yaml'
+
+      - name: Upload Trivy config results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: ${{ always() && !matrix.image.pin }}
+        with:
+          sarif_file: 'trivy-config-${{ matrix.image.name }}.sarif'
+          category: 'trivy-config-${{ matrix.image.name }}'
+
+  # De Kubernetes-manifesten die het platform zelf uitrolt. Deze job RAPPORTEERT en gatet
+  # niet: de 65 bevindingen die hier nu uit komen zijn platformbesluiten (OPI beheert
+  # secrets en namespaces, dat is zijn taak) en readOnlyRootFilesystem per component. Elk
+  # daarvan afwegen is een eigen taak; ze tegenhouden zou de poort met 65 uitzonderingen
+  # moeten openzetten, en dan meet hij niets meer.
+  manifest-scan:
+    name: Manifest config scan - ${{ matrix.map }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [bootstrap, infrastructure]
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Scan ${{ matrix.map }} op misconfiguratie
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.map }}
+          version: ${{ env.TRIVY_SCANNER_VERSION }}
+          format: 'sarif'
+          output: 'trivy-config-${{ matrix.map }}.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy config results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        if: always()
+        with:
+          sarif_file: 'trivy-config-${{ matrix.map }}.sarif'
+          category: 'trivy-config-${{ matrix.map }}'
+
   sbom:
     name: Generate SBOM
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Docker Buildx
