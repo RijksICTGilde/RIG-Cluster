@@ -385,6 +385,19 @@ COMPONENTS: list[Component] = [
         "Op odcn is pgAdmin uitgecommentarieerd: alleen de bestandsrotatie doet er dan.",
     ),
     Component(
+        key="chisel",
+        title="Chisel-tunnel inlog",
+        template="chisel-auth-secret.yaml",
+        category="env-restart",
+        rotate_fields=("password",),
+        workloads=("deploy/chisel-server",),
+        note="De server leest zijn inlog als twee env-variabelen die het Deployment tot "
+        "`--auth=gebruiker:wachtwoord` samenvoegt, dus alleen een herstart draagt de nieuwe waarde. "
+        "Geen cluster-kustomization neemt chisel vandaag op: dan doet alleen de bestandsrotatie het, "
+        "net als bij pgAdmin op odcn. Wie met deze server tunnelt draagt de inlog zelf, dus die kant "
+        "moet na een rotatie mee.",
+    ),
+    Component(
         key="secret-key",
         title="ZAD sessiesleutel (SECRET_KEY)",
         template="",  # leeft uitsluitend in het envsecret van ZAD
@@ -541,7 +554,6 @@ BY_KEY = {component.key: component for component in COMPONENTS}
 # dekking-poort en de toetsen rood: dat is hoe niets stilletjes verdwijnt.
 NON_ROTATABLE: dict[str, str] = {
     "vault-init-secret.yaml": "alleen relevant waar Vault draait; op odcn niet uitgerold",
-    "chisel-auth-secret.yaml": "nog niet onderzocht; toevoegen aan de tabel is dan een bewuste stap",
 }
 
 # Rijen zonder template-bestand, met de reden (hun schrijfpad is anders dan de templates-boom).
