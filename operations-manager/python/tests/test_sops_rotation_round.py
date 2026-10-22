@@ -33,7 +33,7 @@ from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
 from opi.utils.sops import encrypt_to_sops_files, generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_path
 from tests.conftest import write_private_file
-from tests.documented_commands import BARE_PYTHON, LAUNCHER, documented_lines, flags
+from tests.documented_commands import BARE_PYTHON, LAUNCHER, command_lines, documented_lines, flags
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -883,11 +883,12 @@ def test_every_documented_invocation_parses_and_the_final_check_walks_the_projec
         assert arguments.argo_applications, f"the final check walks the fifth place: {line}"
 
 
-#: The six entry points under ``scripts/``.
+#: The seven entry points under ``scripts/``.
 ENTRY_SCRIPTS = (
     "edit-secret.py",
     "rotate-sops-key.py",
     "rotate-project-keys.py",
+    "rewrap-project-keys.py",
     "replace-git-pat.py",
     "set-sops-key-secret.py",
     "scan-secrets.py",
@@ -896,26 +897,18 @@ ENTRY_SCRIPTS = (
 #: The documents that hand an operator a command line to paste.
 COMMAND_DOCS = (
     tool.REPO / "features" / "sops-sleutel-roteren.md",
+    tool.REPO / "instructions" / "sops-sleutel-in-het-cluster.md",
     tool.REPO / "scripts" / "README.md",
 )
 
 
 def _pasteable_commands(doc: Path) -> list[str]:
-    """Every line inside a ```bash block of ``doc`` that runs one of the entry points.
+    """Every command in ``doc`` that runs one of the entry points.
 
-    Only inside a bash block: the same names appear in tables and in prose, and those are
-    references and not commands. A line that starts with ``#`` is a comment in such a block.
+    Bash blocks and inline steps both, which ``command_lines`` says why: the KEK procedures
+    hand their commands over in a numbered step and not in a block.
     """
-    commands = []
-    inside = False
-    for raw in doc.read_text().splitlines():
-        if raw.startswith("```"):
-            inside = raw.startswith("```bash")
-            continue
-        line = raw.strip()
-        if inside and not line.startswith("#") and any(f"scripts/{name}" in line for name in ENTRY_SCRIPTS):
-            commands.append(line)
-    return commands
+    return [line for line in command_lines(doc) if any(f"scripts/{name}" in line for name in ENTRY_SCRIPTS)]
 
 
 def _outside_the_venv() -> dict[str, str]:
@@ -2048,7 +2041,7 @@ def test_the_two_values_a_review_found_outside_the_worklist_are_in_it() -> None:
     }
 
     assert "operations-manager/python/opi/core/config.py" not in found
-    assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 66)
+    assert found["operations-manager/python/scripts/migrate_project_to_production.py"] == ("password", 72)
 
 
 def test_nothing_in_this_tree_carries_ciphertext_that_no_place_converts() -> None:

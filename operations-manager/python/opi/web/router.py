@@ -40,7 +40,7 @@ from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
 from opi.services.user_otp_service import UserOtpService
-from opi.utils.age import decrypt_password_smart, get_global_private_key
+from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
 from opi.utils.yaml_util import load_yaml_from_string
@@ -1561,13 +1561,9 @@ async def render_project_page(request: Request, project_name: str, deployment_na
             if hoort_op != huidig:
                 return RedirectResponse(url=hoort_op, status_code=302)
 
-        settings_private_key = get_global_private_key()
-
         project_data_decrypted = copy.deepcopy(project_data)
 
-        project_private_key = await decrypt_password_smart(
-            project_data["config"]["age-private-key"], settings_private_key
-        )
+        project_private_key = await unwrap_project_key(project_data["config"]["age-private-key"])
 
         # Geheimen gaan alleen naar de context voor admin/owner (BIO2 5.15, 8.03).
         # Dit stond voorheen alleen in het sjabloon en kon weg via een nieuw fragment.

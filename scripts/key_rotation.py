@@ -61,6 +61,10 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
+from opi.core.cluster_config import (  # noqa: E402  (after the sys.path bootstrap above)
+    CLUSTER_CONFIG,
+    get_cluster_config,
+)
 from opi.core.project_schema import (  # noqa: E402  (after the sys.path bootstrap above)
     find_plaintext_secret_violations,
     validate_project_schema,
@@ -92,6 +96,48 @@ REPO = Path(__file__).resolve().parents[1]
 WORKTREE_DIR = ".claude"
 
 AGE_KEY_MARKER = "AGE-SECRET-KEY-"
+
+
+# KEK per cluster: zie features/sops-sleutel-roteren.md.
+def kek_file_for(cluster: str) -> Path:
+    """Het KEK-bestand van dit cluster."""
+    return REPO / "security" / f"project-kek-{cluster}.txt"
+
+
+def kek_fingerprint_for(cluster: str) -> Path:
+    """Het verslag van de KEK-ronde van dit cluster."""
+    return REPO / "security" / f"project-kek-fingerprint-{cluster}.json"
+
+
+def selected_cluster() -> str:
+    """Het gekozen cluster uit ``CLUSTER_TYPE``.
+
+    Alleen gezet binnen ``task``, dat ``.env-taskfile-current`` van ``task select-cluster``
+    zelf inleest. In een gewone shell is dit leeg en noemt de weigering ``--cluster``.
+    """
+    return os.environ.get("CLUSTER_TYPE", "").strip()
+
+
+def cluster_refusal(cluster: str) -> str | None:
+    """De foutregel als dit geen cluster uit ``CLUSTER_CONFIG`` is, anders None."""
+    if cluster in CLUSTER_CONFIG:
+        return None
+    known = ", ".join(sorted(CLUSTER_CONFIG))
+    return (
+        f"unknown cluster {cluster!r}; pass --cluster or run 'task select-cluster' so CLUSTER_TYPE "
+        f"is set. Known clusters: {known}"
+    )
+
+
+def opi_namespace_for(cluster: str) -> str:
+    """De platformnamespace waarin OPI op dit cluster draait, uit ``CLUSTER_CONFIG``.
+
+    Uit de configuratie en niet uit een clusterbrede zoekopdracht op de deploymentnaam: die
+    naam kiest een tenant, en staging en productie delen de API-server, dus een zoekopdracht
+    levert daar de namespaces van BEIDE omgevingen op.
+    """
+    return get_cluster_config(cluster)["namespace"]
+
 
 #: The GitHub token shapes, taken from the scanner's rule set rather than spelled out a second
 #: time here. What the PAT round decides with them is in ``is_github_token``.
@@ -175,7 +221,9 @@ def require_private_file(path: str | Path) -> None:
         return
     mode = stat.S_IMODE(path.stat().st_mode)
     if mode & 0o077:
-        raise KeyFileTooOpen(f"{path} is leesbaar of schrijfbaar buiten de eigenaar (mode {mode:04o}): chmod 600 {path}")
+        raise KeyFileTooOpen(
+            f"{path} is leesbaar of schrijfbaar buiten de eigenaar (mode {mode:04o}): chmod 600 {path}"
+        )
 
 
 def read_key(path: str | Path) -> str:
@@ -937,6 +985,7 @@ async def rotate_project_file(
     new_public_key: str | None = None,
     current_pat: str | None = None,
     new_pat: str | None = None,
+    only_private_key: bool = False,
     dry_run: bool = True,
 ) -> ProjectRound:
     """Convert one project file's two platform fields, or explain why not.
@@ -950,7 +999,9 @@ async def rotate_project_file(
     A file with an unreadable value is skipped with a message and NOT half written.
 
     ``new_pat`` replaces ``repositories[].password``; ``config.age-private-key`` is always
-    only re-encrypted.
+    only re-encrypted. ``only_private_key`` narrows the worklist to that one field, which is
+    what the KEK round needs: there the repository password stays on the platform key, so
+    converting it too would move a field that is supposed to stay where it is.
 
     **The replacement is conditional, and that is not a nicety.** A password is replaced only
     when its plaintext IS ``current_pat``; anything else is only RE-ENCRYPTED, keeps its
@@ -975,6 +1026,8 @@ async def rotate_project_file(
         return round_report
 
     fields = project_fields(data)
+    if only_private_key:
+        fields = [(name, value) for name, value in fields if name == PROJECT_FIELD_PRIVATE_KEY]
     if not fields:
         round_report.skipped = "no encrypted platform fields in this file"
         return round_report

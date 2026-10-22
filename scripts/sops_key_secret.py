@@ -27,6 +27,13 @@ it, so the operator can see what was skipped and why.
 
 **The secret holds the whole key file, not just the key line.** ``--from-file=key=<path>``, and
 ``configmap-sops-plugin.yaml`` greps ``^AGE-SECRET-KEY-`` out of it. This tool keeps that shape.
+
+``--target project-kek`` places the project-KEK (RC-334): the key that wraps project private keys.
+Differs from the platform key: comes from the CHOSEN CLUSTER out of ``CLUSTER_CONFIG``, not from
+a search. The cluster is ``--cluster`` or ``CLUSTER_TYPE``. See ``features/sops-sleutel-roteren.md``
+for the staging/production pentest issue and the full operational context.
+
+    uv run --project operations-manager/python python scripts/set-sops-key-secret.py --target project-kek --cluster odcn-staging --dry-run
 """
 
 from __future__ import annotations
@@ -46,8 +53,12 @@ from key_rotation import (  # type: ignore[reportMissingImports]
     AGE_KEY_MARKER,
     MissingKey,
     ask_for_path,
+    cluster_refusal,
+    kek_file_for,
+    opi_namespace_for,
     public_key_of,
     read_key,
+    selected_cluster,
 )
 from opi.connectors.kubectl import create_kubectl_connector  # type: ignore[reportMissingImports]
 
@@ -56,6 +67,7 @@ CANONICAL_NEW = REPO / "security" / "key.txt"
 CANONICAL_OLD = REPO / "security" / "old_key.txt"
 # S105 fires on both: they are a Kubernetes resource name and a data key, not a password.
 SECRET_NAME = "sops-age-key"  # noqa: S105
+KEK_SECRET_NAME = "project-kek"  # noqa: S105
 SECRET_FIELD = "key"  # noqa: S105
 DEPLOYMENT = "operations-manager"
 
@@ -114,7 +126,7 @@ async def find_holders() -> list[SecretHolder]:
     return holders_from_secret_list(json.loads(stdout))
 
 
-async def write_secret(namespace: str, key_file: Path) -> None:
+async def write_secret(namespace: str, key_file: Path, secret_name: str = SECRET_NAME) -> None:
     """Replace the secret in one namespace, keeping the whole key file as its value.
 
     The rendered manifest goes through a 0600 temporary FILE and ``apply -f <path>``, never
@@ -131,7 +143,7 @@ async def write_secret(namespace: str, key_file: Path) -> None:
             "create",
             "secret",
             "generic",
-            SECRET_NAME,
+            secret_name,
             f"--from-file={SECRET_FIELD}={key_file}",
             "-n",
             namespace,
@@ -142,7 +154,7 @@ async def write_secret(namespace: str, key_file: Path) -> None:
     )
     if code != 0:
         raise RuntimeError(f"kubectl create secret --dry-run failed in {namespace}: {stderr.strip()}")
-    handle, name = tempfile.mkstemp(prefix="sops-age-key-", suffix=".yaml")
+    handle, name = tempfile.mkstemp(prefix=f"{secret_name}-", suffix=".yaml")
     manifest = Path(name)
     try:
         with os.fdopen(handle, "w") as stream:
@@ -184,14 +196,45 @@ async def current_cluster() -> str:
     return stdout.strip()
 
 
+async def namespace_runs_opi(namespace: str) -> bool:
+    """True als ``deployment/operations-manager`` in deze namespace staat.
+
+    Een controle op EEN namespace, niet een zoekopdracht over het cluster: de namespace komt
+    uit het gekozen cluster, en de deploymentnaam bewijst alleen dat OPI daar echt draait.
+    """
+    kubectl = create_kubectl_connector()
+    _out, stderr, code = await kubectl.run_command(["get", "deployment", DEPLOYMENT, "-n", namespace, "-o", "name"])
+    if code != 0 and "not found" not in stderr.lower():
+        raise RuntimeError(f"kubectl get deployment in {namespace} failed: {stderr.strip()}")
+    return code == 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="say which namespaces would change and stop")
+    parser.add_argument(
+        "--target",
+        choices=[SECRET_NAME, KEK_SECRET_NAME],
+        default=SECRET_NAME,
+        help="which key to place: the platform key (default) or the project-KEK",
+    )
+    parser.add_argument(
+        "--cluster",
+        default=selected_cluster(),
+        help="the cluster whose OPI namespace and KEK file to use; default CLUSTER_TYPE",
+    )
+    parser.add_argument(
+        "--kek",
+        help="key file to place as the project-KEK; default security/project-kek-<cluster>.txt",
+    )
     parser.add_argument("--old-key", default=str(CANONICAL_OLD))
     parser.add_argument("--new-key", default=str(CANONICAL_NEW))
     parser.add_argument(
         "--confirm-cluster",
-        help="the cluster name, for a non-interactive run; it must equal the current kubectl context",
+        help=(
+            "the cluster name, for a non-interactive run; the current kubectl context, or with "
+            "--target project-kek the chosen cluster"
+        ),
     )
     return parser
 
@@ -231,8 +274,81 @@ def report_holders(holders: list[SecretHolder], old_public: str, new_public: str
     return targets
 
 
+async def main_project_kek(arguments: argparse.Namespace) -> int:
+    """Place the project-KEK in the OPI namespace of the CHOSEN cluster, and nowhere else.
+
+    No old key and no key comparison: the KEK is not rotated here, it is PLACED. The target
+    comes from the cluster and not from a search, and the confirmation asks for the cluster and
+    not for the kubectl context: staging and production share that context, so typing it would
+    prove nothing about which of the two gets the key.
+
+    That confirmation only catches a slip in an interactive run: with ``--confirm-cluster`` it
+    compares two values off the same command line. The guard that holds is ``namespace_runs_opi``.
+    """
+    cluster = arguments.cluster.strip()
+    refusal = cluster_refusal(cluster)
+    if refusal:
+        print(f"FAIL {refusal}", file=sys.stderr)
+        return 2
+    try:
+        namespace = opi_namespace_for(cluster)
+    except RuntimeError as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+
+    try:
+        reader = (lambda _question: "") if arguments.confirm_cluster else input
+        key_file = ask_for_path("project-KEK", arguments.kek or kek_file_for(cluster), reader=reader)
+        private_key = read_key(key_file)
+    except MissingKey as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+    public_key = public_key_of(private_key)
+
+    try:
+        context = await current_cluster()
+        runs_opi = await namespace_runs_opi(namespace)
+    except RuntimeError as e:
+        print(f"FAIL {e}", file=sys.stderr)
+        return 2
+
+    print(f"\nCluster: {cluster}  (kubectl context: {context})")
+    print(f"Project-KEK (public): {public_key}")
+    print(f"Key file: {key_file}")
+    print(f"\nSecret '{KEK_SECRET_NAME}' goes into one namespace: {namespace}")
+    if not runs_opi:
+        print(
+            f"\nFAIL {namespace} does not run deployment/{DEPLOYMENT}; wrong cluster or wrong context.", file=sys.stderr
+        )
+        return 2
+    print("\nAfter the swap the deployment is restarted: OPI reads the key once, at startup.")
+
+    if arguments.dry_run:
+        print("\nDry run: nothing was changed.")
+        return 0
+
+    print("\nThis replaces whatever is in that secret now. A project file wrapped with an")
+    print("earlier KEK no longer opens afterwards.")
+    typed = arguments.confirm_cluster or input(f"Type the cluster name ({cluster}): ")
+    if typed.strip() != cluster:
+        print("FAIL cluster name does not match; nothing changed.", file=sys.stderr)
+        return 1
+
+    await write_secret(namespace, key_file, KEK_SECRET_NAME)
+    print(f"  secret placed in {namespace}")
+    if await restart_operations_manager(namespace):
+        print(f"  deployment/{DEPLOYMENT} restarted and ready in {namespace}")
+
+    print("\nDone. Now convert the project files, from the repository root:")
+    print("  uv run --project operations-manager/python python scripts/rewrap-project-keys.py")
+    print(f"  --cluster {cluster} --projects <zad-projects-clone>/projects --deployments <clone> --dry-run")
+    return 0
+
+
 async def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    if arguments.target == KEK_SECRET_NAME:
+        return await main_project_kek(arguments)
 
     try:
         reader = (lambda _question: "") if arguments.confirm_cluster else input
@@ -291,5 +407,5 @@ async def main(argv: list[str] | None = None) -> int:
     print("Then, from the repository root, the final check of step 6 -- both clones, because")
     print("without them the fourth and fifth place are not walked:")
     print("  uv run --project operations-manager/python python scripts/rotate-sops-key.py --assert-old-key-dead")
-    print("  --projects <zad-projects clone>/projects --argo-applications <zad-argo clone>")
+    print("  --projects <zad-projects-clone>/projects --argo-applications <zad-argo-clone>")
     return 0

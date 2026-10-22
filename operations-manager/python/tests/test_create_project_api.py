@@ -20,8 +20,7 @@ from opi.api.v2 import router as v2_router
 from opi.api.v2.models import CreateProjectRequest
 from opi.core.project_schema import validate_project_schema
 from opi.manager.project_validation import validate_project_structure
-from opi.services import project_service
-from opi.utils import api_keys, project_utils
+from opi.utils import age, api_keys, project_utils
 from opi.utils.age import decrypt_age_content_sync
 from opi.utils.sops import generate_sops_key_pair
 from opi.utils.yaml_util import load_yaml_from_string
@@ -52,7 +51,7 @@ def sops_keys(monkeypatch: Any) -> Any:
         "CLUSTER_MANAGER": "local",
         "USE_UNSAFE_API_KEY": False,
     }
-    for module in (project_utils, api_keys, project_service, v2_router):
+    for module in (project_utils, api_keys, age, v2_router):
         for name, value in values.items():
             monkeypatch.setattr(module.settings, name, value, raising=False)
     return {"private_key": private_key, "public_key": public_key}
@@ -354,7 +353,7 @@ class TestRefusedRequests:
     ) -> None:
         """Handing out a key the caller cannot use would leave an unreachable project."""
         _, wrong_private_key = generate_sops_key_pair()
-        monkeypatch.setattr(project_service.settings, "SOPS_AGE_PRIVATE_KEY", wrong_private_key, raising=False)
+        monkeypatch.setattr(age.settings, "SOPS_AGE_PRIVATE_KEY", wrong_private_key, raising=False)
 
         response = _post(test_client, bearer_token["token"], {"display_name": "CLI Test", "description": "x"})
 

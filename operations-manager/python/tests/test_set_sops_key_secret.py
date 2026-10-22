@@ -592,10 +592,270 @@ def test_the_documented_secret_swap_parses() -> None:
     an operator cannot swap the secret of the wrong cluster by pasting a line. A renamed flag
     would leave the line in the doc with nothing saying it no longer runs.
     """
-    documented = documented_lines("set-sops-key-secret.py")
+    documented = [line for line in documented_lines("set-sops-key-secret.py") if "--target project-kek" not in line]
 
     assert len(documented) == 2, "step 5 is a dry run and then the real one"
     assert sum("--dry-run" in line for line in documented) == 1, "the dry run comes first"
     for line in documented:
         arguments = tool.build_parser().parse_args(flags(line))
         assert arguments.confirm_cluster is None, f"the cluster name is asked, not pasted: {line}"
+
+
+# --target project-kek: de andere sleutel, met een ander doel (RC-334)
+# Zie features/sops-sleutel-roteren.md voor het volledige verhaal.
+
+
+def test_de_kek_heeft_per_cluster_een_eigen_namespace_en_bestand() -> None:
+    """Per-cluster sleutel en namespace; zie features/sops-sleutel-roteren.md."""
+    assert tool.opi_namespace_for("odcn-production") == "rig-prd-operations"
+    assert tool.opi_namespace_for("odcn-staging") == "rig-staging-operations"
+    assert tool.kek_file_for("odcn-production") != tool.kek_file_for("odcn-staging")
+    for cluster in ("odcn-production", "odcn-staging", "sandboxed-local", "local"):
+        assert cluster in tool.kek_file_for(cluster).name
+
+
+def test_een_onbekend_cluster_laat_de_kek_niet_gokken() -> None:
+    assert tool.cluster_refusal("odcn-production") is None
+    refusal = tool.cluster_refusal("odcn-prod")
+    assert refusal is not None
+    assert "odcn-production" in refusal, "de bekende clusters horen in de melding"
+
+
+@pytest.mark.asyncio
+async def test_de_kek_controleert_een_namespace_en_zoekt_niet_het_cluster_af() -> None:
+    """De naam ``operations-manager`` kiest een tenant zelf, dus hij mag geen namespace AANWIJZEN."""
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=("deployment.apps/operations-manager", "", 0))
+
+    with patch.object(tool, "create_kubectl_connector", return_value=connector):
+        assert await tool.namespace_runs_opi("rig-prd-operations") is True
+
+    arguments = connector.run_command.await_args.args[0]
+    assert "--all-namespaces" not in arguments
+    assert arguments[-2:] == ["-o", "name"]
+    assert "rig-prd-operations" in arguments
+
+
+@pytest.mark.asyncio
+async def test_een_namespace_zonder_opi_is_geen_fout_maar_een_nee() -> None:
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(
+        return_value=("", 'Error from server (NotFound): deployments.apps "x" not found', 1)
+    )
+
+    with patch.object(tool, "create_kubectl_connector", return_value=connector):
+        assert await tool.namespace_runs_opi("rig-staging-operations") is False
+
+
+@pytest.mark.asyncio
+async def test_een_onbereikbaar_cluster_laat_de_kek_controle_niet_gokken() -> None:
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=("", "connection refused", 1))
+
+    with (
+        patch.object(tool, "create_kubectl_connector", return_value=connector),
+        pytest.raises(RuntimeError, match="connection refused"),
+    ):
+        await tool.namespace_runs_opi("rig-prd-operations")
+
+
+@pytest.mark.asyncio
+async def test_een_kek_dry_run_schrijft_niets(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    kek_private, kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "project-kek.txt", kek_private)
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=("", "", 0))
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="prd1.gn2")),
+        patch.object(tool, "namespace_runs_opi", AsyncMock(return_value=True)),
+        patch.object(tool, "create_kubectl_connector", return_value=connector),
+    ):
+        code = await tool.main(
+            [
+                "--target",
+                "project-kek",
+                "--dry-run",
+                "--cluster",
+                "odcn-production",
+                "--kek",
+                str(tmp_path / "project-kek.txt"),
+                "--confirm-cluster",
+                "odcn-production",
+            ]
+        )
+
+    printed = capsys.readouterr().out
+    assert code == 0
+    assert "Dry run: nothing was changed." in printed
+    assert "rig-prd-operations" in printed
+    assert kek_public in printed, "de publieke helft hoort in het verslag, de private nooit"
+    assert kek_private not in printed
+    connector.run_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_een_verkeerde_clusternaam_plaatst_de_kek_niet(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """Het plaatsen is onomkeerbaar: een projectbestand onder een eerdere KEK opent daarna niet.
+
+    De bevestiging vraagt om het CLUSTER en niet om de kubectl-context: staging en productie
+    delen die context, dus het typen ervan zegt niets over welke van de twee de sleutel krijgt.
+    """
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "project-kek.txt", kek_private)
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=("", "", 0))
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="prd1.gn2")),
+        patch.object(tool, "namespace_runs_opi", AsyncMock(return_value=True)),
+        patch.object(tool, "create_kubectl_connector", return_value=connector),
+    ):
+        code = await tool.main(
+            [
+                "--target",
+                "project-kek",
+                "--cluster",
+                "odcn-production",
+                "--kek",
+                str(tmp_path / "project-kek.txt"),
+                "--confirm-cluster",
+                "prd1.gn2",
+            ]
+        )
+
+    assert code == 1
+    assert "cluster name does not match" in capsys.readouterr().err
+    connector.run_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_een_ontbrekend_kek_bestand_noemt_zijn_pad(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    code = await tool.main(
+        [
+            "--target",
+            "project-kek",
+            "--cluster",
+            "odcn-production",
+            "--kek",
+            str(tmp_path / "gone.txt"),
+            "--confirm-cluster",
+            "odcn-production",
+        ]
+    )
+
+    assert code == 2
+    assert str(tmp_path / "gone.txt") in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_zonder_een_namespace_die_opi_draait_gebeurt_er_niets(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Draait OPI daar niet, dan is dit het verkeerde cluster of de verkeerde context."""
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "project-kek.txt", kek_private)
+    connector = AsyncMock()
+    connector.run_command = AsyncMock(return_value=("", "", 0))
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="prd1.gn2")),
+        patch.object(tool, "namespace_runs_opi", AsyncMock(return_value=False)),
+        patch.object(tool, "create_kubectl_connector", return_value=connector),
+    ):
+        code = await tool.main(
+            [
+                "--target",
+                "project-kek",
+                "--cluster",
+                "odcn-staging",
+                "--kek",
+                str(tmp_path / "project-kek.txt"),
+                "--confirm-cluster",
+                "odcn-staging",
+            ]
+        )
+
+    assert code == 2
+    assert f"rig-staging-operations does not run deployment/{tool.DEPLOYMENT}" in capsys.readouterr().err
+    connector.run_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_de_kek_gaat_naar_een_namespace_en_laat_sops_age_key_staan(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """De meting die telt: het secret heet project-kek en komt alleen in de OPI-namespace van dit cluster.
+
+    De platformsleutel-tak zoekt naar sops-age-key in twaalf namespaces; deze tak mag die
+    secrets niet aanraken, want elk project heeft daar zijn eigen sleutel in staan.
+    """
+    kek_private, _kek_public = generate_sops_key_pair()
+    kek_file = tmp_path / "project-kek.txt"
+    write_private_file(kek_file, kek_private)
+    geschreven: list[tuple[str, Path, str]] = []
+    herstart: list[str] = []
+    find_holders = AsyncMock(return_value=[])
+
+    async def write_secret(namespace: str, key_file: Path, secret_name: str = tool.SECRET_NAME) -> None:
+        geschreven.append((namespace, key_file, secret_name))
+
+    async def restart(namespace: str) -> bool:
+        herstart.append(namespace)
+        return True
+
+    with (
+        patch.object(tool, "current_cluster", AsyncMock(return_value="prd1.gn2")),
+        patch.object(tool, "namespace_runs_opi", AsyncMock(return_value=True)),
+        patch.object(tool, "find_holders", find_holders),
+        patch.object(tool, "write_secret", write_secret),
+        patch.object(tool, "restart_operations_manager", restart),
+    ):
+        code = await tool.main(
+            [
+                "--target",
+                "project-kek",
+                "--cluster",
+                "odcn-staging",
+                "--kek",
+                str(kek_file),
+                "--confirm-cluster",
+                "odcn-staging",
+            ]
+        )
+
+    assert code == 0
+    assert geschreven == [("rig-staging-operations", kek_file, tool.KEK_SECRET_NAME)]
+    assert herstart == ["rig-staging-operations"]
+    find_holders.assert_not_awaited()
+    assert "rewrap-project-keys.py" in capsys.readouterr().out, "de ronde erna hoort in het slot"
+
+
+#: De documenten die het plaatsen van de KEK als commando aanreiken.
+_KEK_DOCS = (
+    REPO_ROOT / "scripts" / "README.md",
+    REPO_ROOT / "features" / "sops-sleutel-roteren.md",
+    REPO_ROOT / "instructions" / "sops-sleutel-in-het-cluster.md",
+)
+
+
+def test_de_gedocumenteerde_kek_plaatsing_parst(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Elke gedocumenteerde KEK-regel moet draaien zoals hij er staat, en om de clusternaam vragen.
+
+    Ook de twee terugzetprocedures, want dat is de regel die iemand plakt als de KEK kwijt is.
+    """
+    # Zonder CLUSTER_TYPE, want die voedt de default van ``--cluster``: onder ``task test`` leest
+    # Task hem uit .env-taskfile-current en zou deze poort een regel zonder cluster laten passeren.
+    monkeypatch.delenv("CLUSTER_TYPE", raising=False)
+
+    for doc in _KEK_DOCS:
+        documented = [
+            line for line in documented_lines("set-sops-key-secret.py", doc=doc) if "--target project-kek" in line
+        ]
+
+        assert documented, f"het plaatsen van de KEK staat in {doc.name}"
+        for line in documented:
+            arguments = tool.build_parser().parse_args(flags(line))
+            assert arguments.target == tool.KEK_SECRET_NAME
+            assert arguments.cluster, f"het cluster staat in de regel: {line}"
+            assert arguments.confirm_cluster is None, f"de clusternaam wordt gevraagd, niet geplakt: {line}"

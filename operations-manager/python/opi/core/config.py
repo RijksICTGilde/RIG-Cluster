@@ -288,6 +288,12 @@ class Settings(BaseSettings):
     SOPS_AGE_PUBLIC_KEY: str | None = None  # Public key for SOPS age encryption
     SOPS_AGE_PRIVATE_KEY: str | None = None  # Private key for SOPS age decryption
 
+    # De project-KEK: de sleutel waarmee alleen de projectsleutels zijn ingepakt. Hij staat
+    # bewust alleen in de OPI-pod, zie instructions/sops-sleutel-in-het-cluster.md.
+    PROJECT_KEK_FILE: str | None = None  # Pad naar de gemounte KEK in de pod
+    PROJECT_KEK_PUBLIC_KEY: str | None = None
+    PROJECT_KEK_PRIVATE_KEY: str | None = None
+
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False  # Safe default - zero overhead when off
     OTEL_SERVICE_NAME: str = "opi-operations-manager"
@@ -735,8 +741,10 @@ def parse_sops_age_key_content(content: str) -> tuple[str | None, str | None]:
         return None, None
 
 
-def load_sops_age_key_content(key_file: str | None, key_content: str | None) -> str | None:
-    """De inhoud van de platformsleutel, uit het gemounte bestand of uit de env-terugval.
+def load_sops_age_key_content(
+    key_file: str | None, key_content: str | None, *, label: str = "Platformsleutel"
+) -> str | None:
+    """De inhoud van een AGE-sleutel, uit het gemounte bestand of uit de env-terugval.
 
     Een gezet maar onleesbaar of leeg bestand is een harde opstartfout: stil terugvallen op
     de omgeving zou een verkeerd gemounte sleutel verbergen tot de eerste ontsleuteling.
@@ -745,9 +753,9 @@ def load_sops_age_key_content(key_file: str | None, key_content: str | None) -> 
         try:
             content = pathlib.Path(key_file).read_text().strip()
         except OSError as e:
-            raise RuntimeError(f"Platformsleutel niet leesbaar: {key_file}") from e
+            raise RuntimeError(f"{label} niet leesbaar: {key_file}") from e
         if not content:
-            raise RuntimeError(f"Platformsleutel is leeg: {key_file}")
+            raise RuntimeError(f"{label} is leeg: {key_file}")
         return content
 
     if key_content:
@@ -803,6 +811,32 @@ def _load_sops_key_from_local_file() -> str | None:
         logger.error(f"Failed to read local SOPS key file: {e}")
         logger.error("SOPS operations may fail without proper key configuration")
         return None
+
+
+def _load_project_kek(settings: Settings) -> None:
+    """Zet de project-KEK uit het gemounte bestand, als dat er is.
+
+    Zonder KEK verandert er niets: in- en uitpakken van projectsleutels valt dan terug op de
+    platformsleutel, zodat de sandbox en lokale ontwikkeling niets hoeven.
+    """
+    key_file = settings.PROJECT_KEK_FILE
+    if key_file and not pathlib.Path(key_file).exists():
+        # Het secret is optional in het deployment, dus zonder secret mount kubelet een lege
+        # map. Dan is "geen KEK" de bedoelde uitkomst en geen opstartfout; een bestand dat er
+        # wel is maar leeg of onleesbaar blijft dat wel.
+        logger.warning(f"Project-KEK niet gemount op {key_file}; projectsleutels blijven op de platformsleutel")
+        key_file = None
+    content = load_sops_age_key_content(key_file, None, label="Project-KEK")
+    if content:
+        public_key, private_key = parse_sops_age_key_content(content)
+        if public_key and not settings.PROJECT_KEK_PUBLIC_KEY:
+            settings.PROJECT_KEK_PUBLIC_KEY = public_key
+        if private_key and not settings.PROJECT_KEK_PRIVATE_KEY:
+            settings.PROJECT_KEK_PRIVATE_KEY = private_key
+        if not (settings.PROJECT_KEK_PUBLIC_KEY and settings.PROJECT_KEK_PRIVATE_KEY):
+            raise RuntimeError(f"Project-KEK bevat geen AGE-sleutelpaar: {settings.PROJECT_KEK_FILE}")
+    logger.info(f"Settings PROJECT_KEK_FILE: {settings.PROJECT_KEK_FILE or 'NOT SET'}")
+    logger.info(f"Settings PROJECT_KEK: {'SET' if settings.PROJECT_KEK_PRIVATE_KEY else 'NOT SET'}")
 
 
 def _get_settings() -> Settings:
@@ -865,6 +899,8 @@ def _get_settings() -> Settings:
                 logger.info("Parsed private key")
 
             logger.info("Successfully parsed SOPS age keys from local file content")
+
+    _load_project_kek(settings)
 
     logger.debug(f"Settings loaded with API_TOKEN: {'SET' if settings.API_TOKEN else 'NOT SET'}")
     if settings.SOPS_AGE_PUBLIC_KEY:

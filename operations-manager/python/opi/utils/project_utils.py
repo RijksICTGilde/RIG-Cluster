@@ -15,7 +15,7 @@ from opi.core.config import settings
 from opi.services import ServiceAdapter
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, set_domain_setting
 from opi.services.project_service import get_project_service
-from opi.utils.age import encrypt_age_content, is_age_encrypted
+from opi.utils.age import encrypt_age_content, is_age_encrypted, wrap_project_key
 from opi.utils.api_keys import generate_api_key
 from opi.utils.naming import ROOT_COMPONENT_FORMAT_IDS
 from opi.utils.sops import generate_sops_key_pair
@@ -348,8 +348,7 @@ async def generate_self_service_project_yaml(project_data: Any) -> str:
     # Generate AGE key pair for this project
     try:
         private_key, public_key = generate_sops_key_pair()
-        # Encrypt the private key with the global SOPS AGE key for storage
-        encrypted_private_key = await encrypt_age_content(private_key, settings.SOPS_AGE_PUBLIC_KEY)
+        encrypted_private_key = await wrap_project_key(private_key)
         logger.debug(f"Generated AGE key pair for project: {project_data.project_name}")
     except Exception as e:
         logger.error(f"Failed to generate AGE key pair: {e}")

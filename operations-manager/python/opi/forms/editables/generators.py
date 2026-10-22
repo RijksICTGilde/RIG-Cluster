@@ -53,20 +53,17 @@ class AGEKeyPairGenerator:
 
 
 class EncryptedPrivateKeyGenerator:
-    """Encrypt the generated AGE private key with the system AGE key."""
+    """Pak de gegenereerde AGE-privesleutel in met de project-KEK."""
 
     def generate(self, yaml_data: dict[str, Any]) -> Any:
-        from opi.utils.age import encrypt_age_content_sync
+        from opi.utils.age import wrap_project_key_sync
 
         generated = yaml_data.get("_generated", {})
         plain_private_key = generated.get("age-private-key-plain")
         if not plain_private_key:
             raise ValueError("AGE private key not found in _generated data")
 
-        from opi.core.config import settings
-
-        encrypted = encrypt_age_content_sync(plain_private_key, settings.SOPS_AGE_PUBLIC_KEY)
-        return encrypted
+        return wrap_project_key_sync(plain_private_key)
 
 
 class EncryptedAPIKeyGenerator:

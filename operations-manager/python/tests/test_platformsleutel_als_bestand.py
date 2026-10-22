@@ -126,6 +126,16 @@ def test_child_env_weert_de_platformgeheimen(monkeypatch: pytest.MonkeyPatch) ->
     assert env["HOME"] == "/home/opi"
 
 
+def test_child_env_weert_ook_de_project_kek(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De sleutel die elk projectgeheim opent gaat net zo goed niet mee als de platformsleutel."""
+    for name in ["PROJECT_KEK_FILE", "PROJECT_KEK_PUBLIC_KEY", "PROJECT_KEK_PRIVATE_KEY"]:
+        monkeypatch.setenv(name, "geheim")
+
+    env = child_env()
+
+    assert not [name for name in env if name.startswith("PROJECT_KEK_")]
+
+
 def test_child_env_voegt_extra_toe(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOPS_AGE_PRIVATE_KEY", "van het platform")
 

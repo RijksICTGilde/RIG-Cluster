@@ -14,26 +14,25 @@ logger = logging.getLogger(__name__)
 def resolve_project_private_key(context_data: dict[str, Any] | None) -> str | None:
     """Resolve the project's AGE private key from form context data.
 
-    The project file stores the project private key encrypted with the
-    system key (``config.age-private-key``); decrypt it so field values
+    The project file stores the project private key wrapped with the
+    project-KEK (``config.age-private-key``); unwrap it so field values
     encrypted with the project key can be read.
 
     Returns None when the key cannot be resolved.
     """
     if not context_data:
         return None
-    from opi.core.config import settings
-    from opi.utils.age import decrypt_age_content_sync
+    from opi.utils.age import unwrap_project_key_sync
 
-    system_private_key = settings.SOPS_AGE_PRIVATE_KEY
-    if not system_private_key:
-        logger.warning("[resolve_project_private_key] No system AGE private key available")
-        return None
     encoded_project_key = context_data.get("config", {}).get("age-private-key")
     if not encoded_project_key:
         logger.warning("[resolve_project_private_key] No project age-private-key in context_data")
         return None
-    return decrypt_age_content_sync(encoded_project_key, system_private_key)
+    try:
+        return unwrap_project_key_sync(encoded_project_key)
+    except ValueError as e:
+        logger.warning(f"[resolve_project_private_key] {e}")
+        return None
 
 
 def keep_existing_ciphertext_if_unchanged(existing: Any, new: Any, context_data: dict[str, Any] | None) -> Any:
@@ -623,6 +622,9 @@ class AGEEncryptConverter:
 
     For fields encrypted with the **project** key (e.g. ``user-env-vars``),
     use a generator instead - converters do not have access to project keys.
+
+    Blijft bewust op de platformsleutel: deze converter raakt geen projectsleutel, dus de
+    project-KEK uit RC-334 is hier niet aan de orde.
     """
 
     def __init__(self, public_key: str | None = None) -> None:

@@ -10,8 +10,9 @@ from __future__ import annotations
 import os
 
 # De prefix weert ook SOPS_AGE_KEY_FILE: sops leest die naam zelf en zou dan op de
-# platformsleutel ontsleutelen zonder dat de aanroeper iets meegaf.
-PLATFORM_SECRET_PREFIXES: tuple[str, ...] = ("SOPS_AGE_",)
+# platformsleutel ontsleutelen zonder dat de aanroeper iets meegaf. PROJECT_KEK_ staat er
+# om dezelfde reden: dat is de sleutel die elk projectgeheim opent (RC-334).
+PLATFORM_SECRET_PREFIXES: tuple[str, ...] = ("SOPS_AGE_", "PROJECT_KEK_")
 
 # Volledige inhoud van deployment env-bronnen; toets faalt op onbekende secretRef. Ook wat
 # geen sleutelmateriaal is erft niet mee: ADMIN_EMAILS en ALLOWED_EMAILS zijn persoonsgegevens.

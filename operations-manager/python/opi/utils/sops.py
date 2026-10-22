@@ -18,7 +18,7 @@ from typing import NamedTuple
 
 import yaml
 from opi.core.config import settings
-from opi.utils.age import encrypt_age_content
+from opi.utils.age import wrap_project_key
 from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
@@ -390,7 +390,7 @@ async def generate_and_encrypt_sops_key_pair() -> tuple[str, str, str]:
     """
     try:
         private_key, public_key = generate_sops_key_pair()
-        encrypted_private_key = await encrypt_age_content(private_key, settings.SOPS_AGE_PUBLIC_KEY)
+        encrypted_private_key = await wrap_project_key(private_key)
         return private_key, encrypted_private_key, public_key
     except Exception as e:
         raise SOPSKeyEncryptionError(f"Failed to generate encrypted SOPS key pair: {e}") from e

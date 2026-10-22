@@ -95,8 +95,76 @@ niet. Die twee functies hebben vandaag geen aanroeper.
 Platte SOPS-inhoud gaat tijdelijk naar `SECRET_TEMP_DIR`, een `emptyDir` met
 `medium: Memory`, en niet naar `TEMP_DIR` op de schijf van de node.
 
+## De tweede sleutel: `project-kek`
+
+Sinds RC-334 opent de platformsleutel geen projectsleutel meer. Die zitten onder een eigen
+sleutel, de project-KEK, en dat is een apart secret met een andere verspreiding:
+
+| | `sops-age-key` | `project-kek` |
+|---|---|---|
+| waar | elke namespace die rendert of een eigen projectsleutel heeft | alleen de OPI-namespace van het gekozen cluster, uit `CLUSTER_CONFIG` |
+| wie leest | de CMP in de ArgoCD-repo-server, OPI, `sops` | alleen OPI |
+| in git | nee | nee, en dat is hier een eis: een SOPS-versie onder de platformsleutel zou de scheiding opheffen |
+| opent | de SOPS-bestanden in `bootstrap/` en `infrastructure/`, de losse `base64+age:`-waarden, `repositories[].password` | `config.age-private-key` per projectbestand en de `age-key.txt.age`-back-ups in de deployments-repo |
+| mount | `/var/run/secrets/zad/sops-age/key`, mode `0440` | `/var/run/secrets/zad/project-kek/key`, mode `0440` |
+| zetten | `scripts/set-sops-key-secret.py` | `scripts/set-sops-key-secret.py --target project-kek --cluster <cluster>` |
+| sleutelbestand | `security/key.txt`, per cluster een andere naam | `security/project-kek-<cluster>.txt`, per cluster een ANDERE sleutel |
+
+De KEK is per cluster een andere sleutel. Staging draait op dezelfde OpenShift-cluster als
+productie (`features/zad-staging.md`) en is er voor een pentest, dus met een gedeelde KEK zou wie
+de staging-OPI bereikt elk productieproject kunnen uitpakken. Daarom komt de doelnamespace uit
+het gekozen cluster (`CLUSTER_TYPE`, zoals `task select-cluster` die zet) en niet uit een
+zoekopdracht over het cluster: zo'n zoekopdracht vindt op ODCN de namespaces van BEIDE
+omgevingen, en de deploymentnaam waarop hij zoekt kiest een tenant zelf.
+
+Het volume is `optional: true`. Zonder het secret mount kubelet een lege map, en dan is dat de
+bedoelde uitkomst: in- en uitpakken valt terug op de platformsleutel, zodat de sandbox en
+lokale ontwikkeling niets hoeven. Een bestand dat er WEL is maar leeg of onleesbaar is, blijft
+een harde opstartfout, net als bij de platformsleutel.
+
+Mode `0440`, om dezelfde reden als bij de platformsleutel: kubelet geeft bestanden in een
+secret-volume aan root, en `fsGroup: 1001` is het enige wat ze bij de uid van OPI brengt. Het
+plan van RC-334 vroeg `0400`, maar dan kan OPI het bestand niet lezen en valt het opstarten om
+op een onleesbare sleutel.
+
+Alle in- en uitpakwerk loopt via `wrap_project_key` en `unwrap_project_key` in `opi/utils/age.py`,
+de naad voor een latere externe sleutelbeheerder (OpenBao Transit, issue #219).
+Schrijf dus nooit `encrypt_age_content(..., SOPS_AGE_PUBLIC_KEY)` voor een projectsleutel.
+`tests/test_projectsleutels_alleen_via_de_naad.py` weigert een nieuwe verwijzing naar
+`SOPS_AGE_PUBLIC_KEY`, `SOPS_AGE_PRIVATE_KEY` of `get_global_private_key` in `opi/` en
+`scripts/` als die niet in de toegestane plekkenlijst staat.
+
+Herstarten net als bij de platformsleutel: OPI leest het bestand eenmalig bij het opstarten, dus
+een `rollout restart` hoort bij het plaatsen.
+`set-sops-key-secret.py --target project-kek --cluster <cluster>` doet dat zelf.
+
+### Waar de KEK bewaard wordt, en hoe je hem terugzet
+
+Na de omzetting is de KEK de enige sleutel die de projectsleutels opent. Hij staat in het cluster
+alleen als het secret `project-kek`, en niet in git, dus zonder kopie betekent verlies van dat
+secret dat elk projectgeheim onleesbaar is. Opnieuw genereren helpt niet: een nieuwe KEK opent de
+oude ciphertext niet.
+
+De kopie staat daarom in de password manager van de beheerders, buiten ZAD om, en minstens twee
+mensen kunnen erbij. Alleen de waarde van het KEK-bestand van dat cluster hoort daar; de waarde staat
+nergens in deze repo, ook niet als voorbeeld. Die kopie wordt gemaakt VOOR
+`rewrap-project-keys.py` draait, want vanaf de eerste omgezette commit is hij nodig.
+
+Terugzetten, bijvoorbeeld na een verwijderd secret of een opnieuw opgebouwd cluster:
+
+1. Schrijf de waarde uit de password manager naar `security/project-kek-<cluster>.txt` en zet
+   `chmod 600`; het gereedschap weigert een sleutelbestand dat ruimer staat.
+2. `uv run --project operations-manager/python python scripts/set-sops-key-secret.py --target project-kek --cluster <cluster>`,
+   dat het secret opnieuw plaatst in de OPI-namespace van dat cluster en OPI daar herstart.
+3. Toets dat OPI de projecten weer opent: een projectpagina toont zijn componenten, en de log
+   meldt geen `Could not unwrap the project private key`.
+
+Zolang stap 2 niet gedaan is, valt in- en uitpakken terug op de platformsleutel: omgezette
+projecten zijn dan niet te openen, en een nieuw project krijgt zijn sleutel weer onder de
+platformsleutel. Het roteren van de KEK staat in `features/sops-sleutel-roteren.md`.
+
 ## Verder lezen
 
-- `features/sops-sleutel-roteren.md` is het stappenplan voor de vervanging zelf
+- `features/sops-sleutel-roteren.md` is het stappenplan voor de vervanging zelf, met de boom van wat elke sleutel vasthoudt
 - `features/send-email.md` heeft de aanzetstappen voor de ron-namespace
 - `bootstrap/rig-system/kustomize/configmap-sops-plugin.yaml` is de plugin die de sleutel leest

@@ -100,6 +100,9 @@ spec:
         - name: sops-age-key
           mountPath: /var/run/secrets/zad/sops-age
           readOnly: true
+        - name: project-kek
+          mountPath: /var/run/secrets/zad/project-kek
+          readOnly: true
         - name: secret-tmp
           mountPath: /var/run/zad/secret-tmp
         # CA van argocd-server. Per cluster anders (service-CA op ODCN, eigen CA op sandbox).
@@ -136,6 +139,10 @@ spec:
         # omgevingsvariabele staat in /proc/<pid>/environ van elk kindproces dat OPI start.
         - name: SOPS_AGE_KEY_FILE
           value: "/var/run/secrets/zad/sops-age/key"
+        # De projectsleutels zitten onder een eigen sleutel die alleen hier staat, zodat de
+        # platformsleutel geen enkel projectgeheim meer opent (RC-334).
+        - name: PROJECT_KEK_FILE
+          value: "/var/run/secrets/zad/project-kek/key"
         - name: SECRET_TEMP_DIR
           value: "/var/run/zad/secret-tmp"
         # Eén bron per wachtwoord: rechtstreeks uit het secret van de component zelf en niet uit een kopie die stil kan afwijken. Expliciete env wint van envFrom.
@@ -200,6 +207,20 @@ spec:
       - name: sops-age-key
         secret:
           secretName: sops-age-key
+          defaultMode: 0440
+          items:
+          - key: key
+            path: key
+      # optional: zonder dit secret valt in- en uitpakken terug op de platformsleutel, zoals
+      # de sandbox en lokale ontwikkeling draaien. Het secret komt bewust niet uit git: een
+      # SOPS-versie onder de platformsleutel zou de scheiding weer opheffen.
+      # Mode 0440 en niet 0400 zoals het plan vroeg: kubelet geeft bestanden in een
+      # secret-volume aan root, dus met 0400 kan OPI (uid 1001) er niet bij. Zie de
+      # fsGroup in securityContext.
+      - name: project-kek
+        secret:
+          secretName: project-kek
+          optional: true
           defaultMode: 0440
           items:
           - key: key

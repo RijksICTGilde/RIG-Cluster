@@ -121,13 +121,15 @@ def encrypt_age_content_sync(plain_content: str, public_key: str | None) -> str:
         raise Exception(f"Age encryption failed: {e}") from e
 
 
-def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | None:
+def decrypt_age_content_sync(encrypted_content: str, private_key: str, *, log_failure: bool = True) -> str | None:
     """
     Decrypt age-encrypted content using the provided private key (synchronous version).
 
     Args:
         encrypted_content: The age-encrypted content (including BEGIN/END markers)
         private_key: The age private key (AGE-SECRET-KEY-...)
+        log_failure: False wanneer de aanroeper meer sleutels probeert, zoals
+            :func:`unwrap_project_key_sync`: een kandidaat die niet past is daar geen fout.
 
     Returns:
         Decrypted content as string, or None if decryption failed
@@ -141,7 +143,7 @@ def decrypt_age_content_sync(encrypted_content: str, private_key: str) -> str | 
     try:
         decrypted_content = _decrypt_in_process(encrypted_content, private_key)
     except (pyrage.DecryptError, pyrage.IdentityError) as e:
-        logger.error(f"Age decryption failed (sync): {e}")
+        logger.log(logging.ERROR if log_failure else logging.DEBUG, f"Age decryption failed (sync): {e}")
         return None
 
     logger.info(f"Successfully decrypted age content (sync) - result length: {len(decrypted_content)}")
@@ -424,6 +426,74 @@ def get_project_public_key(project_config: dict) -> str | None:
     return config.get("sops-public-key")
 
 
+# De projectsleutels zitten onder de project-KEK, die alleen in de OPI-pod staat; de
+# platformsleutel is de terugval zolang niet elk projectbestand is omgezet (RC-334).
+PROJECT_KEK_LABEL = "project-kek"
+PLATFORM_KEY_LABEL = "platformsleutel"
+
+
+def project_key_candidates_for(
+    platform_private_key: str | None, kek_private_key: str | None = None
+) -> list[tuple[str, str]]:
+    """Sleutels die een projectsleutel kunnen openen, KEK eerst.
+
+    Voor migratiescripts die de sleutels van het BRONcluster kennen, niet die van eigen settings.
+    """
+    labelled = ((PROJECT_KEK_LABEL, kek_private_key), (PLATFORM_KEY_LABEL, platform_private_key))
+    return [(label, key) for label, key in labelled if key]
+
+
+def project_key_candidates() -> list[tuple[str, str]]:
+    """Sleutels die een projectsleutel kunnen openen: KEK, dan platform.
+
+    Zonder KEK wordt alleen platform gebruikt, dus sandbox en lokale dev hoeven niets.
+    """
+    return project_key_candidates_for(settings.SOPS_AGE_PRIVATE_KEY, settings.PROJECT_KEK_PRIVATE_KEY)
+
+
+def project_wrapping_public_key() -> str:
+    """De publieke helft waarmee een projectsleutel wordt ingepakt: de KEK zodra die er is."""
+    public_key = settings.PROJECT_KEK_PUBLIC_KEY or settings.SOPS_AGE_PUBLIC_KEY
+    if not public_key:
+        raise ValueError("No AGE public key available to wrap a project private key with")
+    return public_key
+
+
+def unwrap_project_key_sync(wrapped: str, candidates: list[tuple[str, str]] | None = None) -> str:
+    """Pak een projectsleutel uit met de eerste sleutel die past, en log welke het was."""
+    if not wrapped:
+        raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
+    candidates = project_key_candidates() if candidates is None else candidates
+    if not candidates:
+        raise ValueError("No AGE private key available to unwrap the project private key with")
+    for label, private_key in candidates:
+        try:
+            # log_failure uit: tijdens de overgang past de KEK niet op een nog niet omgezet
+            # bestand, en dat is de verwachte stand, geen fout.
+            decoded = decrypt_password_smart_sync(wrapped, private_key, log_failure=False)
+        except ValueError, pyrage.DecryptError, pyrage.IdentityError:
+            continue
+        if decoded:
+            logger.debug(f"Project private key unwrapped with the {label}")
+            return decoded
+    raise ValueError(f"Could not unwrap the project private key with any of: {[label for label, _ in candidates]}")
+
+
+async def unwrap_project_key(wrapped: str, candidates: list[tuple[str, str]] | None = None) -> str:
+    """De async kant van :func:`unwrap_project_key_sync`; zelfde volgorde en terugval."""
+    return unwrap_project_key_sync(wrapped, candidates)
+
+
+def wrap_project_key_sync(private_key: str, public_key: str | None = None) -> str:
+    """Pak een projectsleutel in met de KEK, of de gegeven public_key voor migraties."""
+    return encrypt_age_content_sync(private_key, public_key or project_wrapping_public_key())
+
+
+async def wrap_project_key(private_key: str, public_key: str | None = None) -> str:
+    """De async kant van :func:`wrap_project_key_sync`."""
+    return await encrypt_age_content(private_key, public_key or project_wrapping_public_key())
+
+
 async def get_decoded_project_private_key(project_config: dict) -> str:
     """
     Get project's AGE private key
@@ -435,10 +505,7 @@ async def get_decoded_project_private_key(project_config: dict) -> str:
         decrypted AGE private key
     """
     config = project_config.get("config", {})
-    encoded_private_key = config.get("age-private-key")
-    if not encoded_private_key:
-        raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
-    return await decrypt_age_content(encoded_private_key, cast("str", settings.SOPS_AGE_PRIVATE_KEY))
+    return await unwrap_project_key(config.get("age-private-key"))
 
 
 def get_decoded_project_private_key_sync(project_config: dict) -> str:
@@ -451,16 +518,7 @@ def get_decoded_project_private_key_sync(project_config: dict) -> str:
     plaintext.
     """
     config = project_config.get("config", {})
-    encoded_private_key = config.get("age-private-key")
-    if not encoded_private_key:
-        raise ValueError("Missing age-private-key, check and fix legacy sops-private-key if exists")
-    system_private_key = settings.SOPS_AGE_PRIVATE_KEY
-    if not system_private_key:
-        raise ValueError("Missing system AGE private key; cannot decode the project private key")
-    decoded = decrypt_age_content_sync(encoded_private_key, system_private_key)
-    if not decoded:
-        raise ValueError("Could not decrypt the project's age-private-key with the system key")
-    return decoded
+    return unwrap_project_key_sync(config.get("age-private-key"))
 
 
 def decrypt_password_smart_auto_sync(password: str) -> str:
@@ -477,7 +535,7 @@ def decrypt_password_smart_auto_sync(password: str) -> str:
     return decrypt_password_smart_sync(password, private_key)
 
 
-def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
+def decrypt_password_smart_sync(password: str, private_key: str | None, *, log_failure: bool = True) -> str:
     """
     Smart password decryption with prefix support (synchronous version).
 
@@ -509,7 +567,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
         if not private_key:
             raise ValueError("Age encrypted password found but no private key available")
 
-        decrypted = decrypt_age_content_sync(content, private_key)
+        decrypted = decrypt_age_content_sync(content, private_key, log_failure=log_failure)
         if decrypted is None:
             raise ValueError("Failed to decrypt Age password, returning original")
         return decrypted
@@ -522,7 +580,7 @@ def decrypt_password_smart_sync(password: str, private_key: str | None) -> str:
         # First decode base64
         decoded_content = base64.b64decode(content).decode("utf-8")
         # Then decrypt with Age
-        decrypted = decrypt_age_content_sync(decoded_content, private_key)
+        decrypted = decrypt_age_content_sync(decoded_content, private_key, log_failure=log_failure)
         if decrypted is None:
             raise ValueError("Failed to decrypt base64+Age password")
         return decrypted
