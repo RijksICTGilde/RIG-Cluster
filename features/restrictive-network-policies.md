@@ -470,14 +470,13 @@ vult `kubernetes.io/metadata.name` zelf aan.
 
 **Wat de matrix dekt.** `PLATFORM_POLICY_SOURCES` in `tests/netpol/policies.py` noemt elk
 policy-bestand in de repo met de namespace waarin productie het krijgt, en
-`TEMPLATE_SOURCES` elke netpol-template. Van de templates rendert de matrix de
-tenant-baseline en `network-policy.yaml.jinja`: die laatste levert de acme-http-policy
-(`podSelector: {}` op de hele tenant-namespace, poorten 80 en 8089 voor de
-HTTP-01-solver), en omdat alle drie de productiedomeinen `issuer: letsencrypt` dragen
-krijgt elk gepubliceerd deployment hem. `service-network-policy.yaml.jinja` valt erbuiten:
-die hangt aan de config van cross-domain-access, send-email of vlam. Twee tests in
-`test_policy_sources.py` grendelen beide lijsten, dus een nieuw bestand of een nieuwe
-template geeft rood tot je hem erin zet.
+`TEMPLATE_SOURCES` elke netpol-template. De matrix rendert alle drie de templates: de
+tenant-baseline, `network-policy.yaml.jinja` (de acme-http-policy, sinds RC-336 alleen de
+HTTP-01-solver op 8089 en alleen vanaf de router, en omdat alle drie de productiedomeinen
+`issuer: letsencrypt` dragen krijgt elk gepubliceerd deployment hem) en
+`service-network-policy.yaml.jinja`, met de config van cross-domain-access, send-email en
+vlam uit `service_policies()`. Twee tests in `test_policy_sources.py` grendelen beide
+lijsten, dus een nieuw bestand of een nieuwe template geeft rood tot je hem erin zet.
 
 De odcn-staging-overlays staan wel in de registry, met `None` als namespace: ze draaien op
 dezelfde cluster in de Capsule-tenant rig-staging, selecteren alleen pods in de
@@ -490,14 +489,13 @@ Dan zegt de evaluator wat niet te beoordelen is. Zo'n regel bewijs je met `task
 netpol:meet`, waar de pods een adres hebben.
 
 Drie dingen die belangrijk zijn:
-- `emergency-restore-allow-all` maakt rig-prd-operations open. MinIO 9001 staat daarom
-  open voor tenants, terwijl `allow-minio-access` dat bewust beperkt. Beide staan in de
-  matrix, zodat wijzigingen zichtbaar zijn.
-- De internetregel van de tenant-baseline (`0.0.0.0/0` en `::/0`) opent aan de
-  egress-kant ook intra-cluster verkeer op 80 en 443. Dat de matrix daar geen open regel
-  voor heeft, komt van de ingress-kant: de acme-http-policy selecteert elke pod in de
-  tenant-namespace en laat alleen 80 en 8089 toe, dus ook een helm-pod zonder
-  deployment-label is op 443 niet te bereiken.
+- `emergency-restore-allow-all` maakt rig-prd-operations in beide richtingen open, dus
+  de ingress van een platformdienst is daar geen grens. De egress van de tenant is dat
+  wel: sinds RC-336 is MinIO 9001 dicht omdat de ops-egress MinIO alleen op 9000 noemt.
+- De internetregel van de tenant-baseline (`0.0.0.0/0` en `::/0`) opent ook intra-cluster
+  verkeer op 80 en 443 zolang een cluster geen `cluster_cidrs` heeft. Vul die sleutel bij
+  een nieuw cluster voor BEIDE adresfamilies: een `except` op alleen IPv4 laat `::/0`
+  catch-all, en een dual-stack pod blijft dan bereikbaar via zijn IPv6-adres.
 - Een test muteert de internet-regel en controleert dat rood wordt. Zonder die test zegt
   groen niets.
 
@@ -525,15 +523,93 @@ gemeten is:
   adresfamilies niet gelijk te behandelen.
 - De poorten in de policies staan zonder protocol, wat volgens de API TCP betekent. Een
   CNI die dat anders invult, laat dat op elke regel zien.
-
-Een derde constructie staat wel in de policies maar hangt aan geen enkele matrixregel
-meer: de `0.0.0.0/0` zonder `except` van de internetregel tegen een pod-IP. Sinds
-`tenant-app -> tenant-helm-pod:443` op de ingress-kant dicht gaat, bepaalt de CNI die
-uitkomst niet. Geeft acme-http ooit een `podSelector` mee, dan komt die regel terug als
-CNI-afhankelijk.
+- `tenant-app -> tenant-helm-pod:443` legt de internetregel tegen een pod-IP. Die regel
+  stond tot RC-336 in de matrix, maar nu odcn een `cluster_cidrs` heeft, draagt de regel
+  een `except` en is hij niet meer te berekenen. Hij staat als berekening in
+  `TestDeExceptSluitHetClusterUit`. Meten kan alleen op een cluster met de pod-CIDR van
+  odcn, en het wegwerpcluster heeft die van Kind; gemeten is hij dus niet.
 
 Komt uit zo'n meting een verschil tussen de twee CNIs, zet het hier neer met de regel en
 de datum erbij, zodat Calico alleen nodig blijft voor wat aantoonbaar afwijkt.
+
+## De ops-egress per service, en wat je na de release waarneemt
+
+Sinds RC-336 noemt de tenant-baseline de gedeelde services van de operations-namespace
+stuk voor stuk, met hun pod-labels en hun poort, in plaats van de hele namespace open te
+zetten. De lijst staat in `OPS_EGRESS` in `opi/core/cluster_config.py` en is per cluster
+aan te passen via de sleutel `ops_egress`. Dezelfde PR zet de pod- en service-CIDR van
+het cluster in de `except` van de internetregel, uit de sleutel `cluster_cidrs`. Die
+sleutel is op `local` en `sandboxed-local` gevuld met de Kind-defaults, en op
+`odcn-production` en `odcn-staging` (dezelfde cluster) met de OpenShift-CIDRs, op
+2026-10-21 read-only afgeleid uit de pod- en service-IP's in rig-prd-operations,
+rig-prd-regel-k4c en rig-staging-operations omdat `network.config/cluster` niet leesbaar
+is. Noemt een cluster de sleutel niet, dan waarschuwt `get_cluster_cidrs()` bij elke
+generatie en blijft de internetregel zo ruim als hij was.
+
+Die `except` sluit ook de ingress-controller uit, en die is wel een bestemming: een app
+bereikt Keycloak op zijn publieke hostnaam, en die naam wijst naar de router. De baseline
+heeft daarom een eigen egressregel naar de namespace van de ingress-controller op 80 en
+443, met dezelfde selector als de ingress-regel. Zonder die regel gaat het hele OIDC-pad
+dicht zodra een cluster `cluster_cidrs` noemt: de dienst keycloak, de auth-wall sidecar en
+de db-console-pod lopen er alle drie over.
+
+### Wat deze stap openlaat
+
+De ACME-policy selecteerde tot RC-336 elke pod in de namespace (`podSelector: {}`,
+ingress op 80 en 8089). Daarmee beperkte hij ook de pods zonder `deployment:`-label, en
+dat label dragen helm- en helmfile-workloads niet. Nu de policy alleen de solver
+selecteert, valt zo'n pod in een namespace met een Let's Encrypt-issuer terug op
+default-allow en is hij op elke poort bereikbaar voor elke bron die er zelf uit mag
+(een pod zonder baseline heeft ook geen egressbeperking). Dat is hetzelfde gat dat elke
+namespace zonder zo'n issuer al had, en dichtzetten hoort bij de default-deny per
+projectnamespace. De matrix houdt het zichtbaar met de regels van `vreemde-helm-pod`.
+
+### Wat waar te meten is
+
+De `except` van de internetregel en de smalle ACME-policy zijn op verschillende plekken
+te bewijzen, en niet elk stuk kan op de sandbox:
+
+- **De gegenereerde policy** (de vorm die OPI wegschrijft) toetst
+  `tests/test_acme_network_policy_emit.py` op de helper, en op de sandbox de inhoud van
+  het bestand in `zad-deployments`. Daarvoor is geen publiek bereikbaar cluster nodig:
+  het is een generatiestap. Wel een deployment met een base domain dat een
+  `issuer: letsencrypt` draagt, want anders komt `effective_issuer()` op None uit en
+  schrijft OPI helemaal geen ACME-policy. Op `sandboxed-local` is dat niet de
+  standaardzone `sandbox.rijksapp.dev` (die heeft geen issuer), maar
+  `robbertuittenbroek.nl` of een eigen domein van het project.
+- **Of de challenge slaagt** is op de sandbox niet te meten: Let's Encrypt moet de
+  solverpod van buiten bereiken, en de sandbox heeft geen publieke DNS of inkomend
+  verkeer. Dat stuk blijft aan productie.
+- **De `except` tegen een echt pod-adres** vraagt een CNI die hem handhaaft, dus
+  `task netpol:meet CNI=calico`. De unit test rekent hem uit, zie
+  `TestDeExceptSluitHetClusterUit`.
+
+Op productie gemeten (RC-336, 2026-10-21, door de reviewfase in `rig-prd-regel-k4c`):
+de router-selector die de baseline gebruikt (namespace `openshift-ingress` plus
+`ingresscontroller.operator.openshift.io/deployment-ingresscontroller=rig`) laat het
+webverkeer naar elke tenant-app vandaag al toe, en elk podlabel uit `OPS_EGRESS` vindt op
+productie precies een pod. De egressregels landen dus op de pods die ze bedoelen.
+
+### Uitrolvolgorde
+
+De baseline wordt per deployment opnieuw gegenereerd bij de eerstvolgende verwerking van
+het projectbestand. Er is dus geen moment waarop de vloot omslaat: de wijziging
+verspreidt zich deployment voor deployment, en een project dat niet verwerkt wordt houdt
+zijn oude policy. Wie het wil versnellen verwerkt de projecten, bijvoorbeeld via de
+API; wie het wil terugdraaien zet de regel in de template terug en verwerkt opnieuw.
+
+Drie dingen zijn na de release het waarnemen waard:
+
+- **De readiness van tenant-pods die de gedeelde database gebruiken.** Een pod die niet
+  meer bij `rig-db-rw` komt faalt op zijn readiness-probe of blijft hangen op connect.
+  De regel selecteert op `cnpg.io/cluster: rig-db`; een app die via een pooler praat
+  draagt een ander label (issue #116) en heeft een eigen regel nodig.
+- **Het inloggen van apps met de dienst keycloak.** Dat pad loopt via de router, en de
+  egressregel daarvoor staat naast de `except` van de internetregel. Mist die regel, dan
+  haalt de app zijn discovery-URL niet op en komt een gebruiker niet voorbij het inloggen.
+- **De foutmeldingen van projecten met sleep-mode.** De waker roept de API van OPI aan
+  op poort 8000 (`ops_api_url`). Komt die niet door, dan wordt een slapende app niet
+  meer wakker, en dat is aan de waker-logs te zien voordat een gebruiker het meldt.
 
 ## De operations-namespace: per component, en de allow-all krimpt
 

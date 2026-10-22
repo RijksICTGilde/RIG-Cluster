@@ -4,12 +4,33 @@ Cluster configuration for different environments.
 This module defines cluster-specific settings including ingress postfixes.
 """
 
+import logging
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from opi.core.config import settings
 from opi.utils.subprocess_env import child_env
+
+logger = logging.getLogger(__name__)
+
+#: De S3-API van MinIO; staat zowel in minio_port als in de egressregel hieronder.
+MINIO_PORT = 9000
+
+# Pod- en service-CIDRs van de ODCN-cluster, voor de except van de internetregel.
+# 2026-10-21 afgeleid omdat network.config/cluster niet leesbaar is.
+ODCN_CLUSTER_CIDRS = {
+    "ipv4": ["10.128.0.0/14", "172.30.0.0/16"],
+    "ipv6": ["2a04:9a00:1007:4000::/64"],
+}
+
+# Gedeelde services in de operations-namespace: elk op zijn eigen poort.
+OPS_EGRESS = [
+    {"endpoint": "database_server", "pod_labels": {"cnpg.io/cluster": "rig-db"}, "ports": [5432]},
+    {"endpoint": "redis_server", "pod_labels": {"app": "rig-redis"}, "ports": [6379]},
+    {"endpoint": "minio_host", "pod_labels": {"app": "minio"}, "ports": [MINIO_PORT]},
+    {"endpoint": "operations_manager", "pod_labels": {"app": "operations-manager"}, "ports": [8000]},
+]
 
 # TODO: In the future, read this configuration from YAML file
 CLUSTER_CONFIG = {
@@ -25,7 +46,7 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.kind",  # For pods in cluster
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
@@ -39,6 +60,9 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -108,7 +132,7 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.sandbox.rijksapp.dev",
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
@@ -122,6 +146,9 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
+        "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
             "namespace": "ingress-nginx",
             "pod_labels": {},
@@ -201,7 +228,7 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.rijksapp.nl",
         "database_server": "rig-db-rw.rig-prd-operations.svc.cluster.local",  # Assuming production DB is in operations namespace
         "minio_host": "minio.rig-prd-operations.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
         "redis_server": "rig-redis.rig-prd-operations.svc.cluster.local",
         "backup_namespace": "rig-prd-backup",
         # ODCN eist dat een namespace op dat cluster met de clusterprefix begint, dus daar
@@ -223,6 +250,8 @@ CLUSTER_CONFIG = {
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         # Namespace of the CloudNativePG operator (see the note in the other clusters).
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -393,7 +422,7 @@ CLUSTER_CONFIG = {
         "keycloak_discovery_url": "https://keycloak.staging.rijksapp.dev",
         "database_server": "rig-db-rw.rig-staging-operations.svc.cluster.local",
         "minio_host": "minio.rig-staging-operations.svc.cluster.local",
-        "minio_port": 9000,
+        "minio_port": MINIO_PORT,
         "redis_server": "rig-redis.rig-staging-operations.svc.cluster.local",
         "backup_namespace": "rig-staging-backup",
         # Een relay met de mailsink van de sandbox: er gaat geen mail naar buiten.
@@ -403,6 +432,9 @@ CLUSTER_CONFIG = {
         "mail_relay_port": 587,
         "mail_from_address": "noreply-rijksapp@rijksoverheid.nl",
         "database_operator_namespace": "cnpg-system",
+        "ops_egress": OPS_EGRESS,
+        # Staging draait op dezelfde cluster als productie, dus dezelfde CIDRs.
+        "cluster_cidrs": ODCN_CLUSTER_CIDRS,
         "ingress_controller_selector": {
             "namespace": "openshift-ingress",
             "pod_labels": {
@@ -1005,6 +1037,23 @@ def get_database_operator_namespace(cluster_name: str) -> str:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config.get("database_operator_namespace", "cnpg-system")
+
+
+def get_ops_egress(cluster_name: str) -> list[dict[str, Any]]:
+    """Gedeelde services in de operations-namespace per poort voor de tenant-baseline."""
+    return get_cluster_config(cluster_name)["ops_egress"]
+
+
+def get_cluster_cidrs(cluster_name: str) -> dict[str, list[str]] | None:
+    """Pod- en service-CIDRs voor de except van de internetregel, of None."""
+    cidrs = get_cluster_config(cluster_name).get("cluster_cidrs")
+    if not cidrs:
+        logger.warning(
+            f"Cluster '{cluster_name}' heeft geen cluster_cidrs: de internetregel van de tenant-baseline "
+            "krijgt geen except en opent daarmee ook pods in andere namespaces op 80 en 443"
+        )
+        return None
+    return cidrs
 
 
 def get_ingress_controller_selector(cluster_name: str) -> dict:

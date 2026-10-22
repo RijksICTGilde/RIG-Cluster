@@ -441,3 +441,47 @@ class TestSelectableClusters:
         with patch("opi.core.config.settings.CLUSTER_MANAGER", "odcn-production"):
             values = [o["value"] for o in ClusterOptionsProvider().get_options()]
         assert values == ["odcn-production"], values
+
+
+class TestOpsEgressAndClusterCidrs:
+    """RC-336: de tenant-baseline haalt de gedeelde services en de cluster-CIDRs hier op."""
+
+    def test_get_ops_egress_geeft_de_vier_gedeelde_services(self):
+        from opi.core.cluster_config import get_ops_egress
+
+        endpoints = {service["endpoint"] for service in get_ops_egress("odcn-production")}
+        assert endpoints == {"database_server", "redis_server", "minio_host", "operations_manager"}
+
+    @pytest.mark.parametrize("cluster_name", sorted(CLUSTER_CONFIG))
+    def test_elk_cluster_heeft_een_ops_egress(self, cluster_name):
+        from opi.core.cluster_config import get_ops_egress
+
+        assert get_ops_egress(cluster_name), f"{cluster_name} heeft geen ops_egress"
+
+    def test_get_cluster_cidrs_geeft_de_waarde_als_die_er_is(self):
+        from opi.core.cluster_config import get_cluster_cidrs
+
+        assert get_cluster_cidrs("sandboxed-local") == {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]}
+
+    @pytest.mark.parametrize("cluster_name", sorted(c for c in CLUSTER_CONFIG if c.startswith("odcn-")))
+    def test_elk_odcn_cluster_heeft_cluster_cidrs(self, cluster_name, caplog):
+        """Zonder deze waarden krijgt de internetregel daar geen except, en bereikt een
+        tenant-pod de pods van andere projecten nog op 80 en 443."""
+        from opi.core.cluster_config import get_cluster_cidrs
+
+        with caplog.at_level("WARNING"):
+            cidrs = get_cluster_cidrs(cluster_name)
+        assert cidrs == {"ipv4": ["10.128.0.0/14", "172.30.0.0/16"], "ipv6": ["2a04:9a00:1007:4000::/64"]}
+        assert not [record for record in caplog.records if "cluster_cidrs" in record.message]
+
+    def test_get_cluster_cidrs_geeft_none_en_waarschuwt_als_die_er_niet_is(self, caplog):
+        from opi.core import cluster_config as cc
+
+        zonder_cidrs = {k: v for k, v in cc.CLUSTER_CONFIG["odcn-production"].items() if k != "cluster_cidrs"}
+        with (
+            patch.dict(cc.CLUSTER_CONFIG, {"odcn-production": zonder_cidrs}),
+            caplog.at_level("WARNING"),
+        ):
+            result = cc.get_cluster_cidrs("odcn-production")
+        assert result is None
+        assert any("cluster_cidrs" in record.message for record in caplog.records)

@@ -47,6 +47,7 @@ def test_welke_templates_de_matrix_rendert():
     assert gerenderd == {
         "tenant-baseline-network-policy.yaml.jinja",
         "network-policy.yaml.jinja",
+        "service-network-policy.yaml.jinja",
     }
 
 

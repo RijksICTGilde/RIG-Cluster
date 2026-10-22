@@ -48,6 +48,7 @@ from opi.core.cluster_config import (
     get_argo_namespace,
     get_backup_namespace,
     get_ca_certificate_config,
+    get_cluster_cidrs,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
     get_ingress_cluster_issuer,
@@ -58,6 +59,7 @@ from opi.core.cluster_config import (
     get_keycloak_discovery_url,
     get_letsencrypt_contact_email,
     get_namespace,
+    get_ops_egress,
     get_pod_security_labels,
     get_prefixed_namespace,
     is_reserved_project_name,
@@ -2693,6 +2695,8 @@ class ProjectManager:
                     "ops_namespace": get_namespace(cluster_name),
                     "backup_namespace": get_backup_namespace(cluster_name),
                     "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+                    "ops_egress": get_ops_egress(cluster_name),
+                    "cluster_cidrs": get_cluster_cidrs(cluster_name),
                     # The CNPG operator (in its own namespace) must reach the
                     # dedicated cluster's pods to extract instance status, or the
                     # Cluster never becomes Ready. The DB subsystem owns which
@@ -4738,6 +4742,33 @@ class ProjectManager:
 
         return dest_chart_path
 
+    def _emit_acme_network_policy(
+        self,
+        *,
+        deployment_name: str,
+        namespace: str,
+        cluster_name: str,
+        output_dir: str,
+    ) -> str:
+        """NetworkPolicy voor de HTTP-01-solver van cert-manager op poort 8089 vanaf de router."""
+        template_path = os.path.join(os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja")
+        manifest_name = generate_network_policy_manifest_name("acme-http", deployment_name)
+        path = self._manifest_generator.create_manifest_file(
+            template_path=template_path,
+            values={
+                "name": generate_network_policy_name("acme-http", deployment_name),
+                "namespace": namespace,
+                "pod_selector": 'acme.cert-manager.io/http01-solver: "true"',
+                "from_selector": get_ingress_controller_selector(cluster_name),
+                "ports": [8089],
+            },
+            output_dir=output_dir,
+            output_filename=manifest_name,
+            use_sops=False,
+        )
+        logger.info(f"Created ACME HTTP-01 solver network policy: {path}")
+        return f"{manifest_name}.yaml"
+
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
@@ -4889,29 +4920,14 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge.
-                # cert-manager's HTTP-01 solver pod listens on 8089 (the router
-                # forwards the challenge to the pod on 8089, not 80), so the
-                # solver port must be allowed or the self-check times out.
-                network_policy_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                regular_files.append(
+                    self._emit_acme_network_policy(
+                        deployment_name=deployment_name,
+                        namespace=prefixed_namespace,
+                        cluster_name=cluster_name,
+                        output_dir=target_path,
+                    )
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http", deployment_name),
-                    "namespace": prefixed_namespace,
-                    "pod_selector": None,  # Match all pods
-                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                }
-                network_policy_path = self._manifest_generator.create_manifest_file(
-                    template_path=network_policy_template_path,
-                    values=network_policy_variables,
-                    output_dir=target_path,
-                    output_filename=network_policy_filename,
-                    use_sops=False,
-                )
-                regular_files.append(f"{network_policy_filename}.yaml")
-                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
                 logger.warning(
                     f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
@@ -5343,26 +5359,14 @@ class ProjectManager:
                 regular_files.append(f"{issuer_manifest_filename}.yaml")
                 logger.info(f"Created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}")
 
-                # Create network policy for ACME HTTP-01 challenge
-                network_policy_template_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                regular_files.append(
+                    self._emit_acme_network_policy(
+                        deployment_name=deployment_name,
+                        namespace=prefixed_namespace,
+                        cluster_name=cluster_name,
+                        output_dir=target_path,
+                    )
                 )
-                network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                network_policy_variables = {
-                    "name": generate_network_policy_name("acme-http", deployment_name),
-                    "namespace": prefixed_namespace,
-                    "pod_selector": None,
-                    "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                }
-                network_policy_path = self._manifest_generator.create_manifest_file(
-                    template_path=network_policy_template_path,
-                    values=network_policy_variables,
-                    output_dir=target_path,
-                    output_filename=network_policy_filename,
-                    use_sops=False,
-                )
-                regular_files.append(f"{network_policy_filename}.yaml")
-                logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
             else:
                 logger.warning(f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured")
 
@@ -7238,29 +7242,14 @@ class ProjectManager:
                             f"Successfully created Let's Encrypt Issuer manifest for {base_domain}: {issuer_manifest_path}"
                         )
 
-                        # Create network policy for ACME HTTP-01 challenge.
-                        # cert-manager's HTTP-01 solver pod listens on 8089 (the router
-                        # forwards the challenge to the pod on 8089, not 80), so the
-                        # solver port must be allowed or the self-check times out.
-                        network_policy_template_path = os.path.join(
-                            os.path.dirname(__file__), "..", "..", "manifests", "network-policy.yaml.jinja"
+                        created_files.append(
+                            self._emit_acme_network_policy(
+                                deployment_name=deployment_name,
+                                namespace=namespace,
+                                cluster_name=cluster,
+                                output_dir=full_output_dir,
+                            )
                         )
-                        network_policy_filename = generate_network_policy_manifest_name("acme-http", deployment_name)
-                        network_policy_variables = {
-                            "name": generate_network_policy_name("acme-http", deployment_name),
-                            "namespace": namespace,
-                            "pod_selector": None,  # Match all pods
-                            "ports": [80, 8089],  # 80 for ingress, 8089 for ACME solver pod
-                        }
-                        network_policy_path = self._manifest_generator.create_manifest_file(
-                            template_path=network_policy_template_path,
-                            values=network_policy_variables,
-                            output_dir=full_output_dir,
-                            output_filename=network_policy_filename,
-                            use_sops=False,
-                        )
-                        created_files.append(f"{network_policy_filename}.yaml")
-                        logger.info(f"Created HTTP ingress network policy for ACME challenge: {network_policy_path}")
                     else:
                         logger.warning(
                             f"Cannot create Let's Encrypt Issuer for {base_domain}: no contact email configured "
@@ -7308,6 +7297,8 @@ class ProjectManager:
             "ops_namespace": get_namespace(cluster),
             "backup_namespace": get_backup_namespace(cluster),
             "ingress_controller_selector": get_ingress_controller_selector(cluster),
+            "ops_egress": get_ops_egress(cluster),
+            "cluster_cidrs": get_cluster_cidrs(cluster),
             # A regular app namespace hosts no CNPG cluster, so the operator does
             # not need ingress here (only the infrastructure namespace does).
             "database_operator_namespace": None,

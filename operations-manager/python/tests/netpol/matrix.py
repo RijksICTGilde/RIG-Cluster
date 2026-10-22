@@ -12,7 +12,7 @@ from typing import Any
 
 from ruamel.yaml import YAML
 from tests.netpol.evaluator import Endpoint, External, Pod, Verdict, evaluate
-from tests.netpol.policies import acme_http, platform_policies, tenant_baseline
+from tests.netpol.policies import acme_http, platform_policies, service_policies, tenant_baseline
 
 MATRIX_PATH = Path(__file__).parent / "flows_odcn.yaml"
 
@@ -75,21 +75,32 @@ def load_matrix(path: Path = MATRIX_PATH) -> tuple[dict[str, Endpoint], list[Flo
     return endpoints, flows
 
 
-def odcn_policies() -> list[dict[str, Any]]:
-    """Alle policies die de matrix raakt: platform plus de twee tenant-deployments.
+#: Deployments met een tenant-baseline, plus de dienst-eigen policies van hun project.
+TENANT_DEPLOYMENTS = (
+    (TENANT_NAMESPACE, "web", TENANT_PROJECT),
+    (TENANT_NAMESPACE, "api", TENANT_PROJECT),
+    ("rig-prd-afnemer", "prod", "afnemer"),
+    ("rig-prd-mailer", "prod", "mailer"),
+    ("rig-prd-vlam-wt8", "productie", "vlam-wt8"),
+)
 
-    Elk gepubliceerd deployment krijgt naast de baseline ook de acme-http-policy, omdat
-    alle drie de productiedomeinen issuer letsencrypt dragen.
+
+def odcn_policies() -> list[dict[str, Any]]:
+    """Alle policies die de matrix raakt: platform, dienst-eigen en de tenant-baselines.
+
+    Elk gepubliceerd deployment in de demo-namespace krijgt naast de baseline ook de
+    acme-http-policy, omdat alle drie de productiedomeinen issuer letsencrypt dragen.
     """
-    policies = platform_policies()
-    for deployment_name in ("web", "api"):
+    policies = platform_policies() + service_policies()
+    for namespace, deployment_name, project_name in TENANT_DEPLOYMENTS:
         policies.append(
             tenant_baseline(
-                namespace=TENANT_NAMESPACE,
+                namespace=namespace,
                 deployment_name=deployment_name,
-                project_name=TENANT_PROJECT,
+                project_name=project_name,
             )
         )
+    for deployment_name in ("web", "api"):
         policies.append(acme_http(namespace=TENANT_NAMESPACE, deployment_name=deployment_name))
     return policies
 

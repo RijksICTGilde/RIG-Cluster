@@ -10,6 +10,7 @@ import os
 from unittest.mock import patch
 
 import pytest
+from jinja2 import UndefinedError
 from opi.generation.manifests import ManifestGenerator, cmp_env_rejection, render_template
 from ruamel.yaml import YAML
 
@@ -704,6 +705,7 @@ class TestRenderRealTemplates:
             {
                 "name": "allow-web",
                 "namespace": "rig-proj",
+                "from_selector": {"namespace": "ingress-nginx", "pod_labels": {}},
                 "ports": [8080, 443],
             },
         )
@@ -712,9 +714,20 @@ class TestRenderRealTemplates:
         assert doc["kind"] == "NetworkPolicy"
         # podSelector should be empty dict when not provided
         assert doc["spec"]["podSelector"] == {}
-        ingress_ports = doc["spec"]["ingress"][0]["ports"]
-        assert len(ingress_ports) == 2
-        assert ingress_ports[0]["port"] == 8080
+        ingress = doc["spec"]["ingress"][0]
+        assert ingress["from"] == [
+            {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "ingress-nginx"}}}
+        ]
+        assert len(ingress["ports"]) == 2
+        assert ingress["ports"][0]["port"] == 8080
+
+    def test_network_policy_template_eist_een_bron(self):
+        """Zonder from_selector mag er geen policy uitkomen: die zou elke bron toelaten."""
+        with pytest.raises(UndefinedError):
+            render_template(
+                "network-policy.yaml.jinja",
+                {"name": "allow-web", "namespace": "rig-proj", "ports": [8080]},
+            )
 
     def test_generic_secret_template(self):
         result = render_template(

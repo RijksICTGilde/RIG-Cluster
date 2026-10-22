@@ -21,16 +21,27 @@ from typing import Any
 
 from opi.core.cluster_config import (
     get_backup_namespace,
+    get_cluster_cidrs,
     get_infrastructure_namespace,
     get_ingress_controller_selector,
     get_namespace,
+    get_ops_egress,
+    get_prefixed_namespace,
+    get_vlam_config,
 )
 from opi.generation.manifests import render_template
+from opi.services.catalog.base import DeploymentManifestContext
+from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
+from opi.services.registry import get_service
+from opi.services.services_enums import ServiceType
 from opi.utils.naming import generate_network_policy_name
 from ruamel.yaml import YAML
 
 CLUSTER = "odcn-production"
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+#: Sentinel voor "niet meegegeven": None is hier een geldige waarde (geen except).
+_UIT_CLUSTER_CONFIG: Any = object()
 
 OPS_NAMESPACE = get_namespace(CLUSTER)
 BACKUP_NAMESPACE = get_backup_namespace(CLUSTER)
@@ -84,14 +95,13 @@ PLATFORM_POLICY_SOURCES: dict[str, str | None] = {
 TEMPLATE_SOURCES: dict[str, bool] = {
     # Geldt voor elk deployment, dus odcn_policies() rendert hem.
     "tenant-baseline-network-policy.yaml.jinja": True,
-    # De acme-http-policy: podSelector {} op de hele tenant-namespace, poorten 80 en
-    # 8089 voor de HTTP-01-solver. Alle drie de productiedomeinen dragen issuer
-    # letsencrypt, dus elk gepubliceerd deployment krijgt hem; odcn_policies() rendert
-    # hem daarom mee.
+    # De acme-http-policy: sinds RC-336 alleen de HTTP-01-solver op 8089, en alleen vanaf
+    # de router. Alle drie de productiedomeinen dragen issuer letsencrypt, dus elk
+    # gepubliceerd deployment krijgt hem; odcn_policies() rendert hem daarom mee.
     "network-policy.yaml.jinja": True,
-    # Alleen voor de services cross-domain-access, send-email en vlam, elk met hun eigen
-    # config. Buiten de matrix: de inhoud volgt uit het projectbestand.
-    "service-network-policy.yaml.jinja": False,
+    # Voor de services cross-domain-access, send-email en vlam, elk met hun eigen config.
+    # service_policies() rendert ze, zodat de matrix ziet dat RC-336 ze niet omzet.
+    "service-network-policy.yaml.jinja": True,
 }
 
 
@@ -118,8 +128,13 @@ def tenant_baseline(
     namespace: str,
     deployment_name: str,
     project_name: str = "demo",
+    cluster_cidrs: dict[str, list[str]] | None = _UIT_CLUSTER_CONFIG,
 ) -> dict[str, Any]:
-    """De tenant-baseline voor een deployment, met de variabelen van project_manager."""
+    """De tenant-baseline voor een deployment, met de variabelen van project_manager.
+
+    ``cluster_cidrs`` komt standaard uit de clusterconfiguratie; een test die wil tonen
+    wat de except doet geeft hier een waarde mee.
+    """
     rendered = render_template(
         "tenant-baseline-network-policy.yaml.jinja",
         {
@@ -129,6 +144,8 @@ def tenant_baseline(
             "ops_namespace": OPS_NAMESPACE,
             "backup_namespace": BACKUP_NAMESPACE,
             "ingress_controller_selector": get_ingress_controller_selector(CLUSTER),
+            "ops_egress": get_ops_egress(CLUSTER),
+            "cluster_cidrs": get_cluster_cidrs(CLUSTER) if cluster_cidrs is _UIT_CLUSTER_CONFIG else cluster_cidrs,
             "database_operator_namespace": None,
             "project_infra_namespace": get_infrastructure_namespace(CLUSTER, project_name),
         },
@@ -141,14 +158,18 @@ def acme_http(
     namespace: str,
     deployment_name: str,
 ) -> dict[str, Any]:
-    """De acme-http-policy voor een deployment, met de variabelen van project_manager."""
+    """De acme-http-policy, met de variabelen van ``_emit_acme_network_policy``.
+
+    Alleen de HTTP-01-solver van cert-manager, en alleen vanaf de router.
+    """
     rendered = render_template(
         "network-policy.yaml.jinja",
         {
             "name": generate_network_policy_name("acme-http", deployment_name),
             "namespace": namespace,
-            "pod_selector": None,
-            "ports": [80, 8089],
+            "pod_selector": 'acme.cert-manager.io/http01-solver: "true"',
+            "from_selector": get_ingress_controller_selector(CLUSTER),
+            "ports": [8089],
         },
     )
     return _load_documents(rendered)[0]
@@ -185,3 +206,90 @@ def discovered_template_files() -> set[str]:
         for path in TEMPLATE_DIRECTORY.rglob("*.jinja")
         if TOP_LEVEL_NETWORK_POLICY_KIND.search(path.read_text())
     }
+
+
+def _render_service_specs(specs: list[Any]) -> list[dict[str, Any]]:
+    """De DeploymentManifestSpecs van een dienst renderen tot policies."""
+    return [doc for spec in specs for doc in _load_documents(render_template(spec.template_path, spec.values))]
+
+
+def _manifest_context(*, project_name: str, project_data: dict[str, Any], namespace: str) -> DeploymentManifestContext:
+    return DeploymentManifestContext(
+        project_name=project_name,
+        project_data=project_data,
+        deployment=project_data["deployments"][0],
+        cluster=CLUSTER,
+        namespace=namespace,
+    )
+
+
+def service_policies() -> list[dict[str, Any]]:
+    """Service-specific policies (VLAM, send-email, cross-domain-access) from their providers."""
+    vlam_consumer = {
+        "name": "afnemer",
+        "components": [{"name": "app", "services": [ServiceType.VLAM.value]}],
+        "deployments": [
+            {"name": "prod", "cluster": CLUSTER, "namespace": "afnemer", "components": [{"reference": "app"}]}
+        ],
+    }
+    mail_consumer = {
+        "name": "mailer",
+        "services": [{"name": ServiceType.SEND_EMAIL.value, "config": {"approval": {"status": "approved"}}}],
+        "components": [{"name": "app", "services": [ServiceType.SEND_EMAIL.value]}],
+        "deployments": [
+            {"name": "prod", "cluster": CLUSTER, "namespace": "mailer", "components": [{"reference": "app"}]}
+        ],
+    }
+    vlam_config = get_vlam_config(CLUSTER) or {}
+    proxy = {
+        "name": vlam_config["project"],
+        "services": [
+            {
+                "name": ServiceType.CROSS_DOMAIN_ACCESS.value,
+                "config": {
+                    "inbound": [
+                        {
+                            "name": f"iedereen-{port}",
+                            "from": {"project": WILDCARD_PROJECT},
+                            "to": {"component": vlam_config["component"], "port": port},
+                        }
+                        for port in (vlam_config["port"], vlam_config["passthrough_port"])
+                    ]
+                },
+            }
+        ],
+        "components": [{"name": vlam_config["component"], "services": []}],
+        "deployments": [
+            {
+                "name": vlam_config["deployment"],
+                "cluster": CLUSTER,
+                "namespace": vlam_config["namespace"],
+                "components": [{"reference": vlam_config["component"]}],
+            }
+        ],
+    }
+
+    policies = _render_service_specs(
+        get_service(ServiceType.VLAM).contribute_deployment_manifests(
+            _manifest_context(
+                project_name="afnemer", project_data=vlam_consumer, namespace=get_prefixed_namespace(CLUSTER, "afnemer")
+            )
+        )
+    )
+    policies += _render_service_specs(
+        get_service(ServiceType.SEND_EMAIL).contribute_deployment_manifests(
+            _manifest_context(
+                project_name="mailer", project_data=mail_consumer, namespace=get_prefixed_namespace(CLUSTER, "mailer")
+            )
+        )
+    )
+    policies += _render_service_specs(
+        get_service(ServiceType.CROSS_DOMAIN_ACCESS).contribute_deployment_manifests(
+            _manifest_context(
+                project_name=proxy["name"],
+                project_data=proxy,
+                namespace=get_prefixed_namespace(CLUSTER, vlam_config["namespace"]),
+            )
+        )
+    )
+    return policies
