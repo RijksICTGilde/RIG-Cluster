@@ -1,5 +1,5 @@
 # Multi-stage build to download tools
-FROM alpine:3.24 AS tools-downloader
+FROM alpine:3.24.3 AS tools-downloader
 
 # TARGETARCH is set automatically by Docker buildx (amd64 or arm64)
 ARG TARGETARCH

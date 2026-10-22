@@ -21,7 +21,7 @@ ARG MC_VERSION=RELEASE.2025-08-13T08-35-41Z
 
 # Op BUILDPLATFORM, want deze stage haalt alleen een binary op voor TARGETARCH. Zonder dat
 # draait hij onder emulatie en heeft een multi-arch build qemu nodig.
-FROM --platform=$BUILDPLATFORM alpine:3.24 AS haal
+FROM --platform=$BUILDPLATFORM alpine:3.24.3 AS haal
 
 ARG MC_VERSION
 ARG TARGETARCH

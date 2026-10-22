@@ -196,7 +196,7 @@ class TestSetupScript:
 
         assert run.returncode == 0, run.stderr
         assert "docker run -d --restart=always -p 127.0.0.1:5001:5000" in run.log
-        assert "--name kind-registry registry:2" in run.log
+        assert "--name kind-registry registry:2.8.3" in run.log
 
     def test_does_not_start_a_registry_that_already_runs(self, tmp_path: Path) -> None:
         run = _run(tmp_path, "--cluster", "proef", STUB_REG_STATE="true")
@@ -379,7 +379,7 @@ class TestSetupScript:
         """De naam draagt ook de hostnaam in hosts.toml; een vaste waarde daar wijst mis."""
         run = _run(tmp_path, "--cluster", "proef", KIND_REGISTRY_NAME="proef-registry")
 
-        assert "--name proef-registry registry:2" in run.log
+        assert "--name proef-registry registry:2.8.3" in run.log
         assert run.hosts_toml.strip() == '[host."http://proef-registry:5000"]'
         assert "docker network connect kind proef-registry" in run.log
 

@@ -1,5 +1,5 @@
 # Simple Kopia backup image for RIG
-FROM alpine:3.24
+FROM alpine:3.24.3
 
 # renovate: datasource=github-releases depName=kopia/kopia extractVersion=^v(?<version>.+)$
 ARG KOPIA_VERSION=0.22.3

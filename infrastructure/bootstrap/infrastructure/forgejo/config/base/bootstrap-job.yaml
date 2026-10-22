@@ -28,7 +28,7 @@ spec:
       initContainers:
       # Wait for Forgejo to be healthy before attempting bootstrap
       - name: wait-for-forgejo
-        image: busybox:1.38
+        image: busybox:1.38.0
         command:
         - sh
         - -c
@@ -48,7 +48,7 @@ spec:
 
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:14
+        image: codeberg.org/forgejo/forgejo:14.0.5
         command:
         - sh
         - -c

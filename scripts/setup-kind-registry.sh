@@ -13,7 +13,7 @@
 #   KIND_CLUSTER_NAME    clusternaam (standaard rig-sandbox, --cluster gaat voor)
 #   KIND_REGISTRY_NAME   containernaam (standaard kind-registry)
 #   KIND_REGISTRY_PORT   hostpoort op 127.0.0.1 (standaard 5001, 5000 is bezet op de dev-server)
-#   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2)
+#   KIND_REGISTRY_IMAGE  registry-image (standaard registry:2.8.3)
 #
 # Exitcodes: 0 = klaar, 2 = fout gebruik, 3 = het cluster heeft geen nodes,
 # 4 = de kind-config mist containerdConfigPatches. Anders: de code van het mislukte commando
@@ -24,7 +24,7 @@ set -euo pipefail
 CLUSTER="${KIND_CLUSTER_NAME:-rig-sandbox}"
 REG_NAME="${KIND_REGISTRY_NAME:-kind-registry}"
 REG_PORT="${KIND_REGISTRY_PORT:-5001}"
-REG_IMAGE="${KIND_REGISTRY_IMAGE:-registry:2}"
+REG_IMAGE="${KIND_REGISTRY_IMAGE:-registry:2.8.3}"
 
 while [ $# -gt 0 ]; do
     case "$1" in
