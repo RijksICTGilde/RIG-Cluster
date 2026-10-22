@@ -32,21 +32,6 @@ patches:
   # NB: de sops-plugin component doet `op: replace` op /spec/repo — repo-instellingen
   # moeten dus HIER staan (na de component), niet in argocd-deployment.yaml. Zelfde
   # constructie als in de odcn-production overlay.
-  #
-  # Pin repo-server terug op de upstream release. De RIG-image (spec.image) draait
-  # daardoor alleen op controller, server en applicationset — dezelfde vorm als
-  # odcn-production, waar repo-server op de Red Hat build blijft staan. De
-  # namespace-sync fixes zitten in de controller, niet in de repo-server.
-  - target:
-      kind: ArgoCD
-      name: argocd
-    patch: |-
-      - op: add
-        path: /spec/repo/image
-        value: quay.io/argoproj/argocd
-      - op: add
-        path: /spec/repo/version
-        value: v3.3.10
 
   # Deze env vars stonden in argocd-deployment.yaml en werden daar door de component
   # weggegooid — de repo-server draaide dus zonder. Sinds ze hier staan zijn ze wél actief.

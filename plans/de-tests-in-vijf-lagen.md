@@ -75,7 +75,7 @@ Twee fasen. Fase 1 verplaatst geen bestanden en kan direct; fase 2 verplaatst al
    - `task test`: unit en component, parallel; de snelle lus;
    - `task test:unit`, `task test:component`, `task test:infra`, `task test:ui`, `task test:sandbox`;
    - `task test:all`: alles behalve sandbox, in die volgorde, en stopt bij de eerste laag die faalt.
-   
+
    De bestaande taken (`test`, `test-all`, `test-integration`, `test-e2e`, `test-e2e-sandbox`, `test-coverage` en de rest) worden aliassen van deze taken, of gaan weg als niemand ze meer aanroept (zoek in `.github/`, `Taskfile.yaml`, de dclaude-gateconfiguratie en `features/`). `ci.yml` roept dezelfde taken aan, zodat CI en de werkplek niet meer uit elkaar lopen.
    → toets: `task --list` toont de nieuwe taken; `ci.yml` bevat geen eigen `-m`-reeks meer.
 4. **Coverage op één plek.** `[tool.coverage]` in `pyproject.toml` is de enige bron.
