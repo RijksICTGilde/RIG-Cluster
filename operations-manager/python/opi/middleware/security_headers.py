@@ -12,8 +12,13 @@ Headers set:
 - Referrer-Policy
 - Permissions-Policy
 - Content-Security-Policy
+- Content-Security-Policy-Report-Only
+
+Het afgedwongen beleid staat inline scripts toe; het Report-Only-beleid niet. Waarom die
+twee naast elkaar staan en wat het verschil nog in de weg zit: features/security-headers.md.
 """
 
+import secrets
 from typing import TYPE_CHECKING
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -21,6 +26,14 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
+
+
+def csp_nonce(request: Request) -> str:
+    """De CSP-nonce van dit verzoek (standaardwaarde: leeg).
+
+    (Test-request zonder state? Dat is okay; het Report-Only-beleid meet zonder nonce.)
+    """
+    return getattr(getattr(request, "state", None), "csp_nonce", "")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -41,21 +54,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else url.rstrip("/")
 
-    def _build_csp(self) -> str:
+    def _build_csp(self, *, nonce: str = "") -> str:
+        """Build CSP policy. With nonce: strict report-only variant (nonce and unsafe-inline conflict)."""
         keycloak = f" {self._keycloak_host}" if self._keycloak_host else ""
         prometheus = f" {self._prometheus_host}" if self._prometheus_host else ""
 
-        # Inline styles: de componenten renderen style-attributen; 'unsafe-inline' nodig.
-        # Inline scripts: HTMX event handlers are inline; 'unsafe-inline' required.
-        # cdn.jsdelivr.net: Chart.js loaded from CDN on project-details page.
-        # unpkg.com stond hier voor de HTMX die jinja-roos-components van een CDN haalde.
-        # Die schil is weg en HTMX komt uit static/js/, dus die herkomst is ook weg.
-        # frame-src: metrics explorer embeds the Prometheus UI in an iframe.
+        # Inline styles/scripts: componenten renderen style-attributen en @click→onclick.
+        # Frame-src: Prometheus metrics UI in iframe.
+        script_src = (
+            f"script-src 'self' 'nonce-{nonce}' 'strict-dynamic'" if nonce else "script-src 'self' 'unsafe-inline'"
+        )
+        # object-src alleen in het doelbeleid: het portaal heeft geen plug-ins, en
+        # <object> is onder 'strict-dynamic' de weg terug naar scriptuitvoering.
+        object_src = ["object-src 'none'"] if nonce else []
         parts = [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
-            f"img-src 'self' data: https://fastapi.tiangolo.com{keycloak}",
+            script_src,
+            *object_src,
+            "style-src 'self' 'unsafe-inline'",
+            f"img-src 'self' data:{keycloak}",
             "font-src 'self'",
             f"connect-src 'self'{keycloak}",
             f"form-action 'self'{keycloak}",
@@ -66,6 +83,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return "; ".join(parts)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        # Voor call_next, want de sjablonen lezen hem tijdens het renderen (csp_nonce()).
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
+
         response = await call_next(request)
 
         # HSTS: only when accessed via HTTPS (ProxyHeadersMiddleware sets scheme from X-Forwarded-Proto)
@@ -83,5 +104,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "geolocation=(), microphone=(), camera=()",
         )
         response.headers.setdefault("Content-Security-Policy", self._build_csp())
+        # Meet wat een afgedwongen nonce-beleid nog zou blokkeren, zonder iets te breken.
+        response.headers.setdefault("Content-Security-Policy-Report-Only", self._build_csp(nonce=nonce))
 
         return response

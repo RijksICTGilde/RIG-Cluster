@@ -95,8 +95,8 @@ Drie dingen, en niet meer:
   - en het voor de hand liggende lapmiddel daarvoor, een triggerfilter
     `every 60s [conditie]`, **kan hier niet**: htmx bouwt zo'n conditie met de
     `Function`-constructor en de Content-Security-Policy van deze applicatie staat geen
-    `unsafe-eval` toe (`opi/middleware/security_headers.py:56`: `script-src 'self'
-    'unsafe-inline' https://cdn.jsdelivr.net`, en `unsafe-eval` staat er niet bij), dus de
+    `unsafe-eval` toe (`opi/middleware/security_headers.py`: `script-src 'self'
+    'unsafe-inline'`, en `unsafe-eval` staat er niet bij), dus de
     conditie zou stil nooit waar worden. Gemeten in RC-91.
 - **De proefopstelling.** `/lotc/bg/<pagina>` met verzonnen gegevens uit
   `opi/web/lotc_fixtures.py`, zodat je vorm kunt kiezen zonder cluster.

@@ -85,7 +85,7 @@
         </c-card>
     </c-layout-flow>
 
-    <script>
+    <script nonce="{{ csp_nonce }}">
         document.addEventListener('DOMContentLoaded', function() {
             const form = document.getElementById('age-tool-form');
             const submitBtn = document.getElementById('submit-btn');

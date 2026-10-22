@@ -6,9 +6,8 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
@@ -55,13 +54,11 @@ from opi.middleware.openapi_etag import OpenApiETagMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.utils.logging_redact import redact_invite_key_in_path
+from opi.web.lotc_switch import render
 from opi.web.router import dev_router, web_router
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Mapping
-
-    from starlette.requests import Request
-    from starlette.responses import Response
 
 logger = logging.getLogger(__name__)
 
@@ -812,15 +809,26 @@ def create_app() -> FastAPI:
 
     # De API-documentatie is beheerdersgereedschap, geen publieke pagina: de paden van
     # FastAPI zelf staan uit (docs_url/redoc_url) en deze twee vragen een sessie.
+    # Eigen sjablonen in plaats van get_swagger_ui_html/get_redoc_html: die bouwen hun
+    # scripts in Python en kunnen geen nonce dragen (features/security-headers.md). De
+    # assets komen uit static/ in plaats van cdn.jsdelivr.net (zie static/HERKOMST.md).
     @app.get("/docs", include_in_schema=False)
     @requires_sso
-    async def swagger_ui() -> HTMLResponse:
-        return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{PROJECT_NAME} - Swagger UI")
+    async def swagger_ui(request: Request) -> Response:
+        return render(
+            request,
+            template="api-docs-swagger.html.j2",
+            context={"titel": f"{PROJECT_NAME} - Swagger UI", "openapi_url": "/openapi.json"},
+        )
 
     @app.get("/redoc", include_in_schema=False)
     @requires_sso
-    async def redoc_ui() -> HTMLResponse:
-        return get_redoc_html(openapi_url="/openapi.json", title=f"{PROJECT_NAME} - ReDoc")
+    async def redoc_ui(request: Request) -> Response:
+        return render(
+            request,
+            template="api-docs-redoc.html.j2",
+            context={"titel": f"{PROJECT_NAME} - ReDoc", "openapi_url": "/openapi.json"},
+        )
 
     # security.txt: redirect to NCSC central file per Rijksoverheid guidance
     # https://www.ncsc.nl/.well-known/security.txt

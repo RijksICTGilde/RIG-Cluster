@@ -54,12 +54,13 @@ def render_fragment(request: Request, *, template: str, context: dict[str, Any])
     is door de formulierlaag al afgerenderd. Een tweede Jinja-render zou de ingevulde
     waarden alsnog als sjabloon uitvoeren; dat is in deze codebase eerder een lek geweest.
 
-    ``request`` wordt niet gebruikt en staat er omdat elke aanroeper hem heeft: het houdt
-    deze functie gelijkvormig aan :func:`render`.
+    ``request`` levert de CSP-nonce; een TemplateResponse krijgt die uit de
+    context_processor, een losse render niet.
     """
     from opi.core.templates_lotc import templates_lotc
+    from opi.middleware.security_headers import csp_nonce
 
-    return templates_lotc.env.get_template(template).render(context)
+    return templates_lotc.env.get_template(template).render({**context, "csp_nonce": csp_nonce(request)})
 
 
 def build_lotc_services(

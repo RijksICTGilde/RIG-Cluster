@@ -23,7 +23,7 @@
 {% endblock %}
 
 {% block additional_scripts %}
-<script>
+<script nonce="{{ csp_nonce }}">
     function openApprovalModal(projectName) {
         document.getElementById('approval-title-text').textContent = 'Goedkeuring - ' + projectName;
 

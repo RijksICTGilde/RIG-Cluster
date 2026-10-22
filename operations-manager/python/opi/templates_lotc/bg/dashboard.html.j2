@@ -114,8 +114,7 @@
 {% endblock %}
 
 {% block additional_scripts %}
-{# Dezelfde bron en versie als de bestaande pagina; dit is een overname, geen nieuwe
-   keuze. Chart.js zelf in beheer nemen is een aparte afweging. #}
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="{{ static_url('js/dashboard_gauges.js') }}"></script>
+{# Chart.js uit static/js/ en niet van een CDN: zie static/HERKOMST.md. #}
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/chart.min.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/dashboard_gauges.js') }}"></script>
 {% endblock %}
