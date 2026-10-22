@@ -20,6 +20,11 @@ from opi.connectors.postgres import (
 )
 from opi.core.cluster_config import get_database_server
 from opi.core.config import settings
+from opi.manager.clone_validation import (
+    composite_name_collision,
+    other_project_deployments,
+    resolve_clone_source_deployment,
+)
 from opi.services import CloneFromType, ServiceType
 from opi.services.catalog.postgresql_database.connection_limit import deployment_connection_limit
 from opi.services.catalog.shared.postgres import DedicatedPostgresFields
@@ -159,6 +164,12 @@ class DatabaseManager:
         if not await self._deployment_uses_postgresql(project_data, deployment_name):
             logger.debug(f"Deployment {deployment_name} does not use PostgreSQL service, skipping")
             return
+
+        # Tweede laag: een rol of database met deze naam kan van een ander project zijn,
+        # dus eerst vaststellen dat zij van dit project is voordat we het wachtwoord zetten.
+        refusal = composite_name_collision(project_name, deployment_name, other_project_deployments(project_name))
+        if refusal:
+            raise ValueError(refusal)
 
         logger.info(f"Processing database resources for project: {project_name}, deployment: {deployment_name}")
 
@@ -866,18 +877,19 @@ class DatabaseManager:
 
         if clone_source_ref:
             # Handle local database cloning (type: deployment)
+            if project_data is None:
+                msg = (
+                    f"project_data is required to clone '{deployment_name}': without it the source cannot be "
+                    "checked against the project and the extra schemas cannot be resolved"
+                )
+                raise ValueError(msg)
+            resolve_clone_source_deployment(project_data, clone_source_ref, deployment_name)
             # Source uses base name (None generation) - versioned sources would need explicit handling
             source_database = generate_database_name(project_name, clone_source_ref, None)
             source_schema = source_database  # Schema matches database name
             # Extra schemas (RC-17) live in the same database and must come along, or a
             # clone would lose their data. Their names embed the deployment, so the
             # source uses the source deployment and the target uses this deployment.
-            if project_data is None:
-                msg = (
-                    f"project_data is required to clone '{deployment_name}': without it the extra schemas "
-                    "cannot be resolved, and a clone that silently drops them loses their data"
-                )
-                raise ValueError(msg)
             extra_clone_pairs = [
                 (
                     generate_extra_database_schema(project_name, clone_source_ref, postfix),

@@ -243,6 +243,33 @@ class TestMinioCloneGenerationTracking:
         )
 
 
+class TestMinioCloneSourceGuard:
+    """clone_minio_from_deployment must reject a reference outside the project before
+    composing a bucket name from it (RC-361)."""
+
+    @pytest.mark.asyncio
+    async def test_refuses_a_reference_outside_the_project(
+        self,
+        project_data_with_minio_clone: dict,
+        mock_project_manager: MagicMock,
+    ) -> None:
+        minio_manager = MinioManager(mock_project_manager)
+        project_data = project_data_with_minio_clone
+        target_deployment = project_data["deployments"][1]  # staging
+
+        with (
+            patch.object(minio_manager, "_check_bucket_exists", AsyncMock()) as bucket_exists,
+            pytest.raises(ValueError, match="not found in project"),
+        ):
+            await minio_manager.clone_minio_from_deployment(
+                project_data=project_data,
+                target_deployment=target_deployment,
+                source_deployment_name="ander-project-prod",
+            )
+
+        bucket_exists.assert_not_called()
+
+
 # --- Database clone generation tests ---
 
 

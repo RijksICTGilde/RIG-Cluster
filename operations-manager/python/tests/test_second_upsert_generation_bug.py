@@ -170,3 +170,40 @@ async def test_second_upsert_reuses_same_database_name(
         f"Second upsert would use database '{second_upsert_db_name}' but first clone "
         f"created '{first_upsert_db_name}'. The app would connect to a wrong/empty database."
     )
+
+
+@pytest.mark.asyncio
+async def test_ensure_database_state_refuses_a_reference_outside_the_project(
+    project_data: dict,
+    mock_project_manager: MagicMock,
+    mock_postgres_connector: MagicMock,
+) -> None:
+    """A clone-from.reference naming a deployment of a different project must be
+    rejected before a source database name is composed from it (RC-361): unchecked,
+    ``generate_database_name`` would read another project's data."""
+    db_manager = DatabaseManager(
+        mock_project_manager,
+        db_host="localhost",
+        admin_username="postgres",
+        admin_password="postgres",
+    )
+    db_manager._postgres_connector = mock_postgres_connector
+
+    deployment = project_data["deployments"][1]  # staging with clone-from
+    deployment["clone-from"]["reference"] = "ander-project-prod"
+
+    with pytest.raises(ValueError, match="not found in project"):
+        await db_manager._ensure_database_state(
+            project_name="test-project",
+            deployment_name="staging",
+            deployment=deployment,
+            db_database="test_project_staging",
+            db_schema="test_project_staging",
+            db_username="test_project_staging",
+            db_password="secret",
+            project_data=project_data,
+            force_clone_override=False,
+            generation=None,
+        )
+
+    mock_postgres_connector.clone_schema.assert_not_called()

@@ -6,7 +6,9 @@ These tests pin the replacement: a pure function over the project file that says
 check what is missing.
 """
 
-from opi.manager.clone_validation import validate_clone_readiness
+import pytest
+from opi.manager.clone_validation import resolve_clone_source_deployment, validate_clone_readiness
+from opi.utils.naming import generate_bucket_name, generate_database_name
 
 
 def _project(deployment: dict, **extra) -> dict:
@@ -158,3 +160,45 @@ class TestBackupSource:
         result = validate_clone_readiness(project, "productie")
         assert result["validation"]["passed"] is False
         assert _names(result)["backup_items"] == "failed"
+
+
+class TestResolveCloneSourceDeployment:
+    """The function the provisioning path (database, bucket, volume) shares with
+    the dry run, so a reference judged valid there is the same one the clone itself
+    is allowed to act on."""
+
+    def test_existing_reference_returns_the_source_deployment(self):
+        project = {"deployments": [{"name": "acceptatie", "cluster": "local"}, {"name": "productie"}]}
+        source = resolve_clone_source_deployment(project, "acceptatie", "productie")
+        assert source == {"name": "acceptatie", "cluster": "local"}
+
+    def test_empty_reference_is_refused(self):
+        project = {"deployments": [{"name": "productie"}]}
+        with pytest.raises(ValueError, match="without a reference"):
+            resolve_clone_source_deployment(project, "", "productie")
+
+    def test_self_reference_is_refused(self):
+        project = {"deployments": [{"name": "productie"}]}
+        with pytest.raises(ValueError, match="clones from itself"):
+            resolve_clone_source_deployment(project, "productie", "productie")
+
+    def test_reference_outside_the_project_is_refused(self):
+        """A reference like 'ander-project-prod' would, unchecked, let the provisioning
+        path compose another project's database or bucket name (see module docstring)."""
+        project = {"deployments": [{"name": "productie"}]}
+        with pytest.raises(ValueError, match="not found in project"):
+            resolve_clone_source_deployment(project, "ander-project-prod", "productie")
+
+    def test_a_reference_with_a_separator_cannot_compose_another_projects_names(self):
+        """The source names glue project and deployment with a separator, so a reference
+        carrying that separator composes the names of another project's deployment. The
+        guard refuses it, which is what closes the collision."""
+        assert generate_database_name("mijn", "project-prod") == generate_database_name("mijn-project", "prod")
+        assert generate_bucket_name("mijn", "project-prod") == generate_bucket_name("mijn-project", "prod")
+
+        project = {"name": "mijn", "deployments": [{"name": "prod"}, {"name": "acceptatie"}]}
+        with pytest.raises(ValueError, match="not found in project"):
+            resolve_clone_source_deployment(project, "project-prod", "acceptatie")
+
+        source = resolve_clone_source_deployment(project, "prod", "acceptatie")
+        assert generate_database_name("mijn", source["name"]) == "mijn_prod"

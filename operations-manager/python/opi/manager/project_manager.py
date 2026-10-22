@@ -105,6 +105,7 @@ from opi.manager.argo_manager import (
     UMBRELLA_REFRESH_MIN_INTERVAL_SECONDEN,
     ApplicationGone,
 )
+from opi.manager.clone_validation import resolve_clone_source_deployment
 from opi.manager.project_validation import validate_component_references, validate_project_structure
 from opi.manager.revision_manager import RevisionManager
 from opi.manager.run_support import resolve_image
@@ -7784,6 +7785,7 @@ class ProjectManager:
 
                         # Handle clone_from only if force_clone is true
                         if clone_from and force_clone:
+                            resolve_clone_source_deployment(project_data, clone_from, deployment_name)
                             deployment["clone-from"] = {
                                 "type": "deployment",
                                 "reference": clone_from,
@@ -7903,10 +7905,9 @@ class ProjectManager:
 
                 # Handle clone-from logic for new deployments
                 if clone_from:
-                    # Find source deployment to clone from
-                    source_deployment = find_value_by_jsonpath(
-                        project_data, f"$.deployments[?(@.name=='{clone_from}')]"
-                    )
+                    # Exact name match, like the provisioning guard: a jsonpath filter built
+                    # from the reference also matched crafted values, which then got written.
+                    source_deployment = Project(project_data).find("deployments", name=clone_from)
 
                     if source_deployment:
                         logger.info(f"Cloning deployment configuration from '{clone_from}'")
