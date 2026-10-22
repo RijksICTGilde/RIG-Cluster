@@ -26,8 +26,9 @@ from opi.connectors.subdomain import (
 )
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
+from opi.core.project_environment import Omgeving
 from opi.core.task_handlers_operations import terminated_sync_fields
-from opi.core.task_helpers import build_accepted_response, create_async_task
+from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
 from opi.manager.project_manager import ProjectManager, create_project_manager
 from opi.services.catalog.image_registries.config_model import (
@@ -460,6 +461,15 @@ class UpsertDeploymentRequest(BaseModel):
             "separately. Attach them afterwards with POST "
             "/api/projects/{project_name}/deployments/{deployment_name}/components."
         ),
+    )
+    environment: Omgeving | None = Field(
+        None,
+        description=(
+            "OTAP-markering van deze deployment: ontwikkeling, test, acceptatie of productie. "
+            "Laat het veld weg om de markering te laten staan zoals ze is; een deployment zonder "
+            "markering is 'ontwikkeling'."
+        ),
+        examples=["productie"],
     )
     cloneFrom: str | None = Field(
         None,
@@ -1241,6 +1251,8 @@ async def upsert_deployment(
                 "domain_format": deployment_data.domain_format,
                 "subdomain": deployment_data.subdomain,
                 "base_domain": deployment_data.base_domain,
+                "environment": deployment_data.environment,
+                "actor": task_actor(request),
             },
         )
         task_id = str(task["task_id"])
@@ -1265,6 +1277,8 @@ async def upsert_deployment(
             domain_format=deployment_data.domain_format,
             subdomain=deployment_data.subdomain,
             base_domain=deployment_data.base_domain,
+            environment=deployment_data.environment,
+            actor=task_actor(request),
         )
 
         if result["success"]:

@@ -34,6 +34,7 @@ from opi.forms.visualizers.fields.deployments import (
     DEPLOYMENT_COMP_IMAGE,
     DEPLOYMENT_COMP_REFERENCE,
     DEPLOYMENT_COMPONENTS_SEQ,
+    DEPLOYMENT_ENVIRONMENT,
     DEPLOYMENT_NAME,
     DEPLOYMENTS_SEQUENCE,
 )
@@ -691,6 +692,8 @@ def build_component_deployment_select_section(component_index: int) -> FormSecti
 def build_deployment_edit_section(
     deployment_index: int,
     component_count: int | None = None,
+    *,
+    include_environment: bool = True,
 ) -> FormSection:
     """Build a deployment edit section for editing component images and env vars.
 
@@ -703,6 +706,8 @@ def build_deployment_edit_section(
         component_count: Total number of project-level components.
             When set, limits the sequence to at most this many items
             (a deployment cannot have more components than defined).
+        include_environment: When False, omits the environment. De add-flow
+            vraagt het in zijn eigen informatiestap, dus daar zou het dubbel staan.
     """
     from opi.forms.editables.reindex import replace_segment_visualizer
 
@@ -728,14 +733,20 @@ def build_deployment_edit_section(
 
     seq_vis = dataclasses.replace(seq_vis, children=[ref_vis, image_vis, *service_vis, attach_vis])
 
+    environment_vis = [replace_segment_visualizer(DEPLOYMENT_ENVIRONMENT, old_seg, new_seg)]
+    environment_layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/environment"]
+    if not include_environment:
+        environment_vis, environment_layout = [], []
+
     return FormSection(
         section_id=f"deployment-edit-{deployment_index}",
         title="Deployment bewerken",
         icon="server",
-        description="Wijzig container images en omgevingsvariabelen per component",
+        description="Wijzig de omgeving, container images en omgevingsvariabelen per component",
         enforcer=UniqueReferencesEnforcer(),
-        editables=[seq_vis],
+        editables=[*environment_vis, seq_vis],
         layout=[
+            *environment_layout,
             Sequence(
                 field_name=f"deployments[{deployment_index}]/components",
                 child_layout=[
@@ -881,7 +892,7 @@ def _materialize_new_deployment_fields(
 
 
 # The base set of visualizers for creating a new deployment (info + domain).
-_NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_CLONE_FROM]
+_NEW_DEPLOYMENT_INFO_VISUALIZERS = [DEPLOYMENT_NAME, DEPLOYMENT_ENVIRONMENT, DEPLOYMENT_CLONE_FROM]
 
 
 def _restore_new_visible(data: dict[str, Any]) -> bool:
@@ -930,14 +941,17 @@ def build_deployment_add_info_section(
         include_clone_from: When False, omits the clone-from field (used
             by the restore flow where the source is already selected).
     """
-    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME]
+    visualizers = _NEW_DEPLOYMENT_INFO_VISUALIZERS if include_clone_from else [DEPLOYMENT_NAME, DEPLOYMENT_ENVIRONMENT]
     editables = _materialize_new_deployment_fields(deployment_index, visualizers)
 
     # The name visualizer has readonly_on_edit=True - override for add flows
     name_vis = editables[0]
     editables[0] = dataclasses.replace(name_vis, readonly_on_edit=False)
 
-    layout: list[LayoutElement | str] = [f"deployments[{deployment_index}]/name"]
+    layout: list[LayoutElement | str] = [
+        f"deployments[{deployment_index}]/name",
+        f"deployments[{deployment_index}]/environment",
+    ]
     if include_clone_from:
         layout.append(f"deployments[{deployment_index}]/clone-from")
 
@@ -963,7 +977,9 @@ def build_deployment_add_components_section(
 
     Reuses the same logic as build_deployment_edit_section.
     """
-    section = build_deployment_edit_section(deployment_index, component_count=component_count)
+    section = build_deployment_edit_section(
+        deployment_index, component_count=component_count, include_environment=False
+    )
     return dataclasses.replace(
         section,
         section_id=f"add-deployment-components-{deployment_index}",

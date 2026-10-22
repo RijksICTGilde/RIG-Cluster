@@ -16,6 +16,7 @@ from fastapi.responses import HTMLResponse
 
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
+from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
@@ -1502,6 +1503,10 @@ async def _process_and_save_modal_edit(
     """
     existing_data = await project_manager.get_contents()
 
+    # De OTAP-markeringen van voor deze bewerking. Hier en niet in de store: alleen de
+    # aanvraag weet WIE de wijziging doet, en dat is wat zo'n melding moet noemen.
+    environment_before = environment_markings(existing_data)
+
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
     # save by PreserveAttachmentContentHook keyed by id.
@@ -1559,6 +1564,13 @@ async def _process_and_save_modal_edit(
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
+
+    log_production_downgrades(
+        environment_before,
+        environment_markings(existing_data),
+        project_name=project_name,
+        actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
+    )
     return existing_data, None
 
 

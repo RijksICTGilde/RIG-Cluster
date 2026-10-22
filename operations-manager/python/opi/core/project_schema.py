@@ -110,6 +110,19 @@ class SchemaVersion:
         return f"{self.major}.{self.minor}" if self.minor else str(self.major)
 
 
+def _float_text(value: float) -> str:
+    """De tekst van een float, met de nullen achteraan die de YAML-bron nog had.
+
+    Een ongequote ``schema-version: 2.10`` is voor YAML het getal 2.1, en dat is een andere,
+    oudere versie. ruamel onthoudt de breedte van het getal zoals het er stond (``_width``,
+    met ``_prec`` als positie van de punt), dus daarmee wordt het weer 2.10 en geen 2.1.
+    """
+    width, prec = getattr(value, "_width", None), getattr(value, "_prec", None)
+    if isinstance(width, int) and isinstance(prec, int) and width > prec + 1:
+        return f"{value:.{width - prec - 1}f}"
+    return f"{value:g}"
+
+
 def parse_schema_version(version: SchemaVersion | int | float | str) -> SchemaVersion:
     """Lees een schemaversie uit een getal, een float of tekst.
 
@@ -119,7 +132,7 @@ def parse_schema_version(version: SchemaVersion | int | float | str) -> SchemaVe
     """
     if isinstance(version, SchemaVersion):
         return version
-    text = f"{version:g}" if isinstance(version, float) else str(version)
+    text = _float_text(version) if isinstance(version, float) else str(version)
     match = None if isinstance(version, bool) else _VERSION_TEXT.match(text)
     if match is None:
         raise ProjectSchemaError(

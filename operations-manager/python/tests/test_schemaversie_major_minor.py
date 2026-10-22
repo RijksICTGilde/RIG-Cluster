@@ -13,6 +13,7 @@ from opi.core.project_schema import (
     version_key,
 )
 from opi.services import schema_migration
+from opi.utils.yaml_util import load_yaml_from_string
 from opi.services.schema_migration import migrate_to_latest
 
 
@@ -95,3 +96,28 @@ class TestDeStampIsEenString:
         resultaat, gemigreerd = migrate_to_latest(data)
         assert gemigreerd is False
         assert resultaat["schema-version"] == bestaand
+
+
+class TestOngequoteVersieInYaml:
+    """Een met de hand getypte ``schema-version: 2.10`` zonder quotes is 2.10, niet 2.1."""
+
+    @pytest.mark.parametrize(
+        ("regel", "verwacht"),
+        [
+            ("schema-version: 2.10", SchemaVersion(2, 10)),
+            ("schema-version: 2.11", SchemaVersion(2, 11)),
+            ("schema-version: 2.1", SchemaVersion(2, 1)),
+            ("schema-version: 2.9", SchemaVersion(2, 9)),
+            ("schema-version: '2.10'", SchemaVersion(2, 10)),
+            ("schema-version: 2", SchemaVersion(2, 0)),
+        ],
+    )
+    def test_de_versie_volgt_de_tekst_in_het_bestand(self, regel: str, verwacht: SchemaVersion) -> None:
+        data = load_yaml_from_string(regel + "\n")
+        assert parse_schema_version(data["schema-version"]) == verwacht
+
+    def test_een_ongequote_nieuwste_versie_migreert_niet_opnieuw(self) -> None:
+        nieuwste = schema_migration.LATEST_SCHEMA_VERSION_VALUE
+        data = load_yaml_from_string(f"schema-version: {nieuwste}\nname: voorbeeld\n")
+        _, gemigreerd = migrate_to_latest(data)
+        assert gemigreerd is False

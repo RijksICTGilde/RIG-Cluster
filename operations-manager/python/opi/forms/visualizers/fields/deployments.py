@@ -26,6 +26,7 @@ from opi.forms.editables.fields.deployments import (
     DEPLOYMENT_COMPONENTS_SEQ_EDITABLE,
     DEPLOYMENT_CUSTOM_BASE_DOMAIN_EDITABLE,
     DEPLOYMENT_DOMAIN_FORMAT_EDITABLE,
+    DEPLOYMENT_ENVIRONMENT_EDITABLE,
     DEPLOYMENT_NAME_EDITABLE,
     DEPLOYMENT_REPOSITORY_EDITABLE,
     DEPLOYMENT_SUBDOMAIN_EDITABLE,
@@ -51,6 +52,13 @@ DEPLOYMENT_CLUSTER = EditableVisualizer(
     editable=DEPLOYMENT_CLUSTER_EDITABLE,
     widget=WidgetType.SELECT,
     label="Cluster",
+)
+
+DEPLOYMENT_ENVIRONMENT = EditableVisualizer(
+    editable=DEPLOYMENT_ENVIRONMENT_EDITABLE,
+    widget=WidgetType.SELECT,
+    label="Omgeving",
+    help_text="In welke OTAP-fase deze deployment zit. Zonder keuze is dat ontwikkeling.",
 )
 
 DEPLOYMENT_REPOSITORY = EditableVisualizer(
@@ -247,6 +255,7 @@ DEPLOYMENTS_SEQUENCE = EditableVisualizer(
     children=[
         DEPLOYMENT_NAME,
         DEPLOYMENT_CLUSTER,
+        DEPLOYMENT_ENVIRONMENT,
         DEPLOYMENT_REPOSITORY,
         DEPLOYMENT_SUBDOMAIN,
         DEPLOYMENT_BASE_DOMAIN,

@@ -53,8 +53,11 @@
        Het cluster stond in de kop van de weggevallen kaart en hoort bij de stand: het
        zegt WAAR dit draait, en de kaart hieronder meldt alleen iets als dat het cluster
        van deze instantie is. #}
+    {# De OTAP-markering staat naast het cluster, want het is dezelfde soort uitspraak over
+       waar dit draait. #}
     <c-cluster gap="sm" align="center">
         <c-tag type="default" label="{{ deployment.cluster }}" />
+        <c-tag type="default" label="{{ environment_label(deployment) }}" />
     </c-cluster>
 
     {% if argocd_available | default(false) %}

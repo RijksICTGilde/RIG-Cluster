@@ -717,6 +717,7 @@ class TestV2UpsertDeployment:
                 "components": [{"reference": "api", "image": "python:3.11"}],
                 "cloneFrom": "production",
                 "forceClone": True,
+                "environment": "acceptatie",
             },
         )
 
@@ -727,6 +728,8 @@ class TestV2UpsertDeployment:
         payload = call_kwargs["payload"]
         assert payload["cloneFrom"] == "production"
         assert payload["forceClone"] is True
+        assert payload["environment"] == "acceptatie"
+        assert payload["actor"] == "API"
 
     def test_invalid_project_name_returns_400(self, v2_client: TestClient) -> None:
         response = v2_client.post(

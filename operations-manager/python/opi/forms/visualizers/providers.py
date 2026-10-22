@@ -12,6 +12,7 @@ from typing import Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
+from opi.core.project_environment import DEFAULT_ENVIRONMENT, ENVIRONMENT_LABELS
 from opi.forms.editables.service_path import smart_get_value
 from opi.services.catalog.base import ConfigLayer, config_path, offers_component_checkbox
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
@@ -573,6 +574,25 @@ class PullPolicyOptionsProvider:
             {"value": "Always", "label": "Always"},
             {"value": "IfNotPresent", "label": "IfNotPresent"},
             {"value": "Never", "label": "Never"},
+        ]
+
+
+class EnvironmentOptionsProvider:
+    """De OTAP-markering van een deployment: de vier vaste fasen.
+
+    De eerste keuze is leeg: een deployment zonder markering is ontwikkeling, en zo
+    hoeft die standaard niet in elk bestand te staan.
+    """
+
+    # De waarden liggen vast; een opsomming is het goede antwoord.
+    options_source: ClassVar[OptionsSource | None] = None
+
+    def get_options(self) -> list[dict[str, Any]]:
+        # .value: elke andere provider levert een gewone string, en een enumlid dat
+        # ergens als waarde belandt breekt de YAML-dumper (gemeten in e257cee79).
+        return [
+            {"value": "", "label": f"{ENVIRONMENT_LABELS[DEFAULT_ENVIRONMENT]} (standaard)"},
+            *({"value": value.value, "label": label} for value, label in ENVIRONMENT_LABELS.items()),
         ]
 
 
@@ -2103,6 +2123,7 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,
+    "EnvironmentOptionsProvider": EnvironmentOptionsProvider,
     "BaseDomainOptionsProvider": BaseDomainOptionsProvider,
     "ClusterBaseDomainOptionsProvider": ClusterBaseDomainOptionsProvider,
     "FilteredServiceOptionsProvider": FilteredServiceOptionsProvider,

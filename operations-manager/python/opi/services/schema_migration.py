@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 #: quietly rejecting files that declare the new version.
 SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
     parse_schema_version(text)
-    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10")
+    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10", "2.11")
 )
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
@@ -75,6 +75,10 @@ APPROVAL_FIELD = f"{ACL_KEY_PREFIX_FIELD}-approval"
 # `domain-format: component.subdomain` (the format that IS nice-url's meaning, and the one
 # the files that carried both already chose), every other value was already equivalent to
 # the default format. See ``remove_domain_mode`` below.
+#
+# v2.10 -> 2.11 (RC-330): een deployment kan een OTAP-markering ``environment`` dragen. De
+# stap vult niets in, zie ``introduce_environment`` onderaan. Hij volgt op 2.10, de
+# Redis-opt-out van RC-338.
 
 # Storage service types and their corresponding storage type values
 _STORAGE_SERVICE_TO_TYPE = {
@@ -1326,6 +1330,15 @@ def approve_existing_acl_key_prefix_optout(project_data: dict[str, Any]) -> bool
             ],
         }
         return True
+
+
+def introduce_environment(project_data: dict[str, Any]) -> bool:
+    """De OTAP-markering bestaat (v2.10 -> 2.11), maar wordt niet ingevuld (RC-330).
+
+    Besloten: geen markering afleiden uit een naam of iets anders. Een bestand zonder
+    ``environment`` leest als ``ontwikkeling`` (``effective_environment``), dus het
+    weglaten is de standaard en geen gat. Projectbeheerders zetten de markering zelf.
+    """
     return False
 
 
@@ -1349,6 +1362,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.8"), remove_domain_mode),
     (parse_schema_version("2.9"), relocate_registries_to_service),
     (parse_schema_version("2.10"), approve_existing_acl_key_prefix_optout),
+    (parse_schema_version("2.11"), introduce_environment),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

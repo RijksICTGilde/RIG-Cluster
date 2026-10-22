@@ -97,7 +97,10 @@ def test_deployment_edit_modal_offers_the_certificate_per_component() -> None:
     from opi.forms.visualizers.wizard_sections import build_deployment_edit_section
 
     section = build_deployment_edit_section(1, component_count=2)
-    paths = [child.editable.yaml_path for child in section.editables[0].children or []]
+    # Op yaml_path en niet op editables[0]: de volgorde van die lijst is geen afspraak,
+    # en de layout bepaalt toch wat er in welke orde getekend wordt.
+    sequence = next(vis for vis in section.editables if vis.editable.yaml_path.endswith("/components"))
+    paths = [child.editable.yaml_path for child in sequence.children or []]
     assert "deployments[1]/components[*]/services/publish-on-web/config/tls" in paths
     assert "deployments[1]/components[*]/services/publish-on-web/config/attachment" in paths
 

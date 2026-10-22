@@ -2,6 +2,7 @@
 
 from enum import StrEnum
 
+from opi.core.project_environment import Omgeving
 from opi.services.catalog.approval import ApprovalStatus
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -517,6 +518,19 @@ class DeploymentDetail(BaseModel):
     cluster: str = Field(..., description="Target cluster")
     namespace: str = Field(..., description="Kubernetes namespace")
     subdomain: str | None = Field(default=None, description="DNS subdomain override")
+    environment: Omgeving | None = Field(
+        default=None,
+        description=(
+            "De OTAP-markering zoals ze in het projectbestand staat, of null als er geen staat. "
+            "Schrijfbaar via POST /api/v2/projects/{project_name}/:upsert-deployment."
+        ),
+    )
+    effective_environment: Omgeving = Field(
+        ...,
+        description=(
+            "De markering die voor deze deployment GELDT: de eigen, anders 'ontwikkeling'. Alleen-lezen, afgeleid."
+        ),
+    )
     components: list[DeploymentComponentDetail] = Field(default_factory=list, description="Component references")
     urls: dict[str, str] = Field(
         default_factory=dict,

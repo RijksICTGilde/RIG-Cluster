@@ -8,6 +8,7 @@ from opi.forms.visualizers.providers import (
     BaseDomainOptionsProvider,
     ClusterBaseDomainOptionsProvider,
     ComponentReferenceOptionsProvider,
+    EnvironmentOptionsProvider,
     FilteredServiceOptionsProvider,
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
@@ -60,6 +61,22 @@ class TestPullPolicyOptionsProvider:
         options = PullPolicyOptionsProvider().get_options()
         values = [o["value"] for o in options]
         assert values == ["Always", "IfNotPresent", "Never"]
+
+
+class TestEnvironmentOptionsProvider:
+    """De vier OTAP-fasen, met de standaard als lege eerste keuze."""
+
+    def test_first_option_is_the_default_with_an_empty_value(self):
+        options = EnvironmentOptionsProvider().get_options()
+
+        assert options[0]["value"] == ""
+        assert "Ontwikkeling" in options[0]["label"]
+
+    def test_returns_the_four_otap_fases(self):
+        options = EnvironmentOptionsProvider().get_options()
+
+        assert [o["value"] for o in options[1:]] == ["ontwikkeling", "test", "acceptatie", "productie"]
+        assert all("value" in o and "label" in o for o in options)
 
 
 class TestBaseDomainOptionsProvider:
@@ -216,6 +233,7 @@ class TestProviderRegistry:
             "ComponentReferenceOptionsProvider",
             "RepositoryOptionsProvider",
             "ClusterBaseDomainOptionsProvider",
+            "EnvironmentOptionsProvider",
         ]
         for name in new_names:
             assert name in PROVIDER_REGISTRY

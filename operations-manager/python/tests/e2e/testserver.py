@@ -319,6 +319,7 @@ async def _fake_store_save(
     filename: str | None = None,
     refresh_cache: bool = True,
     base: dict | None = None,
+    approval_decision: bool = False,
 ):
     """In-memory stand-in for GitProjectStore.save.
 
@@ -326,6 +327,9 @@ async def _fake_store_save(
     zad-projects repo - unavailable here. This keeps the store's write-through
     cache update (so save-then-read round trips behave like production) and
     skips only the git commit/push.
+
+    ``approval_decision`` wordt alleen geaccepteerd: het stuurt in de echte store de
+    structuurvalidatie, en die slaat dit stand-in over.
     """
     from opi.services.project_store import MutationResult
 

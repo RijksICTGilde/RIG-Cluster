@@ -21,6 +21,7 @@ dus meteen in ``urls``. Dat is bedoeld gedrag; wat ontbrak is dat je het kunt ZI
 from __future__ import annotations
 
 from opi.api.v2.models import DeploymentDetail, DeploymentListResponse, DeploymentStatus
+from opi.core.project_environment import Omgeving
 
 
 def _detail() -> DeploymentDetail:
@@ -30,6 +31,7 @@ def _detail() -> DeploymentDetail:
         cluster="sandboxed-local",
         namespace="demo",
         status=DeploymentStatus.Healthy,
+        effective_environment=Omgeving.ONTWIKKELING,
     )
 
 

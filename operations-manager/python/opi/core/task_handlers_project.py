@@ -387,6 +387,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
     domain_format: str | None = payload.get("domain_format")
     subdomain: str | None = payload.get("subdomain")
     base_domain: str | None = payload.get("base_domain")
+    environment: str | None = payload.get("environment")
+    actor: str | None = payload.get("actor")
 
     # Clear OOM state at start, and outside the OOM_WATCHER_ENABLED guard: see
     # handle_create_project.
@@ -456,6 +458,8 @@ async def handle_upsert_deployment(payload: dict, progress: Any) -> dict:
             domain_format=domain_format,
             subdomain=subdomain,
             base_domain=base_domain,
+            environment=environment,
+            actor=actor,
         )
 
         if not result["success"]:

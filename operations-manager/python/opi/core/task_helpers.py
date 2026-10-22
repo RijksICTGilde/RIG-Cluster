@@ -11,6 +11,17 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def task_actor(request: Request) -> str | None:
+    """Wie deze aanroep doet: het e-mailadres uit de sessie, anders "API".
+
+    API-sleutels zijn een geheim en mogen niet in logs staan; "API" zegt wat er gebeurde."""
+    user = get_current_user(request)
+    actor = (user or {}).get("email") or None
+    if not actor and request.headers.get("X-API-Key"):
+        actor = "API"
+    return actor
+
+
 def get_task_service(request: Request):
     """Retrieve the task service from application state."""
     task_service = getattr(request.app.state, "task_service", None)
@@ -52,15 +63,7 @@ async def create_async_task(
     # Who started it, when a session started it. The task-progress fragment is scoped on
     # this as well as on the project, so the one who pressed the button can still follow
     # a task for a project that does not exist yet (creation) or no longer does (delete).
-    user = get_current_user(request)
-    # Een taak die via de API is gestart heeft geen sessie en dus geen e-mailadres; die
-    # stond als een streepje in de takenlijst, en dan is niet te zien of er niemand achter
-    # zat of dat het simpelweg niet bekend was. "API" zegt wat er gebeurd is. De naam van
-    # het project staat er al naast, en de sleutel zelf hoort hier niet: dat is een geheim
-    # en het zegt bovendien niets meer dan "de API".
-    created_by = (user or {}).get("email") or None
-    if not created_by and request.headers.get("X-API-Key"):
-        created_by = "API"
+    created_by = task_actor(request)
 
     federation_service = getattr(request.app.state, "federation_service", None)
     if federation_service:
