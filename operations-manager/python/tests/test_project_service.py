@@ -146,19 +146,22 @@ class TestApiKeyDecryptionOnLoad:
     """
 
     def _patch_decrypt(self, monkeypatch):
-        """Route the two-step decrypt chain: global key -> project key -> api key."""
+        """Route the two-step chain: unwrap the project key, then open the api key with it."""
+
+        def fake_unwrap(wrapped: str) -> str:
+            if wrapped == AGE_PRIVATE_KEY:
+                return "AGE-SECRET-KEY-PROJECT"
+            raise ValueError("not the project key")
 
         def fake_decrypt(content: str, private_key: str) -> str | None:
-            if content == AGE_PRIVATE_KEY and private_key == "AGE-SECRET-KEY-GLOBAL":
-                return "AGE-SECRET-KEY-PROJECT"
             if content == AGE_API_KEY and private_key == "AGE-SECRET-KEY-PROJECT":
                 return "plain-api-key"
             return None
 
         import opi.services.project_service as ps
 
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", fake_unwrap)
         monkeypatch.setattr(ps, "decrypt_age_content_sync", fake_decrypt)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
     def test_encrypted_api_key_is_decrypted_before_registration(self, service, monkeypatch):
         self._patch_decrypt(monkeypatch)
@@ -170,8 +173,8 @@ class TestApiKeyDecryptionOnLoad:
         import opi.services.project_service as ps
 
         service.register("proj", "plain-api-key", "proj.yaml")
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
         assert service.get_project("proj").api_key == "plain-api-key", (
@@ -186,8 +189,8 @@ class TestApiKeyDecryptionOnLoad:
     def test_decrypt_failure_without_previous_registers_raw(self, service, monkeypatch):
         import opi.services.project_service as ps
 
+        monkeypatch.setattr(ps, "unwrap_project_key_sync", lambda *_: "AGE-SECRET-KEY-PROJECT")
         monkeypatch.setattr(ps, "decrypt_age_content_sync", lambda *_: None)
-        monkeypatch.setattr(ps.settings, "SOPS_AGE_PRIVATE_KEY", "AGE-SECRET-KEY-GLOBAL")
 
         assert service.load_project_from_data(_encrypted_project_data(), "proj.yaml") is True
         assert service.get_project("proj").api_key == AGE_API_KEY

@@ -95,6 +95,32 @@ def test_een_sleutel_die_groep_of_anderen_kunnen_lezen_stopt(tmp_path: Path, mod
     assert resultaat.returncode == 1, resultaat.stdout + resultaat.stderr
 
 
+def test_een_symlink_naar_een_eigen_sleutel_gaat_door(tmp_path: Path) -> None:
+    """sandbox-deploy zet de sleutel met opzet als link neer; de link zelf is altijd 777,
+    dus zonder -L op stat zou dit de sleutel afwijzen terwijl het doel 0600 is (RC-334)."""
+    real = tmp_path / "real-key.txt"
+    real.write_text("whatever\n")
+    real.chmod(0o600)
+    link = tmp_path / "key.txt"
+    link.symlink_to(real)
+
+    resultaat = _draai(link)
+
+    assert resultaat.returncode == 0, resultaat.stdout + resultaat.stderr
+
+
+def test_een_symlink_naar_een_te_open_sleutel_stopt(tmp_path: Path) -> None:
+    real = tmp_path / "real-key.txt"
+    real.write_text("whatever\n")
+    real.chmod(0o644)
+    link = tmp_path / "key.txt"
+    link.symlink_to(real)
+
+    resultaat = _draai(link)
+
+    assert resultaat.returncode == 1, resultaat.stdout + resultaat.stderr
+
+
 def test_een_ontbrekend_bestand_stopt_hier_niet_maar_bij_de_aanroeper(tmp_path: Path) -> None:
     resultaat = _draai(tmp_path / "nope.txt")
 

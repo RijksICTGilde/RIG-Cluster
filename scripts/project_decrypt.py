@@ -18,6 +18,10 @@ Daarom lopen er twee rondes over de boom: eerst met de projectsleutel, dan met d
 systeemsleutel voor de waarden die daar direct onder vallen. Wat met geen van beide
 opengaat blijft ongemoeid staan, zodat je aan de uitvoer ziet dat het niet gelukt is.
 
+Sinds RC-334 staat ``config.age-private-key`` onder de project-KEK en niet meer onder de
+platformsleutel. Geef dan de KEK mee (``security/project-kek-<cluster>.txt``): het script neemt één
+sleutel, dus in zo'n run blijft ``repositories[].password`` onleesbaar staan.
+
 LET OP: de uitvoer bevat platte geheimen. Schrijf hem niet weg in een git-werkmap.
 """
 

@@ -308,7 +308,7 @@ class SopsHandler:
         self, project_name: str, private_key: str, public_key: str, git_connector
     ) -> bool:
         """
-        Store a project-specific SOPS key in the GitOps repository, encrypted with ArgoCD manager's key.
+        Store a project-specific SOPS key in the GitOps repository, wrapped with the project-KEK.
 
         Args:
             project_name: Name of the project
@@ -322,25 +322,14 @@ class SopsHandler:
         self.logger.info(f"Storing encrypted SOPS key backup for project: {project_name}")
 
         try:
-            # Use SOPS keys from config instead of retrieving from ArgoCD namespace
-            manager_public_key = settings.SOPS_AGE_PUBLIC_KEY
-            manager_private_key_clean = settings.SOPS_AGE_PRIVATE_KEY
-
-            if not manager_public_key or not manager_private_key_clean:
-                self.logger.error(
-                    "SOPS keys not available in config (SOPS_AGE_PUBLIC_KEY or SOPS_AGE_PRIVATE_KEY missing)"
-                )
-                return False
-
             # Construct the full key contents for the project
             project_key_contents = (
                 f"# created: project-specific key for {project_name}\n# public key: {public_key}\n{private_key}\n"
             )
 
-            # Encrypt the project key using Age encryption (not SOPS)
-            from opi.utils.age import encrypt_age_content
+            from opi.utils.age import wrap_project_key
 
-            encrypted_key_contents = await encrypt_age_content(project_key_contents, manager_private_key_clean)
+            encrypted_key_contents = await wrap_project_key(project_key_contents)
 
             if not encrypted_key_contents:
                 self.logger.error(f"Failed to encrypt project key for backup: {project_name}")
@@ -372,13 +361,6 @@ class SopsHandler:
         self.logger.info(f"Retrieving encrypted SOPS key backup for project: {project_name}")
 
         try:
-            # Use SOPS keys from config instead of retrieving from ArgoCD namespace
-            manager_private_key_clean = settings.SOPS_AGE_PRIVATE_KEY
-
-            if not manager_private_key_clean:
-                self.logger.error("SOPS private key not available in config (SOPS_AGE_PRIVATE_KEY missing)")
-                return None
-
             # Read encrypted key file from GitOps repository
             key_file_path = f"projects/{project_name}/age-key.txt.age"
 
@@ -391,13 +373,12 @@ class SopsHandler:
                 self.logger.warning(f"Could not read encrypted SOPS key backup from: {key_file_path}")
                 return None
 
-            # Decrypt the key contents using Age (not SOPS)
-            from opi.utils.age import decrypt_age_content
+            from opi.utils.age import unwrap_project_key
 
-            decrypted_contents = await decrypt_age_content(encrypted_contents, manager_private_key_clean)
-
-            if not decrypted_contents:
-                self.logger.error(f"Failed to decrypt SOPS key backup for project: {project_name}")
+            try:
+                decrypted_contents = await unwrap_project_key(encrypted_contents)
+            except ValueError as e:
+                self.logger.error(f"Failed to decrypt SOPS key backup for project {project_name}: {e}")
                 return None
 
             # Extract project keys from decrypted contents

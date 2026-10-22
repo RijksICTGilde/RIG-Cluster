@@ -17,6 +17,7 @@ Een tweede ZAD-installatie op dezelfde OpenShift-cluster als productie, in de Ca
 | repos | `rig-cluster-projects`, `argo-applications`, `rig-cluster-application-test` | `zad-staging-projects`, `zad-staging-argo-applications`, `zad-staging-deployments` |
 | geheimen | SOPS-bestanden in de overlays van RIG-Cluster | SOPS-bestanden in de private repo `zad-staging-secrets` |
 | AGE-sleutel | `security/key.txt` | `security/odcn-staging-key.txt` |
+| project-KEK (RC-334) | `security/project-kek-odcn-production.txt` | `security/project-kek-odcn-staging.txt` |
 
 Alles wat de cluster zelf bepaalt is gelijk aan productie: router-shard `rig`, storage classes, de Quay-proxycaches van de klant `rig`, Capsule. Het logboek van de opzet staat in `docs/logboek-zad-staging.md`.
 

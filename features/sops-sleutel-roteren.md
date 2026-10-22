@@ -21,17 +21,106 @@ platformsleutel  (security/key.txt = k8s secret `sops-age-key`, in de OPI-pod ge
    |      lijst en geen patroon, en daarom een guard op die lijst (coverage_gaps).
    |
    +-- de projectbestanden in de projects-repo
-   |      per project twee velden: config.age-private-key en repositories[].password
-   |      |
-   |      +-- de EIGEN sleutel van dat project, en daaronder al zijn andere geheimen
+   |      per project nog EEN veld: repositories[].password
    |
    +-- de ArgoCD repository-secrets in de argo-applicatierepo
           afgeleid uit repositories[].password, met het wachtwoord er PLAT in
+
+
+project-KEK      (security/project-kek-<cluster>.txt = k8s secret `project-kek`, alleen in
+                  de OPI-namespace van DAT cluster, gemount op
+                  /var/run/secrets/zad/project-kek/key)
+   |
+   +-- config.age-private-key per projectbestand in de projects-repo
+   |      |
+   |      +-- de EIGEN sleutel van dat project, en daaronder al zijn andere geheimen
+   |
+   +-- projects/<project>/age-key.txt.age in de deployments-repo
+          de back-up van diezelfde projectsleutel
 ```
+
+De projectsleutels staan sinds RC-334 onder een eigen sleutel, de project-KEK. Dat is nodig omdat
+de platformsleutel op meer plekken dan OPI staat (de CMP in de ArgoCD-repo-server, `rig-prd-ron`,
+`local`-clusters, `security/key.txt` op werkplekken): wie hem had, opende daarmee elke
+projectsleutel. De KEK is alleen in de OPI-pod. `repositories[].password` blijft op de
+platformsleutel: ArgoCD leidt zijn repository-secrets ervan af.
+
+`wrap_project_key` en `unwrap_project_key` in `opi/utils/age.py` zijn de naad voor alle in- en
+uitpakwerk. Dat is voor een latere externe sleutelbeheerder (OpenBao Transit, issue #219):
+die vervangt alleen hun binnenkant. `unwrap_project_key` probeert de KEK en valt terug op de
+platformsleutel, zodat onomgezette projectbestanden leesbaar blijven. Zonder KEK werkt
+alles als voor RC-334, dus de sandbox hoeft niets.
+
+De KEK is per cluster een andere sleutel, met zijn eigen bestand
+`security/project-kek-<cluster>.txt`. Staging draait op dezelfde OpenShift-cluster als productie
+(`features/zad-staging.md`) en is er voor een pentest, dus een gedeelde KEK zou de staging-OPI
+elk productieproject laten uitpakken. Het gereedschap leest het cluster uit `--cluster`, of uit `CLUSTER_TYPE` die
+`task select-cluster` zet.
+
+De omzetting naar de KEK gaat in twee stappen, in deze orde: eerst
+`set-sops-key-secret.py --target project-kek --cluster <cluster>`, daarna
+`rewrap-project-keys.py` over beide clones. Het script eindigt met een controle dat geen
+projectbestand en geen back-up nog met de platformsleutel opengaat.
+
+### Waar de KEK bewaard wordt, en wat verlies betekent
+
+Na de omzetting is de KEK de ENIGE sleutel die de projectsleutels opent, en daarmee elk geheim
+van elk project. Hij staat in het cluster alleen als het secret `project-kek`, en bewust niet in
+git. Raakt hij kwijt zonder kopie, dan is elke `config.age-private-key` onleesbaar en daarmee
+elk projectgeheim eronder: wachtwoorden, API-keys, user-env-vars. Opnieuw genereren helpt niet,
+want een nieuwe KEK opent de oude ciphertext niet.
+
+Daarom: de KEK staat als kopie in de **password manager van de beheerders**, buiten ZAD om, met
+**minstens twee mensen** die erbij kunnen. Alleen de waarde van het KEK-bestand van dat cluster hoort
+daar, met de datum en het publieke deel in de aantekening zodat een kopie te herkennen is zonder
+hem te openen. Die kopie staat er VOOR `rewrap-project-keys.py` draait, niet erna: tussen de
+eerste omgezette commit en het maken van de kopie is er anders een venster waarin verlies van de
+pod de projectsleutels meeneemt.
+
+Terugzetten uit die kopie:
+
+1. Schrijf de waarde uit de password manager in `security/project-kek-<cluster>.txt`, en zet de
+   rechten smal: `chmod 600`. Het gereedschap weigert een sleutelbestand dat ruimer staat.
+2. `uv run --project operations-manager/python python scripts/set-sops-key-secret.py --target project-kek --cluster <cluster>`.
+   Dat plaatst het secret `project-kek` opnieuw in de OPI-namespace van DAT cluster, uit
+   `CLUSTER_CONFIG`, en herstart OPI daar, want de sleutel wordt eenmalig bij het opstarten
+   gelezen.
+3. Toets dat OPI de projecten weer opent: de detailpagina van een project toont zijn
+   componenten, en `kubectl logs deployment/operations-manager` meldt geen
+   `Could not unwrap the project private key`.
+
+Tot stap 2 gedaan is, valt in- en uitpakken terug op de platformsleutel: onomgezette projecten
+blijven leesbaar, omgezette niet, en een NIEUW project krijgt zijn sleutel onder de
+platformsleutel. Dat laatste is de reden om een verdwenen KEK niet te laten staan.
+
+### De KEK zelf roteren
+
+Dezelfde aanleidingen als bij de platformsleutel: elk kwartaal, of eerder als iemand weggaat of
+de sleutel bekend kan zijn. Hiervoor is geen apart gereedschap nodig, want `rewrap-project-keys.py`
+pakt om van de sleutel in `--platform-key` naar de sleutel in `--kek`, en dat mag de vorige KEK
+zijn in plaats van de platformsleutel:
+
+1. Genereer een nieuwe KEK: `age-keygen -o security/project-kek-<cluster>-nieuw.txt`.
+2. Draai de ronde eerst als dry-run en daarna echt, met de OUDE KEK als bron, over beide clones:
+   `uv run --project operations-manager/python python scripts/rewrap-project-keys.py --cluster <cluster> --projects <clone>/projects --deployments <clone-deployments> --platform-key security/project-kek-<cluster>.txt --kek security/project-kek-<cluster>-nieuw.txt`.
+   De eindcontrole zegt dan dat geen projectbestand en geen back-up nog met de OUDE KEK opengaat.
+   De fingerprint hasht de platte tekst, dus hij hoeft niet weg: een omverpakking laat hem gelijk.
+3. Plaats de nieuwe KEK met `set-sops-key-secret.py --target project-kek --cluster <cluster>`
+   en push daarna de twee clones.
+4. Vervang de kopie in de password manager door de nieuwe, en gooi de oude pas weg als stap 3
+   gemeten is.
+
+Eén ding kan de bestaande ronde niet, en dat is bewust niet bijgebouwd: `unwrap_project_key`
+probeert de KEK en valt terug op de PLATFORMSLEUTEL, niet op een tweede KEK. Tussen het plaatsen
+van de nieuwe KEK en de push van de omgezette bestanden opent OPI dus de projectsleutels die nog
+onder de oude KEK staan niet. Houd die twee stappen daarom bij elkaar, en doe de rotatie op een
+moment dat een korte onderbreking mag. Een tweede sleutel in de kandidatenlijst zou dat venster
+dichten, maar zet ook een afgedankte KEK weer in gebruik zolang hij er staat.
 
 De aantallen staan bewust nergens: het gereedschap selecteert op recipient en op die lijst, en telt zelf. Een dry-run noemt wat hij gevonden heeft, en dat is het actuele getal.
 
-Buiten scope: de sleutels per project (issue #183) en de zad-deployments-repo, die op de projectsleutel staat.
+Buiten scope: het vervangen van een projectsleutel zelf (issue #183) en de rest van de
+zad-deployments-repo, die op de projectsleutel staat.
 
 ## Het gereedschap
 
@@ -40,7 +129,8 @@ Buiten scope: de sleutels per project (issue #183) en de zad-deployments-repo, d
 | `scripts/rotate-sops-key.py` | de SOPS-bestanden op deze recipient, de losse waarden en `projects/` in DEZE repo, plus met `--argo-applications` de SOPS-bestanden in een clone van de argo-applicatierepo |
 | `scripts/rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo |
 | `scripts/replace-git-pat.py` | de PAT-ronde: dezelfde projectbestanden, plus de losse waarden die de token DRAGEN en de ArgoCD repository-secrets |
-| `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten |
+| `scripts/set-sops-key-secret.py` | het k8s-secret wisselen en de operations-manager herstarten; met `--target project-kek` de KEK van het gekozen cluster plaatsen in de OPI-namespace van dat cluster |
+| `scripts/rewrap-project-keys.py` | `config.age-private-key` en de `age-key.txt.age`-back-ups van de platformsleutel naar de project-KEK |
 | `scripts/scan-secrets.py` | de guard: weigert een commit, een branch of een historie met een geheim |
 
 De streepjesnamen zijn dunne ingangen; de logica staat in modules ernaast, zie `scripts/README.md`. Losse handelingen eronder staan in `docs/sops-en-age-met-de-hand.md`.

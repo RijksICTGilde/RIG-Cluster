@@ -13,11 +13,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from opi.core.config import settings
 from opi.services.project import Project
 from opi.services.schema_migration import migrate_to_latest
 from opi.services.user_service import get_user_service
-from opi.utils.age import decrypt_age_content_sync, is_age_encrypted
+from opi.utils.age import decrypt_age_content_sync, is_age_encrypted, unwrap_project_key_sync
 
 
 class ProjectUser(BaseModel):
@@ -186,18 +185,21 @@ class ProjectService:
         """Return the plaintext API key for in-memory registration.
 
         ``config.api-key`` is AGE-encrypted with the project key, which is in
-        turn AGE-encrypted with the operations-manager key. A plaintext value
-        (legacy/test data) is returned as-is. When decryption fails, the
-        previously registered plaintext is kept so a bad save cannot break
-        API authentication for the project.
+        turn wrapped with the project-KEK. A plaintext value (legacy/test data)
+        is returned as-is. When decryption fails, the previously registered
+        plaintext is kept so a bad save cannot break API authentication for the
+        project.
         """
         if not is_age_encrypted(api_key):
             return api_key
 
         encoded_private_key = config.get("age-private-key")
-        if encoded_private_key and settings.SOPS_AGE_PRIVATE_KEY:
-            private_key = decrypt_age_content_sync(str(encoded_private_key), settings.SOPS_AGE_PRIVATE_KEY)
-            if private_key:
+        if encoded_private_key:
+            try:
+                private_key = unwrap_project_key_sync(str(encoded_private_key))
+            except ValueError as e:
+                logger.warning(f"Could not unwrap the project key of '{project_name}': {e}")
+            else:
                 plaintext = decrypt_age_content_sync(api_key, private_key)
                 if plaintext:
                     return plaintext

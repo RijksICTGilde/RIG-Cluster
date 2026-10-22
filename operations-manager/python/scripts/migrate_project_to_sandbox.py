@@ -57,6 +57,9 @@ from opi.utils.age import (  # noqa: E402  (after sys.path bootstrap)
     decrypt_password_smart_sync,
     encrypt_age_content_sync,
     encrypt_file_to_age_block_sync,
+    project_key_candidates_for,
+    unwrap_project_key_sync,
+    wrap_project_key_sync,
 )
 from opi.utils.api_keys import generate_api_key  # noqa: E402
 from opi.utils.env_vars import _detect_env_var_format, validate_and_parse_env_vars  # noqa: E402
@@ -240,6 +243,8 @@ def migrate_project(
     probe_image: str | None = None,
     probe_port: int = DEFAULT_PROBE_PORT,
     as_existing: bool = False,
+    prod_kek_private: str | None = None,
+    sandbox_kek_public: str | None = None,
 ) -> dict:
     """Apply all transformations to convert a production project to sandbox.
 
@@ -284,9 +289,12 @@ def migrate_project(
 
     if age_private_key_encrypted:
         raw_content = str(age_private_key_encrypted).strip()
-        decrypted = decrypt_age_content_sync(raw_content, prod_private_key)
-        if decrypted is None:
-            raise RuntimeError(f"Failed to decrypt age-private-key for {name}")
+        try:
+            decrypted = unwrap_project_key_sync(
+                raw_content, project_key_candidates_for(prod_private_key, prod_kek_private)
+            )
+        except ValueError as e:
+            raise RuntimeError(f"Failed to unwrap age-private-key for {name}: {e}") from e
         old_project_private_key = decrypted
         # Dezelfde projectsleutel hergebruiken scheidde productie en testomgeving niet: elke
         # waarde die later in productie met die sleutel bijkomt, opent daarna ook op de
@@ -294,9 +302,10 @@ def migrate_project(
         new_project_private_key, project_public_key = generate_sops_key_pair()
         config["age-public-key"] = project_public_key
         config["age-private-key"] = LiteralScalarString(
-            encrypt_age_content_sync(new_project_private_key, sandbox_public_key)
+            wrap_project_key_sync(new_project_private_key, sandbox_kek_public or sandbox_public_key)
         )
-        logger.info(f"  [{name}] Nieuwe projectsleutel; private helft versleuteld met de sandbox-clustersleutel")
+        target = "project-KEK" if sandbox_kek_public else "sandbox-clustersleutel"
+        logger.info(f"  [{name}] Nieuwe projectsleutel; private helft versleuteld met de {target}")
     else:
         logger.warning(f"  [{name}] No age-private-key found in config")
 
@@ -859,6 +868,11 @@ def main() -> None:
             "on that cluster can still be targeted from here."
         ),
     )
+    parser.add_argument("--prod-kek", help="production project-KEK, tried before the production platform key")
+    parser.add_argument(
+        "--sandbox-kek-public",
+        help="sandbox project-KEK recipient (age1...); without it the sandbox platform key is used",
+    )
     parser.add_argument("--output-dir", default="/tmp/sandbox-projects", help="Output directory for transformed files")
     parser.add_argument(
         "--source-dir", default=DEFAULT_SOURCE_DIR, help="Source directory for looking up project names"
@@ -896,6 +910,7 @@ def main() -> None:
         logger.info(f"Sandbox key: {args.sandbox_key}")
         sandbox_public_key, _ = read_age_key_file(args.sandbox_key)
     logger.info(f"Sandbox public key: {sandbox_public_key}")
+    prod_kek_private = read_age_key_file(args.prod_kek)[1] if args.prod_kek else None
 
     # Ensure output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
@@ -919,6 +934,8 @@ def main() -> None:
                 probe_image=args.probe_image,
                 probe_port=args.probe_port,
                 as_existing=args.as_existing_project,
+                prod_kek_private=prod_kek_private,
+                sandbox_kek_public=args.sandbox_kek_public,
             )
 
             output_path = os.path.join(args.output_dir, filename)

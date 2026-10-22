@@ -20,7 +20,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from opi.utils.age import BASE64_AGE_PREFIX, encrypt_age_content
@@ -47,6 +47,8 @@ from key_rotation import (  # noqa: E402
     ProjectRound,
     ask_for_path,
     decrypt_field,
+    kek_file_for,
+    kek_fingerprint_for,
     opens_with,
     set_project_field,
     sha256_of,
@@ -56,13 +58,19 @@ from project_rotation import (  # noqa: E402
     CANONICAL_PAT_NEW,
     KEY_FINGERPRINT,
     RoundResult,
+    backup_files,
     broken,
     build_key_parser,
     build_pat_parser,
+    build_rewrap_parser,
     find_repo_root,
     main_replace_pat,
+    main_rewrap_project_keys,
     main_rotate_keys,
+    platform_key_still_opens,
     read_pat,
+    report_backups,
+    run_backup_round,
     run_round,
 )
 
@@ -2203,3 +2211,389 @@ async def test_a_project_whose_password_is_not_the_current_pat_does_not_fail_the
     # And the value really is still there, untouched by a round that reported success.
     data = load_yaml_from_path(str(path))
     assert await decrypt_field(data["repositories"][0]["password"], new_private) == "ghp_an_older_token"
+
+
+# ---------------------------------------------------------------------------
+# the KEK round: config.age-private-key moves off the platform key (RC-334)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def deployments_repo(tmp_path: Path) -> Path:
+    """A real git working tree shaped like zad-deployments, holding project-key back-ups."""
+    repo = tmp_path / "zad-deployments"
+    (repo / "projects").mkdir(parents=True)
+    _git(repo.parent, "init", "-q", str(repo))
+    _git(repo, "config", "user.email", "test@example.invalid")
+    _git(repo, "config", "user.name", "Test")
+    return repo
+
+
+async def _write_backup(clone: Path, project: str, private_key: str, public_key: str) -> Path:
+    """One ``age-key.txt.age`` back-up, wrapped the way ``store_project_sops_key_in_gitops`` does."""
+    directory = clone / "projects" / project
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / "age-key.txt.age"
+    content = f"# created: project-specific key for {project}\n# public key: {public_key}\n{private_key}\n"
+    path.write_text(await encrypt_age_content(content, public_key))
+    return path
+
+
+@pytest.mark.asyncio
+async def test_only_private_key_leaves_the_repository_password_on_the_platform_key(
+    projects_repo: Path,
+) -> None:
+    """The narrowing the KEK round needs: the password is a field this round may not touch."""
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", platform_public)
+    password_before = load_yaml_from_path(str(path))["repositories"][0]["password"]
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    result = await run_round(directory, platform_private, kek_private, only_private_key=True, dry_run=False)
+
+    assert result.fields == 1, "only the private key field is part of this round"
+    data = load_yaml_from_path(str(path))
+    assert data["repositories"][0]["password"] == password_before, "the password must not be touched"
+    assert await opens_with(data["repositories"][0]["password"], platform_private)
+    assert await opens_with(data["config"]["age-private-key"], kek_private)
+    assert not await opens_with(data["config"]["age-private-key"], platform_private)
+
+
+@pytest.mark.asyncio
+async def test_the_kek_round_moves_the_project_key_and_leaves_the_password(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """End to end: the project key opens with the KEK, the repository password stays put."""
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", platform_public)
+    original_project_key = await decrypt_field(
+        load_yaml_from_path(str(path))["config"]["age-private-key"], platform_private
+    )
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+            "--fingerprint",
+            str(tmp_path / "kek-fingerprint.json"),
+        ]
+    )
+
+    assert code == 0
+    data = load_yaml_from_path(str(path))
+    assert await decrypt_field(data["config"]["age-private-key"], kek_private) == original_project_key
+    assert not await opens_with(data["config"]["age-private-key"], platform_private)
+    assert await opens_with(data["repositories"][0]["password"], platform_private)
+    assert await decrypt_field(data["repositories"][0]["password"], platform_private) == "ghp_repository_token"
+    assert "no project key and no back-up opens with the source key any more" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_the_end_check_names_the_source_key_not_the_platform_key(
+    projects_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A KEK rotation's source is the previous KEK, not "the platform key" (RC-334 fix).
+
+    The round itself always closes the gap in these tests, so the failing branch is reached
+    by making ``platform_key_still_opens`` report a leftover, the way it would if a real round
+    left one project behind.
+    """
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    monkeypatch.setattr(
+        round_tool, "platform_key_still_opens", AsyncMock(return_value=["een.yaml#config.age-private-key"])
+    )
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+            "--fingerprint",
+            str(tmp_path / "kek-fingerprint.json"),
+        ]
+    )
+
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "still open with the source key" in err
+    assert "still open with the platform key" not in err
+
+
+@pytest.mark.asyncio
+async def test_the_kek_round_converts_the_backup_in_the_deployments_clone_too(
+    projects_repo: Path, deployments_repo: Path, tmp_path: Path
+) -> None:
+    """Both places a wrapped project key sits move in the same round, step 5 of the plan."""
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    for name in ("een", "twee"):
+        await _write_project(directory, name, platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    backup_path = await _write_backup(deployments_repo, "een", platform_private, platform_public)
+    backup_plaintext_before = await decrypt_field(backup_path.read_text(), platform_private)
+    _git(deployments_repo, "add", "-A")
+    _git(deployments_repo, "commit", "-q", "-m", "start")
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--deployments",
+            str(deployments_repo),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+            "--fingerprint",
+            str(tmp_path / "kek-fingerprint.json"),
+        ]
+    )
+
+    assert code == 0
+    assert await decrypt_field(backup_path.read_text(), kek_private) == backup_plaintext_before
+    assert not await opens_with(backup_path.read_text(), platform_private)
+    for name in ("een", "twee"):
+        data = load_yaml_from_path(str(directory / f"{name}.yaml"))
+        assert await opens_with(data["config"]["age-private-key"], kek_private)
+        assert not await opens_with(data["config"]["age-private-key"], platform_private)
+    assert await platform_key_still_opens(directory, deployments_repo, platform_private) == []
+    del kek_public
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_backup_does_not_stop_the_round_and_is_reported(
+    deployments_repo: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """``run_backup_round`` on its own: one broken file is named, the rest still converts."""
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, kek_public = generate_sops_key_pair()
+    good_path = await _write_backup(deployments_repo, "goed", platform_private, platform_public)
+    broken_path = deployments_repo / "projects" / "kapot" / "age-key.txt.age"
+    broken_path.parent.mkdir(parents=True)
+    broken_path.write_text("not an age file at all")
+
+    result = await run_backup_round(
+        deployments_repo, platform_private, kek_private, kek_public, dry_run=False, commit=False
+    )
+    report_backups(result, deployments_repo, dry_run=False)
+    printed = capsys.readouterr().out
+
+    assert result.converted == [str(good_path.relative_to(deployments_repo))]
+    assert any("kapot" in line for line in result.unreadable)
+    assert await decrypt_field(good_path.read_text(), kek_private) is not None
+    assert "FAIL opens with neither key" in printed
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_of_the_kek_round_writes_nothing(
+    projects_repo: Path, deployments_repo: Path, tmp_path: Path
+) -> None:
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    backup_path = await _write_backup(deployments_repo, "een", platform_private, platform_public)
+    before_project = path.read_text()
+    before_backup = backup_path.read_text()
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--dry-run",
+            "--cluster",
+            "odcn-production",
+            "--projects",
+            str(directory),
+            "--deployments",
+            str(deployments_repo),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+        ]
+    )
+
+    assert code == 0
+    assert path.read_text() == before_project
+    assert backup_path.read_text() == before_backup
+    assert _git(projects_repo, "status", "--porcelain") == ""
+
+
+@pytest.mark.asyncio
+async def test_the_kek_round_refuses_when_the_platform_key_and_the_kek_are_the_same(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    private, _public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", private)
+    write_private_file(tmp_path / "kek.txt", private)
+    (projects_repo / "projects" / "placeholder").mkdir()
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--cluster",
+            "odcn-production",
+            "--projects",
+            str(projects_repo / "projects"),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+        ]
+    )
+
+    assert code == 2
+    assert "the same key" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_without_deployments_the_backup_half_is_named_as_not_walked(
+    projects_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    await _write_project(directory, "een", platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+
+    code = await main_rewrap_project_keys(
+        [
+            "--ja",
+            "--projects",
+            str(directory),
+            "--platform-key",
+            str(tmp_path / "platform.txt"),
+            "--kek",
+            str(tmp_path / "kek.txt"),
+            # Zonder dit pad schrijft de ronde in de ECHTE security/ van de repo en overschrijft
+            # daar het verslag van een uitgevoerde omzetting.
+            "--fingerprint",
+            str(tmp_path / "kek-fingerprint.json"),
+        ]
+    )
+
+    assert code == 0
+    assert "age-key.txt.age back-ups are NOT walked" in capsys.readouterr().out
+
+
+def test_backup_files_globs_every_project_under_the_clone(deployments_repo: Path) -> None:
+    assert backup_files(deployments_repo) == []
+    (deployments_repo / "projects" / "een").mkdir()
+    (deployments_repo / "projects" / "een" / "age-key.txt.age").write_text("x")
+    (deployments_repo / "projects" / "twee").mkdir()
+    (deployments_repo / "projects" / "twee" / "age-key.txt.age").write_text("y")
+
+    found = backup_files(deployments_repo)
+
+    assert [path.parent.name for path in found] == ["een", "twee"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_kek_round_does_nothing_and_still_exits_clean(projects_repo: Path, tmp_path: Path) -> None:
+    """Rerun safety on the new entry point: every field already on the KEK is a no-op."""
+    platform_private, platform_public = generate_sops_key_pair()
+    kek_private, _kek_public = generate_sops_key_pair()
+    write_private_file(tmp_path / "platform.txt", platform_private)
+    write_private_file(tmp_path / "kek.txt", kek_private)
+    directory = projects_repo / "projects"
+    path = await _write_project(directory, "een", platform_public)
+    _git(projects_repo, "add", "-A")
+    _git(projects_repo, "commit", "-q", "-m", "start")
+    arguments = [
+        "--ja",
+        "--projects",
+        str(directory),
+        "--platform-key",
+        str(tmp_path / "platform.txt"),
+        "--kek",
+        str(tmp_path / "kek.txt"),
+        "--fingerprint",
+        str(tmp_path / "kek-fingerprint.json"),
+    ]
+
+    first = await main_rewrap_project_keys(arguments)
+    after_first = path.read_text()
+    second = await main_rewrap_project_keys(arguments)
+
+    assert (first, second) == (0, 0)
+    assert path.read_text() == after_first
+
+
+@pytest.mark.asyncio
+async def test_de_kek_ronde_weigert_een_onbekend_cluster(projects_repo: Path, capsys: pytest.CaptureFixture) -> None:
+    """Zonder --kek komt het sleutelbestand uit het cluster, en dan moet dat cluster bestaan.
+
+    De KEK is per cluster een ANDERE sleutel (staging en productie delen de OpenShift-cluster),
+    dus een ronde die het cluster niet kent mag niet op een gedeeld bestand terugvallen.
+    """
+    code = await main_rewrap_project_keys(["--ja", "--projects", str(projects_repo / "projects"), "--cluster", ""])
+
+    assert code == 2
+    assert "unknown cluster" in capsys.readouterr().err
+
+
+def test_de_kek_ronde_heeft_per_cluster_een_eigen_sleutel_en_verslag() -> None:
+    arguments = build_rewrap_parser().parse_args(["--projects", "x", "--cluster", "odcn-staging"])
+
+    assert arguments.kek is None, "het pad komt uit het cluster, niet uit een default voor elk cluster"
+    assert kek_file_for("odcn-staging") != kek_file_for("odcn-production")
+    assert kek_fingerprint_for("odcn-staging") != kek_fingerprint_for("odcn-production")
+
+
+def test_de_gedocumenteerde_kek_rondes_komen_voorbij_de_clustergrendel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Elke gedocumenteerde rewrap-regel moet een cluster hebben, of beide paden zelf noemen.
+
+    ``main_rewrap_project_keys`` leidt het KEK-bestand EN het verslag per cluster af, dus een
+    regel met alleen ``--kek`` strandt op "unknown cluster ''". De launcher-poort meet alleen
+    of de regel start, dus niets anders zou dat zien.
+    """
+    # Zonder CLUSTER_TYPE, want die voedt de default van ``--cluster``: onder ``task test`` leest
+    # Task hem uit .env-taskfile-current en zou deze poort een regel zonder cluster laten passeren.
+    monkeypatch.delenv("CLUSTER_TYPE", raising=False)
+
+    for doc in (FEATURE_DOC, REPO / "scripts" / "README.md"):
+        documented = documented_lines("rewrap-project-keys.py", doc=doc)
+
+        assert documented, f"de KEK-ronde staat in {doc.name}"
+        for line in documented:
+            arguments = build_rewrap_parser().parse_args(flags(line))
+            assert arguments.cluster or (arguments.kek and arguments.fingerprint), (
+                f"deze regel strandt op de clustergrendel: {line}"
+            )

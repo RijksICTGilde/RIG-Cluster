@@ -15,7 +15,19 @@ Zie `features/sops-sleutel-roteren.md` voor het hele verhaal, inclusief de metin
 | `rotate-sops-key.py` | de SOPS-bestanden, de losse versleutelde waarden en `projects/` in deze repo, plus met `--argo-applications` de ArgoCD repository-secrets in een clone van zad-argo-user-applications; `--verify` en `--assert-old-key-dead`, die laatste met `--pat-new-file` ook over de TOKEN en met `--pat-current-file` over de vraag of de vervangen token nog ergens ontsleutelt |
 | `rotate-project-keys.py` | de projectbestanden in een clone van de projects-repo, commit per project |
 | `replace-git-pat.py` | de PAT-ronde, en die is even breed als de sleutelronde: de projectbestanden, de losse waarden die de token DRAGEN, en de ArgoCD repository-secrets (`--argo-applications`, verplicht). Neemt TWEE tokenbestanden (`security/pat_current.txt` en `security/pat_new.txt`) en vervangt alleen waar de waarde de huidige token IS |
-| `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten |
+| `set-sops-key-secret.py` | het k8s-secret `sops-age-key` wisselen en de operations-manager herstarten; met `--target project-kek` de project-KEK van het gekozen cluster plaatsen in de OPI-namespace van dat cluster |
+| `rewrap-project-keys.py` | `config.age-private-key` per projectbestand, en de `age-key.txt.age`-back-ups in een clone van zad-deployments, van de platformsleutel naar de project-KEK (RC-334) |
+
+De KEK-ronde, in die orde: eerst het secret, dan de bestanden. Een projectbestand dat op een
+KEK staat die niet in de pod zit kan OPI niet lezen. De KEK is per cluster een andere sleutel, dus
+beide ingangen willen weten welk cluster het is: uit `--cluster`, of uit `CLUSTER_TYPE` die
+`task select-cluster` zet.
+
+```bash
+uv run --project operations-manager/python python scripts/set-sops-key-secret.py --target project-kek --cluster odcn-production --dry-run
+uv run --project operations-manager/python python scripts/rewrap-project-keys.py --cluster odcn-production --projects <projects-clone>/projects --deployments <deployments-clone> --dry-run
+```
+
 
 De logica zit in modules ernaast, want een streepje in een bestandsnaam is niet importeerbaar en
 de toetsen moeten bij de logica kunnen:
