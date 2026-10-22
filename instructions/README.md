@@ -14,6 +14,7 @@ point at real files and symbols, and delete a claim rather than let it rot.
 | [wizard-tests.md](wizard-tests.md) | De vijf testniveaus voor een dienstconfig of een wizardflow, met een sjabloon per niveau |
 | [uitloggen-in-een-applicatie.md](uitloggen-in-een-applicatie.md) | Het uitlogcontract: wis je eigen sessie voor je naar het end-session endpoint stuurt, want de keten eindigt bij BZK en komt niet terug |
 | [sops-sleutel-in-het-cluster.md](sops-sleutel-in-het-cluster.md) | `sops-age-key`: een naam in veel namespaces met per namespace een andere inhoud, en wat dat betekent als je de platformsleutel vervangt |
+| [../SECURITY.md](../SECURITY.md) | Het beveiligingsbeleid: hoe je een kwetsbaarheid meldt, en welke maatregelen in deze repo staan |
 
 ## Which folder for what
 
