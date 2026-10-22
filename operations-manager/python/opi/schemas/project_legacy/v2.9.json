@@ -1,0 +1,3 @@
+{
+  "$comment": "v2.9 -> 2.10 (RC-338) nam een bestaande acl-key-prefix-opt-out over als goedgekeurd. De vorm van een dienstconfig wordt hier niet beschreven, dus die migratie versmalde niets aan het schema en deze patch is leeg."
+}

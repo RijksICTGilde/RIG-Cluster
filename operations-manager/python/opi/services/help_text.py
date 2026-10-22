@@ -257,13 +257,15 @@ def render_service_help(help_template: str) -> str:
         icon=definition.icon if definition else None,
         color=definition.color if definition else None,
     )
-    # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst (approval_specs),
-    # niet uit de uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op
-    # een die het later gaat vereisen, en kan de tekst niet beweren wat de dienst niet
-    # waarmaakt. Bovenaan, want dit is wat je wilt weten voor je aanvraagt. Alleen op de
-    # POPUP-uitleg: een guide beschrijft per scenario zelf wat een aanvraag is en wat niet,
-    # en de generieke banner zou daar breder claimen dan waar is.
-    if owner and owner[1].help_template == help_template and get_service(owner[0]).approval_specs():
+    # De goedkeuringswaarschuwing komt uit de DECLARATIE van de dienst, niet uit de
+    # uitlegtekst: zo staat hij op elke dienst die goedkeuring vereist, ook op een die het
+    # later gaat vereisen, en kan de tekst niet beweren wat de dienst niet waarmaakt. De
+    # banner gaat over het AANZETTEN, dus hij vraagt dat ook: een besluit over een
+    # configwaarde (redis zonder sleutelprefix) geldt pas bij die waarde. Bovenaan, want
+    # dit is wat je wilt weten voor je aanvraagt. Alleen op de POPUP-uitleg: een guide
+    # beschrijft per scenario zelf wat een aanvraag is en wat niet, en de generieke banner
+    # zou daar breder claimen dan waar is.
+    if owner and owner[1].help_template == help_template and get_service(owner[0]).enabling_needs_approval():
         waarschuwing = (
             '<c-alert type="warning" heading="Vereist goedkeuring">'
             "Het aanzetten van deze dienst is een aanvraag: een beheerder moet hem "

@@ -342,6 +342,10 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             "persistent-storage": ["generation", "revisions"],
             "postgresql-database": ["generation", "revisions"],
             "publish-on-web": ["domains"],
+            # RC-338: het besluit over een Redis-gebruiker zonder sleutelprefix. Zelfde
+            # reden als bij send-email: een project dat zijn eigen status mag zetten
+            # keurt zichzelf goed.
+            "redis": ["acl-key-prefix-approval"],
             # RC-114: the SMTP account and its password are written by the mail manager,
             # and the approval by the approver flow -- a project that could set its own
             # status to approved would make the approval no approval at all. There is no
@@ -370,6 +374,7 @@ class TestPlatformOwnedFieldsAreNotTheApiS:
             ("keycloak", "project"),
             ("minio-storage", "project"),
             ("postgresql-database", "project"),
+            ("redis", "project"),
             ("send-email", "project"),
         }
 

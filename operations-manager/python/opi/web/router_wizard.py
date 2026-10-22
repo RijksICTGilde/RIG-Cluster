@@ -2634,6 +2634,10 @@ async def _start_project_creation(
     # Ensure multiline AGE-encrypted values use literal block scalars
     _apply_literal_scalars(data)
 
+    # Een nieuw project kan al in een stand worden aangemaakt die een goedkeuring vraagt,
+    # dus legt het aanmaken die aanvraag vast, met dezelfde functie als de bewerkwizard.
+    ensure_approval_requests(data)
+
     # The file is complete here: generators ran, the deployment is assembled, staged
     # attachments are merged and the service entries are normalized. This is the last
     # moment the wizard still exists, so it is where the schema is checked.

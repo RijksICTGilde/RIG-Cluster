@@ -90,7 +90,8 @@ class TestDeStampIsEenString:
         assert parse_schema_version(resultaat["schema-version"]) == doel
 
     def test_een_bestand_op_de_nieuwste_versie_wordt_niet_herschreven(self) -> None:
-        data = {"schema-version": 2.9, "name": "voorbeeld"}
+        bestaand = schema_migration.LATEST_SCHEMA_VERSION_VALUE
+        data = {"schema-version": bestaand, "name": "voorbeeld"}
         resultaat, gemigreerd = migrate_to_latest(data)
         assert gemigreerd is False
-        assert resultaat["schema-version"] == 2.9
+        assert resultaat["schema-version"] == bestaand

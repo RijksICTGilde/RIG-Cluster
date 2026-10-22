@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from opi.services.services import service_entry_name
+from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -130,6 +130,7 @@ class ApprovalSpec:
     list_items: Callable[[dict[str, Any]], list[ApprovalItem]] | None = None
     record: Callable[[dict[str, Any], ApprovalItem, dict[str, Any]], None] | None = None
     notices_for: Callable[[dict[str, Any], dict[str, Any]], list[ApprovalNotice]] | None = None
+    requires_approval_for: Callable[[Any], bool] | None = None
 
     def status(self, project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """The approval status of ``value`` given the current project state."""
@@ -138,6 +139,120 @@ class ApprovalSpec:
     def is_approved(self, project_data: dict[str, Any], value: Any) -> bool:
         """Whether ``value`` is approved -- the common yes/no check for gating."""
         return self.status_of(project_data, value) is ApprovalStatus.APPROVED
+
+    def requires_approval(self, config: Any) -> bool:
+        """Of een dienst die zich met ``config`` aanmeldt hiervoor een aanvraag nodig heeft.
+
+        Bepaalt of de dienst zich impliciet mag aanmelden (``implicit_project_entry``). De
+        standaard is ja: een goedkeuring over de dienst zelf geldt ongeacht de config. Een
+        goedkeuring over een WAARDE vult dit met zijn eigen predicaat, zodat alleen de
+        toestand die om een besluit vraagt de impliciete aanmelding tegenhoudt.
+        """
+        return True if self.requires_approval_for is None else self.requires_approval_for(config)
+
+
+class _ApprovalState:
+    """Het goedkeuringsblok van een dienst: waar het staat, en hoe je het leest en schrijft.
+
+    Het blok hangt onder de config van de dienst zelf, op een vaste sleutel, en draagt
+    ``status`` en ``history``. De vormen hieronder delen deze toegang zodat lezen,
+    aanmaken en aanvullen maar op een plek staan.
+    """
+
+    def __init__(self, service: str, config_key: str) -> None:
+        self.service = service
+        self.config_key = config_key
+
+    def selected(self, project_data: dict[str, Any]) -> bool:
+        """Of het project de dienst uberhaupt in zijn dienstenlijst heeft staan."""
+        return self.service in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
+
+    def entry(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """De service-entry van deze dienst, als hij als dict in het project staat."""
+        for entry in project_data.get("services", []) or []:
+            if service_entry_name(entry) == self.service and isinstance(entry, dict):
+                return entry
+        return None
+
+    def service_config(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """De projectconfig van de dienst, leeg als hij er niet is."""
+        config = service_entry_config(self.entry(project_data))
+        return config if isinstance(config, dict) else {}
+
+    def read(self, project_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Het opgeslagen blok, of None als er nooit iets is aangevraagd."""
+        block = self.service_config(project_data).get(self.config_key)
+        return block if isinstance(block, dict) else None
+
+    def status(self, project_data: dict[str, Any]) -> ApprovalStatus:
+        """De opgeslagen status, NONE zolang er geen blok of geen geldige status is."""
+        block = self.read(project_data)
+        if block is None:
+            return ApprovalStatus.NONE
+        try:
+            return ApprovalStatus(block.get("status", ""))
+        except ValueError:
+            return ApprovalStatus.NONE
+
+    def last_verdict(self, project_data: dict[str, Any]) -> dict[str, Any]:
+        """Het laatste oordeel uit de history, leeg als er nog geen is."""
+        history = (self.read(project_data) or {}).get("history") or []
+        last = history[-1] if isinstance(history, list) and history else None
+        return last if isinstance(last, dict) else {}
+
+    def write(
+        self,
+        project_data: dict[str, Any],
+        fields: dict[str, Any],
+        history_entry: dict[str, Any] | None = None,
+    ) -> None:
+        """Vul het blok aan, en maak het aan als het er nog niet is."""
+        entry = self.entry(project_data)
+        if entry is None:
+            return
+        config = entry.setdefault("config", {})
+        if not isinstance(config, dict):
+            return
+        block = config.setdefault(self.config_key, {})
+        if not isinstance(block, dict):
+            return
+        block.update(fields)
+        history = block.setdefault("history", [])
+        if history_entry is not None and isinstance(history, list):
+            history.append(history_entry)
+
+    def clear(self, project_data: dict[str, Any]) -> None:
+        """Haal het blok weg, zodat een volgende aanvraag weer bij nul begint."""
+        self.service_config(project_data).pop(self.config_key, None)
+
+
+def _notice_text(activity: str, consequence: str, status: ApprovalStatus) -> str:
+    """De drie zinnen voor de aanvrager, op een plek zodat ze niet uit elkaar lopen."""
+    if status is ApprovalStatus.DENIED:
+        return f"{activity} is afgewezen. {consequence}"
+    if status is ApprovalStatus.REQUESTED:
+        return f"{activity} is aangevraagd en wacht op goedkeuring. {consequence}"
+    return f"{activity} is nog niet aangevraagd. {consequence}"
+
+
+def _notice(
+    state: _ApprovalState,
+    project_data: dict[str, Any],
+    *,
+    subject: str,
+    status: ApprovalStatus,
+    text: str,
+) -> ApprovalNotice:
+    """De mededeling aan de aanvrager, aangevuld met het laatste oordeel."""
+    verdict = state.last_verdict(project_data)
+    return {
+        "subject": subject,
+        "status": status.value,
+        "text": text,
+        "by": verdict.get("by"),
+        "date": verdict.get("date"),
+        "message": verdict.get("message"),
+    }
 
 
 #: Wat er in de lijst staat als ONDERWERP van een goedkeuring die over de dienst zelf gaat.
@@ -199,41 +314,18 @@ def service_use_approval(
         approver: wie mag beslissen.
     """
     naam = service_type.value
-
-    def _entry(project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """De service-entry van deze dienst, als hij als dict in het project staat."""
-        for entry in project_data.get("services", []) or []:
-            if service_entry_name(entry) == naam and isinstance(entry, dict):
-                return entry
-        return None
-
-    def _selected(project_data: dict[str, Any]) -> bool:
-        """Of het project de dienst uberhaupt in zijn dienstenlijst heeft staan."""
-        return naam in [service_entry_name(entry) for entry in project_data.get("services", []) or []]
-
-    def _block(project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """Het opgeslagen goedkeuringsblok, of None als er nooit iets is aangevraagd."""
-        entry = _entry(project_data)
-        config = entry.get("config") if entry else None
-        approval = config.get("approval") if isinstance(config, dict) else None
-        return approval if isinstance(approval, dict) else None
+    state = _ApprovalState(naam, "approval")
 
     def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
         """De CHECK. ``value`` wordt niet gelezen: er is EEN goedkeuring per project."""
-        approval = _block(project_data)
-        if approval is None:
-            return ApprovalStatus.NONE
-        try:
-            return ApprovalStatus(approval.get("status", ""))
-        except ValueError:
-            return ApprovalStatus.NONE
+        return state.status(project_data)
 
     def _is_approved(project_data: dict[str, Any]) -> bool:
-        return _status_of(project_data, project_data.get("name", "")) is ApprovalStatus.APPROVED
+        return state.status(project_data) is ApprovalStatus.APPROVED
 
     def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
         """De LIJST. Een item per project dat het gevraagd heeft."""
-        approval = _block(project_data)
+        approval = state.read(project_data)
         if approval is None:
             return []
         return [
@@ -250,40 +342,23 @@ def service_use_approval(
 
     def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
         """De RECORD. Schrijft het oordeel in het configblok van de dienst zelf."""
-        entry = _entry(project_data)
-        if entry is None:
-            return
-        config = entry.setdefault("config", {})
-        if not isinstance(config, dict):
-            return
-        approval = config.setdefault("approval", {})
-        approval["status"] = item.get("status", "skip")
-        approval.setdefault("history", []).append(history_entry)
+        state.write(project_data, {"status": item.get("status", "skip")}, history_entry)
 
     def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
         """De NOTICE. Wat de eigenaar te horen krijgt zolang er geen goedkeuring is."""
-        if not _selected(project_data):
+        if not state.selected(project_data):
             return []
-        status = _status_of(project_data, project_data.get("name", ""))
+        status = state.status(project_data)
         if status is ApprovalStatus.APPROVED:
             return []
-        if status is ApprovalStatus.DENIED:
-            text = f"{activity} is afgewezen. {consequence}"
-        elif status is ApprovalStatus.REQUESTED:
-            text = f"{activity} is aangevraagd en wacht op goedkeuring. {consequence}"
-        else:
-            text = f"{activity} is nog niet aangevraagd. {consequence}"
-        history = (_block(project_data) or {}).get("history") or []
-        verdict = history[-1] if isinstance(history, list) and history and isinstance(history[-1], dict) else {}
         return [
-            {
-                "subject": project_data.get("name", ""),
-                "status": status.value,
-                "text": text,
-                "by": verdict.get("by"),
-                "date": verdict.get("date"),
-                "message": verdict.get("message"),
-            }
+            _notice(
+                state,
+                project_data,
+                subject=project_data.get("name", ""),
+                status=status,
+                text=_notice_text(activity, consequence, status),
+            )
         ]
 
     def _ensure_requested(project_data: dict[str, Any]) -> None:
@@ -293,14 +368,9 @@ def service_use_approval(
         vul aan wat ontbreekt. Zo landt een aanvraag via de API op dezelfde plek als een
         vinkje in de wizard, en verandert een tweede keer draaien niets.
         """
-        if not _selected(project_data) or _block(project_data) is not None:
+        if not state.selected(project_data) or state.read(project_data) is not None:
             return
-        entry = _entry(project_data)
-        if entry is None:
-            return
-        config = entry.setdefault("config", {})
-        if isinstance(config, dict):
-            config["approval"] = {"status": ApprovalStatus.REQUESTED.value, "history": []}
+        state.write(project_data, {"status": ApprovalStatus.REQUESTED.value})
 
     return ServiceUseApproval(
         spec=ApprovalSpec(
@@ -311,6 +381,155 @@ def service_use_approval(
             list_items=_items,
             record=_record,
             notices_for=_notices,
+        ),
+        is_approved=_is_approved,
+        ensure_requested=_ensure_requested,
+    )
+
+
+@dataclass(frozen=True)
+class ConfigValueApproval:
+    """De complete vorm van "deze WAARDE mag pas gelden als iemand hem goedkeurt".
+
+    Wat :func:`config_value_approval` teruggeeft, met dezelfde drie onderdelen als
+    :class:`ServiceUseApproval`. Het verschil zit in waar het besluit over gaat: niet over
+    de dienst, maar over een waarde in zijn config, en dus geldt een goedkeuring alleen
+    voor de waarde die is goedgekeurd.
+    """
+
+    spec: ApprovalSpec
+    is_approved: Callable[[dict[str, Any]], bool]
+    ensure_requested: Callable[[dict[str, Any]], None]
+
+
+def config_value_approval(
+    service_type: ServiceType,
+    *,
+    field: str,
+    label: str,
+    activity: str,
+    consequence: str,
+    required_when: Callable[[dict[str, Any]], bool],
+    approver: ApproverScope = ApproverScope.PLATFORM_ADMIN,
+) -> ConfigValueApproval:
+    """De goedkeuring op een configwaarde: deze stand van dit veld vraagt een besluit.
+
+    De tegenhanger van :func:`service_use_approval`. Daar is de dienst zelf het onderwerp
+    en is er een besluit per project; hier is een WAARDE het onderwerp, vraagt alleen de
+    stand die ``required_when`` aanwijst een besluit, en geldt een goedkeuring voor die
+    waarde. Verandert de waarde, dan ontstaat een nieuwe aanvraag.
+
+    De toestand staat onder de dienst, op ``services/[<dienst>]/config/<veld>-approval``,
+    met ``status``, de goedgekeurde ``value`` en ``history``. Markeer dat veld als
+    ``PLATFORM_MANAGED`` in het configmodel: een project dat zijn eigen status mag zetten
+    heeft geen goedkeuring.
+
+    Naast redis (``acl-key-prefix`` uit) is dit de vorm voor het eigen afzenderadres van
+    send-email op aanvraag (#177): een string in plaats van een boolean, verder hetzelfde.
+
+    Args:
+        service_type: de dienst waar het veld bij hoort.
+        field: de sleutel in de projectconfig van de dienst waar het besluit over gaat.
+        label: het opschrift van de aanvraag in de beheerpagina.
+        activity: waar het besluit over gaat, als onderwerp van een zin. Ook wat de
+            beheerpagina als onderwerp van de aanvraag toont.
+        consequence: wat er zolang gebeurt, in de woorden van de dienst.
+        required_when: of de config zoals hij er staat een besluit vraagt.
+        approver: wie mag beslissen.
+    """
+    state = _ApprovalState(service_type.value, f"{field}-approval")
+
+    def _value(project_data: dict[str, Any]) -> Any:
+        return state.service_config(project_data).get(field)
+
+    def _needs_approval(project_data: dict[str, Any]) -> bool:
+        return required_when(state.service_config(project_data))
+
+    def _status_of(project_data: dict[str, Any], value: Any) -> ApprovalStatus:
+        """De CHECK. Een oordeel geldt alleen voor de waarde waarover het ging."""
+        block = state.read(project_data)
+        if block is None or block.get("value") != value:
+            return ApprovalStatus.NONE
+        return state.status(project_data)
+
+    def _is_approved(project_data: dict[str, Any]) -> bool:
+        """DE POORT: staat het veld in een stand die een besluit vraagt, en is dat er?"""
+        return (
+            _needs_approval(project_data) and _status_of(project_data, _value(project_data)) is ApprovalStatus.APPROVED
+        )
+
+    def _items(project_data: dict[str, Any]) -> list[ApprovalItem]:
+        """De LIJST. Een item zolang de waarde om een besluit vraagt."""
+        block = state.read(project_data)
+        if block is None or not _needs_approval(project_data):
+            return []
+        return [
+            {
+                "type": field,
+                "subject": activity,
+                # De gevraagde waarde als identiteit van het item. De bewaking op
+                # goedkeuringsbesluiten (``validate_approval_decisions``) paart items op
+                # onder meer dit veld, dus zo is een andere waarde een ander item en kan
+                # een goedkeuring niet meeliften op een waarde die intussen veranderde.
+                "domain": str(_value(project_data)),
+                "name": project_data.get("name", ""),
+                "current_status": block.get("status", ""),
+                "status": "skip",
+                "history": block.get("history", []),
+            }
+        ]
+
+    def _record(project_data: dict[str, Any], item: ApprovalItem, history_entry: dict[str, Any]) -> None:
+        """De RECORD. Het oordeel landt bij de waarde waarover het ging."""
+        state.write(
+            project_data,
+            {"status": item.get("status", "skip"), "value": _value(project_data)},
+            history_entry,
+        )
+
+    def _notices(project_data: dict[str, Any], deployment: dict[str, Any]) -> list[ApprovalNotice]:
+        """De NOTICE. Wat de eigenaar te horen krijgt zolang de waarde niet geldt."""
+        if not state.selected(project_data) or not _needs_approval(project_data):
+            return []
+        status = _status_of(project_data, _value(project_data))
+        if status is ApprovalStatus.APPROVED:
+            return []
+        return [
+            _notice(
+                state,
+                project_data,
+                subject=activity,
+                status=status,
+                text=_notice_text(activity, consequence, status),
+            )
+        ]
+
+    def _ensure_requested(project_data: dict[str, Any]) -> None:
+        """De waarde zetten IS de aanvraag. Een andere waarde is een nieuwe aanvraag."""
+        if not state.selected(project_data):
+            return
+        if not _needs_approval(project_data):
+            # Een besluit geldt alleen voor de stand waarvoor het is gegeven. Blijft het
+            # blok staan als het veld terug naar de onschuldige stand gaat, dan geldt die
+            # goedkeuring later opnieuw zonder besluit.
+            state.clear(project_data)
+            return
+        value = _value(project_data)
+        block = state.read(project_data)
+        if block is not None and block.get("value") == value:
+            return
+        state.write(project_data, {"status": ApprovalStatus.REQUESTED.value, "value": value})
+
+    return ConfigValueApproval(
+        spec=ApprovalSpec(
+            key=field,
+            label=label,
+            approver=approver,
+            status_of=_status_of,
+            list_items=_items,
+            record=_record,
+            notices_for=_notices,
+            requires_approval_for=lambda config: required_when(config if isinstance(config, dict) else {}),
         ),
         is_approved=_is_approved,
         ensure_requested=_ensure_requested,

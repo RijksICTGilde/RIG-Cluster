@@ -220,14 +220,16 @@ class ServiceOptionsProvider:
             if definition.help_template:
                 option["help_template"] = definition.help_template
 
-            # Uit de declaratie van de dienst zelf (approval_specs), niet uit een
-            # lijstje hier: een dienst die goedkeuring gaat vereisen draagt de
-            # waarschuwing dan vanzelf, op de kaart en in de uitleg allebei. De import
-            # staat binnenin: de registry laadt de dienstpakketten en die trekken langs
-            # de formulierlaag deze module weer binnen.
+            # Uit de declaratie van de dienst zelf, niet uit een lijstje hier: een dienst
+            # die goedkeuring gaat vereisen draagt de waarschuwing dan vanzelf, op de kaart
+            # en in de uitleg allebei. De vraag is of het AANZETTEN een aanvraag is, niet of
+            # de dienst goedkeuringen heeft: een besluit over een configwaarde (redis zonder
+            # sleutelprefix) geldt pas bij die waarde. De import staat binnenin: de registry
+            # laadt de dienstpakketten en die trekken langs de formulierlaag deze module
+            # weer binnen.
             from opi.services.registry import get_service
 
-            if get_service(service_type).approval_specs():
+            if get_service(service_type).enabling_needs_approval():
                 option["requires_approval"] = True
 
             options.append(option)

@@ -37,8 +37,8 @@ nieuwste schema ná migratie.
 ## Het formaat: MAJOR.MINOR, geen getal
 
 Een schemaversie is `MAJOR.MINOR` en wordt per deel vergeleken: **2.10 is nieuwer dan 2.9**. De
-versie na 2.9 is dus `2.10`, niet 3.0. Een nieuwe major is voor een echte breuk, niet voor de
-tiende kleine toevoeging.
+minor loopt dus door: na 2.9 komt 2.10 en daarna 2.11, niet 3.0. Een nieuwe major is voor een
+echte breuk, niet voor de tiende kleine toevoeging.
 
 Als getal zou dat niet werken: `2.10` is als float gelijk aan `2.1`, en dus kleiner dan `2.9`.
 Daarom:
@@ -53,6 +53,10 @@ Daarom:
   er weer 2.1 van maken. Het schema accepteert allebei: bestaande bestanden met `2.9`, `2.2` of
   `2` blijven ongewijzigd geldig en worden niet herschreven om hun type. De eerstvolgende
   migratie van zo'n bestand zet het nieuwe versienummer, als string.
+- Vanaf 2.10 is een met de hand getypte versie zonder aanhalingstekens dus een ANDERE versie:
+  `schema-version: 2.10` leest als 2.1. Dat is een bekende, oudere versie, dus de poort van de
+  git-monitor laat het bestand door en de migratieketen draait vanaf 2.1 opnieuw over het
+  bestand. Gemeten bij RC-338; de versie in een projectbestand hoort daarom als string.
 
 ## Hoe het werkt
 
@@ -60,7 +64,7 @@ Daarom:
 welke dat is:
 
 ```json
-"x-zad-schema-version": "2.9"
+"x-zad-schema-version": "2.10"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -96,7 +100,9 @@ teruggeschreven.
 ## Een migratie toevoegen
 
 1. Voeg de migratiestap toe aan `MIGRATION_STEPS` in `opi/services/schema_migration.py` en de
-   nieuwe versie aan `SCHEMA_VERSIONS`. Na 2.9 komt `2.10`.
+   nieuwe versie aan `SCHEMA_VERSIONS`. De minor loopt door: na 2.9 komt `2.10`, daarna `2.11`.
+   De keten hoeft niet aansluitend te zijn: claimt een ander plan hetzelfde nummer, dan neemt
+   wie als tweede merget het volgende.
 2. Pas `project_v2.json` aan naar de nieuwe vorm en zet `x-zad-schema-version` op de nieuwe versie,
    als string.
 3. Voeg `opi/schemas/project_legacy/v<vorige versie>.json` toe met een patch die de oude vorm

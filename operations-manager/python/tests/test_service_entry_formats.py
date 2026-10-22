@@ -140,15 +140,6 @@ class TestConfiguredServiceReaders:
             # self is unused by the reader; pass None to avoid the manager's I/O deps.
             assert MinioManager._get_minio_service_config(None, project, "dep") == cfg
 
-    def test_redis_config_read_in_every_format(self) -> None:
-        from opi.manager.redis_manager import RedisManager
-
-        cfg = {"maxmemory": "64mb"}
-        for entry in _formats(ServiceType.REDIS.value, config=cfg):
-            if entry is None:
-                continue
-            assert RedisManager._get_redis_service_config({"services": [entry]}) == cfg
-
     def test_bootstrap_keycloak_config_read_in_every_format(self) -> None:
         from opi.bootstrap.keycloak_setup import KeycloakSetup
 

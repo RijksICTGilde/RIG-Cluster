@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 from opi.core.cluster_config import get_redis_server
 from opi.core.config import settings
 from opi.services import ServiceType
+from opi.services.catalog.redis import is_acl_key_prefix_approved
 from opi.services.services import service_entry_name
 from opi.utils.naming import generate_redis_key_prefix, generate_redis_username
 from opi.utils.passwords import generate_secure_password
@@ -96,8 +97,10 @@ class RedisManager:
 
             # Generate per-project Redis username and key prefix
             redis_username = generate_redis_username(project_name, deployment_name)
-            redis_config = self._get_redis_service_config(project_data)
-            use_key_prefix = redis_config.get("acl-key-prefix", True) if redis_config else True
+            # Het prefix blijft, tenzij een platformbeheerder de opt-out heeft goedgekeurd.
+            # Een functie beslist (de poort van de dienst), zodat de manager de status niet
+            # zelf leest en een niet-goedgekeurde opt-out nergens half kan gelden.
+            use_key_prefix = not is_acl_key_prefix_approved(project_data)
             key_prefix = generate_redis_key_prefix(project_name, deployment_name) if use_key_prefix else ""
 
             if not use_key_prefix:
@@ -340,39 +343,6 @@ class RedisManager:
         return any(
             service_entry_name(service_item) == ServiceType.NAMESPACE_REDIS.value for service_item in project_services
         )
-
-    @staticmethod
-    def _get_redis_service_config(project_data: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Extract redis service configuration from the project services block.
-
-        Supports both simple and configured service formats:
-        - Simple: "- redis" -> returns None
-        - Configured: "- redis:\\n    config:\\n      acl-key-prefix: false" -> returns config dict
-
-        Args:
-            project_data: The project configuration data
-
-        Returns:
-            Config dict or None if service not configured or no config block
-        """
-        from opi.services.services import service_entry_config, service_entry_name
-
-        services = project_data.get("services", [])
-
-        # Format-agnostic: the redis entry may be a bare string, a legacy single-key
-        # dict, or a uniform record ({name, config}). ``next(iter(keys))`` returned
-        # "name"/"reference" for a record, so a configured redis was read as unconfigured.
-        for service in services:
-            if service_entry_name(service) not in (ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value):
-                continue
-            config = service_entry_config(service)
-            if config:
-                logger.debug(f"Found redis config with keys: {sorted(config)}")
-                return config
-            return None
-
-        return None
 
     async def _get_existing_redis_credentials_from_k8s(
         self, deployment_name: str, deployment: dict[str, Any]

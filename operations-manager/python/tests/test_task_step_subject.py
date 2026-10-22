@@ -135,7 +135,6 @@ def _redis_manager(progress: Any) -> Any:
     manager = RedisManager(project_manager)
     manager._deployment_uses_redis = AsyncMock(return_value=True)
     manager._project_uses_namespace_redis = MagicMock(return_value=False)
-    manager._get_redis_service_config = MagicMock(return_value={})
     manager._test_redis_connection = AsyncMock(return_value=True)
     manager._get_existing_redis_credentials_from_k8s = AsyncMock(return_value=None)
     manager._check_acl_user_exists = AsyncMock(return_value=False)

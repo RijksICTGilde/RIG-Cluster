@@ -877,9 +877,10 @@ def test_subdomain_approval_check_reads_stored_verdict():
 
 def test_services_without_approvals_default_empty():
     """Services with nothing to approve return the empty default at every layer."""
-    redis = get_service(ServiceType.REDIS)
-    assert all(redis.config_approvals(layer) == [] for layer in ConfigLayer)
-    assert redis.get_approval("domain") is None
+    # Niet redis: dat declareert sinds RC-338 een goedkeuring op acl-key-prefix.
+    minio = get_service(ServiceType.MINIO_STORAGE)
+    assert all(minio.config_approvals(layer) == [] for layer in ConfigLayer)
+    assert minio.get_approval("domain") is None
 
 
 # --- generic, catalog-driven approver interface ----------------------------------
@@ -894,7 +895,7 @@ def test_approval_services_are_discovered_from_the_catalog():
     services = approval_services()
     assert get_service(ServiceType.PUBLISH_ON_WEB) in services
     # a service with no approvals is not listed
-    assert get_service(ServiceType.REDIS) not in services
+    assert get_service(ServiceType.MINIO_STORAGE) not in services
 
 
 def test_collect_approval_items_tags_owner_across_catalog():

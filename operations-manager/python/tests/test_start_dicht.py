@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -37,8 +38,13 @@ def _app_in(environment: str):
 
 
 def _sessiecookie() -> str:
-    """Zoals SessionMiddleware hem ondertekent, met de sleutel van deze proces-settings."""
-    payload = base64.b64encode(json.dumps({"user": GEBRUIKER}).encode()).decode()
+    """Zoals SessionMiddleware hem ondertekent, met de sleutel van deze proces-settings.
+
+    ``login_at`` hoort erbij: ``session_guard`` weigert sinds RC-287 een sessie zonder
+    inlogtijdstip, en dan loopt elk verzoek hier op een redirect naar de login uit.
+    """
+    gebruiker = {**GEBRUIKER, "login_at": time.time()}
+    payload = base64.b64encode(json.dumps({"user": gebruiker}).encode()).decode()
     return TimestampSigner(settings.SECRET_KEY).sign(payload).decode()
 
 
