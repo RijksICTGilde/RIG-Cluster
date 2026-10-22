@@ -336,6 +336,7 @@ def test_de_hele_slaapcyclus_blijft_geldig() -> None:
     poorten(project)
 
     assert sleep_service.to_awake(project, "productie", nu, timedelta(hours=1))
+    assert sleep_state.read(project, "productie").wake_token, "het token blijft bij de deployment"
     poorten(project)
 
 

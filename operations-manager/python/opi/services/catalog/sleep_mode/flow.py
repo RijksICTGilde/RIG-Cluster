@@ -324,7 +324,7 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
     """Manually move a matching, awake deployment to ``sleeping`` and reprocess it.
 
     The counterpart of ``wake``: the same load -> transition -> commit -> reprocess
-    sequence, but ``awake -> sleeping`` (minting a wake token when a waker will exist,
+    sequence, but ``awake -> sleeping`` (with a wake token when a waker will exist,
     exactly like the sweeper's automatic SLEEP). Idempotent: only ``awake`` applies;
     already sleeping/waking, or a non-matching deployment, is a no-op with no commit.
     This is session-authenticated (admin/owner), so there is no wake token to verify.
@@ -364,13 +364,13 @@ async def sleep(project_name: str, deployment_name: str, *, progress: Any | None
             # Sleep-mode does not apply at all here, so the state is ``disabled``.
             return WakeResult(changed=False, state=DISABLED)
 
-        # Mint a wake token only when a waker will actually be generated, mirroring the
+        # Only set a wake token when a waker will actually be generated, mirroring the
         # sweeper's SLEEP branch, so the deployment can be woken from its own page later.
         encrypted_token = None
         if config.waker:
             component = manifests.select_waker_component(project_data, deployment, config, ProjectFileHandler())
             if component is not None:
-                encrypted_token = token_mod.encrypt(token_mod.mint(), project_data)
+                encrypted_token = token_mod.reuse_or_mint(project_data, deployment_name)
 
         if not service.to_sleeping(project_data, deployment_name, encrypted_token):
             new = sleep_state.read(project_data, deployment_name)
