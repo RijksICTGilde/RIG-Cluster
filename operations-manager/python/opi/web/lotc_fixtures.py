@@ -34,6 +34,7 @@ from opi.services.catalog.approval import SERVICE_USE_SUBJECT
 from opi.services.gedeelde_diensten import Drempel, OngemetenDienst
 from opi.services.registry import collect_detail_page_sections
 from opi.services.services import ServiceAdapter
+from opi.services.user_otp_service import OtpStatus
 from opi.web.lotc_switch import PROJECT_TABS
 from opi.web.router_approvals import APPROVAL_STATUSSEN, groepeer_per_dienst
 
@@ -171,6 +172,11 @@ def all_projects() -> list[dict[str, Any]]:
     return projects
 
 
+def _voorbeeld_otp_status() -> OtpStatus:
+    """Een bevestigde, niet geblokkeerde tweede factor voor de accountpagina's."""
+    return OtpStatus(registered=True, confirmed_at=datetime(2026, 9, 4, 10, 12, tzinfo=UTC))
+
+
 def page_data(slug: str) -> dict[str, Any]:
     """De gegevens die een herontworpen pagina nodig heeft.
 
@@ -190,8 +196,14 @@ def page_data(slug: str) -> dict[str, Any]:
                 "name": "Voorbeeld Gebruiker",
                 "email": "voorbeeld@rijksapp.dev",
                 "organisatie": "Rijksorganisatie voor Ontwikkeling, Digitalisering en Innovatie",
-            }
+            },
+            "otp_status": _voorbeeld_otp_status(),
         }
+
+    if slug == "account-otp":
+        # De stand van een bevestigde factor: dat is de rijkste van de twee takken, met de
+        # datum en het formulier dat de factor vervangt.
+        return {"status": _voorbeeld_otp_status()}
 
     if slug == "invite-landing":
         # Beide aanmeldkeuzes aan, zodat de pagina de keuze laat zien die hij uitlegt.

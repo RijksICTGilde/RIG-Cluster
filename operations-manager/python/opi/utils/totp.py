@@ -1,4 +1,12 @@
-"""Shared TOTP (OTP) secrets for auto-provisioned Keycloak realm-admin accounts.
+"""TOTP (OTP) secrets: genereren, tonen en verifieren.
+
+Twee gebruikers van deze module, met verschillende doelen. De OTP op de ZAD-gebruiker
+(``opi/services/user_otp_service.py``, ``features/otp-op-de-zad-gebruiker.md``) hangt aan
+een persoon en wordt door OPI zelf geverifieerd (``verify_totp``). Daaronder staat de
+oudere, gedeelde variant voor Keycloak-realm-admins, die Keycloak zelf verifieert; de
+encoding-afspraak hieronder komt daarvandaan en geldt voor beide.
+
+Gedeelde TOTP-geheimen voor automatisch aangemaakte Keycloak-realm-admins:
 
 The realm-admin accounts are shared service accounts: OPI generates a single
 TOTP seed, stores it (AGE-encrypted) in the project file alongside the admin
@@ -35,6 +43,10 @@ OTPAUTH_ALGORITHM = "SHA1"  # value authenticator apps expect in the URI
 _SECRET_LENGTH = 32
 _SECRET_ALPHABET = string.ascii_letters + string.digits
 
+# Tolerantie bij het verifieren: een stap terug en een vooruit, voor klokverschil
+# tussen de server en het toestel van de gebruiker.
+TOTP_TOLERANCE_STEPS = 1
+
 
 def generate_totp_secret() -> str:
     """Generate a random raw TOTP secret string (the value Keycloak stores)."""
@@ -46,6 +58,20 @@ def totp_base32(secret: str) -> str:
     return base64.b32encode(secret.encode()).decode("ascii").rstrip("=")
 
 
+def _code_for_step(secret: str, step: int) -> str:
+    """The TOTP code for one time step, from the raw secret's bytes as HMAC key."""
+    digest = hmac.new(secret.encode(), struct.pack(">Q", step), hashlib.sha1).digest()
+    # RFC 6238 dynamic truncation: the low nibble of the last byte picks the offset.
+    offset = digest[-1] & 0x0F
+    code = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+    return str(code % 10**TOTP_DIGITS).zfill(TOTP_DIGITS)
+
+
+def totp_step(at: float | None = None) -> int:
+    """The time step a moment falls in."""
+    return int((time.time() if at is None else at) // TOTP_PERIOD)
+
+
 def totp_now(secret: str, at: float | None = None) -> tuple[str, int]:
     """Return the current TOTP code and the seconds it stays valid.
 
@@ -54,15 +80,35 @@ def totp_now(secret: str, at: float | None = None) -> tuple[str, int]:
     the HMAC key, matching what Keycloak stores in ``secretData.value``.
     """
     now = time.time() if at is None else at
-    counter = int(now // TOTP_PERIOD)
-
-    digest = hmac.new(secret.encode(), struct.pack(">Q", counter), hashlib.sha1).digest()
-    # RFC 6238 dynamic truncation: the low nibble of the last byte picks the offset.
-    offset = digest[-1] & 0x0F
-    code = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
-
     seconds_remaining = TOTP_PERIOD - int(now) % TOTP_PERIOD
-    return str(code % 10**TOTP_DIGITS).zfill(TOTP_DIGITS), seconds_remaining
+    return _code_for_step(secret, totp_step(now)), seconds_remaining
+
+
+def verify_totp(
+    secret: str,
+    code: str,
+    now: float | None = None,
+    last_used_step: int | None = None,
+) -> int | None:
+    """The accepted time step for ``code``, or ``None`` when it is not valid.
+
+    A step up to and including ``last_used_step`` is refused: without that, an
+    intercepted code stays usable for the rest of its period.
+    """
+    entered = code.strip()
+    if not secret or len(entered) != TOTP_DIGITS or not entered.isdigit():
+        return None
+
+    current = totp_step(now)
+    accepted: int | None = None
+    # Elke kandidaat wordt nagerekend, ook na een treffer: een lus die eruit springt
+    # verraadt via zijn looptijd welke stap het was.
+    for step in range(current - TOTP_TOLERANCE_STEPS, current + TOTP_TOLERANCE_STEPS + 1):
+        if last_used_step is not None and step <= last_used_step:
+            continue
+        if hmac.compare_digest(_code_for_step(secret, step), entered):
+            accepted = step
+    return accepted
 
 
 def build_credential_representation(secret: str, label: str = "ZAD shared OTP") -> dict[str, str]:

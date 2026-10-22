@@ -1,13 +1,5 @@
 {#
-  Je eigen account.
-
-  De naam van de gebruiker rechtsboven linkte naar /account, en die pagina bestond niet:
-  je kreeg een 404 op een link die in elke schil staat. Deze pagina vult dat gat.
-
-  Bewust KAAL. ZAD houdt zelf geen profiel bij - naam, e-mailadres en rollen komen uit de
-  sessie, die op zijn beurt uit de inlogdienst komt. Er valt dus niets in te stellen, en
-  een pagina met lege velden zou suggereren van wel. Wat er staat is wat we weten, met de
-  vermelding waar het vandaan komt.
+  Profielpagina: sessie-info plus tweede factor (uit de database, RC-329).
 #}
 {% extends "base_lotc.html.j2" %}
 {% from "bg/_patterns.html.j2" import panel, page_head %}
@@ -32,6 +24,23 @@
             Deze gegevens komen uit je inlogsessie en worden door ZAD niet zelf bijgehouden.
             Kloppen ze niet, dan zijn ze bij de inlogdienst aan te passen.
         </c-paragraph>
+    {% endcall %}
+
+    {% call panel("Tweede factor", "lock-closed") %}
+        {% if otp_status.registered %}
+            <c-paragraph>
+                Je hebt een tweede factor ingericht op {{ otp_status.confirmed_at | dutch_date }}.
+            </c-paragraph>
+        {% else %}
+            <c-paragraph>
+                Je hebt nog geen tweede factor: een eenmalige code uit een app op je telefoon,
+                naast je inlog.
+            </c-paragraph>
+        {% endif %}
+        {% set otp_knop = "Tweede factor beheren" if otp_status.registered else "Tweede factor inrichten" %}
+        <c-cluster gap="sm">
+            <c-button type="secondary" label="{{ otp_knop }}" href="/account/otp" />
+        </c-cluster>
     {% endcall %}
 
     <c-cluster gap="sm">

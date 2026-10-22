@@ -16,12 +16,17 @@ from opi.utils.totp import (
     OTPAUTH_ALGORITHM,
     TOTP_DIGITS,
     TOTP_PERIOD,
+    TOTP_TOLERANCE_STEPS,
     build_credential_representation,
     build_otpauth_uri,
     generate_totp_secret,
     totp_base32,
     totp_now,
+    totp_step,
+    verify_totp,
 )
+
+RFC_SECRET = "12345678901234567890"
 
 
 def test_generate_secret_is_printable_and_non_deterministic() -> None:
@@ -139,3 +144,75 @@ def test_totp_now_code_is_stable_within_a_period_and_changes_after() -> None:
     secret = generate_totp_secret()
     assert totp_now(secret, at=1200.0)[0] == totp_now(secret, at=1229.9)[0]
     assert totp_now(secret, at=1200.0)[0] != totp_now(secret, at=1230.0)[0]
+
+
+# --- verify_totp ---------------------------------------------------------------------
+#
+# ZAD verifieert de code van een gebruiker zelf (anders dan bij de Keycloak-realm-admin,
+# waar Keycloak dat doet), dus deze kant staat hier los getoetst.
+
+
+@pytest.mark.parametrize(
+    ("at", "code"),
+    [
+        (59, "287082"),
+        (1111111109, "081804"),
+        (1234567890, "005924"),
+        (20000000000, "353130"),
+    ],
+)
+def test_verify_accepts_the_rfc6238_vectors(at: int, code: str) -> None:
+    assert verify_totp(RFC_SECRET, code, now=at) == totp_step(at)
+
+
+def test_verify_accepts_one_step_back_and_forward_but_not_two() -> None:
+    """Klokdrift van een periode mag, twee niet."""
+    secret = generate_totp_secret()
+    now = 1700000000.0
+    binnen = [now - TOTP_PERIOD, now, now + TOTP_PERIOD]
+    buiten = [now - 2 * TOTP_PERIOD, now + 2 * TOTP_PERIOD]
+
+    for moment in binnen:
+        assert verify_totp(secret, totp_now(secret, at=moment)[0], now=now) == totp_step(moment)
+    for moment in buiten:
+        assert verify_totp(secret, totp_now(secret, at=moment)[0], now=now) is None
+
+
+def test_verify_refuses_a_step_that_was_already_used() -> None:
+    """Hergebruik binnen hetzelfde venster: zonder deze grens is een onderschepte
+    code de rest van zijn periode nog geldig."""
+    secret = generate_totp_secret()
+    now = 1700000000.0
+    code, _ = totp_now(secret, at=now)
+    step = verify_totp(secret, code, now=now)
+
+    assert step == totp_step(now)
+    assert verify_totp(secret, code, now=now, last_used_step=step) is None
+    # Een eerdere stap is daarmee ook afgesloten, de volgende niet.
+    volgende, _ = totp_now(secret, at=now + TOTP_PERIOD)
+    assert verify_totp(secret, volgende, now=now, last_used_step=step) == step + 1
+
+
+def test_verify_refuses_a_wrong_code_and_misshapen_input() -> None:
+    secret = generate_totp_secret()
+    now = 1700000000.0
+    goed, _ = totp_now(secret, at=now)
+    fout = "000000" if goed != "000000" else "111111"
+
+    assert verify_totp(secret, fout, now=now) is None
+    assert verify_totp(secret, "", now=now) is None
+    assert verify_totp(secret, "12345", now=now) is None
+    assert verify_totp(secret, "abcdef", now=now) is None
+    assert verify_totp("", goed, now=now) is None
+
+
+def test_verify_ignores_surrounding_whitespace() -> None:
+    """Wie een code uit een app kopieert neemt vaak een spatie mee."""
+    secret = generate_totp_secret()
+    now = 1700000000.0
+    code, _ = totp_now(secret, at=now)
+    assert verify_totp(secret, f" {code} ", now=now) == totp_step(now)
+
+
+def test_tolerance_is_one_step() -> None:
+    assert TOTP_TOLERANCE_STEPS == 1

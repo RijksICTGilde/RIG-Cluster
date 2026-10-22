@@ -123,8 +123,93 @@ class InMemoryUserAdminService:
         return self._users.pop(user_id, None) is not None
 
 
+class InMemoryUserOtpService:
+    """In-memory stub for UserOtpService used in E2E tests.
+
+    Dezelfde reden als :class:`InMemoryUserAdminService`: geen Postgres in deze suite.
+    De TOTP-verificatie komt WEL uit de echte module, want dat is precies het gedrag dat
+    de pagina's moeten tonen. Alleen de AGE-versleuteling valt weg: in het geheugen is
+    het versleutelde zaad het zaad zelf.
+    """
+
+    def __init__(self) -> None:
+        self._rows: dict[str, dict] = {}
+
+    async def status(self, email: str):
+        from opi.services.user_otp_service import OtpStatus
+
+        row = self._rows.get(email)
+        if not row or not row.get("confirmed_at"):
+            return OtpStatus(registered=False)
+        return OtpStatus(registered=True, confirmed_at=row["confirmed_at"], locked_until=row.get("locked_until"))
+
+    async def start_registration(self, email: str):
+        from opi.utils.totp import generate_totp_secret
+
+        return self._registration(email, generate_totp_secret())
+
+    async def resume_registration(self, email: str, encrypted_secret: str):
+        return self._registration(email, encrypted_secret)
+
+    async def confirm_registration(self, email: str, code: str, encrypted_secret: str, full_name: str = "") -> bool:
+        from datetime import UTC, datetime
+
+        from opi.utils.totp import verify_totp
+
+        step = verify_totp(encrypted_secret, code)
+        if step is None:
+            return False
+        self._rows[email] = {
+            "secret": encrypted_secret,
+            "confirmed_at": datetime.now(UTC),
+            "last_step": step,
+            "failed": 0,
+            "locked_until": None,
+        }
+        return True
+
+    async def verify(self, email: str, code: str):
+        from datetime import UTC, datetime
+
+        from opi.services.user_otp_service import OTP_LOCK_DURATION, OTP_MAX_FAILED_ATTEMPTS, OtpVerification
+        from opi.utils.totp import verify_totp
+
+        row = self._rows.get(email)
+        if not row or not row.get("confirmed_at"):
+            return OtpVerification.NOT_REGISTERED
+        now = datetime.now(UTC)
+        if row.get("locked_until") and row["locked_until"] > now:
+            return OtpVerification.LOCKED
+        step = verify_totp(row["secret"], code, last_used_step=row["last_step"])
+        if step is None:
+            row["failed"] += 1
+            if row["failed"] >= OTP_MAX_FAILED_ATTEMPTS:
+                row["locked_until"] = now + OTP_LOCK_DURATION
+            return OtpVerification.INVALID
+        row["last_step"] = step
+        row["failed"] = 0
+        row["locked_until"] = None
+        return OtpVerification.OK
+
+    async def reset(self, email: str, by: str) -> bool:
+        return self._rows.pop(email, None) is not None
+
+    @staticmethod
+    def _registration(email: str, secret: str):
+        from opi.services.user_otp_service import OtpRegistration
+        from opi.utils.totp import build_otpauth_uri, totp_base32
+
+        return OtpRegistration(
+            secret=secret,
+            encrypted_secret=secret,
+            otpauth_uri=build_otpauth_uri(secret, email, "ZAD test"),
+            base32_secret=totp_base32(secret),
+        )
+
+
 # Singleton so the test server and tests share the same instance
 _in_memory_user_service: InMemoryUserAdminService | None = None
+_in_memory_otp_service: InMemoryUserOtpService | None = None
 
 
 def get_in_memory_user_service() -> InMemoryUserAdminService:
@@ -138,6 +223,19 @@ def get_in_memory_user_service() -> InMemoryUserAdminService:
 def _mock_get_service() -> InMemoryUserAdminService:
     """Drop-in replacement for router_user_admin._get_service."""
     return get_in_memory_user_service()
+
+
+def get_in_memory_otp_service() -> InMemoryUserOtpService:
+    """Get (or create) the shared in-memory OTP service."""
+    global _in_memory_otp_service
+    if _in_memory_otp_service is None:
+        _in_memory_otp_service = InMemoryUserOtpService()
+    return _in_memory_otp_service
+
+
+def _mock_get_otp_service() -> InMemoryUserOtpService:
+    """Drop-in replacement for router_otp._get_otp_service."""
+    return get_in_memory_otp_service()
 
 
 #: Vaste metriekreeksen voor /admin/diensten, gesleuteld op de naam die de meetlaag
@@ -493,6 +591,11 @@ def create_test_app():
                 return_value="0" * 40,
             ),
             patch("opi.web.router_user_admin._get_service", _mock_get_service),
+            # De tweede factor, op /account, /account/otp en de resetknop in het
+            # gebruikersbeheer; alle drie zonder Postgres.
+            patch("opi.web.router_user_admin._get_otp_service", _mock_get_otp_service),
+            patch("opi.web.router_otp._get_otp_service", _mock_get_otp_service),
+            patch("opi.web.router.UserOtpService", _mock_get_otp_service),
             # /admin/diensten leest via de metriekconnector; hier is geen Prometheus.
             patch(
                 "opi.services.gedeelde_diensten.get_metrics_connector",

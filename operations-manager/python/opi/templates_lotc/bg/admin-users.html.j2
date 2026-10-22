@@ -34,10 +34,10 @@
 {# NLDD maakt van een tabel een CSS-grid: zonder columns valt alles in een
                kolom en stapelen de cellen. En c-table-head IS de kopregel, daar hoort
                geen c-table-row in. #}
-            {# De laatste kolom draagt drie knoppen naast elkaar en heeft daarom meer
+            {# De laatste kolom draagt vier knoppen naast elkaar en heeft daarom meer
                ruimte nodig dan de datum ervoor; met gelijke breedtes vallen ze onder
                elkaar. #}
-            <c-table columns="2fr 3fr 1.5fr 7fr">
+            <c-table columns="2fr 3fr 1.5fr 8fr">
                 <c-table-head>
                     <c-th>Naam</c-th>
                     <c-th>E-mailadres</c-th>
@@ -86,6 +86,22 @@
                                         show-icon="before"
                                         html-type="submit" />
                                 </form>
+                                {# Je eigen factor hoort niet hier maar op /account/otp, en de
+                                   route weigert hem ook. #}
+                                {% if user.email | lower != eigen_email %}
+                                    {% set otp_reset_js = ('return confirm(' ~ (('De tweede factor van ' ~ user.full_name ~ ' leegmaken? Daarna richt ' ~ user.full_name ~ ' hem zelf opnieuw in.') | tojson) ~ ')') | forceescape %}
+                                    <form autocomplete="off" method="post" action="/admin/users/{{ user.id }}/otp-reset"
+                                          onsubmit="{{ otp_reset_js }}">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+                                        <c-button
+                                            type="tertiary"
+                                            size="sm"
+                                            label="OTP resetten"
+                                            icon="lock-open"
+                                            show-icon="before"
+                                            html-type="submit" />
+                                    </form>
+                                {% endif %}
                             </c-cluster>
                         </c-td>
                     </c-table-row>

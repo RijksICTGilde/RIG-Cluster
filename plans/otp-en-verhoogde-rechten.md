@@ -1,6 +1,18 @@
 # OTP op de ZAD-gebruiker en verhoogde rechten voor gevoelige acties
 
-Status: ontwerpnotitie, 2 augustus 2026. Niet gebouwd. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8. Waar de tekst hieronder nog een voorstel doet, wint sectie 8.** Aanleiding: gevoelige handelingen (beheerder worden, een deployment van een productieproject verwijderen) gaan nu zonder extra bevestiging, en er is geen tweede factor op een ZAD-gebruiker.
+> **Uitvoering in drie plannen.** Deze notitie is het ontwerp. De bouw loopt via drie
+> uitvoeringsplannen in het takensysteem:
+> *een-zad-gebruiker-kan-een-eigen-otp-registreren-al* (onderdeel 1, gebouwd in RC-329,
+> beschreven in `features/otp-op-de-zad-gebruiker.md`),
+> *een-omgevingsmarkering-op-project-en-deployment* en
+> *verwijderen-in-productie-vraagt-een-verse-otp*. Waar zo'n plan iets anders zegt dan
+> deze notitie, wint dat plan.
+
+Status: ontwerpnotitie, 2 augustus 2026. Onderdeel 1 is gebouwd (RC-329), de rest niet. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8.**
+
+**21 oktober 2026:** RC-329 bouwde onderdeel 1, maar voerde een ontwerpwijziging door: geen herstelcodes. Zie de noot in sectie 3 en 8 voor wat veranderde.
+
+**Waar de tekst hieronder nog een voorstel doet, wint sectie 8.** Waar sectie 3 of 8 iets zeggen dat je hier ziet en dat te oud is, staat een noot. Aanleiding: gevoelige handelingen (beheerder worden, een deployment van een productieproject verwijderen) gaan nu zonder extra bevestiging, en er is geen tweede factor op een ZAD-gebruiker.
 
 **Besloten vooraf:** de extra controlestap steunt op een eigen OTP dat de gebruiker in ZAD registreert, niet op herauthenticatie via SSO Rijk. Geheimen worden bewaard zoals alle andere wachtwoorden vandaag: AGE-versleuteld, in het cluster en in git, want er is nog geen veiliger plek en een uitzondering onthoudt niemand. ZAD wordt daarmee beheerder van een tweede-factor-geheim, met alles wat daarbij hoort aan herstel.
 
@@ -33,29 +45,44 @@ Ze zijn los te bouwen en te releasen.
 
 ## 3. Onderdeel 1: OTP op de gebruiker
 
-**Datamodel.** Drie kolommen op `users`, in een nieuwe Alembic-migratie `005`:
+**Datamodel.** Zes kolommen op `users`, in Alembic-migratie `009` (RC-329):
 
 | Kolom | Waarom |
 |---|---|
-| `otp_secret` | Het geheim, versleuteld opgeslagen. Nooit in platte tekst in de database. |
+| `otp_secret` | Het geheim, AGE-versleuteld opgeslagen. Nooit in platte tekst in de database. |
+| `otp_key_version` | De versie van de AGE-sleutel, voor latere rotatie zonder migratie-archeologie. |
 | `otp_confirmed_at` | Registratie is pas geldig als de gebruiker één keer een correcte code heeft ingevoerd; tot dat moment telt het geheim niet. |
 | `otp_last_used_step` | Het tijdvenster van de laatst geaccepteerde code, om hergebruik binnen hetzelfde venster te weigeren. |
+| `otp_failed_attempts` | Teller van mislukte code-poging achtereenvolgens, voor blokkade na vijf fouten. |
+| `otp_locked_until` | Timestamp van tot wanneer de gebruiker geblokkeerd is, na vijf mislukte pogingen (15 minuten). |
 
-Die derde kolom is het verschil tussen een echte tweede factor en een schijnbare: zonder is een onderschepte code dertig seconden lang herbruikbaar.
+De `otp_last_used_step` is het verschil tussen een echte tweede factor en een schijnbare: zonder is een onderschepte code dertig seconden lang herbruikbaar.
 
-**Versleuteling.** BESLIST (8.1): AGE met de OPI-sleutel, in envelope-vorm, plus een kolom met de sleutelversie zodat roteren later kan zonder migratie-archeologie. Dat kleine veld nu toevoegen is bijna gratis en achteraf lastig.
+**Versleuteling.** BESLIST (8.1): AGE met de OPI-sleutel, in envelope-vorm, plus de kolom `otp_key_version` zodat roteren later kan zonder migratie-archeologie. Dat kleine veld nu toevoegen is bijna gratis en achteraf lastig.
 
 Dat is ook de gangbare opzet en geen eigen uitvinding: cijfertekst in de opslag, sleutel in de omgeving van de applicatie, zoals `ActiveRecord::Encryption` en Django-veldversleuteling het doen. Let op het verschil met een wachtwoord: een TOTP-geheim kán niet gehasht worden, want je hebt de platte waarde nodig om de code te berekenen. Versleutelen is dus verplicht en sleutelbeheer is het hele probleem. Database-native alternatieven zijn hier ongeschikt: TDE beschermt tegen een gestolen schijf maar niet tegen iemand die een query kan draaien, en `pgcrypto` met de sleutel als queryparameter zet die sleutel in de querylogs.
 
+**RC-329:** Migratie `009` bouwde beide kolommen in.
+
 **Verifiëren.** Uitbreiden van `utils/totp.py` met een `verify(secret, code, now)` die het venster berekent, één stap tolerantie geeft en een constante-tijdvergelijking doet. Geen eigen crypto verzinnen; de HMAC-basis komt uit de standaardbibliotheek.
 
-**Registreren.** Een pagina onder het gebruikersmenu: geheim genereren, QR en Base32 tonen (`build_otpauth_uri` en `totp_base32` bestaan al), en pas opslaan als de gebruiker een geldige code invoert. Toon de herstelcodes in diezelfde stap, want daarna zijn ze niet meer te tonen.
+**Registreren.** Een pagina onder het gebruikersmenu: geheim genereren, QR en Base32 tonen, en pas opslaan als de gebruiker een geldige code invoert.
 
-**Herstel bij verlies van het toestel.** BESLIST (8.2): eenmalige herstelcodes bij registratie zijn de primaire weg. Op termijn komt daar een herstel via een gemailde link bij, in dezelfde vorm als fase 2 van de invite-service, zodra de mailserver er is. Tot die tijd is er geen formeel noodpad: wie zowel toestel als codes kwijt is, wordt op verzoek handmatig geholpen door iemand met database- en AGE-toegang.
+**RC-329:** Dit is gebouwd. Een pagina onder `/account/otp` zonder herstelcodes.
 
-Twee dingen die daarbij horen. Leg in de feature-documentatie vast wélke kolommen dan geleegd moeten worden, zodat degene die dat buiten kantooruren doet niet hoeft te gokken. En besef dat een handmatige ingreep geen spoor achterlaat waar de rest van het systeem dat wel doet; noteer hem dus ergens.
+**Herstel bij verlies van het toestel.** BESLIST (8.2) was oorspronkelijk: eenmalige herstelcodes zijn de primaire weg. **21 oktober 2026:** RC-329 voerde een ontwerpwijziging door. Geen herstelcodes. De nieuwe procedure:
 
-Een consequentie die bij de gemailde link hoort en die bewust genomen moet worden: herstel via e-mail maakt de tweede factor zo sterk als de mailbox, en omdat de eerste factor SSO Rijk is dat aan datzelfde adres hangt, valt de tweede factor daarmee terug op de eerste. Voor gewone gebruikers is dat aanvaardbaar; voor accounts met verhoogde rechten is een wachttijd met notificatie of een goedkeuringsstap het overwegen waard.
+1. Vraag een platformbeheerder om een reset op `/admin/users` (knop **OTP resetten**).
+2. Registreer vervolgens opnieuw op `/account/otp`.
+
+Een platformbeheerder kan zijn eigen factor niet zo resetten (dat zou elke overgenomen sessie omzeilen). Vervangen kan wel: op `/account/otp`, en dat vraagt een code van de bestaande factor.
+
+Blokkade na vijf mislukte codes loopt na 15 minuten af. Eerder kan alleen een reset door een platformbeheerder. Geen zelfbedieningsherstel via herstelcodes.
+
+Later komt daar mogelijk een herstel via gemailde link bij (besluit 8.2, na de mailserver). Tot die tijd:
+
+- Leg in `features/otp-op-de-zad-gebruiker.md` vast wélke kolommen een reset leegmaakt, zodat handmatige hulp (buiten kantooruren) weet wat te doen.
+- Besef dat een handmatige ingreep geen spoor achterlaat waar de rest van het systeem dat wel doet; noteer hem dus ergens.
 
 Je eigen OTP instellen is nooit een verhoogde actie: dat is zelfbediening en kan per definitie geen rechtenverhoging zijn.
 
@@ -118,7 +145,9 @@ Doe stap 3 pas als stap 2 in de sandbox is uitgeprobeerd, inclusief het herstelp
 ## 8. Genomen beslissingen (2 augustus 2026)
 
 1. **AGE met de OPI-sleutel, in envelope-vorm**, met een sleutelversie in de rij zodat roteren later kan.
-2. **Herstelcodes primair; later een gemailde link** (na de mailserver, zoals fase 2 van de invite-service). Tot die tijd geen formeel noodpad: handmatig op verzoek via database- en AGE-toegang. Je eigen OTP instellen vraagt nooit een verhoogde stap.
+   - **RC-329:** Migratie `009` bouwde `otp_key_version` in naast `otp_secret`.
+2. **Herstelcodes primair; later een gemailde link** (na de mailserver, zoals fase 2 van de invite-service).
+   - **21 oktober 2026:** RC-329 voerde een ontwerpwijziging door: **geen herstelcodes**. De procedure is nu: platformbeheerder reset → gebruiker registreert opnieuw. Blok na vijf fouten loopt na 15 minuten af. Geen zelfbedieningsherstel. Tot die tijd geen formeel noodpad: handmatig op verzoek via database- en AGE-toegang. Je eigen OTP instellen vraagt nooit een verhoogde stap.
 3. **De projectstatus wordt een enum op project en mogelijk deployment**, maar wordt hier niet gebruikt.
 4. **Eigendom van dat veld ligt bij een nog te bouwen promotieservice** die deployments of images door een OTAP-pad loodst. Die bepaalt ook wie de status mag zetten.
 5. **Een kort venster van ongeveer vijf minuten dat niet meeschuift** bij gebruik.

@@ -77,6 +77,10 @@ dependencies = [
     # Ontsleutelen loopt hiermee in het proces in plaats van via een fork van het
     # age-binary per veld; zie features/age-ontsleuteling-in-proces.md.
     "pyrage>=1.4.0",
+    # De QR van een OTP-registratie wordt hiermee server-side een inline SVG. Een
+    # script van een CDN op een pagina die een geheim draagt is geen optie; zie de
+    # aanwijzing in features/keycloak-realm-admin-otp.md.
+    "segno>=1.6.1",
 ]
 
 [dependency-groups]
