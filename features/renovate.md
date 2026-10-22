@@ -172,18 +172,31 @@ levert niets op.
   uit.
 - **Lokale sandboxverwijzingen** (`localhost:5001/...`, `operations-manager:latest`): er
   is geen registry om een versie bij op te zoeken.
+- **Shellscripts** (`scripts/*.sh`). Geen Renovate-manager leest een `.sh`, ook geen custom
+  manager, dus `registry:2.8.3` in `scripts/setup-kind-registry.sh` krijgt nooit een
+  update-PR. `TestVasteVersies` leest die regel wel, dus de pin kan niet stil terugvallen.
+- **De `imageName` van de platformdatabase**
+  (`infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml` en de
+  `/spec/imageName`-patch in de twee odcn-overlays). De kubernetes-manager leest alleen
+  `image:`-regels en de kustomize-manager alleen `images:`-entries, dus `17.11` krijgt nooit
+  een update-PR. `TestVasteVersies` leest die drie regels wel, dus de pin kan niet stil
+  terugvallen.
 - **`archive/`**, de testmappen en `self-service-portal/` (een schets, geen app).
+
+## Zwevende tags: gedekt
+
+Geen image van derden onder `infrastructure/`, `bootstrap/`, `images/` of `scripts/` staat
+nog op een tag die meebeweegt. Voor de yaml- en Dockerfile-verwijzingen stelt Renovate er
+gewone patch- en minor-PR's voor, op twee plekken na: `scripts/` en de `imageName` van de
+platformdatabase leest geen enkele manager, dus daar houdt alleen de grendel de pin vast.
+RC-348 pinde `rig-cmp-argo-kustomize-sops` en `rig-backup`, RC-353 de images van derden.
+`TestVasteVersies` in `operations-manager/python/tests/test_image_layer_guard.py` houdt dit
+vast en noemt per uitzondering de reden.
 
 ## Wat nog niet gedekt is
 
 Renovate kan hier niets zinnigs voorstellen; elk van deze punten is een eigen vervolgtaak:
 
-- Images op een zwevende tag: `jpillora/chisel:latest`, `nginxinc/nginx-unprivileged:alpine`,
-  `gcr.io/distroless/static-debian12:nonroot`, `registry:2`,
-  `codeberg.org/forgejo/forgejo:14`, `redis:7-alpine`. Pin ze op een versie of een digest.
-  `rig-cmp-argo-kustomize-sops` en `rig-backup` stonden hier ook in en zijn met RC-348
-  gepind; `jpillora/chisel:latest` draait nergens, want geen clusterkustomization neemt
-  `infrastructure/bootstrap/infrastructure/chisel/` op.
 - De twee VS Code-extensies in `images/jupyterhub-user/Dockerfile`
   (`PYTHON_EXTENSION_VERSION`, `BASEDPYRIGHT_VERSION`). Renovate heeft geen datasource voor
   de extensiemarktplaats, dus die blijven handwerk. Ze staan met die reden in de

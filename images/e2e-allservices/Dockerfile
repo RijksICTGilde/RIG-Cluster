@@ -12,7 +12,7 @@
 # probe_spec.json must be current before building:
 #   uv run python scripts/generate_probe_spec.py   (guarded by test_probe_spec_drift.py)
 
-FROM golang:1.27-alpine AS build
+FROM golang:1.27.3-alpine AS build
 WORKDIR /src
 
 # Cache module downloads separately from the source.
@@ -26,7 +26,7 @@ ARG TARGETARCH=amd64
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/e2e-allservices .
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/e2e-allservices /e2e-allservices
 # tcpSocket readiness/liveness probe the platform generates targets 8080.
 EXPOSE 8080

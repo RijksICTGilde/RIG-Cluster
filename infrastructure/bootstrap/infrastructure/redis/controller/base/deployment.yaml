@@ -25,7 +25,7 @@ spec:
           type: RuntimeDefault
       initContainers:
       - name: init-aclfile
-        image: redis:7-alpine
+        image: redis:7.4.11-alpine
         command:
         - sh
         - -c
@@ -55,7 +55,7 @@ spec:
           mountPath: /data
       containers:
       - name: redis
-        image: redis:7-alpine
+        image: redis:7.4.11-alpine
         command:
         - redis-server
         - --appendonly

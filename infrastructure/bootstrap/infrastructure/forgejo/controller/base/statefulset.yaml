@@ -28,7 +28,7 @@ spec:
 
       containers:
       - name: forgejo
-        image: codeberg.org/forgejo/forgejo:14
+        image: codeberg.org/forgejo/forgejo:14.0.5
         imagePullPolicy: IfNotPresent
 
         ports:

@@ -42,39 +42,39 @@ Audit of all container images used across the repository, performed February 202
 - Community edition is now distributed as source code only - no pre-built binaries. Container images need to be built from source or via Helm chart.
 - Investigate what this means for the current deployment before upgrading.
 
-### Redis - 7.2 EOL (February 28, 2026)
+### Redis - 7.4.11-alpine (pinned via RC-353)
 
-- **Current**: `redis:7-alpine` (resolves to 7.2.x)
+- **Current**: `redis:7.4.11-alpine` (pinned October 2026)
 - **Latest**: 8.4.1 (`8-alpine`)
 - **Files**: `infrastructure/bootstrap/infrastructure/redis/controller/base/deployment.yaml`
-- **Impact**: Redis 7.2 security support ends February 28, 2026.
+- **Impact**: Redis is pinned to the version that ran at the time of RC-353. Updates via Renovate will come as regular PRs.
 
 **Upgrade notes**:
 - Redis 7.4+ and 8.x use RSALv2/SSPLv1 license (no longer BSD). Requires a licensing check before upgrading.
-- Options: `7.4-alpine` (support until Nov 2026, same license change) or `8-alpine` (latest, tri-license RSALv2/SSPLv1/AGPLv3).
+- Options: stay on the 7.4 line (support until Nov 2026, same license change) or move to 8.x (tri-license RSALv2/SSPLv1/AGPLv3). Pin a full version either way; the guard rejects `7.4-alpine` and `8-alpine`.
 - Redis 7.2 is the last BSD-licensed version.
 
-### Alpine Linux - 3.19 (unsupported)
+### Alpine Linux - 3.24.3 (pinned via RC-353)
 
-- **Current**: `alpine:3.19`
-- **Latest**: 3.23.3 (released 2026-01-28)
-- **Files**: `images/cmp-kustomize-sops/Dockerfile`, `images/kopia/Dockerfile`
-- **Impact**: 3.19 community repository support has ended. No security patches.
-
-**Upgrade notes**:
-- Straightforward upgrade. Use `3.21` (conservative) or `3.23` (latest).
-- Quick win, low risk.
-
-### BusyBox - 1.28 (extremely outdated)
-
-- **Current**: `1.28` (Taskfile), `1.36` (bootstrap-job, tests)
-- **Latest**: 1.37.0
-- **Files**: `Taskfile.yaml` (line 556), `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, `operations-manager/python/tests/fixtures/test-workloads.yaml`
-- **Impact**: `1.28` is from ~2018.
+- **Current**: `alpine:3.24.3` (pinned October 2026; stood on `3.24` before)
+- **Latest**: 3.24.3, the newest in the 3.24 line
+- **Files**: `images/cmp-kustomize-sops/Dockerfile`, `images/job-test/Dockerfile`, `images/kopia/Dockerfile`, `images/mc/Dockerfile`
+- **Impact**: none. `3.24` and `3.24.3` have the same config and layer digest, so nothing changed version. The pin first read `3.24.2`, which `3.24` had already moved past; that one carried CVE-2026-85091 (zlib heap overflow, MEDIUM) and 3.24.3 does not.
 
 **Upgrade notes**:
-- Standardize all BusyBox references to `1.37.0`.
-- Quick win, low risk.
+- Patch and minor updates arrive as regular Renovate PRs; no manual bump needed.
+- Alpine supports a minor for two years, so the 3.24 line runs until mid-2028.
+
+### BusyBox - 1.38.0 (pinned via RC-353)
+
+- **Current**: `busybox:1.38.0` (pinned October 2026; stood on `1.38` before)
+- **Latest**: may be newer in the 1.38 line
+- **Files**: `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, `infrastructure/bootstrap/infrastructure/forgejo/controller/overlays/sandboxed-local/statefulset-patch.yaml`
+- **Impact**: none. `1.38` and `1.38.0` were digest-identical when pinned.
+
+**Upgrade notes**:
+- Updates arrive as regular Renovate PRs.
+- Both references are init containers that only chown and chmod a volume, so a bump has a small surface.
 
 ## Medium Priority
 
@@ -134,14 +134,18 @@ Audit of all container images used across the repository, performed February 202
 - Minimum: update to `kindest/node:v1.32.11`.
 - Full upgrade to v1.35.0 requires Kind v0.31.0. Note that K8s 1.35 drops cgroup v1 support.
 
-### Chisel - :latest (unpinned)
+### Chisel - 1.12.0
 
-- **Current**: `jpillora/chisel:latest`
-- **Latest**: v1.11.3 (released Sep 2025)
-- **Files**: `infrastructure/bootstrap/infrastructure/chisel/controller/base/deployment.yaml`
+The chisel server manifest under `infrastructure/bootstrap/infrastructure/chisel/` stood on
+`:latest`. No cluster kustomization includes it, so nothing deploys it, but RC-353 pinned it
+anyway: `1.12.0` is digest-identical to what `latest` resolved to, and it matches the client
+version in the OPI image. Whether the manifest stays at all is still a human's call; the pin
+does not settle that.
 
 **Upgrade notes**:
-- Pin to `jpillora/chisel:1.11.3` for reproducibility.
+- The chisel CLIENT ships in the OPI image (`operations-manager/Dockerfile`, `ARG CHISEL_VERSION`) and is used by `opi/connectors/chisel_connector.py` for tunneled database and bucket clones. Both now name 1.12.0, so move them together.
+- Latest upstream is `1.13.0`. Renovate reads the manifest (the `kubernetes` manager covers `infrastructure/**`), so that update arrives as a normal PR.
+- Deploying the server? Add the directory to a cluster kustomization. `infrastructure/bootstrap/infrastructure/secrets/templates/chisel-auth-secret.yaml` holds the matching auth-secret template.
 
 ## Low Priority
 
@@ -152,12 +156,12 @@ Audit of all container images used across the repository, performed February 202
 - **Files**: `infrastructure/bootstrap/infrastructure/pgadmin/controller/base/deployment.yaml`
 - Straightforward minor upgrade within the same v9.x line.
 
-### Forgejo - :14 / :14-rootless
+### Forgejo - 14.0.5 (pinned via RC-353)
 
-- **Current**: `codeberg.org/forgejo/forgejo:14` / `:14-rootless`
-- **Latest**: 14.0.2 (released 2026-01-29)
+- **Current**: `codeberg.org/forgejo/forgejo:14.0.5` / `:14.0.5-rootless`
+- **Latest**: May be newer in the 14.x line
 - **Files**: `infrastructure/bootstrap/infrastructure/forgejo/controller/base/statefulset.yaml`, `infrastructure/bootstrap/infrastructure/forgejo/config/base/bootstrap-job.yaml`, sandbox overlays
-- Already current - floating `:14` tag resolves to latest 14.0.x.
+- Pinned to 14.0.5 via RC-353 (October 2026). Updates via Renovate will come as regular PRs.
 
 ### Python - 3.14-slim
 
@@ -166,21 +170,33 @@ Audit of all container images used across the repository, performed February 202
 - **Files**: `operations-manager/Dockerfile`, `operations-manager/backup-image/Dockerfile`
 - 3.13 still supported until ~October 2029; project moved to 3.14 for PEP 649 deferred annotation evaluation.
 
-### CloudNativePG PostgreSQL - :17
+### CloudNativePG PostgreSQL - 17.11 standard-bookworm (pinned via RC-353)
 
-- **Current**: `ghcr.io/cloudnative-pg/postgresql:17`
-- **Latest**: PostgreSQL 18.1 available
+- **Current**: `ghcr.io/cloudnative-pg/postgresql:17.11-202610190957-standard-bookworm@sha256:0d0e407c...` (pinned October 2026; stood on `17-standard-bookworm` before)
+- **Latest**: PostgreSQL 18.x available
 - **Files**: `images/postgresql-with-dictionaries/Dockerfile`
-- `:17` resolves to latest 17.x (17.7). PG 17 is supported until ~November 2029. Plan PG 18 migration at convenience.
+- **Impact**: none. The pinned tag was digest-identical to what `17-standard-bookworm` resolved to.
+- The platform database itself (`infrastructure/bootstrap/infrastructure/postgresql/database/`, base plus the two ODCN overlays) stands on `ghcr.io/cloudnative-pg/postgresql:17.11`, digest-identical to the `:17` it stood on (`sha256:70664ebc...`). CNPG numbers that image after the PostgreSQL release, so two digit groups is the full version there; `TestVasteVersies` carries it as a named exception. Rolling the pin replaces instance pods: CNPG's `checkPodImageIsOutdated` compares images as strings, not digests. Expect a switchover on the two-instance ODCN cluster, even though the content is identical.
+
+**Upgrade notes**:
+- CNPG publishes no patch digit in its tag, but it does publish a tag carrying the build timestamp, and that one never moves. The `packageRule` for this image in `renovate.json` uses a `versioning: "regex"` so updates stay inside the standard-bookworm line and no proposal jumps to bullseye or trixie.
+- PG 17 is supported until ~November 2029. Plan the PG 18 migration at convenience; that is a database migration, not an image bump.
 
 ## Suggested Upgrade Order
 
-1. **Alpine 3.19 -> 3.21+** and **BusyBox 1.28 -> 1.37.0** - quick wins, no breaking changes
-2. **Chisel :latest -> 1.11.3** - pin for reproducibility
-3. **Redis 7-alpine -> 7.4-alpine or 8-alpine** - EOL imminent, but check license implications
+1. ~~**Alpine** and **BusyBox**~~ - pinned in RC-353 (October 2026); updates now arrive via Renovate
+2. ~~**Chisel :latest**~~ - pinned to 1.12.0 in RC-353; whether the manifest stays is still a human's call
+3. **Redis 7.4.11-alpine -> 8-alpine** - EOL imminent, but check license implications
 4. **MinIO** - security CVE, but investigate UI removal and build-from-source requirement first
 5. **PgAdmin, Kube State Metrics, External DNS** - straightforward minor upgrades
 6. **Keycloak 25.0.1 -> 26.5.x** - review migration guide, moderate effort
 7. **Prometheus v2 -> v3** - major upgrade, plan and test
 8. **ArgoCD v2.8 -> v3.x + Operator v0.14 -> v0.17** - largest effort, coordinate both, incremental path required
 9. **Kind node, Python, PostgreSQL** - upgrade at convenience
+
+## Floating tags
+
+No third-party image under `infrastructure/`, `bootstrap/`, `images/` or `scripts/` stands
+on a tag that moves anymore. `TestVasteVersies` in
+`operations-manager/python/tests/test_image_layer_guard.py` holds that, and names the reason
+per remaining exception.

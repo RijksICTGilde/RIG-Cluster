@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: bootstrap
-        image: codeberg.org/forgejo/forgejo:14-rootless
+        image: codeberg.org/forgejo/forgejo:14.0.5-rootless
         command:
         - sh
         - -c

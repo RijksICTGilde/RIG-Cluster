@@ -27,7 +27,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: chisel
-        image: jpillora/chisel:latest
+        image: jpillora/chisel:1.12.0
         imagePullPolicy: Always
         args:
         - server

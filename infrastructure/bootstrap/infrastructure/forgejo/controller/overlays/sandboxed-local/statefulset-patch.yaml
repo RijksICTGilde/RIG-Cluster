@@ -7,7 +7,7 @@ spec:
     spec:
       initContainers:
       - name: init-directories
-        image: busybox:1.38
+        image: busybox:1.38.0
         command: ["sh", "-c", "mkdir -p /var/lib/gitea/custom/conf"]
         volumeMounts:
         - name: data
@@ -19,7 +19,7 @@ spec:
             - ALL
       containers:
       - name: forgejo
-        image: codeberg.org/forgejo/forgejo:14-rootless
+        image: codeberg.org/forgejo/forgejo:14.0.5-rootless
         env:
         - name: USER_UID
           value: "1000"

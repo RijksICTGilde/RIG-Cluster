@@ -9,11 +9,13 @@ morgen naar een andere image dan vandaag, zonder commit. Zie features/image-vers
 """
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
 import yaml
 from opi.core.config import settings
+from opi.utils.naming import split_image_reference
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DOCKERFILE = REPO_ROOT / "operations-manager" / "Dockerfile"
@@ -164,6 +166,25 @@ def _opgenomen_bestanden(wortel: Path, gezien: set[Path] | None = None) -> list[
     return gevonden
 
 
+#: De velden waarin een patch een image kan zetten. CNPG draagt zijn image in imageName,
+#: niet in image, en zonder die tweede naam blijft die verwijzing ongelezen.
+IMAGE_VELDEN = ("/image", "/imageName")
+
+
+def _patchwaarden(inhoud: str) -> list[str]:
+    """De waarden die de JSON6902-patches van een kustomization op een image-veld zetten."""
+    doc = yaml.safe_load(inhoud) or {}
+    waarden: list[str] = []
+    for patch in doc.get("patches") or []:
+        ops = yaml.safe_load(patch["patch"]) if isinstance(patch, dict) and patch.get("patch") else None
+        waarden += [
+            str(op["value"])
+            for op in (ops if isinstance(ops, list) else [])
+            if isinstance(op, dict) and str(op.get("path", "")).endswith(IMAGE_VELDEN)
+        ]
+    return waarden
+
+
 def _imageverwijzingen(pad: Path) -> list[str]:
     """Elke image-verwijzing in een manifest: `image:`-regels, `newTag` en de JSON6902-patches."""
     inhoud = pad.read_text()
@@ -177,14 +198,7 @@ def _imageverwijzingen(pad: Path) -> list[str]:
         for entry in doc.get("images") or []
         if entry.get("newTag")
     ]
-    for patch in doc.get("patches") or []:
-        ops = yaml.safe_load(patch["patch"]) if isinstance(patch, dict) and patch.get("patch") else None
-        verwijzingen += [
-            str(op["value"])
-            for op in (ops if isinstance(ops, list) else [])
-            if isinstance(op, dict) and str(op.get("path", "")).endswith("/image")
-        ]
-    return verwijzingen
+    return verwijzingen + _patchwaarden(inhoud)
 
 
 def _is_gepind(verwijzing: str) -> bool:
@@ -475,6 +489,171 @@ class TestAptLayers:
             or "--mount=type=cache,target=/var/lib/apt" not in line
         ]
         assert missing == []
+
+
+# Elke image van derden onder deze paden noemt een volledige versie: drie of meer
+# cijfergroepen met een optioneel achtervoegsel zoals -alpine of -rootless. Een tag die
+# meebeweegt (`redis:7-alpine`, `registry:2`) geeft bij twee pulls een andere versie zonder
+# dat er in git iets verandert, en Renovate kan hem niet bijwerken.
+VERSIEPADEN = ("infrastructure", "bootstrap", "images", "scripts")
+VOLLEDIGE_VERSIE = re.compile(r"v?\d+(\.\d+){2,}([.-][\w.-]+)?")
+YAML_VERWIJZING = re.compile(r"^\s*-?\s*(?:image|imageName|newTag):\s*[\"\']?([^\"\'\s]+)[\"\']?\s*$", re.MULTILINE)
+# De default van een *_IMAGE-variabele in een shellscript, met of zonder ${VAR:-...} eromheen.
+SHELL_VERWIJZING = re.compile(r"^\w*IMAGE=[\"\']?(?:\$\{\w+:-)?([^\"\'}\s]+)", re.MULTILINE)
+
+# Op naam, dus elke tag erop is toegestaan. Alleen voor een naam waarvan de tag per uitrol
+# wisselt: een sleutel op naam en tag wordt dan stil rood zodra iets de tag herschrijft.
+ZWEVENDE_NAMEN_TOEGESTAAN: dict[str, str] = {
+    "localhost:5001/operations-manager": (
+        "eigen image; task sandbox:configure-operations-manager-image zet de tag per uitrol op de commit-sha (RC-348)"
+    ),
+    "ghcr.io/minbzk/base-images/argocd-rig": "eigen image, de operator-CR pint de tag in het veld version:",
+    "rcr.rijksapps.nl/ghcr-rig/minbzk/base-images/argocd-rig": (
+        "eigen image, de operator-CR pint de tag in het veld version:"
+    ),
+}
+
+# Op naam en tag, voor een verwijzing die geen volledige versie KAN dragen. Een image dat
+# alleen nog niet gepind is hoort hier niet: dat is een gat met een reden ervoor.
+ZWEVEND_TOEGESTAAN: dict[str, str] = {
+    # Eigen images en lokale namen: dat gaat over `latest` op een eigen pad, en dat is RC-348.
+    "operations-manager:latest": "eigen image, de overlay zet de tag (RC-348)",
+    "rig-cmp-argo-kustomize-sops:latest": "eigen image (RC-348)",
+    "ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops:latest": "eigen image (RC-348)",
+    "ghcr.io/minbzk/base-images/minio:RELEASE.2025-07-23T15-54-02Z": (
+        "eigen spiegel van de MinIO-release; RELEASE.<datum> is daar de volledige versie"
+    ),
+    "RELEASE.2025-07-23T15-54-02Z": "newTag van diezelfde MinIO-spiegel",
+    "<IMAGE>": "placeholder in de voorbeeldtekst van task cr-snippet, wordt niet uitgerold",
+    "quay.io/jupyter/minimal-notebook:2026-10-12": "datumtag, die vult jupyter eenmalig",
+    "quay.io/argoproj/argocd": "de ArgoCD-CR pint de versie ernaast in /spec/repo/version, niet in de verwijzing",
+    # CNPG nummert zijn image naar de PostgreSQL-release, dus twee cijfergroepen is daar de
+    # volledige versie; de plain tag heeft geen datumstempel-variant zoals de bookworm-lijn.
+    "ghcr.io/cloudnative-pg/postgresql:17.11": "CNPG heeft geen derde cijfergroep; 17.11 is daar de volledige versie",
+    "rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17.11": (
+        "dezelfde image via de rcr-proxy, die de odcn-overlays patchen"
+    ),
+}
+
+
+def _gevolgde_bestanden() -> list[Path]:
+    uitvoer = subprocess.run(
+        ["git", "ls-files", "-z", *VERSIEPADEN],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    return [REPO_ROOT / naam for naam in uitvoer.split("\0") if naam]
+
+
+def _verwijzingen_in_bestand(bestand: Path) -> list[str]:
+    """De images waar dit bestand naar wijst, zoals ze er staan."""
+    if bestand.name.startswith("Dockerfile"):
+        instructies = _instructions(bestand.read_text())
+        fasen = {fase for fase, _ in instructies if fase}
+        bases = [
+            next(deel for deel in instructie.split()[1:] if not deel.startswith("--"))
+            for _, instructie in instructies
+            if instructie.upper().startswith("FROM ")
+        ]
+        return [basis for basis in bases if basis not in fasen and basis != "scratch"]
+    if bestand.suffix in (".yaml", ".yml"):
+        inhoud = bestand.read_text()
+        if bestand.name.startswith("kustomization."):
+            return YAML_VERWIJZING.findall(inhoud) + _patchwaarden(inhoud)
+        return YAML_VERWIJZING.findall(inhoud)
+    if bestand.suffix == ".sh":
+        return SHELL_VERWIJZING.findall(bestand.read_text())
+    return []
+
+
+def _tag(verwijzing: str) -> str:
+    """Een newTag staat er al als tag; een image-ref draagt hem achter de laatste dubbele punt."""
+    if ":" not in verwijzing:
+        return "" if "/" in verwijzing else verwijzing
+    return verwijzing.rpartition(":")[2]
+
+
+def _zweeft(verwijzing: str) -> bool:
+    naam, _, draagt_digest = split_image_reference(verwijzing)
+    if verwijzing in ZWEVEND_TOEGESTAAN or naam in ZWEVENDE_NAMEN_TOEGESTAAN:
+        return False
+    if draagt_digest:
+        return False
+    return not VOLLEDIGE_VERSIE.fullmatch(_tag(verwijzing))
+
+
+def _pad(bestand: Path) -> str:
+    """Het pad vanaf de repo-root, want de bestandsnaam alleen zegt vaak deployment.yaml."""
+    return str(bestand.relative_to(REPO_ROOT)) if bestand.is_relative_to(REPO_ROOT) else str(bestand)
+
+
+def _zwevende_images(bestanden: list[Path]) -> list[tuple[str, str]]:
+    return [
+        (_pad(bestand), verwijzing)
+        for bestand in bestanden
+        for verwijzing in _verwijzingen_in_bestand(bestand)
+        if _zweeft(verwijzing)
+    ]
+
+
+class TestVasteVersies:
+    """Elke image van derden onder infrastructure/, bootstrap/, images/ en scripts/ noemt een vaste versie.
+
+    Vaste versie betekent hier: een volledige versietag, een digest, of een regel in een van
+    de twee uitzonderingslijsten hierboven met de reden erbij. De meting per image en wat er
+    nog niet gedekt is: features/renovate.md.
+    """
+
+    def test_geen_image_op_een_zwevende_tag(self) -> None:
+        bestanden = _gevolgde_bestanden()
+        assert bestanden, "git ls-files gaf geen bestanden"
+
+        assert _zwevende_images(bestanden) == []
+
+    def test_de_grendel_ziet_een_teruggezette_tag(self, tmp_path: Path) -> None:
+        """Zonder deze toets zegt de test hierboven niets zodra de vorm van een bestand wijzigt."""
+        bron = REPO_ROOT / "infrastructure/bootstrap/infrastructure/redis/controller/base/deployment.yaml"
+        kopie = tmp_path / "deployment.yaml"
+        kopie.write_text(bron.read_text().replace("redis:7.4.11-alpine", "redis:7-alpine"))
+
+        assert _zwevende_images([bron]) == []
+        assert _zwevende_images([kopie]) == [(str(kopie), "redis:7-alpine")] * 2
+
+    def test_de_grendel_leest_de_image_van_een_shellscript(self, tmp_path: Path) -> None:
+        """Zonder deze toets zegt scripts/ in VERSIEPADEN niets: shell is geen yaml en geen Dockerfile."""
+        bron = REPO_ROOT / "scripts/setup-kind-registry.sh"
+        assert _verwijzingen_in_bestand(bron) == ["registry:2.8.3"]
+
+        kopie = tmp_path / "setup-kind-registry.sh"
+        kopie.write_text(bron.read_text().replace("registry:2.8.3", "registry:2"))
+
+        assert _zwevende_images([kopie]) == [(str(kopie), "registry:2")]
+
+    def test_de_grendel_leest_de_imagename_van_een_cnpg_cluster(self, tmp_path: Path) -> None:
+        """CNPG draagt zijn image in imageName; las de grendel alleen image:, dan bleef die tag ongezien."""
+        bron = REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/base/cluster.yaml"
+        kopie = tmp_path / "cluster.yaml"
+        kopie.write_text(bron.read_text().replace("postgresql:17.11", "postgresql:17"))
+
+        assert _zwevende_images([kopie]) == [(str(kopie), "ghcr.io/cloudnative-pg/postgresql:17")]
+
+    def test_de_grendel_leest_de_patchwaarde_op_een_imagename(self, tmp_path: Path) -> None:
+        """De odcn-overlays zetten imageName via een JSON6902-patch, en die staat niet op een image:-regel."""
+        bron = (
+            REPO_ROOT / "infrastructure/bootstrap/infrastructure/postgresql/database/overlays/odcn/kustomization.yaml"
+        )
+        kopie = tmp_path / "kustomization.yaml"
+        kopie.write_text(bron.read_text().replace("postgresql:17.11", "postgresql:17"))
+
+        zwevend = _zwevende_images([kopie])
+        assert zwevend == [(str(kopie), "rcr.rijksapps.nl/ghcr-rig/cloudnative-pg/postgresql:17")]
+
+    def test_een_naam_blijft_toegestaan_als_de_tag_herschreven_wordt(self) -> None:
+        """De sandbox-tag van OPI wisselt per uitrol, dus de uitzondering staat op de naam."""
+        assert not _zweeft("localhost:5001/operations-manager:8102b1a45")
+        assert not _zweeft("localhost:5001/operations-manager:deadbee12")
 
 
 class TestManifestImages:
