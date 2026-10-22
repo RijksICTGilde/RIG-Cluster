@@ -49,6 +49,7 @@ from opi.core.cluster_config import (
     get_backup_namespace,
     get_ca_certificate_config,
     get_cluster_cidrs,
+    get_database_operator_namespace,
     get_external_dns_target_for_hostname,
     get_infrastructure_namespace,
     get_ingress_cluster_issuer,
@@ -211,6 +212,7 @@ from opi.utils.project_utils import (
     RESERVED_PROJECT_NAME_MESSAGE,
     ComponentValidationError,
     build_component_config,
+    namespace_level_deployment,
     normalize_container_image,
     project_level_deployment,
     validate_root_component,
@@ -4349,18 +4351,29 @@ class ProjectManager:
 
         logger.info(f"Processing deployment: {deployment_name} at path: {deployment_path}")
 
+        # Voor alle drie de soorten deployments, want juist een helm- of helmfile-pod
+        # draagt geen deployment-label en viel tot nu toe buiten elk beleid.
+        namespace_policy_files = self._emit_namespace_network_policies(
+            project_data=project_data,
+            project_name=project_name,
+            deployment=deployment,
+            cluster_name=cluster_name,
+            namespace=prefixed_namespace,
+            output_dir=target_path,
+        )
+
         # Check if this is a helmfile deployment, helm chart deployment, or component deployment
         if self._deployment_uses_helmfile(deployment):
             # Process helmfile deployment (ArgoCD CMP runs helmfile template)
             logger.info(f"Deployment '{deployment_name}' uses helmfile - processing as helmfile deployment")
-            await self._process_helmfile_deployment(deployment, git_connector, target_path)
+            await self._process_helmfile_deployment(deployment, git_connector, target_path, namespace_policy_files)
             # Note: SOPS encryption is handled inside _process_helmfile_deployment
             return
 
         if self._deployment_uses_helm_charts(deployment):
             # Process helm chart deployment (no component manifests, uses Kustomize helmCharts)
             logger.info(f"Deployment '{deployment_name}' uses helm-charts - processing as helm deployment")
-            await self._process_helm_chart_deployment(deployment, git_connector, target_path)
+            await self._process_helm_chart_deployment(deployment, git_connector, target_path, namespace_policy_files)
             # Note: SOPS encryption is handled inside _process_helm_chart_deployment
             return
 
@@ -4377,6 +4390,9 @@ class ProjectManager:
             # Rollback subdomain registration if manifest creation fails
             await self._rollback_subdomain_if_needed()
             raise
+
+        # Hoort bij de gewenste staat van deze map, dus de prunes hieronder laten ze staan.
+        created_files.extend(namespace_policy_files)
 
         # Note: SSO and user secrets are already created in create_application_manifests above
 
@@ -4770,11 +4786,88 @@ class ProjectManager:
         logger.info(f"Created ACME HTTP-01 solver network policy: {path}")
         return f"{manifest_name}.yaml"
 
+    def _emit_namespace_network_policies(
+        self,
+        *,
+        project_data: dict[str, Any],
+        project_name: str,
+        deployment: dict[str, Any],
+        cluster_name: str,
+        namespace: str,
+        output_dir: str,
+    ) -> list[str]:
+        """Create or clean up namespace-level NetworkPolicies (default-deny, unlabeled-baseline, dedicated-database)."""
+        default_deny_name = generate_network_policy_manifest_name("default-deny")
+        unlabeled_name = generate_network_policy_manifest_name("unlabeled-baseline")
+        database_name = generate_network_policy_manifest_name("dedicated-database")
+
+        owner = namespace_level_deployment(project_data.get("deployments", []), cluster_name, deployment["namespace"])
+        if owner is None or owner["name"] != deployment["name"]:
+            for filename in (default_deny_name, unlabeled_name, database_name):
+                stale = os.path.join(output_dir, f"{filename}.yaml")
+                if os.path.exists(stale):
+                    os.remove(stale)
+                    logger.info(f"Removed namespace network policy '{filename}' from non-owner '{deployment['name']}'")
+            return []
+
+        os.makedirs(output_dir, exist_ok=True)
+        template_dir = os.path.join(os.path.dirname(__file__), "..", "..", "manifests")
+        baseline_values = {
+            "name": generate_network_policy_name("unlabeled-baseline"),
+            "namespace": namespace,
+            # Geen deployment_selector maar de tegenhanger ervan: precies de pods die
+            # het label niet dragen, met dezelfde rechten als een deployment.
+            "deployment_selector": None,
+            "unlabeled_selector": True,
+            "ops_namespace": get_namespace(cluster_name),
+            "backup_namespace": get_backup_namespace(cluster_name),
+            "ingress_controller_selector": get_ingress_controller_selector(cluster_name),
+            "ops_egress": get_ops_egress(cluster_name),
+            "cluster_cidrs": get_cluster_cidrs(cluster_name),
+            # De operator komt bij het databasecluster via de policy hieronder, niet via
+            # de baseline: hij hoeft de helm-pods in deze namespace niet te bereiken.
+            "database_operator_namespace": None,
+            "project_infra_namespace": get_infrastructure_namespace(cluster_name, project_name),
+        }
+        specs = (
+            (
+                default_deny_name,
+                "default-deny-network-policy.yaml.jinja",
+                {"name": generate_network_policy_name("default-deny"), "namespace": namespace},
+            ),
+            (unlabeled_name, "tenant-baseline-network-policy.yaml.jinja", baseline_values),
+            (
+                database_name,
+                "dedicated-database-network-policy.yaml.jinja",
+                {
+                    "name": generate_network_policy_name("dedicated-database"),
+                    "namespace": namespace,
+                    "database_operator_namespace": get_database_operator_namespace(cluster_name),
+                },
+            ),
+        )
+        created_files = []
+        for filename, template_name, values in specs:
+            self._manifest_generator.create_manifest_file(
+                template_path=os.path.join(template_dir, template_name),
+                values=values,
+                output_dir=output_dir,
+                output_filename=filename,
+                use_sops=False,
+            )
+            created_files.append(f"{filename}.yaml")
+        logger.info(
+            f"Created namespace network policies for '{namespace}' "
+            f"(owner deployment '{deployment['name']}'): {', '.join(created_files)}"
+        )
+        return created_files
+
     async def _process_helm_chart_deployment(
         self,
         deployment: dict[str, Any],
         git_connector: GitConnector,
         target_path: str,
+        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """
         Process a deployment that uses helm-charts instead of components.
@@ -4878,8 +4971,11 @@ class ProjectManager:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helm deployment")
 
+        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
+        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
+        regular_files: list[str] = list(namespace_policy_files or [])
+
         # Create Let's Encrypt Issuer manifest if configured
-        regular_files: list[str] = []
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
@@ -5130,6 +5226,7 @@ class ProjectManager:
         deployment: dict[str, Any],
         git_connector: GitConnector,
         target_path: str,
+        namespace_policy_files: list[str] | None = None,
     ) -> None:
         """
         Process a deployment that uses helmfile instead of components or helm-charts.
@@ -5320,8 +5417,11 @@ class ProjectManager:
         )
         logger.info(f"Created {len(secret_files)} service secret manifests for helmfile deployment")
 
+        # De namespace-brede policies staan al op schijf; ze moeten alleen nog in de
+        # kustomization, want die wordt hier uit een lijst gebouwd en niet uit een scan.
+        regular_files: list[str] = list(namespace_policy_files or [])
+
         # Create Let's Encrypt Issuer manifest if configured
-        regular_files: list[str] = []
         issuer_config = effective_issuer(project_data, deployment, cluster_name)
         base_domain = get_domain_setting(deployment, DomainSetting.BASE_DOMAIN)
 
@@ -7278,9 +7378,9 @@ class ProjectManager:
         # Emit one tenant-baseline NetworkPolicy per deployment after all
         # components have been processed. The policy selects pods by the
         # `deployment: <name>` label (added in deployment.yaml.jinja), so
-        # multiple components of the same deployment share one policy and
-        # helm/helmfile pods are left unselected (default-allow remains the
-        # status quo for those until a separate baseline is added).
+        # multiple components of the same deployment share one policy, while
+        # unlabeled pods (helm, helmfile, backup/restore) are covered by the
+        # namespace-level baseline policy.
         if target_dir:
             deployment_output_dir = os.path.join(working_dir, target_dir)
         else:

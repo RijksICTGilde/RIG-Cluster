@@ -1,9 +1,10 @@
 # Restrictive Network Policies
 
-**Status**: Testing Infrastructure Ready (Phase 1 Complete)
+**Status**: Default-deny per projectnamespace uitgerold (RC-343); de fasen 2 tot 5 hieronder zijn nog ontwerp
 **Priority**: In Progress
 **Created**: 2026-02-17
 **Testing Added**: 2026-10-17
+**Default-deny**: 2026-10-18
 
 ## Problem Statement
 
@@ -553,16 +554,14 @@ heeft daarom een eigen egressregel naar de namespace van de ingress-controller o
 dicht zodra een cluster `cluster_cidrs` noemt: de dienst keycloak, de auth-wall sidecar en
 de db-console-pod lopen er alle drie over.
 
-### Wat deze stap openlaat
+### Wat RC-336 openliet, en RC-343 sloot
 
 De ACME-policy selecteerde tot RC-336 elke pod in de namespace (`podSelector: {}`,
 ingress op 80 en 8089). Daarmee beperkte hij ook de pods zonder `deployment:`-label, en
 dat label dragen helm- en helmfile-workloads niet. Nu de policy alleen de solver
-selecteert, valt zo'n pod in een namespace met een Let's Encrypt-issuer terug op
-default-allow en is hij op elke poort bereikbaar voor elke bron die er zelf uit mag
-(een pod zonder baseline heeft ook geen egressbeperking). Dat is hetzelfde gat dat elke
-namespace zonder zo'n issuer al had, en dichtzetten hoort bij de default-deny per
-projectnamespace. De matrix houdt het zichtbaar met de regels van `vreemde-helm-pod`.
+selecteert, viel zo'n pod terug op default-allow. De default-deny per projectnamespace
+hieronder sluit dat gat; de matrix houdt het zichtbaar met de regels van
+`vreemde-helm-pod`.
 
 ### Wat waar te meten is
 
@@ -658,10 +657,64 @@ Twee dingen die bij deze volgorde horen:
   tenants. Dat is stap 3 van
   `features/futures/client-ip-vertrouwen-achter-de-router.md` (issue #195).
 
+## De default-deny per projectnamespace (RC-343)
+
+Elke projectnamespace krijgt sinds RC-343 drie namespace-brede NetworkPolicies, naast de
+tenant-baseline die per deployment blijft bestaan. Geen pod valt nog terug op Kubernetes'
+default-allow (BIO2 8.22, defense in depth).
+
+| Policy | Template | Wat hij doet |
+|---|---|---|
+| `default-deny-network-policy` | `manifests/default-deny-network-policy.yaml.jinja` | `podSelector: {}`, beide richtingen, geen regels: alles dicht tenzij een andere policy het opent |
+| `unlabeled-baseline-network-policy` | `manifests/tenant-baseline-network-policy.yaml.jinja` (render met `unlabeled_selector`) | Dezelfde rechten als een deployment, voor pods ZONDER `deployment:`-label |
+| `dedicated-database-network-policy` | `manifests/dedicated-database-network-policy.yaml.jinja` | Een toegewijd PostgreSQL-cluster in deze namespace: 5432 vanuit de eigen namespace, plus de CNPG-operator |
+
+### Wat dit voor een helm-chart verandert
+
+Een pod zonder `deployment:`-label houdt DNS, de gedeelde services uit `ops_egress`,
+internet op 80 en 443, en ingress vanaf de router. Hij verliest:
+
+- **ingress vanuit andere tenant-namespaces**: een chart die vanuit een ander project
+  wordt aangeroepen heeft een regel nodig via cross-domain-access;
+- **egress naar de pods van een deployment in dezelfde namespace**, en andersom. Praat
+  je chart met een OPI-deployment naast zich, dan is dat een regel die er niet is. De
+  uitzondering is het toegewijde databasecluster: dat bereiken beide kanten op 5432;
+- **egress naar alles buiten DNS, de gedeelde services en 80/443**, dus bijvoorbeeld een
+  eigen poort op een externe host.
+
+Pods onderling zonder dat label mogen elkaar wel bereiken, dus een chart met meerdere
+workloads blijft intern werken.
+
+Zet een chart zelf een `deployment:`-label met een waarde die geen deployment van het
+project is, dan selecteert geen van beide baselines die pod: de per-deployment baseline
+kijkt naar de echte naam, de baseline zonder label naar het ONTBREKEN van het label. Zo'n
+pod valt alleen onder de default-deny en staat dus volledig dicht. Laat het label weg, of
+geef hem de naam van de deployment waar hij bij hoort. De matrix houdt dat zichtbaar met
+de regels van `tenant-vreemd-label-pod`.
+
+### De restore-afweging
+
+Restore- en kloonpods dragen geen `deployment:`-label en vallen dus onder de baseline
+zonder label. Ze houden daarmee 80 en 443 naar buiten, zodat een restore naar een externe
+bestemming mogelijk blijft. Dat is een bewuste keuze en geen omissie: de technische review
+noemt zo'n restore verdedigbaar mits die open egress een expliciete keuze blijft. Het
+beperken ervan hoort bij een egress-allowlist per project (#85), niet hier.
+
+### Open punt: admission webhooks en operators
+
+Twee typen charts werken niet onder deze policies: een admission webhook, omdat de
+kube-apiserver de webhookpod aanroept en geen ingress-regel de control plane toelaat, en
+een operator, omdat `kubernetes.default.svc` in de service-CIDR valt die de internetregel
+juist uitsluit. Hier is daar bewust niets voor gebouwd: een oplossing kiest tussen een
+egressregel naar de apiserver en een ingressregel voor de control plane, en dat hoort bij
+de egress-allowlist per project (#85). De infrastructuurnamespace kent dezelfde grenzen al.
+
 ## Related
 
 - [`features/cross-domain-access.md`](cross-domain-access.md) - The cross-domain-access service writes an **additive** per-component NetworkPolicy next to this baseline, so a project can explicitly open named cross-project peers on named ports without touching the baseline itself.
 - `features/shared-resource-warning-acme-network-policy.md` - Related issue with shared network policies across deployments
-- `manifests/network-policy.yaml.jinja` - Current network policy template
-- `manifests/allow-all-network-policy.yaml.jinja` - Current allow-all template
+- `manifests/default-deny-network-policy.yaml.jinja` - Namespace-wide default-deny base policy
+- `manifests/tenant-baseline-network-policy.yaml.jinja` - Per-deployment and unlabeled-pod baseline policy
+- `manifests/dedicated-database-network-policy.yaml.jinja` - Policy for dedicated database clusters
+- `manifests/network-policy.yaml.jinja` - Per-component service-specific policy
 - `manifests/deployment.yaml.jinja` - Deployment template (source of pod labels)

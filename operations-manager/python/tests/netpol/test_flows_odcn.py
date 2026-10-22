@@ -84,6 +84,11 @@ def test_de_matrix_dekt_beide_adresfamilies():
     assert {"internet-v4", "internet-v6"} <= doelen
 
 
+#: De tenant-baseline en de baseline zonder deployment-label: beide renders van
+#: hetzelfde template, en beide dragen de internetregel.
+BASELINE_ACHTERVOEGSEL = "baseline-network-policy"
+
+
 def _internetregel(policy):
     for rule in policy["spec"]["egress"]:
         if any("ipBlock" in (peer or {}) for peer in rule.get("to") or []):
@@ -97,7 +102,7 @@ class TestDeMatrixMerktEenWijziging:
     def test_poort_25_openzetten_maakt_de_matrix_rood(self, policies):
         gemuteerd = copy.deepcopy(policies)
         for policy in gemuteerd:
-            if policy["metadata"]["name"].endswith("tenant-baseline-network-policy"):
+            if policy["metadata"]["name"].endswith(BASELINE_ACHTERVOEGSEL):
                 _internetregel(policy)["ports"].append({"protocol": "TCP", "port": 25})
 
         dichte_smtp = [
@@ -112,7 +117,7 @@ class TestDeMatrixMerktEenWijziging:
     def test_de_internetregel_weghalen_sluit_uitgaand_verkeer(self, policies):
         gemuteerd = copy.deepcopy(policies)
         for policy in gemuteerd:
-            if policy["metadata"]["name"].endswith("tenant-baseline-network-policy"):
+            if policy["metadata"]["name"].endswith(BASELINE_ACHTERVOEGSEL):
                 spec = policy["spec"]
                 spec["egress"] = [r for r in spec["egress"] if r is not _internetregel(policy)]
 

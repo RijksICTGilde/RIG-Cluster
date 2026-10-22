@@ -46,6 +46,8 @@ def test_welke_templates_de_matrix_rendert():
     gerenderd = {naam for naam, in_matrix in TEMPLATE_SOURCES.items() if in_matrix}
     assert gerenderd == {
         "tenant-baseline-network-policy.yaml.jinja",
+        "default-deny-network-policy.yaml.jinja",
+        "dedicated-database-network-policy.yaml.jinja",
         "network-policy.yaml.jinja",
         "service-network-policy.yaml.jinja",
     }

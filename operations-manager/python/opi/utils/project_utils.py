@@ -308,6 +308,25 @@ RESERVED_PROJECT_NAME_MESSAGE = (
 )
 
 
+def namespace_level_deployment(
+    deployments: list[dict[str, Any]], cluster: str, namespace: str
+) -> dict[str, Any] | None:
+    """De deployment die de NAMESPACE-brede manifests van deze namespace schrijft, of None.
+
+    Dezelfde regel als ``project_level_deployment``, een laag lager: de alfabetisch
+    eerste deployment in de namespace is de eigenaar. Zonder zo'n eigenaar zetten twee
+    deployments in dezelfde namespace hetzelfde object in twee ArgoCD-applicaties.
+    """
+    in_namespace = [
+        d
+        for d in deployments
+        if isinstance(d, dict) and d.get("name") and d.get("cluster") == cluster and d.get("namespace") == namespace
+    ]
+    if not in_namespace:
+        return None
+    return min(in_namespace, key=lambda d: str(d["name"]))
+
+
 def validate_project_name(name: str) -> bool:
     """
     Validate project name: must start with lowercase letter, then lowercase a-z, numbers 0-9, dash -, max 20 characters.
