@@ -160,10 +160,12 @@ RUN chmod +x /app/entrypoint.sh
 # opnieuw gebouwd wordt sleept elke laag eronder mee. Zet je iets nieuws in static/, dan
 # hoort het in een van deze regels; tests/test_image_layer_guard.py meet dat.
 # Achtergrond en metingen: features/image-lagen.md.
-COPY --chown=appuser:appuser operations-manager/python/static/promo.mp4 operations-manager/python/static/*.jpg operations-manager/python/static/favicon.ico ./static/
+COPY --chown=appuser:appuser operations-manager/python/static/promo.mp4 operations-manager/python/static/*.jpg operations-manager/python/static/favicon.ico operations-manager/python/static/HERKOMST.md ./static/
 COPY --chown=appuser:appuser operations-manager/python/manifests ./manifests
 COPY --chown=appuser:appuser operations-manager/python/static/css ./static/css
 COPY --chown=appuser:appuser operations-manager/python/static/js ./static/js
+COPY --chown=appuser:appuser operations-manager/python/static/swagger-ui ./static/swagger-ui
+COPY --chown=appuser:appuser operations-manager/python/static/redoc ./static/redoc
 COPY --chown=appuser:appuser operations-manager/python/opi ./opi
 
 # Switch to non-root user

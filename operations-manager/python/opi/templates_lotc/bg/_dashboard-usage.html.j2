@@ -99,7 +99,7 @@
     </c-auto-grid>
     {% endcall %}
 
-    <script>
+    <script nonce="{{ csp_nonce }}">
         initializeGauges({{ metrics.cpu_percentage }}, {{ metrics.memory_percentage }}, {{ metrics.storage_percentage }});
         initializeCharts({{ metrics.network_in_data | tojson }}, {{ metrics.network_out_data | tojson }});
     </script>

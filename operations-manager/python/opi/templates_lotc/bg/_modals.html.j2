@@ -72,5 +72,5 @@
    null zijn en zou de viewer stilzwijgend niets doen. #}
 {% include "bg/_log-viewer.html.j2" %}
 <link rel="stylesheet" href="{{ static_url('css/project-details.css') }}">
-<script src="{{ static_url('js/wizard.js') }}"></script>
-<script src="{{ static_url('js/log_viewer.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/wizard.js') }}"></script>
+<script nonce="{{ csp_nonce }}" src="{{ static_url('js/log_viewer.js') }}"></script>

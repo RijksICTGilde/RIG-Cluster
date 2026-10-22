@@ -31,6 +31,7 @@ from opi.core.template_helpers import (
 )
 from opi.core.version import get_version_info
 from opi.forms.lotc_attrs import attr_escape, field_attrs
+from opi.middleware.security_headers import csp_nonce
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 from opi.services.catalog.aliases.references import is_reference as _alias_is_reference
 from opi.services.event_interpreter import group_component_failures
@@ -102,6 +103,10 @@ templates_lotc.env.globals["group_component_failures"] = group_component_failure
 # macro's die in de roos-templates attribuut-TEKST in de tag schreven; zie
 # opi/forms/lotc_attrs.py voor waarom dat bij LOTC niet kan.
 templates_lotc.env.globals["field_attrs"] = field_attrs
+
+# De CSP-nonce van het huidige verzoek, voor nonce="{{ csp_nonce }}" op elk eigen
+# <script>. Als context_processor en niet als global: de waarde is per verzoek anders.
+templates_lotc.context_processors.append(lambda request: {"csp_nonce": csp_nonce(request)})
 
 
 # Hier stonden twee overgangsdingen. render_roos() rendeerde een dienstblok zonder

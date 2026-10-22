@@ -18,7 +18,7 @@
     <p>Check browser inspector to see actual @click value</p>
 </c-layout-flow>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 function showDeleteConfirmation(projectName, displayName) {
     console.log('showDeleteConfirmation called with:', projectName, displayName);
     alert(`Called with: ${projectName}, ${displayName}`);

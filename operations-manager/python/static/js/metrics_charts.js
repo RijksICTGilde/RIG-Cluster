@@ -17,8 +17,8 @@
    binnen en het fragment roept initMetricsCharts() daarna zelf aan, maar op een pagina
    waar ze al bij het laden staan tekent deze binding ze.
 
-   Chart.js en chartjs-plugin-annotation komen van dezelfde CDN als op de bestaande pagina
-   en worden door de pagina zelf ingeladen. */
+   Chart.js en chartjs-plugin-annotation komen uit static/js/ (static/HERKOMST.md) en
+   worden door de pagina zelf ingeladen. */
 
 /**
  * Convert Unix timestamps to local time labels (HH:MM format)
