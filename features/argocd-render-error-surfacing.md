@@ -43,7 +43,10 @@ This feature makes that error visible in three places.
 (`deployment_diagnostics.conditions_to_errors`) unconditionally - even when health still reads
 `Healthy` from the last good reconciliation - so a `ComparisonError` is no longer filtered out
 behind the health guard. A `ComparisonError` is rendered with a readable heading,
-"Configuratiefout (kustomize CMP)", and the raw kustomize/CMP message underneath. The sync
+"Configuratiefout (kustomize CMP)", and the raw kustomize/CMP message underneath. ArgoCD uses
+the same condition for a refused commit signature (`GIT/GPG: Failed verifying revision ...`);
+that one gets its own heading, "Commit niet ondertekend", so it does not read as a manifest
+problem (see `features/ondertekende-gitops-commits.md`). The sync
 badge shows `Unknown` in red instead of neutral grey.
 
 ### 3. As a pre-commit failsafe

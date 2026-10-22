@@ -75,11 +75,27 @@ def _shell(*taken: str) -> str:
     return "\n".join(cmd for taak in taken for cmd in _taak(taak)["cmds"] if isinstance(cmd, str))
 
 
+#: Een var die zijn eigen default zet (``{{.OVERLAY | default "odcn-production"}}``): de
+#: waarde die Task kiest als niemand hem meegeeft.
+_DEFAULT_RE = re.compile(r'\{\{\s*\.\w+\s*\|\s*default\s*"([^"]*)"\s*\}\}')
+
+
 def _pinbestanden(pintaak: str) -> list[str]:
-    """De bestanden die een pintaak aan de digeststap meegeeft, met zijn vars ingevuld."""
+    """De bestanden die een pintaak aan de digeststap meegeeft, met zijn vars ingevuld.
+
+    Rond tot een vast punt: een var kan naar een andere var wijzen (PATCH_FILE noemt
+    OVERLAY), en eenmaal vervangen blijft er dan een template in staan.
+    """
     meegegeven = _aangeroepen(pintaak, DIGESTSTAP)["vars"]["PIN_FILES"]
-    for naam, waarde in (_taak(pintaak).get("vars") or {}).items():
-        meegegeven = meegegeven.replace(f"{{{{.{naam}}}}}", str(waarde))
+    vars_van_de_taak = (_taak(pintaak).get("vars") or {}).items()
+    for _ in range(len(vars_van_de_taak) + 1):
+        ingevuld = meegegeven
+        for naam, waarde in vars_van_de_taak:
+            ingevuld = ingevuld.replace(f"{{{{.{naam}}}}}", str(waarde))
+        ingevuld = _DEFAULT_RE.sub(lambda m: m.group(1), ingevuld)
+        if ingevuld == meegegeven:
+            break
+        meegegeven = ingevuld
     return meegegeven.split()
 
 
