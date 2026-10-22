@@ -185,7 +185,9 @@ concreet:
 ### Allowlist voor bronnen
 
 OPI kloont een helmfile- of chartbron alleen als de URL onder `RENDER_SOURCE_ALLOWLIST`
-valt: een komma-gescheiden lijst URL-prefixen per cluster. De vergelijking kijkt naar
+valt: een komma-gescheiden lijst URL-prefixen per cluster, in de configmap van de
+OPI-overlay (`bootstrap/rig-system/kustomize/operations-manager/overlays/<cluster>/configmap.yaml`,
+voor `odcn-production`, `odcn-staging` en `sandboxed-local`). De vergelijking kijkt naar
 schema, host en pad (zonder userinfo of `.git`, met het pad opgelost omdat git
 `/toegestaan/../../elders` als `/elders` opvraagt), en vereist een padgrens: een prefix mag
 eronder liggen (`https://github.com/MinBZK/mijn-bureau-infra/sub`) maar niet ernaast

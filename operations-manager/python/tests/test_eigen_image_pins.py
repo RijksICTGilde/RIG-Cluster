@@ -42,10 +42,10 @@ DIGESTSTAP = "_pin-image-digest"
 PINTAKEN = ("pin-cmp-image", "pin-operations-manager-image")
 
 #: De bestanden waar de sidecar in git staat: de component die de sandbox gebruikt, de
-#: image-patch die op productie telt, en de ArgoCD-CR zelf.
+#: component die op elk ODCN-cluster telt, en de ArgoCD-CR zelf.
 CMP_BESTANDEN = (
     "bootstrap/rig-system/kustomize/components/sops-plugin/kustomization.yaml",
-    "bootstrap/rig-system/kustomize/overlays/odcn-production/kustomization.yaml",
+    "bootstrap/rig-system/kustomize/components/cmp-odcn/kustomization.yaml",
     "bootstrap/rig-system/kustomize/overlays/odcn-production/argocd-deployment.yaml",
 )
 

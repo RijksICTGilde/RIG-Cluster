@@ -13,12 +13,16 @@ De repo-server draait twee CMP-sidecars, allebei op het script uit `bootstrap/ri
 
 `SOPS_KEY_SECRET` is `sops-age-key` tenzij de Application hem via `plugin.env` overschrijft, en `ARGOCD_APP_NAMESPACE` is de namespace waar die Application naartoe deployt. De tenant-sidecar haalt de sleutel dus niet uit één centrale plek maar uit de bestemming van wat hij aan het renderen is. Daaruit volgt alles hieronder.
 
+Elk ODCN-cluster richt die twee sidecars identiek in via de component
+`bootstrap/rig-system/kustomize/components/cmp-odcn/`; alleen het UID uit het SCC-bereik van de
+namespace staat per overlay (`odcn-production`, `odcn-staging`).
+
 Er zijn twee soorten houders:
 
 | soort | namespace | inhoud | wie zet hem neer |
 |---|---|---|---|
-| platform | `rig-prd-operations` (prod), `rig-system` (sandbox) | de platformsleutel | bootstrap |
-| project | `rig-prd-<project>` / `rig-<project>` | de EIGEN sleutel van dat project | OPI, `store_project_sops_key_in_namespace` |
+| platform | `rig-prd-operations` (prod), `rig-staging-operations` (staging), `rig-system` (sandbox) | de platformsleutel | bootstrap |
+| project | `rig-prd-<project>` / `rig-staging-<project>` / `rig-<project>` | de EIGEN sleutel van dat project | OPI, `store_project_sops_key_in_namespace` |
 
 De platformsleutel staat nog maar op één plek. Tot RC-351 stond hij ook in `rig-prd-ron` / `rig-ron`, omdat de mailrelay daarheen deployt en de plugin de sleutel uit de bestemmingsnamespace haalde; die app rendert nu in `cmp-platform` met de gemounte sleutel, dus die tweede houder is weg. Draait er nog een cluster met dat secret, dan mag het met de hand weg.
 
@@ -39,7 +43,7 @@ N carry the OLD platform key and WILL be replaced:   <- hier horen alleen platfo
 M carry a DIFFERENT key and are left alone:          <- hier hoort elke projectnamespace, met zijn eigen publieke sleutel
 ```
 
-Gemeten op het sandboxcluster op 24 september 2026, toen de platformsleutel nog twee houders had: 16 houders, waarvan 2 de platformsleutel (`rig-system`, `rig-ron`) en 14 een eigen projectsleutel. Sinds RC-351 is er nog één platformhouder (`rig-system`, op productie `rig-prd-operations`); de verhouding voor de projectnamespaces verandert niet.
+Gemeten op het sandboxcluster op 24 september 2026, toen de platformsleutel nog twee houders had: 16 houders, waarvan 2 de platformsleutel (`rig-system`, `rig-ron`) en 14 een eigen projectsleutel. Sinds RC-351 is er nog één platformhouder (`rig-system`, op productie `rig-prd-operations`, op staging `rig-staging-operations`); de verhouding voor de projectnamespaces verandert niet.
 
 ## Wie moet herstarten
 

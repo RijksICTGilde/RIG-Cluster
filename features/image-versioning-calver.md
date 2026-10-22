@@ -129,7 +129,7 @@ image komt.
 | Bestand | Wat het doet |
 |---|---|
 | `components/sops-plugin/kustomization.yaml` | de sidecar zelf, via `ghcr.io` (wat de sandbox pullt) |
-| `overlays/odcn-production/kustomization.yaml` | de image-patch die op productie telt, via de rcr-spiegel |
+| `components/cmp-odcn/kustomization.yaml` | de image-patch die op elk ODCN-cluster telt, via de rcr-spiegel |
 | `overlays/odcn-production/argocd-deployment.yaml` | de ArgoCD-CR; de component vervangt `/spec/repo`, dus deze waarde bereikt het cluster niet |
 
 Het rcr-pad staat in git omdat de ODCN-admission images daarheen herschrijft. Staat `ghcr.io`
