@@ -12,6 +12,11 @@ if TYPE_CHECKING:
 from opi.connectors.minio_mc import MinioConnector, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
+from opi.manager.clone_validation import (
+    composite_name_collision,
+    other_project_deployments,
+    resolve_clone_source_deployment,
+)
 from opi.services import CloneFromType, ServiceType
 from opi.services.project import Project
 from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
@@ -176,6 +181,12 @@ class MinioManager:
             logger.debug(f"Deployment {deployment_name} does not use MinIO service, skipping")
             return
 
+        # Tweede laag: een bestaande MinIO-gebruiker met deze naam krijgt
+        # hieronder een nieuwe secret key, dus eerst controleren dat zij van dit project is.
+        refusal = composite_name_collision(project_name, deployment_name, other_project_deployments(project_name))
+        if refusal:
+            raise ValueError(refusal)
+
         # Check if this deployment should be cloned from another deployment
         clone_from = deployment.get("clone-from")
         # Use runtime override if True, otherwise fall back to deployment config
@@ -211,10 +222,7 @@ class MinioManager:
                     )
                     return
                 elif clone_type == CloneFromType.DEPLOYMENT.value:
-                    source_deployment = clone_from.get("reference")
-                    if not source_deployment:
-                        msg = f"clone-from van type deployment zonder reference voor '{deployment_name}'"
-                        raise ValueError(msg)
+                    source_deployment = str(clone_from.get("reference") or "")
                     logger.info(f"Deployment {deployment_name} has clone-from deployment: {source_deployment}")
                     await self.clone_minio_from_deployment(project_data, deployment, source_deployment)
                     return
@@ -947,10 +955,15 @@ class MinioManager:
             project_data: The project configuration data
             target_deployment: The target deployment configuration
             source_deployment_name: Name of the source deployment to clone from
+
+        Raises:
+            ValueError: if the source is not a deployment of this project.
         """
         project_name = await self.project_manager.get_name()
         target_deployment_name = target_deployment["name"]
         force_clone = target_deployment.get("force-clone", False)
+
+        resolve_clone_source_deployment(project_data, source_deployment_name, target_deployment_name)
 
         logger.info(
             f"Cloning MinIO resources from {source_deployment_name} to {target_deployment_name} "

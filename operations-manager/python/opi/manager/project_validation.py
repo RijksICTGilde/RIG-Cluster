@@ -21,6 +21,7 @@ from opi.core.cluster_config import CLUSTER_CONFIG, is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_schema import ProjectIntegrityError, age_pattern_violations
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
+from opi.manager.clone_validation import composite_name_collision, other_project_deployments
 from opi.services import ServiceAdapter
 from opi.services.approvals import collect_approval_items
 from opi.services.catalog.approval import ApprovalStatus
@@ -885,9 +886,9 @@ async def validate_project_structure(
     ProjectIntegrityError on the first violation; fails closed.
 
     ``previous`` is the version this one replaces, when the caller has it. Only the
-    rules that judge a CHANGE rather than a value need it (see
-    ``validate_service_setting_changes``); everything else reads ``project_data`` alone,
-    so a caller without a previous version -- a create, a replay -- loses nothing else.
+    rules that judge a CHANGE rather than a value need it (``validate_service_setting_changes``,
+    and the composite-name guard, which judges only pairs that are new); everything else
+    reads ``project_data`` alone. A caller without it is judged as a create: every pair is new.
     The reserved-name rule runs the other way around: only without a previous version,
     because it judges a name that is being introduced.
 
@@ -996,6 +997,20 @@ async def validate_project_structure(
             pass
         except ValueError as e:
             raise ProjectIntegrityError(str(e)) from e
+
+    # Only guard new pairs: a pre-existing collision must not lock a project out of its own file.
+    stored_pairs: set[str] = set()
+    if previous is not None and previous.get("name") == project_name:
+        stored_pairs = {
+            name for dep in (previous.get("deployments") or []) if isinstance(dep, dict) and (name := dep.get("name"))
+        }
+    new_pairs = seen_deployments - stored_pairs
+    if new_pairs:
+        others = other_project_deployments(project_name)
+        for dep_name in sorted(new_pairs):
+            refusal = composite_name_collision(project_name, dep_name, others)
+            if refusal:
+                raise ProjectIntegrityError(refusal)
 
     # A service is only usable where the cluster can deliver it. Here rather than at the
     # form field because a project reaches this point from the wizard, the API and a
