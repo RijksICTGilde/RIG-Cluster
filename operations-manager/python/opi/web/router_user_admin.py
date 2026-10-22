@@ -16,6 +16,7 @@ from opi.forms.editables.user_editables import USER_SECTION
 from opi.forms.widgets.lotc import LOTCWidgetAdapter
 from opi.services.session_revocation_service import revoke_sessions
 from opi.services.user_admin_service import UserAdminService
+from opi.services.user_otp_service import UserOtpService
 from opi.services.user_service import get_user_service
 from opi.utils.csrf import ensure_csrf_token
 from opi.web.menu import get_menu_items
@@ -32,6 +33,10 @@ user_admin_router = APIRouter(prefix="/admin/users", tags=["user-admin"])
 
 def _get_service() -> UserAdminService:
     return UserAdminService()
+
+
+def _get_otp_service() -> UserOtpService:
+    return UserOtpService()
 
 
 def _create_renderer() -> FormRenderer:
@@ -125,6 +130,7 @@ async def list_users(request: Request) -> Response:
             "users": users,
             "csrf_token": csrf_token,
             "success_message": success_message,
+            "eigen_email": str(user.get("email", "")).lower(),
             **build_lotc_admin(user=user, current_path="/admin/users"),
         },
     )
@@ -332,5 +338,35 @@ async def delete_user(request: Request, user_id: str) -> Response:
 
     return RedirectResponse(
         url="/admin/users?success=Gebruiker+verwijderd",
+        status_code=303,
+    )
+
+
+@user_admin_router.post("/{user_id}/otp-reset", response_model=None)
+@requires_sso
+async def reset_user_otp(request: Request, user_id: str) -> Response:
+    """Maak de tweede factor van een ANDERE gebruiker leeg.
+
+    Voor wie geen code meer uit zijn app kan halen. Welke kolommen dit leegmaakt
+    staat in ``features/otp-op-de-zad-gebruiker.md``, zodat een handmatige ingreep
+    hetzelfde doet.
+
+    Niet voor jezelf: je eigen factor leegmaken zonder tweede factor zou van elke
+    overgenomen beheerderssessie een weg om die factor heen maken. Vervangen kan wel, op
+    /account/otp, en dat vraagt een code van de bestaande factor.
+    """
+    beheerder = require_platform_admin(request)
+    service = _get_service()
+    existing = await service.get_user(user_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Gebruiker niet gevonden")
+
+    door = str(beheerder.get("email", "")).lower()
+    if existing["email"].lower() == door:
+        raise HTTPException(status_code=403, detail="Je eigen tweede factor reset je op /account/otp")
+
+    await _get_otp_service().reset(existing["email"], by=door)
+    return RedirectResponse(
+        url="/admin/users?success=Tweede+factor+gereset",
         status_code=303,
     )

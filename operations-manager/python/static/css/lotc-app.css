@@ -267,3 +267,16 @@ nldd-sidebar-section {
 .lange-waarden-breken nldd-cell {
     overflow-wrap: anywhere;
 }
+
+/* De QR van een OTP-registratie (RC-329).
+ *
+ * De SVG komt zonder eigen afmeting uit de server (omitsize), zodat de pagina hem hier
+ * begrenst in plaats van hem op de schermgrootte van de maker te zetten. Zonder deze
+ * regel vult hij de hele kaart.
+ */
+.otp-qr svg {
+    display: block;
+    width: 100%;
+    max-width: 220px;
+    height: auto;
+}

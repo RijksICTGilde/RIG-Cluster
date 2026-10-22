@@ -1,0 +1,27 @@
+{#
+  Je tweede factor: de stand, en de weg om hem in te richten of te vervangen.
+
+  De twee standen staan in een eigen deeltemplate, want samen passen ze niet in een
+  content-blok van vijftig regels (tests/test_template_structure.py).
+#}
+{% extends "base_lotc.html.j2" %}
+{% from "bg/_patterns.html.j2" import page_head %}
+
+{% block page_title %}Tweede factor - Self Service Portal{% endblock %}
+
+{% block content %}
+    {{ page_head("Tweede factor", "Een eenmalige code uit een app op je telefoon, naast je inlog.") }}
+
+    {% if fout %}
+        <c-alert type="error" heading="{{ fout }}" />
+    {% endif %}
+    {% if melding %}
+        <c-alert type="info" heading="{{ melding }}" />
+    {% endif %}
+
+    {% if status.registered %}
+        {% include "bg/_otp-ingericht.html.j2" %}
+    {% else %}
+        {% include "bg/_otp-nog-niet-ingericht.html.j2" %}
+    {% endif %}
+{% endblock %}

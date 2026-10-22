@@ -39,6 +39,7 @@ from opi.services.project_authorization import (
 from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
+from opi.services.user_otp_service import UserOtpService
 from opi.utils.age import decrypt_password_smart, get_global_private_key
 from opi.utils.csrf import ensure_csrf_token
 from opi.utils.totp import totp_now
@@ -70,6 +71,7 @@ from .metrics_explorer_router import metrics_explorer_router
 from .router_approvals import approvals_router
 from .router_attachments import attachments_router
 from .router_detail_edit import detail_edit_router
+from .router_otp import otp_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
 from .router_tasks import tasks_router
@@ -101,6 +103,7 @@ web_router.include_router(approvals_router)
 web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
 web_router.include_router(tasks_router)
+web_router.include_router(otp_router)
 
 # Routers the services themselves deliver (RC-24): a service that owns a page block owns
 # the endpoints that fill it (the backups fragment, the console/job modals), instead of
@@ -2771,14 +2774,17 @@ def _wegwijzer(request: Request, roos: str, lotc: str, pad: str):
 @web_router.get("/account", response_class=HTMLResponse)
 @requires_sso
 async def account_pagina(request: Request):
-    """Je eigen account: wat er in de sessie staat, en verder niets.
+    """Je eigen account: wat er in de sessie staat, plus je tweede factor.
 
     De naam rechtsboven linkte naar /account en die route bestond niet - een 404 op een
     link die in elke schil staat. ZAD houdt zelf geen profiel bij; naam en e-mailadres
-    komen uit de inlogdienst, dus er valt hier niets in te stellen.
+    komen uit de inlogdienst. De tweede factor is het enige dat hier WEL in te stellen
+    is, en staat daarom op deze pagina (RC-329).
     """
     user = get_current_user(request)
     from opi.web.navigation_lotc import get_navigation
+
+    otp_status = await UserOtpService().status(str(user.get("email", "")).lower())
 
     return render(
         request,
@@ -2792,6 +2798,7 @@ async def account_pagina(request: Request):
                 "email": user.get("email", ""),
                 "organisatie": user.get("organization") or user.get("organisation") or "",
             },
+            "otp_status": otp_status,
         },
     )
 
