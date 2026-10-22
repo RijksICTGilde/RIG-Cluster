@@ -1,0 +1,14 @@
+# De tegenhanger van overtreder-pod.yaml: dezelfde policies horen hier niets te melden.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nette-pod
+  namespace: rig-testproject
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true

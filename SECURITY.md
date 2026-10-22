@@ -25,6 +25,11 @@ Meld ook vermoedens en houd bevindingen vertrouwelijk totdat het team heeft kunn
 - **Secret-scan**: iedere pull request en iedere push naar `main` draait een eigen scan over de volledige boom op gecommitte geheimen ([`scripts/scan-secrets.py`](scripts/scan-secrets.py), job `secret-scan` in [`security.yml`](.github/workflows/security.yml)).
 - **Dependencies**: `pip-audit` toetst de Python-dependencies tegen OSV, bij iedere pull request, bij iedere push naar `main` en wekelijks (job `dependency-audit` in [`security.yml`](.github/workflows/security.yml)).
 - **Container-images**: Trivy scant de Operations Manager, de back-upimage, de SOPS-sidecar en onze eigen PostgreSQL-, Keycloak- en ArgoCD-image op kwetsbare OS-pakketten en bibliotheken; bevindingen komen als SARIF in de Security-tab van de repository (job `container-scan` in [`security.yml`](.github/workflows/security.yml)). Een image die we zelf bouwen, gaat pas de registry in als hij langs de poort komt, en wordt getekend; zie [De toeleverketen van de images](#de-toeleverketen-van-de-images).
+- **Eigen code**: semgrep en CodeQL lezen de code statisch op injectie en op een webroute die zonder authenticatie open staat; gitleaks scant de boom op sleutelvormen en wekelijks de hele historie (jobs `sast-semgrep`, `sast-codeql`, `gitleaks` en `gitleaks-history` in [`security.yml`](.github/workflows/security.yml)).
+- **Gegenereerde manifests**: kube-linter en checkov meten de manifests die ZAD voor elke tenant genereert op `securityContext`, niet-root en een vaste tag (job `manifest-posture` in [`security.yml`](.github/workflows/security.yml)).
+- **Het draaiende portaal**: nuclei vuurt ruim 11.000 templates af op een instantie die de run zelf opzet op de loopback van de runner, met en zonder sessie ([`aanvalsproef.yml`](.github/workflows/aanvalsproef.yml)). Wat die scanners vinden gaat door een poort met een uitzonderingslijst met reden en vervaldatum; zie [`features/aanvalsproef-harnas.md`](features/aanvalsproef-harnas.md).
+- **Schotten op het cluster**: Kyverno-policies in waarschuwmodus en Falco voor runtime-detectie ([`features/kyverno-admission-audit.md`](features/kyverno-admission-audit.md), [`features/falco-runtime-detectie.md`](features/falco-runtime-detectie.md)).
+- **Dekking**: welke ASVS-eis door welke toets gedekt is, en wat handwerk blijft, staat in [`docs/asvs-zelfbeoordeling.md`](docs/asvs-zelfbeoordeling.md).
 - **Wijzigingen**: de testsuite, de linter en de typecontrole draaien op iedere pull request en iedere push naar `main` ([`ci.yml`](.github/workflows/ci.yml)); de gevoelige paden hebben een vaste eigenaar ([`.github/CODEOWNERS`](.github/CODEOWNERS)).
 
 De volledige BIO-verantwoording per control wordt hier niet herhaald; die is intern belegd.
@@ -36,6 +41,8 @@ Hoe de images van dit platform gebouwd, gescand en getekend worden, en hoe je ze
 ### De runner staat dicht
 
 Elke job in `.github/workflows/` begint met `step-security/harden-runner` op `egress-policy: block`. Alles buiten de allowlist van die workflow wordt tegengehouden, dus een gecompromitteerde action of buildstap kan niets naar buiten praten. De lijst staat per workflow in `env.HARDEN_ENDPOINTS`, en een geblokkeerd endpoint komt als annotatie in de run te staan: dat is de plek om te lezen wat erbij hoort.
+
+Dat geldt ook voor de jobs van `aanvalsproef.yml`, die een eigen allowlist hebben: die workflow haalt de nuclei-templates, de kind-binary en de Kyverno- en Falco-images op. Die lijst is afgeleid uit de bron van elk werktuig en op een echte GitHub-run nog niet gemeten.
 
 Dit is de vangrail achter de SHA-pins: elke externe action staat op een commit-SHA, dus de inhoud kan niet onder dezelfde naam veranderen. `tests/test_workflows_actions_op_sha.py` en `tests/test_workflows_harden_runner.py` bewaken die twee.
 

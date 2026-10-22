@@ -106,6 +106,16 @@
     },
     {
       "customType": "regex",
+      "description": "De scanners van de aanvalsproef: de versie staat als env-pin in de workflow, met dezelfde # renovate:-annotatie als in de Dockerfiles",
+      "managerFilePatterns": ["/^\\.github/workflows/(security|aanvalsproef)\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-zA-Z0-9-._]+?) depName=(?<depName>[^\\s]+?)(?: versioning=(?<versioning>[^\\s]+?))?\\s+[A-Z_]+: (?<currentValue>[0-9][^\\s]*)"
+      ],
+      "extractVersionTemplate": "^v?(?<version>.+)$",
+      "depTypeTemplate": "scanner-version"
+    },
+    {
+      "customType": "regex",
       "description": "De jar van het NL-design-thema. De versie staat uitgeschreven in de URL en niet als ARG, zodat --build-arg de checksumcontrole niet kan omzeilen",
       "managerFilePatterns": ["/^images/keycloak-zad/Dockerfile$/"],
       "matchStrings": [

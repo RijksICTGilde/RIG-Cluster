@@ -186,6 +186,8 @@ async def eigen_domein(request: Request) -> Response:
 async def root(request: Request):
     """De voordeur: het dashboard als je ingelogd bent, anders de introductie.
 
+    BEWUST ZONDER ``@requires_sso``: de voordeur hoort leesbaar te zijn zonder sessie.
+
     Wie hier zonder sessie binnenkwam werd naar ``/dashboard`` gestuurd, en die vraagt SSO,
     dus eindigde elke bezoeker zonder rechten op het inlogscherm - zonder ooit gelezen te
     hebben WAT dit is. Sinds de architectuurpagina weg is, was dat de enige uitkomst.
@@ -238,6 +240,8 @@ async def permission_denied(request: Request) -> HTMLResponse:
     """
     Show the permission denied page for users who are authenticated but not authorized.
 
+    BEWUST ZONDER ``@requires_sso``: deze pagina is juist voor wie geen rechten heeft.
+
     This page is shown to users who have successfully authenticated via SSO
     but whose email address is not in the allowed users list.
 
@@ -275,7 +279,11 @@ async def permission_denied(request: Request) -> HTMLResponse:
 # Redirect old self-service portal URL to the wizard
 @web_router.get("/projects/new")
 async def redirect_projects_new_to_wizard():
-    """Redirect legacy /projects/new to the wizard-based project creation flow."""
+    """Redirect legacy /projects/new to the wizard-based project creation flow.
+
+    BEWUST ZONDER ``@requires_sso``: een blinde doorverwijzing geeft niets prijs, en de
+    wizard erachter vraagt wel een sessie.
+    """
     return RedirectResponse(url="/forms/wizard/create-project", status_code=302)
 
 
@@ -1469,7 +1477,7 @@ async def project_tab_oude_vorm(request: Request, project_name: str, deployment_
     heeft in de sandbox gestaan en kan gedeeld zijn, en een gedeelde link hoort niet stil
     een 404 te worden - dus verwijst hij door in plaats van te verdwijnen.
 
-    Hier zit GEEN autorisatie op, en dat kan omdat er niets wordt opgezocht: dit is een
+    BEWUST ZONDER ``@requires_sso``, en dat kan omdat er niets wordt opgezocht: dit is een
     blinde herschrijving van het pad die niets prijsgeeft over het project (of het bestaat,
     of je erbij mag). Het antwoord is voor elke naam hetzelfde. De echte pagina achter het
     nieuwe adres doet de autorisatie zoals altijd.
@@ -2809,6 +2817,8 @@ async def account_pagina(request: Request):
 async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
     """Onthoud de weergavekeuze (systeem, licht, donker) en ga terug waar je vandaan kwam.
 
+    BEWUST ZONDER ``@requires_sso``: de keuze zet alleen een koekje en leest geen gegevens.
+
     Server-side en niet in localStorage, om dezelfde reden als de layoutschakelaar: dan
     rendert de server de pagina meteen in de goede stand en flitst er niets. NLDD leest
     ``data-scheme`` op ``<html>``; de schil zet dat uit dit koekje.
@@ -2833,7 +2843,10 @@ async def kies_weergave(request: Request, scheme: str = "", terug: str = "/"):
 
 @web_router.get("/about", response_class=HTMLResponse)
 async def about_platform(request: Request):
-    """Serve the 'About the platform' page."""
+    """Serve the 'About the platform' page.
+
+    BEWUST ZONDER ``@requires_sso``: een publieke uitlegpagina, net als de introductie.
+    """
     try:
         user = get_current_user(request)
         from opi.web.navigation_lotc import get_navigation

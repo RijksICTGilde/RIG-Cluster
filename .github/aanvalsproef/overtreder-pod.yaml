@@ -1,0 +1,11 @@
+# De pod die de admission-policies moet laten rapporteren: een image op :latest en geen
+# securityContext. Gebruikt door de job admission-audit in .github/workflows/aanvalsproef.yml.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: overtreder
+  namespace: rig-testproject
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:latest

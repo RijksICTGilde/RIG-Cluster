@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: falco-config
+data:
+  falco.yaml: |
+    rules_files:
+      - /etc/falco/falco_rules.yaml
+      - /etc/falco/rules.d
+    # De alerts gaan als JSON naar stdout, zodat ze in dezelfde logstroom staan als de rest
+    # van het cluster en er geen tweede afleverpad bij hoeft. Zie features/falco-runtime-detectie.md.
+    json_output: true
+    json_include_output_property: true
+    stdout_output:
+      enabled: true
+    file_output:
+      enabled: false
+    syscall_event_drops:
+      actions:
+        - log
+      rate: 0.03333
+      max_burst: 10
+    # Metrics op de Prometheus-vorm, zodat het aantal alerts per regel te volgen is naast
+    # de bestaande scrapes (features/prometheus-monitoring.md).
+    metrics:
+      enabled: true
+      interval: 1m
+      output_rule: true
+    webserver:
+      enabled: true
+      listen_port: 8765
+      k8s_healthz_endpoint: /healthz
+      prometheus_metrics_enabled: true

@@ -31,6 +31,8 @@
 /scripts/scan-secrets.py @uittenbroekrobbert
 /scripts/secret-scan-baseline.json @uittenbroekrobbert
 /workflow/secret-scan-allow.toml @uittenbroekrobbert
+/aanvalsproef/gitleaks.toml @uittenbroekrobbert
+/aanvalsproef/uitzonderingen.yaml @uittenbroekrobbert
 
 # Wat er in logs en in commits terechtkomt
 /operations-manager/python/opi/utils/logging_redact.py @uittenbroekrobbert
@@ -48,3 +50,9 @@
 /.github/CODEOWNERS @uittenbroekrobbert
 /SECURITY.md @uittenbroekrobbert
 /features/security-scanning-pipeline.md @uittenbroekrobbert
+/features/aanvalsproef-harnas.md @uittenbroekrobbert
+/features/kyverno-admission-audit.md @uittenbroekrobbert
+/features/falco-runtime-detectie.md @uittenbroekrobbert
+/features/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/docs/asvs-zelfbeoordeling.md @uittenbroekrobbert
+/architecture/asvs-zelfbeoordeling.yaml @uittenbroekrobbert

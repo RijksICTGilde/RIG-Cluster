@@ -1,0 +1,29 @@
+# Configuratie van de checkov-stage in .github/workflows/security.yml.
+#
+# Checkov draait naast kube-linter omdat de twee andere dingen zien: kube-linter kijkt naar
+# de workload-definitie, checkov ook naar wat eromheen hoort te staan (CKV2-regels over een
+# NetworkPolicy per pod). De selectie is om dezelfde reden expliciet als bij kube-linter:
+# de volledige set levert 93 bevindingen op dezelfde map, waarvan het merendeel voorkeur is
+# (secrets als bestand, image op digest) en geen poort kan dragen. Gemeten 21 oktober 2026.
+directory:
+  - operations-manager/python/tests/golden/manifests
+framework:
+  - kubernetes
+check:
+  - CKV_K8S_14   # image met een vaste tag, dus geen :latest
+  - CKV_K8S_16   # geen privileged container
+  - CKV_K8S_17   # geen hostPID
+  - CKV_K8S_18   # geen hostIPC
+  - CKV_K8S_19   # geen hostNetwork
+  - CKV_K8S_20   # allowPrivilegeEscalation staat uit
+  - CKV_K8S_22   # read-only rootfs waar het kan
+  - CKV_K8S_23   # niet als root
+  - CKV_K8S_28   # NET_RAW laten vallen
+  - CKV_K8S_29   # securityContext aanwezig
+  - CKV_K8S_30   # securityContext op de container
+  - CKV_K8S_31   # seccompProfile gezet
+  - CKV_K8S_37   # capabilities beperkt
+  - CKV_K8S_153  # geen nginx-annotatie-snippet (CVE-2021-25742)
+  - CKV2_K8S_6   # een NetworkPolicy per pod
+compact: true
+quiet: true

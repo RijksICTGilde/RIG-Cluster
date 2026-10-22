@@ -1,0 +1,37 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: zad-getekende-images
+  annotations:
+    policies.kyverno.io/title: Alleen images die wij zelf tekenden
+    policies.kyverno.io/category: Supply chain
+    policies.kyverno.io/description: >-
+      Een eigen image hoort een cosign-handtekening te hebben van de workflow die hem
+      bouwde, keyless via de OIDC-identiteit van GitHub Actions. Zo is te zien dat wat er
+      draait uit onze pijplijn komt en niet ergens anders is gebouwd en onder dezelfde naam
+      gepusht.
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Ignore
+  rules:
+    - name: eigen-images-zijn-getekend
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      verifyImages:
+        # Waarschuwmodus, en met opzet: het tekenen van de images zelf hangt aan
+        # RC-369, en welke build productie draait aan het open admission-besluit. In
+        # Audit meldt deze regel wat er nog niet getekend is, zonder iets te stoppen.
+        - failureAction: Audit
+          imageReferences:
+            - "ghcr.io/rijksictgilde/zad/*"
+          attestors:
+            - entries:
+                - keyless:
+                    issuer: https://token.actions.githubusercontent.com
+                    subject: https://github.com/RijksICTGilde/RIG-Cluster/.github/workflows/*
+                    rekor:
+                      url: https://rekor.sigstore.dev
