@@ -8,10 +8,13 @@ number directly.
 """
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from opi.core.project_schema import SchemaVersion, parse_schema_version, version_key
+from opi.services.catalog.approval import ApprovalStatus
 from opi.services.catalog.image_registries.upstream import normalize_upstream
+from opi.services.catalog.redis.config_model import ACL_KEY_PREFIX_FIELD
 from opi.services.postgres_scope import database_generation_service_type
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name
@@ -30,7 +33,8 @@ logger = logging.getLogger(__name__)
 #: at startup, so adding a migration without a schema fails loudly instead of
 #: quietly rejecting files that declare the new version.
 SCHEMA_VERSIONS: tuple[SchemaVersion, ...] = tuple(
-    parse_schema_version(text) for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9")
+    parse_schema_version(text)
+    for text in ("1", "2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "2.8", "2.9", "2.10")
 )
 
 LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
@@ -40,6 +44,10 @@ LATEST_SCHEMA_VERSION = SCHEMA_VERSIONS[-1]
 LATEST_SCHEMA_VERSION_VALUE = version_key(LATEST_SCHEMA_VERSION)
 
 _V1, _V2 = SCHEMA_VERSIONS[0], SCHEMA_VERSIONS[1]
+
+#: Waar het goedkeuringsblok van de Redis-opt-out staat, zoals ``config_value_approval``
+#: het schrijft.
+APPROVAL_FIELD = f"{ACL_KEY_PREFIX_FIELD}-approval"
 
 # NOTE: Domain restriction changes (task-1) introduced:
 # - domains.allowed-subdomains entries changed from list[str] to list[{name, status, history}]
@@ -1283,6 +1291,44 @@ def _normalize_upstream(url: Any) -> Any:
     return normalize_upstream(url) if isinstance(url, str) else url
 
 
+def approve_existing_acl_key_prefix_optout(project_data: dict[str, Any]) -> bool:
+    """Neem een bestaande Redis-opt-out over als goedgekeurd (v2.9 -> 2.10, RC-338).
+
+    ``acl-key-prefix: false`` vraagt sinds deze versie het besluit van een
+    platformbeheerder. De bestanden die hem al droegen zijn de reden dat de instelling
+    bestaat, dus hun toestand wordt overgenomen in plaats van ingetrokken. Een migratie
+    draait een keer per bestand, dus een opt-out die daarna wordt gezet doorloopt de
+    gewone aanvraag.
+
+    Idempotent. Retourneert True als er iets veranderd is.
+    """
+    for entry in project_data.get("services", []) or []:
+        if service_entry_name(entry) != ServiceType.REDIS.value:
+            continue
+        config = service_entry_config(entry)
+        if not isinstance(config, dict) or config.get(ACL_KEY_PREFIX_FIELD) is not False:
+            continue
+        if isinstance(config.get(APPROVAL_FIELD), dict):
+            continue
+        config[APPROVAL_FIELD] = {
+            "status": ApprovalStatus.APPROVED.value,
+            "value": False,
+            "history": [
+                {
+                    "date": datetime.now(UTC).isoformat(),
+                    "status": ApprovalStatus.APPROVED.value,
+                    "by": "schema-migration",
+                    # De versie van DEZE stap, niet de laatste: de regel legt vast bij welke
+                    # migratie de opt-out is overgenomen, en die blijft 2.10 als er een
+                    # versie bijkomt.
+                    "message": "Bestaande opt-out overgenomen bij de migratie naar 2.10",
+                }
+            ],
+        }
+        return True
+    return False
+
+
 def _set_service_config(project_data: dict[str, Any], service_name: str, config: dict[str, Any]) -> None:
     """Zet de projectconfig van een dienst, en maak de dienstvermelding als die er niet is."""
     Project(project_data).set(f"services/{service_name}/config", config)
@@ -1302,6 +1348,7 @@ MIGRATION_STEPS: tuple[tuple[SchemaVersion, Callable[[dict[str, Any]], bool]], .
     (parse_schema_version("2.7"), relocate_domain_settings_to_service),
     (parse_schema_version("2.8"), remove_domain_mode),
     (parse_schema_version("2.9"), relocate_registries_to_service),
+    (parse_schema_version("2.10"), approve_existing_acl_key_prefix_optout),
 )
 
 # The v1 -> v2 step is the odd one out (it replaces the dict rather than mutating it) and

@@ -49,6 +49,7 @@ from opi.forms.wizard.session import (
     save_modal_state_by_token,
 )
 from opi.handlers.project_file_handler import extract_attachment_catalog
+from opi.services.approvals import ensure_approval_requests
 from opi.services.catalog.cross_domain_access.context import build_cross_domain_context
 from opi.services.project_authorization import (
     is_user_authorized_for_project,
@@ -1529,6 +1530,11 @@ async def _process_and_save_modal_edit(
         return existing_data, _render_modal_review(
             request, wizard_token, project_name, flow.flow_id, active_sections, state, global_errors=[str(e)]
         )
+
+    # Een stand die een goedkeuring vraagt, legt hier zijn aanvraag vast, net als de
+    # bewerkwizard. Op de opslagweg en niet in de merge: die mag een lege bewerking
+    # niets laten veranderen.
+    ensure_approval_requests(existing_data)
 
     # Save through the single validated path: schema + structural integrity
     # validation, canonical dumper, commit + push, and cache refresh in one shot.

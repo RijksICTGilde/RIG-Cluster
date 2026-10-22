@@ -156,8 +156,7 @@ def config_endpoint_path(layer: ConfigLayer, service_name: str, project_name: st
 #: services, or a list for sequence configs (e.g. storage mounts).
 ServiceConfigData = dict[str, Any] | list[Any]
 
-#: One forward migration step: it takes a config at the previous version and returns the
-#: same config at the version the step is stamped with.
+#: Eén migratiestap: neemt een config van de vorige versie en geeft hem terug op de versie waarmee hij is gestempeld.
 ConfigMigrationStep = Callable[[ServiceConfigData], ServiceConfigData]
 
 
@@ -182,7 +181,7 @@ class ProvisionContext:
     mail_manager: Any
     # Een eerdere run begon aan de kloon van deze deployment en legde hem niet als afgerond vast.
     clone_interrupted: bool = False
-    #: Diensten (ServiceType-waarden) waarvan het geheim deze ronde vervangen moet worden
+    #: Diensten (``ServiceType``-waarden) waarvan het geheim deze ronde vervangen moet worden
     #: in plaats van hergebruikt. Leeg bij een gewone ronde.
     rotate_credentials: frozenset[str] = frozenset()
 
@@ -766,9 +765,9 @@ class Service(ABC):
     #: had a versioned contract; the pairing with config_model is enforced by
     #: tests/test_service_config_schema.py.
     config_schema_version: ClassVar[str | None] = None
-    #: Forward migration steps in ascending order, each stamped with the version it brings
-    #: the config TO; the last one lands on ``config_schema_version``. ``__init_subclass__``
-    #: holds a subclass to that, comparing the stamps as ``SchemaVersion``.
+    #: Migratiestappen in oplopende volgorde, elk gestempeld met de versie waar hij naar voert.
+    #: De laatste landt op ``config_schema_version``. ``__init_subclass__`` handhaaft dat,
+    #: stempels vergeleken als ``SchemaVersion``.
     config_migration_steps: ClassVar[tuple[tuple[str, ConfigMigrationStep], ...]] = ()
 
     #: Wizard/edit config-section id for this service (RC-5 Phase 3), or None if the
@@ -894,11 +893,11 @@ class Service(ABC):
 
     @classmethod
     def _check_config_migration_steps(cls) -> None:
-        """Hold the declared steps to ascending order, landing on the current version.
+        """Check dat migratiestappen in oplopende volgorde eindigen op de huidige versie.
 
-        A string sort would put 1.10 before 1.9, so the stamps are compared as
-        ``SchemaVersion``; an unreadable stamp fails here, at import, instead of on the
-        first project file that carries it.
+        Een tekstsortering zet 1.10 voor 1.9, dus de stempels worden vergeleken als
+        ``SchemaVersion``; een onleesbare stempel faalt hier, bij het laden, in plaats van bij
+        het eerste projectbestand dat hem draagt.
         """
         versions = [parse_schema_version(version) for version, _ in cls.config_migration_steps]
         if versions != sorted(set(versions)):
@@ -976,15 +975,15 @@ class Service(ABC):
         return (ConfigRole.USE,) if layer in self.config_layers() else ()
 
     def migrate_config(self, config: ServiceConfigData, from_version: str) -> ServiceConfigData:
-        """Convert an older config forward to ``config_schema_version`` (hub).
+        """Zet een oudere config vooruit naar ``config_schema_version`` (hub).
 
-        Forward-only (spoke -> hub): applies every ``config_migration_steps`` entry the
-        stored version has not had yet, in order. A service still at its first version
-        declares no steps and this is identity. Keep each step simple and lossless where
-        possible (the Kubernetes conversion rule).
+        Alleen vooruit (spoke -> hub): voert elke stap uit ``config_migration_steps`` uit die
+        de opgeslagen versie nog niet gehad heeft, in volgorde. Een dienst die nog op zijn
+        eerste versie staat declareert geen stappen, en dit is dan de identiteit. Houd elke
+        stap eenvoudig en verliesvrij waar mogelijk (de Kubernetes-conversieregel).
 
-        ``config`` is a dict for most services, or a list for services whose config
-        is a sequence (e.g. storage mounts).
+        ``config`` is een dict voor de meeste diensten, of een lijst voor diensten waarvan de
+        config een reeks is (bijvoorbeeld storage mounts).
         """
         stored = parse_schema_version(from_version)
         for step_version, step in self.config_migration_steps:
@@ -1218,9 +1217,10 @@ class Service(ABC):
 
     #: Whether hanging this service on a component/deployment may also add it to the
     #: project's ``services`` list, without anyone selecting it there. False (the safe
-    #: answer) for every service that does not say otherwise; a service that declares
-    #: approvals is never implicit, whatever it sets here. Only asked of a service that
-    #: HAS a project layer -- without one there is no decision to protect (RC-103).
+    #: answer) for every service that does not say otherwise; a service whose approvals
+    #: say the implicit config needs a request is never implicit, whatever it sets here.
+    #: Only asked of a service that HAS a project layer -- without one there is no
+    #: decision to protect (RC-103).
     allows_implicit_project_selection: ClassVar[bool] = False
 
     def implicit_project_config(self) -> ServiceConfigData | None:
@@ -1251,9 +1251,12 @@ class Service(ABC):
           to make it with, so refusing would send the caller to a layer that does not
           exist -- a promise the API cannot keep. This outranks the two rules below,
           which both exist to protect a project-level decision;
-        * a service that declares approvals (``config_approvals``) is never implicit --
-          enrolling itself would enrol the thing an administrator has to approve, so the
-          approval wins over whatever the service declares;
+        * a service may never enrol itself into a state that needs approving. Not the
+          mere presence of an ``ApprovalSpec``: the spec is asked whether the config the
+          service would enrol with needs a request (``requires_approval``). A
+          ``service_use_approval`` always says yes, so such a service stays non-implicit;
+          a ``config_value_approval`` says yes only for the value its predicate names, so
+          a service whose default config is the narrow one still enrols itself;
         * a service that says yes must produce an entry that validates. If its default
           project config does not pass its own project-layer model, that is a programming
           error in the service and it fails loudly here instead of writing a project file
@@ -1274,7 +1277,9 @@ class Service(ABC):
             # refusing would name a layer the caller cannot reach.
             return self.service_type.value
 
-        if not self.allows_implicit_project_selection or self.approval_specs():
+        if not self.allows_implicit_project_selection:
+            return None
+        if self.enabling_needs_approval():
             return None
 
         if model is not None:
@@ -1438,6 +1443,16 @@ class Service(ABC):
             for spec in self.config_approvals(layer):
                 seen.setdefault(spec.key, spec)
         return list(seen.values())
+
+    def enabling_needs_approval(self) -> bool:
+        """Of het AANZETTEN van deze dienst zelf een aanvraag is.
+
+        Niet de aanwezigheid van een spec: een goedkeuring over een CONFIGWAARDE geldt
+        pas bij die waarde, en de dienst aanzetten vraagt dan niets. Dezelfde vraag als
+        in ``implicit_project_entry``, voor de kaart en de uitleg in het formulier.
+        """
+        config = self.implicit_project_config() or {}
+        return any(spec.requires_approval(config) for spec in self.approval_specs())
 
     def get_approval(self, key: str) -> ApprovalSpec | None:
         """This service's ApprovalSpec with ``key`` (searched across layers), or None."""
@@ -1669,17 +1684,17 @@ class Service(ABC):
         return []
 
     def validate_project_change(self, previous: dict[str, Any], project_data: dict[str, Any]) -> list[str]:
-        """This service's rules on what the save CHANGES, as messages (default none).
+        """Regels van deze dienst op wat de save VERANDERT, als meldingen (standaard geen).
 
-        The sibling of ``validate_project`` for a rule that can only be judged with the
-        version being replaced in hand: a stricter bound on a NEW value, where a value that
-        has been in the project file for a year must keep validating or its owner can no
-        longer save at all. ``ConfigSetting``'s ``grow_only`` covers that for a scalar with
-        a numeric bound (see ``validate_service_setting_changes``); this is for a rule that
-        does not fit a declaration.
+        De zuster van ``validate_project`` voor een regel die alleen kan oordelen met de
+        versie die vervangen wordt in de hand: een striktere grens op een NIEUWE waarde, want
+        een waarde die al een jaar in het projectbestand staat moet blijven valideren, anders
+        kan de eigenaar niet meer opslaan. ``ConfigSetting``'s ``grow_only`` dekt dat voor een
+        scalar met een getalsgrens (zie ``validate_service_setting_changes``); dit is voor een
+        regel die niet in een declaratie past.
 
-        ``previous`` is the committed version, and ``{}`` on a create: a file that replaces
-        nothing has nothing stored, so every value in it is new.
+        ``previous`` is de vastgelegde versie, en ``{}`` op een aanmaak: een bestand dat
+        niets vervangt heeft niets opgeslagen, dus elke waarde daarin is nieuw.
         """
         return []
 

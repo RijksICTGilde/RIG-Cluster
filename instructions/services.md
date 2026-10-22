@@ -1120,6 +1120,13 @@ Alongside the spec, the service itself answers one more question:
 |---|---|---|
 | `ensure_approval_requests(project_data)` | What does this project ask for that nobody has judged yet? | `opi/services/approvals.ensure_approval_requests`, called after a write that can introduce such a value |
 
+Elke formulier-schrijfweg draait hem, en dat is de voorwaarde om aan te sluiten: de
+bewerkwizard (`_save_existing_project`), het aanmaken (`_start_project_creation`), het
+opslaan van een bewerkdialoog (`_process_and_save_modal_edit`) en de API-configschrijf
+(`project_manager`). Sluit een nieuwe schrijfweg erop aan, anders ziet de beheerder een
+aanvraag die daar wordt gezet nooit, en blijft een oud besluit staan voor een stand die
+intussen veranderde.
+
 It sits on the service and not on the spec because one pass over the project can produce
 several kinds of request at once (publish-on-web reads a deployment's domain and its
 subdomain together). Write it **state-shaped, not event-shaped**: read the project as it
@@ -1157,6 +1164,49 @@ that is switched on and silently does nothing is the fault this shape exists to 
 Note the split between blocking and enforcing: a user picking a rejected domain is stopped
 at the form field, but the save gate accepts the state, otherwise an approver could not
 record a revocation on a domain that is already in use. Enforcement happens at publication.
+
+### "May this project set this value?"
+
+De tweede vorm, `config_value_approval()` in hetzelfde bestand. Het besluit gaat niet over
+de dienst maar over een WAARDE in zijn projectconfig, en een goedkeuring geldt voor de
+waarde die is goedgekeurd: verandert die, dan ontstaat een nieuwe aanvraag. De toestand
+staat onder de dienst, op `services/[<dienst>]/config/<veld>-approval`, met `status`, de
+goedgekeurde `value` en `history`.
+
+```python
+APPROVAL = config_value_approval(
+    ServiceType.REDIS,
+    field="acl-key-prefix",
+    label="Redis zonder sleutelprefix",
+    activity="Redis gebruiken zonder sleutelprefix",
+    consequence="De Redis-gebruiker houdt het prefix {deployment}-{project}: zolang er geen goedkeuring is.",
+    required_when=lambda config: config.get("acl-key-prefix", True) is False,
+)
+```
+
+Hij geeft dezelfde drie dingen terug als `service_use_approval`, en `is_approved` is ook
+hier DE POORT: hij zegt of het veld in een stand staat die een besluit vraagt EN dat
+besluit er is. Drie dingen horen erbij:
+
+* zet het goedkeuringsveld op `PLATFORM_MANAGED` in je configmodel. Een project dat zijn
+  eigen status mag schrijven heeft geen goedkeuring;
+* `required_when` is ook wat de impliciete aanmelding leest (`requires_approval`), dus een
+  dienst met deze vorm mag zich nog aanmelden zolang zijn standaardconfig de smalle stand
+  is. Zie `features/impliciete-dienstselectie.md`;
+* de dienstkaart in de wizard en de banner boven de popup-uitleg vragen
+  `Service.enabling_needs_approval()`, niet of er een spec is: ze gaan over het AANZETTEN
+  van de dienst, en een besluit over een configwaarde geldt pas bij die waarde. Een dienst
+  met alleen deze vorm draagt dus geen "vereist goedkeuring" op zijn kaart.
+
+Gaat het veld terug naar een stand die geen besluit vraagt, dan ruimt `ensure_requested`
+het blok op. Een oordeel geldt alleen voor de stand waarvoor het gold: bleef het staan, dan
+gold een oude goedkeuring opnieuw zodra het veld terugkwam, en weigerde
+`validate_approval_decisions` daarna het opslaan omdat een `approved` die in de vorige
+versie niet bestond niet van de goedkeuringsroute kan komen.
+
+Bestaande bestanden die de waarde al droegen zijn een migratiestap, geen uitzondering in de
+code: `approve_existing_acl_key_prefix_optout` (schemaversie 2.10) neemt zo'n stand over als
+goedgekeurd, met `by: schema-migration` in de history.
 
 ## Adding a service
 

@@ -1,11 +1,64 @@
 {
+  "$defs": {
+    "AclKeyPrefixApproval": {
+      "additionalProperties": true,
+      "description": "Of een platformbeheerder het uitzetten van de sleutelbeperking heeft toegestaan.\n\nZelfde vorm als het goedkeuringsblok van send-email, met de goedgekeurde ``value``\nerbij: een oordeel geldt voor de waarde waarover het ging. Geschreven door de\ngoedkeuringsroute (``opi/services/approvals.py``).",
+      "properties": {
+        "history": {
+          "description": "Oordeelgeschiedenis: een {date, status, by, message}-regel per besluit.",
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "History",
+          "type": "array"
+        },
+        "status": {
+          "description": "requested, approved of denied. Geschreven door de goedkeuringsroute.",
+          "title": "Status",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "De waarde van acl-key-prefix waarover dit oordeel ging.",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "AclKeyPrefixApproval",
+      "type": "object"
+    }
+  },
   "additionalProperties": false,
   "properties": {
     "acl-key-prefix": {
       "default": true,
-      "description": "Restrict this project's Redis user to keys prefixed with {deployment}-{project}:. Turning it off gives the user every key in the shared instance, so it is a deliberate widening for applications that cannot prefix their keys.",
+      "description": "Restrict this project's Redis user to keys prefixed with {deployment}-{project}:. Turning it off gives the user every key in the shared instance, so it is a deliberate widening for applications that cannot prefix their keys, and it needs the approval of a platform admin before it takes effect.",
       "title": "Acl-Key-Prefix",
       "type": "boolean"
+    },
+    "acl-key-prefix-approval": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AclKeyPrefixApproval"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Of het uitzetten van de sleutelbeperking is goedgekeurd. Geschreven door het platform: zolang het niet approved zegt, houdt de Redis-gebruiker het prefix van het project.",
+      "x-platform-managed": true
     }
   },
   "title": "RedisConfig",
