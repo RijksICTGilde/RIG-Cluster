@@ -187,7 +187,9 @@ class ProjectStore(ABC):
     async def create(self, name: str, data: dict[str, Any], *, message: str, actor: Actor) -> ProjectSummary: ...
 
     @abstractmethod
-    async def mutate(self, name: str, change: ChangeFunction, *, message: str, actor: Actor) -> MutationResult: ...
+    async def mutate(
+        self, name: str, change: ChangeFunction, *, message: str | Callable[[], str], actor: Actor
+    ) -> MutationResult: ...
 
     @abstractmethod
     async def delete(self, name: str, *, message: str, actor: Actor) -> None: ...
@@ -505,7 +507,7 @@ class GitProjectStore(ProjectStore):
         name: str,
         change: ChangeFunction,
         *,
-        message: str,
+        message: str | Callable[[], str],
         actor: Actor,
         enforce_validation: bool = True,
         filename: str | None = None,
@@ -522,6 +524,9 @@ class GitProjectStore(ProjectStore):
         a version that is not durable. On a push failure that cannot be
         resolved, the local commit is discarded (reset --hard) so the warm copy
         is left clean.
+
+        ``message`` may be a callable, resolved per attempt after ``change`` has run, so a
+        commit message can name what that attempt actually changed.
         """
         async with self._locked("mutate", name):
             connector = await self.get_connector()
@@ -538,17 +543,18 @@ class GitProjectStore(ProjectStore):
                 # left it a union with the un-awaited Awaitable for everything below.
                 changed = change(copy.deepcopy(current))
                 mutated = await changed if inspect.isawaitable(changed) else changed
+                commit_message = message() if callable(message) else message
 
                 if mutated is None:
                     # Idempotent no-op: the change is already applied.
-                    logger.info("Project mutation already applied, nothing to commit: %s", message)
+                    logger.info("Project mutation already applied, nothing to commit: %s", commit_message)
                     ref = await connector.get_local_commit_hash()
                     return MutationResult(before=current, after=current, ref=ref, committed=False)
 
                 await self._validate(mutated, enforce=enforce_validation, previous=current)
 
                 try:
-                    ref = await self._persist(connector, relative_path, mutated, message, actor)
+                    ref = await self._persist(connector, relative_path, mutated, commit_message, actor)
                 except GitPushConflictError as e:
                     last_error = e
                     # HEAD moved under us. Re-sync to whatever actually landed and re-apply
@@ -559,7 +565,7 @@ class GitProjectStore(ProjectStore):
                     # instead of an invalid file reaching git.
                     logger.warning(
                         "Push conflict on '%s' (attempt %d/%d); re-reading remote and re-applying",
-                        message,
+                        commit_message,
                         attempt + 1,
                         MAX_MUTATION_ATTEMPTS,
                     )

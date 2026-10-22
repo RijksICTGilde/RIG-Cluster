@@ -167,6 +167,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 handle_refresh_deployment,
                 handle_refresh_project,
                 handle_rotate_credentials,
+                handle_rotate_project_key,
             )
             from opi.core.task_handlers_project import (  # type: ignore[reportMissingImports]
                 handle_create_project,
@@ -194,6 +195,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             _worker_instance.register_handler(TaskType.SLEEP_DEPLOYMENT, handle_sleep_transition)
             _worker_instance.register_handler(TaskType.WAKE_DEPLOYMENT, handle_sleep_transition)
             _worker_instance.register_handler(TaskType.REFRESH_PROJECT, handle_refresh_project)
+            _worker_instance.register_handler(TaskType.ROTATE_PROJECT_KEY, handle_rotate_project_key)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT, handle_add_component)
             _worker_instance.register_handler(TaskType.UPDATE_COMPONENT, handle_update_component)
             _worker_instance.register_handler(TaskType.ADD_COMPONENT_TO_DEPLOYMENT, handle_add_component_to_deployment)

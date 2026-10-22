@@ -14,7 +14,7 @@ from typing import Annotated, Any, NamedTuple, cast
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_api_token
+from opi.api.endpoint_util import validate_admin_api_key, validate_api_token
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
 from opi.api.router import (
     AddComponentRequest,
@@ -43,6 +43,7 @@ from opi.api.task_models import (
     RefreshDeploymentResult,
     RefreshProjectResult,
     RotateCredentialsResult,
+    RotateProjectKeyResult,
     TaskResponse,
     UpdateImageResult,
     UpsertDeploymentResult,
@@ -1438,6 +1439,42 @@ async def refresh_project_v2(
         },
     )
     return _accepted_response(task, "refresh_project")
+
+
+@v2_router.post(
+    "/projects/{project_name}/:rotate-project-key",
+    tags=["projects"],
+    responses={
+        200: {"model": TaskResponse[RotateProjectKeyResult], "description": "Task completed (when polled)"},
+        202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
+        401: {"description": "Unauthorized - invalid or missing ADMIN_API_KEY"},
+        501: {"description": "ADMIN_API_KEY not configured"},
+    },
+)
+@validate_admin_api_key
+async def rotate_project_key_v2(
+    request: Request,
+    project_name: str,
+) -> JSONResponse:
+    """Replace this project's AGE key pair. Async task, requires ADMIN_API_KEY.
+
+    See ``features/projectsleutel-vervangen.md`` for details.
+    """
+    logger.info("V2 rotate project key: %s", project_name)
+
+    if not validate_project_name(project_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid project name format. Must start with lowercase letter, then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters",
+        )
+
+    task = await create_async_task(
+        request=request,
+        task_type="rotate_project_key",
+        project_name=project_name,
+        payload={"project_name": project_name},
+    )
+    return _accepted_response(task, "rotate_project_key")
 
 
 @v2_router.delete(

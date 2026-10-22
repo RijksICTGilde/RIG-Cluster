@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from prometheus_client.core import Metric
 
 CONNECTORS = Path(__file__).resolve().parent.parent / "opi" / "connectors"
-VERBODEN_VLAGGEN = ("--password", "--secret-access-key", "--access-key", "--auth")
+VERBODEN_VLAGGEN = ("--password", "--new-password", "--secret-access-key", "--access-key", "--auth")
 VLAG_IN_ARGUMENT = re.compile('"({})"'.format("|".join(VERBODEN_VLAGGEN)))
 
 

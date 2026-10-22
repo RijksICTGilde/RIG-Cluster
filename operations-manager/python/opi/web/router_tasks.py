@@ -28,6 +28,7 @@ _RUN_LABELS = {"db-console": "Databaseconsole", "job": "Job"}
 _TASK_LABELS = {
     "create_project": "Project aanmaken",
     "refresh_project": "Project verversen",
+    "rotate_project_key": "Projectsleutel vervangen",
     "refresh_deployment": "Deployment verversen",
     "rotate_credentials": "Credentials vervangen",
     "update_image": "Image bijwerken",

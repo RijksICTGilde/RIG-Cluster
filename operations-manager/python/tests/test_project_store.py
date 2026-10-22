@@ -333,6 +333,29 @@ async def test_mutate_applies_and_commits(harness: StoreHarness) -> None:
     assert result.before["deployments"] == []
 
 
+async def test_mutate_accepts_a_callable_message_resolved_after_the_change_ran(harness: StoreHarness) -> None:
+    """A commit message can name what the change actually did, not what it was asked to do.
+
+    Called after ``change`` so it can read what landed (here: how many deployments exist
+    afterwards) instead of a count fixed before the mutation ran.
+    """
+    seen: list[int] = []
+
+    def change(data: dict[str, Any]) -> dict[str, Any]:
+        data.setdefault("deployments", []).append(
+            {"name": "dep-1", "cluster": "odcn-production", "namespace": "demo", "components": []}
+        )
+        seen.append(len(data["deployments"]))
+        return data
+
+    def message() -> str:
+        return f"{seen[-1]} deployments na de wijziging"
+
+    await harness.store.mutate(PROJECT_NAME, change, message=message, actor="tester")
+
+    assert harness.remote.commits[-1]["message"] == "1 deployments na de wijziging"
+
+
 async def test_mutations_are_mutually_exclusive(harness: StoreHarness) -> None:
     """The lock guarantee: two mutations never run their read-modify-write concurrently.
 

@@ -35,7 +35,8 @@ ADMIN_SECRET_KEY = "s"
 _BACKUP_PACKAGE = Path(__file__).parent.parent / "opi" / "manager" / "backup"
 
 # De plekken waar OPI zelf met de bestemming praat: bucket aanmaken, en Kopia vanuit OPI
-# aanroepen om snapshots te lezen of te verwijderen. Alleen daar mag het beheeraccount nog.
+# aanroepen om snapshots te lezen of te verwijderen, of om het repositorywachtwoord om te
+# zetten. Alleen daar mag het beheeraccount nog.
 ADMIN_KEY_IS_ALLOWED_IN = frozenset(
     {
         "_pod_s3_credentials",
@@ -45,6 +46,7 @@ ADMIN_KEY_IS_ALLOWED_IN = frozenset(
         "delete_snapshots",
         "list_bucket_snapshots",
         "list_database_snapshots",
+        "carry_over_backup_password",
     }
 )
 

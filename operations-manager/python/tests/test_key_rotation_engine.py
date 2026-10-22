@@ -245,6 +245,22 @@ async def test_plain_text_never_reaches_the_loop(key_pair_a: tuple[str, str]) ->
         await convert_value("just-a-password", private_a, "age1whatever")
 
 
+@pytest.mark.asyncio
+async def test_decrypt_field_does_not_swallow_an_unexpected_error(key_pair_a: tuple[str, str]) -> None:
+    """``decrypt_field`` turns "wrong key" into ``None``, not every failure into one.
+
+    A bare ``except Exception`` would hide a bug in the loop itself as an ordinary skipped
+    field. Patch past the three known forms to prove something else still breaks loudly.
+    """
+    private_a, public_a = key_pair_a
+    value = await encrypt_age_content("x", public_a)
+    with (
+        patch("opi.utils.key_rotation.decrypt_age_content", side_effect=TypeError("boom")),
+        pytest.raises(TypeError, match="boom"),
+    ):
+        await decrypt_field(value, private_a)
+
+
 # ---------------------------------------------------------------------------
 # the fingerprint
 # ---------------------------------------------------------------------------

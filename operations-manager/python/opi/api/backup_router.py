@@ -1,7 +1,5 @@
 """API router for PVC, database, and bucket backup operations."""
 
-import base64
-import hashlib
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +21,7 @@ from opi.manager.backup import (
     create_bucket_backup_manager,
     create_database_backup_manager,
 )
+from opi.manager.backup.base import derive_backup_password
 from opi.services import ServiceType
 from opi.services.postgres_scope import project_uses_dedicated_postgres
 from opi.services.project_store import get_project_store
@@ -866,7 +865,6 @@ async def delete_snapshot(
         k8s_namespace = get_prefixed_namespace(deployment_cluster, raw_namespace)
 
         # Get SOPS key for this namespace and derive Kopia password
-        # (Same approach as BaseBackupManager._derive_backup_key)
         kubectl = create_kubectl_connector()
         age_key = await kubectl.get_sops_secret_from_namespace(k8s_namespace)
 
@@ -874,10 +872,7 @@ async def delete_snapshot(
             logger.warning(f"No SOPS key found in namespace {k8s_namespace}, using namespace-based key")
             age_key = f"fallback-key-{k8s_namespace}"
 
-        # Derive backup-specific password (same as BaseBackupManager)
-        material = f"kopia-backup-{k8s_namespace}-{age_key}".encode()
-        derived = hashlib.sha256(material).digest()
-        kopia_password = base64.b64encode(derived).decode()[:32]
+        kopia_password = derive_backup_password(k8s_namespace, age_key)
 
         # Build Kopia repository config
         backup_config = create_backup_manager().config

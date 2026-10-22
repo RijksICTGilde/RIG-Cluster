@@ -27,7 +27,7 @@ from opi.core.cluster_config import get_volume_snapshot_class
 from opi.core.config import settings
 from opi.services.catalog.image_registries.manifest_pass import apply_rules_to_document
 from opi.services.catalog.image_registries.resolution import cluster_rules
-from opi.utils.naming import generate_project_service_account_name
+from opi.utils.naming import generate_backup_prefix, generate_project_service_account_name
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -535,6 +535,16 @@ class BackupConfig:
 _KOPIA_USERNAME = "opi-backup"
 
 
+def derive_backup_password(namespace: str, age_key: str) -> str:
+    """Kopia-wachtwoord van een namespace, afgeleid uit zijn SOPS-age-sleutel.
+
+    Vervangt een projectsleutel, dan verandert deze afleiding mee: de rotatie zet het
+    wachtwoord van de bestaande repository over (``features/projectsleutel-vervangen.md``).
+    """
+    material = f"kopia-backup-{namespace}-{age_key}".encode()
+    return base64.b64encode(hashlib.sha256(material).digest()).decode()[:32]
+
+
 def pod_credentials_secret_name(pod_name: str) -> str:
     """Name of the Secret a backup or restore pod reads its keys from."""
     return f"{pod_name}-credentials"
@@ -758,6 +768,37 @@ class BaseBackupManager:
 
         return bucket_name
 
+    async def carry_over_backup_password(
+        self,
+        project_name: str,
+        cluster: str,
+        namespace: str,
+        new_age_key: str,
+    ) -> bool:
+        """Zet het wachtwoord van de Kopia-repository van een namespace over op een nieuwe projectsleutel.
+
+        Zonder deze stap opent de repository na een sleutelvervanging niet meer en staat de
+        backup van die namespace stil. False betekent: daar staat nog geen repository.
+        """
+        # Lokaal: opi.connectors.kopia leest ResourceType uit deze module.
+        from opi.connectors.kopia import KopiaRepositoryConfig, create_kopia_connector
+
+        old_password = await self._derive_backup_key(namespace)
+        new_password = derive_backup_password(namespace, new_age_key)
+        if old_password == new_password:
+            return True
+
+        config = KopiaRepositoryConfig(
+            s3_endpoint=self.config.s3_endpoint,
+            s3_bucket=self.config.get_bucket_name(project_name, cluster),
+            s3_access_key=self.config.s3_access_key,
+            s3_secret_key=self.config.s3_secret_key,
+            s3_prefix=generate_backup_prefix(cluster, namespace),
+            password=old_password,
+            use_tls=self.config.s3_use_tls,
+        )
+        return await create_kopia_connector().change_repository_password(config, new_password)
+
     async def _ensure_bucket_account(
         self,
         minio_connector: MinioConnector,
@@ -798,10 +839,7 @@ class BaseBackupManager:
             logger.warning(f"No SOPS key found in namespace {namespace}, using namespace-based key")
             age_key = f"fallback-key-{namespace}"
 
-        # Derive a backup-specific password
-        material = f"kopia-backup-{namespace}-{age_key}".encode()
-        derived = hashlib.sha256(material).digest()
-        return base64.b64encode(derived).decode()[:32]
+        return derive_backup_password(namespace, age_key)
 
     async def _get_pvc_info(self, namespace: str, pvc_name: str) -> dict[str, str] | None:
         """Get PVC size and storage class."""
