@@ -67,9 +67,11 @@ def test_the_refusal_does_not_repeat_a_token_from_the_url(monkeypatch: pytest.Mo
     monkeypatch.setattr(settings, "RENDER_SOURCE_ALLOWLIST", "", raising=False)
 
     with pytest.raises(ValueError, match="RENDER_SOURCE_ALLOWLIST") as fout:
-        require_allowed_render_source("https://x-access-token:ghp_geheim@github.com/MinBZK/iets.git", "helmfile 'x'")
+        require_allowed_render_source(
+            "https://x-access-token:ghp_placeholder@github.com/MinBZK/iets.git", "helmfile 'x'"
+        )
 
-    assert "ghp_geheim" not in str(fout.value)
+    assert "ghp_placeholder" not in str(fout.value)
     assert "x-access-token" not in str(fout.value)
     assert "github.com/MinBZK/iets" in str(fout.value)
 
