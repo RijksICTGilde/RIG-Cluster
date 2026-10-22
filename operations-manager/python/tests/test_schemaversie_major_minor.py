@@ -13,8 +13,8 @@ from opi.core.project_schema import (
     version_key,
 )
 from opi.services import schema_migration
-from opi.utils.yaml_util import load_yaml_from_string
 from opi.services.schema_migration import migrate_to_latest
+from opi.utils.yaml_util import load_yaml_from_string
 
 
 class TestParsen:
