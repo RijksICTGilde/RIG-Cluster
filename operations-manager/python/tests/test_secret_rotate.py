@@ -145,6 +145,38 @@ def test_keycloak_db_hoort_bij_cnpg_en_herstart_keycloak() -> None:
     assert component.workloads == ("deploy/keycloak",)
 
 
+def test_chisel_roteert_via_een_herstart_van_de_server() -> None:
+    """De inlog staat in twee velden omdat de generatie per veld vult; alleen `password`
+    roteert, en de server leest hem als env, dus een herstart hoort erbij."""
+    component = rotate.BY_KEY["chisel"]
+    assert component.category == "env-restart"
+    assert component.rotate_fields == ("password",)
+    assert component.workloads == ("deploy/chisel-server",)
+    assert rotate.secret_name_of(component) == "chisel-auth-credentials"
+
+
+def test_chisel_leest_beide_velden_uit_het_secret_dat_de_rotatie_schrijft() -> None:
+    """De secretKeyRef van het Deployment moet de veldnamen van de template volgen: een
+    hernoeming aan één kant laat de pod met een ontbrekende sleutel achter."""
+    deployment = yaml.safe_load(
+        (REPO / "infrastructure/bootstrap/infrastructure/chisel/controller/base/deployment.yaml").read_text()
+    )
+    container = deployment["spec"]["template"]["spec"]["containers"][0]
+    refs = {
+        entry["name"]: (entry["valueFrom"]["secretKeyRef"]["name"], entry["valueFrom"]["secretKeyRef"]["key"])
+        for entry in container["env"]
+        if "valueFrom" in entry
+    }
+    assert refs == {
+        "CHISEL_USERNAME": ("chisel-auth-credentials", "username"),
+        "CHISEL_PASSWORD": ("chisel-auth-credentials", "password"),
+    }
+    assert "--auth=$(CHISEL_USERNAME):$(CHISEL_PASSWORD)" in container["args"]
+    assert set(refs.values()) <= {
+        ("chisel-auth-credentials", veld) for veld in rotate.template_fields_of(rotate.BY_KEY["chisel"])
+    }
+
+
 def test_de_volgorde_is_de_veiligheid() -> None:
     keys = [component.key for component in rotate.COMPONENTS]
     assert keys[0] == "postgresql", "de superuser gaat voorop: daar hangt niets van af"
@@ -549,6 +581,7 @@ GEWONE_CLUSTERCOMPONENTEN = {
     "prometheus",
     "pgadmin",
     "platform-backup",
+    "chisel",
 }
 
 

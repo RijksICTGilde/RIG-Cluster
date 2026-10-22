@@ -32,16 +32,23 @@ spec:
         args:
         - server
         - --port=$(CHISEL_PORT)
-        - --auth=$(CHISEL_AUTH)
+        - --auth=$(CHISEL_USERNAME):$(CHISEL_PASSWORD)
         - --keepalive=30s
         env:
         - name: CHISEL_PORT
           value: "8080"
-        - name: CHISEL_AUTH
+        # De twee helften van `--auth`, apart omdat de secretgeneratie per veld vult; zie
+        # secrets/templates/chisel-auth-secret.yaml.
+        - name: CHISEL_USERNAME
           valueFrom:
             secretKeyRef:
               name: chisel-auth-credentials
-              key: auth
+              key: username
+        - name: CHISEL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: chisel-auth-credentials
+              key: password
         ports:
         - name: http
           containerPort: 8080
