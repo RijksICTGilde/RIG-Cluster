@@ -139,6 +139,7 @@ class TestV1AsyncUpsertDeployment:
                 "deploymentName": "staging",
                 "components": [{"reference": "web", "image": "nginx:1.21"}],
                 "cloneFrom": "production",
+                "environment": "productie",
             },
         )
 
@@ -147,6 +148,25 @@ class TestV1AsyncUpsertDeployment:
         assert call_kwargs["project_name"] == "test-project"
         assert call_kwargs["deployment_name"] == "staging"
         assert call_kwargs["payload"]["cloneFrom"] == "production"
+        assert call_kwargs["payload"]["environment"] == "productie"
+        # Geen sessie, maar wel een API-sleutel: de taak weet wie dit deed.
+        assert call_kwargs["payload"]["actor"] == "API"
+
+    def test_environment_defaults_to_none_in_payload(self, client: TestClient, mock_task_service: AsyncMock) -> None:
+        """Weglaten moet erven betekenen, niet een lege string die niets is."""
+        mock_task_service.create_task.return_value = _make_task(task_type="upsert_deployment")
+
+        client.post(
+            "/api/projects/test-project/:upsert-deployment",
+            headers={"X-API-Key": API_KEY},
+            json={
+                "deploymentName": "staging",
+                "components": [{"reference": "web", "image": "nginx:1.21"}],
+            },
+        )
+
+        call_kwargs = mock_task_service.create_task.call_args[1]
+        assert call_kwargs["payload"]["environment"] is None
 
 
 class TestV1AsyncUpdateImage:

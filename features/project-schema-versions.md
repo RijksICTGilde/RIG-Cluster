@@ -53,10 +53,11 @@ Daarom:
   er weer 2.1 van maken. Het schema accepteert allebei: bestaande bestanden met `2.9`, `2.2` of
   `2` blijven ongewijzigd geldig en worden niet herschreven om hun type. De eerstvolgende
   migratie van zo'n bestand zet het nieuwe versienummer, als string.
-- Vanaf 2.10 is een met de hand getypte versie zonder aanhalingstekens dus een ANDERE versie:
-  `schema-version: 2.10` leest als 2.1. Dat is een bekende, oudere versie, dus de poort van de
-  git-monitor laat het bestand door en de migratieketen draait vanaf 2.1 opnieuw over het
-  bestand. Gemeten bij RC-338; de versie in een projectbestand hoort daarom als string.
+- Een met de hand getypte versie zonder aanhalingstekens, zoals `schema-version: 2.10`, is voor
+  YAML het getal 2.1. `parse_schema_version` leest daarom de breedte die ruamel van het getal
+  onthoudt, zodat het weer 2.10 is en niet 2.1. Zonder die stap zou de git-poort het bestand als
+  2.1 doorlaten en de migratieketen er opnieuw overheen draaien. OPI schrijft de versie zelf
+  altijd als string.
 
 ## Hoe het werkt
 
@@ -64,7 +65,7 @@ Daarom:
 welke dat is:
 
 ```json
-"x-zad-schema-version": "2.10"
+"x-zad-schema-version": "2.11"
 ```
 
 Een oudere versie wordt samengesteld uit dat schema plus een keten van patches. Elke patch is
@@ -72,7 +73,11 @@ een [RFC 7386 JSON Merge Patch](https://www.rfc-editor.org/rfc/rfc7386) die van 
 de eerstvolgende versie dat van die versie maakt:
 
 ```
-project_v2.json                 (2.6)
+project_v2.json                 (2.11)
+  + project_legacy/v2.9.json -> 2.9   (geen `environment` op een deployment: 2.11 voegde hem toe)
+  + project_legacy/v2.8.json -> 2.8   (registries op root)
+  + project_legacy/v2.7.json -> 2.7   (leeg: die migratie versmalde de vorm niet)
+  + project_legacy/v2.6.json -> 2.6   (webadresvelden op de deployment terug)
   + project_legacy/v2.5.json -> 2.5   (root `invites:` terug)
   + project_legacy/v2.4.json -> 2.4   (root `domains:` terug)
   + project_legacy/v2.3.json -> 2.3   (leeg: die migratie versmalde de vorm niet)

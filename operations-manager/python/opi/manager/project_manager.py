@@ -66,6 +66,7 @@ from opi.core.cluster_config import (
     uses_capsule,
 )
 from opi.core.config import settings
+from opi.core.project_environment import Omgeving, environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.task_errors import TaskInputError
 from opi.forms.editables.enforcers import DomainConfigEnforcer, FieldWarning
@@ -7623,6 +7624,8 @@ class ProjectManager:
         domain_format: str | None = None,
         subdomain: str | None = None,
         base_domain: str | None = None,
+        environment: str | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """Create or update a deployment, retrying a concurrent-edit conflict.
 
@@ -7644,6 +7647,8 @@ class ProjectManager:
                     domain_format=domain_format,
                     subdomain=subdomain,
                     base_domain=base_domain,
+                    environment=environment,
+                    actor=actor,
                 )
             except (ConflictError, ConcurrencyError) as e:
                 if attempt == _UPSERT_CONFLICT_RETRIES - 1:
@@ -7676,6 +7681,8 @@ class ProjectManager:
         domain_format: str | None = None,
         subdomain: str | None = None,
         base_domain: str | None = None,
+        environment: str | None = None,
+        actor: str | None = None,
     ) -> dict[str, Any]:
         """
         Create or update a deployment in the project YAML file.
@@ -7711,6 +7718,10 @@ class ProjectManager:
                     "error": validation_result["error"],
                     "error_type": "invalid_component_references",
                 }
+
+            # De markeringen van VOOR deze wijziging, om een verlaging van productie te
+            # kunnen melden zodra de nieuwe staat er is.
+            environment_before = environment_markings(project_data)
 
             # Check if deployment already exists
             existing_deployments = await self.get_deployments(cluster_filter=False)
@@ -7766,6 +7777,11 @@ class ProjectManager:
                                 logger.info(
                                     f"Added new component '{component.reference}' with image '{normalized_image}'"
                                 )
+
+                        if environment is not None:
+                            # .value: de v1-route geeft een enumlid door, en de YAML-dumper
+                            # kent alleen gewone strings.
+                            deployment["environment"] = Omgeving(environment).value
 
                         # Update domain settings if provided
                         if domain_format is not None:
@@ -7827,6 +7843,8 @@ class ProjectManager:
                     change_parts.append(f"subdomain to {subdomain}")
                 if base_domain is not None:
                     change_parts.append(f"base-domain to {base_domain}")
+                if environment is not None:
+                    change_parts.append(f"environment to {environment}")
                 if clone_from and force_clone:
                     change_parts.append(f"clone-from {clone_from}")
 
@@ -7835,6 +7853,14 @@ class ProjectManager:
 
                 # Validate (schema + structural) then save and commit through the single path
                 await self.save_and_commit_project(project_data, commit_message)
+
+                # Na de opslag: weigert die de wijziging, dan is er niets verlaagd.
+                log_production_downgrades(
+                    environment_before,
+                    environment_markings(project_data),
+                    project_name=project_name,
+                    actor=actor or "de API",
+                )
 
                 logger.info(f"Successfully updated deployment '{deployment_name}' in project '{project_name}'")
                 result: dict[str, Any] = {
@@ -7856,6 +7882,8 @@ class ProjectManager:
 
                 # Create new deployment object
                 new_deployment: dict[str, Any] = {"name": deployment_name, "components": []}
+                if environment is not None:
+                    new_deployment["environment"] = Omgeving(environment).value
 
                 # Apply domain settings if provided. Kept as a mapping because the clone
                 # path has to write them a second time: the copy from the source lands on

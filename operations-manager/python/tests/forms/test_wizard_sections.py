@@ -20,6 +20,9 @@ from opi.forms.visualizers.wizard_sections import (
     TEAM_SECTION,
     _strip_removed_services_from_components,
     build_component_edit_section,
+    build_deployment_add_components_section,
+    build_deployment_add_info_section,
+    build_deployment_edit_section,
 )
 from opi.services.services import service_entry_name
 from opi.services.services_enums import ServiceType
@@ -302,6 +305,40 @@ class TestStripRemovedServicesFromComponents:
 
     def test_services_edit_section_has_post_merge(self):
         assert SERVICES_EDIT_SECTION.post_merge is _strip_removed_services_from_components
+
+
+class TestOmgevingVeldInDeploymentSecties:
+    """Het environment-veld staat in de add-flow's informatiestap (RC-330), niet ook nog
+    in de componentenstap: anders komt dezelfde editable er twee keer in te staan en
+    overschrijft de ene post de andere."""
+
+    def test_add_info_section_draagt_het_veld(self):
+        section = build_deployment_add_info_section(0)
+        assert "deployments[0]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+
+    def test_add_info_section_draagt_het_veld_ook_zonder_clone_from(self):
+        """De restore-flow laat clone-from weg maar niet environment."""
+        section = build_deployment_add_info_section(0, include_clone_from=False)
+        assert "deployments[0]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+        assert "deployments[0]/clone-from" not in section.layout
+
+    def test_add_components_section_laat_het_veld_weg(self):
+        """Die stap van de add-flow komt na de informatiestap: het veld staat daar al."""
+        section = build_deployment_add_components_section(0)
+        assert "deployments[0]/environment" not in section.layout
+        assert not any(e.editable.yaml_path == "deployments[0]/environment" for e in section.editables)
+
+    def test_edit_section_draagt_het_veld_standaard(self):
+        section = build_deployment_edit_section(1)
+        assert "deployments[1]/environment" in section.layout
+        assert any(e.editable.yaml_path == "deployments[1]/environment" for e in section.editables)
+
+    def test_edit_section_kan_het_veld_weglaten(self):
+        section = build_deployment_edit_section(1, include_environment=False)
+        assert "deployments[1]/environment" not in section.layout
+        assert not any(e.editable.yaml_path == "deployments[1]/environment" for e in section.editables)
 
 
 def _slot_divs(items: list) -> list[Div]:

@@ -34,6 +34,13 @@ DEPLOYMENT_NAME_EDITABLE = Editable(
 DEPLOYMENT_CLUSTER_EDITABLE = Editable(
     yaml_path="deployments[*]/cluster", required=True, values_provider="ClusterOptionsProvider"
 )
+# Leeg betekent de standaard ontwikkeling. remove_when_none haalt de sleutel dan uit het
+# bestand, zodat er geen deployment met een lege markering achterblijft.
+DEPLOYMENT_ENVIRONMENT_EDITABLE = Editable(
+    yaml_path="deployments[*]/environment",
+    values_provider="EnvironmentOptionsProvider",
+    remove_when_none=True,
+)
 DEPLOYMENT_REPOSITORY_EDITABLE = Editable(
     yaml_path="deployments[*]/repository", values_provider="RepositoryOptionsProvider"
 )
@@ -216,6 +223,7 @@ DEPLOYMENTS_SEQUENCE_EDITABLE = Editable(
     children=[
         DEPLOYMENT_NAME_EDITABLE,
         DEPLOYMENT_CLUSTER_EDITABLE,
+        DEPLOYMENT_ENVIRONMENT_EDITABLE,
         DEPLOYMENT_REPOSITORY_EDITABLE,
         # Per-service deployment fields, gathered from the registry (RC-60): the
         # web-address set is publish-on-web's, and nothing here names it.

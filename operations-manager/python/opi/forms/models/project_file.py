@@ -10,6 +10,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from opi.core.project_environment import Omgeving
 from opi.forms.layout import (
     ButtonGroup,
     Column,
@@ -337,6 +338,16 @@ class DeploymentModel(BaseModel):
             widget="text",
         ),
     ]
+
+    environment: Annotated[
+        Omgeving | None,
+        FormMeta(
+            label="deployment.environment",
+            description="deployment.environment.description",
+            widget="select",
+            options_provider="EnvironmentOptionsProvider",
+        ),
+    ] = Field(default=None)
 
     repository: Annotated[
         str,

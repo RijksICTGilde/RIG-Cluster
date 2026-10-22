@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from starlette.responses import Response
 
 from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
@@ -2580,6 +2581,7 @@ async def _save_existing_project(
     project_manager = ProjectManager(project_file_relative_path=f"projects/{project_name}.yaml")
     try:
         stored_data = await project_manager.get_contents()
+        environment_before = environment_markings(stored_data)
         existing_data = apply_form_data_to_project(copy.deepcopy(stored_data), data)
 
         # Form path bypasses set_service_config, so guard platform fields here (RC-286).
@@ -2594,6 +2596,12 @@ async def _save_existing_project(
         # Persist through the single validated path: schema + structural integrity
         # validation, canonical dumper, commit + push, and cache refresh in one shot.
         await project_manager.save_and_commit_project(existing_data, f"Update project {project_name} via wizard")
+        log_production_downgrades(
+            environment_before,
+            environment_markings(existing_data),
+            project_name=project_name,
+            actor=(get_current_user(request) or {}).get("email", "(onbekend)"),
+        )
     finally:
         await project_manager.close()
 

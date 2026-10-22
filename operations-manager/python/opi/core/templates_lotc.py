@@ -19,6 +19,7 @@ from jinja2 import FileSystemLoader
 from lord_of_the_components import get_static_roots, setup_components
 
 from opi.core.config import BUILD_DATE, VERSION
+from opi.core.project_environment import environment_label, highest_environment_label
 from opi.core.template_helpers import (
     CATALOG_DIR,
     format_dutch_date,
@@ -147,6 +148,11 @@ templates_lotc.env.filters["korte_digest"] = shorten_image_digest
 # anders niet bij. Een uitzondering voor dit ene sjabloon in die route zou de volgende
 # hulptekst met gegevens weer een uitzondering kosten.
 templates_lotc.env.globals["alias_variabelen"] = alias_variabelen
+# De OTAP-markering als label: per deployment de zijne, op projectniveau de hoogste van
+# zijn deployments. Als GLOBAL en niet per pagina in de context, zodat de standaard en de
+# afleiding op EEN plek staan (opi/core/project_environment.py).
+templates_lotc.env.globals["environment_label"] = environment_label
+templates_lotc.env.globals["highest_environment_label"] = highest_environment_label
 
 templates_lotc.env.add_extension("jinja2.ext.i18n")
 

@@ -382,6 +382,8 @@ class TestUpsertDeploymentRollout:
                     "deployment_name": "dev",
                     "components": [{"reference": "web", "image": "web:v1"}],
                     "rollout": False,
+                    "environment": "productie",
+                    "actor": "iemand@example.org",
                 },
                 progress,
             )
@@ -392,6 +394,11 @@ class TestUpsertDeploymentRollout:
         assert result["processing"]["reason"] == SKIPPED_REASON
         # No OOM watcher and no web addresses: nothing ran.
         progress.update_component_web_address.assert_not_called()
+        # De waarden uit de taakpayload moeten de manager bereiken, niet alleen
+        # bestaan in de payload.
+        upsert_kwargs = pm.upsert_deployment.call_args.kwargs
+        assert upsert_kwargs["environment"] == "productie"
+        assert upsert_kwargs["actor"] == "iemand@example.org"
 
 
 # ---------------------------------------------------------------------------

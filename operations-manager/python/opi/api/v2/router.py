@@ -102,7 +102,8 @@ from opi.core.cluster_config import (
     supports_custom_domain_certificates,
 )
 from opi.core.config import settings
-from opi.core.task_helpers import build_accepted_response, create_async_task
+from opi.core.project_environment import deployment_environment, effective_environment
+from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
 from opi.handlers.project_file_handler import (
     COMPONENT_USAGE_WEB_ADDRESS,
@@ -489,6 +490,8 @@ def _build_deployment_detail(
         cluster=deployment.get("cluster", ""),
         namespace=deployment.get("namespace", ""),
         subdomain=get_domain_setting(deployment, DomainSetting.SUBDOMAIN),
+        environment=deployment_environment(deployment),
+        effective_environment=effective_environment(deployment),
         components=components,
         urls=urls,
         status=live.status,
@@ -1157,6 +1160,8 @@ async def upsert_deployment_v2(
             "domain_format": deployment_data.domain_format,
             "subdomain": deployment_data.subdomain,
             "base_domain": deployment_data.base_domain,
+            "environment": deployment_data.environment,
+            "actor": task_actor(request),
             "rollout": rollout,
         },
     )
