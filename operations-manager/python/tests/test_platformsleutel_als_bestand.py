@@ -183,13 +183,19 @@ def _namen_uit_env_bronnen() -> set[str]:
     return namen
 
 
+# Namen die de lijst bewust draagt zonder dat een manifest ze zet. Geen manifest betekent
+# hier niet "kan niet voorkomen": de sandbox maakt zijn env-secret uit een `.env` die deze
+# repo niet kent. Leeg sinds RC-345: ARGOCD_PASSWORD staat weer in de sandbox-overlay.
+ZONDER_MANIFEST: frozenset[str] = frozenset()
+
+
 def test_lijst_dekt_elk_geheim_uit_de_manifesten() -> None:
     """Een nieuw geheim in een env-bron of in een secretKeyRef erft niet stil weer mee."""
     uit_manifesten = _namen_uit_env_bronnen()
 
     ongedekt = {name for name in uit_manifesten if name not in PLATFORM_SECRET_NAMES}
     assert not {name for name in ongedekt if not name.startswith(PLATFORM_SECRET_PREFIXES)}
-    assert not PLATFORM_SECRET_NAMES - uit_manifesten
+    assert not PLATFORM_SECRET_NAMES - uit_manifesten - ZONDER_MANIFEST
 
 
 def test_deployment_mount_de_sleutel_in_plaats_van_hem_in_de_omgeving_te_zetten() -> None:

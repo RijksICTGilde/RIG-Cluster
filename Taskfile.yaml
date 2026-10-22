@@ -2820,6 +2820,10 @@ tasks:
       # - task: sandbox:update-dns  # Not needed when *.sandbox.rijksapp.dev resolves to 127.0.0.1 via public DNS
       # Phase 5: Wait for everything to be deployed and ready
       - task: sandbox:wait-ready
+      # Het API-token waarmee OPI bij ArgoCD komt. Pas hier: het account opi bestaat zodra
+      # de operator de CR heeft gereconcilieerd, en OPI heeft het token nodig voor zijn
+      # eerste uitrol.
+      - task: sandbox:issue-argocd-opi-token
       - |
         kubectl config set-context --current --namespace=rig-system
       - |
@@ -2831,6 +2835,14 @@ tasks:
         cat docs/sandbox-reference.md
         echo ""
         echo "This reference card is saved at: docs/sandbox-reference.md"
+    silent: true
+
+  sandbox:issue-argocd-opi-token:
+    desc: "Geef OPI een ArgoCD-API-token (account opi) en zet het in opi-argocd-token"
+    cmds:
+      - |
+        uv run --project operations-manager/python python scripts/edit-secret.py \
+          --component argocd-opi-token --cluster sandboxed-local --apply --yes
     silent: true
 
   sandbox:create-cluster:

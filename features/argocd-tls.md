@@ -52,7 +52,7 @@ kubectl -n rig-prd-operations get secret argocd-server-tls \
 ```
 
 Staan TLS en controle aan zonder bundel, dan weigert `ArgoConnector` met een
-`ArgoTLSConfiguratieError` in plaats van door te gaan. De CA achter de server zit niet in
+`ArgoTLSConfigurationError` in plaats van door te gaan. De CA achter de server zit niet in
 de systeemtrust van de container, dus zonder bundel faalt elke aanroep toch, en een
 duidelijke fout bij de constructie is beter dan een certificaatfout zestien aanroepen
 verderop. Staat er wel een pad maar is het bestand er niet of bevat het geen certificaat,
@@ -108,7 +108,7 @@ open staat. Dat de server er is, zie je aan het secret dat de service-CA vult:
 kubectl -n rig-staging-operations get secret argocd-server-tls
 ```
 
-Faalt daarna elke ArgoCD-aanroep met een `ArgoTLSConfiguratieError`, dan is de bundel leeg
+Faalt daarna elke ArgoCD-aanroep met een `ArgoTLSConfigurationError`, dan is de bundel leeg
 of ontbreekt hij. De mount is optioneel, dus de pod start wel:
 
 ```bash

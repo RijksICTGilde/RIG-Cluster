@@ -7,13 +7,9 @@ rules:
   - apiGroups: [""]
     resources: [namespaces]
     verbs: [create, get, list, patch, delete]
-  # Ground-truth existence check bij deletie (#123): de ArgoCD API antwoordt
-  # 'permission denied' zodra de Application weg is, de k8s API geeft een
-  # eerlijk NotFound. Op odcn-production dekt Capsule's admin-RoleBinding dit
-  # al, in de sandbox geldt deze ingescopete role als enige.
-  - apiGroups: [argoproj.io]
-    resources: [applications]
-    verbs: [get, list, update, patch, delete]
+  # applications/appprojects stonden hier cluster-breed met get, list, update, patch
+  # en delete. Ze staan nu als Role in de namespace van ArgoCD, met alleen de verbs
+  # die OPI gebruikt: base/argo-application-role.yaml.
   # Secrets cluster-breed: OPI plaatst SOPS-age-keys en Keycloak-secrets per
   # tenant-ns; per-namespace Role+RoleBinding is follow-up #90.
   - apiGroups: [""]

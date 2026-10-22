@@ -93,7 +93,9 @@ def test_de_restartlijst_dekt_elke_zad_lezer_en_start_zad_als_laatste() -> None:
         "grafana",
         "keycloak-admin",
         "platform-repo-pat",
-        "argocd-admin",
+        # Niet argocd-admin: OPI leest dat wachtwoord sinds RC-345 niet meer, hij werkt met
+        # het account opi en zijn API-token.
+        "argocd-opi-token",
         "secret-key",
         "keycloak-master-oidc",
     }
@@ -485,6 +487,7 @@ def test_bulk_sluit_de_externe_categorie_uit() -> None:
         "platform-repo-pat",
         "keycloak-master-oidc",
         "registry",
+        "argocd-webhook-github",
     }
 
 
@@ -525,6 +528,8 @@ def test_de_bewuste_uitsluitingen_zijn_en_blijven_benoemd() -> None:
         "secret-key",
         "keycloak-master-oidc",
         "registry",
+        "argocd-opi-token",
+        "argocd-webhook-github",
     }
 
 
@@ -878,3 +883,381 @@ def test_seed_weigert_een_bestaande_overlay(tmp_path: Path, monkeypatch: pytest.
     monkeypatch.setattr(rotate, "EDIT_TREES", {"infrastructure": (tmp_path / "templates", overlays_root, "X")})
     with pytest.raises(EditFailed, match="bestaat al"):
         rotate.seed_overlay(cluster, _LiveKube(), apply_changes=True)
+
+
+# --- RC-345: het ArgoCD-token van het account opi -----------------------------------
+
+
+def _fake_jwt(jti: str | None = "jti-1") -> str:
+    """Een JWT die er echt genoeg uitziet voor `token_id_of`: twee punten, een geldige
+    base64url-payload met (of zonder) een jti-claim."""
+    header = base64.urlsafe_b64encode(b'{"alg":"none"}').rstrip(b"=").decode()
+    claims = {} if jti is None else {"jti": jti}
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}.sig"
+
+
+def test_token_id_of_leest_de_jti_claim_en_weigert_wat_geen_jwt_is() -> None:
+    assert rotate.token_id_of(_fake_jwt("abc-123")) == "abc-123"
+
+    with pytest.raises(EditFailed, match="JWT"):
+        rotate.token_id_of("dit-is-geen-jwt")
+
+    with pytest.raises(EditFailed, match="jti"):
+        rotate.token_id_of(_fake_jwt(None))
+
+
+class _TokenKube:
+    """Een Kube voor de ArgoCD-token- en webhook-stappen: exec en run zijn los te stellen,
+    secret_value komt uit een kleine tabel zodat een ontbrekend secret simpel is te zetten."""
+
+    dry_run = False
+
+    def __init__(
+        self,
+        exec_responder: object = None,
+        secret_values: dict[tuple[str, str], str | None] | None = None,
+        namespace: str = "rig-prd-operations",
+    ) -> None:
+        self.namespace = namespace
+        self._exec_responder = exec_responder or (lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""))
+        self._secret_values = secret_values or {}
+        self.exec_calls: list[list[str]] = []
+        self.run_calls: list[tuple[list[str], str | None]] = []
+
+    def secret_value(self, name: str, key: str) -> str | None:
+        return self._secret_values.get((name, key), "adminpw")
+
+    def exec(self, workload: str, command: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+        self.exec_calls.append(command)
+        return self._exec_responder(command)  # type: ignore[misc]
+
+    def run(
+        self, args: list[str], *, check: bool = True, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        self.run_calls.append((args, input_text))
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+
+def _opi_token_steps(kube: object) -> list[rotate.Step]:
+    component = rotate.BY_KEY["argocd-opi-token"]
+    return rotate.argocd_opi_token_steps(component, _cluster(), kube, None)  # type: ignore[arg-type]
+
+
+def _ctx_voor_opi_token(kube: object, *, current: str | None = None, new: str | None = None) -> rotate.Ctx:
+    field = rotate.BY_KEY["argocd-opi-token"].rotate_fields[0]
+    return rotate.Ctx(
+        cluster=_cluster(),
+        kube=kube,  # type: ignore[arg-type]
+        current={field: current} if current is not None else {},
+        new={field: new} if new is not None else {},
+        apply_changes=True,
+        rotating=field,
+    )
+
+
+def test_opi_token_check_meldt_eerste_uitgifte_zonder_te_proberen() -> None:
+    kube = _TokenKube()
+    check = next(s for s in _opi_token_steps(kube) if s.phase == "check")
+    assert check.run is not None
+    assert "eerste uitgifte" in check.run(_ctx_voor_opi_token(kube))
+    assert kube.exec_calls == []
+
+
+def test_opi_token_check_meldt_drift_als_het_huidige_token_wordt_afgewezen() -> None:
+    kube = _TokenKube(lambda cmd: subprocess.CompletedProcess(cmd, 0, "FATA Unauthenticated", ""))
+    check = next(s for s in _opi_token_steps(kube) if s.phase == "check")
+    assert check.run is not None
+    with pytest.raises(EditFailed, match="wijst dit token af"):
+        check.run(_ctx_voor_opi_token(kube, current="oud-token"))
+
+
+def test_opi_token_issue_leest_het_nieuwe_token_en_zijn_id_uit_de_cli_output() -> None:
+    token = _fake_jwt("jti-nieuw")
+
+    def _antwoord(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        if "generate-token" in " ".join(cmd):
+            return subprocess.CompletedProcess(cmd, 0, f"enkele info-regel\n{token}\n", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    kube = _TokenKube(_antwoord)
+    issue = next(s for s in _opi_token_steps(kube) if "aanmaken" in s.title)
+    assert issue.run is not None
+    ctx = _ctx_voor_opi_token(kube)
+    result = issue.run(ctx)
+
+    assert "jti-nieuw" in result
+    assert ctx.new[ctx.rotating] == token
+
+
+def test_opi_token_issue_faalt_als_de_cli_geen_token_teruggeeft() -> None:
+    kube = _TokenKube(lambda cmd: subprocess.CompletedProcess(cmd, 0, "FATA permission denied", ""))
+    issue = next(s for s in _opi_token_steps(kube) if "aanmaken" in s.title)
+    assert issue.run is not None
+    with pytest.raises(EditFailed, match="geen token"):
+        issue.run(_ctx_voor_opi_token(kube))
+
+
+def test_opi_token_write_secret_zet_de_namespace_en_het_nieuwe_token() -> None:
+    kube = _TokenKube(namespace="rig-system")
+    write = next(s for s in _opi_token_steps(kube) if "zetten" in s.title)
+    assert write.run is not None
+    result = write.run(_ctx_voor_opi_token(kube, new="vers-token"))
+
+    assert rotate.OPI_TOKEN_SECRET in result
+    args, input_text = kube.run_calls[-1]
+    assert "apply" in args
+    assert input_text is not None
+    assert "rig-system" in input_text
+    assert "vers-token" in input_text
+
+
+def test_opi_token_verify_nieuw_faalt_als_het_verse_token_wordt_afgewezen() -> None:
+    kube = _TokenKube(lambda cmd: subprocess.CompletedProcess(cmd, 0, "FATA invalid session", ""))
+    verify = next(s for s in _opi_token_steps(kube) if s.phase == "verify" and "nieuwe" in s.title)
+    assert verify.run is not None
+    with pytest.raises(EditFailed, match="wijst dit token af"):
+        verify.run(_ctx_voor_opi_token(kube, new="vers-token"))
+
+
+def test_opi_token_revoke_old_trekt_in_en_bewijst_dat_het_oude_token_dood_is() -> None:
+    def _antwoord(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(cmd)
+        if "delete-token" in joined:
+            return subprocess.CompletedProcess(cmd, 0, "token deleted", "")
+        if "app list" in joined:
+            # Na het intrekken wijst ArgoCD het oude token (altijd T=oud-token) af.
+            return subprocess.CompletedProcess(cmd, 0, "FATA Unauthenticated", "")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    kube = _TokenKube(_antwoord)
+    revoke = next(s for s in _opi_token_steps(kube) if "intrekken" in s.title)
+    assert revoke.run is not None
+    result = revoke.run(_ctx_voor_opi_token(kube, current=_fake_jwt("jti-oud")))
+
+    assert "jti-oud" in result
+    assert "ingetrokken" in result
+    assert any("delete-token" in " ".join(c) for c in kube.exec_calls)
+
+
+def test_opi_token_revoke_old_faalt_als_het_oude_token_na_intrekken_nog_werkt() -> None:
+    def _antwoord(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(cmd)
+        if "delete-token" in joined:
+            return subprocess.CompletedProcess(cmd, 0, "token deleted", "")
+        # Het oude token blijft werken: de wissel is niet doorgekomen.
+        return subprocess.CompletedProcess(cmd, 0, "[]", "")
+
+    kube = _TokenKube(_antwoord)
+    revoke = next(s for s in _opi_token_steps(kube) if "intrekken" in s.title)
+    assert revoke.run is not None
+    with pytest.raises(EditFailed, match="OUDE waarde"):
+        revoke.run(_ctx_voor_opi_token(kube, current=_fake_jwt("jti-oud")))
+
+
+def test_opi_token_revoke_old_quote_de_jti_uit_het_secret() -> None:
+    """De jti komt uit het Secret en gaat een `sh -c` in waar het adminwachtwoord als $W in
+    de omgeving staat. Wie dat Secret kan schrijven zou er anders een commando in zetten dat
+    bij de volgende rotatie in de argocd-server-pod draait."""
+
+    def _antwoord(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        joined = " ".join(cmd)
+        if "delete-token" in joined:
+            return subprocess.CompletedProcess(cmd, 0, "token deleted", "")
+        return subprocess.CompletedProcess(cmd, 0, "FATA Unauthenticated", "")
+
+    kube = _TokenKube(_antwoord)
+    revoke = next(s for s in _opi_token_steps(kube) if "intrekken" in s.title)
+    assert revoke.run is not None
+    revoke.run(_ctx_voor_opi_token(kube, current=_fake_jwt("x; id > /tmp/pwned #")))
+
+    script = next(" ".join(c) for c in kube.exec_calls if "delete-token" in " ".join(c))
+    assert "'x; id > /tmp/pwned #'" in script, script
+    assert "opi x; id" not in script, script
+
+
+def test_opi_token_revoke_old_meldt_niets_in_te_trekken_bij_de_eerste_uitgifte() -> None:
+    kube = _TokenKube()
+    revoke = next(s for s in _opi_token_steps(kube) if "intrekken" in s.title)
+    assert revoke.run is not None
+    assert "niets in te trekken" in revoke.run(_ctx_voor_opi_token(kube))
+    assert kube.exec_calls == []
+
+
+def test_gather_ctx_voor_de_eerste_uitgifte_laat_current_leeg_en_vraagt_niets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda *a: (_ for _ in ()).throw(AssertionError("mag niet vragen")))
+    component = rotate.BY_KEY["argocd-opi-token"]
+    kube = _TokenKube(secret_values={(rotate.OPI_TOKEN_SECRET, "token"): None})
+
+    ctx = rotate.gather_ctx(component, _cluster(), kube, apply_changes=True)  # type: ignore[arg-type]
+
+    assert ctx.current == {}
+    assert ctx.new == {component.rotate_fields[0]: ""}
+
+
+def test_gather_ctx_voor_een_bestaand_token_leest_de_huidige_waarde_en_vraagt_niets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("builtins.input", lambda *a: (_ for _ in ()).throw(AssertionError("mag niet vragen")))
+    component = rotate.BY_KEY["argocd-opi-token"]
+    kube = _TokenKube(secret_values={(rotate.OPI_TOKEN_SECRET, "token"): "huidig-token"})
+
+    ctx = rotate.gather_ctx(component, _cluster(), kube, apply_changes=True)  # type: ignore[arg-type]
+
+    assert ctx.current == {component.rotate_fields[0]: "huidig-token"}
+    assert ctx.new == {component.rotate_fields[0]: ""}
+
+
+def test_check_component_bij_de_eerste_uitgifte_meldt_eerste_uitgifte_en_niet_overgeslagen() -> None:
+    component = rotate.BY_KEY["argocd-opi-token"]
+    kube = _TokenKube(secret_values={(rotate.OPI_TOKEN_SECRET, "token"): None}, namespace="rig-system")
+
+    report = "\n".join(rotate.check_component(component, _cluster(), kube))  # type: ignore[arg-type]
+
+    assert "overgeslagen" not in report
+    assert "eerste uitgifte" in report
+
+
+def test_check_component_zonder_issued_by_system_slaat_een_leeg_secret_wel_over() -> None:
+    """Contrast met hierboven: zonder `issued_by_system` is een ontbrekend secret wel een
+    reden om de check voor dit component over te slaan."""
+    component = rotate.BY_KEY["argocd-admin"]
+    key = component.current_from_secret
+    kube = _TokenKube(secret_values={key: None}, namespace="rig-system")  # type: ignore[arg-type]
+
+    report = "\n".join(rotate.check_component(component, _cluster(), kube))  # type: ignore[arg-type]
+
+    assert "overgeslagen" in report
+
+
+# --- RC-345: het GitHub-webhookgeheim van ArgoCD ------------------------------------
+
+
+def _webhook_steps(kube: object) -> list[rotate.Step]:
+    return rotate.argocd_webhook_github_steps(kube, None)  # type: ignore[arg-type]
+
+
+def _ctx_voor_webhook(kube: object, *, current: str | None = None, new: str | None = None) -> rotate.Ctx:
+    field = rotate.BY_KEY["argocd-webhook-github"].rotate_fields[0]
+    return rotate.Ctx(
+        cluster=_cluster(),
+        kube=kube,  # type: ignore[arg-type]
+        current={field: current} if current is not None else {},
+        new={field: new} if new is not None else {},
+        apply_changes=True,
+        rotating=field,
+    )
+
+
+def test_webhook_check_meldt_dat_elke_webhook_wordt_aangenomen_zonder_huidig_geheim() -> None:
+    kube = _TokenKube()
+    check = next(s for s in _webhook_steps(kube) if s.phase == "check")
+    assert check.run is not None
+    assert "elke webhook" in check.run(_ctx_voor_webhook(kube))
+    assert kube.exec_calls == []
+
+
+def test_webhook_patch_zet_het_nieuwe_geheim_op_de_juiste_key_in_argocd_secret() -> None:
+    kube = _TokenKube()
+    patch = next(s for s in _webhook_steps(kube) if s.phase == "apply")
+    assert patch.run is not None
+    result = patch.run(_ctx_voor_webhook(kube, new="nieuw-geheim"))
+
+    assert "argocd-secret" in result
+    args, input_text = kube.run_calls[-1]
+    assert "patch" in args
+    assert input_text is not None
+    assert "nieuw-geheim" in input_text
+    assert rotate.WEBHOOK_KEY in input_text
+
+
+def test_webhook_verify_faalt_als_de_proef_geen_200_teruggeeft() -> None:
+    kube = _TokenKube(lambda cmd: subprocess.CompletedProcess(cmd, 0, "403", ""))
+    verify = next(s for s in _webhook_steps(kube) if s.phase == "verify")
+    assert verify.run is not None
+    with pytest.raises(EditFailed):
+        verify.run(_ctx_voor_webhook(kube, new="nieuw-geheim"))
+
+
+def test_webhook_verify_slaagt_en_wijst_het_oude_geheim_af() -> None:
+    def _antwoord(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        env = next((a for a in cmd if a.startswith("S=")), "")
+        return subprocess.CompletedProcess(cmd, 0, "200" if env == "S=nieuw-geheim" else "403", "")
+
+    kube = _TokenKube(_antwoord)
+    verify = next(s for s in _webhook_steps(kube) if s.phase == "verify")
+    assert verify.run is not None
+    result = verify.run(_ctx_voor_webhook(kube, current="oud-geheim", new="nieuw-geheim"))
+
+    assert "HTTP 200" in result
+    assert "ingetrokken" not in result  # geen rotatiejargon van het token-component
+
+
+def test_gather_ctx_voor_de_eerste_webhookuitgifte_laat_current_leeg_en_vraagt_de_waarde(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    component = rotate.BY_KEY["argocd-webhook-github"]
+    monkeypatch.setattr("builtins.input", lambda *a: "nieuw-geheim")
+    kube = _TokenKube(secret_values={component.current_from_secret: None})  # type: ignore[arg-type]
+
+    ctx = rotate.gather_ctx(component, _cluster(), kube, apply_changes=True)  # type: ignore[arg-type]
+
+    assert ctx.current == {}
+    assert ctx.new == {component.rotate_fields[0]: "nieuw-geheim"}
+
+
+def test_check_component_bij_de_eerste_webhookuitgifte_meldt_het_ontbreken_en_slaat_niet_over() -> None:
+    component = rotate.BY_KEY["argocd-webhook-github"]
+    kube = _TokenKube(secret_values={component.current_from_secret: None}, namespace="rig-system")  # type: ignore[arg-type]
+
+    report = "\n".join(rotate.check_component(component, _cluster(), kube))  # type: ignore[arg-type]
+
+    assert "overgeslagen" not in report
+    assert "elke webhook" in report
+
+
+# --- RC-345: execute(assume_yes=...) voor een non-interactieve ronde ---------------
+
+
+def _weigerende_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "builtins.input", lambda *a: (_ for _ in ()).throw(AssertionError("assume_yes mag niets vragen"))
+    )
+
+
+def test_execute_met_assume_yes_breekt_op_een_handmatige_stap_zonder_te_vragen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _weigerende_input(monkeypatch)
+    steps = [rotate.Step("Zet dit klaar", "manual", ["doe iets buiten de tool"], None)]
+    ctx = _ctx_voor_opi_token(_TokenKube())
+
+    assert rotate.execute(ctx, steps, assume_yes=True) is False
+
+
+def test_execute_met_assume_yes_breekt_op_een_mislukte_check_zonder_te_vragen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _weigerende_input(monkeypatch)
+
+    def _faal(ctx: rotate.Ctx) -> str:
+        raise EditFailed("drift")
+
+    steps = [rotate.Step("Check", "check", ["x"], _faal)]
+    ctx = _ctx_voor_opi_token(_TokenKube())
+
+    assert rotate.execute(ctx, steps, assume_yes=True) is False
+
+
+def test_execute_met_assume_yes_voert_gewone_stappen_uit_zonder_te_vragen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _weigerende_input(monkeypatch)
+    gedaan: list[int] = []
+    steps = [rotate.Step("Doe iets", "apply", ["x"], lambda ctx: (gedaan.append(1), "gedaan")[1])]
+    ctx = _ctx_voor_opi_token(_TokenKube())
+
+    assert rotate.execute(ctx, steps, assume_yes=True) is True
+    assert gedaan == [1]

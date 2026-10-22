@@ -23,6 +23,14 @@ spec:
   extraConfig:
     timeout.reconciliation: "15m"
     timeout.hard.reconciliation: "0s"
+    # Het account waarmee OPI werkt: alleen apiKey, geen login, dus er is geen wachtwoord
+    # om mee in te loggen. Het token zet `scripts/edit-secret.py --component
+    # argocd-opi-token`.
+    accounts.opi: apiKey
+    # De enforce-beslissingen in de log van argocd-server. Die regel staat op debug-niveau
+    # (gemeten 18-10-2026); de PermissionDenied-waarschuwing ernaast staat er altijd, met
+    # subject, resource en actie.
+    server.rbac.log.enforce.enable: "true"
   server:
     extraCommandArgs:
       - --repo-server-timeout-seconds=180
@@ -84,6 +92,19 @@ spec:
       requests:
         cpu: 50m
         memory: 256Mi
+  # Least privilege per rol (RC-345). Welke RBAC-actie elke aanroep van OPI vraagt:
+  #
+  #   GET  /api/v1/applications                         applications, get
+  #   GET  /api/v1/applications/{app}                   applications, get
+  #   GET  /api/v1/applications/{app}?refresh=...       applications, get
+  #   GET  /api/v1/applications/{app}/manifests         applications, get
+  #   GET  /api/v1/applications/{app}/resource-tree     applications, get
+  #   POST /api/v1/applications/{app}/sync              applications, sync
+  #
+  # Dat is de hele lijst (opi/connectors/argo.py); POST /api/v1/session valt weg zodra OPI
+  # zijn API-token gebruikt. Aanmaken, wijzigen en verwijderen van een Application doet OPI
+  # via git, en wat hij rechtstreeks op de CR doet loopt via de Kubernetes-API (de Role bij
+  # operations-manager), niet via deze RBAC.
   rbac:
     defaultPolicy: 'role:none'
     policy: |-
@@ -95,9 +116,20 @@ spec:
       p, role:none, projects, get, *, deny
       p, role:none, accounts, get, *, deny
       p, role:none, gpgkeys, get, *, deny
+      # Het machine-account van OPI. Precies de twee acties uit de inventaris hierboven.
+      p, role:zad-opi, applications, get, */*, allow
+      p, role:zad-opi, applications, sync, */*, allow
+      g, opi, role:zad-opi
+      # Ontwikkelaars: deze rol draagt alleen de extra's bovenop role:readonly (syncen,
+      # refreshen, resource-actions); de groep krijgt beide rollen. Geen create, update of
+      # delete: een Application, AppProject of repository komt uit git en van OPI, of van
+      # de admingroep.
+      p, role:zad-developer, applications, sync, */*, allow
+      p, role:zad-developer, applications, action/*, */*, allow
       g, system:cluster-admins, role:admin
       g, rig-staging-admin-group, role:admin
-      g, rig-staging-developer-group, role:admin
+      g, rig-staging-developer-group, role:readonly
+      g, rig-staging-developer-group, role:zad-developer
       g, rig-staging-viewer-group, role:readonly
     scopes: '[groups]'
   sso:

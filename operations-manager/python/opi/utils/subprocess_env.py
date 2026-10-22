@@ -21,6 +21,7 @@ PLATFORM_SECRET_NAMES: frozenset[str] = frozenset(
         "ADMIN_EMAILS",
         "ALLOWED_EMAILS",
         "ARGOCD_PASSWORD",
+        "ARGOCD_TOKEN",
         "BACKUP_S3_ACCESS_KEY",
         "BACKUP_S3_ENDPOINT",
         "BACKUP_S3_SECRET_KEY",

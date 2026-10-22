@@ -41,6 +41,17 @@ spec:
           value: "sandboxed-local"
         - name: LOCAL_DEVELOPMENT
           value: "true"
+        # Alleen op de sandbox: zolang er geen opi-argocd-token is valt OPI terug op het
+        # admin-account, zodat een sandbox van voor RC-345 blijft syncen. Is ARGOCD_TOKEN
+        # gezet, dan wint het token (create_argo_connector kijkt daar eerst). Op odcn
+        # staat dit niet: daar is het token de enige weg.
+        - name: ARGOCD_USERNAME
+          value: "admin"
+        - name: ARGOCD_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: argocd-cluster
+              key: admin.password
         - name: DATABASE_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
