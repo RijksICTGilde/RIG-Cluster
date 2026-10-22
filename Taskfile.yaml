@@ -247,9 +247,9 @@ tasks:
       vars: [KEY_FILE]
     preconditions:
       - sh: |
-          # Linux en macOS hebben verschillende vlaggen; `00` als laatste tak houdt een
-          # ontbrekend bestand bij de aanroeper, die het zelf al meldt.
-          MODE=$(stat -c %a "{{.KEY_FILE}}" 2>/dev/null || stat -f %Lp "{{.KEY_FILE}}" 2>/dev/null || echo 00)
+          # `-L` volgt de symlink: een link zelf is 777, dus zonder raakt de grendel
+          # een gesymlinkte sleutel die zelf 600 is.
+          MODE=$(stat -Lc %a "{{.KEY_FILE}}" 2>/dev/null || stat -Lf %Lp "{{.KEY_FILE}}" 2>/dev/null || echo 00)
           # Geen `$((0$MODE & 077))`: de shell van task leest een leidende nul niet als
           # octaal, dus 0600 werd 600 decimaal en een goed bestand werd afgewezen. De
           # laatste twee cijfers ZIJN de rechten voor groep en anderen.

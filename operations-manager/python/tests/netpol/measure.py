@@ -230,7 +230,7 @@ def main() -> int:
         print(
             f"{afwijkingen} regel(s) wijken af: de evaluator of de matrix klopt niet, deze CNI mist de "
             "constructie, of deze host komt niet bij het doel (de internetregels meten dicht zonder "
-            "route naar 93.184.216.34 of zonder IPv6-egress)"
+            "route naar de internet-endpoints uit de matrix of zonder IPv6-egress)"
         )
         return 1
     print("de meting en de evaluator zijn het over elke regel eens")

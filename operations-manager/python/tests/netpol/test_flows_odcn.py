@@ -10,7 +10,16 @@ from __future__ import annotations
 import copy
 
 import pytest
-from tests.netpol.matrix import evaluate_flow, load_matrix, odcn_policies, odcn_policies_zonder_allow_all
+from tests.netpol.evaluator import ONBEOORDEELBAAR, evaluate
+from tests.netpol.matrix import (
+    TENANT_NAMESPACE,
+    TENANT_PROJECT,
+    evaluate_flow,
+    load_matrix,
+    odcn_policies,
+    odcn_policies_zonder_allow_all,
+)
+from tests.netpol.policies import tenant_baseline
 
 ENDPOINTS, FLOWS = load_matrix()
 
@@ -42,7 +51,7 @@ def test_geen_matrixregel_rust_op_een_onbeoordeelbaar_verdict(policies):
     matrixregel hierop, dan hoort die bij `task netpol:meet` en niet hier."""
     for flow in FLOWS:
         verdict = evaluate_flow(flow, ENDPOINTS, policies)
-        assert "niet te beoordelen" not in verdict.reason, (
+        assert ONBEOORDEELBAAR not in verdict.reason, (
             f"{flow.van} -> {flow.naar}:{flow.poort} rust op een onbeoordeelbaar ipBlock: {verdict.reason}"
         )
 
@@ -113,3 +122,62 @@ class TestDeMatrixMerktEenWijziging:
         assert open_internet, "de matrix moet een open internetregel van een tenant houden"
         for flow in open_internet:
             assert not evaluate_flow(flow, ENDPOINTS, gemuteerd).allowed
+
+
+class TestDeExceptSluitHetClusterUit:
+    """Wat de internetregel doet zodra een cluster zijn pod- en service-CIDR noemt.
+
+    De matrix hierboven kan dit niet vastleggen: zodra de internetregel een except
+    draagt, legt een CNI die tegen het echte bestemmingsadres, en dit model kent geen
+    pod-IP. Deze test rendert de baseline met een waarde per adresfamilie en toont het
+    verschil: een pod in een andere namespace valt buiten de regel, een extern adres
+    niet. De gemeten variant (task netpol:meet op Calico) is het bewijs; dit is de
+    berekening.
+    """
+
+    @staticmethod
+    def _policies_met_cidrs() -> list:
+        baseline = tenant_baseline(
+            namespace=TENANT_NAMESPACE,
+            deployment_name="web",
+            project_name=TENANT_PROJECT,
+            # Beide adresfamilies: een except op alleen IPv4 laat ::/0 catch-all, en
+            # daarmee blijft elke pod bereikbaar via zijn IPv6-adres.
+            cluster_cidrs={
+                "ipv4": ["10.128.0.0/14", "172.30.0.0/16"],
+                "ipv6": ["fd01::/48", "fd02::/112"],
+            },
+        )
+        return [baseline]
+
+    def test_een_pod_in_een_andere_namespace_valt_buiten_de_internetregel(self):
+        verdict = evaluate(
+            self._policies_met_cidrs(),
+            ENDPOINTS["tenant-app"],
+            ENDPOINTS["tenant-helm-pod"],
+            443,
+        )
+        assert not verdict.allowed, verdict.reason
+
+    def test_de_router_blijft_bereikbaar(self):
+        """Het OIDC-pad loopt via de router, en die valt binnen de except.
+
+        De baseline heeft daarom een eigen egressregel naar de ingress-controller; zonder
+        die regel gaat elke verbinding via een publieke hostnaam dicht.
+        """
+        verdict = evaluate(
+            self._policies_met_cidrs(),
+            ENDPOINTS["tenant-app"],
+            ENDPOINTS["router"],
+            443,
+        )
+        assert verdict.allowed, verdict.reason
+
+    def test_een_extern_adres_blijft_bereikbaar(self):
+        verdict = evaluate(
+            self._policies_met_cidrs(),
+            ENDPOINTS["tenant-app"],
+            ENDPOINTS["internet-v4"],
+            443,
+        )
+        assert verdict.allowed, verdict.reason

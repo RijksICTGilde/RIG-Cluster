@@ -543,13 +543,21 @@ def _sjabloon_fixtures(waarde: str) -> dict[str, dict[str, Any]]:
             "project": {"name": waarde},
         },
         "namespace.yaml.jinja": {"namespace": waarde},
+        "cmp-sops-key-reader.yaml.jinja": {
+            "role_name": waarde,
+            "namespace": waarde,
+            "secret_name": waarde,
+            "service_account": waarde,
+            "argo_namespace": waarde,
+        },
         "network-policy.yaml.jinja": {
             "name": waarde,
             "namespace": waarde,
             # Platform: deze policy wordt alleen voor de ACME-challenge gerenderd, met
-            # een vaste poortenlijst en zonder podSelector.
-            "pod_selector": None,
-            "ports": [80, 8089],
+            # een vaste poortenlijst, de solverpod als doel en de router als bron.
+            "pod_selector": 'acme.cert-manager.io/http01-solver: "true"',
+            "from_selector": {"namespace": "openshift-ingress", "pod_labels": {"app": "router"}},
+            "ports": [8089],
         },
         "service-network-policy.yaml.jinja": {
             "name": waarde,

@@ -19,6 +19,10 @@ from typing import Any
 # zodat een testregel alleen de labels hoeft te noemen die iemand zelf zette.
 NAMESPACE_NAME_LABEL = "kubernetes.io/metadata.name"
 
+#: Markering in een reden: deze kant weigert, maar op een regel die dit model niet tegen
+#: dit doel kan leggen (zie `_unjudged_peer`). Dat is geen bevestigde weigering.
+ONBEOORDEELBAAR = "niet te beoordelen"
+
 
 @dataclass(frozen=True)
 class Pod:
@@ -231,7 +235,7 @@ def _direction_allowed(
     names = ", ".join(p.get("metadata", {}).get("name", "<naamloos>") for p in selecting)
     reason = f"geen {rule_key}-regel past, wel geselecteerd door: {names}"
     if onbeoordeeld:
-        reason += f"; niet te beoordelen: {'; '.join(dict.fromkeys(onbeoordeeld))}"
+        reason += f"; {ONBEOORDEELBAAR}: {'; '.join(dict.fromkeys(onbeoordeeld))}"
     return Verdict(False, reason)
 
 
@@ -249,16 +253,20 @@ def evaluate(
     """
     if isinstance(source, Pod):
         egress = _direction_allowed(policies, source, target, port, protocol, direction="Egress")
-        if not egress:
-            return Verdict(False, f"egress geweigerd: {egress.reason}")
     else:
         egress = Verdict(True, "bron buiten het cluster")
 
     if isinstance(target, Pod):
         ingress = _direction_allowed(policies, target, source, port, protocol, direction="Ingress")
-        if not ingress:
-            return Verdict(False, f"ingress geweigerd: {ingress.reason}")
     else:
         ingress = Verdict(True, "doel buiten het cluster")
+
+    # Beide kanten worden altijd gewogen: weigert de ene op een onbeoordeelbare regel en
+    # de andere op een regel die dit model wel kan leggen, dan is die tweede de reden.
+    weigeringen = [(kant, verdict) for kant, verdict in (("egress", egress), ("ingress", ingress)) if not verdict]
+    if weigeringen:
+        beoordeeld = [item for item in weigeringen if ONBEOORDEELBAAR not in item[1].reason]
+        kant, verdict = (beoordeeld or weigeringen)[0]
+        return Verdict(False, f"{kant} geweigerd: {verdict.reason}")
 
     return Verdict(True, f"egress: {egress.reason}; ingress: {ingress.reason}")

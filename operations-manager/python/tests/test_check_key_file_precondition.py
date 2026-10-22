@@ -101,6 +101,31 @@ def test_een_ontbrekend_bestand_stopt_hier_niet_maar_bij_de_aanroeper(tmp_path: 
     assert resultaat.returncode == 0, resultaat.stdout + resultaat.stderr
 
 
+def test_een_symlink_naar_een_sleutel_met_goede_rechten_gaat_door(tmp_path: Path) -> None:
+    """stat zonder -L leest symlink-modus (altijd 777), niet het doelbestand."""
+    echte_sleutel = tmp_path / "echte-sleutel.txt"
+    echte_sleutel.write_text("whatever\n")
+    echte_sleutel.chmod(0o600)
+    link = tmp_path / "key.txt"
+    link.symlink_to(echte_sleutel)
+
+    resultaat = _draai(link)
+
+    assert resultaat.returncode == 0, resultaat.stdout + resultaat.stderr
+
+
+def test_een_symlink_naar_een_sleutel_met_slechte_rechten_stopt(tmp_path: Path) -> None:
+    echte_sleutel = tmp_path / "echte-sleutel.txt"
+    echte_sleutel.write_text("whatever\n")
+    echte_sleutel.chmod(0o644)
+    link = tmp_path / "key.txt"
+    link.symlink_to(echte_sleutel)
+
+    resultaat = _draai(link)
+
+    assert resultaat.returncode == 1, resultaat.stdout + resultaat.stderr
+
+
 def test_elke_taak_die_een_sleutelpad_rechtstreeks_leest_heeft_de_guard() -> None:
     """Het plan vraagt deze guard op elke lezer; dit toetst dat die belofte blijft gelden.
 

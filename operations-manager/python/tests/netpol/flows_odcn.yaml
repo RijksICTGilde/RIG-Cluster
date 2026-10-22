@@ -12,10 +12,10 @@
 #                       gelijk aan `verwacht`.
 #
 # `verwacht: dicht` betekent niet dat het beleid klaar is: de egress van de
-# tenant-baseline staat bewust ruim open (poort 80 en 443 naar elke bestemming), en
-# emergency-restore-allow-all maakt de pods in rig-prd-operations die nog geen eigen
-# beleid dragen in beide richtingen open. Beide staan hier als open regels in, zodat het
-# omzetten ervan een zichtbare wijziging is.
+# tenant-baseline staat bewust ruim open (poort 80 en 443 naar elk adres buiten de
+# cluster-CIDRs), en emergency-restore-allow-all maakt de pods in rig-prd-operations die
+# nog geen eigen beleid dragen in beide richtingen open. Beide staan hier als open regels
+# in, zodat het omzetten ervan een zichtbare wijziging is.
 #
 # `waarom` noemt waar de verbinding vandaan komt: een configmap, een env-variabele, een
 # scrape-job of een policy. Zonder die bron is een regel een aanname.
@@ -32,9 +32,9 @@ endpoints:
     labels: {deployment: api, project: demo}
 
   # Een pod zonder het deployment-label, zoals een helm- of helmfile-workload in een
-  # projectnamespace. Geen tenant-baseline selecteert hem, dus zijn egress is open; het
-  # template noemt dat zelf ("falls through to default-allow"). Zijn ingress is dat niet:
-  # de acme-http-policy selecteert met podSelector {} elke pod in de namespace.
+  # projectnamespace. Geen tenant-baseline selecteert hem, dus hij is in beide richtingen
+  # open; het template noemt dat zelf ("falls through to default-allow"). Sinds RC-336
+  # selecteert de acme-http-policy alleen de solverpod, dus die dekt hem ook niet meer.
   tenant-helm-pod:
     namespace: rig-prd-demo
     namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
@@ -45,6 +45,13 @@ endpoints:
   # tenant-regel laat hem toe.
   vreemde-pod:
     namespace: rig-prd-vreemd
+
+  # Dezelfde soort pod in de namespace van een ANDER project: geen baseline selecteert
+  # hem, dus ook zijn egress is default-allow en hij is de bron die bij de twee regels
+  # onderaan hoort.
+  vreemde-helm-pod:
+    namespace: rig-prd-ander
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
 
   rig-db:
     namespace: rig-prd-operations
@@ -96,6 +103,32 @@ endpoints:
     namespace: rig-prd-operations
     labels: {acme.cert-manager.io/http01-solver: "true"}
 
+  # Dezelfde soort solverpod, maar voor een certificaat van een tenant: die landt in de
+  # projectnamespace en valt onder de acme-http-policy die OPI daar wegschrijft.
+  tenant-acme-solver:
+    namespace: rig-prd-demo
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {acme.cert-manager.io/http01-solver: "true"}
+
+  # Een afnemer van VLAM: een tenant-pod met de egressregel van de dienst vlam erbij.
+  vlam-afnemer:
+    namespace: rig-prd-afnemer
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: prod, app: prod-app, project: afnemer}
+
+  # De interne VLAM-proxy, in de projectnamespace van het vlam-project. Zijn poorten
+  # staan open voor elke bron via een inbound-regel van cross-domain-access.
+  vlam-proxy:
+    namespace: rig-prd-vlam-wt8
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: productie, app: productie-vlam-proxy-intern, project: vlam-wt8}
+
+  # Een tenant-pod met de dienst send-email erbij.
+  mail-afnemer:
+    namespace: rig-prd-mailer
+    namespace_labels: {created-by: operations-manager, capsule.clastix.io/tenant: rig-prd}
+    labels: {deployment: prod, app: prod-app}
+
   mail-relay:
     namespace: rig-prd-ron
     labels: {app: rig-mail-relay}
@@ -108,11 +141,14 @@ endpoints:
     namespace: openshift-ingress
     labels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: rig}
 
+  # Twee adressen die ook echt antwoorden: `task netpol:meet` legt er een TCP-verbinding
+  # naartoe. Het oude meetadres (93.184.216.34, example.com) antwoordt nergens meer, ook
+  # zonder beleid niet, en liet de internetregels daarom altijd afwijken.
   internet-v4:
-    ip: 93.184.216.34
+    ip: 1.1.1.1
 
   internet-v6:
-    ip: "2606:2800:220:1:248:1893:25c8:1946"
+    ip: "2606:4700:4700::1111"
 
 flows:
   # ---------------------------------------------------------------- tenant naar platform
@@ -134,15 +170,14 @@ flows:
     verwacht: open
     waarom: de S3-API; de console op 9001 is alleen voor de platform-namespace
 
-  # allow-minio-access opent 9001 alleen voor de platform-namespace, maar
-  # emergency-restore-allow-all selecteert minio nog met een lege ingress-regel en maakt
-  # die beperking daarmee ongedaan. Stap (c) van de uitsluitlijst zet dit om.
+  # Tot RC-336 stond deze op open: de ingress van MinIO liet de console alleen voor de
+  # platform-namespace toe, maar emergency-restore-allow-all maskeerde dat. De egress
+  # van de tenant is nu de grens die wel houdt, ongeacht wat er aan de andere kant ligt.
   - van: tenant-app
     naar: minio
     poort: 9001
-    verwacht: open
-    zonder_allow_all: dicht
-    waarom: emergency-restore-allow-all maskeert de console-beperking van allow-minio-access
+    verwacht: dicht
+    waarom: de ops-egress van de baseline noemt MinIO alleen op 9000, dus de console valt erbuiten
 
   # task bootstrap-backup-destination applied deze overlay buiten ArgoCD om; allow-minio-
   # access in rig-prd-backup laat alleen de Capsule-tenant rig-prd en de platform-backup-
@@ -207,17 +242,11 @@ flows:
     verwacht: dicht
     waarom: twee deployments in dezelfde namespace blijven van elkaar gescheiden
 
-  # De egress-kant is open: de internetregel is een ipBlock op 0.0.0.0/0 en ::/0 zonder
-  # except, en een CNI legt die CIDR tegen het echte bestemmingsadres, dus elk pod-IP
-  # valt erbinnen. De ingress-kant sluit hem: de acme-http-policy van elk gepubliceerd
-  # deployment selecteert met podSelector {} ook deze pod, en laat alleen 80 en 8089 toe.
-  # Haal de acme-http-policy weg of geef hem een podSelector op het deployment-label,
-  # dan slaat deze regel om naar open.
-  - van: tenant-app
-    naar: tenant-helm-pod
-    poort: 443
-    verwacht: dicht
-    waarom: acme-http selecteert elke pod in de namespace voor ingress en laat alleen 80 en 8089 toe
+  # tenant-app -> tenant-helm-pod:443 stond hier tot odcn zijn cluster_cidrs kreeg. De
+  # except op de internetregel sluit dat pod-IP nu uit, maar dit model kent geen pod-IP
+  # en kan de regel dus niet beoordelen; zo'n regel hoort niet in de matrix. De
+  # berekening staat in TestDeExceptSluitHetClusterUit; meten kan alleen op een cluster
+  # met de pod-CIDR van odcn, en het wegwerpcluster heeft die van Kind.
 
   # -------------------------------------------------------------------- OPI, uitgaand
   - van: opi
@@ -319,9 +348,8 @@ flows:
   - van: tenant-app
     naar: opi
     poort: 5678
-    verwacht: open
-    zonder_allow_all: dicht
-    waarom: de debugpy-poort uit de Service; tenants krijgen alleen 8000
+    verwacht: dicht
+    waarom: de ops-egress noemt OPI alleen op 8000, dus de debugpy-poort valt erbuiten
 
   - van: vreemde-pod
     naar: opi
@@ -337,6 +365,8 @@ flows:
     verwacht: open
     waarom: de publieke OIDC-flow over keycloak.rijksapp.nl
 
+  # De except van de internetregel sluit het cluster uit, inclusief de router zelf, dus
+  # de baseline heeft een eigen egressregel naar de ingress-controller.
   - van: tenant-app
     naar: router
     poort: 443
@@ -344,11 +374,16 @@ flows:
     waarom: een tenant-pod bereikt Keycloak op de publieke hostnaam (keycloak_discovery_url), dus via de router
 
   - van: tenant-app
+    naar: router
+    poort: 8443
+    verwacht: dicht
+    waarom: de routerregel noemt alleen 80 en 443
+
+  - van: tenant-app
     naar: keycloak
     poort: 8080
-    verwacht: open
-    zonder_allow_all: dicht
-    waarom: issue #105; een tenant-pod komt niet rechtstreeks bij Keycloak binnen
+    verwacht: dicht
+    waarom: de ops-egress noemt Keycloak niet; een app bereikt hem op zijn publieke hostnaam, dus via de router
 
   - van: vreemde-pod
     naar: keycloak
@@ -368,6 +403,12 @@ flows:
     poort: 9000
     verwacht: open
     waarom: de pod draagt prometheus.io/port 9000, dus de kubernetes-pods-job scrapet de management-poort
+
+  - van: tenant-app
+    naar: argocd
+    poort: 8080
+    verwacht: dicht
+    waarom: ArgoCD staat in dezelfde namespace maar is geen bestemming voor een tenant
 
   - van: argocd
     naar: keycloak
@@ -424,9 +465,8 @@ flows:
   - van: tenant-app
     naar: prometheus
     poort: 9090
-    verwacht: open
-    zonder_allow_all: dicht
-    waarom: alleen de router en OPI bevragen Prometheus
+    verwacht: dicht
+    waarom: de ops-egress noemt vier services, en Prometheus hoort daar niet bij
 
   - van: prometheus
     naar: rig-db
@@ -511,6 +551,59 @@ flows:
     verwacht: dicht
     waarom: external-dns heeft geen ingress nodig, en de allow-all selecteert deze pod niet meer
 
+  # ------------------------------------------------- de dienst-eigen policies van tenants
+  # Ze lopen niet via de ops-egress maar via een policy van hun eigen dienst, en die
+  # blijft ongemoeid.
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8082
+    verwacht: open
+    waarom: de dienst vlam draagt per component een egressregel bij naar de proxy
+
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8443
+    verwacht: open
+    waarom: het doorlus-pad zit op een tweede poort van dezelfde pod
+
+  - van: vlam-afnemer
+    naar: vlam-proxy
+    poort: 8081
+    verwacht: dicht
+    waarom: VlamEndpoint.ports geeft alleen port en passthrough_port, en 8081 is geen van beide
+
+  # De inbound-regel van de proxy staat open voor elke bron, maar een willekeurige
+  # tenant komt er niet: zijn eigen baseline laat die egress niet toe.
+  - van: tenant-app
+    naar: vlam-proxy
+    poort: 8082
+    verwacht: dicht
+    waarom: zonder de dienst vlam heeft de tenant geen egressregel naar die namespace
+
+  - van: mail-afnemer
+    naar: mail-relay
+    poort: 2525
+    verwacht: open
+    waarom: de podpoort van de relay; de Service vertaalt 587 hierheen
+
+  - van: mail-afnemer
+    naar: mail-relay
+    poort: 587
+    verwacht: dicht
+    waarom: een NetworkPolicy kijkt naar de poort van de pod, en dat is 2525
+
+  - van: tenant-app
+    naar: mail-relay
+    poort: 2525
+    verwacht: dicht
+    waarom: zonder de dienst send-email heeft de tenant geen egressregel naar rig-prd-ron
+
+  - van: mail-afnemer
+    naar: tenant-app
+    poort: 80
+    verwacht: dicht
+    waarom: poort 80 van een app-pod staat alleen open voor de router, niet voor een andere tenant
+
   # -------------------------------------------------------------------- cert-manager-solver
   - van: router
     naar: acme-solver
@@ -521,6 +614,36 @@ flows:
   - van: tenant-app
     naar: acme-solver
     poort: 8089
+    verwacht: dicht
+    waarom: de ops-egress noemt de solverpod niet, dus de tenant komt er aan de uitgaande kant niet uit
+
+  # De HTTP-01-solver in de projectnamespace draagt geen deployment-label, dus geen
+  # tenant-baseline selecteert hem: de acme-http-policy is het enige beleid op die pod.
+  - van: router
+    naar: tenant-acme-solver
+    poort: 8089
     verwacht: open
-    zonder_allow_all: dicht
-    waarom: alleen de router hoort bij een challenge te komen
+    waarom: de router stuurt de challenge naar poort 8089 van de solverpod
+
+  - van: tenant-andere-deployment
+    naar: tenant-acme-solver
+    poort: 8089
+    verwacht: dicht
+    waarom: de acme-http-policy laat alleen de router toe, en de bron mag er ook niet uit
+
+  # Wat RC-336 openlaat. Tot deze taak selecteerde de acme-http-policy elke pod in een
+  # namespace met een Let's Encrypt-issuer (podSelector {}, ingress 80 en 8089), en
+  # beperkte daarmee ook de pods zonder deployment-label. Nu de policy alleen de solver
+  # selecteert, valt zo'n pod terug op default-allow en staat hij op elke poort open.
+  # Dat gat sluit de default-deny per projectnamespace, niet deze taak.
+  - van: vreemde-helm-pod
+    naar: tenant-helm-pod
+    poort: 5432
+    verwacht: open
+    waarom: geen policy selecteert een pod zonder deployment-label, aan geen van beide kanten
+
+  - van: vreemde-helm-pod
+    naar: tenant-app
+    poort: 5432
+    verwacht: dicht
+    waarom: een pod MET het deployment-label heeft zijn baseline, en die laat deze bron niet toe
