@@ -13,6 +13,14 @@ from opi.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class AgeDecryptionError(Exception):
+    """Age kon deze inhoud niet openen: verkeerde sleutel of beschadigde ciphertext.
+
+    Een eigen type zodat een aanroeper die "deze sleutel opent het niet" als normale uitkomst
+    behandelt dat kan onderscheiden van elke andere fout.
+    """
+
+
 # TODO: replace this method with direct configuration value
 def get_global_private_key() -> str:
     return cast("str", settings.SOPS_AGE_PRIVATE_KEY)
@@ -52,7 +60,7 @@ async def decrypt_age_content(encrypted_content: str, private_key: str) -> str:
         return _decrypt_in_process(encrypted_content, private_key)
     except (pyrage.DecryptError, pyrage.IdentityError) as e:
         logger.error(f"Age decryption failed: {e}")
-        raise Exception(f"Age decryption failed: {e}") from e
+        raise AgeDecryptionError(f"Age decryption failed: {e}") from e
 
 
 async def _encrypt_with_age_and_base64encode_as_prefixed_string(client_secret: str, public_key: str | None) -> str:

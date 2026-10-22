@@ -272,6 +272,7 @@ class KopiaConnector:
         config_file: str | None = None,
         timeout: int = 60,
         credentials: KopiaRepositoryConfig | None = None,
+        extra_env: dict[str, str] | None = None,
     ) -> tuple[str, str, int]:
         """
         Run a Kopia command asynchronously.
@@ -281,6 +282,7 @@ class KopiaConnector:
             config_file: Optional path to config file
             timeout: Command timeout in seconds
             credentials: Repository credentials, passed to kopia via the environment
+            extra_env: Extra secrets kopia reads from the environment, such as KOPIA_NEW_PASSWORD
 
         Returns:
             Tuple of (stdout, stderr, return_code)
@@ -317,7 +319,7 @@ class KopiaConnector:
         try:
             from opi.core.metrics import track_subprocess_memory
 
-            env = self.env | (credentials.credential_env() if credentials else {})
+            env = self.env | (credentials.credential_env() if credentials else {}) | (extra_env or {})
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -347,6 +349,28 @@ class KopiaConnector:
         except Exception as e:
             logger.error(f"Error running Kopia command: {e}")
             raise KopiaExecutionError(f"Command execution failed: {e}") from e
+
+    @staticmethod
+    def _connect_args(config: KopiaRepositoryConfig, cache_dir: str) -> list[str]:
+        """Argumenten voor ``kopia repository connect s3`` tegen ``config``.
+
+        Zonder de S3-sleutels en het wachtwoord: die gaan via ``credential_env``.
+        """
+        return [
+            "repository",
+            "connect",
+            "s3",
+            "--bucket",
+            config.s3_bucket,
+            "--prefix",
+            f"{config.s3_prefix}/",
+            "--endpoint",
+            config.s3_endpoint,
+            "--cache-directory",
+            cache_dir,
+            "--no-check-for-updates",
+            *([] if config.use_tls else ["--disable-tls"]),
+        ]
 
     async def _disconnect_from_repository(self, config_file: str) -> None:
         """Disconnect from repository, ignoring any errors."""
@@ -386,25 +410,8 @@ class KopiaConnector:
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Build TLS flag
-            tls_flag = [] if config.use_tls else ["--disable-tls"]
-
             # Connect to repository
-            connect_args = [
-                "repository",
-                "connect",
-                "s3",
-                "--bucket",
-                config.s3_bucket,
-                "--prefix",
-                f"{config.s3_prefix}/",
-                "--endpoint",
-                config.s3_endpoint,
-                "--cache-directory",
-                cache_dir,
-                "--no-check-for-updates",
-                *tls_flag,
-            ]
+            connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
                 connect_args,
@@ -448,6 +455,51 @@ class KopiaConnector:
 
             return snapshots
 
+    async def change_repository_password(
+        self,
+        config: KopiaRepositoryConfig,
+        new_password: str,
+    ) -> bool:
+        """Zet het wachtwoord van de repository op ``config.s3_prefix`` om naar ``new_password``.
+
+        False betekent: op die prefix staat nog geen repository, dus er is niets over te zetten.
+        """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_file = os.path.join(temp_dir, "repository.config")
+            cache_dir = os.path.join(temp_dir, "cache")
+            os.makedirs(cache_dir, exist_ok=True)
+
+            _, stderr, code = await self._run_kopia_command(
+                self._connect_args(config, cache_dir),
+                config_file=config_file,
+                timeout=30,
+                credentials=config,
+            )
+
+            if code != 0:
+                if _is_missing_repository(stderr):
+                    logger.debug(f"No repository found at {config.s3_prefix}, no password to carry over")
+                    return False
+                raise KopiaExecutionError(f"Could not open the backup repository at {config.s3_prefix}: {stderr}")
+
+            try:
+                _, stderr, code = await self._run_kopia_command(
+                    ["repository", "change-password"],
+                    config_file=config_file,
+                    timeout=60,
+                    credentials=config,
+                    extra_env={"KOPIA_NEW_PASSWORD": new_password},
+                )
+                if code != 0:
+                    raise KopiaExecutionError(
+                        f"Could not change the backup repository password at {config.s3_prefix}: {stderr}"
+                    )
+            finally:
+                await self._disconnect_from_repository(config_file)
+
+            logger.info(f"Changed the Kopia repository password at {config.s3_prefix}")
+            return True
+
     async def delete_snapshot(
         self,
         config: KopiaRepositoryConfig,
@@ -469,25 +521,8 @@ class KopiaConnector:
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Build TLS flag
-            tls_flag = [] if config.use_tls else ["--disable-tls"]
-
             # Connect to repository
-            connect_args = [
-                "repository",
-                "connect",
-                "s3",
-                "--bucket",
-                config.s3_bucket,
-                "--prefix",
-                f"{config.s3_prefix}/",
-                "--endpoint",
-                config.s3_endpoint,
-                "--cache-directory",
-                cache_dir,
-                "--no-check-for-updates",
-                *tls_flag,
-            ]
+            connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
                 connect_args,
@@ -549,23 +584,7 @@ class KopiaConnector:
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            tls_flag = [] if config.use_tls else ["--disable-tls"]
-
-            connect_args = [
-                "repository",
-                "connect",
-                "s3",
-                "--bucket",
-                config.s3_bucket,
-                "--prefix",
-                f"{config.s3_prefix}/",
-                "--endpoint",
-                config.s3_endpoint,
-                "--cache-directory",
-                cache_dir,
-                "--no-check-for-updates",
-                *tls_flag,
-            ]
+            connect_args = self._connect_args(config, cache_dir)
 
             _, stderr, code = await self._run_kopia_command(
                 connect_args,
@@ -617,25 +636,8 @@ class KopiaConnector:
             cache_dir = os.path.join(temp_dir, "cache")
             os.makedirs(cache_dir, exist_ok=True)
 
-            # Build TLS flag
-            tls_flag = [] if config.use_tls else ["--disable-tls"]
-
             # Connect to repository
-            connect_args = [
-                "repository",
-                "connect",
-                "s3",
-                "--bucket",
-                config.s3_bucket,
-                "--prefix",
-                f"{config.s3_prefix}/",
-                "--endpoint",
-                config.s3_endpoint,
-                "--cache-directory",
-                cache_dir,
-                "--no-check-for-updates",
-                *tls_flag,
-            ]
+            connect_args = self._connect_args(config, cache_dir)
 
             stdout, stderr, code = await self._run_kopia_command(
                 connect_args,

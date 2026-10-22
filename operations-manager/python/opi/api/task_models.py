@@ -236,6 +236,22 @@ class RefreshProjectResult(BaseModel):
     error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
 
 
+class RotateProjectKeyResult(BaseModel):
+    """Result of a rotate_project_key task. Paths, never values."""
+
+    status: str
+    message: str = ""
+    project: ProjectInfo | None = None
+    public_key: str | None = None
+    rotated_fields: list[str] = Field(default_factory=list)
+    skipped_fields: list[str] = Field(default_factory=list)
+    backup_namespaces: list[str] = Field(default_factory=list)
+    processing: ProcessingStatus | None = None
+    error: str | None = None
+    error_type: str | None = None
+    error_category: ErrorCategory | None = ERROR_CATEGORY_FIELD
+
+
 class RefreshDeploymentResult(BaseModel):
     """Result of a refresh_deployment task."""
 
@@ -432,6 +448,7 @@ TASK_RESULT_MODELS: dict[TaskType, type[BaseModel]] = {
     TaskType.CLONE_DATABASE: CloneDatabaseResult,
     TaskType.CLONE_BUCKET: CloneBucketResult,
     TaskType.REFRESH_PROJECT: RefreshProjectResult,
+    TaskType.ROTATE_PROJECT_KEY: RotateProjectKeyResult,
     TaskType.REFRESH_DEPLOYMENT: RefreshDeploymentResult,
     TaskType.ROTATE_CREDENTIALS: RotateCredentialsResult,
     TaskType.ADD_COMPONENT: AddComponentResult,

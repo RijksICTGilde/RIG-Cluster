@@ -196,6 +196,9 @@ def mock_settings() -> Any:
         # Real int, not a bare MagicMock: create_app() reads this to wire SessionMiddleware,
         # and numeric comparisons on it must work even when this mock is in effect.
         mock_settings.SESSION_MAX_AGE_SECONDS = 28800
+        # De body-limit (RC-367) rekent met deze twee bij elk verzoek op een uploadroute.
+        mock_settings.ATTACHMENT_BODY_LIMIT_FACTOR = 16
+        mock_settings.IMAGE_UPLOAD_MAX_SIZE_MB = 5120
         # Om dezelfde reden een echte string. validate_master_api_key doet eerst
         # `if not settings.MASTER_API_KEY` (een kale MagicMock is waar-achtig, dus daar komt
         # hij doorheen) en daarna secrets.compare_digest, en die weigert een MagicMock met

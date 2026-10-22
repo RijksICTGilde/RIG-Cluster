@@ -119,8 +119,7 @@ dichten, maar zet ook een afgedankte KEK weer in gebruik zolang hij er staat.
 
 De aantallen staan bewust nergens: het gereedschap selecteert op recipient en op die lijst, en telt zelf. Een dry-run noemt wat hij gevonden heeft, en dat is het actuele getal.
 
-Buiten scope: het vervangen van een projectsleutel zelf (issue #183) en de rest van de
-zad-deployments-repo, die op de projectsleutel staat.
+Buiten scope: de sleutels per project en de zad-deployments-repo, die op de projectsleutel staat. Die sleutel vervang je per project met een eigen route, zie `features/projectsleutel-vervangen.md`.
 
 ## Het gereedschap
 
@@ -310,6 +309,6 @@ De scan meldt wat hij NIET gelezen heeft, met de reden. Een melding die zwijgt o
 
 ## Wat hierna komt
 
-- **De sleutels per project** (#183): die staan los van deze ronde en hebben hun eigen hiërarchie.
+- **De sleutels per project**: die staan los van deze ronde en hebben hun eigen hiërarchie. Vervangen gaat per project via `POST /api/v2/projects/{project_name}/:rotate-project-key`, zie `features/projectsleutel-vervangen.md`.
 - **De oefenronde**: PREPARE en VERIFY-1 maandelijks op een wegwerpsleutel, met het resultaat weggegooid, zodat de ingreep geoefend blijft zonder dat er iets productie raakt. Een voorstel; er draait nog geen workflow voor.
 - **De kubectl-aanroepen** via een library of de API in plaats van de commandline (#182).

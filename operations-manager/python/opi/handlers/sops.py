@@ -37,6 +37,15 @@ CMP_SOPS_ROLE_NAME = "cmp-sops-key-reader"
 CMP_SERVICE_ACCOUNT = "argocd-cmp"
 
 
+def format_age_key_file(private_key: str, public_key: str) -> str:
+    """De inhoud van het Secret ``sops-age-key``, in de vorm van een AGE-sleutelbestand.
+
+    Het Kopia-wachtwoord wordt uit deze hele tekst afgeleid, dus wie voorspelt wat er na een
+    sleutelvervanging in de namespace komt te staan moet dezelfde vorm gebruiken.
+    """
+    return f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
+
+
 # TODO: maybe this handler has to go.. it conflicts with the utils/sops.py
 class SopsHandler:
     """
@@ -223,9 +232,7 @@ class SopsHandler:
         self.logger.info(f"Storing project-specific SOPS key in namespace: {namespace}")
 
         try:
-            # Construct the full key contents format for the AGE key file
-            # This matches the format that AGE key files use
-            full_key_contents = f"# created: project-specific key\n# public key: {public_key}\n{private_key}\n"
+            full_key_contents = format_age_key_file(private_key, public_key)
 
             # Create secret using the generic secret template
             template_path = "manifests/generic-secret.yaml.to-sops.jinja"

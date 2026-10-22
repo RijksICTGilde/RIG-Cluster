@@ -147,6 +147,12 @@ class TestPVCBackupPod:
         assert manifest["kind"] == "Pod"
         assert manifest["metadata"]["name"] == "test-pod"
 
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
+
 
 # ---------------------------------------------------------------------------
 # Database template
@@ -203,6 +209,12 @@ class TestDatabaseBackupPod:
     def test_trigger_tag_present(self, env: Environment) -> None:
         rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
         assert '--tags="trigger:scheduled"' in rendered
+
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
 
     def test_yaml_is_valid(self, env: Environment) -> None:
         rendered = _render(env, "backup-database-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
@@ -263,6 +275,12 @@ class TestBucketBackupPod:
     def test_trigger_tag_present(self, env: Environment) -> None:
         rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="manual"))
         assert '--tags="trigger:manual"' in rendered
+
+    def test_bestaande_repository_wordt_niet_gewist(self, env: Environment) -> None:
+        """Een repository die niet opengaat wordt nooit gewist: de pod stopt met een foutcode."""
+        rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="scheduled"))
+        assert "mc rm" not in rendered
+        assert "exit 21" in rendered
 
     def test_yaml_is_valid(self, env: Environment) -> None:
         rendered = _render(env, "backup-bucket-pod.yaml.jinja", **self._ctx(trigger="scheduled"))

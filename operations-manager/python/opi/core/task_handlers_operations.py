@@ -10,10 +10,20 @@ No FastAPI dependencies (Request, HTTPException, etc.) are used here.
 import logging
 from typing import Any
 
+from opi.connectors.kopia import KopiaConnectionError, KopiaExecutionError
+from opi.core.actor import get_actor
+from opi.core.cluster_config import get_prefixed_namespace
+from opi.core.config import settings
+from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
 from opi.core.task_errors import platform_failure_fields
+from opi.handlers.sops import format_age_key_file
+from opi.manager.backup.base import BaseBackupManager
 from opi.services.oom_watcher import reset_oom_tune_attempts
-from opi.services.project_store import get_project_store
-from opi.utils.age import decrypt_password_smart_auto
+from opi.services.project_store import ProjectStoreError, get_project_store
+from opi.utils.age import decrypt_password_smart_auto, get_decoded_project_private_key, wrap_project_key
+from opi.utils.key_rotation import ConversionFailed, rotate_project_key
+from opi.utils.project_utils import validate_project_name
+from opi.utils.sops import generate_sops_key_pair
 
 logger = logging.getLogger(__name__)
 
@@ -618,3 +628,154 @@ async def handle_refresh_project(payload: dict, progress: Any) -> dict:
     finally:
         if project_manager:
             await project_manager.close()
+
+
+async def _carry_over_backup_passwords(
+    project_data: dict[str, Any],
+    new_private_key: str,
+    new_public_key: str,
+) -> list[str]:
+    """Zet het Kopia-wachtwoord van elke namespace van dit project mee naar de nieuwe sleutel.
+
+    Het wachtwoord wordt afgeleid uit het Secret ``sops-age-key``; zonder deze stap opent de
+    bestaande repository na de vervanging niet meer en staat de backup van die namespace stil.
+    """
+    project_name = project_data.get("name", "")
+    cluster = settings.CLUSTER_MANAGER
+    new_age_key = format_age_key_file(new_private_key, new_public_key)
+
+    backup_manager = BaseBackupManager()
+    # Deployments delen een namespace, dus één keer per namespace: een tweede poging met het
+    # oude wachtwoord opent niets meer.
+    seen: set[str] = set()
+    carried: list[str] = []
+    for deployment in project_data.get("deployments", []) or []:
+        base_namespace = deployment.get("namespace")
+        if not base_namespace or deployment.get("cluster") != cluster:
+            continue
+        namespace = get_prefixed_namespace(cluster, base_namespace)
+        if namespace in seen:
+            continue
+        seen.add(namespace)
+        if await backup_manager.carry_over_backup_password(project_name, cluster, namespace, new_age_key):
+            carried.append(namespace)
+    return carried
+
+
+async def handle_rotate_project_key(payload: dict, progress: Any) -> dict:
+    """Replace the AGE key pair of one project.
+
+    See ``features/projectsleutel-vervangen.md`` for what this does and does not do.
+
+    Expected payload keys:
+        project_name: the project whose key is being rotated
+    """
+    project_name: str = payload["project_name"]
+
+    if not validate_project_name(project_name):
+        error_msg = (
+            "Invalid project name format. Must start with lowercase letter, "
+            "then lowercase letters a-z, numbers 0-9, dash -, maximum 20 characters"
+        )
+        progress.fail_project(error_msg)
+        raise ValueError(error_msg)
+
+    store = get_project_store()
+
+    lookup_task = progress.add_task("Projectbestand lezen")
+    await store.reconcile()
+    project = store.get(project_name)
+    if not project:
+        error_msg = f"Project '{project_name}' not found in project registry"
+        progress.fail_task(lookup_task, error_msg)
+        progress.fail_project(error_msg)
+        raise ValueError(error_msg)
+    progress.complete_task(lookup_task)
+
+    rotate_task = progress.add_task("Nieuwe projectsleutel maken, de velden omzetten en opslaan")
+    new_private_key, new_public_key = generate_sops_key_pair()
+    # Onder de project-KEK, net als bij projectaanmaak; zonder KEK valt wrap_project_key terug
+    # op de platformsleutel (RC-334).
+    encrypted_new_private_key = await wrap_project_key(new_private_key)
+    # Per poging overschreven: wat de laatste, geslaagde ronde deed is wat er landde.
+    rotated_fields: list[str] = []
+    skipped_fields: list[str] = []
+
+    async def rotate(current: dict[str, Any]) -> dict[str, Any]:
+        """De omzetting, per poging opnieuw op de verse staat uit git.
+        Zie waarom mutate beter is dan save in features/projectsleutel-vervangen.md."""
+        old_private_key = await get_decoded_project_private_key(current)
+        rotation = await rotate_project_key(current, old_private_key, new_public_key)
+        rotation.data["config"]["age-public-key"] = new_public_key
+        rotation.data["config"]["age-private-key"] = encrypted_new_private_key
+        rotated_fields[:] = rotation.rotated
+        skipped_fields[:] = rotation.skipped
+        return rotation.data
+
+    def commit_message() -> str:
+        return f"Projectsleutel van {project_name} vervangen ({len(rotated_fields)} velden omgezet)"
+
+    try:
+        mutation = await store.mutate(
+            project_name,
+            rotate,
+            message=commit_message,
+            actor=get_actor(),
+            filename=project.filename,
+        )
+    except ConversionFailed as e:
+        error_msg = f"Omzetten naar de nieuwe projectsleutel is mislukt: {e}"
+        progress.fail_task(rotate_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
+    except (ProjectStoreError, ProjectSchemaError, ProjectIntegrityError) as e:
+        error_msg = f"Opslaan van het projectbestand met de nieuwe sleutel is mislukt: {e}"
+        progress.fail_task(rotate_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
+    logger.info(
+        "Project key rotation for %s: %d fields converted, %d left on another key",
+        project_name,
+        len(rotated_fields),
+        len(skipped_fields),
+    )
+    progress.complete_task(rotate_task)
+
+    # Na opslag (reparatie vereist beide wachtwoorden) en voor verwerking (die de sleutel in het Secret zet).
+    backup_task = progress.add_task("Backupwachtwoord meeverhuizen")
+    try:
+        carried = await _carry_over_backup_passwords(mutation.after, new_private_key, new_public_key)
+    except (KopiaConnectionError, KopiaExecutionError) as e:
+        error_msg = f"Het backupwachtwoord kon niet mee naar de nieuwe sleutel: {e}"
+        progress.fail_task(backup_task, error_msg)
+        progress.fail_project(error_msg)
+        raise
+    logger.info("Project key rotation for %s: backup password carried over for %s", project_name, carried or "none")
+    progress.complete_task(backup_task)
+
+    # Reprocess through refresh_project: same code path as any other project change.
+    refresh_result = await handle_refresh_project(
+        {"project_name": project_name, "force_clone": False, "reset_running_sync": True}, progress
+    )
+    failed = refresh_result.get("status") == "failed"
+
+    return {
+        "status": "failed" if failed else "success",
+        "message": (
+            refresh_result.get("message", "Herverwerken na het vervangen van de sleutel mislukt")
+            if failed
+            else f"Projectsleutel van '{project_name}' vervangen: {len(rotated_fields)} velden omgezet"
+        ),
+        "project": {"name": project_name, "file_path": f"projects/{project.filename}"},
+        "public_key": new_public_key,
+        "rotated_fields": rotated_fields,
+        "skipped_fields": skipped_fields,
+        "backup_namespaces": carried,
+        "processing": refresh_result.get("processing"),
+        **({"error": refresh_result.get("error"), "error_type": refresh_result.get("error_type")} if failed else {}),
+        **(
+            {"error_category": refresh_result["error_category"]}
+            if failed and refresh_result.get("error_category")
+            else {}
+        ),
+    }
