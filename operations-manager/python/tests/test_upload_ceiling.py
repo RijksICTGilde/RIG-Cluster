@@ -9,34 +9,56 @@ gigabyte, en OPI heeft weinig marge voordat hij OOMKilled wordt. Wat hier gemete
 * beide wegen naar een bijlage (de wizard-upload en de API-actie) weigeren een te groot
   bestand met dezelfde melding die ze altijd gaven;
 * een verzoek naar een bijlageroute met een body boven de bovengrens wordt geweigerd
-  voordat de route draait.
+  voordat de route draait;
+* een upload boven het plafond van gelijktijdige uploads wacht in een begrensde wachtrij,
+  en wordt pas geweigerd als die vol is (RC-367);
+* de image-push krijgt zijn sleutelcontrole en zijn plek in het slot vóór de parser, dus
+  een verzoek zonder geldige sleutel en een verzoek op een vol slot laten geen byte body
+  binnen (RC-367).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import io
+import os
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI, File, Request, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
+from opi.api.image_router import image_router
+from opi.core.config import settings
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
-from opi.middleware.body_limit import MAX_ATTACHMENT_BODY_BYTES, BodyLimitMiddleware
+from opi.middleware.body_limit import (
+    BodyLimitMiddleware,
+    attachment_body_limit,
+    body_limit_for,
+    image_push_body_limit,
+)
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
-from opi.utils.uploads import CHUNK_SIZE, read_capped
+from opi.utils import uploads
+from opi.utils.uploads import CHUNK_SIZE, read_capped, spill_capped, upload_slot
 from opi.web.router_wizard_attachments import stage_attachment
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     import httpx
     from starlette.middleware.base import RequestResponseEndpoint
     from starlette.responses import Response
+    from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 FLOW_ID = "modal-edit-attachments"
 TOKEN = "1" * 32
+# De wizard geeft zijn state alleen aan de gebruiker die hem opende.
+OWNER_EMAIL = "bouwer@rijksoverheid.nl"
 
 
 class _TellendeBuffer(io.BytesIO):
@@ -103,13 +125,24 @@ async def test_een_grote_upload_wordt_niet_uitgelezen() -> None:
 
 @pytest.mark.asyncio
 async def test_de_wizard_weigert_een_te_groot_bestand_met_de_bestaande_melding() -> None:
-    state = WizardState(flow_id=FLOW_ID, current_step="attachments", project_name="bijlage-plafond")
+    state = WizardState(
+        flow_id=FLOW_ID, current_step="attachments", project_name="bijlage-plafond", owner_email=OWNER_EMAIL
+    )
     state.base_data = {"services": []}
     save_modal_state_by_token(TOKEN, state)
     upload, _ = _upload(b"x" * (MAX_ATTACHMENT_BYTES + 1))
 
     response = await stage_attachment(
-        Request({"type": "http", "method": "POST", "path": "/", "headers": [], "session": {}}),
+        Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/",
+                "headers": [],
+                "session": {},
+                "state": {"user": {"email": OWNER_EMAIL}},
+            }
+        ),
         FLOW_ID,
         attachment_id="server-cert",
         file=upload,
@@ -125,7 +158,7 @@ async def test_de_wizard_weigert_een_te_groot_bestand_met_de_bestaande_melding()
 # --------------------------------------------------------------------------------------
 
 BOUNDARY = "bijlagegrens"
-BLOKKEN_BOVEN_DE_GRENS = MAX_ATTACHMENT_BODY_BYTES // CHUNK_SIZE + 2
+BLOKKEN_BOVEN_DE_GRENS = attachment_body_limit() // CHUNK_SIZE + 2
 
 
 def _multipart_blokken(blokken: int) -> Iterator[bytes]:
@@ -185,7 +218,7 @@ def client() -> TestClient:
 
 
 def test_een_body_boven_de_bovengrens_wordt_geweigerd(client: TestClient) -> None:
-    response = client.post("/forms/wizard/flow/attachments/stage", content=b"x" * (MAX_ATTACHMENT_BODY_BYTES + 1))
+    response = client.post("/forms/wizard/flow/attachments/stage", content=b"x" * (attachment_body_limit() + 1))
 
     assert response.status_code == 413
     assert "Body te groot" in response.json()["detail"]
@@ -233,7 +266,7 @@ def test_een_middleware_die_de_body_leest_geeft_geen_serverfout() -> None:
 
 def test_een_andere_route_houdt_zijn_eigen_plafond(client: TestClient) -> None:
     """De image-upload heeft een eigen, veel hoger plafond en gaat hier niet langs."""
-    response = client.post("/api/v2/images/upload", content=b"x" * (MAX_ATTACHMENT_BODY_BYTES + 1))
+    response = client.post("/api/v2/images/upload", content=b"x" * (attachment_body_limit() + 1))
 
     assert response.status_code == 200
 
@@ -245,3 +278,424 @@ def test_create_app_bedraadt_de_body_limit_middleware() -> None:
     app = create_app()
 
     assert any(mw.cls is BodyLimitMiddleware for mw in app.user_middleware)
+
+
+def test_body_limit_for_kent_de_image_push_zijn_eigen_grens_toe() -> None:
+    """De image-push hoort veel hoger te mogen dan een bijlage, en een onbekend pad niets."""
+    assert body_limit_for("/forms/wizard/flow/attachments/stage") == attachment_body_limit()
+    assert body_limit_for("/api/v1/projects/test-project/images/push") == image_push_body_limit()
+    assert body_limit_for("/api/v2/images/upload") is None
+
+
+def test_image_push_body_limit_volgt_image_upload_max_size_mb(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "IMAGE_UPLOAD_MAX_SIZE_MB", 1)
+
+    assert image_push_body_limit() == 1024 * 1024
+
+
+def test_een_te_grote_image_push_wordt_geweigerd_voor_de_route_draait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zijn eigen, veel hogere grens geldt ook hier: geweigerd vóór de route, niet erna."""
+    monkeypatch.setattr(settings, "IMAGE_UPLOAD_MAX_SIZE_MB", 1)
+    app = FastAPI()
+    app.state.gedraaid = []
+
+    @app.post("/api/v1/projects/test-project/images/push")
+    async def _push(request: Request) -> dict[str, int]:
+        request.app.state.gedraaid.append("push")
+        return {"gelezen": len(await request.body())}
+
+    app.add_middleware(BodyLimitMiddleware)
+    client = TestClient(app)
+
+    response = client.post("/api/v1/projects/test-project/images/push", content=b"x" * (image_push_body_limit() + 1))
+
+    assert response.status_code == 413
+    assert client.app.state.gedraaid == [], "de route heeft de body toch gelezen"
+
+
+# --------------------------------------------------------------------------------------
+# 4. Het slot en zijn wachtrij
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def slot_van_een(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een slot met plek voor één upload en een wachtrij van één, zodat de derde weigert."""
+    monkeypatch.setattr(settings, "MAX_CONCURRENT_UPLOADS", 1)
+    monkeypatch.setattr(settings, "UPLOAD_QUEUE_SIZE", 1)
+    monkeypatch.setattr(settings, "UPLOAD_QUEUE_WAIT_SECONDS", 5.0)
+    monkeypatch.setattr(uploads, "_slot", None)
+
+
+@pytest.mark.asyncio
+async def test_een_upload_boven_het_plafond_wacht_in_de_wachtrij(slot_van_een: None) -> None:
+    """Een upload is meestal zo gelezen, dus de tweede wacht op zijn plek, hij wordt niet geweigerd."""
+    volgorde: list[str] = []
+
+    async def upload(naam: str, duur: float) -> None:
+        async with upload_slot():
+            volgorde.append(naam)
+            await asyncio.sleep(duur)
+
+    await asyncio.gather(upload("eerste", 0.05), upload("tweede", 0))
+
+    assert volgorde == ["eerste", "tweede"]
+
+
+@pytest.mark.asyncio
+async def test_een_volle_wachtrij_weigert_met_503(slot_van_een: None) -> None:
+    los = asyncio.Event()
+    bezig = asyncio.Event()
+
+    async def houd_de_plek_vast() -> None:
+        async with upload_slot():
+            bezig.set()
+            await los.wait()
+
+    async def wacht_in_de_rij() -> str:
+        async with upload_slot():
+            return "erdoor"
+
+    vasthouder = asyncio.create_task(houd_de_plek_vast())
+    await bezig.wait()
+    wachter = asyncio.create_task(wacht_in_de_rij())
+    await asyncio.sleep(0)
+
+    with pytest.raises(HTTPException) as fout:
+        async with upload_slot():
+            pass
+
+    assert fout.value.status_code == 503
+
+    los.set()
+    await vasthouder
+    # Wie al in de rij stond komt er wel door, en daarna is het slot weer vrij.
+    assert await wachter == "erdoor"
+    async with upload_slot():
+        pass
+
+
+@pytest.mark.asyncio
+async def test_het_slot_komt_vrij_na_een_fout(slot_van_een: None) -> None:
+    with pytest.raises(RuntimeError):
+        async with upload_slot():
+            raise RuntimeError("upload afgebroken")
+
+    async with upload_slot():
+        pass
+
+
+@pytest.fixture
+def slot_met_korte_wachttijd(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een slot met plek voor een wachter, maar een wachttijd die meteen verloopt."""
+    monkeypatch.setattr(settings, "MAX_CONCURRENT_UPLOADS", 1)
+    monkeypatch.setattr(settings, "UPLOAD_QUEUE_SIZE", 10)
+    monkeypatch.setattr(settings, "UPLOAD_QUEUE_WAIT_SECONDS", 0.05)
+    monkeypatch.setattr(uploads, "_slot", None)
+
+
+@pytest.mark.asyncio
+async def test_een_wachter_die_de_wachttijd_overschrijdt_weigert_met_503(
+    slot_met_korte_wachttijd: None,
+) -> None:
+    """Niet alleen een volle rij weigert: wie te lang wacht, krijgt ook een 503."""
+    bezig = asyncio.Event()
+
+    async def houd_de_plek_vast() -> None:
+        async with upload_slot():
+            bezig.set()
+            await asyncio.sleep(1)
+
+    vasthouder = asyncio.create_task(houd_de_plek_vast())
+    await bezig.wait()
+
+    with pytest.raises(HTTPException) as fout:
+        async with upload_slot():
+            pass
+
+    assert fout.value.status_code == 503
+
+    vasthouder.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await vasthouder
+    # De plek is weer vrij: de timeout van de wachter houdt hem niet vast.
+    async with upload_slot():
+        pass
+
+
+@pytest.fixture
+def vol_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Een slot zonder plek en zonder wachtrij: de volgende upload wordt meteen geweigerd."""
+    monkeypatch.setattr(settings, "MAX_CONCURRENT_UPLOADS", 0)
+    monkeypatch.setattr(settings, "UPLOAD_QUEUE_SIZE", 0)
+    monkeypatch.setattr(uploads, "_slot", None)
+
+
+@pytest.fixture
+def app_met_een_uploadroute() -> TestClient:
+    """De echte app, met een route die het slot neemt zoals de drie uploadroutes dat doen.
+
+    De 503 van het slot is een ``HTTPException`` en loopt dus langs de foutafhandeling van
+    de app, waar de ``Retry-After`` eerder afviel; die wordt hier op het antwoord gemeten
+    en niet op de uitzondering. Een GET, want een POST naar een pad zonder formulier
+    strandt op de CSRF-controle voordat het slot in zicht komt. Zonder ``with``, want de
+    lifespan van de echte app verbindt met de buitenwereld.
+    """
+    from opi.server import create_app
+
+    app = create_app()
+
+    @app.get("/slot-van-een-upload")
+    async def _neem_het_slot() -> dict[str, bool]:
+        async with upload_slot():
+            return {"gelezen": True}
+
+    return TestClient(app)
+
+
+@pytest.mark.parametrize("accept", ["application/json", "text/html"])
+def test_een_geweigerde_upload_geeft_een_retry_after_op_het_antwoord(
+    app_met_een_uploadroute: TestClient, vol_slot: None, accept: str
+) -> None:
+    response = app_met_een_uploadroute.get("/slot-van-een-upload", headers={"Accept": accept})
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == str(settings.UPLOAD_SLOT_RETRY_AFTER_SECONDS)
+
+
+# --------------------------------------------------------------------------------------
+# 5. spill_capped: in het geheugen tot de grens, daarboven naar een tempbestand
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_blijft_in_het_geheugen_onder_spill_after() -> None:
+    data = b"x" * 100
+    upload, _ = _upload(data)
+
+    staged = await spill_capped(upload, max_bytes=1000, spill_after=1000)
+
+    assert staged is not None
+    assert staged.content == data
+    assert staged.path is None
+    assert staged.size == len(data)
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_valt_zonder_argument_terug_op_de_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Geen ``spill_after`` meegegeven: de grens komt dan uit ``UPLOAD_SPILL_AFTER_BYTES``."""
+    monkeypatch.setattr(settings, "UPLOAD_SPILL_AFTER_BYTES", 10)
+    data = b"x" * 100
+    upload, _ = _upload(data)
+
+    staged = await spill_capped(upload, max_bytes=len(data))
+
+    assert staged is not None
+    assert staged.path is not None
+    assert staged.content is None
+    staged.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_schrijft_naar_een_tempbestand_boven_spill_after() -> None:
+    data = b"x" * (CHUNK_SIZE * 3)
+    upload, _ = _upload(data)
+
+    staged = await spill_capped(upload, max_bytes=len(data), spill_after=CHUNK_SIZE)
+
+    assert staged is not None
+    assert staged.content is None
+    assert staged.path is not None
+    assert staged.size == len(data)
+    with open(staged.path, "rb") as f:
+        assert f.read() == data
+
+    pad = staged.path
+    staged.cleanup()
+
+    assert staged.path is None
+    assert not os.path.exists(pad)
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_precies_op_het_plafond_komt_er_volledig_uit() -> None:
+    data = b"x" * MAX_ATTACHMENT_BYTES
+    upload, _ = _upload(data)
+
+    staged = await spill_capped(upload, MAX_ATTACHMENT_BYTES, spill_after=0)
+
+    assert staged is not None
+    assert staged.size == MAX_ATTACHMENT_BYTES
+    assert staged.path is not None
+    with open(staged.path, "rb") as f:
+        assert f.read() == data
+    staged.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_boven_het_plafond_geeft_none_en_ruimt_het_tempbestand_op(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Een half weggeschreven tempbestand mag niet blijven liggen als het plafond wordt gehaald."""
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
+    upload, _ = _upload(b"x" * (MAX_ATTACHMENT_BYTES + 1))
+
+    staged = await spill_capped(upload, MAX_ATTACHMENT_BYTES, spill_after=0)
+
+    assert staged is None
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_spill_capped_ruimt_het_tempbestand_op_als_de_upload_afbreekt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Een client die wegvalt geeft een CancelledError, en die mag geen tarball achterlaten."""
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
+
+    class _AfgebrokenUpload:
+        def __init__(self) -> None:
+            self.gelezen = 0
+
+        async def read(self, size: int) -> bytes:
+            self.gelezen += 1
+            if self.gelezen > 2:
+                raise asyncio.CancelledError
+            return b"x" * size
+
+    with pytest.raises(asyncio.CancelledError):
+        await spill_capped(_AfgebrokenUpload(), max_bytes=10**9, spill_after=0)  # type: ignore[arg-type]
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_attachment_body_limit_volgt_max_attachment_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """De bijlagegrens is afgeleid van het bijlageplafond, niet los ingetypt."""
+    monkeypatch.setattr(settings, "ATTACHMENT_BODY_LIMIT_FACTOR", 2)
+
+    assert attachment_body_limit() == MAX_ATTACHMENT_BYTES * 2
+
+
+# --------------------------------------------------------------------------------------
+# 6. De image-push: sleutel en slot vóór de multipart-parser (RC-367)
+# --------------------------------------------------------------------------------------
+#
+# FastAPI parseert de body voordat de handler draait, dus een 401 of een 503 uit de route
+# zelf valt pas nadat de hele tarball ontvangen is. Tien pushes van 5 GB zonder geldige
+# sleutel zouden zo 50 GB tempschijf kosten. BodyLimitMiddleware is de enige plek die voor
+# de parser draait, en doet die twee controles daarom daar.
+
+PUSH_PAD = "/api/v1/projects/test-project/images/push?image_name=app&tag=v1"
+
+
+class _TeltOntvangen:
+    """Telt hoe vaak de app onder de middleware om een stuk body vraagt."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self.ontvangen = 0
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        async def tellend() -> Message:
+            self.ontvangen += 1
+            return await receive()
+
+        await self.app(scope, tellend, send)
+
+
+@pytest.fixture
+def push_stack(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[TestClient, _TeltOntvangen]:
+    """De echte image-push achter de middleware, met skopeo en het projectregister gemokt."""
+    monkeypatch.setattr(settings, "TEMP_DIR", str(tmp_path))
+    monkeypatch.setattr(settings, "IMAGE_UPLOAD_MAX_SIZE_MB", 10)
+    monkeypatch.setattr(settings, "REGISTRY_URL", "rcr.rijksapps.nl")
+
+    project = SimpleNamespace(name="test-project", api_key="de-juiste-sleutel")
+    store = MagicMock()
+    store.get.return_value = project
+    monkeypatch.setattr("opi.api.endpoint_util.get_project_store", lambda: store)
+
+    connector = MagicMock()
+    connector.validate_push_target = MagicMock()
+    connector.push_image = AsyncMock(return_value="rcr.rijksapps.nl/rig/zad:test-project_app-v1")
+    monkeypatch.setattr("opi.api.image_router.SkopeoConnector", lambda: connector)
+
+    app = FastAPI()
+    app.include_router(image_router)
+    teller = _TeltOntvangen(app)
+    return TestClient(BodyLimitMiddleware(teller)), teller
+
+
+def test_een_push_zonder_sleutel_leest_geen_body(
+    push_stack: tuple[TestClient, _TeltOntvangen], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, teller = push_stack
+
+    with caplog.at_level("WARNING", logger="opi.middleware.body_limit"):
+        response = client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)})
+
+    assert response.status_code == 401
+    assert any("Authentication failed" in r.getMessage() for r in caplog.records)
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_een_push_met_een_verkeerde_sleutel_leest_geen_body(
+    push_stack: tuple[TestClient, _TeltOntvangen], tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Een sleutel die niet bij het project in het pad hoort komt even ver als geen sleutel."""
+    client, teller = push_stack
+
+    with caplog.at_level("WARNING", logger="opi.middleware.body_limit"):
+        response = client.post(
+            PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-sleutel-van-een-ander"}
+        )
+
+    assert response.status_code == 401
+    assert any("Authentication failed" in r.getMessage() for r in caplog.records)
+    assert not any("de-sleutel-van-een-ander" in r.getMessage() for r in caplog.records)
+    assert response.json()["detail"] == "Invalid API key"
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_een_push_op_een_vol_slot_wordt_geweigerd_voor_de_parser(
+    push_stack: tuple[TestClient, _TeltOntvangen], vol_slot: None, tmp_path: Path
+) -> None:
+    """Met MAX_CONCURRENT_UPLOADS uploads in behandeling volgt de 503 vóór de body."""
+    client, teller = push_stack
+
+    response = client.post(
+        PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-juiste-sleutel"}
+    )
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == str(settings.UPLOAD_SLOT_RETRY_AFTER_SECONDS)
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_een_geldige_push_komt_er_nog_helemaal_door(
+    push_stack: tuple[TestClient, _TeltOntvangen], tmp_path: Path
+) -> None:
+    client, _ = push_stack
+
+    response = client.post(
+        PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "de-juiste-sleutel"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["image"] == "rcr.rijksapps.nl/rig/zad:test-project_app-v1"
+    assert list(tmp_path.iterdir()) == [], "de tarball is niet opgeruimd"
+
+
+@pytest.mark.asyncio
+async def test_de_route_neemt_het_slot_niet_een_tweede_keer(slot_van_een: None) -> None:
+    """Dubbel nemen zou één push twee plekken kosten; met een slot van één loopt dat vast."""
+    scope: dict[str, object] = {uploads.SLOT_HELD_IN_SCOPE: True}
+
+    async def meting() -> None:
+        async with upload_slot(scope), upload_slot(scope):
+            pass
+
+    await asyncio.wait_for(meting(), timeout=5)

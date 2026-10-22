@@ -49,7 +49,7 @@ from opi.handlers.project_file_handler import (
 from opi.services import upload_staging
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.services.catalog.attachments.editables import ATTACHMENT_ID_EDITABLE
-from opi.utils.uploads import read_capped, too_large_detail
+from opi.utils.uploads import read_capped, too_large_detail, upload_slot
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +239,10 @@ async def stage_attachment(
             return _attachments_list_response(request, state, wizard_token, error=replace_error)
 
     # The same ceiling the API upload enforces (catalog_model.MAX_ATTACHMENT_BYTES): a
-    # limit only one road honours just moves the problem to the other one.
-    raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
+    # limit only one road honours just moves the problem to the other one. The slot caps
+    # how many uploads read at once, over all three upload routes together.
+    async with upload_slot():
+        raw = await read_capped(file, MAX_ATTACHMENT_BYTES)
     if raw is None:
         return _attachments_list_response(request, state, wizard_token, error=too_large_detail(MAX_ATTACHMENT_BYTES))
     try:

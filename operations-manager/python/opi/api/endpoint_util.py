@@ -3,7 +3,7 @@ import re
 import secrets
 from collections.abc import Callable  # noqa: TC003 — used in decorator signatures at runtime
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
 from opi.api.user_token_auth import UserTokenError, extract_bearer_token
@@ -11,6 +11,9 @@ from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, project_
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
+
+if TYPE_CHECKING:
+    from opi.services.project_service import ProjectSummary
 
 REQUIRES_PROJECT_NAME = "zad_requires_project_name"
 """Markering op een route die met een projectsleutel wordt afgeschermd."""
@@ -24,6 +27,23 @@ REQUIRES_MASTER_API_KEY = "zad_requires_master_api_key"
 
 REQUIRES_METRICS_SCRAPE_TOKEN = "zad_requires_metrics_scrape_token"
 """Markering op een route die met PROMETHEUS_METRICS_AUTH_TOKEN wordt afgeschermd."""
+
+
+def authenticate_project_api_key(project_name: str | None, presented: str | None) -> ProjectSummary | None:
+    """Het project uit ``project_name`` als ``presented`` zijn projectsleutel is, anders ``None``.
+
+    Gedeeld met ``BodyLimitMiddleware``, die deze controle voor de image-push al vóór de
+    multipart-parser doet; een tweede vergelijking ernaast zou uiteen kunnen gaan lopen.
+    """
+    if not presented or not project_name:
+        return None
+    project = get_project_store().get(project_name)
+    if not project:
+        return None
+    # Op bytes vergelijken, zie de noot in _require_shared_secret.
+    if not secrets.compare_digest(project.api_key.encode(), presented.encode()):
+        return None
+    return project
 
 
 def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -50,10 +70,9 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             )
             raise HTTPException(status_code=401, detail="Missing project_name parameter")
 
-        project = get_project_store().get(project_name_from_url)
+        project = authenticate_project_api_key(project_name_from_url, x_api_key)
 
-        # Op bytes vergelijken, zie de noot in _require_shared_secret.
-        if not project or not secrets.compare_digest(project.api_key.encode(), x_api_key.encode()):
+        if not project:
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")
             raise HTTPException(status_code=401, detail="Invalid API key")
 
