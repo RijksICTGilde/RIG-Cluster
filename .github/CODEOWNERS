@@ -47,3 +47,4 @@
 /.github/workflows/ @uittenbroekrobbert
 /.github/CODEOWNERS @uittenbroekrobbert
 /SECURITY.md @uittenbroekrobbert
+/features/security-scanning-pipeline.md @uittenbroekrobbert

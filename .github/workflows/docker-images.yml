@@ -13,13 +13,62 @@ on:
           - postgresql-with-dictionaries
           - keycloak-zad
           - all
+  # Laag A van de patchstrategie (SECURITY.md): een nachtelijke herbouw zonder laagcache
+  # haalt verse OS-pakketten op zonder dat iemand iets hoeft te mergen, en publiceert op
+  # een nightly-tag. Een uur na docker.yml, zodat de twee niet om dezelfde runners vechten.
+  schedule:
+    - cron: '0 4 * * *'
 
 permissions:
   contents: read
-  packages: write
 
 env:
   REGISTRY: ghcr.io
+  # De runner staat op egress-policy: block, dus alles buiten deze lijst wordt tegengehouden
+  # en als annotatie gemeld. Komt er een stap bij die iets anders ophaalt, dan staat het
+  # endpoint in die annotatie en hoort het hier. Zie SECURITY.md.
+  HARDEN_ENDPOINTS: |
+    *.actions.githubusercontent.com:443
+    *.blob.core.windows.net:443
+    agent.api.stepsecurity.io:443
+    api.adoptium.net:443
+    api.github.com:443
+    archive.ubuntu.com:80
+    astral.sh:443
+    auth.docker.io:443
+    azure.archive.ubuntu.com:80
+    cdn01.quay.io:443
+    cdn02.quay.io:443
+    cdn03.quay.io:443
+    codeload.github.com:443
+    deb.debian.org:443
+    deb.debian.org:80
+    esm.ubuntu.com:443
+    files.pythonhosted.org:443
+    fulcio.sigstore.dev:443
+    ghcr.io:443
+    github.com:443
+    index.docker.io:443
+    mirror.gcr.io:443
+    motd.ubuntu.com:443
+    objects.githubusercontent.com:443
+    pkg-containers.githubusercontent.com:443
+    pkgs.k8s.io:443
+    production.cloudflare.docker.com:443
+    pypi.org:443
+    quay.io:443
+    raw.githubusercontent.com:443
+    registry-1.docker.io:443
+    registry.k8s.io:443
+    rekor.sigstore.dev:443
+    timestamp.sigstore.dev:443
+    release-assets.githubusercontent.com:443
+    repo.maven.apache.org:443
+    repo1.maven.org:443
+    results-receiver.actions.githubusercontent.com:443
+    security.debian.org:80
+    security.ubuntu.com:80
+    tuf-repo-cdn.sigstore.dev:443
 
 jobs:
   prepare:
@@ -27,6 +76,10 @@ jobs:
     outputs:
       calver_tag: ${{ steps.calver.outputs.tag }}
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -34,6 +87,10 @@ jobs:
       - name: Calculate CalVer tag
         id: calver
         run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
+            echo "tag=nightly-$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           PREFIX="$(date -u +%Y.%-m)"
           PATCH=$(git tag -l "${PREFIX}.*" | sed "s/${PREFIX}\.//" | sort -n | tail -1)
           NEXT_PATCH=$(( ${PATCH:-0} + 1 ))
@@ -43,8 +100,14 @@ jobs:
 
   rig-backup:
     needs: prepare
-    if: inputs.image == 'rig-backup' || inputs.image == 'all'
+    if: inputs.image == 'rig-backup' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless tekenen en de provenance-attestatie halen hun OIDC-token hier.
+      id-token: write
+      attestations: write
     env:
       # Deze naam wordt niet gepind: wat er draait komt van
       # ghcr.io/minbzk/base-images/rig-backup, waar `task publish-*` naartoe
@@ -52,6 +115,10 @@ jobs:
       # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-backup
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -63,7 +130,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # De poort staat VOOR de push: oplosbare HIGH of CRITICAL en misconfiguratie in de
+      # Dockerfile houden de publicatie tegen.
+      - name: Poort voor de push
+        uses: ./.github/actions/image-gate
+        with:
+          name: rig-backup
+          context: operations-manager/backup-image
+          file: operations-manager/backup-image/Dockerfile
+          cache-scope: rig-backup
+          no-cache: ${{ github.event_name == 'schedule' }}
+
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: operations-manager/backup-image
@@ -76,13 +155,26 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
           provenance: mode=max
           sbom: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=gha,scope=rig-backup
           cache-to: type=gha,scope=rig-backup,mode=max
 
+      - name: Teken en attesteer
+        uses: ./.github/actions/image-sign
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          digest: ${{ steps.push.outputs.digest }}
+
   cmp-kustomize-sops:
     needs: prepare
-    if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all'
+    if: inputs.image == 'cmp-kustomize-sops' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless tekenen en de provenance-attestatie halen hun OIDC-token hier.
+      id-token: write
+      attestations: write
     env:
       # Deze naam wordt niet gepind: wat er draait komt van
       # ghcr.io/minbzk/base-images/rig-cmp-argo-kustomize-sops, waar `task publish-*` naartoe
@@ -90,6 +182,10 @@ jobs:
       # niet overnemen. Zie features/image-versioning-calver.md.
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/rig-cmp-argo-kustomize-sops
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -101,7 +197,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # De poort staat VOOR de push: oplosbare HIGH of CRITICAL en misconfiguratie in de
+      # Dockerfile houden de publicatie tegen.
+      - name: Poort voor de push
+        uses: ./.github/actions/image-gate
+        with:
+          name: cmp-kustomize-sops
+          context: .
+          file: images/cmp-kustomize-sops/Dockerfile
+          cache-scope: cmp-kustomize-sops
+          no-cache: ${{ github.event_name == 'schedule' }}
+
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -114,16 +222,33 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
           provenance: mode=max
           sbom: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=gha,scope=cmp-kustomize-sops
           cache-to: type=gha,scope=cmp-kustomize-sops,mode=max
 
+      - name: Teken en attesteer
+        uses: ./.github/actions/image-sign
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          digest: ${{ steps.push.outputs.digest }}
+
   postgresql-with-dictionaries:
     needs: prepare
-    if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all'
+    if: inputs.image == 'postgresql-with-dictionaries' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless tekenen en de provenance-attestatie halen hun OIDC-token hier.
+      id-token: write
+      attestations: write
     env:
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/postgresql-with-dictionaries
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -135,7 +260,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # De poort staat VOOR de push: oplosbare HIGH of CRITICAL en misconfiguratie in de
+      # Dockerfile houden de publicatie tegen.
+      - name: Poort voor de push
+        uses: ./.github/actions/image-gate
+        with:
+          name: postgresql-with-dictionaries
+          context: images/postgresql-with-dictionaries
+          file: images/postgresql-with-dictionaries/Dockerfile
+          cache-scope: postgresql
+          no-cache: ${{ github.event_name == 'schedule' }}
+
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: images/postgresql-with-dictionaries
@@ -148,16 +285,33 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
           provenance: mode=max
           sbom: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=gha,scope=postgresql
           cache-to: type=gha,scope=postgresql,mode=max
 
+      - name: Teken en attesteer
+        uses: ./.github/actions/image-sign
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          digest: ${{ steps.push.outputs.digest }}
+
   keycloak-zad:
     needs: prepare
-    if: inputs.image == 'keycloak-zad' || inputs.image == 'all'
+    if: inputs.image == 'keycloak-zad' || inputs.image == 'all' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      # Keyless tekenen en de provenance-attestatie halen hun OIDC-token hier.
+      id-token: write
+      attestations: write
     env:
       IMAGE_NAME: ghcr.io/rijksictgilde/zad/keycloak-zad
     steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: block
+          allowed-endpoints: ${{ env.HARDEN_ENDPOINTS }}
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -169,7 +323,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # De poort staat VOOR de push: oplosbare HIGH of CRITICAL en misconfiguratie in de
+      # Dockerfile houden de publicatie tegen.
+      - name: Poort voor de push
+        uses: ./.github/actions/image-gate
+        with:
+          name: keycloak-zad
+          context: .
+          file: images/keycloak-zad/Dockerfile
+          cache-scope: keycloak-zad
+          no-cache: ${{ github.event_name == 'schedule' }}
+
       - name: Build and push
+        id: push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
@@ -182,5 +348,12 @@ jobs:
             ${{ env.IMAGE_NAME }}:latest
           provenance: mode=max
           sbom: true
+          no-cache: ${{ github.event_name == 'schedule' }}
           cache-from: type=gha,scope=keycloak-zad
           cache-to: type=gha,scope=keycloak-zad,mode=max
+
+      - name: Teken en attesteer
+        uses: ./.github/actions/image-sign
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          digest: ${{ steps.push.outputs.digest }}

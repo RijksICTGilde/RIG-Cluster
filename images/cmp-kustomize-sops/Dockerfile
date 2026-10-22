@@ -176,7 +176,7 @@ USER root
 
 # Install additional runtime dependencies and pick up Ubuntu security patches
 # newer than the ArgoCD base image
-RUN apt-get update && apt-get upgrade -y && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
     jq \
     file \
     && rm -rf /var/lib/apt/lists/*

@@ -7,6 +7,7 @@
   "labels": ["dependencies"],
   "prConcurrentLimit": 10,
   "prHourlyLimit": 3,
+  "minimumReleaseAge": "7 days",
   "ignorePaths": [
     "archive/**",
     "self-service-portal/**",
@@ -195,6 +196,22 @@
       "description": "Een major komt alleen op het dashboard. Pas na een vinkje maakt Renovate de PR",
       "matchUpdateTypes": ["major"],
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Laag B van de patchstrategie (SECURITY.md): het bouwgereedschap gaat zonder mens mee, maar alleen patch en minor en alleen nadat de poort groen is. Een digest-update is een verplaatste tag, precies waar de SHA-pin tegen beschermt, en blijft dus een merge die iemand doet. De manifesten en de app-afhankelijkheden ook",
+      "matchUpdateTypes": ["patch", "minor"],
+      "matchManagers": ["github-actions"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Laag B voor het gereedschap in .tool-versions, met dezelfde grens als de actions hierboven",
+      "matchUpdateTypes": ["patch", "minor"],
+      "matchFileNames": [".tool-versions"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
     },
     {
       "description": "De odcn-overlays verwijzen bewust naar de rcr-proxy. Zoek de versie op bij de echte bron en laat het rcr-pad in de PR staan",
