@@ -668,10 +668,7 @@ tasks:
         if [ -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml" ]; then
           kubectl apply $KUBECTL_FLAGS -f "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml"
           RON_NAMESPACE="$(yq '.metadata.name' "bootstrap/rig-system/kustomize/overlays/{{.CLUSTER}}/namespace-ron.yaml")"
-          # Geen sleutelsecret in deze namespace: ron-infrastructure rendert sinds RC-351
-          # op de platform-plugin, die de sleutel uit zijn mount leest. Een tweede plek met
-          # de platformsleutel is een plek die bij een rotatie wordt vergeten
-          # (instructions/sops-sleutel-in-het-cluster.md).
+          # Geen sleutelsecret: ron-infrastructure rendert op de platform-plugin sinds RC-351.
           if [[ "{{.DRY_RUN}}" != "true" ]]; then
             kubectl label namespace "$RON_NAMESPACE" argocd.argoproj.io/managed-by={{.RIG_NAMESPACE}} --overwrite
           fi
@@ -1436,6 +1433,20 @@ tasks:
     dir: operations-manager/python
     cmds:
       - uv run python ../../scripts/generate_probe_spec.py
+    silent: true
+
+  biv-overzicht:
+    desc: "Genereer architecture/biv-overzicht.md uit de BIV-inventaris"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.biv_render
+    silent: true
+
+  biv-check:
+    desc: "Toets de BIV-inventaris op gaten en het overzicht op drift"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m opi.tools.biv_render --check
     silent: true
 
   publish-e2e-allservices:
@@ -3517,11 +3528,8 @@ tasks:
 
         echo "sops-age-key secret created in rig-system"
 
-        # De RON-namespace (mailrelay) kan NIET via GitOps (de ArgoCD op dit clustertype
-        # draait in namespaced mode en weigert Namespace-resources), dus hij wordt hier
-        # handmatig aangemaakt, met het label dat de argocd-operator de beheer-RBAC voor de
-        # namespace laat aanmaken. Een sops-age-key hoort er sinds RC-351 niet meer bij:
-        # ron-infrastructure rendert op de platform-plugin, met de gemounte sleutel.
+        # RON-namespace kan niet via GitOps (namespaced ArgoCD), handmatig aangemaakt.
+        # Geen sops-age-key: ron-infrastructure rendert op de platform-plugin.
         kubectl apply -f - <<'EOF'
         apiVersion: v1
         kind: Namespace

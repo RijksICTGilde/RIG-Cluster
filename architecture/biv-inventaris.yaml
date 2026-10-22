@@ -1,0 +1,358 @@
+# BIV-classificatie van de ZAD-componenten: de bron van waarheid.
+#
+# architecture/biv-overzicht.md (diagram en tabel) wordt hieruit gegenereerd met
+# `task biv-overzicht`; bewerk dat bestand niet met de hand. Een score van M of hoger
+# vraagt ten minste een mitigatie, een score H ook een mitigatie met een toets.
+#
+# Zie features/biv-inventaris.md voor de velden, de BBN-afleiding en de controles.
+
+schema-version: 1
+
+componenten:
+  - id: opi
+    naam: Operations Manager (OPI)
+    gegevens: >-
+      Projectbestanden, de AGE-sleutel en API-sleutel per project, Keycloak-beheerwachtwoorden,
+      portaalsessies.
+    trust-boundary: platformvlak (rig-system)
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            Een upload wordt met een plafond gelezen in plaats van eerst volledig, zodat een
+            grote upload de pod niet OOMKilled maakt.
+          bron: plans/invoer-eerst-schoon-dan-getoetst.md
+          toets: operations-manager/python/tests/test_upload_ceiling.py
+        - maatregel: >-
+            Het aantal verbindingen dat een project op de gedeelde database opent is begrensd,
+            zodat OPI zijn eigen verbindingen houdt.
+          bron: features/postgresql-connection-limits.md
+          toets: operations-manager/python/tests/test_connection_limit.py
+      integriteit:
+        - maatregel: >-
+            De namespace van een deployment komt uit de projectnaam en niet uit het
+            projectbestand, dat door de aanvrager te bepalen is.
+          bron: plans/technische-review-bio-en-nora-bevindingen.md
+          toets: operations-manager/python/tests/test_tenant_isolation_namespace.py
+        - maatregel: Elke muterende route achter een CSRF-token.
+          bron: features/opi-start-dicht.md
+          toets: operations-manager/python/tests/test_csrf_enforcement.py
+        - maatregel: >-
+            Een gelijktijdige schrijfactie op hetzelfde projectbestand verliest niet stil: de
+            tweede schrijver botst in plaats van de eerste te overschrijven.
+          bron: features/concurrent-write-safety-lost-update.md
+          toets: operations-manager/python/tests/test_external_git_edit_conflict.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Een ontsleuteld geheim kan op geen enkele schrijfweg in git belanden; de
+            guard op het schema weigert de schrijfactie.
+          bron: features/sops-sleutel-roteren.md
+          toets: operations-manager/python/tests/test_plaintext_secret_guard.py
+        - maatregel: Projectgeheimen zijn alleen voor admin en owner zichtbaar.
+          bron: features/projectgeheimen-alleen-voor-admin-en-owner.md
+          toets: operations-manager/python/tests/test_projectpagina_geheimen_per_rol.py
+        - maatregel: >-
+            Een portaalsessie heeft een absolute levensduur en uitloggen maakt eerdere sessies
+            ongeldig.
+          bron: features/portaalsessie-levensduur.md
+          toets: operations-manager/python/tests/test_portaalsessie_levensduur.py
+        - maatregel: >-
+            Er is geen vaste of afgeleide standaard voor SECRET_KEY: een opgegeven sleutel die
+            te kort is weigert de start, en zonder opgave komt er een verse random sleutel.
+          bron: features/opi-start-dicht.md
+          toets: operations-manager/python/tests/test_secret_key_failclosed.py
+
+  - id: keycloak
+    naam: Keycloak
+    gegevens: >-
+      Identiteiten en sessies van alle portaalgebruikers, een realm met clients en
+      beheeraccount per project.
+    trust-boundary: gedeelde diensten
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            De realms komen uit blueprints in git, dus een realm is opnieuw op te bouwen zonder
+            handwerk.
+          bron: features/keycloak-yaml-templates.md
+      integriteit:
+        - maatregel: >-
+            De koppeling tussen een lokaal account en een externe identiteit staat vast; een
+            tweede account kan hem niet overnemen.
+          bron: features/keycloak-auto-link.md
+          toets: operations-manager/python/tests/test_keycloak_identity_lock.py
+        - maatregel: >-
+            Projectbestand en realm lopen niet stil uiteen: een mislukte lezing van de realm
+            geldt niet als afwezig.
+          bron: plans/keycloak-config-bewerkbaar-zonder-verlies.md
+          toets: operations-manager/python/tests/test_keycloak_drift_guards.py
+      vertrouwelijkheid:
+        - maatregel: Het realm-beheeraccount staat achter een tweede factor (OTP).
+          bron: features/keycloak-realm-admin-otp.md
+          toets: operations-manager/python/tests/test_keycloak_otp.py
+        - maatregel: Uitloggen trekt de sessies in plaats van alleen het koekje te wissen.
+          bron: features/keycloak-always-clear-session-logout.md
+          toets: operations-manager/python/tests/test_sessies_intrekken.py
+
+  - id: gedeelde-postgresql
+    naam: Gedeelde PostgreSQL
+    gegevens: De databases van alle projecten die geen eigen clusterdatabase kozen.
+    trust-boundary: gedeelde diensten
+    aanvalsproef: true
+    beschikbaarheid: H
+    integriteit: H
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            Een verbindingslimiet per project, zodat een project de verbindingen van de
+            gedeelde server niet voor de andere projecten opmaakt.
+          bron: features/postgresql-connection-limits.md
+          toets: operations-manager/python/tests/test_connection_limit.py
+      integriteit:
+        - maatregel: >-
+            Een database is alleen te openen door zijn eigen rollen; PUBLIC CONNECT is
+            ingetrokken.
+          bron: features/database-alleen-eigen-rollen.md
+          toets: operations-manager/python/tests/test_database_publieke_toegang.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Elke verbinding die OPI zelf opzet draagt DATABASE_SSLMODE, want CNPG biedt TLS aan
+            maar dwingt het niet af.
+          bron: features/postgresql-tls.md
+          toets: operations-manager/python/tests/test_database_sslmode.py
+        - maatregel: Elk project een eigen database en eigen rollen, geen gedeelde gebruiker.
+          bron: features/postgresql-scope-and-schemas.md
+          toets: operations-manager/python/tests/test_database_publieke_toegang.py
+
+  - id: object-storage
+    naam: Object storage (MinIO / SeaweedFS)
+    gegevens: Buckets per project, en de bestemming van de back-ups.
+    trust-boundary: gedeelde diensten
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: M
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: Een bucket per project, zodat de quota en de opruiming van het een het ander niet raken.
+          bron: features/backup-system.md
+      integriteit:
+        - maatregel: >-
+            De retentie-opruiming werkt binnen de bucket van het project en kiest zijn doel niet
+            zelf.
+          bron: features/backup-retention-sweep.md
+          toets: operations-manager/python/tests/test_backup_retention_sweep.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Een back-up- of restorepod krijgt een S3-account dat alleen bij zijn eigen bucket
+            mag; het beheeraccount van de bestemming blijft bij OPI.
+          bron: features/backup-system.md
+          toets: operations-manager/python/tests/test_backup_bucket_account.py
+
+  - id: redis
+    naam: Redis
+    gegevens: Sessie- en cachegegevens van de projecten die de service binden.
+    trust-boundary: gedeelde diensten
+    aanvalsproef: false
+    beschikbaarheid: M
+    integriteit: M
+    vertrouwelijkheid: M
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: Een eigen Redis per namespace is beschikbaar voor projecten die de gedeelde niet willen delen.
+          bron: features/redis-cloning-consideration.md
+      integriteit:
+        - maatregel: Een ACL-gebruiker per project, met een sleutelruimte die bij het project hoort.
+          bron: features/redis-acl-persistence.md
+      vertrouwelijkheid:
+        - maatregel: Een ACL-gebruiker per project, met een eigen wachtwoord uit de projectgeheimen.
+          bron: features/redis-acl-persistence.md
+
+  - id: argocd
+    naam: ArgoCD
+    gegevens: >-
+      De uitrol van elk project, de repository-credentials van de GitOps-repo's en de
+      AppProjects die de grenzen zetten.
+    trust-boundary: platformvlak (rig-system)
+    aanvalsproef: true
+    beschikbaarheid: H
+    integriteit: H
+    vertrouwelijkheid: M
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            Een sync die blijft hangen wordt als zodanig gemeld en blokkeert de volgende niet
+            stil.
+          bron: features/argocd-vastgelopen-verwijdering.md
+          toets: operations-manager/python/tests/test_argocd_stuck_sync.py
+      integriteit:
+        - maatregel: >-
+            Het AppProject van een project accepteert alleen de repo's van dat project; het
+            stond op sourceRepos ['*'].
+          bron: features/argocd-appprojects.md
+          toets: operations-manager/python/tests/test_argocd_appproject_sourcerepos.py
+        - maatregel: >-
+            Het default-AppProject staat dicht en het app-of-apps heeft een eigen AppProject
+            met eigen bronnen.
+          bron: features/argocd-appprojects.md
+          toets: operations-manager/python/tests/test_argocd_handwritten_appprojects.py
+      vertrouwelijkheid:
+        - maatregel: TLS op de ArgoCD-server in plaats van plaintext achter de router.
+          bron: features/argocd-tls.md
+
+  - id: gitops-repositories
+    naam: De drie GitOps-repositories
+    gegevens: >-
+      zad-projects (projectdefinities), zad-argo-user-applications (Applications) en
+      zad-deployments (manifests plus SOPS-versleutelde secrets).
+    trust-boundary: platformvlak (rig-system)
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            De repo's zijn de bron van waarheid en staan in Forgejo op een PVC die meegaat in de
+            clusterback-up.
+          bron: features/backup-system.md
+      integriteit:
+        - maatregel: OPI ondertekent zijn commits, zodat een commit buiten OPI om herkenbaar is.
+          bron: features/opi-ondertekent-zijn-commits.md
+          toets: operations-manager/python/tests/test_git_signing.py
+        - maatregel: Elke commit noemt de gebruiker die de wijziging aanvroeg.
+          bron: features/opi-ondertekent-zijn-commits.md
+          toets: operations-manager/python/tests/test_git_commit_actor_trailer.py
+      vertrouwelijkheid:
+        - maatregel: De repositories staan prive; Forgejo weigert een lezer zonder sessie.
+          bron: features/forgejo-repositories-prive.md
+        - maatregel: >-
+            Een secret in zad-deployments is SOPS-versleuteld, en de secret-scan in de pijplijn
+            weigert een platte waarde.
+          bron: features/security-scanning-pipeline.md
+          toets: operations-manager/python/tests/test_secret_scan.py
+
+  - id: kopia-backups
+    naam: Kopia-back-ups
+    gegevens: Volledige kopieen van de databases, volumes en buckets van elk project.
+    trust-boundary: buiten het cluster
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: M
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: Incrementeel en gededupliceerd, met een retentieschema per project.
+          bron: features/backup-kopia-incremental-deduplication.md
+          toets: operations-manager/python/tests/test_backup_retention_sweep.py
+      integriteit:
+        - maatregel: >-
+            Een restore naar een bestemming van buiten is een expliciete opdracht met een eigen
+            verwijzing, niet de standaardweg.
+          bron: features/backup-restore-wizard.md
+          toets: operations-manager/python/tests/test_restore_reference_van_buiten.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            De Kopia-repository is versleuteld, en het wachtwoord staat per project in de
+            projectgeheimen.
+          bron: features/backup-system.md
+          toets: operations-manager/python/tests/test_backup_pod_credentials.py
+        - maatregel: Een back-uppod draait op de serviceaccount van zijn eigen project.
+          bron: features/backup-system.md
+          toets: operations-manager/python/tests/test_backup_pod_service_account.py
+
+  - id: registry
+    naam: Container registry
+    gegevens: De images van alle projecten, in een gedeelde repository met eigendom in de tag.
+    trust-boundary: buiten het cluster
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: M
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: Een storing op de registry schakelt een deployment niet uit.
+          bron: features/registry-image-ownership.md
+          toets: operations-manager/python/tests/test_registry_outage_no_disable.py
+      integriteit:
+        - maatregel: >-
+            Het eigendom van een image zit in de tag en wordt van buitenaf afgedwongen, want
+            een gedeelde repository kent geen geneste scope.
+          bron: features/registry-image-ownership.md
+          toets: operations-manager/python/tests/test_tenant_isolation_registry.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Credentials voor een eigen registry staan AGE-versleuteld in de config van het
+            project.
+          bron: features/registry-image-ownership.md
+
+  - id: cert-manager-external-dns
+    naam: cert-manager en external-dns
+    gegevens: Certificaten en DNS-records voor elk gepubliceerd adres.
+    trust-boundary: platformvlak (rig-system)
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: L
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: >-
+            De ACME-uitgifte is een gedeelde bron met een eigen netwerkregel, zodat een project
+            de uitgifte voor de andere niet opmaakt.
+          bron: features/shared-resource-warning-acme-network-policy.md
+      integriteit:
+        - maatregel: >-
+            Een adres buiten de eigen zones vraagt een goedkeuring; een niet-goedgekeurd domein
+            komt niet in een ingress.
+          bron: features/domain-restrictions.md
+          toets: operations-manager/python/tests/test_upsert_domain_enforcement.py
+        - maatregel: >-
+            De issuer komt uit het goedgekeurde domein en niet uit het projectbestand, zodat
+            een ingress nooit zonder certificaat blijft.
+          bron: features/external-domains-letsencrypt.md
+          toets: operations-manager/python/tests/test_publish_on_web_issuer.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Een certificaat en een DNS-record zijn publieke gegevens; er is geen
+            vertrouwelijkheidsbelang.
+          bron: features/domain-restrictions.md
+
+  - id: tenant-namespaces
+    naam: Namespaces per project
+    gegevens: De pods, volumes, secrets en serviceaccounts van een project.
+    trust-boundary: tenant
+    aanvalsproef: true
+    beschikbaarheid: M
+    integriteit: H
+    vertrouwelijkheid: H
+    mitigaties:
+      beschikbaarheid:
+        - maatregel: Resourcelimieten per component, met een auto-tuner die binnen het clusterplafond blijft.
+          bron: features/auto-resource-tuning.md
+      integriteit:
+        - maatregel: >-
+            Elke weg van projectbestand naar namespace pint de namespace op de projectnaam, dus
+            een opgegeven namespace van een ander project doet niets.
+          bron: plans/technische-review-bio-en-nora-bevindingen.md
+          toets: operations-manager/python/tests/test_tenant_isolation_namespace.py
+        - maatregel: Pod Security Standards per namespace, zodat een pod geen privileges kan opeisen.
+          bron: features/pod-security-labels.md
+          toets: operations-manager/python/tests/test_pod_security_labels.py
+      vertrouwelijkheid:
+        - maatregel: >-
+            Een NetworkPolicy-baseline per namespace blokkeert verkeer naar de andere
+            tenantnamespaces; de allow-all die er stond deed dat niet.
+          bron: features/restrictive-network-policies.md
+          toets: operations-manager/python/tests/test_tenant_baseline_netpol.py
+        - maatregel: >-
+            De rol in het projectbestand bepaalt wat een lid mag: bewerken en operationele
+            handelingen liggen bij eigen rollenlijsten, en member is een leesrol.
+          bron: features/rollen-voor-operationele-handelingen.md
+          toets: operations-manager/python/tests/test_project_authorization.py
