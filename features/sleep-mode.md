@@ -107,10 +107,10 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
   - `awake` → **"Deployment slapen"** (handmatig in slaapstand, `awake -> sleeping`),
   - `sleeping`/`waking` → **"Applicatie wekken"** (`sleeping -> waking`).
 
-  De twee vormen samen een toggle: er staat er altijd maar één. Handmatig slapen mint —
-  net als de sweeper — een wektoken als er een wekker komt, zodat de deployment daarna weer
-  gewekt kan worden. Wakken zet de volgende deadline op `sleep-after-wake`, dus na een
-  handmatige wake valt de deployment vanzelf weer in slaapstand.
+  De twee vormen samen een toggle: er staat er altijd maar één. Handmatig slapen zet, net
+  als de sweeper, een wektoken op de deployment als er een wekker komt, zodat de deployment
+  daarna weer gewekt kan worden. Wakken zet de volgende deadline op `sleep-after-wake`, dus
+  na een handmatige wake valt de deployment vanzelf weer in slaapstand.
 - Een **rollout wekt de deployment**: een image-update of een upsert zet de staat op
   `awake` met een verse `sleep-after-deploy`-deadline. Nieuwe inhoud op nul replicas is
   niet uitgerold -- er start geen pod, dus niets pakt hem op. Sleep-mode doet dat zelf via
@@ -177,6 +177,12 @@ Per deployment wordt een wektoken gemunt, AGE-versleuteld op
 de namespace gerenderd voor de wekkerpod (`envFrom`). Blast radius bij lekken: één
 deployment wekken. Tweede laag: het endpoint accepteert alleen de overgang
 `sleeping -> waking` voor een matchende deployment; al het andere is een no-op.
+
+Het token is **van de deployment, niet van de slaapronde**: hij wordt bij de eerste
+slaapronde gemunt en daarna hergebruikt, en een wake laat hem staan. Tot RC-268 muntte elke
+slaapronde een nieuw token, terwijl de wekkerpod zijn token eenmalig via `envFrom` leest en
+niet herstart. Gemeten op 16-10-2026 (PR-omgevingen `wies/pr-460` en `wies/pr-689`): de
+wekkers stuurden het vorige token en kregen 401s, dus waren niet meer te wekken.
 
 De project-API-key mag hetzelfde endpoint gebruiken, en dat is geen verruiming van het
 wektoken maar van wie er nog meer bij mag: die sleutel kan toch al alles met dit project.

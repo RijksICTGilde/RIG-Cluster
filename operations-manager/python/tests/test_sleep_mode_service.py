@@ -51,13 +51,14 @@ class TestBeginWake:
 
 
 class TestToAwake:
-    def test_waking_to_awake_sets_deadline_and_clears_token(self) -> None:
+    def test_waking_to_awake_sets_deadline_and_keeps_token(self) -> None:
+        """Het token hoort bij de deployment: een nog draaiende wekker leest hem niet opnieuw."""
         project = {"deployments": [{"name": "PR-1", "sleep": {"state": "waking", "wake-token": "t"}}]}
         assert service.to_awake(project, "PR-1", NOW, timedelta(hours=1))
         state = read(project, "PR-1")
         assert state.state == STATE_AWAKE
         assert state.expires_at == (NOW + timedelta(hours=1)).isoformat()
-        assert state.wake_token is None
+        assert state.wake_token == "t"
 
     def test_already_awake_is_noop(self) -> None:
         assert not service.to_awake(_project(), "PR-1", NOW, timedelta(hours=1))
@@ -69,13 +70,20 @@ class TestToAwake:
 
 
 class TestSetSleepDeadline:
-    def test_sets_awake_with_deadline(self) -> None:
+    def test_sets_awake_with_deadline_and_keeps_token(self) -> None:
         project = {"deployments": [{"name": "PR-1", "sleep": {"state": "sleeping", "wake-token": "t"}}]}
         assert service.set_sleep_deadline(project, "PR-1", NOW, timedelta(hours=48))
         state = read(project, "PR-1")
         assert state.state == STATE_AWAKE
         assert state.expires_at == (NOW + timedelta(hours=48)).isoformat()
-        assert state.wake_token is None
+        assert state.wake_token == "t"
+
+
+class TestWakeWithoutDeadline:
+    def test_a_deployment_out_of_scope_keeps_no_sleep_block(self) -> None:
+        project = {"deployments": [{"name": "PR-1", "sleep": {"state": "sleeping", "wake-token": "t"}}]}
+        assert service.wake_without_deadline(project, "PR-1")
+        assert "sleep" not in project["deployments"][0]
 
 
 class TestTokenCompare:

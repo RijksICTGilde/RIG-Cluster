@@ -1560,7 +1560,7 @@ class ProjectManager:
         Renders the waker Deployment + ConfigMap and its SOPS token Secret behind the
         component's Service (same ``app`` label, ``zad-role: waker``) when the deployment
         is asleep/waking and this is the chosen waker component. The token comes from the
-        deployment's own ``sleep.wake-token`` (minted by the sweeper). All files go into
+        deployment's own ``sleep.wake-token`` (minted on its first sleep). All files go into
         ``created_files`` so the obsolete-manifest prune removes them once awake.
 
         ``service_port`` is what this component's Service targets -- the value the caller
