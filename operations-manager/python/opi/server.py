@@ -56,7 +56,9 @@ from opi.core.static_files import CacheControlledStaticFiles
 from opi.core.task_manager import start_periodic_cleanup, stop_periodic_cleanup
 from opi.middleware.authorization import AuthorizationMiddleware
 from opi.middleware.body_limit import BodyLimitMiddleware
+from opi.middleware.client_ip import PeerAddressMiddleware
 from opi.middleware.openapi_etag import OpenApiETagMiddleware
+from opi.middleware.rate_limit import RateLimitMiddleware
 from opi.services.catalog.sleep_mode.router import sleep_mode_router
 from opi.services.project_store import start_reconcile_poll, stop_reconcile_poll
 from opi.utils.logging_redact import redact_invite_key_in_path
@@ -770,12 +772,19 @@ def create_app() -> FastAPI:
         https_only=not settings.DEBUG,
         max_age=settings.SESSION_MAX_AGE_SECONDS,
     )
+    # Binnen de veiligheidsheaders (ook een 429 draagt ze) en buiten sessie, onderhoud en
+    # autorisatie: een stortvloed wordt geweigerd voordat hij die stappen kost.
+    app.add_middleware(RateLimitMiddleware)
     app.add_middleware(
         SecurityHeadersMiddleware,
         keycloak_url=settings.KEYCLOAK_URL,
         prometheus_url=settings.PROMETHEUS_EXTERNAL_URL or settings.PROMETHEUS_URL,
     )
     app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])  # type: ignore[arg-type]
+    # Buiten ProxyHeadersMiddleware, dus vóór hem uitgevoerd: die overschrijft
+    # scope["client"] met een waarde uit X-Forwarded-For, en het peer-adres is daarna niet
+    # meer te lezen. Zie opi/utils/client_ip.py.
+    app.add_middleware(PeerAddressMiddleware)
     # Buiten sessie, CSRF en autorisatie: een te grote bijlage-upload wordt geweigerd
     # voordat de multipart-parser zijn body ontvangt.
     app.add_middleware(BodyLimitMiddleware)

@@ -206,10 +206,17 @@ def mock_settings() -> Any:
         # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
         # De waarde is expres een andere dan de projectsleutels in de fixtures.
         mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
-        # Ook echte ints: BodyLimitMiddleware vergelijkt de aangekondigde lengte met deze
-        # grenzen, en een kale MagicMock gaf daar een TypeError in plaats van een antwoord.
-        mock_settings.ATTACHMENT_BODY_LIMIT_FACTOR = 16
-        mock_settings.IMAGE_UPLOAD_MAX_SIZE_MB = 1024
+        # Ook echte ints, om dezelfde reden: opi/api/rate_limiter.py rekent bij import met
+        # deze waarden om zijn emmers te bouwen, en retry_after_seconds vergelijkt met de
+        # max. Een kale MagicMock gaf een TypeError bij de import van de module, en dan
+        # viel elke test die create_app() bouwt om op de fixture.
+        mock_settings.AUTH_FAILURE_LIMIT_PER_MINUTE = 10
+        mock_settings.API_RATE_LIMIT_PER_MINUTE = 600
+        mock_settings.API_RATE_LIMIT_BURST = 120
+        mock_settings.RATE_LIMIT_RETRY_AFTER_MAX_SECONDS = 60
+        # Zelfde reden: opi/utils/client_ip.py vergelijkt TRUSTED_PROXY_HOPS met een int
+        # (`hops > 0`), en een kale MagicMock geeft daar dezelfde TypeError.
+        mock_settings.TRUSTED_PROXY_HOPS = 0
         yield mock_settings
 
 
@@ -344,6 +351,31 @@ def reset_actor_context() -> Any:
     token = actor.set(ACTOR_UNKNOWN)
     yield
     actor.reset(token)
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters() -> Any:
+    """Leegt de emmers van de limiters tussen tests.
+
+    De faaltellers en de grove grens staan op moduleniveau, dus zonder dit telt een test
+    de mislukte authenticatiepogingen van de vorige mee en krijgt hij een 429 waar hij een
+    401 toetst. Het aantal tests dat met een foute sleutel klopt ligt boven de grens.
+    """
+    from opi.api.rate_limiter import API_FLOOD_LIMITER, AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY
+
+    limiters = (AUTH_FAILURE_PER_CLIENT, AUTH_FAILURE_PER_KEY, API_FLOOD_LIMITER)
+
+    def leeg() -> None:
+        for limiter in limiters:
+            limiter._tokens.clear()
+            limiter._last_update.clear()
+            limiter._ip_tokens.clear()
+            limiter._ip_last_update.clear()
+            limiter._new_client_timestamps.clear()
+
+    leeg()
+    yield
+    leeg()
 
 
 # --- Real Postgres for ORM-backed repository tests (RC-5 persistence phase 2) --------

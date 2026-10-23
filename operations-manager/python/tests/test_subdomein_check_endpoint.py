@@ -33,6 +33,7 @@ dezelfde 401 opleverde.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -231,6 +232,38 @@ class TestDeControleBlijftEenControle:
         )
 
         assert response.status_code == 401
+
+
+class TestDeAuditregelLeestHetAfgeleideAdres:
+    """RC-368: deze regel gebruikte ``IPRateLimiter.get_client_ip``, die de koptekst zelf
+    las. Zonder vertrouwde proxy-hop (de default) telt ``client_ip`` op het peer-adres, en
+    een verzonnen ``X-Forwarded-For`` mag daar niet doorheen lekken naar het auditspoor."""
+
+    def test_een_verzonnen_header_komt_niet_in_het_auditspoor(
+        self, mock_settings: Any, store: Any, connector: Any, caplog: Any
+    ) -> None:
+        """Door de echte ``create_app()``-opbouw, zodat de volgorde van
+        ``PeerAddressMiddleware`` vóór ``ProxyHeadersMiddleware`` meetelt: zonder die
+        volgorde overschrijft ``ProxyHeadersMiddleware`` ``scope["client"]`` al met de
+        gespoofte waarde voordat het peer-adres bewaard is.
+        """
+        from opi.server import create_app
+
+        app = create_app()
+        echte_peer = "203.0.113.9"
+        client = TestClient(app, client=(echte_peer, 1234))
+
+        with caplog.at_level(logging.INFO, logger="opi.api.v2.router"):
+            response = client.get(
+                PATH,
+                params={"base_domain": "rijksapp.nl"},
+                headers={**HEADERS, "X-Forwarded-For": "198.51.100.77"},
+            )
+
+        assert response.status_code == 200
+        audit = next(r.getMessage() for r in caplog.records if "AUDIT: Subdomain check" in r.getMessage())
+        assert "198.51.100.77" not in audit
+        assert f"ip={echte_peer}" in audit, audit
 
 
 class TestHetDocumentZegtHetOok:

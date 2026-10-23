@@ -69,6 +69,11 @@ data:
     ARGOCD_VERIFY_SSL=true
     ARGOCD_CA_BUNDLE=/etc/ssl/argocd/service-ca.crt
 
+    # De OpenShift-router is hier de enige ingang en zet zijn waarde achter die van de
+    # client in X-Forwarded-For, dus de rechtse waarde is het echte client-IP. Zonder dit
+    # telt OPI op het peer-adres, en dat is bij elk verzoek de router.
+    TRUSTED_PROXY_HOPS=1
+
     # INFO in productie: de DEBUG-regels van OPI noemen per verzoek het e-mailadres van
     # de gebruiker, en die stroom gaat naar Loki.
     LOG_LEVEL=INFO
