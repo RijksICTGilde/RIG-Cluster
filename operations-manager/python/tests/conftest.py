@@ -206,6 +206,10 @@ def mock_settings() -> Any:
         # toetst dat een PROJECTsleutel geweigerd wordt viel om op de vorm van de weigering.
         # De waarde is expres een andere dan de projectsleutels in de fixtures.
         mock_settings.MASTER_API_KEY = "test-master-api-key-not-a-project-key"
+        # Ook echte ints: BodyLimitMiddleware vergelijkt de aangekondigde lengte met deze
+        # grenzen, en een kale MagicMock gaf daar een TypeError in plaats van een antwoord.
+        mock_settings.ATTACHMENT_BODY_LIMIT_FACTOR = 16
+        mock_settings.IMAGE_UPLOAD_MAX_SIZE_MB = 1024
         yield mock_settings
 
 

@@ -95,7 +95,7 @@ from opi.connectors.subdomain import (
     validate_base_domain,
     validate_subdomain_for_domain,
 )
-from opi.core.auth_decorators import get_current_user
+from opi.core.auth_decorators import get_current_user, requires_step_up
 from opi.core.cluster_config import (
     get_domain_supports_dots,
     get_ingress_postfix,
@@ -104,6 +104,7 @@ from opi.core.cluster_config import (
 )
 from opi.core.config import settings
 from opi.core.project_environment import deployment_environment, effective_environment
+from opi.core.step_up import StepUpActie
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.core.task_rollout import NON_DEFERRABLE_REASONS
 from opi.handlers.project_file_handler import (
@@ -157,6 +158,11 @@ from opi.services.services import (
     service_entry_name,
 )
 from opi.services.services_enums import CleanupStrategy, ServiceKind, ServiceType
+from opi.services.step_up_conditions import (
+    component_in_production,
+    deployment_environment_downgrade,
+    deployment_in_production,
+)
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import (
@@ -1097,6 +1103,7 @@ def _reject_deferred_rollout(rollout: bool, task_type: str) -> None:
     },
 )
 @validate_api_token
+@requires_step_up(deployment_environment_downgrade, actie=StepUpActie.MARKERING_VERLAGEN)
 async def upsert_deployment_v2(
     request: Request,
     project_name: str,
@@ -1486,6 +1493,7 @@ async def rotate_project_key_v2(
     },
 )
 @validate_api_token
+@requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
 async def delete_deployment_v2(
     request: Request,
     project_name: str,
@@ -1965,6 +1973,7 @@ ConfirmInUseQuery = Annotated[
     },
 )
 @validate_api_token
+@requires_step_up(component_in_production, actie=StepUpActie.COMPONENT_VERWIJDEREN)
 async def delete_component_v2(
     request: Request,
     project_name: str,

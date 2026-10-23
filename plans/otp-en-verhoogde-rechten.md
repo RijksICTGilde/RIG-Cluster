@@ -8,7 +8,7 @@
 > *verwijderen-in-productie-vraagt-een-verse-otp*. Waar zo'n plan iets anders zegt dan
 > deze notitie, wint dat plan.
 
-Status: ontwerpnotitie, 2 augustus 2026. Onderdeel 1 is gebouwd (RC-329), de rest niet. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8.**
+Status: ontwerpnotitie, 2 augustus 2026. Onderdeel 1 (RC-329), de markering (RC-330) en de step-up op verwijderen in productie (RC-332) zijn gebouwd; platformbeheer niet. **Alle zeven openstaande beslissingen zijn genomen op 2 augustus; zie sectie 8.**
 
 **21 oktober 2026:** RC-329 bouwde onderdeel 1, maar voerde een ontwerpwijziging door: geen herstelcodes. Zie de noot in sectie 3 en 8 voor wat veranderde.
 

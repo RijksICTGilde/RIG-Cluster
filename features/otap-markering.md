@@ -113,16 +113,17 @@ verzinnen.
 ## Productie verlaten
 
 `is_production_downgrade(before, after)` zegt of een overgang een markering `productie`
-verlaat. Zolang de step-up uit `verwijderen-in-productie-vraagt-een-verse-otp.md` er niet
-is, logt OPI zo'n verlaging per deployment op WARNING met wie, project en deployment. Een
-markering weghalen is ook een verlaging: de deployment komt dan op `ontwikkeling` uit.
+verlaat. Sinds RC-332 vraagt zo'n verlaging een verse step-up, en logt OPI hem per
+deployment op WARNING met wie, project en deployment. Een markering weghalen is ook een
+verlaging: de deployment komt dan op `ontwikkeling` uit.
 
 De melding staat op de wegen die een BESTAANDE markering kunnen wijzigen: de twee
 portaalwegen (wizard-edit en modal-edit) en de upsert-deployment van de API. Ze noemen
 allemaal wie het doet. Op de API-weg komt die identiteit uit de taakpayload (`actor`,
 dezelfde bron als `created_by` op de taak zelf): het e-mailadres uit de sessie, anders
 "API". Elke weg logt NA de opslag, zodat een geweigerde wijziging niets meldt.
-`productie` zetten blijft vrij.
+`productie` zetten blijft vrij. Welke handelingen een step-up vragen staat in
+[otp-op-de-zad-gebruiker.md](otp-op-de-zad-gebruiker.md).
 
 ## Schemaversie
 
@@ -133,7 +134,6 @@ RC-363; zie `features/project-schema-versions.md`.
 
 ## Buiten scope
 
-- De step-up zelf (`verwijderen-in-productie-vraagt-een-verse-otp.md`).
 - Een promotieservice die deployments door het OTAP-pad loodst; die kan het eigendom van
   het veld later overnemen.
 - Een eigen lifecycle op het project (experiment, pilot, productie).

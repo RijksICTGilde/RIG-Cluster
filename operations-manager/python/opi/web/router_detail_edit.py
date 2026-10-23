@@ -7,9 +7,11 @@ to drive multi-step edit flows within the modal.
 
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -18,6 +20,7 @@ from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.backup_constants import DEFAULT_BACKUP_RESOURCE_TYPES
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -67,6 +70,7 @@ from opi.web.router_wizard import (
     _split_data_across_sections,
 )
 from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
+from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
 
 if TYPE_CHECKING:
     from opi.forms.visualizers.flows import FormFlow
@@ -1507,6 +1511,9 @@ async def _process_and_save_modal_edit(
     # aanvraag weet WIE de wijziging doet, en dat is wat zo'n melding moet noemen.
     environment_before = environment_markings(existing_data)
 
+    # De staat van voor de merge, om een verwijdering of een verlaging aan af te lezen.
+    before_data = copy.deepcopy(existing_data)
+
     # Capture existing attachments' encrypted content before the form merge: the wizard
     # strips it from the session (see _strip_attachment_content), so it is re-attached at
     # save by PreserveAttachmentContentHook keyed by id.
@@ -1551,6 +1558,26 @@ async def _process_and_save_modal_edit(
     # de uitleg voor de gebruiker mee. Zonder deze regel viel hij door naar buiten als
     # een kale 500: gemeten in de reallife-doorloop van RC-112, waar een API-patch en
     # een verwijdering in de componenten-modal elkaar op hetzelfde bestand raakten.
+    # De step-up hoort hier en niet op de route: pas na de merge is er een NA-staat om de
+    # verlaging of de verwijdering aan af te lezen. Nog voor het opslaan, dus een weigering
+    # laat niets achter.
+    handeling = save_requires_step_up(before_data, existing_data)
+    if handeling is not None and not has_fresh_step_up(request):
+        log_step_up_refusal(
+            handeling,
+            project_name=project_name,
+            actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
+        )
+        # De herhaling gaat naar /confirm en niet naar het pad van dit verzoek: een flow
+        # zonder review komt hier via de step-route binnen, en die eist een JSON-body die
+        # de bodyloze herhaling niet heeft (gemeten: HTTP 400). /confirm is de staart van
+        # beide wegen en leest alles uit de sessiestaat bij het wizard-token.
+        vervolg = f"/projects/{project_name}/modal-wizard/{flow.flow_id}/confirm"
+        if wizard_token:
+            vervolg = f"{vervolg}?_wizard_token={quote(wizard_token)}"
+        dialoog = await render_step_up_dialog(request, vervolg=vervolg, handeling=handeling, vervolg_token=wizard_token)
+        return existing_data, step_up_dialog_response(dialoog)
+
     try:
         await project_manager.save_and_commit_project(existing_data, f"Update {project_name} ({flow.flow_id})")
     except (ProjectSchemaError, ProjectIntegrityError, ConflictError) as e:

@@ -1,0 +1,55 @@
+{#
+  De vraag om een verse code, voordat een handeling in productie doorgaat (RC-332).
+
+  Komt in de gedeelde dialoog te staan, in plaats van de bevestiging die hem opriep. De
+  CSRF-header staat op de omhullende div omdat htmx hem van een voorouder erft, net als
+  in bg/_action-confirm.html.j2.
+
+  Verwacht: vervolg (de handeling die hierna alsnog moet draaien), handeling (hoe hij
+  heet), geregistreerd (of deze gebruiker een bevestigde factor heeft). Optioneel: fout en
+  vervolg_token (het wizard-token dat de herhaling in de body meestuurt).
+#}
+<div data-step-up
+     hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'>
+    <c-stack gap="md">
+        <c-alert type="warning" heading="Deze handeling raakt productie" />
+
+        {% if fout %}
+            <c-alert type="error" heading="{{ fout }}" />
+        {% endif %}
+
+        {% if geregistreerd %}
+            <c-paragraph>Vul een code uit je app in om {{ handeling }}. De code dekt vijf minuten; daarna vraagt de volgende handeling er opnieuw om.</c-paragraph>
+            {# novalidate: de server valideert de code en meldt in het Nederlands. #}
+            <form id="step-up-form"
+                  autocomplete="off"
+                  novalidate
+                  hx-post="/step-up"
+                  hx-target="#edit-section-inner"
+                  hx-swap="innerHTML">
+                <input type="hidden" name="vervolg" value="{{ vervolg }}" />
+                <input type="hidden" name="handeling" value="{{ handeling }}" />
+                <input type="hidden" name="vervolg_token" value="{{ vervolg_token }}" />
+                <c-stack gap="md">
+                    <c-text-input-field
+                        id="step_up_code"
+                        name="code"
+                        label="Code uit je app"
+                        type="text"
+                        autocomplete="one-time-code"
+                        required="true" />
+                    <c-action-group align="end">
+                        <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />
+                        <c-button type="warning" label="Bevestigen" html-type="submit" />
+                    </c-action-group>
+                </c-stack>
+            </form>
+        {% else %}
+            <c-paragraph>Je hebt nog geen tweede factor ingericht. Richt er een in: dat is nodig om {{ handeling }}.</c-paragraph>
+            <c-action-group align="end">
+                <c-button type="secondary" label="Annuleren" @click="closeEditModal()" />
+                <c-button type="primary" label="Factor inrichten" href="/account/otp" />
+            </c-action-group>
+        {% endif %}
+    </c-stack>
+</div>
