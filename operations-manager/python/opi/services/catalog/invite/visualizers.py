@@ -8,8 +8,8 @@ Two editables exist but are deliberately NOT rendered here:
 
 * ``restrict-domain`` -- restricts by email domain, which reads like a list of allowed
   addresses and is not that. Still enforced for files that carry it.
-* ``auth-methods`` is rendered conditionally: only when the keycloak template is
-  ``sso-support``, because ``sso-only`` leaves nothing to choose.
+* ``auth-methods`` is rendered conditionally: only when the keycloak template allows local
+  accounts (``LOCAL_ACCOUNT_TEMPLATES``), because ``sso-only`` leaves nothing to choose.
 """
 
 from __future__ import annotations
@@ -97,9 +97,9 @@ INVITE_APPLICATION_TARGET = EditableVisualizer(
     ),
 )
 
-# Only rendered when the keycloak template is sso-support; under sso-only there is nothing
-# to choose (see the editable). The wording says "beperken" on purpose: an invite can narrow
-# what the realm offers, never widen it.
+# Only rendered when the keycloak template allows local accounts (LOCAL_ACCOUNT_TEMPLATES);
+# under sso-only there is nothing to choose (see the editable). The wording says "beperken" on
+# purpose: an invite can narrow what the realm offers, never widen it.
 INVITE_AUTH_METHODS = EditableVisualizer(
     editable=INVITE_AUTH_METHODS_EDITABLE,
     widget=WidgetType.CHECKBOX_GROUP,

@@ -372,6 +372,7 @@ operations-manager/python/opi/configs/keycloak/
 ├── bootstrap.yaml           # RIG Platform realm setup
 ├── sso-only.yaml           # Project realm with SSO-only auth
 ├── sso-support.yaml        # Project realm with SSO + local auth
+├── sso-support-otp.yaml    # Project realm with SSO + local auth with required OTP
 └── algoritmeregister.yaml  # Application-specific realm
 ```
 

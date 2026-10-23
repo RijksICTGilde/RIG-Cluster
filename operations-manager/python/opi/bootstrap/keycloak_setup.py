@@ -19,7 +19,7 @@ from typing import Any
 from keycloak.exceptions import KeycloakError
 from ruamel.yaml import YAML
 
-from opi.connectors.keycloak import create_keycloak_connector
+from opi.connectors.keycloak import REQUIRED_OTP_BROWSER_FLOW, create_keycloak_connector
 from opi.connectors.kubectl import KubectlConnector
 from opi.core.cluster_config import get_namespace
 from opi.core.config import settings
@@ -72,6 +72,9 @@ class KeycloakSetup:
             # Step 0c: the master realm's own security stand. Keycloak creates that realm
             # itself, so it never passes create_realm and gets nothing from a blueprint.
             await self.ensure_master_realm_hardening()
+
+            # Step 0d: every password login in master requires an OTP.
+            await self.ensure_master_otp()
             self.kubectl = KubectlConnector()
 
             # Build context from settings
@@ -185,6 +188,31 @@ class KeycloakSetup:
             await KeycloakYamlHandler(keycloak).ensure_realm_hardening(yaml_path, context)
         except KeycloakError as e:
             logger.error(f"Kon de beveiligingsstand van de master-realm niet zetten: {e}")
+
+    async def ensure_master_otp(self) -> None:
+        """Require OTP for every password login in the master realm. Fails gracefully,
+        controlled by ``KEYCLOAK_ENFORCE_MASTER_OTP``.
+        """
+        if not settings.KEYCLOAK_ENFORCE_MASTER_OTP:
+            # The flag only skips this step; a flow bound on an earlier start stays bound, and
+            # unbinding it is a manual action in Keycloak.
+            logger.info("KEYCLOAK_ENFORCE_MASTER_OTP is off; skipping required OTP on master realm")
+            return
+
+        keycloak = self.keycloak or await create_keycloak_connector()
+        try:
+            await keycloak.ensure_required_otp_browser_flow("master", REQUIRED_OTP_BROWSER_FLOW)
+            await keycloak.ensure_browser_flow("master", REQUIRED_OTP_BROWSER_FLOW)
+            # Skip KEYCLOAK_ADMIN_USERNAME: an open required action blocks the password grant that
+            # OPI falls back to when KEYCLOAK_ADMIN_CLIENT_SECRET is absent.
+            gewijzigd = await keycloak.ensure_configure_totp_required(
+                "master", skip_usernames=frozenset({settings.KEYCLOAK_ADMIN_USERNAME})
+            )
+        except KeycloakError as e:
+            logger.error(f"Could not set required OTP on master realm: {e}")
+            return
+
+        logger.info(f"Required OTP on master realm set; {len(gewijzigd)} user(s) will configure on next login")
 
     async def ensure_master_admin_service_account(self) -> None:
         """First-boot self-bootstrap of OPI's client-credentials service account.

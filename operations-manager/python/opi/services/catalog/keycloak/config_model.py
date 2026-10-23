@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE
 from opi.services.config_managed import PLATFORM_MANAGED
 from opi.utils.redirect_uris import validate_redirect_uris
 from opi.utils.url_paths import normalize_logout_path
@@ -172,8 +173,12 @@ class KeycloakConfig(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     template: str = Field(
-        default="sso-only",
-        description="Realm template the realm is created from; 'sso-only' is single sign-on without extras.",
+        default=SSO_ONLY_TEMPLATE,
+        description=(
+            "Realm template the realm is created from: 'sso-only' is single sign-on without extras, "
+            "'sso-support' adds a login screen where a local account can sign in, and 'sso-support-otp' "
+            "also requires an OTP from such a local account."
+        ),
     )
     realms: list[KeycloakRealm] = Field(
         default_factory=list,

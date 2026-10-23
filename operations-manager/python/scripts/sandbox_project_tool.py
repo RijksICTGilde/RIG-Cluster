@@ -29,6 +29,7 @@ import os
 import re
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -44,7 +45,9 @@ _CTX.verify_mode = ssl.CERT_NONE
 
 
 def _session_cookie() -> str:
-    user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool"}
+    # login_at hoort erbij: session_guard laat een sessie zonder dat veld vervallen en
+    # stuurt elk verzoek naar /auth/login, waar dit koekje een inlogpagina met een 200 kreeg.
+    user = {"sub": "sandbox-tool", "email": USER_EMAIL, "name": "Sandbox Tool", "login_at": time.time()}
     payload = base64.b64encode(json.dumps({"user": user}).encode()).decode()
     return "session=" + TimestampSigner(SECRET).sign(payload).decode()
 
