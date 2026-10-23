@@ -95,7 +95,8 @@ def _draai_pin(repo: Path, tag: str) -> subprocess.CompletedProcess[str]:
 def _gepinde_tag(patch: Path) -> str:
     deployment = yaml.safe_load(patch.read_text())
     image = deployment["spec"]["template"]["spec"]["containers"][0]["image"]
-    return image.split(":")[-1]
+    # Sinds de pin ook een digest draagt is de vorm <repo>:<tag>@sha256:<hex>.
+    return image.split("@")[0].split(":")[-1]
 
 
 @pytest.fixture(scope="module")

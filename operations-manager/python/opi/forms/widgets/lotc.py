@@ -63,10 +63,10 @@ class LOTCWidgetAdapter(FieldWidgetAdapter):
             if not sleutel.endswith(cls._HTML_SUFFIXEN):
                 gemarkeerd[sleutel] = waarde
             elif isinstance(waarde, str):
-                gemarkeerd[sleutel] = markupsafe.Markup(waarde)  # noqa: S704
+                gemarkeerd[sleutel] = markupsafe.Markup(waarde)  # noqa: S704  # al door de componentlaag gerenderde HTML, geen invoer
             elif isinstance(waarde, list):
                 gemarkeerd[sleutel] = [
-                    markupsafe.Markup(deel) if isinstance(deel, str) else deel  # noqa: S704
+                    markupsafe.Markup(deel) if isinstance(deel, str) else deel  # noqa: S704  # al door de componentlaag gerenderde HTML, geen invoer
                     for deel in waarde  # pyright: ignore[reportUnknownVariableType]
                 ]
             else:
@@ -88,4 +88,4 @@ class LOTCWidgetAdapter(FieldWidgetAdapter):
         # niet - de velden zijn er allemaal en elk attribuut klopt.
         # c-stack is de primitief die wel een gap zet (.lotc-stack, display:flex).
         template = self._env.from_string('<c-stack gap="lg">{{ inner }}</c-stack>')
-        return template.render(inner=markupsafe.Markup("\n".join(children_html)))  # noqa: S704
+        return template.render(inner=markupsafe.Markup("\n".join(children_html)))  # noqa: S704  # al gerenderde veld-HTML, gaat als variabele in het sjabloon

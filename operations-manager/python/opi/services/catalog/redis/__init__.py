@@ -41,7 +41,7 @@ class RedisService(Service):
         icon="zandloper",
         color="rood",
         shared_per_deployment=True,
-        secret_class="RedisSecret",
+        secret_class="RedisSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in RedisVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )
@@ -131,7 +131,7 @@ class RedisService(Service):
             SecretFileSpec(
                 secret_name=RedisSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="redis",
+                secret_type="redis",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
             )
         ]

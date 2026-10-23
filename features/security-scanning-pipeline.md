@@ -239,6 +239,45 @@ meet andere aantallen.
 Voor `argocd-rig` hoef je niets te bouwen: `trivy image` op
 `ghcr.io/minbzk/base-images/argocd-rig:<versie uit de overlay>` haalt hem zelf op.
 
+## Statische analyse op de OPI-code
+
+**Waar**: `operations-manager/python/pyproject.toml`, sectie `[tool.ruff.lint]`.
+
+De `S`-familie van ruff (bandit) staat aan voor `opi/`, inclusief `S105`/`S106`
+(hardcoded wachtwoorden), `S603`/`S607` (subprocess), `S608` (SQL in een string) en
+`S701` (Jinja2 zonder autoescape). `tests/` en `functional_tests/` hebben voor die
+regels een vrijstelling: een testfixture mag een vast wachtwoord en een `psql`-aanroep
+hebben.
+
+### Een noqa draagt zijn reden
+
+Een onderdrukking van een `S`-regel in `opi/` schrijft de reden op dezelfde regel:
+
+```python
+MAIL_KEYCLOAK_SECRET_KEY: str = "smtp-password"  # noqa: S105  # naam van de sleutel in het secret, geen secret
+```
+
+`tests/test_noqa_heeft_een_reden.py` loopt `opi/` langs en wordt rood zodra er een
+`# noqa: S<nnn>` zonder tekst erachter bij komt. Zonder die reden is niet te zien of
+een melding beoordeeld is of alleen weggezet, en groeit het aantal stil terug.
+
+Gebruik `ruff check --add-noqa` dus niet zonder de redenen er daarna bij te zetten.
+
+De drie `S608`-onderdrukkingen in `connectors/postgres.py` zijn zo'n beoordeelde melding:
+`psql -c` interpoleert geen psql-variabelen, dus de schemanaam kan daar niet gebonden
+worden. Wat die query's dekt is de identifiervalidatie die in `_execute_pgdump_clone`
+voor het eerste subprocess staat.
+
+### Dekkingsdrempels
+
+`.github/workflows/ci.yml` toetst de dekking twee keer: een algemene ondergrens over
+heel `opi/`, en een tweede over de modules die de vertrouwensgrens dragen (de
+middleware, de tokenauthenticatie, de projectautorisatie, en AGE, SOPS en de API-keys).
+Beide staan op het gemeten niveau: 71 procent over heel `opi/` en 86 procent over die modules.
+
+Een drempel mag omhoog, nooit omlaag zonder een reden in de PR. Zakt de dekking van een
+van die modules, dan is dat een bevinding en geen reden om het getal aan te passen.
+
 ## Dependency Management
 
 **Renovate** draait als GitHub Action (`.github/workflows/renovate.yml`) met de

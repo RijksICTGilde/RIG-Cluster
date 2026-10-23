@@ -26,7 +26,7 @@ class MinioStorageService(BackupsPageMixin, Service):
         icon="map",
         color="rood",
         shared_per_deployment=True,
-        secret_class="MinIOSecret",
+        secret_class="MinIOSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in MinIOVariables],
         cleanup_strategy=CleanupStrategy.DEFERRED,
         backup_label="minio",
@@ -120,7 +120,7 @@ class MinioStorageService(BackupsPageMixin, Service):
             SecretFileSpec(
                 secret_name=MinIOSecret.get_secret_name(ctx.deployment_name),
                 secret_pairs=secret.to_k8s_secret_data(),
-                secret_type="minio",
+                secret_type="minio",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
                 resolve_aliases=True,
             )
         ]

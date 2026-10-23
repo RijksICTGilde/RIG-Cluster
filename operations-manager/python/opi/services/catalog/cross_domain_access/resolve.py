@@ -89,9 +89,9 @@ def _selector(cluster: str, rule: MergedRule, namespace: str) -> PeerSelector:
     A wildcard rule never reaches here: it is turned into a peerless ``ResolvedRule`` before
     resolution starts, which is what these three narrowings record.
     """
-    assert rule.peer_deployment is not None  # noqa: S101
-    assert rule.peer_component is not None  # noqa: S101
-    assert rule.peer_project is not None  # noqa: S101
+    assert rule.peer_deployment is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
+    assert rule.peer_component is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
+    assert rule.peer_project is not None  # noqa: S101  # typevernauwing, de wildcardregel komt hier niet
     return PeerSelector(
         namespace=get_prefixed_namespace(cluster, namespace),
         pod_labels={
@@ -117,7 +117,7 @@ def _conventional_peer(cluster: str, rule: MergedRule) -> PeerSelector:
     must carry ``project: <peer>``, so a namespace that happens to be named after the peer but
     belongs to someone else still matches nothing.
     """
-    assert rule.peer_project is not None  # noqa: S101 - a wildcard rule has no peer to resolve
+    assert rule.peer_project is not None  # noqa: S101  # a wildcard rule has no peer to resolve
     return _selector(cluster, rule, namespace=rule.peer_project)
 
 
@@ -150,7 +150,7 @@ def resolve_rules(
             entry = ResolvedRule(local_component=rule.local_component, peer=None, port=rule.port)
             resolved.setdefault(_key(entry), entry)
             continue
-        assert rule.peer_project is not None  # noqa: S101 - not open means the model filled the peer
+        assert rule.peer_project is not None  # noqa: S101  # not open means the model filled the peer
         project_data = lookup_project(rule.peer_project)
         if project_data is None:
             logger.warning(
@@ -163,8 +163,8 @@ def resolve_rules(
             )
             resolved.setdefault(_key(entry), entry)
             continue
-        assert rule.peer_deployment is not None  # noqa: S101 - to_merged_rule dropped the open ones
-        assert rule.peer_component is not None  # noqa: S101 - required on a complete rule
+        assert rule.peer_deployment is not None  # noqa: S101  # to_merged_rule dropped the open ones
+        assert rule.peer_component is not None  # noqa: S101  # required on a complete rule
         deployment = _find_deployment(project_data, rule.peer_deployment)
         if deployment is None:
             logger.warning(

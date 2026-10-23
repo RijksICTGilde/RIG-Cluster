@@ -756,7 +756,7 @@ class ProjectManager:
         if self._database_manager is not None:
             # If we have a cached manager but it was created with placeholder credentials,
             # and now we need real credentials, reinitialize it
-            if not skip_credential_check and self._database_manager._admin_password == "placeholder":
+            if not skip_credential_check and self._database_manager._admin_password == "placeholder":  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
                 logger.info(
                     "DatabaseManager was initialized with placeholder credentials, reinitializing with real credentials"
                 )
@@ -788,7 +788,7 @@ class ProjectManager:
                 # During infrastructure creation, credentials don't exist yet
                 # Use placeholder values - they'll be replaced after infrastructure is ready
                 admin_username = "postgres"
-                admin_password = "placeholder"
+                admin_password = "placeholder"  # noqa: S105  # placeholder tot de echte credentials er zijn, geen secret
                 logger.info(
                     f"Initializing DatabaseManager for configuration only (credentials not validated): {db_host}"
                 )

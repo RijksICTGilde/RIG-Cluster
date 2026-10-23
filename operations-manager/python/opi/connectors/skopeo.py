@@ -122,7 +122,7 @@ class SkopeoConnector:
         """Check if skopeo CLI is available on the system."""
         try:
             result = subprocess.run(
-                ["skopeo", "--version"],
+                ["skopeo", "--version"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                 capture_output=True,
                 text=True,
                 timeout=10,

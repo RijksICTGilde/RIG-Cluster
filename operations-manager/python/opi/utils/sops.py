@@ -84,7 +84,7 @@ def decrypt_sops_file(file_path: str) -> str | None:
 
     # De platformsleutel gaat expliciet mee: child_env weert SOPS_AGE_KEY_FILE, en zonder
     # sleutel kan sops een platformbestand niet ontsleutelen.
-    process = subprocess.run(
+    process = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
         cmd,
         capture_output=True,
         text=True,
@@ -116,7 +116,7 @@ def encrypt_sops_file(file_path: str) -> bool:
     logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
 
     # Versleutelen haalt de recipients uit .sops.yaml, niet uit een sleutel in de omgeving.
-    process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())
+    process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
 
     if process.returncode != 0:
         error_msg = process.stderr.strip()
@@ -159,8 +159,8 @@ def _sops_plaintext_unchanged(plaintext_path: str, encrypted_path: str, private_
 
 def decrypt_sops_with_key(file_path: str, private_key: str) -> str | None:
     """Decrypt a SOPS file with an explicit AGE private key. None on failure."""
-    process = subprocess.run(
-        ["sops", "--decrypt", file_path],
+    process = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+        ["sops", "--decrypt", file_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
         capture_output=True,
         text=True,
         check=False,
@@ -236,7 +236,7 @@ def encrypt_to_sops_files(directory: str, public_key: str, private_key: str | No
             cmd = ["sops", "--encrypt", "--age", public_key, file_path]
             logger.debug(f"Running SOPS encryption command: {' '.join(cmd)}")
 
-            process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())
+            process = subprocess.run(cmd, capture_output=True, text=True, check=False, env=child_env())  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
 
             if process.returncode != 0:
                 error_msg = process.stderr.strip()
@@ -338,8 +338,12 @@ def generate_sops_key_pair() -> tuple[str, str]:
 
         try:
             # Generate age key pair
-            result = subprocess.run(
-                ["age-keygen", "-o", temp_file_path], capture_output=True, text=True, check=True, env=child_env()
+            result = subprocess.run(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+                ["age-keygen", "-o", temp_file_path],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
+                capture_output=True,
+                text=True,
+                check=True,
+                env=child_env(),
             )
 
             # Read the generated private key

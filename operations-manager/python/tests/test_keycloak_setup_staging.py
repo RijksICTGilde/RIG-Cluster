@@ -10,19 +10,20 @@ import pytest
 from opi.bootstrap.keycloak_setup import KeycloakSetup
 
 
-async def _users_created(bootstrap_config: str) -> list:
+async def _users_created(bootstrap_config: str) -> list[str]:
+    """De gebruikersnamen die de bootstrap in het OPI-realm aanmaakt."""
     handler = MagicMock()
     handler.execute_config = AsyncMock()
-    handler._process_users = AsyncMock()
     setup = KeycloakSetup()
     setup.keycloak = MagicMock()
+    setup.keycloak.create_user = AsyncMock()
     with (
         patch("opi.bootstrap.keycloak_setup.KeycloakYamlHandler", return_value=handler),
         patch("opi.bootstrap.keycloak_setup.settings.KEYCLOAK_BOOTSTRAP_CONFIG", bootstrap_config),
         patch("opi.bootstrap.keycloak_setup.settings.OWN_DOMAIN", "zad.staging.rijksapp.dev"),
     ):
         await setup.setup_operations_realm()
-    return [call.args[0] for call in handler._process_users.await_args_list]
+    return [aanroep.kwargs["username"] for aanroep in setup.keycloak.create_user.await_args_list]
 
 
 @pytest.mark.asyncio
@@ -32,5 +33,4 @@ async def test_staging_creates_no_local_user():
 
 @pytest.mark.asyncio
 async def test_sandbox_still_creates_its_admin():
-    created = await _users_created("sandbox")
-    assert [user["username"] for user in created[0]] == ["admin"]
+    assert await _users_created("sandbox") == ["admin"]

@@ -23,7 +23,7 @@ class AuthType(Enum):
     NONE = "none"
     BASIC = "basic"
     BEARER = "bearer"
-    KEYCLOAK_PASSWORD = "keycloak-password"  # Resource Owner Password Credentials
+    KEYCLOAK_PASSWORD = "keycloak-password"  # Resource Owner Password Credentials  # noqa: S105  # naam van het OAuth-granttype, geen secret
     KEYCLOAK_CLIENT = "keycloak-client"  # Client Credentials
 
 

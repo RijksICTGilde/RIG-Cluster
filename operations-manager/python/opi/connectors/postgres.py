@@ -1991,6 +1991,39 @@ class PostgresConnector:
                 }
             )
 
+            # Stacked defense at the subprocess boundary. The public
+            # clone_schema entry point already validates, but a future refactor
+            # could route around it. This runs before step 1 so a malicious value
+            # gets a PostgresValidationError before the first process spawns, the
+            # schema-existence checks included:
+            #   * identifiers: PG identifier rules (letter/_ start, no special
+            #     chars, <=63 chars) -- _validate_identifier
+            #   * hosts: in-cluster K8s service only (bare service name or
+            #     '<svc>.<ns>.svc.cluster.local'); IPs and external domains
+            #     rejected so a tenant cannot stream data out of the cluster
+            #     -- _validate_in_cluster_host
+            #   * passwords: no NUL / CR / LF so they cannot smuggle anything
+            #     past env-var or libpq parsing -- _validate_pg_password_safe
+            identifiers: list[tuple[str, str]] = [
+                (source_database, "source_database"),
+                (target_database, "target_database"),
+                (source_username, "source_username"),
+                (target_username, "target_username"),
+                (target_owner, "target_owner"),
+            ]
+            for source_schema, target_schema in schema_pairs:
+                identifiers.append((source_schema, "source_schema"))
+                identifiers.append((target_schema, "target_schema"))
+            for ident_value, ident_name in identifiers:
+                self._validate_identifier(ident_value, ident_name)
+            self._validate_in_cluster_host(source_host, "source_host")
+            self._validate_in_cluster_host(target_host, "target_host")
+            self._validate_pg_port(source_port, "source_port")
+            self._validate_pg_port(target_port, "target_port")
+            self._validate_pg_password_safe(source_password, "source_password")
+            self._validate_pg_password_safe(target_password, "target_password")
+            self._validate_pg_password_safe(target_owner_password, "target_owner_password")
+
             # Step 1: Check if the source schemas exist in the target database (safety check)
             # For a pre-created schema the check was already done by
             # _precreate_extensions_for_clone() - skip it to avoid duplication.
@@ -2010,7 +2043,7 @@ class PostgresConnector:
                 _, check_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{source_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
                     tuples_only=True,
                 )
                 if not check_out.strip():
@@ -2042,7 +2075,7 @@ class PostgresConnector:
                 _, check_target_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
                     tuples_only=True,
                 )
                 if check_target_out.strip():
@@ -2084,39 +2117,6 @@ class PostgresConnector:
 
             from opi.core.metrics import track_subprocess_memory
 
-            # Stacked defense at the subprocess boundary. The public
-            # clone_schema entry point already validates, but this is the
-            # last line where attacker-controlled input could leak through
-            # a future refactor. Cheap re-validation here means a malicious
-            # value gets a PostgresValidationError before any process spawns:
-            #   * identifiers: PG identifier rules (letter/_ start, no special
-            #     chars, <=63 chars) -- _validate_identifier
-            #   * hosts: in-cluster K8s service only (bare service name or
-            #     '<svc>.<ns>.svc.cluster.local'); IPs and external domains
-            #     rejected so a tenant cannot stream data out of the cluster
-            #     -- _validate_in_cluster_host
-            #   * passwords: no NUL / CR / LF so they cannot smuggle anything
-            #     past env-var or libpq parsing -- _validate_pg_password_safe
-            identifiers: list[tuple[str, str]] = [
-                (source_database, "source_database"),
-                (target_database, "target_database"),
-                (source_username, "source_username"),
-                (target_username, "target_username"),
-                (target_owner, "target_owner"),
-            ]
-            for source_schema, target_schema in schema_pairs:
-                identifiers.append((source_schema, "source_schema"))
-                identifiers.append((target_schema, "target_schema"))
-            for ident_value, ident_name in identifiers:
-                self._validate_identifier(ident_value, ident_name)
-            self._validate_in_cluster_host(source_host, "source_host")
-            self._validate_in_cluster_host(target_host, "target_host")
-            self._validate_pg_port(source_port, "source_port")
-            self._validate_pg_port(target_port, "target_port")
-            self._validate_pg_password_safe(source_password, "source_password")
-            self._validate_pg_password_safe(target_password, "target_password")
-            self._validate_pg_password_safe(target_owner_password, "target_owner_password")
-
             dump_args = ["pg_dump", "-d", source_database]
             for source_schema, _ in schema_pairs:
                 dump_args += ["-n", source_schema]
@@ -2137,14 +2137,14 @@ class PostgresConnector:
                 import subprocess
 
                 def _run_clone_pipeline() -> tuple[int, bytes, int, bytes, bytes]:
-                    dump = subprocess.Popen(
+                    dump = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
                         dump_args,
                         env=source_env,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                     )
                     rewrite = subprocess.Popen(
-                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],
+                        ["sed", "s/^CREATE SCHEMA /CREATE SCHEMA IF NOT EXISTS /g"],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                         stdin=dump.stdout,
                         stdout=subprocess.PIPE,
                         env=child_env(),
@@ -2153,8 +2153,8 @@ class PostgresConnector:
                     if dump.stdout is None:
                         raise RuntimeError("pg_dump did not open a stdout pipe")
                     dump.stdout.close()
-                    restore = subprocess.Popen(
-                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],
+                    restore = subprocess.Popen(  # noqa: S603  # geen shell; de variabele delen zijn losse argv-elementen
+                        ["psql", "-v", "ON_ERROR_STOP=1", "-d", target_database],  # noqa: S607  # gereedschap uit de PATH van de image, geen vast pad
                         env=target_env,
                         stdin=rewrite.stdout,
                         stdout=subprocess.PIPE,
@@ -2206,7 +2206,7 @@ class PostgresConnector:
                 _, check_out, _ = await self._psql(
                     env,
                     target_database,
-                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",
+                    f"SELECT 1 FROM information_schema.schemata WHERE schema_name = '{target_schema}';",  # noqa: S608  # psql -c interpoleert geen psql-variabelen; de naam is bovenaan deze functie door _validate_identifier gecontroleerd
                     tuples_only=True,
                 )
                 if check_out.strip():

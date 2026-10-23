@@ -126,7 +126,7 @@ class SendEmailService(Service):
         help_template="send_email/help.md",
         icon="envelop",
         color="donkerblauw",
-        secret_class="SendEmailSecret",
+        secret_class="SendEmailSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in SendEmailVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
     )

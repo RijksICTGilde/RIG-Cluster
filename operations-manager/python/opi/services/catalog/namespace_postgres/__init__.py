@@ -31,7 +31,7 @@ class NamespacePostgresqlDatabaseService(BackupsPageMixin, DatabasePagesMixin, S
         icon="database",
         color="donkerblauw",
         shared_per_deployment=True,
-        secret_class="DatabaseSecret",
+        secret_class="DatabaseSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in DatabaseVariables],
         hidden=True,
         cleanup_strategy=CleanupStrategy.DEFERRED,
