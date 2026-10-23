@@ -328,6 +328,14 @@ class WizardState:
     back into the real structure.
     """
 
+    selection: list[str] = field(default_factory=list)
+    """De items die deze modal toont, als de flow op een selectie is geopend.
+
+    Leeg betekent "de hele lijst". De flow zegt WELKE lijst (``FormFlow.selectable``);
+    dit zijn de namen daarin. Het opslaan zet ze terug tussen de items die de modal niet
+    toonde, zie ``opi.forms.wizard.selection``.
+    """
+
     staged_attachments: dict[str, Any] = field(default_factory=dict)
     """Attachment uploads staged this session (id -> {filename, content="staging:<token>"}).
 
@@ -471,6 +479,7 @@ class WizardState:
             "stashed_data": self.stashed_data,
             "locked_services": self.locked_services,
             "virt_mappings": self.virt_mappings,
+            "selection": self.selection,
             "staged_attachments": self.staged_attachments,
         }
 
@@ -512,5 +521,6 @@ class WizardState:
             stashed_data=data.get("stashed_data", {}),
             locked_services=data.get("locked_services", []),
             virt_mappings=data.get("virt_mappings", {}),
+            selection=data.get("selection", []),
             staged_attachments=data.get("staged_attachments", {}),
         )

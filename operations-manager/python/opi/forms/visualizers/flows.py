@@ -82,6 +82,23 @@ class FlowTarget:
     """True when the item does not exist yet and the flow appends it."""
 
 
+@dataclass(frozen=True)
+class ListSelectable:
+    """A list in a flow of which the modal may show only part.
+
+    A list modal normally renders every item. With a selection it renders only the
+    named ones, and the save splices them back into the stored list, so everything
+    outside the selection is neither shown nor submitted and cannot be touched.
+    """
+
+    list_path: str
+    """Where the list sits, e.g. ``components`` or ``deployments[2]/components``."""
+
+    key_field: str
+    """The field that names an item: ``name`` for a component, ``reference`` for its
+    use in a deployment."""
+
+
 @dataclass
 class FormFlow:
     """Composes FormSections into a wizard or tabbed interface."""
@@ -101,6 +118,9 @@ class FormFlow:
     ``None`` for flows that write project-wide fields (identity, team,
     service config): those write wherever their editables point.
     """
+
+    selectable: ListSelectable | None = None
+    """The list a caller may narrow to a selection, for flows that edit a whole list."""
 
 
 CREATE_FLOW = FormFlow(
@@ -189,12 +209,16 @@ MODAL_EDIT_TEAM_FLOW = FormFlow(
     sections=[TEAM_SECTION],
 )
 
+#: De componentdefinities op het project, de lijst waar de componentenmodal op werkt.
+COMPONENTS_SELECTABLE = ListSelectable("components", "name")
+
 MODAL_EDIT_COMPONENTS_FLOW = FormFlow(
     flow_id="modal-edit-components",
     title="Components beheren",
     mode=FlowMode.WIZARD,
     show_review=False,
     sections=[COMPONENTS_EDIT_SECTION],
+    selectable=COMPONENTS_SELECTABLE,
 )
 
 MODAL_EDIT_SERVICES_FLOW = FormFlow(
@@ -400,6 +424,7 @@ def build_deployment_edit_flow(
         show_review=False,
         sections=[section],
         target=FlowTarget("deployments", deployment_index),
+        selectable=ListSelectable(f"deployments[{deployment_index}]/components", "reference"),
     )
 
 

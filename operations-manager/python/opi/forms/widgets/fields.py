@@ -16,6 +16,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from opi.forms.editables.rendered_sequences import GERENDERDE_REEKSEN_VELD
+from opi.forms.editables.sequence_identity import IDENTITY_KEYS
 from opi.forms.widgets.base import WidgetAdapter
 from opi.services.catalog.aliases.overzicht import alias_variabelen
 
@@ -271,7 +272,33 @@ class FieldWidgetAdapter(WidgetAdapter):
 
     def render_sequence_item(self, field: FormField, index: int, item_html: str) -> str:
         template = "sequence_item_inline.html.j2" if self._is_simple_sequence(field) else "sequence_item_card.html.j2"
-        return self._render_template(template, {"field": field, "index": index, "item_html": item_html})
+        return self._render_template(
+            template,
+            {
+                "field": field,
+                "index": index,
+                "item_html": item_html,
+                "identiteitsvelden": self._identity_fields(field, index),
+            },
+        )
+
+    @staticmethod
+    def _identity_fields(field: FormField, index: int) -> list[dict[str, str]]:
+        """De sleutel van rij *index*, als verborgen veld, zolang de rij hem niet post.
+
+        Een readonly sleutel rendert als ``disabled`` en komt dus niet mee in de
+        inzending; de verwerker moest de rijen daarom op index paren, en dan erft een
+        rij achter een verwijderde rij de configuratie van zijn buur. Zie
+        ``opi/forms/editables/sequence_identity.py``.
+        """
+        items = field.children or []
+        if not 0 <= index < len(items):
+            return []
+        return [
+            {"name": kind.path, "value": str(kind.value)}
+            for kind in items[index].children or []
+            if kind.readonly and kind.value and kind.path.rsplit("/", 1)[-1] in IDENTITY_KEYS
+        ]
 
     # ------------------------------------------------------------------
     # Layout rendering methods

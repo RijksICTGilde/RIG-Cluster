@@ -4511,6 +4511,61 @@ def remove_component_references(project_data: dict[str, Any], component_name: st
     return removed
 
 
+class ComponentInUseError(Exception):
+    """A component cannot be removed yet: something still points at it.
+
+    Carries the sites so the caller can name them (the API's ``used_by``, the modal's
+    error text) instead of only reporting that it was refused.
+    """
+
+    def __init__(self, message: str, sites: list[ComponentUsageSite]) -> None:
+        super().__init__(message)
+        self.sites = sites
+
+
+def remove_component(
+    project_data: dict[str, Any],
+    component_name: str,
+    *,
+    confirm_in_use: bool = False,
+) -> list[ComponentUsageSite]:
+    """Remove a component definition and every reference to it, in place.
+
+    The one rule for "a component goes", shared by the API delete and the components
+    modal: a reference left pointing at a component that no longer exists makes the
+    project file invalid, so the definition and its references leave together.
+
+    Refuses with :class:`ComponentInUseError` when the component is still in use and
+    *confirm_in_use* is not set, and always when a deployment's web address is built
+    around it: deciding how that site should be served instead is not a decision a
+    delete gets to make.
+
+    Returns the sites it uncoupled, so the caller can report what went with it.
+    """
+    sites = component_usage_sites(project_data).get(component_name, [])
+    web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
+    if sites and (not confirm_in_use or web_addresses):
+        if web_addresses:
+            reason = (
+                f"Component '{component_name}' bepaalt het webadres van: "
+                f"{', '.join(site.label for site in web_addresses)}. Wijzig eerst het webadres daar; "
+                "een component waar een adres omheen gebouwd is kan niet zomaar worden verwijderd."
+            )
+        else:
+            reason = (
+                f"Component '{component_name}' is in gebruik door: "
+                f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
+            )
+        raise ComponentInUseError(reason, sites)
+
+    uncoupled = remove_component_references(project_data, component_name) if sites else []
+    components = project_data.get("components") or []
+    project_data["components"] = [
+        c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
+    ]
+    return uncoupled
+
+
 def extract_service_names_from_component(component: dict[str, Any]) -> list[str]:
     """
     Extract service names from a component's services list.

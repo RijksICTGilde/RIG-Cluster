@@ -46,6 +46,7 @@ from opi.forms.wizard.secrets import (
     reachable_leaf_keys,
     redact_unreachable_secrets,
 )
+from opi.forms.wizard.selection import narrow_to_selection, parse_selection, selectable_names
 from opi.forms.wizard.session import (
     clear_modal_state_by_token,
     init_modal_state_tokenized,
@@ -721,6 +722,22 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
     for section in flow.sections:
         processor.populate_deferred_fields(project_data, section.editables)
 
+    # Een selectie: de modal toont alleen deze items van de lijst die de flow aanwijst.
+    # Narrowen VOOR de split, zodat step_data en base_data allebei alleen het getoonde
+    # deel dragen; het opslaan zet het terug tussen de rest (wizard/selection.py).
+    selection = parse_selection(request.query_params.get("components"))
+    if selection:
+        if flow.selectable is None:
+            raise HTTPException(status_code=400, detail=f"Flow '{flow_id}' kent geen selectie van componenten")
+        bekend = selectable_names(project_data, flow.selectable)
+        onbekend = [name for name in selection if name not in bekend]
+        if onbekend:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Component '{', '.join(onbekend)}' bestaat niet in dit project",
+            )
+        project_data = narrow_to_selection(project_data, flow.selectable, selection)
+
     # Pre-fill step data from existing project. Strip attachment content first: only
     # id/filename are needed to display the catalog, and carrying the encrypted blocks
     # bloats the disk-backed session. The content is re-attached from the stored project
@@ -764,6 +781,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         owner_email=user_email,
     )
     state.step_data = step_data
+    state.selection = selection
     state.locked_services = _extract_services(project_data)
     state.populate_virt_mappings(flow.sections)
 

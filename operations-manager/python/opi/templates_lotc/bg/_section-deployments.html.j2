@@ -91,16 +91,15 @@
         <c-heading type="h4" size="5" label="Componenten" />
         <c-stack gap="sm">
             {% for component in deployment.components | sort(attribute='reference') %}
-                {# De rij droeg een chevron maar deed niets: een pijl die nergens heen wijst
-                   belooft iets dat er niet is. Hij opent nu het bewerkscherm van DEZE
-                   deployment, want daar staan sinds RC-78 de instellingen per component
-                   binnen deze deployment (het certificaat, de bijlage). Een eigen scherm
-                   voor alleen dit component binnen deze deployment bestaat nog niet; de
-                   titel zegt daarom waar je terechtkomt in plaats van iets anders te
-                   beloven. Alleen klikbaar voor wie mag bewerken. #}
+                {# Een klik opent het bewerkscherm van DEZE deployment, want daar staan sinds
+                   RC-78 de instellingen per component binnen deze deployment (het certificaat,
+                   de bijlage). Met de selectie (RC-378) toont dat scherm alleen het component
+                   dat je aanklikte; de andere componenten van de deployment staan niet in het
+                   formulier en blijven bij het opslaan onaangeroerd. Alleen klikbaar voor wie
+                   mag bewerken. #}
                 {% if user_role in ['admin', 'owner'] %}
                     {% set comp_index = project.deployments.index(deployment) %}
-                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', 'Deployment bewerken - " ~ deployment.name ~ " (" ~ component.reference ~ ")')" %}
+                    {% set comp_bewerken = "openEditModal('modal-edit-deployment-" ~ comp_index ~ "', '" ~ component.reference ~ " in " ~ deployment.name ~ "', {components: '" ~ component.reference ~ "'})" %}
                     <c-layer
                         icon="puzzle-piece"
                         title="{{ component.reference }}"

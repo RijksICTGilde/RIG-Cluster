@@ -591,16 +591,6 @@ def test_ui_env_vars_while_api_patches_same_file(
 
 
 @pytest.mark.timeout(1800)
-@pytest.mark.xfail(
-    reason=(
-        "Productfout, buiten deze PR: een component uit de componenten-modal halen laat zijn "
-        "verwijzing in de deployment staan, waarna het opslaan afketst op 'Invalid component "
-        "references in deployment'. De API-route (project_manager.delete_component) haalt die "
-        "verwijzingen wel weg; de modal doet dat niet, dus via de UI is een component dat in een "
-        "deployment zit niet te verwijderen. Strict, zodat deze test gaat piepen zodra dat klopt."
-    ),
-    strict=True,
-)
 def test_ui_removal_while_api_patches_same_file(
     reallife_projects: list[CreatedProject],
     sandbox_url: str,
@@ -681,10 +671,9 @@ def test_final_state_of_all_projects(
     Each individual round only checks its own change. This checks every round at
     once, which is where a lost update from an earlier round becomes visible.
     """
-    # BETA hoort hier: de verwijderronde erboven staat als xfail omdat de UI een
-    # component dat in een deployment zit niet kan verwijderen, dus hij staat er nog.
-    # Verdwijnt die xfail, dan hoort BETA hier ook weg.
-    expected_components = sorted([WEB, ALPHA, BETA, GAMMA])
+    # BETA staat hier NIET: de verwijderronde erboven haalt hem weg, en sinds RC-378 gaan
+    # zijn verwijzingen in de deployments mee, dus dat opslaan lukt ook.
+    expected_components = sorted([WEB, ALPHA, GAMMA])
     problems: list[str] = []
 
     for project in reallife_projects:

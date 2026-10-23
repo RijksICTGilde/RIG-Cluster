@@ -82,11 +82,10 @@ from opi.generation.manifests import (
     cmp_env_rejection,
 )
 from opi.handlers.project_file_handler import (
-    COMPONENT_USAGE_WEB_ADDRESS,
     USAGE_CERTIFICATE,
+    ComponentInUseError,
     ProjectFileHandler,
     attachment_usage_sites,
-    component_usage_sites,
     ensure_attachment_data_list,
     extract_attachment_catalog,
     extract_component_attachment_uses,
@@ -94,7 +93,7 @@ from opi.handlers.project_file_handler import (
     find_attachment_data_list,
     image_is_confirmed_absent,
     remove_attachment_references,
-    remove_component_references,
+    remove_component,
 )
 from opi.handlers.sops import SopsHandler
 from opi.manager.argo_manager import (
@@ -8384,6 +8383,9 @@ class ProjectManager:
         is built around (``root-component`` or ``expose-component-on-bare-domain``). There is
         no reference to remove there without also deciding how that site should be served
         instead, and that is not a decision this call gets to make.
+
+        The rule itself lives in ``remove_component``; the components modal removes a
+        component through the same function, so there is one implementation of it.
         """
         try:
             project_data = await self.get_contents()
@@ -8397,31 +8399,15 @@ class ProjectManager:
                     "error_type": "not_found",
                 }
 
-            sites = component_usage_sites(project_data).get(component_name, [])
-            web_addresses = [site for site in sites if site.kind == COMPONENT_USAGE_WEB_ADDRESS]
-            if sites and (not confirm_in_use or web_addresses):
-                if web_addresses:
-                    reason = (
-                        f"Component '{component_name}' bepaalt het webadres van: "
-                        f"{', '.join(site.label for site in web_addresses)}. Wijzig eerst het webadres daar; "
-                        "een component waar een adres omheen gebouwd is kan niet zomaar worden verwijderd."
-                    )
-                else:
-                    reason = (
-                        f"Component '{component_name}' is in gebruik door: "
-                        f"{', '.join(site.label for site in sites)} en kan niet worden verwijderd"
-                    )
+            try:
+                uncoupled = remove_component(project_data, component_name, confirm_in_use=confirm_in_use)
+            except ComponentInUseError as e:
                 return {
                     "success": False,
-                    "error": reason,
+                    "error": str(e),
                     "error_type": "in_use",
-                    "used_by": [site.as_dict() for site in sites],
+                    "used_by": [site.as_dict() for site in e.sites],
                 }
-
-            uncoupled = remove_component_references(project_data, component_name) if sites else []
-            project_data["components"] = [
-                c for c in components if not (isinstance(c, dict) and c.get("name") == component_name)
-            ]
 
             where = f" and removed from {', '.join(site.label for site in uncoupled)}" if uncoupled else ""
             await self.save_and_commit_project(
