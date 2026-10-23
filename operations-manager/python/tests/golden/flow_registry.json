@@ -101,6 +101,14 @@
       "section_id": "redis-config",
       "title": "Redis configuratie"
     },
+    "seaweedfs-config": {
+      "editables": [
+        "services/seaweedfs-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "seaweedfs-config",
+      "title": "SeaweedFS-objectopslag configuratie"
+    },
     "send-email-config": {
       "editables": [
         "services/send-email/config/from-name",
@@ -163,6 +171,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "seaweedfs-config",
         "send-email-config",
         "deployment",
         "domains"
@@ -186,6 +195,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "seaweedfs-config",
         "send-email-config",
         "deployments",
         "config"
@@ -282,6 +292,13 @@
         "redis-config"
       ]
     },
+    "modal-edit-seaweedfs-config": {
+      "flow_id": "modal-edit-seaweedfs-config",
+      "mode": "wizard",
+      "sections": [
+        "seaweedfs-config"
+      ]
+    },
     "modal-edit-send-email-config": {
       "flow_id": "modal-edit-send-email-config",
       "mode": "wizard",
@@ -304,6 +321,7 @@
         "cross-domain-access-config",
         "redis-config",
         "minio-config",
+        "seaweedfs-config",
         "send-email-config",
         "attachments"
       ]
@@ -333,6 +351,7 @@
     "namespace-postgresql-database": "modal-edit-postgresql-config",
     "postgresql-database": "modal-edit-postgresql-schemas",
     "redis": "modal-edit-redis-config",
+    "seaweedfs-storage": "modal-edit-seaweedfs-config",
     "send-email": "modal-edit-send-email-config",
     "sleep-mode": "modal-edit-sleep-mode-config"
   },
@@ -420,6 +439,14 @@
       "post_save_action": "process_project",
       "section_id": "redis-config",
       "title": "Redis configuratie"
+    },
+    "seaweedfs-storage": {
+      "editables": [
+        "services/seaweedfs-storage/config/enable-versioning"
+      ],
+      "post_save_action": "process_project",
+      "section_id": "seaweedfs-config",
+      "title": "SeaweedFS-objectopslag configuratie"
     },
     "send-email": {
       "editables": [

@@ -36,6 +36,7 @@ from opi.forms.visualizers.wizard_sections import (
     REDIS_CONFIG_SECTION,
     RESTORE_SELECT_SECTION,
     RESTORE_TARGET_SECTION,
+    SEAWEEDFS_CONFIG_SECTION,
     SEND_EMAIL_CONFIG_SECTION,
     SERVICES_EDIT_SECTION,
     SERVICES_SECTION,
@@ -128,6 +129,7 @@ CREATE_FLOW = FormFlow(
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         build_deployment_wizard_section(0),
         build_domain_section(0),
@@ -156,6 +158,7 @@ EDIT_FLOW = FormFlow(
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         DEPLOYMENTS_SECTION,
         CONFIG_DISPLAY_SECTION,
@@ -211,6 +214,7 @@ MODAL_EDIT_SERVICES_FLOW = FormFlow(
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         ATTACHMENTS_SECTION,
     ],
@@ -296,6 +300,14 @@ MODAL_EDIT_MINIO_FLOW = FormFlow(
     sections=[MINIO_CONFIG_SECTION],
 )
 
+MODAL_EDIT_SEAWEEDFS_FLOW = FormFlow(
+    flow_id="modal-edit-seaweedfs-config",
+    title="SeaweedFS-objectopslag configuratie",
+    mode=FlowMode.WIZARD,
+    show_review=False,
+    sections=[SEAWEEDFS_CONFIG_SECTION],
+)
+
 MODAL_EDIT_SEND_EMAIL_FLOW = FormFlow(
     flow_id="modal-edit-send-email-config",
     title="E-mail versturen",
@@ -357,6 +369,7 @@ FLOW_REGISTRY: dict[str, FormFlow] = {
     MODAL_EDIT_CROSS_DOMAIN_FLOW.flow_id: MODAL_EDIT_CROSS_DOMAIN_FLOW,
     MODAL_EDIT_REDIS_FLOW.flow_id: MODAL_EDIT_REDIS_FLOW,
     MODAL_EDIT_MINIO_FLOW.flow_id: MODAL_EDIT_MINIO_FLOW,
+    MODAL_EDIT_SEAWEEDFS_FLOW.flow_id: MODAL_EDIT_SEAWEEDFS_FLOW,
     MODAL_EDIT_SEND_EMAIL_FLOW.flow_id: MODAL_EDIT_SEND_EMAIL_FLOW,
     MODAL_EDIT_IMAGE_REGISTRIES_FLOW.flow_id: MODAL_EDIT_IMAGE_REGISTRIES_FLOW,
     MODAL_BACKUP_FLOW.flow_id: MODAL_BACKUP_FLOW,

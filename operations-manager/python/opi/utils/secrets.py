@@ -264,6 +264,18 @@ class MinIOSecret(BaseSecret):
 
 
 @dataclass
+class SeaweedFSSecret(MinIOSecret):
+    """Hetzelfde secret als MinIO, met een eigen naam en service (RC-331).
+
+    Een applicatie ziet dus precies dezelfde variabelen (``MinIOVariables``); alleen host,
+    poort en sleutels verschillen. Overstappen is een endpoint wisselen, geen code.
+    """
+
+    SECRET_NAME_TEMPLATE: ClassVar[str] = "{prefix}-seaweedfs"  # noqa: S105  # sjabloon voor de secretnaam, geen secret
+    SERVICE_TYPE: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
+@dataclass
 class KeycloakSecret(BaseSecret):
     """Keycloak/OIDC secret configuration."""
 

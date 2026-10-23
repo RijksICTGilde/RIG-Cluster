@@ -1,0 +1,21 @@
+{
+  "additionalProperties": false,
+  "description": "Bucketinstellingen van de dienst.",
+  "properties": {
+    "enable-versioning": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keep previous versions of an object in the bucket instead of overwriting it.",
+      "title": "Enable-Versioning"
+    }
+  },
+  "title": "SeaweedfsStorageConfig",
+  "type": "object"
+}

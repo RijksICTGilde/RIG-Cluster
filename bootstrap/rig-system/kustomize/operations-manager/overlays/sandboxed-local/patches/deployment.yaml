@@ -104,6 +104,13 @@ spec:
             secretKeyRef:
               name: minio-admin-credentials
               key: MINIO_ROOT_PASSWORD
+        # De admin-Bearer op de IAM-gRPC van de filer; `weed shell` leest hem zelf uit de
+        # omgeving. Zonder deze sleutel neemt die gRPC elke aanroep aan (RC-331, rij I5).
+        - name: WEED_JWT_FILER_SIGNING_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: WEED_JWT_FILER_SIGNING_KEY
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:

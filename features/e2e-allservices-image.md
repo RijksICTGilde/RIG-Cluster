@@ -34,7 +34,7 @@ Each bound service maps to one reusable *probe kind*:
 |---|---|---|
 | `sql` | postgresql-database, namespace-postgresql-database | connect via `DATABASE_SERVER_FULL` (or discrete vars), `SELECT 1`; for the default `DATABASE_SCHEMA` and every extra `DATABASE_SCHEMA_{POSTFIX}`: create a real table, insert, read back, drop; the read-only role (`DATABASE_SERVER_USER_RO`) must `SELECT` and be **refused** writes |
 | `redis` | redis, namespace-redis | `PING`, then `SET`/`GET`/`DEL` on `{REDIS_PREFIX}:e2e-healthcheck` (the ACL only grants the prefixed keyspace) |
-| `s3` | minio-storage | `PutObject`/`GetObject`/compare/`RemoveObject` in `OBJECT_STORE_BUCKET_NAME` |
+| `s3` | minio-storage, seaweedfs-storage | `PutObject`/`GetObject`/compare/`RemoveObject` in `OBJECT_STORE_BUCKET_NAME` |
 | `oidc` | keycloak | GET `OIDC_DISCOVERY_URL` (assert `issuer` + `token_endpoint`), then a **client-credentials token grab** with `OIDC_CLIENT_ID`/`OIDC_CLIENT_SECRET` (falls back to discovery-only if the grant is unavailable, clearly marked - never a silent pass) |
 | `path` | persistent-storage, temp-storage | for each of `DATA_PATH` / `TEMP_PATH`: write a file, `fsync`, read back, compare, delete |
 | `metadata` | publish-on-web, metrics-scraper, platform, send-email | assert presence and echo (`DEPLOYMENT_NAME`, `PUBLIC_HOST`, ...); secret-looking values are redacted |

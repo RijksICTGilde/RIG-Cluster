@@ -372,6 +372,10 @@ REDIS_CONFIG_SECTION = _with_service_help(
 MINIO_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.MINIO_STORAGE).config_form_section(ConfigLayer.PROJECT), ServiceType.MINIO_STORAGE
 )
+SEAWEEDFS_CONFIG_SECTION = _with_service_help(
+    get_service(ServiceType.SEAWEEDFS_STORAGE).config_form_section(ConfigLayer.PROJECT),
+    ServiceType.SEAWEEDFS_STORAGE,
+)
 SEND_EMAIL_CONFIG_SECTION = _with_service_help(
     get_service(ServiceType.SEND_EMAIL).config_form_section(ConfigLayer.PROJECT), ServiceType.SEND_EMAIL
 )
@@ -403,6 +407,7 @@ _CONFIG_SECTIONS_BY_ID: dict[str, FormSection] = {
         CROSS_DOMAIN_CONFIG_SECTION,
         REDIS_CONFIG_SECTION,
         MINIO_CONFIG_SECTION,
+        SEAWEEDFS_CONFIG_SECTION,
         SEND_EMAIL_CONFIG_SECTION,
         IMAGE_REGISTRIES_CONFIG_SECTION,
     )

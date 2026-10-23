@@ -36,6 +36,9 @@ def _make_project_manager_mock() -> MagicMock:
     mock_pm._keycloak_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
     mock_pm._minio_manager = AsyncMock()
     mock_pm._minio_manager.delete_resources_for_deployment = AsyncMock(return_value={"operations": [], "errors": []})
+    # Deze deployment noemt seaweedfs-storage niet, dus de guard in delete_deployment
+    # slaat die tak over. Een AsyncMock zegt uit zichzelf overal ja.
+    mock_pm._project_file_handler.deployment_uses_service = MagicMock(return_value=False)
     mock_pm._ensure_database_manager = AsyncMock()
     mock_pm._ensure_database_manager.return_value = AsyncMock()
     mock_pm._ensure_database_manager.return_value.delete_resources_for_deployment = AsyncMock(

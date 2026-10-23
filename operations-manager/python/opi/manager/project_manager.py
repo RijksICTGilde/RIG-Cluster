@@ -725,11 +725,13 @@ class ProjectManager:
         from opi.manager.minio_manager import MinioManager
         from opi.manager.pvc_manager import PVCManager
         from opi.manager.redis_manager import RedisManager
+        from opi.manager.seaweedfs_manager import SeaweedfsManager
 
         # DatabaseManager will be lazily initialized on first access
         # This allows us to determine the correct database host based on project services
         self._database_manager: DatabaseManager | None = None
         self._minio_manager = MinioManager(self)
+        self._seaweedfs_manager = SeaweedfsManager(self)
         self._keycloak_manager = KeycloakManager(self)
         self._redis_manager = RedisManager(self)
         self._mail_manager = MailManager(self)
@@ -1194,6 +1196,10 @@ class ProjectManager:
             ServiceType.REDIS: "redis",
             ServiceType.NAMESPACE_REDIS: "redis",
             ServiceType.MINIO_STORAGE: "minio",
+            # seaweedfs-storage hergebruikt MinIOVariables, dus dezelfde collapse als
+            # redis/postgresql: anders routeert een OBJECT_STORE_*-alias naar een bucket
+            # die geen enkel project consumeert en verdwijnt hij stil uit het secret.
+            ServiceType.SEAWEEDFS_STORAGE: "minio",
             ServiceType.KEYCLOAK: "keycloak",
             ServiceType.PUBLISH_ON_WEB: "web",
             ServiceType.PERSISTENT_STORAGE: "storage",
@@ -5887,6 +5893,7 @@ class ProjectManager:
                         force_clone=force_clone,
                         database_manager=db_manager,
                         minio_manager=self._minio_manager,
+                        seaweedfs_manager=self._seaweedfs_manager,
                         keycloak_manager=self._keycloak_manager,
                         redis_manager=self._redis_manager,
                         mail_manager=self._mail_manager,

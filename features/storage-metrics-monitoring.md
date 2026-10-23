@@ -8,10 +8,13 @@ This feature enables monitoring of storage usage for PostgreSQL databases and Mi
 |-----------|-----------------|------|------------|
 | PostgreSQL (CNPG) | `/metrics` | 9187 | `cnpg_pg_database_size_bytes` |
 | MinIO | `/minio/v2/metrics/cluster` | 9000 | `minio_bucket_usage_total_bytes` |
+| SeaweedFS | `/metrics` | 8081 | `SeaweedFS_volumeServer_total_disk_size` |
 
-Both components are scraped by Prometheus via:
+Components are scraped by Prometheus via:
 1. Pod annotations (`prometheus.io/scrape: "true"`)
 2. Dedicated scrape jobs in the Prometheus ConfigMap (fallback)
+
+Note: SeaweedFS is available only on the sandbox cluster (`sandboxed-local`) and is a proef (RC-331).
 
 ## PostgreSQL Database Metrics
 
@@ -168,6 +171,65 @@ kubectl port-forward -n rig-system svc/minio 9000:9000
 curl http://localhost:9000/minio/v2/metrics/cluster | grep minio_bucket_usage
 ```
 
+## SeaweedFS Bucket Metrics (Sandbox Only)
+
+**Note:** SeaweedFS is available only on the sandbox cluster (`sandboxed-local`) as a proef (RC-331). It does not replace MinIO in production.
+
+### Available Metrics
+
+| Metric | Description |
+|--------|-------------|
+| `SeaweedFS_volumeServer_total_disk_size` | Total disk size per bucket (collection) in bytes |
+
+**Limitation:** SeaweedFS provides bucket size but not object count per bucket. See `features/seaweedfs-objectopslag.md` for details on what is available and what is missing.
+
+### Prometheus Queries
+
+**List all bucket sizes:**
+```promql
+SeaweedFS_volumeServer_total_disk_size
+```
+
+**Size of a specific bucket:**
+```promql
+SeaweedFS_volumeServer_total_disk_size{collection="my-bucket-name"}
+```
+
+**Bucket sizes in MB:**
+```promql
+SeaweedFS_volumeServer_total_disk_size / 1024 / 1024
+```
+
+**Bucket sizes in GB:**
+```promql
+SeaweedFS_volumeServer_total_disk_size / 1024 / 1024 / 1024
+```
+
+### Accessing SeaweedFS Metrics Directly
+
+```bash
+# Port-forward to SeaweedFS (metrics are on port 8081)
+kubectl port-forward -n rig-system svc/seaweedfs 8081:8081
+
+# Query metrics
+curl http://localhost:8081/metrics | grep SeaweedFS_volumeServer_total_disk_size
+```
+
+### Configuration
+
+SeaweedFS metrics are enabled in the deployment:
+
+```yaml
+# infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/deployment.yaml
+spec:
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+```
+
 ## Accessing Prometheus UI
 
 ```bash
@@ -243,6 +305,12 @@ Dedicated scrape jobs are configured in the Prometheus ConfigMap:
   static_configs:
     - targets: ['minio.rig-system:9000']
   metrics_path: /minio/v2/metrics/cluster
+
+# SeaweedFS job (static config, sandbox only)
+- job_name: 'seaweedfs'
+  static_configs:
+    - targets: ['seaweedfs.rig-system:8081']
+  metrics_path: /metrics
 ```
 
 ## Limitations

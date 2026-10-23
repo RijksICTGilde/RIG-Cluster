@@ -554,6 +554,9 @@ BY_KEY = {component.key: component for component in COMPONENTS}
 # dekking-poort en de toetsen rood: dat is hoe niets stilletjes verdwijnt.
 NON_ROTATABLE: dict[str, str] = {
     "vault-init-secret.yaml": "alleen relevant waar Vault draait; op odcn niet uitgerold",
+    "seaweedfs-credentials-secret.yaml": "de admin-identiteit leeft NIET in dit bestand maar in de "
+    "filer-configuratie; een nieuw sleutelpaar in het bestand maakt daar geen identiteit van, dus "
+    "roteren vraagt een eigen procedure langs weed shell (RC-331, proef op de sandbox)",
 }
 
 # Rijen zonder template-bestand, met de reden (hun schrijfpad is anders dan de templates-boom).

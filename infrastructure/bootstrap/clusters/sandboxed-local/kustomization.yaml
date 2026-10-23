@@ -9,6 +9,8 @@ resources:
   - ../../infrastructure/keycloak/controller/overlays/sandboxed-local
   - ../../infrastructure/keycloak/config/overlays/sandboxed-local
   - ../../infrastructure/minio/controller/overlays/sandboxed-local
+  # Proef naast minio (RC-331), alleen hier; odcn haalt hem niet op.
+  - ../../infrastructure/seaweedfs/controller/overlays/sandboxed-local
   - ../../infrastructure/prometheus/controller/overlays/sandboxed-local
   - ../../infrastructure/redis/controller/overlays/sandboxed-local
   # De mailrelay in zijn eigen RON-namespace (RC-114) staat hier bewust NIET aan. De
@@ -68,6 +70,15 @@ patches:
   - target:
       kind: Deployment
       name: minio
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "10m"
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+  - target:
+      kind: Deployment
+      name: seaweedfs
     patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu

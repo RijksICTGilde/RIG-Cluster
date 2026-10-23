@@ -176,6 +176,7 @@ class ProvisionContext:
     force_clone: bool
     database_manager: Any
     minio_manager: Any
+    seaweedfs_manager: Any
     keycloak_manager: Any
     redis_manager: Any
     mail_manager: Any
