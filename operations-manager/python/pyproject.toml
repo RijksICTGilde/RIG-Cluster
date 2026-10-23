@@ -98,6 +98,7 @@ test = [
     "pytest-minio-mock>=0.4.17",
     "pytest-timeout>=2.3.1",
     "pytest-randomly>=3.16.0",
+    "schemathesis>=4.0",
 ]
 dev = [
     "ruff>=0.11.11",
@@ -174,6 +175,9 @@ ignore = [
 # Tests can use asserts, dynamic types, subprocess calls, hardcoded test secrets, and complex helper functions
 "tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
 "functional_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
+# Het harnas van de aanvalsproef is testcode: asserts, wegwerpsleutels en subprocess-aanroepen
+# horen erbij.
+"security_tests/**.py" = ["S101", "S105", "S603", "S607", "S608", "S701", "ANN201", "ANN401", "TRY300", "S106"]
 # C901 blijft: de complexiteitsdrempel van bestaande orchestratiefuncties is een eigen
 # opruimtaak, niet een beveiligingsregel.
 "opi/**.py" = ["C901"]
@@ -219,6 +223,9 @@ command_line = "-m pytest"
 relative_files = true # needed for sonarcloud code coverage
 omit = [
     "tests/*",
+    # Het harnas van de aanvalsproef (security-proof) is toetslaag, geen applicatiecode onder
+    # de 90%-eis; hij draait tegen een eigen wegwerp-sandbox en niet in de standaardrun.
+    "security_tests/*",
     # Operational/diagnostic scripts are not application code under the 90% bar.
     # Some are imported by tests (e.g. probe-spec drift, upgrade-safety), which
     # would otherwise pull their partial coverage into the application metric.

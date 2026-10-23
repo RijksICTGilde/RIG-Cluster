@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from opi.forms.editables.editable import Editable, WidgetType
 from opi.forms.layout import Fieldset
 from opi.forms.visualizers.sections import FormSection
@@ -16,6 +17,7 @@ from opi.web.router_wizard import (
     _get_section_from_flow,
     _render_step_html,
     _section_has_errors,
+    flow_uit_pad,
 )
 
 
@@ -44,6 +46,18 @@ class TestGetSectionFromFlow:
     def test_raises_for_unknown_flow(self):
         with pytest.raises(KeyError, match="Unknown flow"):
             _get_section_from_flow("nonexistent-flow", "identity")
+
+
+class TestFlowUitPad:
+    """RC-371: een onbekende flow in het pad geeft 404, niet de ongevangen 500 van get_flow."""
+
+    def test_finds_existing_flow(self):
+        assert flow_uit_pad("create-project").flow_id == "create-project"
+
+    def test_raises_404_for_unknown_flow(self):
+        with pytest.raises(HTTPException) as exc_info:
+            flow_uit_pad("nonexistent-flow")
+        assert exc_info.value.status_code == 404
 
 
 class TestRenderStepHtml:

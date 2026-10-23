@@ -68,6 +68,7 @@ from opi.web.router_wizard import (
     _extract_section_data,
     _find_sequence_editable,
     _split_data_across_sections,
+    flow_uit_pad,
 )
 from opi.web.router_wizard_attachments import REPLACE_TARGET_KEY
 from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
@@ -713,7 +714,7 @@ async def modal_wizard_init(request: Request, project_name: str, flow_id: str) -
         deployments.append({"cluster": settings.CLUSTER_MANAGER})
         project_data = {**project_data, "deployments": deployments}
 
-    flow = get_flow(flow_id, **flow_context)
+    flow = flow_uit_pad(flow_id, **flow_context)
 
     # Populate transient fields for deferred editables (e.g. custom domain text input)
     processor = EditableFormProcessor()
