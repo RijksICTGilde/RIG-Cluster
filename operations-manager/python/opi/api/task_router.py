@@ -279,18 +279,17 @@ async def list_tasks(
     Requires the project's API key (X-API-Key header) and a project_name
     query parameter. Tasks are filtered to the authenticated project.
     """
-    task_service = _get_task_service(request)
-
-    if not project_name:
-        raise HTTPException(status_code=400, detail="project_name query parameter is required")
-
-    # Validate API key against the requested project
+    # Herkenning gaat voor alles: naamloze aanroeper krijgt 401, niet 503 of 400.
     api_key = request.headers.get("X-API-Key")
     if not api_key:
         raise HTTPException(status_code=401, detail="Authentication required - provide X-API-Key header")
+    if not project_name:
+        raise HTTPException(status_code=400, detail="project_name query parameter is required")
     project = get_project_store().get(project_name)
     if not project or not secrets.compare_digest(project.api_key, api_key):
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+    task_service = _get_task_service(request)
 
     logger.info(
         "Listing tasks (project=%s, deployment=%s, status=%s, limit=%d, offset=%d)",

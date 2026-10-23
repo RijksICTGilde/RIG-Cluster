@@ -408,11 +408,22 @@ async def wizard_start(request: Request) -> Response:
 # ---------------------------------------------------------------------------
 
 
+def flow_uit_pad(flow_id: str, **context: Any) -> FormFlow:
+    """De flow waar een pad naar wijst, of 404.
+
+    ``get_flow`` werpt een KeyError op onbekende id; dit vangt die en geeft 404 in plaats van 500.
+    """
+    try:
+        return get_flow(flow_id, **context)
+    except KeyError as fout:
+        raise HTTPException(status_code=404, detail=f"Onbekende wizard: {flow_id}") from fout
+
+
 @wizard_router.get("/{flow_id}", response_class=HTMLResponse)
 @requires_sso
 async def wizard_page(request: Request, flow_id: str) -> HTMLResponse:
     """Render the full wizard page, resuming existing state if available."""
-    flow = get_flow(flow_id)
+    flow = flow_uit_pad(flow_id)
     user = get_current_user(request)
 
     # Check for existing wizard state for this flow
@@ -535,7 +546,7 @@ async def wizard_edit_page(request: Request, flow_id: str, project_name: str) ->
     """Render the wizard page pre-filled from an existing project."""
     from opi.web.project_edit_security import require_project_edit_access
 
-    flow = get_flow(flow_id)
+    flow = flow_uit_pad(flow_id)
     user = get_current_user(request)
 
     # Enforce admin/owner role: the wizard edit flow exposes users/role and

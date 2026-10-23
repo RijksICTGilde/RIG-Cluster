@@ -71,8 +71,9 @@ De melding noemt het component en de as, zodat duidelijk is waar het gat zit.
 ## De aanvalsproef leest dezelfde lijst
 
 `aanvalsproef_doelen()` geeft de component-id's die de aanvalsproef moet dekken. Het
-harnas van de proef leest die functie in plaats van een eigen lijst van onderdelen bij te
-houden, en `ongedekte_aanvalsproef()` meldt elk component met score H dat er niet in staat.
+harnas van de proef (zie `features/aanvalsproef.md`) leest die functie in plaats van een eigen
+lijst van onderdelen bij te houden, en `ongedekte_aanvalsproef()` meldt elk component met
+score H dat er niet in staat.
 
 ## Afhankelijkheden
 

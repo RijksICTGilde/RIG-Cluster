@@ -186,9 +186,9 @@ def test_de_controle_wordt_rood_van_een_route_zonder_herkenning() -> None:
     worden opgemerkt. Daarmee staat vast dat een groene uitslag hierboven betekent dat de
     routes in orde zijn, en niet dat de controle niets vond om naar te kijken.
     """
-    # Zonder docs_url en redoc_url, want FastAPI hangt die routes zelf op en ze zijn
-    # hier niet het onderwerp.
-    eigen_app = FastAPI(docs_url=None, redoc_url=None)
+    # Zonder de documentroutes van FastAPI zelf (/docs, /redoc, /openapi.json) meet deze
+    # tegenproef alleen de route die zij neerzet.
+    eigen_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @eigen_app.get("/een-nieuwe-route-zonder-decorator")
     async def nieuwe_route() -> dict[str, str]:
@@ -202,9 +202,7 @@ def test_de_controle_wordt_rood_van_een_route_zonder_herkenning() -> None:
 
 def test_de_controle_is_tevreden_met_een_herkenning() -> None:
     """En het omgekeerde, anders zou een controle die altijd klaagt er ook door komen."""
-    # Zonder docs_url en redoc_url, want FastAPI hangt die routes zelf op en ze zijn
-    # hier niet het onderwerp.
-    eigen_app = FastAPI(docs_url=None, redoc_url=None)
+    eigen_app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @eigen_app.get("/een-nieuwe-route-met-decorator")
     @requires_sso

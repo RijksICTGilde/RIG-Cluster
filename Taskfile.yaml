@@ -1581,6 +1581,38 @@ tasks:
     cmds:
       - uv run pip-audit --strict --desc
 
+  security-proof:
+    desc: "Aanvalsproef: zet een wegwerp-sandbox op, beproef hem, en schrijf het rapport"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m security_tests.proef
+
+  security-proof:up:
+    desc: "Breng de wegwerp-sandbox van de aanvalsproef omhoog op poort 8311"
+    dir: operations-manager/python
+    cmds:
+      - |
+        if curl -fsS http://127.0.0.1:8311/health >/dev/null 2>&1; then
+          echo "proefsandbox draait al op http://127.0.0.1:8311"
+          exit 0
+        fi
+        mkdir -p ../security-proof/.proef
+        nohup uv run python -m security_tests.sandbox > ../security-proof/.proef/sandbox.log 2>&1 &
+        timeout 300 bash -c 'until curl -fsS http://127.0.0.1:8311/health >/dev/null 2>&1; do sleep 1; done'
+        uv run python -m security_tests.doel
+
+  security-proof:down:
+    desc: "Breek de wegwerp-sandbox van de aanvalsproef af"
+    dir: operations-manager/python
+    cmds:
+      - uv run python -m security_tests.sandbox stop
+
+  security-proof:fuzzers:
+    desc: "Draai alleen de gerichte proeven tegen een al draaiende wegwerp-sandbox"
+    dir: operations-manager/python
+    cmds:
+      - uv run pytest security_tests -q -p no:cacheprovider
+
   security-scan-image:
     desc: "Scan operations-manager Docker image for vulnerabilities with Trivy"
     cmds:

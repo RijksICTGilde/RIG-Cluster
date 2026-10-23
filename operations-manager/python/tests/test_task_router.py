@@ -666,10 +666,15 @@ class TestTaskServiceUnavailable:
         self,
         test_client_without_task_service: TestClient,
     ) -> None:
-        """GET /api/tasks should return 503 when task_service is absent."""
-        response = test_client_without_task_service.get(
-            f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
-        )
+        """GET /api/tasks should return 503 when task_service is absent.
+
+        De sleutel moet hier echt kloppen: de route controleert de herkenning voordat hij de
+        taakdienst opzoekt, zodat een naamloze aanroeper 401 krijgt en niet 503 (RC-371).
+        """
+        with patch("opi.api.task_router.get_project_store", return_value=_mock_project_service()):
+            response = test_client_without_task_service.get(
+                f"/api/tasks?project_name={SAMPLE_PROJECT}", headers=AUTH_HEADERS
+            )
 
         assert response.status_code == 503
 
