@@ -9,13 +9,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from opi.manager.project_validation import validate_service_availability
+import pytest
+from opi.core.project_schema import ProjectIntegrityError
+from opi.manager.project_validation import validate_project_structure, validate_service_availability
 from opi.services.catalog.base import ManifestContext
 from opi.services.registry import get_service
 from opi.services.services_enums import ServiceType
 from opi.utils.secrets import MinIOSecret, SeaweedFSSecret
 
 DIENST = get_service(ServiceType.SEAWEEDFS_STORAGE)
+MINIO = get_service(ServiceType.MINIO_STORAGE)
 
 
 def _project(deployments: list[dict[str, Any]], componenten: list[dict[str, Any]]) -> dict[str, Any]:
@@ -142,3 +145,102 @@ class TestSecret:
             get_secret=lambda dep, soort, klasse: creds,
         )
         assert DIENST.build_secret_files(ctx) == []
+
+
+def _minio_project(
+    deployments: list[dict[str, Any]], componenten: list[dict[str, Any]], services: list[Any] | None = None
+) -> dict[str, Any]:
+    return {
+        "name": "proj",
+        "services": services if services is not None else ["minio-storage"],
+        "components": componenten,
+        "deployments": deployments,
+    }
+
+
+class TestVervangenDoorEenOpvolger:
+    """RC-382: minio-storage draagt ``replaced_by = seaweedfs-storage``."""
+
+    def test_vervangen_waar_de_opvolger_bestaat(self) -> None:
+        assert MINIO.replaced_on_cluster("sandboxed-local") is True
+
+    def test_niet_vervangen_waar_de_opvolger_ontbreekt(self) -> None:
+        # seaweedfs-storage is er niet op productie (TestBeschikbaarheid hierboven),
+        # dus er is niets om naar over te stappen.
+        assert MINIO.available_on_cluster("odcn-production") is True
+        assert MINIO.replaced_on_cluster("odcn-production") is False
+
+    def test_replacement_name_is_de_weergavenaam_van_de_opvolger(self) -> None:
+        assert MINIO.replacement_name() == DIENST.definition.name
+
+    def test_de_opvolger_zelf_is_nooit_vervangen(self) -> None:
+        assert DIENST.replaced_by is None
+        assert DIENST.replaced_on_cluster("sandboxed-local") is False
+
+
+class TestValidatieVanEenVervangenDienst:
+    """``validate_service_availability`` met zijn tweede, zachtere regel (RC-382):
+    een deployment die minio-storage al had, houdt hem; een deployment die hem
+    NIEUW zou krijgen op een cluster met de opvolger, wordt geweigerd."""
+
+    def _dep(self, naam: str = "dep", cluster: str = "sandboxed-local") -> dict[str, Any]:
+        return {"name": naam, "cluster": cluster, "namespace": "proj", "components": [{"reference": "web"}]}
+
+    def _comp(self, services: list[Any] | None = None) -> list[dict[str, Any]]:
+        return [{"name": "web", "services": services if services is not None else ["minio-storage"]}]
+
+    def test_nieuw_project_met_de_vervangen_dienst_wordt_geweigerd(self) -> None:
+        project = _minio_project([self._dep()], self._comp())
+        fouten = validate_service_availability(project, previous=None)
+        assert len(fouten) == 1
+        assert "minio-storage" in fouten[0]
+        assert "seaweedfs-storage" in fouten[0]
+        assert "dep" in fouten[0]
+
+    def test_een_deployment_die_hem_al_had_houdt_hem(self) -> None:
+        project = _minio_project([self._dep()], self._comp())
+        vorige = _minio_project([self._dep()], self._comp())
+        assert validate_service_availability(project, previous=vorige) == []
+
+    def test_een_tweede_deployment_die_hem_erbij_krijgt_wordt_geweigerd(self) -> None:
+        oud_comp = {"name": "oud-comp", "services": ["minio-storage"]}
+        nieuw_comp = {"name": "web", "services": ["minio-storage"]}
+        oud_dep = {**self._dep("oud"), "components": [{"reference": "oud-comp"}]}
+        vorige = {
+            "name": "proj",
+            "services": ["minio-storage"],
+            "components": [oud_comp],
+            "deployments": [oud_dep],
+        }
+        project = {
+            "name": "proj",
+            "services": ["minio-storage"],
+            "components": [oud_comp, nieuw_comp],
+            "deployments": [oud_dep, self._dep("nieuw")],
+        }
+
+        fouten = validate_service_availability(project, previous=vorige)
+        assert len(fouten) == 1
+        assert "nieuw" in fouten[0]
+
+    def test_op_een_cluster_zonder_opvolger_verandert_er_niets(self) -> None:
+        # odcn-production heeft geen seaweedfs-storage, dus minio-storage is daar niet
+        # vervangen: zelfs zonder vorige versie mag een deployment hem gewoon krijgen.
+        project = _minio_project([self._dep(cluster="odcn-production")], self._comp())
+        assert validate_service_availability(project, previous=None) == []
+
+    @pytest.mark.asyncio
+    async def test_de_opslagweg_weigert_en_noemt_de_opvolger(self) -> None:
+        """De weigering die telt: de wizard, de API en een handgeschreven bestand lopen hier langs."""
+        with pytest.raises(ProjectIntegrityError) as fout:
+            await validate_project_structure(_minio_project([self._dep()], self._comp()))
+        assert ServiceType.MINIO_STORAGE.value in str(fout.value)
+        assert ServiceType.SEAWEEDFS_STORAGE.value in str(fout.value)
+
+    @pytest.mark.asyncio
+    async def test_de_opslagweg_geeft_de_vorige_versie_door(self) -> None:
+        """Zonder die doorgifte zou elke save van een bestaand MinIO-project geweigerd worden."""
+        await validate_project_structure(
+            _minio_project([self._dep()], self._comp()),
+            previous=_minio_project([self._dep()], self._comp()),
+        )

@@ -13,6 +13,7 @@ from opi.forms.visualizers.providers import (
     KeycloakTemplateOptionsProvider,
     PullPolicyOptionsProvider,
     RepositoryOptionsProvider,
+    ServiceOptionsProvider,
     StorageSizeOptionsProvider,
     StorageTypeOptionsProvider,
     UserRoleOptionsProvider,
@@ -110,6 +111,30 @@ class TestUserRoleOptionsProvider:
         values = [o["value"] for o in UserRoleOptionsProvider().get_options()]
         assert "member" in values
         assert "operator" not in values
+
+
+class TestServiceOptionsProviderVervangenDienst:
+    """RC-382: de kaart van een vervangen dienst (minio-storage, op een cluster met
+    seaweedfs-storage) blijft alleen staan voor een project dat de dienst al heeft."""
+
+    def test_geen_kaart_voor_een_project_dat_hem_nog_niet_heeft(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        options = ServiceOptionsProvider(project_services=[]).get_options()
+        assert "minio-storage" not in [o["value"] for o in options]
+
+    def test_de_kaart_blijft_staan_voor_een_project_dat_hem_al_heeft(self, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        options = ServiceOptionsProvider(project_services=["minio-storage"]).get_options()
+        minio = next(o for o in options if o["value"] == "minio-storage")
+        assert minio["replaced_by"] == "seaweedfs-storage"
+
+    def test_zonder_opvolger_op_dit_cluster_blijft_de_kaart_voor_iedereen(self, monkeypatch) -> None:
+        # odcn-production heeft geen seaweedfs-storage, dus minio-storage is daar niet
+        # vervangen en is nog steeds een gewone kaart, ook zonder project_services.
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "odcn-production")
+        options = ServiceOptionsProvider(project_services=[]).get_options()
+        minio = next(o for o in options if o["value"] == "minio-storage")
+        assert "replaced_by" not in minio
 
 
 class TestFilteredServiceOptionsProvider:

@@ -283,3 +283,46 @@ async def test_both_flows_reconcile_the_selection_the_same_way(section: Any) -> 
     services = await _submit_services(section, base, post)
 
     assert sorted(_names(services)) == sorted([LOCKED_BY_DEPENDENCY, "keycloak", NEVER_OFFERED])
+
+
+# ---------------------------------------------------------------------------
+# BUG 5 (RC-382) - "offered" must ask with the SAME context the renderer used
+#
+# ServiceOptionsProvider keeps the card for a replaced service (minio-storage, on a
+# cluster with seaweedfs-storage) only for a project that already carries it --
+# ``offered_selection_values`` has to feed it that project's own services, or it
+# concludes the card was never shown and the mirror image of bug 2 above happens:
+# NEVER_OFFERED's rule ("absent survives") now also protects a service the user
+# just unticked.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_replaced_service_the_base_already_has_can_still_be_unticked(monkeypatch) -> None:
+    from opi.core.config import settings
+
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+    base = {"services": [LOCKED_BY_DEPENDENCY, "minio-storage"]}
+    post = {"services": [LOCKED_BY_DEPENDENCY]}  # the user unticked minio-storage
+
+    services = await _submit_services(SERVICES_SECTION, base, post)
+
+    assert "minio-storage" not in _names(services)
+
+
+def test_offered_follows_the_project_its_own_services(monkeypatch) -> None:
+    """minio-storage is replaced on this cluster: the card the user actually saw
+    depends on whether THEIR project already carries it, so ``offered`` must too."""
+    from opi.core.config import settings
+
+    monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    without_it = offered_selection_values(SERVICES_SECTION.editables, "services", {"project_services": ["keycloak"]})
+    with_it = offered_selection_values(
+        SERVICES_SECTION.editables, "services", {"project_services": ["keycloak", "minio-storage"]}
+    )
+
+    assert without_it is not None
+    assert "minio-storage" not in without_it
+    assert with_it is not None
+    assert "minio-storage" in with_it

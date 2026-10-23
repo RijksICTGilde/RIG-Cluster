@@ -1,8 +1,9 @@
 """seaweedfs-storage: de proef met SeaweedFS als tweede object-storage-service (RC-331).
 
-Naast ``minio-storage`` en niet in zijn plaats, want wat erachter zit is anders: een ander
-beheerprotocol, een ander IAM-model, andere poorten. Het resultaat staat alleen op de
-sandbox, en productie verandert niet.
+De opvolger van ``minio-storage``: sinds RC-382 draagt die dienst ``replaced_by`` naar deze,
+dus op een cluster waar SeaweedFS er is ziet een nieuw project de MinIO-kaart niet meer. Wat
+erachter zit is wel anders: een ander beheerprotocol, een ander IAM-model, andere poorten. De
+dienst staat alleen op de sandbox, en productie verandert niet.
 
 Drie dingen zijn met opzet zoals ze zijn:
 

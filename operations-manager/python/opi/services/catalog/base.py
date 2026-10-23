@@ -759,6 +759,11 @@ class Service(ABC):
     #: its directory. ``__init_subclass__`` rejects a subclass that forgets it.
     definition: ClassVar[ServiceDefinition]
 
+    #: De dienst die deze dienst opvolgt, of None. Zie ``replaced_on_cluster``.
+    #: Niet te verwarren met ``superseded_by_component_details``, dat een feit op de
+    #: deploymentkaart is en niets over de catalogus zegt.
+    replaced_by: ClassVar[ServiceType | None] = None
+
     #: Pydantic model for this service's config, or None if it takes no config.
     config_model: ClassVar[type[BaseModel] | None] = None
     #: Current config schema version (major.minor), or None for a service that takes no
@@ -1623,6 +1628,29 @@ class Service(ABC):
         the API and a hand-written project file never see a card.
         """
         return True
+
+    def replaced_on_cluster(self, cluster: str) -> bool:
+        """Of deze dienst op ``cluster`` vervangen is door ``replaced_by``.
+
+        Alleen waar de opvolger er echt is: zolang die op een cluster ontbreekt, is er
+        niets om naar over te stappen en verandert daar niets. Dezelfde twee lezers als
+        ``available_on_cluster``, met een zachtere uitkomst: de kiezer laat de kaart weg
+        voor wie de dienst nog niet heeft, en de validatie weigert alleen een deployment
+        die hem erbij krijgt.
+        """
+        if self.replaced_by is None:
+            return False
+        from opi.services.registry import get_service
+
+        return get_service(self.replaced_by).available_on_cluster(cluster)
+
+    def replacement_name(self) -> str | None:
+        """De weergavenaam van de opvolger, voor een melding die hem noemt."""
+        if self.replaced_by is None:
+            return None
+        from opi.services.registry import get_service
+
+        return get_service(self.replaced_by).definition.name
 
     def manifest_activation_types(self) -> tuple[ServiceType, ...]:
         """Service types whose presence in a component activates this provider's

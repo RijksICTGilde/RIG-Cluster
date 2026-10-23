@@ -342,3 +342,49 @@ class TestEenVergrendeldeDienstOverleeftHetVersturen:
         twee keer in de POST."""
         html = self._render(["keycloak", "publish-on-web"])
         assert '<input type="hidden" name="services[]"' not in html
+
+
+class TestDeKaartVanEenVervangenDienst:
+    """RC-382: de pil op de kaart komt uit ``option['replaced_by']``, dat
+    ``ServiceOptionsProvider`` alleen zet voor een project dat de dienst al heeft."""
+
+    def _render(self, monkeypatch: pytest.MonkeyPatch, project_services: list[str]) -> str:
+        from opi.core.config import settings
+        from opi.forms.field import FormField
+        from opi.forms.visualizers.providers import ServiceOptionsProvider
+        from opi.forms.widgets.lotc import LOTCWidgetAdapter
+
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+        options = ServiceOptionsProvider(project_services=project_services).get_options()
+
+        field = FormField(
+            name="services",
+            path="services",
+            schema_type=list,
+            widget_type="service_cards",
+            label="Services",
+            value=project_services,
+            options=options,
+        )
+        return LOTCWidgetAdapter().render_service_cards(field)
+
+    def _card(self, html: str, service: str) -> str:
+        after = html.split(f'data-service="{service}"', 1)[1]
+        return after.split("data-service=", 1)[0]
+
+    def test_de_pil_noemt_de_opvolger_op_de_kaart_van_een_bestaand_project(self, monkeypatch) -> None:
+        html = self._render(monkeypatch, ["minio-storage"])
+        card = self._card(html, "minio-storage")
+        assert "Vervangen door seaweedfs-storage" in card
+        assert "Uitzetten kan niet terug" in card
+
+    def test_geen_pil_op_een_dienst_die_niet_vervangen_is(self, monkeypatch) -> None:
+        html = self._render(monkeypatch, ["minio-storage"])
+        card = self._card(html, "redis")
+        assert "Vervangen door" not in card
+
+    def test_de_kaart_bestaat_niet_eens_voor_een_project_dat_hem_nog_niet_heeft(self, monkeypatch) -> None:
+        # ServiceOptionsProvider liet de kaart al weg; dit is de garantie dat de HTML
+        # dus ook geen pil voor een dienst toont die er niet is.
+        html = self._render(monkeypatch, [])
+        assert 'data-service="minio-storage"' not in html

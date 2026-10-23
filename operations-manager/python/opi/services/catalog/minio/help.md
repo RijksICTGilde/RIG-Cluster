@@ -2,6 +2,22 @@
 
 Opslag voor bestanden via een S3-compatibele koppeling. Je krijgt een eigen bucket waarin je applicatie documenten, afbeeldingen of grote bestanden kan zetten en weer ophalen.
 
+## Vervangen door SeaweedFS
+
+Op een cluster waar **SeaweedFS Object Storage** beschikbaar is, is deze dienst zijn
+opvolger: MinIO distribueert zijn images niet meer, en SeaweedFS kan wat wij van MinIO
+gebruiken. Daar geldt:
+
+- een nieuw project of een nieuwe deployment kiest SeaweedFS; de MinIO-kaart staat er niet
+  meer, en een projectbestand of API-aanroep die hem toch kiest wordt geweigerd;
+- een deployment die MinIO al heeft, houdt hem: bucket, back-up, restore en configuratie
+  blijven werken, en de kaart blijft staan zodat je hem kunt bewerken;
+- zet je hem uit, dan kun je hem niet opnieuw aanzetten.
+
+Op een cluster zonder SeaweedFS (vandaag: productie) verandert er niets. Zie
+`features/dienst-vervangen-door-een-opvolger.md` en `features/seaweedfs-objectopslag.md`.
+De migratie van bestaande buckets komt apart.
+
 ## Wanneer gebruik je dit?
 
 - Gebruikers uploaden bestanden die je moet bewaren

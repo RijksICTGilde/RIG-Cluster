@@ -151,7 +151,9 @@ ALL_CREATE_WIZARD_SERVICES = [
     "persistent-storage",
     "temp-storage",
     "postgresql-database",
-    "minio-storage",
+    # seaweedfs-storage en niet minio-storage: MinIO is op een cluster met SeaweedFS
+    # vervangen (RC-382), dus zijn kaart staat er niet meer voor een nieuw project.
+    "seaweedfs-storage",
     "redis",
     "attachments",
 ]

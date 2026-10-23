@@ -5,7 +5,7 @@ Dit is de positie waarin de zad-cli staat (vraag 10 en 11 uit
 `plans/vragen-uit-zad-cli.md`): een API-sleutel, de twee leesendpoints, en geen
 kennis van het projectbestand. De suite doet precies wat zij doen:
 
-1. maak een project met een database- en een bucketdienst;
+1. maak een project met een databasedienst;
 2. maak een backup via de API;
 3. lees de naam uit `GET /api/v1/backup/runs/...` en uit
    `GET /api/v1/restore/snapshots/...`;
@@ -44,7 +44,9 @@ pytestmark = [pytest.mark.e2e, pytest.mark.sandbox]
 
 _VERIFY_SSL = FORGEJO_VERIFY_SSL
 _CLUSTER = "sandboxed-local"
-_SERVICES = ["postgresql-database", "minio-storage"]
+# SeaweedFS replaces minio-storage on this cluster (RC-382) but has no backup yet.
+# Bucket migration is separate; this suite tests the database half (RC-81, RC-82).
+_SERVICES = ["postgresql-database"]
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +55,7 @@ def restore_project(
     sandbox_url: str,
     forgejo: ForgejoClient,
 ) -> Generator[CreatedProject]:
-    """Een project met een database en een bucket, plus een backup."""
+    """Een project met een database, plus een backup."""
     display_name = unique_project_name(prefix="rest")
     page = sandbox_context.new_page()
     created: CreatedProject | None = None
@@ -66,7 +68,7 @@ def restore_project(
             user_email=SANDBOX_TEST_USER["email"],
             services=_SERVICES,
         )
-        logger.info("Project met database en bucket: %s (deployment %s)", created.name, created.deployment_name)
+        logger.info("Project met database: %s (deployment %s)", created.name, created.deployment_name)
         yield created
     finally:
         page.close()
@@ -96,7 +98,7 @@ def test_restore_van_buiten(restore_project: CreatedProject, sandbox_url: str) -
         "POST",
         f"/api/v1/backup/project/{project}/deployment/{deployment}",
         key,
-        json={"resource_types": ["database", "minio"]},
+        json={"resource_types": ["database"]},
     )
     logger.info("BACKUP %s %s", backup.status_code, backup.text[:2000])
 
@@ -145,26 +147,6 @@ def test_restore_van_buiten(restore_project: CreatedProject, sandbox_url: str) -
     )
     logger.info("RESTORE DOEL.INVALID %s %s", extern.status_code, extern.text[:2000])
 
-    bucketnamen = sorted(
-        {
-            item["reference_name"]
-            for run in runs.json().get("runs", [])
-            for item in run.get("items", [])
-            if item.get("resource_type") == "bucket"
-        }
-    )
-    logger.info("BUCKETNAMEN UIT BACKUP LIST: %s", bucketnamen)
-    assert bucketnamen, "backup list noemt geen enkele bucketbackup"
-
-    bucket = _api(
-        sandbox_url,
-        "POST",
-        f"/api/v1/restore/bucket/{_CLUSTER}/{namespace}/{bucketnamen[0]}?project_name={project}",
-        key,
-        json={},
-    )
-    logger.info("RESTORE EIGEN BUCKET %s %s", bucket.status_code, bucket.text[:2000])
-
     # De oude, gepubliceerde mapnaam bestaat niet meer als referentie; de 404 daarop
     # hoort te zeggen welke naam er dan wel is, zodat je niet hoeft te raden.
     onbekend = _api(
@@ -177,11 +159,8 @@ def test_restore_van_buiten(restore_project: CreatedProject, sandbox_url: str) -
     logger.info("RESTORE ONBEKENDE NAAM %s %s", onbekend.status_code, onbekend.text[:1000])
 
     # De snapshotlijst en de backuplijst noemen dezelfde naam, en dat is er een die werkt.
-    assert sorted(s["pvc_name"] for s in snaps.json()["snapshots"]) == sorted(names + bucketnamen)
+    assert sorted(s["pvc_name"] for s in snaps.json()["snapshots"]) == sorted(names)
     assert eigen.status_code == 200, f"restore zonder doelvelden faalde: {eigen.status_code} {eigen.text[:500]}"
-    assert bucket.status_code == 200, (
-        f"bucketrestore zonder doelvelden faalde: {bucket.status_code} {bucket.text[:500]}"
-    )
     assert extern.status_code == 400, f"doel.invalid gaf {extern.status_code}: {extern.text[:500]}"
     assert extern.json().get("error_category") == "InvalidTarget"
     assert onbekend.status_code == 404
