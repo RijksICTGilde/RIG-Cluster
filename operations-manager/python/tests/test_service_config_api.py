@@ -1057,8 +1057,9 @@ EXPECTED_API_TARGETS: dict[str, list[str]] = {
     "publish-on-web": ["component", "deployment", "deployment-component"],
     "redis": ["project"],
     "resource-tuning": [],
-    # RC-331: dezelfde ene instelling als minio-storage (enable-versioning), op dezelfde laag.
-    "seaweedfs-storage": ["project"],
+    # RC-331: enable-versioning op de projectlaag, zoals minio-storage. RC-380 zet daar de
+    # grens op oude versies bij, en die staat ook per deployment.
+    "seaweedfs-storage": ["project", "deployment"],
     # RC-114: the SMTP account belongs to the project; a component only decides whether
     # it gets the credentials, so there is nothing to configure on any other layer.
     "send-email": ["project"],

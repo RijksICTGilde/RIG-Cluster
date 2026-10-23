@@ -10,11 +10,13 @@ import asyncio
 import json
 import os
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from opi.connectors.minio_mc import MinioConnector
+from opi.connectors.minio_mc import MinioConnector, MinioExecutionError
 from opi.connectors.seaweedfs_shell import (
     JWT_SLEUTEL_ENV,
+    S3_ALIAS,
     SeaweedfsConfigurationError,
     SeaweedfsConnector,
     SeaweedfsExecutionError,
@@ -216,6 +218,74 @@ class TestFouten:
         assert SeaweedfsConnector.is_configured() is False
         with pytest.raises(SeaweedfsConfigurationError):
             await SeaweedfsConnector().list_buckets()
+
+
+class TestGrensOpOudeVersies:
+    """``ensure_noncurrent_version_rule`` (RC-380): loopt over `mc` op de S3-poort, niet
+    over `weed shell`. Hier staat de connector zelf gemockt, want de idempotentie van de
+    regel staat al bij ``MinioConnector`` (``test_noncurrent_versions.py``)."""
+
+    @pytest.fixture(autouse=True)
+    def _cluster_heeft_seaweedfs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "sandboxed-local")
+
+    async def test_zonder_admin_sleutels_geeft_een_configuratiefout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_ACCESS_KEY", "")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_SECRET_KEY", "")
+        with (
+            patch("opi.connectors.seaweedfs_shell.create_minio_connector") as fabriek,
+            pytest.raises(SeaweedfsConfigurationError, match="SEAWEEDFS_ADMIN_ACCESS_KEY"),
+        ):
+            await SeaweedfsConnector().ensure_noncurrent_version_rule("t-a", 30)
+        fabriek.assert_not_called()
+
+    async def test_zonder_seaweedfs_op_dit_cluster_geeft_een_configuratiefout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(settings, "CLUSTER_MANAGER", "local")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_ACCESS_KEY", "key")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_SECRET_KEY", "secret")
+        with pytest.raises(SeaweedfsConfigurationError):
+            await SeaweedfsConnector().ensure_noncurrent_version_rule("t-a", 30)
+
+    async def test_een_onbereikbare_alias_geeft_een_uitvoerfout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_ACCESS_KEY", "key")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_SECRET_KEY", "secret")
+        mc = MagicMock()
+        mc.is_alias_configured.return_value = False
+        mc.configure_alias = AsyncMock(return_value=False)
+        with (
+            patch("opi.connectors.seaweedfs_shell.create_minio_connector", return_value=mc),
+            pytest.raises(SeaweedfsExecutionError, match=S3_ALIAS),
+        ):
+            await SeaweedfsConnector().ensure_noncurrent_version_rule("t-a", 30)
+        mc.ensure_noncurrent_version_rule.assert_not_called()
+
+    async def test_de_regel_gaat_over_de_geconfigureerde_alias_naar_mc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_ACCESS_KEY", "key")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_SECRET_KEY", "secret")
+        mc = MagicMock()
+        mc.is_alias_configured.return_value = True
+        mc.configure_alias = AsyncMock()
+        mc.ensure_noncurrent_version_rule = AsyncMock(return_value={"status": "created"})
+        with patch("opi.connectors.seaweedfs_shell.create_minio_connector", return_value=mc):
+            result = await SeaweedfsConnector().ensure_noncurrent_version_rule("t-a", 30, expire_days=90)
+
+        assert result == {"status": "created"}
+        mc.configure_alias.assert_not_awaited()  # al geconfigureerd, dus niet opnieuw
+        mc.ensure_noncurrent_version_rule.assert_awaited_once_with(S3_ALIAS, "t-a", 30, 90)
+
+    async def test_een_mislukte_regel_bij_mc_wordt_een_seaweedfsfout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_ACCESS_KEY", "key")
+        monkeypatch.setattr(settings, "SEAWEEDFS_ADMIN_SECRET_KEY", "secret")
+        mc = MagicMock()
+        mc.is_alias_configured.return_value = True
+        mc.ensure_noncurrent_version_rule = AsyncMock(side_effect=MinioExecutionError("access denied"))
+        with (
+            patch("opi.connectors.seaweedfs_shell.create_minio_connector", return_value=mc),
+            pytest.raises(SeaweedfsExecutionError, match="access denied"),
+        ):
+            await SeaweedfsConnector().ensure_noncurrent_version_rule("t-a", 30)
 
 
 class TestBeleidsdocument:

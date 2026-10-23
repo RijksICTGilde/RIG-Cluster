@@ -8,7 +8,7 @@ for populating select/radio fields with dynamic data from OPI's domain.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, ClassVar, Final, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Protocol
 
 from opi.core.cluster_config import CLUSTER_CONFIG, get_selectable_clusters
 from opi.core.config import settings
@@ -24,10 +24,21 @@ from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT_STEPS,
     project_connection_limit,
 )
+from opi.services.catalog.shared.noncurrent_versions import (
+    MAX_NONCURRENT_VERSIONS,
+    MAX_NONCURRENT_VERSIONS_STEPS,
+    NONCURRENT_EXPIRE_DAYS,
+    NONCURRENT_EXPIRE_DAYS_STEPS,
+    project_max_noncurrent_versions,
+    project_noncurrent_expire_days,
+)
 from opi.services.catalog.shared.storage import STORAGE_SIZES
 from opi.services.resource_analyzer import parse_k8s_memory_to_mi
 from opi.services.services import ServiceAdapter, service_entry_name
 from opi.services.services_enums import ServiceKind, ServiceType
+
+if TYPE_CHECKING:
+    from opi.services.catalog.config_settings import IntegerSetting
 
 logger = logging.getLogger(__name__)
 
@@ -503,29 +514,43 @@ class PostgresStorageSizeOptionsProvider(StorageSizeOptionsProvider):
             return options
 
 
-class ConnectionLimitOptionsProvider:
-    """The connection-limit steps, plus the stored value when it is not one of them.
-    The empty choice stores nothing."""
+class IntegerStepOptionsProvider:
+    """De stappen van een ``IntegerSetting``, plus de opgeslagen waarde als die er niet bij
+    staat. De lege keuze slaat niets op, en wat dat betekent zegt de laag: op het project de
+    standaard van het platform, op een deployment de waarde van het project.
+
+    De stappen zijn een gemak; de grens zelf staat in de declaratie, en die is wat valideert.
+    """
 
     options_source: ClassVar[OptionsSource | None] = None
+    setting: ClassVar[IntegerSetting]
+    steps: ClassVar[tuple[int, ...]]
 
     def __init__(self, current_value: str | None = None, yaml_data: dict[str, Any] | None = None) -> None:
         self.current_value = current_value
         self.yaml_data = yaml_data or {}
 
     def empty_label(self) -> str:
-        return f"Standaard van het platform ({CONNECTION_LIMIT.default})"
+        default = self.setting.default
+        return "Geen grens" if default is None else f"Standaard van het platform ({default})"
 
     def get_options(self) -> list[dict[str, Any]]:
-        steps = list(CONNECTION_LIMIT_STEPS)
+        steps = list(self.steps)
         custom = int(self.current_value) if self.current_value and self.current_value.isdigit() else None
         if custom is not None and custom not in steps:
             steps = sorted([*steps, custom])
         options = [{"value": "", "label": self.empty_label()}]
         for step in steps:
-            label = str(step) if step in CONNECTION_LIMIT_STEPS else f"{step} (eigen waarde)"
+            label = str(step) if step in self.steps else f"{step} (eigen waarde)"
             options.append({"value": str(step), "label": label})
         return options
+
+
+class ConnectionLimitOptionsProvider(IntegerStepOptionsProvider):
+    """De connectielimiet van de projectdatabase (RC-201)."""
+
+    setting: ClassVar[IntegerSetting] = CONNECTION_LIMIT
+    steps: ClassVar[tuple[int, ...]] = CONNECTION_LIMIT_STEPS
 
 
 class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
@@ -533,6 +558,57 @@ class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
 
     def empty_label(self) -> str:
         return f"Volg het project ({project_connection_limit(self.yaml_data)})"
+
+
+class MaxNoncurrentVersionsOptionsProvider(IntegerStepOptionsProvider):
+    """Hoeveel oude versies een bucket met versioning houdt (RC-380).
+
+    Op de projectlaag is de lege keuze de standaard van het platform, en die is voor beide
+    object-opslagdiensten dezelfde declaratie; de dienst doet hier dus niet mee.
+    """
+
+    setting: ClassVar[IntegerSetting] = MAX_NONCURRENT_VERSIONS
+    steps: ClassVar[tuple[int, ...]] = MAX_NONCURRENT_VERSIONS_STEPS
+
+
+class NoncurrentExpireDaysOptionsProvider(IntegerStepOptionsProvider):
+    """De leeftijdsgrens op oude versies, bovenop het aantal (RC-380)."""
+
+    setting: ClassVar[IntegerSetting] = NONCURRENT_EXPIRE_DAYS
+    steps: ClassVar[tuple[int, ...]] = NONCURRENT_EXPIRE_DAYS_STEPS
+
+
+class DeploymentMaxNoncurrentVersionsOptionsProvider(MaxNoncurrentVersionsOptionsProvider):
+    """Op een deployment volgt de lege keuze het project, en dat is per dienst."""
+
+    service: ClassVar[ServiceType]
+
+    def empty_label(self) -> str:
+        return f"Volg het project ({project_max_noncurrent_versions(self.yaml_data, self.service)})"
+
+
+class DeploymentNoncurrentExpireDaysOptionsProvider(NoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType]
+
+    def empty_label(self) -> str:
+        days = project_noncurrent_expire_days(self.yaml_data, self.service)
+        return "Volg het project (geen grens)" if days is None else f"Volg het project ({days} dagen)"
+
+
+class MinioDeploymentMaxNoncurrentVersionsOptionsProvider(DeploymentMaxNoncurrentVersionsOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
+
+
+class MinioDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.MINIO_STORAGE
+
+
+class SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider(DeploymentMaxNoncurrentVersionsOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
+
+
+class SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider(DeploymentNoncurrentExpireDaysOptionsProvider):
+    service: ClassVar[ServiceType] = ServiceType.SEAWEEDFS_STORAGE
 
 
 class KeycloakTemplateOptionsProvider:
@@ -2153,6 +2229,12 @@ PROVIDER_REGISTRY: dict[str, type[OptionsProvider]] = {
     "PostgresStorageSizeOptionsProvider": PostgresStorageSizeOptionsProvider,
     "ConnectionLimitOptionsProvider": ConnectionLimitOptionsProvider,
     "DeploymentConnectionLimitOptionsProvider": DeploymentConnectionLimitOptionsProvider,
+    "MaxNoncurrentVersionsOptionsProvider": MaxNoncurrentVersionsOptionsProvider,
+    "NoncurrentExpireDaysOptionsProvider": NoncurrentExpireDaysOptionsProvider,
+    "MinioDeploymentMaxNoncurrentVersionsOptionsProvider": MinioDeploymentMaxNoncurrentVersionsOptionsProvider,
+    "MinioDeploymentNoncurrentExpireDaysOptionsProvider": MinioDeploymentNoncurrentExpireDaysOptionsProvider,
+    "SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider": SeaweedfsDeploymentMaxNoncurrentVersionsOptionsProvider,
+    "SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider": SeaweedfsDeploymentNoncurrentExpireDaysOptionsProvider,
     "KeycloakTemplateOptionsProvider": KeycloakTemplateOptionsProvider,
     "KeycloakAccountLinkOptionsProvider": KeycloakAccountLinkOptionsProvider,
     "PullPolicyOptionsProvider": PullPolicyOptionsProvider,

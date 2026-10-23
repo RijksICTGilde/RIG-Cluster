@@ -111,6 +111,18 @@ spec:
             secretKeyRef:
               name: seaweedfs-credentials
               key: WEED_JWT_FILER_SIGNING_KEY
+        # Het admin-sleutelpaar van de S3-poort. `weed shell` heeft geen lifecycle-commando,
+        # dus de grens op oude versies gaat over S3 (RC-380).
+        - name: SEAWEEDFS_ADMIN_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: AWS_ACCESS_KEY_ID
+        - name: SEAWEEDFS_ADMIN_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: seaweedfs-credentials
+              key: AWS_SECRET_ACCESS_KEY
         - name: REDIS_PASSWORD
           valueFrom:
             secretKeyRef:

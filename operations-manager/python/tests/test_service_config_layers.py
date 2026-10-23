@@ -97,10 +97,19 @@ class TestConfigLayersIsDerivedNotDeclared:
         assert ConfigLayer.COMPONENT in SERVICES[ServiceType.TEMP_STORAGE].config_layers()
 
     def test_a_layer_with_only_api_fields_counts(self) -> None:
-        # minio's deployment layer has no editables, only model-derived API fields.
-        minio = SERVICES[ServiceType.MINIO_STORAGE]
-        assert not minio.config_editables(ConfigLayer.DEPLOYMENT)
-        assert ConfigLayer.DEPLOYMENT in minio.config_layers()
+        # Geen dienst in de catalogus heeft vandaag nog zo'n laag: de deploymentlaag van
+        # minio-storage was het voorbeeld, tot de grens op oude versies (RC-380) hem een
+        # formulierveld gaf. De regel zelf wordt daarom op een afgeleide dienst gemeten.
+        class OnlyApiFields(type(SERVICES[ServiceType.MINIO_STORAGE])):  # type: ignore[misc]
+            def config_editables(self, layer: ConfigLayer) -> list:
+                return []
+
+            def config_settings(self) -> tuple:
+                return ()
+
+        service = OnlyApiFields()
+        assert service.config_api_fields(ConfigLayer.DEPLOYMENT)
+        assert ConfigLayer.DEPLOYMENT in service.config_layers()
 
     def test_a_behaviour_only_service_carries_no_config(self) -> None:
         assert SERVICES[ServiceType.PLATFORM].config_layers() == []

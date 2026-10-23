@@ -36,6 +36,11 @@ class MinioValidationError(Exception):
     """Exception raised when input validation fails."""
 
 
+#: Het ID van de lifecycle-regel die OPI op een bucket met versioning beheert. Andere
+#: regels op dezelfde bucket blijven staan; deze ene wordt vervangen.
+NONCURRENT_VERSION_RULE_ID = "zad-noncurrent-versions"
+
+
 class MinioConnector:
     """Connector for interacting with MinIO using mc CLI commands."""
 
@@ -827,12 +832,17 @@ class MinioConnector:
             if stdout.strip():
                 try:
                     version_info = json.loads(stdout.strip())
-                    status = version_info.get("status", "").lower()
+                    # De staat staat onder ``versioning``; het veld ``status`` ernaast is dat van
+                    # het COMMANDO ("success"). Dat las elke bucket als onversioneerd, waardoor
+                    # ensure_bucket_versioning nooit "unchanged" zag en nooit kon suspenden.
+                    # Gemeten op mc RELEASE.2025-08-13.
+                    versioning = version_info.get("versioning")
+                    state = (versioning if isinstance(versioning, dict) else version_info).get("status") or ""
 
                     return {
-                        "enabled": status == "enabled",
-                        "suspended": status == "suspended",
-                        "status": version_info.get("status", "Unversioned"),
+                        "enabled": state.lower() == "enabled",
+                        "suspended": state.lower() == "suspended",
+                        "status": state or "Unversioned",
                     }
                 except json.JSONDecodeError as e:
                     logger.warning(f"Failed to parse versioning info: {e}")
@@ -968,6 +978,85 @@ class MinioConnector:
         except Exception as e:
             logger.exception(f"Failed to ensure versioning state for bucket {bucket_name}")
             raise MinioExecutionError(f"Ensuring versioning state failed: {e}") from e
+
+    # Bucket Lifecycle Operations
+
+    async def get_bucket_lifecycle(self, alias: str, bucket_name: str) -> list[dict[str, Any]]:
+        """The lifecycle rules on a bucket, as the S3 document carries them.
+
+        An empty list for a bucket without a lifecycle configuration: ``mc`` reports that
+        as a failure, and "no rules yet" is not an error here.
+        """
+        validated_bucket_name = self._validate_bucket_name(bucket_name)
+        bucket_path = f"{alias}/{validated_bucket_name}"
+
+        stdout, stderr, code = await self._run_mc_command(["ilm", "rule", "export", bucket_path])
+        if code != 0:
+            if "not exist" in stderr.lower() or "not found" in stderr.lower():
+                return []
+            raise MinioExecutionError(f"Failed to read lifecycle of bucket {validated_bucket_name}: {stderr}")
+        if not stdout.strip():
+            return []
+        try:
+            document = json.loads(stdout)
+        except json.JSONDecodeError as e:
+            raise MinioExecutionError(f"Unreadable lifecycle document for bucket {validated_bucket_name}: {e}") from e
+        rules = document.get("Rules") or []
+        return [rule for rule in rules if isinstance(rule, dict)]
+
+    @staticmethod
+    def _noncurrent_version_rule(max_versions: int, expire_days: int | None) -> dict[str, Any]:
+        """The rule OPI owns: the newest ``max_versions`` noncurrent versions survive.
+
+        ``ExpiredObjectDeleteMarker`` cleans up a delete marker that has no version left
+        behind it, which is what remains once the versions under it are expired.
+        """
+        expiration: dict[str, Any] = {"NewerNoncurrentVersions": max_versions}
+        if expire_days is not None:
+            expiration["NoncurrentDays"] = expire_days
+        return {
+            "ID": NONCURRENT_VERSION_RULE_ID,
+            "Status": "Enabled",
+            "Expiration": {"ExpiredObjectDeleteMarker": True},
+            "NoncurrentVersionExpiration": expiration,
+        }
+
+    async def ensure_noncurrent_version_rule(
+        self, alias: str, bucket_name: str, max_versions: int, expire_days: int | None = None
+    ) -> dict[str, Any]:
+        """Idempotently put OPI's noncurrent-version rule on a bucket.
+
+        Only the rule with OPI's own ID is replaced; every other rule on the bucket is
+        written back untouched. An identical rule is left alone, so a reprocess does not
+        rewrite the configuration.
+
+        Returns:
+            ``{"status": "unchanged" | "created" | "updated", "rule": <the rule>}``
+        """
+        validated_bucket_name = self._validate_bucket_name(bucket_name)
+        desired = self._noncurrent_version_rule(max_versions, expire_days)
+        existing = await self.get_bucket_lifecycle(alias, validated_bucket_name)
+        current = next((rule for rule in existing if rule.get("ID") == NONCURRENT_VERSION_RULE_ID), None)
+
+        if current == desired:
+            logger.debug(f"Bucket {validated_bucket_name} already carries the noncurrent-version rule")
+            return {"status": "unchanged", "rule": desired}
+
+        others = [rule for rule in existing if rule.get("ID") != NONCURRENT_VERSION_RULE_ID]
+        document = json.dumps({"Rules": [*others, desired]})
+        bucket_path = f"{alias}/{validated_bucket_name}"
+        stdout, stderr, code = await self._run_mc_command(["ilm", "rule", "import", bucket_path], stdin_input=document)
+        if code != 0:
+            raise MinioExecutionError(
+                f"Failed to set the noncurrent-version rule on bucket {validated_bucket_name}: {stderr or stdout}"
+            )
+
+        status = "updated" if current is not None else "created"
+        logger.info(
+            f"Noncurrent-version rule {status} on bucket {validated_bucket_name}: "
+            f"max {max_versions} versions, expire_days={expire_days}"
+        )
+        return {"status": status, "rule": desired}
 
     # Convenience methods for common operations
 

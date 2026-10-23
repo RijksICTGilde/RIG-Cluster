@@ -50,6 +50,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 from opi.services.catalog.base import ConfigLayer, config_path
 from opi.services.resource_analyzer import K8S_QUANTITY_PATTERN, parse_k8s_cpu_to_m, parse_k8s_memory_to_mi
+from opi.services.services import service_entry_config, service_entry_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -141,6 +142,12 @@ class ConfigSetting(ABC):
     layer says anything, and it is checked against the declaration's own bounds at
     import time -- a default outside its own room is a bug in the declaration, not
     something to discover in production.
+
+    ``default=None`` declares a field that is simply NOT SET until a layer says
+    something: ``resolve_setting`` then answers None and the consumer leaves the thing
+    out. It is for a field whose "off" has no number to stand for it, such as an age
+    limit on top of a count limit, where 0 would be a magic value in a range that starts
+    at 1. A None default is not held against the bounds, because it is not a value in them.
     """
 
     path: str
@@ -164,10 +171,17 @@ class ConfigSetting(ABC):
                 f"een blok kleiner wordt. Wie dit veld op meer dan een laag nodig heeft, moet eerst de "
                 f"OPGELOSTE waarde per plek laten vergelijken."
             )
+        if self.default is None:
+            return
         try:
             self.check(self.default)
         except SettingError as e:
             raise ValueError(f"De standaardwaarde van '{self.path}' valt buiten zijn eigen speelruimte: {e}") from e
+
+    @property
+    def default_sentence(self) -> str:
+        """What the service does when no layer says anything, as one Dutch sentence."""
+        return "Standaard niet gezet." if self.default is None else f"Standaard {self.default}."
 
     @property
     def judges_changes(self) -> bool:
@@ -258,7 +272,7 @@ class IntegerSetting(ConfigSetting):
         return value
 
     def latitude(self) -> str:
-        return f"Een geheel getal van {self.minimum} tot en met {self.maximum}. Standaard {self.default}."
+        return f"Een geheel getal van {self.minimum} tot en met {self.maximum}. {self.default_sentence}"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -325,7 +339,7 @@ class QuantitySetting(ConfigSetting):
             )
 
     def latitude(self) -> str:
-        room = f"Een hoeveelheid van {self.minimum} tot en met {self.maximum}. Standaard {self.default}."
+        room = f"Een hoeveelheid van {self.minimum} tot en met {self.maximum}. {self.default_sentence}"
         return f"{room} Je kunt deze waarde later alleen verhogen." if self.grow_only else room
 
 
@@ -353,7 +367,7 @@ class ChoiceSetting(ConfigSetting):
         return value
 
     def latitude(self) -> str:
-        return f"Een van: {', '.join(self.allowed)}. Standaard {self.default}."
+        return f"Een van: {', '.join(self.allowed)}. {self.default_sentence}"
 
 
 def wrong_layer_message(setting: ConfigSetting, layer: ConfigLayer) -> str:
@@ -375,6 +389,22 @@ def read_setting_value(config: Any, setting: ConfigSetting) -> Any:
             return MISSING
         node = node[part]
     return node
+
+
+def service_setting_value(entries: Any, service: ServiceType, setting: ConfigSetting) -> Any:
+    """What one ``services`` list says about ``setting`` for ``service``, or None.
+
+    The layer is the list: a project's ``services``, or a deployment's. Reads the entry
+    format-agnostically (``service_entry_name``/``service_entry_config``), because a
+    configured service that happens to be written as a uniform record was otherwise read
+    as unconfigured. None means "says nothing", which is exactly what ``resolve_setting``
+    skips.
+    """
+    for entry in entries or []:
+        if service_entry_name(entry) == service.value:
+            value = read_setting_value(service_entry_config(entry), setting)
+            return None if value is MISSING else value
+    return None
 
 
 def resolve_setting(setting: ConfigSetting, values: Mapping[ConfigLayer, Any]) -> Any:

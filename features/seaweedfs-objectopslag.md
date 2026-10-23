@@ -186,6 +186,37 @@ een manier die gebruiker en isolatie niet raakt. K (kloon) en B (back-up) werken
 zijn in deze proef niet bedraad. M1 (metrieken) is het enige echte gat: grootte per bucket
 wel, objectaantal niet.
 
+### G20: de grens op oude versies (RC-380)
+
+Nieuwe rij, met de hand gemeten op 23-10-2026 tegen SeaweedFS 4.48 op de sandbox (nog niet
+in de regressiesuite, want het forceren van een lifecycle-ronde hoort bij die meting):
+
+| Rij | Wat | Uitkomst |
+|---|---|---|
+| G20 | Een lifecycle-regel met `NoncurrentVersionExpiration` + `NewerNoncurrentVersions` op een bucket met versioning | **werkt anders**: hij neemt de regel aan, geeft hem terug op `GetBucketLifecycleConfiguration`, bewaart hem als XML in de bucket-entry van de filer, en voert hem uit: 50 versies van een object werden 31 (30 oude plus de actuele). Maar de ronde die hem uitvoert draait **niet vanzelf** in deze uitrol. |
+
+Wat er precies gemeten is:
+
+- `put-bucket-lifecycle-configuration` met de regel: exit 0. `get-...` geeft hem letterlijk
+  terug, en `fs.meta.cat /buckets/<bucket>` laat hem staan onder
+  `s3-bucket-lifecycle-configuration-xml`. `ttlSec` blijft 0, ook bij een regel met alleen
+  `Expiration.Days`, dus de filer-TTL is hier niet de weg.
+- Acht minuten en 24 pollingrondes later stonden er nog 50 versies: er is **geen** vlag in
+  `weed server -h` of `weed s3 -h` die een lifecycle-worker start, en de pod logt er niets
+  over. 4.48 heeft wel de machinerie: `s3.lifecycle.run-shard` ("manually run one
+  daily-replay pass for the given shards", 16 shards) en `s3.bucket.lifecycle.fastpath`.
+- `s3.lifecycle.run-shard -shards 0-15 -s3 127.0.0.1:18333 -refresh 0` gaf
+  `loaded lifecycle for 1 bucket(s)` en `shards 0-15 complete; cursors checkpointed`, en
+  direct daarna waren het 31 versies.
+
+Gevolg voor de dienst: OPI zet de regel (`SeaweedfsConnector.ensure_noncurrent_version_rule`,
+over de S3-poort met de admin-sleutels, want `weed shell` heeft geen lifecycle-commando),
+maar hij wordt pas afgedwongen als die ronde loopt. Een periodieke trigger is er niet en is
+in RC-380 ook niet gebouwd: dat zou een CronJob in dit component kosten die
+`weed shell s3.lifecycle.run-shard -shards 0-15 -s3 <s3>:18333` draait, of één pass met
+`-refresh 24h` die blijft lopen. Dat hoort bij het productieplan van deze dienst, naast
+back-up, kloon en uitgesteld opruimen. Zie `features/oude-versies-in-een-bucket.md`.
+
 Besluit van 18-10-2026 bij rij G7: de actie `s3:ListBucketVersions` is aan het gedeelde
 policy-document toegevoegd. SeaweedFS eist hem voor `ListObjectVersions`; op de
 sandbox-MinIO is nagemeten dat die aanroep daar al door `s3:ListBucket` gedekt wordt, dus

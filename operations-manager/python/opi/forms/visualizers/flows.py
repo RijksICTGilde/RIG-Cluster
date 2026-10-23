@@ -529,6 +529,31 @@ def build_postgresql_deployment_flow(deployment_index: int) -> FormFlow:
     )
 
 
+def build_minio_deployment_flow(deployment_index: int) -> FormFlow:
+    """De grens op oude versies van de bucket van een deployment (RC-380)."""
+    return _build_noncurrent_deployment_flow(
+        ServiceType.MINIO_STORAGE, "modal-edit-minio-deployment-", deployment_index
+    )
+
+
+def build_seaweedfs_deployment_flow(deployment_index: int) -> FormFlow:
+    """Dezelfde grens voor de bucket van seaweedfs-storage (RC-380)."""
+    return _build_noncurrent_deployment_flow(
+        ServiceType.SEAWEEDFS_STORAGE, "modal-edit-seaweedfs-deployment-", deployment_index
+    )
+
+
+def _build_noncurrent_deployment_flow(service_type: ServiceType, prefix: str, deployment_index: int) -> FormFlow:
+    return FormFlow(
+        flow_id=f"{prefix}{deployment_index}",
+        title="Oude versies per deployment",
+        mode=FlowMode.WIZARD,
+        show_review=False,
+        sections=[get_service(service_type).deployment_form_section(deployment_index)],
+        target=FlowTarget("deployments", deployment_index),
+    )
+
+
 def build_domain_edit_flow(deployment_index: int) -> FormFlow:
     """Build a modal edit flow for a specific deployment's domain config.
 
@@ -628,6 +653,16 @@ INDEXED_FLOWS: tuple[IndexedFlow, ...] = (
         prefix="modal-edit-postgresql-deployment-",
         list_key="deployments",
         build=lambda index, _ctx: build_postgresql_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-minio-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_minio_deployment_flow(index),
+    ),
+    IndexedFlow(
+        prefix="modal-edit-seaweedfs-deployment-",
+        list_key="deployments",
+        build=lambda index, _ctx: build_seaweedfs_deployment_flow(index),
     ),
 )
 
