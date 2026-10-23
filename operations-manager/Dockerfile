@@ -10,6 +10,11 @@ FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 # er is staat in images/mc/Dockerfile, hoe je hem vult in images/mc/README.md.
 FROM ghcr.io/minbzk/base-images/mc:${MC_VERSION} AS mc
 
+# De `weed`-binary voor de proef seaweedfs-storage (RC-331). Op dezelfde digest als
+# infrastructure/bootstrap/infrastructure/seaweedfs/controller/base/deployment.yaml: die
+# twee gaan samen omhoog, want de eisentabel hangt aan precies deze build.
+FROM chrislusf/seaweedfs:4.48@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d AS weed
+
 # Stage 1: Base system with dependencies (rarely changes)
 FROM python:3.14-slim AS base-system
 
@@ -72,6 +77,9 @@ RUN case "${TARGETARCH}" in \
 
 # Install MinIO client
 COPY --from=mc --chmod=755 /usr/bin/mc /usr/local/bin/mc
+
+# De weed-client, waarmee SeaweedfsConnector `weed shell` draait.
+COPY --from=weed --chmod=755 /usr/bin/weed /usr/local/bin/weed
 
 # Install Kopia - layer cached unless KOPIA_VERSION ARG changes
 # Kopia uses "x64" for amd64 and "arm64" for arm64

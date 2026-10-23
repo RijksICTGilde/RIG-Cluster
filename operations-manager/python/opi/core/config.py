@@ -479,6 +479,12 @@ class Settings(BaseSettings):
     # MinIO client configuration
     MC_CONFIG_DIR: str = "/tmp/mc-config"  # Directory for mc CLI configuration files
 
+    # SeaweedFS (proef seaweedfs-storage, RC-331). Beide adressen zijn nodig: `weed shell`
+    # hangt zonder masteradres in WaitUntilConnected (gemeten, rij G18). Leeg betekent
+    # "dit cluster levert de dienst niet"; alleen de sandbox-overlay zet ze.
+    SEAWEEDFS_FILER_ADDRESS: str = ""
+    SEAWEEDFS_MASTER_ADDRESS: str = ""
+
     # Redis configuration
     REDIS_HOST: str = "rig-redis.rig-system.svc.cluster.local"
     REDIS_PORT: int = 6379

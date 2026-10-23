@@ -54,6 +54,7 @@ PLATFORM_SECRET_NAMES: frozenset[str] = frozenset(
         "SECRET_KEY",
         "TRANSIP_ACCOUNT_NAME",
         "TRANSIP_PRIVATE_KEY",
+        "WEED_JWT_FILER_SIGNING_KEY",
     }
 )
 

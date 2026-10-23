@@ -120,7 +120,7 @@ POST /projects/{project}/deployments/{deployment}/sleep # sessie + CSRF, voor de
 - De API-endpoints kennen **twee manieren om je te legitimeren**, omdat er twee soorten
   aanroepers zijn. De wekkerpod stuurt een **wektoken per deployment** (`X-Wake-Token`):
   een gelekt wektoken kan één deployment wekken en verder niets. Een projecteigenaar stuurt
-  de **project-API-key** (`X-API-Key`), gecontroleerd tegen het project uit de URL — de
+  de **project-API-key** (`X-API-Key`), gecontroleerd tegen het project uit de URL: de
   sleutel van een ander project wordt geweigerd. Beide headers staan als parameter in
   `/openapi.json`, zodat een gegenereerde client ze kan vinden. Het endpoint accepteert
   alleen `sleeping -> waking`; al het andere is een no-op.

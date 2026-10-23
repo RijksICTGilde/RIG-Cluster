@@ -870,6 +870,73 @@ def generate_minio_policy_name(project_name: str, deployment_name: str) -> str:
     return _truncate_if_needed(policy_name, 128)  # MinIO policy name limit
 
 
+def validate_bucket_name(bucket_name: str) -> str:
+    """Toets een bucketnaam tegen de S3-regels en geef hem terug.
+
+    Hier en niet bij een connector: beide object-storage-services stellen dezelfde eis aan
+    een naam die van buiten komt (RC-331).
+    """
+    if not bucket_name:
+        raise ValueError("Bucket name cannot be empty")
+
+    if len(bucket_name) < 3:
+        raise ValueError("Bucket name must be at least 3 characters long")
+    if len(bucket_name) > 63:
+        raise ValueError("Bucket name cannot exceed 63 characters")
+
+    if not re.match(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$", bucket_name):
+        raise ValueError(
+            f"Bucket name '{bucket_name}' contains invalid characters. "
+            "Must contain only lowercase letters, numbers, and hyphens. "
+            "Must start and end with a letter or number."
+        )
+
+    if "--" in bucket_name:
+        raise ValueError("Bucket name cannot contain consecutive hyphens")
+
+    if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", bucket_name):
+        raise ValueError("Bucket name cannot be formatted as an IP address")
+
+    return bucket_name
+
+
+def validate_object_store_username(username: str) -> str:
+    """Toets de naam van een object-storage-identiteit; die naam IS de access key."""
+    if not username:
+        raise ValueError("Username cannot be empty")
+
+    if len(username) < 3:
+        raise ValueError("Username must be at least 3 characters long")
+    if len(username) > 128:
+        raise ValueError("Username cannot exceed 128 characters")
+
+    if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-\.]*$", username):
+        raise ValueError(
+            f"Username '{username}' contains invalid characters. "
+            "Must start with letter/underscore and contain only letters, digits, underscores, hyphens, and dots."
+        )
+
+    return username
+
+
+def validate_policy_name(policy_name: str) -> str:
+    """Toets de naam van een object-storage-policy en geef hem terug.
+
+    Zelfde reden als de twee toetsen hierboven: beide object-storage-services stellen
+    dezelfde eis (RC-331).
+    """
+    if not policy_name:
+        raise ValueError("Policy name cannot be empty")
+
+    if not re.match(r"^[a-zA-Z0-9_\-\.]+$", policy_name):
+        raise ValueError(
+            f"Policy name '{policy_name}' contains invalid characters. "
+            "Must contain only letters, digits, underscores, hyphens, and dots."
+        )
+
+    return policy_name
+
+
 def generate_keycloak_client_id(project_name: str, deployment_name: str, component_name: str | None = None) -> str:
     """
     Generate a consistent Keycloak client ID.

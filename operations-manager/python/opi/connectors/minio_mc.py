@@ -11,13 +11,14 @@ import contextlib
 import json
 import logging
 import os
-import re
 import tempfile
 import threading
 from typing import Any, ClassVar
 from urllib.parse import quote
 
 from opi.core.config import settings
+from opi.utils.naming import validate_bucket_name, validate_object_store_username, validate_policy_name
+from opi.utils.s3_policy import bucket_access_policy
 from opi.utils.subprocess_env import child_env
 
 logger = logging.getLogger(__name__)
@@ -89,64 +90,32 @@ class MinioConnector:
 
     # Security validation methods
 
+    # De drie naamtoetsen staan in opi/utils/naming.py: seaweedfs-storage stelt dezelfde
+    # eis (RC-331). Hier blijft de vertaling naar MinioValidationError staan, zodat de
+    # aanroepers en hun foutafhandeling onveranderd zijn.
     @staticmethod
     def _validate_bucket_name(bucket_name: str) -> str:
         """Validate and sanitize bucket names according to S3 specifications."""
-        if not bucket_name:
-            raise MinioValidationError("Bucket name cannot be empty")
-
-        if len(bucket_name) < 3:
-            raise MinioValidationError("Bucket name must be at least 3 characters long")
-        if len(bucket_name) > 63:
-            raise MinioValidationError("Bucket name cannot exceed 63 characters")
-
-        if not re.match(r"^[a-z0-9][a-z0-9\-]*[a-z0-9]$", bucket_name):
-            raise MinioValidationError(
-                f"Bucket name '{bucket_name}' contains invalid characters. "
-                "Must contain only lowercase letters, numbers, and hyphens. "
-                "Must start and end with a letter or number."
-            )
-
-        if "--" in bucket_name:
-            raise MinioValidationError("Bucket name cannot contain consecutive hyphens")
-
-        if re.match(r"^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$", bucket_name):
-            raise MinioValidationError("Bucket name cannot be formatted as an IP address")
-
-        return bucket_name
+        try:
+            return validate_bucket_name(bucket_name)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     @staticmethod
     def _validate_username(username: str) -> str:
         """Validate and sanitize MinIO usernames."""
-        if not username:
-            raise MinioValidationError("Username cannot be empty")
-
-        if len(username) < 3:
-            raise MinioValidationError("Username must be at least 3 characters long")
-        if len(username) > 128:
-            raise MinioValidationError("Username cannot exceed 128 characters")
-
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_\-\.]*$", username):
-            raise MinioValidationError(
-                f"Username '{username}' contains invalid characters. "
-                "Must start with letter/underscore and contain only letters, digits, underscores, hyphens, and dots."
-            )
-
-        return username
+        try:
+            return validate_object_store_username(username)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     @staticmethod
     def _validate_policy_name(policy_name: str) -> str:
         """Validate policy name."""
-        if not policy_name:
-            raise MinioValidationError("Policy name cannot be empty")
-
-        if not re.match(r"^[a-zA-Z0-9_\-\.]+$", policy_name):
-            raise MinioValidationError(
-                f"Policy name '{policy_name}' contains invalid characters. "
-                "Must contain only letters, digits, underscores, hyphens, and dots."
-            )
-
-        return policy_name
+        try:
+            return validate_policy_name(policy_name)
+        except ValueError as e:
+            raise MinioValidationError(str(e)) from e
 
     async def _test_mc_availability(self) -> bool:
         """
@@ -1037,36 +1006,8 @@ class MinioConnector:
             # Create policy for bucket access
             policy_name = f"{validated_username}-{validated_bucket_name}-policy"
 
-            # Build policy document
-            statements = []
-
-            if "list" in permissions or "read" in permissions:
-                statements.append(
-                    {
-                        "Effect": "Allow",
-                        "Action": [
-                            "s3:ListBucket",
-                            "s3:GetBucketVersioning",  # Required for apps like Grist that check versioning
-                            "s3:GetBucketLocation",  # Common requirement for S3 clients
-                        ],
-                        "Resource": [f"arn:aws:s3:::{validated_bucket_name}"],
-                    }
-                )
-
-            actions = []
-            if "read" in permissions:
-                actions.extend(["s3:GetObject", "s3:GetObjectVersion"])
-            if "write" in permissions:
-                actions.extend(["s3:PutObject"])
-            if "delete" in permissions:
-                actions.append("s3:DeleteObject")
-
-            if actions:
-                statements.append(
-                    {"Effect": "Allow", "Action": actions, "Resource": [f"arn:aws:s3:::{validated_bucket_name}/*"]}
-                )
-
-            policy_document = {"Version": "2012-10-17", "Statement": statements}
+            # Shared with seaweedfs-storage: one document, so one isolation (RC-331).
+            policy_document = bucket_access_policy(validated_bucket_name, permissions)
 
             # Create the policy
             policy_result = await self.create_policy(alias, policy_name, policy_document)

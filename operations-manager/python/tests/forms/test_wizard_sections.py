@@ -130,8 +130,9 @@ class TestServiceConfigSectionsLookup:
 
     def test_lookup_count(self):
         # +1 for postgresql-database's schema-list section (RC-17), +2 for the redis /
-        # minio-storage project-level sections (RC-25), +1 for image-registries.
-        assert len(SERVICE_CONFIG_SECTIONS) == 11
+        # minio-storage project-level sections (RC-25), +1 for image-registries, +1 for
+        # seaweedfs-storage (RC-331).
+        assert len(SERVICE_CONFIG_SECTIONS) == 12
 
 
 class TestFlowDefinitions:
@@ -139,8 +140,9 @@ class TestFlowDefinitions:
         assert CREATE_FLOW.flow_id == "create-project"
         assert CREATE_FLOW.show_review is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25), +1 for image-registries.
-        assert len(CREATE_FLOW.sections) == 18
+        # minio-storage (RC-25), +1 for image-registries, +1 for seaweedfs-storage
+        # (RC-331).
+        assert len(CREATE_FLOW.sections) == 19
         assert "attachments" in [s.section_id for s in CREATE_FLOW.sections]
         # invite-config sits after the keycloak step so its realm-role picker reads the
         # keycloak config already entered in the draft.
@@ -159,8 +161,9 @@ class TestFlowDefinitions:
         assert EDIT_FLOW.show_review is False
         assert EDIT_FLOW.save_per_section is True
         # +1 for the postgresql-database schema-list section (RC-17), +2 for redis /
-        # minio-storage (RC-25), +1 for image-registries.
-        assert len(EDIT_FLOW.sections) == 17
+        # minio-storage (RC-25), +1 for image-registries, +1 for seaweedfs-storage
+        # (RC-331).
+        assert len(EDIT_FLOW.sections) == 18
         # Attachments are edited via a modal/service-edit flow in edit mode,
         # so the edit wizard has no dedicated attachments section (unlike create).
         assert "attachments" not in [s.section_id for s in EDIT_FLOW.sections]

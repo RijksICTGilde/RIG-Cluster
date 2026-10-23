@@ -71,6 +71,9 @@ KIND_MAP: dict[ServiceType, tuple[str, str, tuple[str, ...]]] = {
     ServiceType.REDIS: ("redis", "redis", ("REDIS_HOST",)),
     ServiceType.NAMESPACE_REDIS: ("redis", "redis", ("REDIS_HOST",)),
     ServiceType.MINIO_STORAGE: ("s3", "minio", ("OBJECT_STORE_HOST",)),
+    # Dezelfde soort en hetzelfde doel-id als minio: de dienst geeft dezelfde variabelen,
+    # dus het image bindt op dezelfde namen en hoeft niet opnieuw gebouwd te worden.
+    ServiceType.SEAWEEDFS_STORAGE: ("s3", "minio", ("OBJECT_STORE_HOST",)),
     ServiceType.KEYCLOAK: ("oidc", "oidc", ("OIDC_DISCOVERY_URL", "OIDC_URL")),
     ServiceType.PERSISTENT_STORAGE: ("path", "storage-data", ("DATA_PATH",)),
     ServiceType.TEMP_STORAGE: ("path", "storage-temp", ("TEMP_PATH",)),

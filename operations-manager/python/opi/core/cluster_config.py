@@ -17,6 +17,9 @@ logger = logging.getLogger(__name__)
 #: De S3-API van MinIO; staat zowel in minio_port als in de egressregel hieronder.
 MINIO_PORT = 9000
 
+#: De S3-API van SeaweedFS; staat zowel in seaweedfs_port als in de egressregel hieronder.
+SEAWEEDFS_S3_PORT = 8333
+
 # Pod- en service-CIDRs van de ODCN-cluster, voor de except van de internetregel.
 # 2026-10-21 afgeleid omdat network.config/cluster niet leesbaar is.
 ODCN_CLUSTER_CIDRS = {
@@ -30,6 +33,13 @@ OPS_EGRESS = [
     {"endpoint": "redis_server", "pod_labels": {"app": "rig-redis"}, "ports": [6379]},
     {"endpoint": "minio_host", "pod_labels": {"app": "minio"}, "ports": [MINIO_PORT]},
     {"endpoint": "operations_manager", "pod_labels": {"app": "operations-manager"}, "ports": [8000]},
+]
+
+# SeaweedFS draait alleen op de sandbox (proef RC-331), dus de regel staat niet in de
+# gedeelde OPS_EGRESS: die zou de tenant-netpol van productie veranderen.
+SANDBOX_OPS_EGRESS = [
+    *OPS_EGRESS,
+    {"endpoint": "seaweedfs_host", "pod_labels": {"app": "seaweedfs"}, "ports": [SEAWEEDFS_S3_PORT]},
 ]
 
 # TODO: In the future, read this configuration from YAML file
@@ -133,6 +143,11 @@ CLUSTER_CONFIG = {
         "database_server": "rig-db-rw.rig-system.svc.cluster.local",
         "minio_host": "minio.rig-system.svc.cluster.local",
         "minio_port": MINIO_PORT,
+        # De schakelaar van de proef seaweedfs-storage (RC-331): alleen een cluster met
+        # deze twee sleutels biedt de dienst aan en accepteert een project dat hem noemt.
+        # Productie heeft ze niet, en daarom geen kaart en geen opslag.
+        "seaweedfs_host": "seaweedfs.rig-system.svc.cluster.local",
+        "seaweedfs_port": SEAWEEDFS_S3_PORT,
         "redis_server": "rig-redis.rig-system.svc.cluster.local",
         "backup_namespace": "rig-backup-destination",
         "mail_relay_namespace": "rig-ron",
@@ -146,7 +161,7 @@ CLUSTER_CONFIG = {
         # CNPG cluster's pods to extract instance status; the infra-namespace
         # NetworkPolicy allows ingress from here.
         "database_operator_namespace": "cnpg-system",
-        "ops_egress": OPS_EGRESS,
+        "ops_egress": SANDBOX_OPS_EGRESS,
         # Pod- en service-CIDR voor de except van de internetregel; single-stack IPv4 alleen.
         "cluster_cidrs": {"ipv4": ["10.244.0.0/16", "10.96.0.0/16"]},
         "ingress_controller_selector": {
@@ -972,6 +987,21 @@ def get_minio_port(cluster_name: str) -> int:
     """
     cluster_config = get_cluster_config(cluster_name)
     return cluster_config["minio_port"]
+
+
+def get_seaweedfs_host(cluster_name: str) -> str | None:
+    """Het SeaweedFS-adres van dit cluster, of None als het die dienst niet levert.
+
+    Afwezig is de normale uitkomst: de proef staat alleen op de sandbox. Zoals bij
+    ``get_vlam_config`` is dit de hele beschikbaarheidsvraag, zodat de dienst zelf geen
+    clusternaam noemt.
+    """
+    return get_cluster_config(cluster_name).get("seaweedfs_host")
+
+
+def get_seaweedfs_port(cluster_name: str) -> int:
+    """De S3-poort van SeaweedFS op dit cluster."""
+    return get_cluster_config(cluster_name)["seaweedfs_port"]
 
 
 def get_minio_server(cluster_name: str) -> str:

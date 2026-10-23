@@ -116,6 +116,7 @@ bewaakt dat.
 | `postgresql-database` | ja | Zonder configuratie is het een shared-scope database - precies wat een project krijgt dat de dienst met de hand aanzet. Project-scope of extra schema's blijft een expliciete daad. |
 | `namespace-postgresql-database` | ja | Elk veld van de projectconfiguratie reproduceert `DatabaseManager.DEFAULT_CONFIG`; een lege configuratie geeft hetzelfde cluster als de wizard. |
 | `minio-storage` | ja | Een bucket vraagt geen keuze op projectniveau. `enable-versioning` valt terug op de platformstandaard; de rest van het model is kloonstatus die het platform zelf schrijft. |
+| `seaweedfs-storage` | ja | Dezelfde reden als `minio-storage`: een bucket vraagt geen keuze op projectniveau, en `enable-versioning` staat uit zolang niemand hem aanvinkt. |
 | `redis` | ja | Het projectveld `acl-key-prefix` staat standaard op de smalle, veilige waarde, en de goedkeuring die eraan hangt vraagt alleen een aanvraag voor de brede waarde. |
 | `namespace-redis` | ja | Draagt helemaal geen projectconfiguratie; een expliciete selectie zou een besluit vastleggen dat niemand nam. |
 | `persistent-storage` | ja | De mounts staan op het component; de projectlaag bevat geen opslagbesluit. |

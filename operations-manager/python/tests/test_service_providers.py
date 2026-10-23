@@ -87,6 +87,9 @@ def test_provisioning_providers_order_matches_legacy_sequence():
     assert [p.service_type.value for p in provisioning_services()] == [
         "postgresql-database",
         "minio-storage",
+        # seaweedfs-storage (RC-331) provisioneert direct na minio, zodat de bevroren
+        # voorloop van deze reeks blijft zoals hij was.
+        "seaweedfs-storage",
         "keycloak",
         "redis",
         "send-email",
@@ -102,13 +105,21 @@ def test_namespace_variants_do_not_double_provision():
 
 
 def test_provision_delegates_to_the_right_manager():
-    db, minio, keycloak, redis, mail = (AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock(), AsyncMock())
+    db, minio, seaweedfs, keycloak, redis, mail = (
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+        AsyncMock(),
+    )
     ctx = ProvisionContext(
         project_data={"name": "p"},
         deployment={"name": "d"},
         force_clone=True,
         database_manager=SimpleNamespace(create_resources_for_deployment=db),
         minio_manager=SimpleNamespace(create_resources_for_deployment=minio),
+        seaweedfs_manager=SimpleNamespace(create_resources_for_deployment=seaweedfs),
         keycloak_manager=SimpleNamespace(create_resources_for_deployment=keycloak),
         redis_manager=SimpleNamespace(create_resources_for_deployment=redis),
         mail_manager=SimpleNamespace(create_resources_for_deployment=mail),
@@ -122,6 +133,7 @@ def test_provision_delegates_to_the_right_manager():
     # same calls + args as the old fixed sequence
     db.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, clone_interrupted=False, rotate_password=False)
     minio.assert_awaited_once_with({"name": "p"}, {"name": "d"}, True, rotate_secret_key=False)
+    seaweedfs.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     keycloak.assert_awaited_once_with({"name": "p"}, {"name": "d"}, rotate_client_secret=False)
     redis.assert_awaited_once_with({"name": "p"}, {"name": "d"})
     mail.assert_awaited_once_with({"name": "p"}, {"name": "d"})
@@ -145,6 +157,8 @@ _LEGACY_SERVICE_MANAGER_KEYS = {
     ServiceType.POSTGRESQL_DATABASE: ManagerKey.DATABASE,
     ServiceType.NAMESPACE_POSTGRESQL_DATABASE: ManagerKey.DATABASE,
     ServiceType.MINIO_STORAGE: ManagerKey.MINIO,
+    # RC-331: eigen manager, want opruimen is hier direct en bij minio uitgesteld.
+    ServiceType.SEAWEEDFS_STORAGE: ManagerKey.SEAWEEDFS,
     ServiceType.REDIS: ManagerKey.REDIS,
     ServiceType.NAMESPACE_REDIS: ManagerKey.REDIS,
     ServiceType.KEYCLOAK: ManagerKey.KEYCLOAK,
@@ -237,6 +251,7 @@ def test_handle_service_removal_noop_without_manager_key():
 _EXPECTED_ENVFROM_ORDER = [
     ("postgresql-database", "mydep-database"),
     ("minio-storage", "mydep-minio"),
+    ("seaweedfs-storage", "mydep-seaweedfs"),
     ("keycloak", "mydep-keycloak"),
     ("redis", "mydep-redis"),
     ("metrics-scraper", "mydep-metrics-auth"),
@@ -324,6 +339,7 @@ def test_manifest_providers_includes_auth_wall_after_secrets():
     assert order == [
         "postgresql-database",
         "minio-storage",
+        "seaweedfs-storage",
         "keycloak",
         "redis",
         "metrics-scraper",

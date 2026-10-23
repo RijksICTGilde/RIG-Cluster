@@ -1884,6 +1884,23 @@ class DeleteProjectManager:
             if minio_results.get("errors"):
                 deletion_results["errors"].extend(minio_results["errors"])
 
+            # Dezelfde tak voor seaweedfs-storage (RC-331): deze plek roept de manager
+            # rechtstreeks aan en gaat niet via cleanup_manager_key, dus een tweede dienst
+            # moet er met de hand bij. Opruimen is hier altijd direct, ook met een
+            # marked_for_deletion_service: de proef kent geen uitgestelde verwijdering.
+            # De guard houdt het antwoord van een deployment zonder deze dienst gelijk,
+            # zoals de tweede plek met has_seaweedfs doet.
+            if self.project_manager._project_file_handler.deployment_uses_service(
+                project_data, deployment_name, [ServiceType.SEAWEEDFS_STORAGE.value]
+            ):
+                seaweedfs_results = await self.project_manager._seaweedfs_manager.delete_resources_for_deployment(
+                    project_data, deployment
+                )
+                deletion_results["service_results"]["seaweedfs"] = seaweedfs_results
+                deletion_results["operations"].extend(seaweedfs_results.get("operations", []))
+                if seaweedfs_results.get("errors"):
+                    deletion_results["errors"].extend(seaweedfs_results["errors"])
+
             # Step 7: Delete deployment folders from git repositories
             # Uitgestelde opruiming (RC-254) handelt intentioneel staan gelaten maps af.
             # Alleen git-fouten zetten dit op False en blokken stap 8.
@@ -2403,6 +2420,11 @@ class DeleteProjectManager:
                 deployment_name,
                 [ServiceType.MINIO_STORAGE.value],
             )
+            has_seaweedfs = file_handler.deployment_uses_service(
+                previous_yaml,
+                deployment_name,
+                [ServiceType.SEAWEEDFS_STORAGE.value],
+            )
             has_redis = file_handler.deployment_uses_service(
                 previous_yaml,
                 deployment_name,
@@ -2419,6 +2441,7 @@ class DeleteProjectManager:
                 service_names & {ServiceType.POSTGRESQL_DATABASE.value, ServiceType.NAMESPACE_POSTGRESQL_DATABASE.value}
             )
             has_minio = ServiceType.MINIO_STORAGE.value in service_names
+            has_seaweedfs = ServiceType.SEAWEEDFS_STORAGE.value in service_names
             has_redis = bool(service_names & {ServiceType.REDIS.value, ServiceType.NAMESPACE_REDIS.value})
 
         # 3. Delete Keycloak resources (ephemeral)
@@ -2487,6 +2510,22 @@ class DeleteProjectManager:
             except Exception as e:
                 deletion_results["errors"].append(f"Error handling MinIO service removal: {e}")
                 logger.exception("Error handling MinIO service removal")
+
+        if has_seaweedfs:
+            try:
+                seaweedfs_result = await self.project_manager._seaweedfs_manager.handle_service_removal(
+                    project_name=project_name,
+                    deployment_name=deployment_name,
+                    deployment_data=deployment_data,
+                    project_data=service_check_yaml,
+                )
+                deletion_results["service_results"]["seaweedfs"] = seaweedfs_result
+                deletion_results["operations"].extend(seaweedfs_result.get("operations", []))
+                if seaweedfs_result.get("errors"):
+                    deletion_results["errors"].extend(seaweedfs_result["errors"])
+            except Exception as e:
+                deletion_results["errors"].append(f"Error handling SeaweedFS service removal: {e}")
+                logger.exception("Error handling SeaweedFS service removal")
 
         has_deferred = has_database or has_minio
 
@@ -2721,6 +2760,7 @@ class DeleteProjectManager:
             return await self.project_manager._ensure_database_manager()
         return {
             ManagerKey.MINIO: self.project_manager._minio_manager,
+            ManagerKey.SEAWEEDFS: self.project_manager._seaweedfs_manager,
             ManagerKey.REDIS: self.project_manager._redis_manager,
             ManagerKey.KEYCLOAK: self.project_manager._keycloak_manager,
             ManagerKey.PVC: self.project_manager._pvc_manager,

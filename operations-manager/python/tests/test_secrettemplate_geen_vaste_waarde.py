@@ -36,6 +36,8 @@ NIET_GEHEIM: dict[str, str] = {
     "pgadmin-secret.yaml:PGADMIN_DEFAULT_EMAIL": "inlognaam van pgAdmin, geen wachtwoord",
     "platform-backup-secret.yaml:username": "databaserolnaam, geen geheim",
     "postgres-admin-secret.yaml:username": "databaserolnaam, geen geheim",
+    "seaweedfs-credentials-secret.yaml:AWS_ACCESS_KEY_ID": "identiteitsnaam van het admin-sleutelpaar; "
+    "de AWS_SECRET_ACCESS_KEY ernaast is gegenereerd",
 }
 
 

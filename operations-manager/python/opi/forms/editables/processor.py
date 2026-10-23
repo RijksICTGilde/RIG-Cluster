@@ -544,7 +544,12 @@ class EditableFormProcessor:
                 value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
                 self._write_field(ed, ed.yaml_path, value, result)
-            elif vis.widget == WidgetType.CHECKBOX_GROUP:
+            elif vis.widget in (WidgetType.CHECKBOX_GROUP, WidgetType.SERVICE_CARDS):
+                # Een selectie die deze sectie RENDERT is leeg als de inzending er niets
+                # over zegt: een vinkje dat uit staat stuurt niets mee. Zonder de
+                # omzetting naar [] viel de kaartenselectie in de tak hieronder, waar
+                # ``None`` "ongewijzigd" betekent, en bleef de laatst overgebleven dienst
+                # staan: uitvinken lukte alleen zolang er nog een andere dienst aan stond.
                 value = _coerce_to_list(_read_submitted(submitted, ed))
                 value = self._effective_value(vis, value)
                 self._validate_field(vis, ed.yaml_path, value, errors, enforcer_context)
