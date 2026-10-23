@@ -15,6 +15,12 @@ the master `/admin/` console) contains a *Conditional OTP Form* that requires
 OTP for any user who has an OTP credential and skips it otherwise. Provisioning
 the credential is therefore sufficient to enforce OTP for that user.
 
+Sinds [keycloak-verplichte-otp.md](keycloak-verplichte-otp.md) draagt de master-realm een
+eigen browser flow waarin de OTP-stap VERPLICHT is. Voor deze accounts verandert dat niets:
+ze hebben een credential en geven hun code zoals hiervoor. Wat het wel verandert is de
+situatie zonder `KEYCLOAK_ENFORCE_ADMIN_OTP`: zo'n account krijgt dan `CONFIGURE_TOTP` en
+stelt zijn eigen app in, in plaats van met alleen een wachtwoord binnen te komen.
+
 ## Two OTPs, two purposes - do not conflate them
 
 This is the OTP *in Keycloak*. There is a second, related OTP *in ZAD* (on the

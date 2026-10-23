@@ -396,6 +396,10 @@ class Settings(BaseSettings):
     # retrofitted (seed shown in the portal) the next time they are processed.
     KEYCLOAK_ENFORCE_ADMIN_OTP: bool = False
 
+    # Require OTP for every password login in the master realm. Disable to troubleshoot
+    # master console access issues.
+    KEYCLOAK_ENFORCE_MASTER_OTP: bool = True
+
     # Bewaartermijn van de login- en admin-events van de MASTER-realm, in dagen. 0 betekent
     # in Keycloak: nooit opruimen. Instelbaar omdat BIO2 8.15.04 een risicogerichte termijn
     # vraagt die niet vanuit de code te bepalen is (open beslissing 7 in

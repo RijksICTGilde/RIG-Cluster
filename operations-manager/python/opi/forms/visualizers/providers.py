@@ -18,6 +18,7 @@ from opi.services.catalog.base import ConfigLayer, config_path, offers_component
 from opi.services.catalog.cross_domain_access.config_model import WILDCARD_PROJECT
 from opi.services.catalog.image_registries.rules import normalize_image, normalize_prefix
 from opi.services.catalog.keycloak.account_link import account_link_mode
+from opi.services.catalog.keycloak.templates import allows_local_accounts
 from opi.services.catalog.postgresql_database.connection_limit import (
     CONNECTION_LIMIT,
     CONNECTION_LIMIT_STEPS,
@@ -518,7 +519,7 @@ class DeploymentConnectionLimitOptionsProvider(ConnectionLimitOptionsProvider):
 
 
 class KeycloakTemplateOptionsProvider:
-    """The two realm blueprints, named after what a user gets rather than after the file.
+    """The three realm blueprints, named after what a user gets rather than after the file.
 
     What actually differs is the LOGIN SCREEN, and only that. ``sso-only`` points the realm's
     browser flow at "External IDP Redirector", so whoever opens the application travels
@@ -537,9 +538,13 @@ class KeycloakTemplateOptionsProvider:
     A user of ``sso-only`` never reaches a screen where a local account could be typed in, so
     that is the one that really excludes them. ``InviteAuthMethodOptionsProvider`` reads the
     same difference for the invite auth methods.
+
+    ``sso-support-otp`` extends ``sso-support`` with a second factor on the local password path:
+    a password login requires an OTP code and configures the authenticator app on first login.
+    SSO Rijk logins bypass the password step entirely and never see the OTP requirement.
     """
 
-    # De lijst ligt vast: elk project krijgt deze keuzes.
+    # Options are fixed: every project gets the same choices.
     options_source: ClassVar[OptionsSource | None] = None
 
     def get_options(self) -> list[dict[str, Any]]:
@@ -560,6 +565,15 @@ class KeycloakTemplateOptionsProvider:
                     "Het inlogscherm van Keycloak laat de keuze: doorgaan met SSO Rijk, of inloggen met een "
                     "lokaal account uit het realm van dit project. Lokale accounts maak je met uitnodigingen; "
                     "aanmelden kan niemand zichzelf."
+                ),
+            },
+            {
+                "value": "sso-support-otp",
+                "label": "SSO Rijk of een lokaal account, met verplichte OTP",
+                "description": (
+                    "Zelfde keuze als hierboven, maar een lokaal account geeft naast zijn wachtwoord een code "
+                    "uit een authenticator-app. Bij de eerste login stelt het die app in. Wie met SSO Rijk "
+                    "inlogt merkt er niets van."
                 ),
             },
         ]
@@ -1909,11 +1923,13 @@ class InviteAuthMethodOptionsProvider:
 
     An invite can only narrow what the realm offers, never widen it (``invite_routes``
     computes ``realm_auth[x] and invite_auth_config[x]``). The realm follows the keycloak
-    template, and the two blueprints differ exactly here:
+    template, and the blueprints differ exactly here:
 
     * ``sso-only``    -- the browser flow redirects straight to SSO Rijk, so there is no
       screen on which a local account could ever be typed in;
-    * ``sso-support`` -- Keycloak's own login screen, which offers both.
+    * ``sso-support`` en ``sso-support-otp`` -- Keycloak's own login screen, which offers
+      both. Welke blauwdruk een lokaal account toelaat staat op één plek:
+      ``allows_local_accounts``.
 
     Offering "Lokaal account" under sso-only would therefore be a choice that silently does
     nothing. Empty selection still means "fall back to whatever the realm allows".
@@ -1929,7 +1945,7 @@ class InviteAuthMethodOptionsProvider:
     options_source: ClassVar[OptionsSource | None] = OptionsSource(
         description=(
             "sso kan altijd; local alleen als het keycloak-template van dit project lokale "
-            "accounts toestaat (het template is dan niet sso-only) en het realm niet "
+            "accounts toestaat (sso-support of sso-support-otp) en het realm niet "
             "automatisch koppelt op e-mailadres (account-link)."
         ),
         endpoint="GET /api/v2/projects/{project_name}/services/keycloak/config",
@@ -1943,14 +1959,14 @@ class InviteAuthMethodOptionsProvider:
         from opi.forms.editables.service_path import smart_get_value
 
         options = [{"value": "sso", "label": "Single sign-on (SSO)"}]
-        # An absent template means sso-only: that is the default on KeycloakConfig.template,
-        # so it is what the realm actually gets. Reading it as "unknown, allow both" would
-        # also disagree with the field's show_when, which hides the field in that same case.
-        template = smart_get_value(self.yaml_data, "services/keycloak/config/template") or "sso-only"
+        # Absent template means sso-only (the default on KeycloakConfig.template),
+        # which is what the realm gets. Treating it as "unknown, allow both" would
+        # conflict with the field's show_when rule, which hides the field in that case.
+        template = smart_get_value(self.yaml_data, "services/keycloak/config/template")
         # Via smart_get_value en niet via de project-ingang van de helper: in de wizard staat
         # de keycloak-config onder de virtuele root, waar een lezing op "services" niets vindt.
         links_on_email = account_link_mode(smart_get_value(self.yaml_data, "services/keycloak/config")) is not None
-        if template != "sso-only" and not links_on_email:
+        if allows_local_accounts(template) and not links_on_email:
             options.append({"value": "local", "label": "Lokaal account"})
         return options
 

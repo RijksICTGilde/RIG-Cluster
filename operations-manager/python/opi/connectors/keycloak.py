@@ -33,6 +33,26 @@ AUTO_LINK_FIRST_BROKER_LOGIN_FLOW = "first broker login auto-link"
 #: en de flow die er automatisch naartoe stuurt noemt hem als ``defaultProvider``.
 PLATFORM_IDP_ALIAS = "rig-platform-oidc"
 
+#: Browser flow with required OTP on every password login (built by ensure_required_otp_browser_flow).
+REQUIRED_OTP_BROWSER_FLOW = "Browser with required OTP"
+
+#: Keycloak's own browser flow, for every blueprint that asks for nothing else.
+DEFAULT_BROWSER_FLOW = "browser"
+
+#: Browser flows that show a username/password form. A realm bound to anything else (such as
+#: "External IDP Redirector") redirects straight to the IdP, so a local account cannot log in
+#: there. Read by whoever decides whether a local account is a way in.
+PASSWORD_FORM_BROWSER_FLOWS = frozenset({DEFAULT_BROWSER_FLOW, REQUIRED_OTP_BROWSER_FLOW})
+
+#: Required action that lets a user configure a TOTP authenticator.
+CONFIGURE_TOTP = "CONFIGURE_TOTP"
+
+#: Credential types that represent OTP factors in Keycloak.
+_OTP_CREDENTIAL_TYPES = frozenset({"otp", "totp", "hotp"})
+
+#: Prefix of service account usernames (no browser login, so OTP does not apply).
+_SERVICE_ACCOUNT_PREFIX = "service-account-"
+
 
 def _redirect_uris_and_origins(
     ingress_hosts: list[str],
@@ -60,16 +80,11 @@ def _redirect_uris_and_origins(
 
 
 def role_gate_flow_alias(client_id: str) -> str:
-    """Alias van de browser flow die alleen rolhouders binnenlaat, voor deze client.
+    """Alias of the role-restricted browser flow for this client.
 
-    Bewust een ANDERE naam dan de flow die hier tot 2026-08 stond
-    (``browser-restricted-<client>``): die zette de rolcontrole in de forms-subflow, en
-    daar draaide hij niet wanneer de Cookie-stap een bestaande realm-sessie hergebruikte.
-    Een realm-sessie die bij een andere client van dezelfde realm was ontstaan (de
-    ingebouwde account-console, de publieke client van de deployment) kwam er zo zonder
-    rol langs. De structuur moest daarvoor veranderen, en dan is bijwerken van de oude
-    flow gevaarlijker dan hem vervangen: half omgebouwd sluit hij iedereen buiten. Dus een
-    nieuwe naam, de client daarheen omhangen, en de oude opruimen.
+    Name changed from ``browser-restricted-<client>`` in 2026-08: the previous location
+    in the forms-subflow was skipped when the Cookie step reused an existing realm session.
+    Sessions from other clients would bypass the check. Replace, don't update.
     """
     return f"browser-role-gate-{client_id}"
 
@@ -376,17 +391,29 @@ class KeycloakConnector:
         keeps self-service password setting lets a federated user set a local password and log in
         without SSO Rijk, so an API failure aborts realm provisioning.
         """
+        await self._update_required_action(realm_name, alias, {"enabled": enabled})
+
+    async def set_required_action_default(self, realm_name: str, alias: str, default: bool) -> None:
+        """Zet of een required action aan een NIEUWE gebruiker wordt gehangen.
+
+        Zo stelt een nieuw lokaal account in een realm met verplichte OTP bij zijn eerste
+        login een authenticator-app in.
+        """
+        await self._update_required_action(realm_name, alias, {"defaultAction": default})
+
+    async def _update_required_action(self, realm_name: str, alias: str, changes: dict[str, Any]) -> None:
+        """Schrijf velden op een required action provider, en alleen als ze afwijken."""
         try:
             self.admin.change_current_realm(realm_name)
             action = self.admin.get_required_action_by_alias(alias)
             if action is None:
                 logger.warning(f"Required action {alias} not found in realm {realm_name}, nothing to change")
                 return
-            if action.get("enabled") == enabled:
+            if all(action.get(veld) == waarde for veld, waarde in changes.items()):
                 return
-            action["enabled"] = enabled
+            action.update(changes)
             self.admin.update_required_action(alias, payload=action)
-            logger.info(f"Set required action {alias} to enabled={enabled} in realm {realm_name}")
+            logger.info(f"Set required action {alias} to {changes} in realm {realm_name}")
         except KeycloakError as e:
             logger.error(f"Could not set required action {alias} in realm {realm_name}: {e}")
             raise
@@ -2516,6 +2543,7 @@ class KeycloakConnector:
         role_name: str,
         error_message: str = "${accessDeniedNoPermission}",
         redirect_to_idp: str | None = None,
+        require_otp: bool = False,
     ) -> None:
         """
         Create a browser flow that restricts access to users with a specific client role.
@@ -2528,6 +2556,8 @@ class KeycloakConnector:
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
             redirect_to_idp: Identity provider alias to send the user straight to, or None to
                 show Keycloak's own login screen (see ``_build_role_gate_flow``)
+            require_otp: Require an OTP on every password login instead of only from users who
+                already configured one (see ``_ensure_browser_authenticators``)
         """
         await self._build_role_gate_flow(
             realm_name=realm_name,
@@ -2536,6 +2566,7 @@ class KeycloakConnector:
             error_message=error_message,
             client_id=client_id,
             redirect_to_idp=redirect_to_idp,
+            require_otp=require_otp,
         )
 
     async def _build_role_gate_flow(
@@ -2546,6 +2577,7 @@ class KeycloakConnector:
         error_message: str,
         client_id: str | None = None,
         redirect_to_idp: str | None = None,
+        require_otp: bool = False,
     ) -> None:
         """Bouw een browser flow waarin de rolcontrole NAAST de authenticators staat.
 
@@ -2563,6 +2595,10 @@ class KeycloakConnector:
               <flow>-deny-no-role            CONDITIONAL
                 Condition - user role (negate)  REQUIRED
                 Deny Access                     REQUIRED
+
+        De inlogstappen zelf komen uit ``_ensure_browser_authenticators``, dezelfde die de
+        realmflow van ``sso-support-otp`` bouwt. ``require_otp`` zet de OTP-stap daar
+        verplicht, zodat de poort dezelfde eis stelt als het realm eromheen.
 
         De rolcontrole hoort op hetzelfde niveau als het inloggen zelf, want alleen daar
         draait hij ongeacht HOE iemand binnenkwam. Stond hij in de forms-subflow, dan sloeg
@@ -2632,24 +2668,14 @@ class KeycloakConnector:
             # via ``_ensure_execution_in_flow`` en ``_ensure_subflow``, die het opgehaalde
             # object compleet terugsturen.
             await self._ensure_subflow(flow_alias, authenticate, "REQUIRED", "Authenticate the user")
-            await self._ensure_execution_in_flow(authenticate, "auth-cookie", "ALTERNATIVE", priority=10)
-            await self._ensure_execution_in_flow(
-                authenticate, "identity-provider-redirector", "ALTERNATIVE", priority=20
+            await self._ensure_browser_authenticators(
+                realm_name=realm_name,
+                parent_alias=authenticate,
+                forms_alias=forms,
+                otp_alias=otp,
+                redirect_to_idp=redirect_to_idp,
+                require_otp=require_otp,
             )
-            # Op de SUBFLOW en niet op de poort zelf: daar staat de execution, en beide
-            # helpers zoeken hem op onder het alias dat ze meekrijgen. De realm staat hier al
-            # ingesteld. BEIDE richtingen, want een config die alleen bijgezet wordt en nooit
-            # weggehaald blijft doorsturen: een project dat van sso-only naar sso-support gaat
-            # zou dan nooit meer een inlogscherm te zien krijgen.
-            if redirect_to_idp:
-                await self._configure_redirector_execution(realm_name, authenticate, redirect_to_idp)
-            else:
-                await self._clear_redirector_execution(authenticate)
-            await self._ensure_subflow(authenticate, forms, "ALTERNATIVE", "Username, password, otp")
-            await self._ensure_execution_in_flow(forms, "auth-username-password-form", "REQUIRED", priority=10)
-            await self._ensure_subflow(forms, otp, "CONDITIONAL", "Browser - conditional OTP")
-            await self._ensure_execution_in_flow(otp, "conditional-user-configured", "REQUIRED", priority=10)
-            await self._ensure_execution_in_flow(otp, "auth-otp-form", "REQUIRED", priority=20)
 
             await self._ensure_subflow(flow_alias, deny, "CONDITIONAL", f"Deny access without role {role_desc}")
             await self._add_condition_user_role(
@@ -2864,6 +2890,7 @@ class KeycloakConnector:
         role_name: str,
         error_message: str = "${accessDeniedNoPermission}",
         redirect_to_idp: str | None = None,
+        require_otp: bool = False,
     ) -> None:
         """
         Create a browser flow that restricts access to users with a specific realm role.
@@ -2877,6 +2904,8 @@ class KeycloakConnector:
             error_message: Theme message key in ${key} format (default: "${accessDeniedNoPermission}")
             redirect_to_idp: Identity provider alias to send the user straight to, or None to
                 show Keycloak's own login screen (see ``_build_role_gate_flow``)
+            require_otp: Require an OTP on every password login instead of only from users who
+                already configured one (see ``_ensure_browser_authenticators``)
         """
         await self._build_role_gate_flow(
             realm_name=realm_name,
@@ -2884,6 +2913,7 @@ class KeycloakConnector:
             role_name=role_name,
             error_message=error_message,
             redirect_to_idp=redirect_to_idp,
+            require_otp=require_otp,
         )
 
     async def set_client_authentication_flow_override(
@@ -3049,6 +3079,120 @@ class KeycloakConnector:
             )
             self.admin.change_current_realm("master")
             raise
+
+    async def _ensure_browser_authenticators(
+        self,
+        realm_name: str,
+        parent_alias: str,
+        forms_alias: str,
+        otp_alias: str,
+        redirect_to_idp: str | None,
+        require_otp: bool,
+    ) -> None:
+        """Ensure login steps of a browser flow (idempotent).
+
+        ``require_otp`` sets the OTP subflow to REQUIRED and the condition to DISABLED,
+        so password logins always require an OTP. Both states are written, so realm
+        template switches work in both directions.
+        """
+        await self._ensure_execution_in_flow(parent_alias, "auth-cookie", "ALTERNATIVE", priority=10)
+        await self._ensure_execution_in_flow(parent_alias, "identity-provider-redirector", "ALTERNATIVE", priority=20)
+        if redirect_to_idp:
+            await self._configure_redirector_execution(realm_name, parent_alias, redirect_to_idp)
+        else:
+            await self._clear_redirector_execution(parent_alias)
+
+        await self._ensure_subflow(parent_alias, forms_alias, "ALTERNATIVE", "Username, password, otp")
+        await self._ensure_execution_in_flow(forms_alias, "auth-username-password-form", "REQUIRED", priority=10)
+        await self._ensure_subflow(
+            forms_alias,
+            otp_alias,
+            "REQUIRED" if require_otp else "CONDITIONAL",
+            "Browser - required OTP" if require_otp else "Browser - conditional OTP",
+        )
+        await self._ensure_execution_in_flow(
+            otp_alias, "conditional-user-configured", "DISABLED" if require_otp else "REQUIRED", priority=10
+        )
+        await self._ensure_execution_in_flow(otp_alias, "auth-otp-form", "REQUIRED", priority=20)
+
+    async def ensure_required_otp_browser_flow(self, realm_name: str, flow_alias: str) -> None:
+        """Ensure browser flow where password login always requires OTP (idempotent).
+        Built here (not from YAML) because the template reader cannot create nested subflows.
+        """
+        forms = f"{flow_alias} forms"
+        otp = f"{flow_alias} otp"
+
+        try:
+            self.admin.change_current_realm(realm_name)
+
+            if not any(flow.get("alias") == flow_alias for flow in self.admin.get_authentication_flows()):
+                self.admin.create_authentication_flow(
+                    payload={
+                        "alias": flow_alias,
+                        "providerId": "basic-flow",
+                        "topLevel": True,
+                        "builtIn": False,
+                        "description": "Browser flow where a password login always requires an OTP",
+                    }
+                )
+                logger.info(f"Created required-OTP browser flow '{flow_alias}' in realm '{realm_name}'")
+
+            await self._ensure_browser_authenticators(
+                realm_name=realm_name,
+                parent_alias=flow_alias,
+                forms_alias=forms,
+                otp_alias=otp,
+                redirect_to_idp=None,
+                require_otp=True,
+            )
+            logger.info(f"Required-OTP browser flow '{flow_alias}' is in place in realm '{realm_name}'")
+        finally:
+            self.admin.change_current_realm("master")
+
+    async def ensure_configure_totp_required(
+        self, realm_name: str, skip_usernames: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """Set CONFIGURE_TOTP on human users without OTP. Idempotent.
+
+        Skips service accounts, users with existing OTP credentials, and federated users.
+        ``skip_usernames`` spares accounts whose non-browser logins must keep working: an
+        open required action makes the password grant unusable ("Account is not fully set up").
+        Returns the usernames that received the action.
+        """
+        gewijzigd: list[str] = []
+        try:
+            self.admin.change_current_realm(realm_name)
+            for user in self._all_realm_users():
+                username = user.get("username", "")
+                if username.startswith(_SERVICE_ACCOUNT_PREFIX) or username in skip_usernames:
+                    continue
+                acties = list(user.get("requiredActions") or [])
+                if CONFIGURE_TOTP in acties:
+                    continue
+                user_id = user["id"]
+                if self.admin.get_user_social_logins(user_id=user_id):
+                    continue
+                credentials = self.admin.get_credentials(user_id=user_id)
+                if any(c.get("type") in _OTP_CREDENTIAL_TYPES for c in credentials):
+                    continue
+                self.admin.update_user(user_id=user_id, payload={"requiredActions": [*acties, CONFIGURE_TOTP]})
+                gewijzigd.append(username)
+        finally:
+            self.admin.change_current_realm("master")
+
+        if gewijzigd:
+            await self.set_required_action_enabled(realm_name, CONFIGURE_TOTP, enabled=True)
+            logger.info(f"Required CONFIGURE_TOTP for {len(gewijzigd)} user(s) in realm '{realm_name}'")
+        return gewijzigd
+
+    def _all_realm_users(self, page_size: int = 100) -> list[dict[str, Any]]:
+        """All users in the current realm, paginated."""
+        users: list[dict[str, Any]] = []
+        while True:
+            page = self.admin.get_users({"first": len(users), "max": page_size})
+            users.extend(page)
+            if len(page) < page_size:
+                return users
 
     async def _ensure_subflow(self, parent_alias: str, subflow_alias: str, requirement: str, description: str) -> None:
         """

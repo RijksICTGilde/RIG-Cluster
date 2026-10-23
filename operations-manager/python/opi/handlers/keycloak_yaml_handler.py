@@ -532,6 +532,14 @@ class KeycloakYamlHandler:
         for alias in item.get("disabledRequiredActions") or []:
             await self.keycloak.set_required_action_enabled(realm_name, alias, enabled=False)
 
+        # Een KAART en geen lijst, want hier moeten BEIDE standen beschreven staan. Een
+        # blauwdruk die alleen "aan" kan zeggen laat de stand van zijn voorganger staan: een
+        # realm die van sso-support-otp terug naar sso-support ging, bleef elk NIEUW lokaal
+        # account om een OTP vragen terwijl het realm er niet meer naar vroeg (gemeten op de
+        # sandbox, 22 oktober 2026).
+        for alias, default in (item.get("requiredActionDefaults") or {}).items():
+            await self.keycloak.set_required_action_default(realm_name, alias, default=bool(default))
+
         for entry in item.get("removeFromDefaultRoles") or []:
             client_id, _, role_name = str(entry).partition(":")
             if not role_name:
@@ -874,6 +882,13 @@ class KeycloakYamlHandler:
             logger.debug(
                 f"Processing flow item: alias={item.get('alias')}, setAsBrowserFlow={item.get('setAsBrowserFlow')}"
             )
+
+            # Geneste subflows kan deze lezer niet aanmaken, en de verplichte OTP-stap zit in
+            # een subflow. De blauwdruk noemt het alias, de connector bouwt de structuur; de
+            # ``browserFlow``-sleutel bindt hem daarna aan de realm.
+            if item.get("requireOtp"):
+                await self.keycloak.ensure_required_otp_browser_flow(realm_name, item["alias"])
+                continue
 
             if item.get("setAsBrowserFlow"):
                 # Extract provider alias from the identity-provider-redirector execution config

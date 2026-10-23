@@ -10,7 +10,9 @@ from keycloak.exceptions import KeycloakError
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from opi.connectors.keycloak import (
+    DEFAULT_BROWSER_FLOW,
     PLATFORM_IDP_ALIAS,
+    REQUIRED_OTP_BROWSER_FLOW,
     KeycloakConnector,
     create_keycloak_connector,
     legacy_restricted_flow_alias,
@@ -33,6 +35,7 @@ from opi.services.catalog.keycloak.config_model import (
     KeycloakClientEntry,
     RestrictAccessConfig,
 )
+from opi.services.catalog.keycloak.templates import SSO_ONLY_TEMPLATE, SSO_SUPPORT_OTP_TEMPLATE
 from opi.services.catalog.publish_on_web.domain_config import DomainSetting, get_domain_setting
 from opi.services.project import Project
 from opi.services.services import service_entry_config, service_entry_name, service_entry_type
@@ -63,14 +66,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: De blauwdruk die meteen doorstuurt naar SSO Rijk in plaats van een inlogscherm te tonen,
-#: en tegelijk de blauwdruk die een project krijgt zolang zijn projectbestand er geen noemt.
-#:
-#: Dezelfde waarde als in ``KeycloakConfig.template`` en in het API-schema. Het FORMULIER
-#: kende hier ooit een eigen mening (``sso-support``), en dat is precies wat een scherm liet
-#: tonen wat het platform niet deed; het veld heeft daarom geen default meer en vraagt om een
-#: keuze (``opi/services/catalog/keycloak/editables.py``).
-SSO_ONLY_TEMPLATE = "sso-only"
+#: De browser flow die bij een blauwdruk hoort. Elke blauwdruk zet hem ook zelf (met
+#: ``setAsBrowserFlow`` of met de ``browserFlow``-sleutel); deze kaart is de expliciete
+#: assertie voor een realm die afdreef, en de reden dat er geen template-naam meer in een
+#: if-tak staat.
+BROWSER_FLOW_BY_TEMPLATE = {
+    SSO_ONLY_TEMPLATE: "External IDP Redirector",
+    SSO_SUPPORT_OTP_TEMPLATE: REQUIRED_OTP_BROWSER_FLOW,
+}
 
 #: De demo-gebruikers die de blauwdruk ``algoritmeregister`` aanmaakt. Ze dragen een
 #: wachtwoord uit de repo en staan daarom apart van de blauwdruk, zodat alleen een cluster
@@ -1332,10 +1335,12 @@ class KeycloakManager:
             template: The project's realm blueprint. It decides whether the gate redirects to
                 SSO Rijk or shows Keycloak's login screen: the gate REPLACES the realm's
                 browser flow on this client, so without it the redirect of ``sso-only`` was
-                lost and the user got the login form (see ``_build_role_gate_flow``).
+                lost and the user got the login form (see ``_build_role_gate_flow``). For the
+                same reason, the gate carries the OTP requirement of ``sso-support-otp``.
         """
         error_message = restrict_access.get("error_message", "${accessDeniedNoPermission}")
         redirect_to_idp = PLATFORM_IDP_ALIAS if template == SSO_ONLY_TEMPLATE else None
+        require_otp = template == SSO_SUPPORT_OTP_TEMPLATE
         browser_flow_alias = role_gate_flow_alias(client_id)
         post_broker_flow_alias = f"post-broker-restricted-{client_id}"
 
@@ -1375,6 +1380,7 @@ class KeycloakManager:
                     role_name=role_name,
                     error_message=error_message,
                     redirect_to_idp=redirect_to_idp,
+                    require_otp=require_otp,
                 )
             else:
                 # Step 1: Create the client role
@@ -1395,6 +1401,7 @@ class KeycloakManager:
                     role_name=role_name,
                     error_message=error_message,
                     redirect_to_idp=redirect_to_idp,
+                    require_otp=require_otp,
                 )
 
             # Step 3: Set the browser flow as an authentication override on the client
@@ -1622,14 +1629,17 @@ class KeycloakManager:
         handler = KeycloakYamlHandler(keycloak)
         await handler.ensure_authentication_flows(yaml_path, context)
 
-        # Converge the browser flow on what the template implies. Both templates already
-        # set it themselves (sso-only through setAsBrowserFlow, sso-support through its
+        # Converge the browser flow on what the template implies. Every template already
+        # sets it itself (sso-only through setAsBrowserFlow, the others through their
         # browserFlow key), so this is normally a no-op; it stays as the explicit
         # assertion for a realm that drifted, and for a template carrying neither signal.
-        # sso-only: External IDP Redirector flow (auto-redirect to IdP)
-        # sso-support: standard browser flow (shows login form with SSO button)
-        expected_browser_flow = "External IDP Redirector" if template_name == SSO_ONLY_TEMPLATE else "browser"
+        expected_browser_flow = BROWSER_FLOW_BY_TEMPLATE.get(template_name, DEFAULT_BROWSER_FLOW)
         await keycloak.ensure_browser_flow(realm_name, expected_browser_flow)
+
+        # Switching to sso-support-otp: set CONFIGURE_TOTP on existing accounts without OTP.
+        # SSO users and service accounts are unaffected.
+        if template_name == SSO_SUPPORT_OTP_TEMPLATE:
+            await keycloak.ensure_configure_totp_required(realm_name)
 
     async def _ensure_realm_clients(
         self,
