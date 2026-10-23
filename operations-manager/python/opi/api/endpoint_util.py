@@ -6,6 +6,7 @@ from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
+from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.api.user_token_auth import UserTokenError, extract_bearer_token
 from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, project_api_key_actor, set_actor
 from opi.core.config import settings
@@ -70,10 +71,13 @@ def validate_api_token(func: Callable[..., Any]) -> Callable[..., Any]:
             )
             raise HTTPException(status_code=401, detail="Missing project_name parameter")
 
+        refuse_when_key_failures_exhausted(x_api_key)
+
         project = authenticate_project_api_key(project_name_from_url, x_api_key)
 
         if not project:
             logger.warning(f"Authentication failed for route {func.__name__} - invalid API key")
+            refuse_after_auth_failure(request, x_api_key)
             raise HTTPException(status_code=401, detail="Invalid API key")
 
         logger.debug(f"Project API key validation successful for route {func.__name__} (project: {project.name})")
@@ -109,6 +113,7 @@ def normalize_project_name(text: str) -> str:
 
 
 def _require_shared_secret(
+    request: Request,
     presented: str | None,
     configured: str | None,
     setting_name: str,
@@ -125,6 +130,8 @@ def _require_shared_secret(
         logger.warning(f"Authentication failed for route {route_name} ({setting_name}) - no credential provided")
         raise HTTPException(status_code=401, detail=missing_detail)
 
+    refuse_when_key_failures_exhausted(presented)
+
     if not configured:
         logger.warning(f"{setting_name} not configured - route {route_name} is disabled")
         raise HTTPException(
@@ -136,6 +143,7 @@ def _require_shared_secret(
     # TypeError, en de header komt van buiten met willekeurige bytes.
     if not secrets.compare_digest(presented.encode(), configured.encode()):
         logger.warning(f"Authentication failed for route {route_name} ({setting_name}) - invalid credential")
+        refuse_after_auth_failure(request, presented)
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     logger.debug(f"{setting_name} validation successful for route {route_name}")
@@ -147,6 +155,7 @@ def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
         _require_shared_secret(
+            request,
             request.headers.get("X-API-Key"),
             settings.ADMIN_API_KEY,
             "ADMIN_API_KEY",
@@ -166,6 +175,7 @@ def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
         _require_shared_secret(
+            request,
             request.headers.get("X-API-Key"),
             settings.MASTER_API_KEY,
             "MASTER_API_KEY",
@@ -194,6 +204,7 @@ def validate_metrics_scrape_token(func: Callable[..., Any]) -> Callable[..., Any
             token = None
 
         _require_shared_secret(
+            request,
             token,
             settings.PROMETHEUS_METRICS_AUTH_TOKEN,
             "PROMETHEUS_METRICS_AUTH_TOKEN",

@@ -14,7 +14,9 @@ gigabyte, en OPI heeft weinig marge voordat hij OOMKilled wordt. Wat hier gemete
   en wordt pas geweigerd als die vol is (RC-367);
 * de image-push krijgt zijn sleutelcontrole en zijn plek in het slot vóór de parser, dus
   een verzoek zonder geldige sleutel en een verzoek op een vol slot laten geen byte body
-  binnen (RC-367).
+  binnen (RC-367);
+* die sleutelcontrole loopt langs dezelfde faaltellers als de routes, want deze weg staat
+  buiten ``RateLimitMiddleware`` (RC-368).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import pytest
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.testclient import TestClient
 from opi.api.image_router import image_router
+from opi.api.rate_limiter import AUTH_FAILURE_PER_KEY
 from opi.core.config import settings
 from opi.forms.wizard.session import save_modal_state_by_token
 from opi.forms.wizard.state import WizardState
@@ -655,6 +658,29 @@ def test_een_push_met_een_verkeerde_sleutel_leest_geen_body(
     assert any("Authentication failed" in r.getMessage() for r in caplog.records)
     assert not any("de-sleutel-van-een-ander" in r.getMessage() for r in caplog.records)
     assert response.json()["detail"] == "Invalid API key"
+    assert teller.ontvangen == 0, "de body is toch gelezen"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_raden_op_de_push_loopt_vast_op_de_faalteller(
+    push_stack: tuple[TestClient, _TeltOntvangen], tmp_path: Path
+) -> None:
+    """Deze weg doet de sleutelvergelijking zelf en staat buiten RateLimitMiddleware.
+
+    Zonder de faaltellers kostte raden hier niets: een 401 per poging, met een
+    projectlezing en een compare_digest erbij.
+    """
+    client, teller = push_stack
+    grens = AUTH_FAILURE_PER_KEY.burst
+
+    def push() -> httpx.Response:
+        return client.post(PUSH_PAD, files={"file": ("img.tar", b"x" * 4096)}, headers={"X-API-Key": "raad-maar"})
+
+    assert [push().status_code for _ in range(grens)] == [401] * grens
+
+    geweigerd = push()
+    assert geweigerd.status_code == 429
+    assert int(geweigerd.headers["Retry-After"]) >= 1
     assert teller.ontvangen == 0, "de body is toch gelezen"
     assert list(tmp_path.iterdir()) == []
 

@@ -164,6 +164,7 @@ from opi.services.step_up_conditions import (
     deployment_in_production,
 )
 from opi.utils.age import get_decoded_project_private_key
+from opi.utils.client_ip import client_ip
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import (
     generate_argocd_application_name,
@@ -681,13 +682,14 @@ async def check_subdomain_availability_v2(
 
     safe_subdomain = sanitize_for_log(subdomain)
     safe_base_domain = sanitize_for_log(base_domain)
-    client_ip = sanitize_for_log(IPRateLimiter.get_client_ip(request))
+    # Het afgeleide client-IP, niet de ruwe header: deze regel wordt als spoor gelezen.
+    ip = sanitize_for_log(client_ip(request))
     logger.info(
         "AUDIT: Subdomain check - project=%s, subdomain=%s, base_domain=%s, ip=%s",
         sanitize_for_log(project_name),
         safe_subdomain,
         safe_base_domain,
-        client_ip,
+        ip,
     )
 
     _project_data_or_404(project_name)

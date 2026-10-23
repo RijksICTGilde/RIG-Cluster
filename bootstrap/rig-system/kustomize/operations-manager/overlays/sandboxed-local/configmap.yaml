@@ -80,6 +80,14 @@ data:
 
     PROMETHEUS_EXTERNAL_URL=https://prometheus.sandbox.rijksapp.dev
 
+    # ingress-nginx is hier de enige ingang en zet X-Forwarded-For op $remote_addr
+    # (nergens een use-forwarded-headers, dus de default), dus er is precies een
+    # vertrouwde hop en de inkomende header telt niet mee. Zonder dit telt de rem op het
+    # peer-adres, en dat is bij elk extern verzoek de ingress-pod: een emmer voor alle
+    # clients samen. Gemeten op de sandbox: hops=0 gaf 10.244.0.247 (de ingress-pod),
+    # hops=1 geeft het adres dat de ingress ziet.
+    TRUSTED_PROXY_HOPS=1
+
     LOG_TO_FILE=false
 
     # Sleep-mode: pull the published waker image, same tag as production and as the code

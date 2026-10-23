@@ -75,6 +75,12 @@ async def test_reconcile_is_a_no_op_when_nothing_changed(live_settings) -> None:
 async def test_reconcile_refuses_a_wrong_key(live_settings) -> None:
     request = AsyncMock()
     request.headers = {"X-API-Key": "not-the-admin-key"}
+    # Een foute sleutel loopt door refuse_after_auth_failure, die het client-id opbouwt:
+    # request.scope.get(...) en request.session.get(...) geven op een kale AsyncMock zelf
+    # weer een AsyncMock terug, en .get() daarop een ongeawaite coroutine in plaats van een
+    # dict. Zie dezelfde reden in test_endpoint_util.py (mock_request.scope).
+    request.scope = {}
+    request.session = {}
     store = _store("aaaa1111", "bbbb2222")
 
     with patch.object(admin_module, "get_project_store", return_value=store), pytest.raises(HTTPException) as exc:

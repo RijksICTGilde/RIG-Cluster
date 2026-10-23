@@ -193,6 +193,27 @@ class Settings(BaseSettings):
     # ASVS 3.3.1). De inactiviteitsgrens hierboven is een schuivend venster; dit is hard.
     SESSION_ABSOLUTE_MAX_SECONDS: int = 43200  # 12 hours
 
+    # Mislukte authenticatiepogingen per minuut op de sleutelpaden, apart geteld per client
+    # en per aangeboden sleutel. Boven de grens volgt een 429. Zie
+    # features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md voor welke van de twee
+    # vóór de sleutelvergelijking weigert en waarom de andere er pas na staat.
+    AUTH_FAILURE_LIMIT_PER_MINUTE: int = 10
+
+    # De grove bovengrens op /api en /auth per client. Ruim: hij hoort de piek af te
+    # vlakken, niet normaal gebruik te raken.
+    API_RATE_LIMIT_PER_MINUTE: int = 600
+    API_RATE_LIMIT_BURST: int = 120
+
+    # Plafond op de Retry-After die bij een 429 meegaat.
+    RATE_LIMIT_RETRY_AFTER_MAX_SECONDS: int = 60
+
+    # Aantal vertrouwde proxy-hops in X-Forwarded-For, geteld van RECHTS. 0 vertrouwt geen
+    # enkele header en telt op het TCP-peer-adres: de juiste waarde voor een opbouw zonder
+    # proxy ervoor (docker-compose, pytest, uv run). Elke opbouw met een ingress ervoor zet
+    # hem op 1 in zijn eigen configmap, want daar is die ene proxy de enige ingang. Zie
+    # features/futures/client-ip-vertrouwen-achter-de-router.md.
+    TRUSTED_PROXY_HOPS: int = 0
+
     # Development mode: "reload" (hot-reload) | "debug" (debugger) | "production"
     # Default "production": een vergeten instelling valt naar de dichte kant, zonder
     # bestandsbewaking en zonder debugger. Lokaal en sandbox zetten "reload" expliciet.

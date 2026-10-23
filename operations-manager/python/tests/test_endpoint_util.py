@@ -121,6 +121,7 @@ class TestValidateApiToken:
             return {"ok": True}
 
         mock_request = MagicMock(spec=Request)
+        mock_request.scope = {}
         mock_request.headers = {"X-API-Key": "wrong-key"}
 
         mock_project = MagicMock()
@@ -147,6 +148,7 @@ class TestValidateApiToken:
             return {"ok": True}
 
         mock_request = MagicMock(spec=Request)
+        mock_request.scope = {}
         mock_request.headers = {"X-API-Key": "caf\xe9"}
 
         mock_project = MagicMock()
@@ -219,6 +221,7 @@ class TestValidateApiToken:
             return {"ok": True}
 
         mock_request = MagicMock(spec=Request)
+        mock_request.scope = {}
         mock_request.headers = {"X-API-Key": "some-key"}
 
         mock_service = MagicMock()
@@ -260,6 +263,7 @@ class TestValidateAdminApiKey:
             return {"ok": True}
 
         mock_request = MagicMock(spec=Request)
+        mock_request.scope = {}
         mock_request.headers = {"X-API-Key": "wrong-key"}
 
         with patch("opi.api.endpoint_util.settings") as mock_settings:
@@ -316,6 +320,7 @@ class TestValidateMasterApiKey:
             return {"ok": True}
 
         mock_request = MagicMock(spec=Request)
+        mock_request.scope = {}
         mock_request.headers = {"X-API-Key": "wrong-key"}
 
         with patch("opi.api.endpoint_util.settings") as mock_settings:

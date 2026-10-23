@@ -6,10 +6,12 @@ subdomain check endpoint with periodic memory cleanup.
 """
 
 import time
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 from opi.api.router import IPRateLimiter
+from starlette.requests import Request
 
 
 class TestIPRateLimiterBasics:
@@ -114,6 +116,50 @@ class TestIPRateLimiterTimeBasedCleanup:
         # Old entries should be cleaned up (those older than 300 seconds)
         assert len(limiter._tokens) < 10  # Most should be cleaned
 
+    def test_size_based_cleanup_triggers_on_ip_bucket_growth_too(self):
+        """De drempel kijkt naar de grootste van de twee emmers, niet alleen de client-emmer.
+
+        ``max_new_clients_per_minute=None`` (zoals ``API_FLOOD_LIMITER``) laat de emmer per
+        IP meegroeien met elk verzonnen client-id. Kijkt de opruimdrempel alleen naar
+        ``_tokens``, dan blijft die emmer per IP ongelimiteerd groeien terwijl ``_tokens``
+        zelf klein blijft.
+        """
+        limiter = IPRateLimiter(
+            requests_per_minute=30, burst=10, cleanup_interval=99999.0, max_new_clients_per_minute=None
+        )
+
+        for i in range(8001):
+            ip = f"203.0.{i // 256}.{i % 256}"
+            limiter._ip_tokens[ip] = 10.0
+            limiter._ip_last_update[ip] = time.monotonic() - 5000
+
+        assert len(limiter._tokens) == 0
+        assert len(limiter._ip_tokens) > 8000
+
+        limiter.is_allowed("10.0.0.1|fingerprint|")
+
+        assert len(limiter._ip_tokens) < 10
+
+    def test_gradual_purge_removes_stale_ip_entries_too(self):
+        """De noodopruiming ruimt ook de emmer per IP op, niet alleen de emmer per client.
+
+        Zonder dit raakt alleen ``_tokens`` begrensd door ``MAX_TRACKED_CLIENTS``, en groeit
+        ``_ip_tokens`` ongelimiteerd door bij een stortvloed van verzonnen client-ids.
+        """
+        limiter = IPRateLimiter(requests_per_minute=30, burst=10)
+        oud = time.monotonic() - (limiter.EMERGENCY_PURGE_MIN_AGE_SECONDS + 60)
+        limiter._tokens["oude.client"] = 5.0
+        limiter._last_update["oude.client"] = oud
+        limiter._ip_tokens["203.0.113.1"] = 5.0
+        limiter._ip_last_update["203.0.113.1"] = oud
+
+        limiter._gradual_purge_unlocked()
+
+        assert "oude.client" not in limiter._tokens
+        assert "oude.client" not in limiter._last_update
+        assert "203.0.113.1" not in limiter._ip_tokens
+        assert "203.0.113.1" not in limiter._ip_last_update
+
 
 class TestIPRateLimiterCleanupOldEntries:
     """Tests for cleanup_old_entries method."""
@@ -212,6 +258,79 @@ class TestIPRateLimiterMemoryBounds:
         assert limiter.is_allowed("test.ip") is True
 
 
+class TestDeWeigeringBlijftGoedkoop:
+    """De drie remmen uit commit ``6251026b7``, op de limiter zonder nieuwe-clientgrens.
+
+    ``API_FLOOD_LIMITER`` staat op elk verzoek onder ``/api/`` en ``/auth/`` en draait
+    zonder die grens, dus het client-id is van buiten te kiezen (de vingerafdruk is een
+    hash van User-Agent, Accept-Language en Accept-Encoding). Zonder deze drie remmen
+    bepaalt een aanvaller wat zijn eigen weigering kost, en daarmee wat een verzoek van
+    iedere andere client kost.
+    """
+
+    @staticmethod
+    def _limiter() -> IPRateLimiter:
+        return IPRateLimiter(
+            requests_per_minute=600, burst=10, cleanup_interval=99999.0, max_new_clients_per_minute=None
+        )
+
+    def test_een_geweigerd_verzoek_laat_geen_emmer_achter(self):
+        """Verse client-ids vanaf een adres leveren niet meer emmers op dan de burst per IP.
+
+        Voor de reparatie materialiseerde ``is_allowed`` de emmer voordat hij weigerde: deze
+        500 verzoeken lieten er 500 achter.
+        """
+        limiter = self._limiter()
+
+        for nummer in range(500):
+            limiter.is_allowed(f"203.0.113.9|ua-{nummer}|")
+
+        # De emmer per IP is het enige dat een verse client nog kan weigeren, dus zij
+        # begrenst het aantal emmers. Bijvullen tijdens de lus geeft er een paar bij.
+        assert len(limiter._last_update) <= limiter._per_ip_burst + 5
+        assert len(limiter._tokens) == len(limiter._last_update)
+        assert limiter.is_allowed("203.0.113.9|ua-nog-eentje|") is False
+
+    def test_max_tracked_clients_is_een_harde_bovengrens(self, monkeypatch: pytest.MonkeyPatch):
+        """Verdringing houdt beide emmersoorten op de grens, ook zonder iets om op te ruimen.
+
+        Voor de reparatie was de grens alleen een drempel voor de opruiming, en die laat een
+        emmer jonger dan een minuut staan: deze 5000 client-ids hielden er 5000 over.
+        """
+        monkeypatch.setattr(IPRateLimiter, "MAX_TRACKED_CLIENTS", 50)
+        limiter = self._limiter()
+
+        for nummer in range(5000):
+            limiter.is_allowed(f"198.51.100.{nummer % 200}|ua-{nummer}|")
+
+        assert len(limiter._last_update) == 50
+        assert len(limiter._tokens) == 50
+        assert len(limiter._ip_last_update) <= 50
+        assert len(limiter._ip_tokens) == len(limiter._ip_last_update)
+
+    def test_de_noodopruiming_draait_hoogstens_een_keer_per_interval(self, monkeypatch: pytest.MonkeyPatch):
+        """Anders draaien er twee O(n)-scans per verzoek, onder de lock van elke client.
+
+        Voor de reparatie draaide de scan 95 keer in deze 100 verzoeken.
+        """
+        monkeypatch.setattr(IPRateLimiter, "CLEANUP_THRESHOLD", 5)
+        limiter = self._limiter()
+        scans = 0
+        echte_scan = limiter._cleanup_old_entries_unlocked
+
+        def tel(max_age_seconds: int = 600) -> None:
+            nonlocal scans
+            scans += 1
+            echte_scan(max_age_seconds)
+
+        monkeypatch.setattr(limiter, "_cleanup_old_entries_unlocked", tel)
+
+        for nummer in range(100):
+            limiter.is_allowed(f"203.0.113.9|ua-{nummer}|")
+
+        assert scans == 1
+
+
 class TestKubectlConnectorGetResourcesByLabel:
     """Tests for KubectlConnector.get_resources_by_label method."""
 
@@ -274,33 +393,30 @@ class TestKubectlConnectorGetResourcesByLabel:
             assert result == []
 
 
+def _request(peer: str, headers: dict[str, str] | None = None, sessie: dict[str, str] | None = None) -> Request:
+    """Een echt Request-object: het client-id leest de ruwe headerregels, geen dict."""
+    scope: dict[str, Any] = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/api/ping",
+        "query_string": b"",
+        "root_path": "",
+        "server": ("testserver", 80),
+        "client": (peer, 1234),
+        "headers": [(naam.encode(), waarde.encode()) for naam, waarde in (headers or {}).items()],
+    }
+    if sessie is not None:
+        scope["session"] = sessie
+    return Request(scope)
+
+
 class TestIPRateLimiterClientIdentification:
-    """Tests for robust client identification to prevent X-Forwarded-For spoofing."""
-
-    def test_get_client_ip_from_x_forwarded_for(self):
-        """get_client_ip extracts IP from X-Forwarded-For header."""
-        from unittest.mock import MagicMock
-
-        request = MagicMock()
-        request.headers = {"x-forwarded-for": "203.0.113.50, 10.0.0.1, 172.16.0.1"}
-        request.client.host = "127.0.0.1"
-
-        ip = IPRateLimiter.get_client_ip(request)
-        assert ip == "203.0.113.50"  # First IP in chain (original client)
-
-    def test_get_client_ip_fallback_to_direct(self):
-        """get_client_ip falls back to direct connection when no X-Forwarded-For."""
-        from unittest.mock import MagicMock
-
-        request = MagicMock()
-        request.headers = {}
-        request.client.host = "192.168.1.100"
-
-        ip = IPRateLimiter.get_client_ip(request)
-        assert ip == "192.168.1.100"
+    """Hoe een client wordt geidentificeerd. Het IP zelf: tests/test_client_ip.py."""
 
     def test_get_client_fingerprint_generates_hash(self):
-        """_get_client_fingerprint generates consistent hash from headers."""
+        """get_client_fingerprint generates consistent hash from headers."""
         from unittest.mock import MagicMock
 
         request = MagicMock()
@@ -310,18 +426,18 @@ class TestIPRateLimiterClientIdentification:
             "accept-encoding": "gzip, deflate, br",
         }
 
-        fingerprint = IPRateLimiter._get_client_fingerprint(request)
+        fingerprint = IPRateLimiter.get_client_fingerprint(request)
 
         # Should be a 16-character hex string
         assert len(fingerprint) == 16
         assert all(c in "0123456789abcdef" for c in fingerprint)
 
         # Same headers should produce same fingerprint
-        fingerprint2 = IPRateLimiter._get_client_fingerprint(request)
+        fingerprint2 = IPRateLimiter.get_client_fingerprint(request)
         assert fingerprint == fingerprint2
 
     def test_get_client_fingerprint_different_for_different_headers(self):
-        """_get_client_fingerprint produces different hashes for different headers."""
+        """get_client_fingerprint produces different hashes for different headers."""
         from unittest.mock import MagicMock
 
         request1 = MagicMock()
@@ -338,24 +454,22 @@ class TestIPRateLimiterClientIdentification:
             "accept-encoding": "gzip",
         }
 
-        fp1 = IPRateLimiter._get_client_fingerprint(request1)
-        fp2 = IPRateLimiter._get_client_fingerprint(request2)
+        fp1 = IPRateLimiter.get_client_fingerprint(request1)
+        fp2 = IPRateLimiter.get_client_fingerprint(request2)
 
         assert fp1 != fp2  # Different user agents should produce different fingerprints
 
     def test_get_client_identifier_combines_factors(self):
         """get_client_identifier combines IP, fingerprint, and session."""
-        from unittest.mock import MagicMock
-
-        request = MagicMock()
-        request.headers = {
-            "x-forwarded-for": "203.0.113.50",
-            "user-agent": "TestAgent/1.0",
-            "accept-language": "en",
-            "accept-encoding": "gzip",
-        }
-        request.client.host = "127.0.0.1"
-        request.session = {"_session_id": "abc123def456"}
+        request = _request(
+            "203.0.113.50",
+            headers={
+                "user-agent": "TestAgent/1.0",
+                "accept-language": "en",
+                "accept-encoding": "gzip",
+            },
+            sessie={"_session_id": "abc123def456"},
+        )
 
         identifier = IPRateLimiter.get_client_identifier(request)
 
@@ -368,16 +482,14 @@ class TestIPRateLimiterClientIdentification:
 
     def test_get_client_identifier_without_session(self):
         """get_client_identifier works without session (unauthenticated)."""
-        from unittest.mock import MagicMock
-
-        request = MagicMock()
-        request.headers = {
-            "user-agent": "TestAgent/1.0",
-            "accept-language": "en",
-            "accept-encoding": "gzip",
-        }
-        request.client.host = "192.168.1.1"
-        request.session = {}
+        request = _request(
+            "192.168.1.1",
+            headers={
+                "user-agent": "TestAgent/1.0",
+                "accept-language": "en",
+                "accept-encoding": "gzip",
+            },
+        )
 
         identifier = IPRateLimiter.get_client_identifier(request)
 
@@ -387,42 +499,25 @@ class TestIPRateLimiterClientIdentification:
         assert len(parts[1]) == 16
         assert parts[2] == ""  # Empty session
 
-    def test_spoofed_xff_with_same_fingerprint_is_caught(self):
-        """Rate limiting catches requests with spoofed XFF but same fingerprint."""
-        from unittest.mock import MagicMock
+    def test_spoofed_xff_levert_hetzelfde_client_id(self):
+        """Een verzonnen X-Forwarded-For geeft geen eigen emmer meer.
 
-        limiter = IPRateLimiter(requests_per_minute=30, burst=3)
+        Deze test pinde tot RC-368 het omgekeerde vast: de linkse headerwaarde werd het
+        client-id, dus wie zijn adres verzon koos zijn eigen emmer. Het IP komt nu van
+        ``client_ip``, en zonder vertrouwde proxy-hop telt dat op het peer-adres.
+        """
+        headers = {
+            "user-agent": "Same Browser/1.0",
+            "accept-language": "en-US",
+            "accept-encoding": "gzip",
+        }
+        ids = {
+            IPRateLimiter.get_client_identifier(_request("127.0.0.1", headers={**headers, "x-forwarded-for": ip}))
+            for ip in ("1.1.1.1", "2.2.2.2", "3.3.3.3")
+        }
 
-        # Same fingerprint (same browser), different "spoofed" IPs
-        def make_request(ip):
-            request = MagicMock()
-            request.headers = {
-                "x-forwarded-for": ip,
-                "user-agent": "Same Browser/1.0",
-                "accept-language": "en-US",
-                "accept-encoding": "gzip",
-            }
-            request.client.host = "127.0.0.1"
-            request.session = {}
-            return request
-
-        # Requests from "different IPs" but same fingerprint
-        req1 = make_request("1.1.1.1")
-        req2 = make_request("2.2.2.2")
-        req3 = make_request("3.3.3.3")
-
-        # Without fingerprinting, these would all be allowed
-        # With fingerprinting, they share the same limit because fingerprint matches
-        id1 = IPRateLimiter.get_client_identifier(req1)
-        id2 = IPRateLimiter.get_client_identifier(req2)
-        id3 = IPRateLimiter.get_client_identifier(req3)
-
-        # Different IPs produce different identifiers, but fingerprint is same component
-        # This ensures that spoofing just XFF requires more effort
-        assert "1.1.1.1" in id1
-        assert "2.2.2.2" in id2
-        # The fingerprint portion should be the same
-        assert id1.split("|")[1] == id2.split("|")[1] == id3.split("|")[1]
+        assert len(ids) == 1
+        assert next(iter(ids)).startswith("127.0.0.1|")
 
 
 class TestIPRateLimiterRetention:

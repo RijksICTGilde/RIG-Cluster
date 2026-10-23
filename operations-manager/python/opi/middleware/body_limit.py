@@ -22,9 +22,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from fastapi import HTTPException
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from opi.api.endpoint_util import authenticate_project_api_key
+from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.core.config import settings
 from opi.services.catalog.attachments.catalog_model import MAX_ATTACHMENT_BYTES
 from opi.utils.uploads import SLOT_HELD_IN_SCOPE, upload_slot
@@ -107,12 +109,9 @@ class BodyLimitMiddleware:
         Het slot blijft tot het antwoord verstuurd is, zodat het aantal tarballs op de
         tempschijf echt begrensd is en niet alleen het aantal dat tegelijk gelezen wordt.
         """
-        presented = _header(scope, b"x-api-key")
-        if authenticate_project_api_key(project_name, presented) is None:
-            detail = _FOUTE_SLEUTEL if presented else _GEEN_SLEUTEL
-            # Dezelfde WARNING als validate_api_token, die deze 401 voor is.
-            logger.warning("Authentication failed for image push to %s: %s", project_name, detail)
-            await self._respond(scope, receive, send, 401, detail)
+        weigering = self._key_refusal(scope, project_name)
+        if weigering is not None:
+            await self._respond(scope, receive, send, *weigering)
             return
 
         genomen = False
@@ -126,6 +125,25 @@ class BodyLimitMiddleware:
             if genomen:
                 raise
             await self._respond(scope, receive, send, bezet.status_code, str(bezet.detail), bezet.headers)
+
+    def _key_refusal(self, scope: Scope, project_name: str) -> tuple[int, str, Mapping[str, str] | None] | None:
+        """Het antwoord dat de sleutelcontrole eist, of ``None`` als de sleutel klopt.
+
+        Dezelfde twee faaltellers als ``validate_api_token``: deze weg loopt buiten
+        ``RateLimitMiddleware`` om, dus zonder dit zou raden hier ongeremd zijn.
+        """
+        presented = _header(scope, b"x-api-key")
+        detail = _FOUTE_SLEUTEL if presented else _GEEN_SLEUTEL
+        try:
+            refuse_when_key_failures_exhausted(presented)
+            if authenticate_project_api_key(project_name, presented) is not None:
+                return None
+            # Dezelfde WARNING als validate_api_token, die deze 401 voor is.
+            logger.warning("Authentication failed for image push to %s: %s", project_name, detail)
+            refuse_after_auth_failure(Request(scope), presented)
+        except HTTPException as geweigerd:
+            return geweigerd.status_code, str(geweigerd.detail), geweigerd.headers
+        return 401, detail, None
 
     async def _count_while_reading(self, scope: Scope, receive: Receive, send: Send, max_bytes: int) -> None:
         """Chunked transfer kent geen Content-Length, dus daar valt de grens pas tijdens het lezen."""

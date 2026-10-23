@@ -31,6 +31,11 @@ componenten:
             zodat OPI zijn eigen verbindingen houdt.
           bron: features/postgresql-connection-limits.md
           toets: operations-manager/python/tests/test_connection_limit.py
+        - maatregel: >-
+            Een stortvloed van verzoeken op /api en /auth loopt tegen een grove bovengrens per
+            client, met een 429 en een Retry-After in plaats van een vertraging.
+          bron: features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md
+          toets: operations-manager/python/tests/test_snelle_weigering.py
       integriteit:
         - maatregel: >-
             De namespace van een deployment komt uit de projectnaam en niet uit het
@@ -64,6 +69,11 @@ componenten:
             te kort is weigert de start, en zonder opgave komt er een verse random sleutel.
           bron: features/opi-start-dicht.md
           toets: operations-manager/python/tests/test_secret_key_failclosed.py
+        - maatregel: >-
+            Het raden van een X-API-Key loopt vast op een faalteller per aangeboden sleutel en
+            per client, voor de sleutelvergelijking en voor het lezen van het projectbestand.
+          bron: features/een-foute-sleutel-loopt-tegen-een-snelle-weigering.md
+          toets: operations-manager/python/tests/test_snelle_weigering.py
 
   - id: keycloak
     naam: Keycloak
