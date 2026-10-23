@@ -22,6 +22,12 @@ from opi.api.invite_routes import invite_router
 from opi.api.logs_router import logs_router
 from opi.api.logs_websocket_router import logs_websocket_router
 from opi.api.openapi_choices import API_DESCRIPTION, annotate_config_choices
+from opi.api.otp_step_up import (
+    OTP_CODE_HEADER,
+    STEP_UP_PROBLEM_MEDIA_TYPE,
+    STEP_UP_PROBLEM_TYPE,
+    StepUpProblem,
+)
 from opi.api.prometheus_router import prometheus_router
 from opi.api.resource_router import resource_router
 from opi.api.restore_router import restore_router
@@ -30,7 +36,7 @@ from opi.api.task_router import task_router
 from opi.api.user_token_auth import REQUIRES_USER_TOKEN
 from opi.api.v2.models import ProblemDetail, category_for_status
 from opi.api.v2.router import v2_router
-from opi.core.auth_decorators import requires_sso
+from opi.core.auth_decorators import REQUIRES_STEP_UP, requires_sso
 from opi.core.config import PROJECT_DESCRIPTION, PROJECT_NAME, VERSION, settings
 from opi.core.database_pools import close_database_pools
 
@@ -556,6 +562,39 @@ def create_app() -> FastAPI:
         envelop = ProblemDetail.model_json_schema(ref_template="#/components/schemas/{model}")
         schemas.update(envelop.pop("$defs", {}))
         schemas["ProblemDetail"] = envelop
+
+        # De step-up, op dezelfde manier uit de route zelf gelezen: welke routes een verse
+        # tweede factor vragen staat in hun decorator, en een client hoort de header en de
+        # 403 in dit document te vinden in plaats van ze te ontdekken (RC-332).
+        step_up_operations = {
+            (route.path, method.lower())
+            for route in app.routes
+            if getattr(route, "endpoint", None) is not None and getattr(route.endpoint, REQUIRES_STEP_UP, None)
+            for method in getattr(route, "methods", None) or []
+        }
+        step_up_schema = StepUpProblem.model_json_schema(ref_template="#/components/schemas/{model}")
+        schemas.update(step_up_schema.pop("$defs", {}))
+        schemas["StepUpProblem"] = step_up_schema
+        step_up_header = {
+            "name": OTP_CODE_HEADER,
+            "in": "header",
+            "required": False,
+            "schema": {"type": "string"},
+            "description": (
+                "Een verse code uit de authenticator van de aanroeper, voor een handeling die "
+                "productie raakt. Alleen nodig als deze aanroep dat echt doet, en alleen te "
+                "gebruiken met een persoonlijk token: de code wordt getoetst tegen de tweede "
+                "factor van de eigenaar van dat token. Met een projectsleutel kan de handeling niet."
+            ),
+        }
+        step_up_403 = {
+            "description": (
+                "Deze handeling raakt productie en vraagt een verse tweede factor. Het antwoord "
+                f"heeft type '{STEP_UP_PROBLEM_TYPE}'; 'cause' zegt waarom er werd geweigerd en "
+                f"'remedy' wat er moet gebeuren. Herhaal de aanroep met '{OTP_CODE_HEADER}'."
+            ),
+            "content": {STEP_UP_PROBLEM_MEDIA_TYPE: {"schema": {"$ref": "#/components/schemas/StepUpProblem"}}},
+        }
         vijf_xx = {
             "description": (
                 "Er ging iets mis aan onze kant. Het lag niet aan je verzoek, dus opnieuw "
@@ -574,6 +613,9 @@ def create_app() -> FastAPI:
                 scheme = "BearerToken" if (path, verb) in bearer_operations else "APIKeyHeader"
                 method["security"] = [{scheme: []}]
                 method.setdefault("responses", {})["5XX"] = vijf_xx
+                if (path, verb) in step_up_operations:
+                    method.setdefault("parameters", []).append(step_up_header)
+                    method["responses"]["403"] = step_up_403
 
         # Sort paths: V2 first, then v1, for clarity in docs
         paths = openapi_schema.get("paths", {})

@@ -12,10 +12,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.exc import SQLAlchemyError
 
-from opi.core.auth_decorators import get_current_user, requires_sso
+from opi.core.auth_decorators import get_current_user, requires_sso, requires_step_up
 from opi.core.cluster_config import get_prefixed_namespace
 from opi.core.dns_config import ROUTER_HOSTNAMES, router_addresses_for, router_hostname_for
 from opi.core.errors import kenmerk_nu, kenmerk_van, log_render_failure, met_kenmerk
+from opi.core.step_up import StepUpActie
 from opi.core.templates_lotc import templates_lotc
 from opi.services.argocd_operation import (
     STUCK_OPERATION_THRESHOLD_SECONDS,
@@ -39,6 +40,11 @@ from opi.services.project_authorization import (
 from opi.services.project_env_vars import read_user_env_vars
 from opi.services.project_store import get_project_store
 from opi.services.registry import collect_service_routers, find_deployment_action
+from opi.services.step_up_conditions import (
+    component_in_production,
+    deployment_in_production,
+    project_in_production,
+)
 from opi.services.user_otp_service import UserOtpService
 from opi.utils.age import decrypt_password_smart, unwrap_project_key
 from opi.utils.csrf import ensure_csrf_token
@@ -74,6 +80,7 @@ from .router_detail_edit import detail_edit_router
 from .router_otp import otp_router
 from .router_self_service import check_subdomain_availability_web
 from .router_shared_services import shared_services_router
+from .router_step_up import step_up_router
 from .router_tasks import tasks_router
 from .router_usage import usage_router
 from .router_user_admin import user_admin_router
@@ -104,6 +111,7 @@ web_router.include_router(attachments_router)
 web_router.include_router(wizard_attachments_router)
 web_router.include_router(tasks_router)
 web_router.include_router(otp_router)
+web_router.include_router(step_up_router)
 
 # Routers the services themselves deliver (RC-24): a service that owns a page block owns
 # the endpoints that fill it (the backups fragment, the console/job modals), instead of
@@ -403,6 +411,7 @@ async def project_progress_page_fragment(request: Request, task_id: str) -> HTML
 
 @web_router.post("/projects/delete/{project_name}", response_class=HTMLResponse)
 @requires_sso
+@requires_step_up(project_in_production, actie=StepUpActie.PROJECT_VERWIJDEREN)
 async def delete_project_web(request: Request, project_name: str) -> HTMLResponse:
     """Delete a whole project from the UI, as a task you can follow.
 
@@ -441,6 +450,7 @@ async def delete_project_web(request: Request, project_name: str) -> HTMLRespons
 
 @web_router.post("/projects/{project_name}/delete-deployment/{deployment_name}", response_class=HTMLResponse)
 @requires_sso
+@requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
 async def delete_deployment_web(request: Request, project_name: str, deployment_name: str) -> HTMLResponse:
     """Delete one deployment from the UI, as a task you can follow."""
     user = get_current_user(request)
@@ -476,6 +486,7 @@ async def delete_deployment_web(request: Request, project_name: str, deployment_
 
 @web_router.post("/projects/{project_name}/delete-component/{component_name}", response_class=HTMLResponse)
 @requires_sso
+@requires_step_up(component_in_production, actie=StepUpActie.COMPONENT_VERWIJDEREN)
 async def delete_component_web(request: Request, project_name: str, component_name: str) -> HTMLResponse:
     """Delete a component from the UI, as a task you can follow.
 

@@ -1,0 +1,19 @@
+{#
+  De step-up is binnen: voer de handeling alsnog uit (RC-332).
+
+  Een fragment dat zichzelf bij het laden post naar de oorspronkelijke handeling, zodat de
+  gebruiker niet opnieuw op verwijderen hoeft te klikken. Het antwoord daarvan (de
+  voortgang van de taak) vervangt dit blok.
+
+  vervolg_token gaat als body-waarde mee naast de query, net als de bevestigknop in
+  bg/_modal-wizard-review.html.j2: htmx laat een query string op een POST niet overal staan.
+#}
+{% set vals = '{"_wizard_token": "' ~ vervolg_token ~ '"}' if vervolg_token else '{}' %}
+<div hx-headers='{"X-CSRF-Token": "{{ request.state.csrf_token }}"}'
+     hx-post="{{ vervolg }}"
+     hx-vals='{{ vals }}'
+     hx-trigger="load"
+     hx-target="#edit-section-inner"
+     hx-swap="innerHTML">
+    <c-paragraph>Bezig met uitvoeren...</c-paragraph>
+</div>

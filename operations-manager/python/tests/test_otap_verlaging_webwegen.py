@@ -10,11 +10,13 @@ geen enkele dekking: een vergeten of verkeerd bedrade aanroep daar zou stilblijv
 from __future__ import annotations
 
 import copy
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from opi.core.step_up import STEP_UP_SESSION_KEY
 
 OWNER_EMAIL = "eigenaar@example.org"
 
@@ -50,7 +52,11 @@ def _patch_project_manager_voor_wizard(stored: dict[str, Any]):
 
 
 def _request_for(email: str) -> Any:
-    return SimpleNamespace(state=SimpleNamespace(user={"email": email}))
+    """Een verzoek met een VERSE step-up: sinds RC-332 weigert een verlaging zonder."""
+    return SimpleNamespace(
+        state=SimpleNamespace(user={"email": email}),
+        session={STEP_UP_SESSION_KEY: datetime.now(UTC).isoformat()},
+    )
 
 
 @pytest.mark.asyncio

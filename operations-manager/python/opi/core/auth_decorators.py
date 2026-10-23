@@ -5,11 +5,15 @@ These decorators provide a clean way to annotate routes with their
 authentication requirements instead of using URL-based checks.
 """
 
+import inspect
 import logging
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from fastapi import HTTPException
+from starlette.requests import Request  # noqa: TC002 -- FastAPI needs Request at runtime
+
+from opi.core.step_up import StepUpActie, has_fresh_step_up, log_step_up_refusal
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -77,3 +81,81 @@ def require_platform_admin(request) -> dict[str, Any]:
     if not get_user_service().is_platform_admin(email):
         raise HTTPException(status_code=403, detail="Alleen beheerders hebben toegang")
     return user
+
+
+#: Markering op een route die zich voor een step-up heeft aangemeld, met de
+#: :class:`~opi.core.step_up.StepUpActie` als waarde. ``tests/test_step_up_routes.py``
+#: leest hem, en ``custom_openapi`` documenteert de header en de 403 eruit: zonder
+#: markering zou een route die de decorator kwijtraakt stilzwijgend weer open staan.
+REQUIRES_STEP_UP = "zad_requires_step_up"
+
+
+def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Callable:
+    """Laat een handeling zelf verklaren dat ze een verse step-up vraagt (RC-332).
+
+    ``condition`` krijgt het verzoek en de argumenten van de route en zegt of DEZE
+    aanroep er een vraagt; is hij onwaar, dan gebeurt er niets extra. ``actie`` zegt welke
+    handeling het is, en draagt zelf de teksten voor de dialoog, de log en de client.
+
+    Twee wegen, omdat er twee soorten aanroepers zijn: het portaal heeft een sessie en
+    krijgt een dialoog, de API heeft die niet en draagt de code van de eigenaar van het
+    token per verzoek mee.
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Het verzoek komt als keyword van FastAPI en positioneel van een test die de
+            # route rechtstreeks aanroept.
+            request: Request = kwargs.get("request") or args[0]
+            argumenten = {sleutel: waarde for sleutel, waarde in kwargs.items() if sleutel != "request"}
+
+            nodig = condition(request, **argumenten)
+            if inspect.isawaitable(nodig):
+                nodig = await nodig
+            if not nodig:
+                return await func(*args, **kwargs)
+
+            project_name = str(argumenten.get("project_name", ""))
+            doelwit = str(argumenten.get("deployment_name") or argumenten.get("component_name") or project_name)
+
+            if request.url.path.startswith("/api/"):
+                from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up
+
+                probleem = await verify_api_step_up(request, project_name=project_name, actie=actie, doelwit=doelwit)
+                if probleem is not None:
+                    return step_up_problem_response(probleem)
+                return await func(*args, **kwargs)
+
+            email = str((get_current_user(request) or {}).get("email", ""))
+            if not has_fresh_step_up(request):
+                tekst = log_step_up_refusal(actie.handeling, project_name=project_name, actor=email, doelwit=doelwit)
+                return await _step_up_refusal(request, actie.handeling, tekst)
+
+            logger.info(
+                "Verse step-up gebruikt om %s: doel '%s', project '%s', door %s",
+                actie.handeling,
+                doelwit,
+                project_name,
+                email,
+            )
+            return await func(*args, **kwargs)
+
+        setattr(wrapper, REQUIRES_STEP_UP, actie)
+        return wrapper
+
+    return decorator
+
+
+async def _step_up_refusal(request: Request, handeling: str, tekst: str) -> Any:
+    """De dialoog voor een htmx-verzoek, dezelfde tekst als 403 voor al het andere.
+
+    De dialoog komt uit de weblaag; die importeren op modulehoogte zou een kring maken,
+    want de weblaag leunt zelf op dit bestand.
+    """
+    from opi.web.step_up_dialog import render_step_up_dialog, step_up_dialog_response
+
+    if request.headers.get("HX-Request"):
+        html = await render_step_up_dialog(request, vervolg=request.url.path, handeling=handeling)
+        return step_up_dialog_response(html)
+    raise HTTPException(status_code=403, detail=tekst)

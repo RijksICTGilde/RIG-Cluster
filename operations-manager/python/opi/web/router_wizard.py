@@ -16,6 +16,7 @@ from starlette.responses import Response
 from opi.core.auth_decorators import get_current_user, requires_sso
 from opi.core.project_environment import environment_markings, log_production_downgrades
 from opi.core.project_schema import ProjectIntegrityError, ProjectSchemaError, validate_project_schema
+from opi.core.step_up import has_fresh_step_up, log_step_up_refusal, save_requires_step_up
 from opi.core.templates_lotc import templates_lotc
 from opi.forms import FormRenderer, get_default_nl_translator
 from opi.forms.editables.processor import EditableFormProcessor
@@ -2587,6 +2588,20 @@ async def _save_existing_project(
         # Form path bypasses set_service_config, so guard platform fields here (RC-286).
         ServiceAdapter.enforce_platform_managed_fields(existing_data, stored_data)
         ensure_approval_requests(existing_data)
+
+        # Een kale 403 en niet de dialoog uit bg/_step-up.html.j2: die hangt aan de
+        # gedeelde modal van de projectpagina, en de volledige wizard heeft die niet.
+        handeling = save_requires_step_up(stored_data, existing_data)
+        if handeling is not None and not has_fresh_step_up(request):
+            tekst = log_step_up_refusal(
+                handeling,
+                project_name=project_name,
+                actor=str((get_current_user(request) or {}).get("email", "(onbekend)")),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"{tekst} Doe dit vanaf de projectpagina, daar vraagt het portaal erom.",
+            )
 
         # The complete file only exists after the merge with the stored project -- the
         # form itself writes a subset. Same check the store makes, one step earlier, so

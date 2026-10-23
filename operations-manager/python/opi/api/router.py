@@ -24,9 +24,11 @@ from opi.connectors.subdomain import (
     SubdomainNotAvailableError,
     SubdomainValidationError,
 )
+from opi.core.auth_decorators import requires_step_up
 from opi.core.cluster_config import is_reserved_project_name
 from opi.core.config import settings
 from opi.core.project_environment import Omgeving
+from opi.core.step_up import StepUpActie
 from opi.core.task_handlers_operations import terminated_sync_fields
 from opi.core.task_helpers import build_accepted_response, create_async_task, task_actor
 from opi.manager.clone_validation import validate_clone_readiness
@@ -38,6 +40,11 @@ from opi.services.catalog.image_registries.config_model import (
 )
 from opi.services.persistence.subdomain_registry import create_subdomain_connector
 from opi.services.project_store import get_project_store
+from opi.services.step_up_conditions import (
+    deployment_environment_downgrade,
+    deployment_in_production,
+    project_in_production,
+)
 from opi.utils.age import encrypt_age_content
 from opi.utils.egress_guard import clone_source_refusal
 from opi.utils.naming import DomainFormatId, sanitize_kubernetes_name
@@ -1174,6 +1181,7 @@ api_router: APIRouter = APIRouter(
     },
 )
 @validate_api_token
+@requires_step_up(deployment_environment_downgrade, actie=StepUpActie.MARKERING_VERLAGEN)
 async def upsert_deployment(
     request: Request,
     project_name: str,
@@ -2467,6 +2475,7 @@ async def refresh_deployment(
 
 @api_router.delete("/projects/{project_name}")
 @validate_api_token
+@requires_step_up(project_in_production, actie=StepUpActie.PROJECT_VERWIJDEREN)
 async def delete_project(
     request: Request, project_name: ProjectNamePath, delete_data: ProjectDeleteRequest = Body(...)
 ) -> JSONResponse:
@@ -2561,6 +2570,7 @@ async def delete_project(
 
 @api_router.delete("/projects/{project_name}/{deployment_name}")
 @validate_api_token
+@requires_step_up(deployment_in_production, actie=StepUpActie.DEPLOYMENT_VERWIJDEREN)
 async def delete_project_deployment(
     request: Request,
     project_name: ProjectNamePath,
