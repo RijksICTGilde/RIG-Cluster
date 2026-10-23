@@ -6,8 +6,8 @@ from __future__ import annotations
 from typing import Any, Final
 
 from opi.services.catalog.base import ConfigLayer
-from opi.services.catalog.config_settings import MISSING, IntegerSetting, read_setting_value, resolve_setting
-from opi.services.services import deployment_index, service_entry_config, service_entry_name
+from opi.services.catalog.config_settings import IntegerSetting, resolve_setting, service_setting_value
+from opi.services.services import deployment_index
 from opi.services.services_enums import ServiceType
 
 CONNECTION_LIMIT: Final = IntegerSetting(
@@ -25,11 +25,7 @@ CONNECTION_LIMIT_STEPS: Final[tuple[int, ...]] = (10, 20, 40, 50, 75, 100, 150, 
 
 
 def _limit_in(entries: Any) -> Any:
-    for entry in entries or []:
-        if service_entry_name(entry) == ServiceType.POSTGRESQL_DATABASE.value:
-            value = read_setting_value(service_entry_config(entry), CONNECTION_LIMIT)
-            return None if value is MISSING else value
-    return None
+    return service_setting_value(entries, ServiceType.POSTGRESQL_DATABASE, CONNECTION_LIMIT)
 
 
 def project_connection_limit(project_data: dict[str, Any]) -> int:

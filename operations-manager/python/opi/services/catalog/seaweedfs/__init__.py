@@ -26,15 +26,23 @@ productieplan.
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from opi.core.cluster_config import get_seaweedfs_host, get_seaweedfs_port
 from opi.services.catalog.base import ConfigLayer, ManifestContext, ProvisionContext, SecretFileSpec, Service
 from opi.services.catalog.minio.variables import MinIOVariables
+from opi.services.catalog.seaweedfs.actions import seaweedfs_storage_actions
 from opi.services.catalog.seaweedfs.config_model import SeaweedfsStorageConfig
+from opi.services.catalog.shared.noncurrent_versions import (
+    NONCURRENT_VERSION_SETTINGS,
+    noncurrent_deployment_section,
+)
 from opi.services.services import ServiceDefinition
 from opi.services.services_enums import CleanupStrategy, ManagerKey, ServiceType
 from opi.utils.secrets import SeaweedFSSecret
+
+if TYPE_CHECKING:
+    from opi.services.catalog.config_settings import ConfigSetting
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +61,7 @@ class SeaweedfsStorageService(Service):
         secret_class="SeaweedFSSecret",  # noqa: S106  # naam van de sleutel of de secretklasse, geen secret
         variables=[var.value for var in MinIOVariables],
         cleanup_strategy=CleanupStrategy.IMMEDIATE,
+        actions_provider=seaweedfs_storage_actions,
     )
     config_model = SeaweedfsStorageConfig
     config_schema_version = "1.0"
@@ -67,6 +76,9 @@ class SeaweedfsStorageService(Service):
 
     config_section_id: ClassVar[str] = "seaweedfs-config"
     modal_flow_id = "modal-edit-seaweedfs-config"
+
+    def config_settings(self) -> tuple[ConfigSetting, ...]:
+        return NONCURRENT_VERSION_SETTINGS
 
     def available_on_cluster(self, cluster: str) -> bool:
         """Alleen waar de clusterconfiguratie een SeaweedFS-adres kent.
@@ -108,26 +120,66 @@ class SeaweedfsStorageService(Service):
         return fouten
 
     def config_api_fields(self, layer: ConfigLayer) -> list[str]:
-        if layer is ConfigLayer.PROJECT:
+        # De grens op oude versies staat op beide lagen, en beide zijn velden van het ene
+        # model, dus de lijst komt daar vandaan.
+        if layer in (ConfigLayer.PROJECT, ConfigLayer.DEPLOYMENT):
             return self.config_model_field_names()
         return []
 
     def config_editables(self, layer: ConfigLayer):
-        if layer is not ConfigLayer.PROJECT:
-            return []
-        from opi.services.catalog.seaweedfs.editables import SEAWEEDFS_ENABLE_VERSIONING_EDITABLE
+        if layer is ConfigLayer.PROJECT:
+            from opi.services.catalog.seaweedfs.editables import SEAWEEDFS_ENABLE_VERSIONING_EDITABLE
+            from opi.services.catalog.seaweedfs.visualizers import (
+                MAX_NONCURRENT_VERSIONS_FIELD,
+                NONCURRENT_EXPIRE_DAYS_FIELD,
+            )
 
-        return [SEAWEEDFS_ENABLE_VERSIONING_EDITABLE]
+            return [
+                SEAWEEDFS_ENABLE_VERSIONING_EDITABLE,
+                MAX_NONCURRENT_VERSIONS_FIELD.editable,
+                NONCURRENT_EXPIRE_DAYS_FIELD.editable,
+            ]
+        if layer is ConfigLayer.DEPLOYMENT:
+            from opi.services.catalog.seaweedfs.visualizers import (
+                DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD,
+                DEPLOYMENT_NONCURRENT_EXPIRE_DAYS_FIELD,
+            )
+
+            return [
+                DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD.editable,
+                DEPLOYMENT_NONCURRENT_EXPIRE_DAYS_FIELD.editable,
+            ]
+        return []
+
+    def deployment_form_section(self, deployment_index: int | None = None):
+        """De grens op oude versies voor een bucket; zonder index beschrijft hij de laag."""
+        from opi.services.catalog.seaweedfs.visualizers import (
+            DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD,
+            DEPLOYMENT_NONCURRENT_EXPIRE_DAYS_FIELD,
+        )
+
+        return noncurrent_deployment_section(
+            "seaweedfs-deployment-config",
+            (DEPLOYMENT_MAX_NONCURRENT_VERSIONS_FIELD, DEPLOYMENT_NONCURRENT_EXPIRE_DAYS_FIELD),
+            deployment_index,
+        )
 
     def config_form_section(self, layer: ConfigLayer):
+        if layer is ConfigLayer.DEPLOYMENT:
+            return self.deployment_form_section()
         if layer is not ConfigLayer.PROJECT:
             return super().config_form_section(layer)
         # Gecached: afnemers vergelijken de identiteit van een sectie (EDIT_SECTIONS[...] is X).
         cached = getattr(self, "_config_section_cache", None)
         if cached is None:
+            from opi.forms.layout import Fieldset
             from opi.forms.visualizers.sections import FormSection
             from opi.services.catalog.base import config_path
-            from opi.services.catalog.seaweedfs.visualizers import SEAWEEDFS_ENABLE_VERSIONING
+            from opi.services.catalog.seaweedfs.visualizers import (
+                MAX_NONCURRENT_VERSIONS_FIELD,
+                NONCURRENT_EXPIRE_DAYS_FIELD,
+                SEAWEEDFS_ENABLE_VERSIONING,
+            )
 
             cached = FormSection(
                 section_id=self.config_section_id,
@@ -136,8 +188,22 @@ class SeaweedfsStorageService(Service):
                 description="Instellingen voor de SeaweedFS-bucket van dit project",
                 visible=self._config_selected,
                 post_save_action="process_project",
-                editables=[SEAWEEDFS_ENABLE_VERSIONING],
-                layout=[config_path(ConfigLayer.PROJECT, self.service_type, "config", "enable-versioning")],
+                editables=[SEAWEEDFS_ENABLE_VERSIONING, MAX_NONCURRENT_VERSIONS_FIELD, NONCURRENT_EXPIRE_DAYS_FIELD],
+                layout=[
+                    config_path(ConfigLayer.PROJECT, self.service_type, "config", "enable-versioning"),
+                    Fieldset(
+                        legend="Oude versies",
+                        description=(
+                            "Geldt alleen voor een bucket met versiebeheer. Oude versies boven het aantal "
+                            "worden opgeruimd, en met een leeftijdsgrens ook de versies die ouder zijn. "
+                            "Je kunt dus niet verder terug dan wat hier staat."
+                        ),
+                        children=[
+                            MAX_NONCURRENT_VERSIONS_FIELD.editable.yaml_path,
+                            NONCURRENT_EXPIRE_DAYS_FIELD.editable.yaml_path,
+                        ],
+                    ),
+                ],
             )
             self._config_section_cache = cached
         return cached

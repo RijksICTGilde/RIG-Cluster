@@ -99,6 +99,7 @@ async def test_het_bucketpad_provisioneert_zonder_de_verdwenen_bron() -> None:
         patch.object(MinioManager, "_deployment_uses_minio", AsyncMock(return_value=True)),
         patch.object(MinioManager, "_get_existing_minio_credentials_from_k8s", AsyncMock(return_value=None)),
         patch.object(MinioManager, "_apply_bucket_versioning", AsyncMock()),
+        patch.object(MinioManager, "_apply_noncurrent_version_limit", AsyncMock()),
         patch.object(MinioManager, "_get_deployment_bucket_generation", return_value=None),
         patch.object(MinioManager, "clone_minio_from_deployment", AsyncMock()) as kloon,
         patch("opi.manager.minio_manager.get_minio_host", lambda cluster: "minio"),

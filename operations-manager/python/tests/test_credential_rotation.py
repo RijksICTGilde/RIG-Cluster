@@ -448,6 +448,7 @@ def _patch_minio(gebruikers: _Gebruikers, *, verbinding_werkt: bool) -> Any:
         )
         stack.enter_context(patch.object(MinioManager, "_check_minio_user_exists", AsyncMock(return_value=True)))
         stack.enter_context(patch.object(MinioManager, "_apply_bucket_versioning", AsyncMock()))
+        stack.enter_context(patch.object(MinioManager, "_apply_noncurrent_version_limit", AsyncMock()))
         stack.enter_context(patch("opi.manager.minio_manager.get_minio_host", lambda cluster: "minio"))
         stack.enter_context(patch("opi.manager.minio_manager.get_minio_port", lambda cluster: 9000))
         yield toets

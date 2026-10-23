@@ -69,7 +69,9 @@
     },
     "minio-config": {
       "editables": [
-        "services/minio-storage/config/enable-versioning"
+        "services/minio-storage/config/enable-versioning",
+        "services/minio-storage/config/max-noncurrent-versions",
+        "services/minio-storage/config/noncurrent-expire-days"
       ],
       "post_save_action": "process_project",
       "section_id": "minio-config",
@@ -103,7 +105,9 @@
     },
     "seaweedfs-config": {
       "editables": [
-        "services/seaweedfs-storage/config/enable-versioning"
+        "services/seaweedfs-storage/config/enable-versioning",
+        "services/seaweedfs-storage/config/max-noncurrent-versions",
+        "services/seaweedfs-storage/config/noncurrent-expire-days"
       ],
       "post_save_action": "process_project",
       "section_id": "seaweedfs-config",
@@ -408,7 +412,9 @@
     },
     "minio-storage": {
       "editables": [
-        "services/minio-storage/config/enable-versioning"
+        "services/minio-storage/config/enable-versioning",
+        "services/minio-storage/config/max-noncurrent-versions",
+        "services/minio-storage/config/noncurrent-expire-days"
       ],
       "post_save_action": "process_project",
       "section_id": "minio-config",
@@ -442,7 +448,9 @@
     },
     "seaweedfs-storage": {
       "editables": [
-        "services/seaweedfs-storage/config/enable-versioning"
+        "services/seaweedfs-storage/config/enable-versioning",
+        "services/seaweedfs-storage/config/max-noncurrent-versions",
+        "services/seaweedfs-storage/config/noncurrent-expire-days"
       ],
       "post_save_action": "process_project",
       "section_id": "seaweedfs-config",

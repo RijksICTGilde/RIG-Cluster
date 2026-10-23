@@ -51,6 +51,7 @@ from opi.services.catalog.config_settings import (
     resolve_setting,
 )
 from opi.services.catalog.postgresql_database.connection_limit import CONNECTION_LIMIT
+from opi.services.catalog.shared.noncurrent_versions import MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS
 from opi.services.catalog.shared.postgres_settings import DEDICATED_POSTGRES_SETTINGS
 from opi.services.project_service import get_project_service
 from opi.services.project_store import GitProjectStore
@@ -215,12 +216,16 @@ def test_wie_in_de_catalogus_een_speelruimte_declareert() -> None:
     Declareert een dienst hier iets bij, dan is er gedrag veranderd dat niemand heeft
     gevraagd -- en dan hoort daar een test bij die dat gedrag meet, niet deze. De
     connectielimiet (RC-201) is gemeten in ``test_connection_limit.py``; de velden van een
-    eigen PostgreSQL-cluster (RC-327) staan in ``shared/postgres_settings.py``.
+    eigen PostgreSQL-cluster (RC-327) staan in ``shared/postgres_settings.py``; de grens op
+    oude versies in een bucket (RC-380) in ``shared/noncurrent_versions.py``, gedeeld door de
+    twee object-opslagdiensten.
     """
     declarerend = {name: provider.config_settings() for name, provider in SERVICES.items()}
     assert {name: settings for name, settings in declarerend.items() if settings} == {
         _DATABASE: (CONNECTION_LIMIT, *DEDICATED_POSTGRES_SETTINGS),
         ServiceType.NAMESPACE_POSTGRESQL_DATABASE: DEDICATED_POSTGRES_SETTINGS,
+        ServiceType.MINIO_STORAGE: (MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS),
+        ServiceType.SEAWEEDFS_STORAGE: (MAX_NONCURRENT_VERSIONS, NONCURRENT_EXPIRE_DAYS),
     }
 
 
@@ -331,6 +336,20 @@ def test_een_waarde_buiten_de_toegestane_verzameling() -> None:
 def test_een_standaardwaarde_buiten_zijn_eigen_speelruimte_is_een_fout_in_de_declaratie() -> None:
     with pytest.raises(ValueError, match="valt buiten zijn eigen speelruimte"):
         IntegerSetting(path="x", layers=(ConfigLayer.PROJECT,), default=500, minimum=1, maximum=100, label="X")
+
+
+def test_default_none_wordt_niet_tegen_de_grenzen_gehouden() -> None:
+    """RC-380: ``default=None`` is "niet gezet", geen waarde in de speelruimte, dus 0 (buiten
+    een reeks die bij 1 begint) blokkeert de declaratie niet."""
+    setting = IntegerSetting(path="x", layers=(ConfigLayer.PROJECT,), default=None, minimum=1, maximum=100, label="X")
+    assert setting.default is None
+    assert setting.latitude() == "Een geheel getal van 1 tot en met 100. Standaard niet gezet."
+
+
+def test_default_sentence_noemt_de_waarde_als_die_er_is() -> None:
+    assert CONNECTION_LIMIT.default_sentence == "Standaard 20."
+    assert MAX_NONCURRENT_VERSIONS.default_sentence == "Standaard 30."
+    assert NONCURRENT_EXPIRE_DAYS.default_sentence == "Standaard niet gezet."
 
 
 def test_een_ondergrens_boven_de_bovengrens() -> None:

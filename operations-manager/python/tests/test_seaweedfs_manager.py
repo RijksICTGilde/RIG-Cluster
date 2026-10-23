@@ -49,9 +49,11 @@ def _cluster_heeft_seaweedfs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "SEAWEEDFS_MASTER_ADDRESS", "seaweedfs:9333")
 
 
-def _connector(monkeypatch: pytest.MonkeyPatch, *, user_exists: bool = False) -> AsyncMock:
+def _connector(monkeypatch: pytest.MonkeyPatch, *, user_exists: bool = False, versioning: bool = False) -> AsyncMock:
     connector = AsyncMock()
     connector.user_exists.return_value = user_exists
+    connector.get_versioning.return_value = versioning
+    connector.ensure_noncurrent_version_rule.return_value = {"status": "created"}
     monkeypatch.setattr("opi.manager.seaweedfs_manager.create_seaweedfs_connector", lambda: connector)
     return connector
 
@@ -65,7 +67,9 @@ class TestAanmaken:
         # Zonder bestaand secret is user_exists niet nodig; delete_user ervoor, want
         # SeaweedFS kent geen "wachtwoord vervangen" (rij G10).
         namen = [aanroep[0] for aanroep in connector.method_calls]
-        assert namen == ["delete_user", "create_user", "create_bucket", "grant_bucket_access"]
+        # get_versioning als laatste: de grens op oude versies vraagt de staat van de bucket,
+        # en zonder versioning krijgt hij geen regel (RC-380).
+        assert namen == ["delete_user", "create_user", "create_bucket", "grant_bucket_access", "get_versioning"]
         connector.create_user.assert_awaited_once()
         gebruiker, access_key, secret_key = connector.create_user.await_args.args
         assert gebruiker == access_key == "proj_dep"
@@ -91,6 +95,21 @@ class TestAanmaken:
         project = {**PROJECT, "services": [{"name": "seaweedfs-storage", "config": {"enable-versioning": True}}]}
         await SeaweedfsManager(NepProjectManager()).create_resources_for_deployment(project, DEPLOYMENT)
         connector.set_versioning.assert_awaited_once_with("proj-dep", True)
+
+    async def test_de_grens_op_oude_versies_alleen_op_een_bucket_met_versioning(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        connector = _connector(monkeypatch, versioning=False)
+        await SeaweedfsManager(NepProjectManager()).create_resources_for_deployment(PROJECT, DEPLOYMENT)
+        connector.ensure_noncurrent_version_rule.assert_not_awaited()
+
+        connector = _connector(monkeypatch, versioning=True)
+        project = {
+            **PROJECT,
+            "services": [{"name": "seaweedfs-storage", "config": {"max-noncurrent-versions": 5}}],
+        }
+        await SeaweedfsManager(NepProjectManager()).create_resources_for_deployment(project, DEPLOYMENT)
+        connector.ensure_noncurrent_version_rule.assert_awaited_once_with("proj-dep", 5, None)
 
     async def test_een_geldig_bestaand_secret_maakt_niets_opnieuw(self, monkeypatch: pytest.MonkeyPatch) -> None:
         connector = _connector(monkeypatch, user_exists=True)

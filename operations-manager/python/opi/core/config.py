@@ -483,6 +483,10 @@ class Settings(BaseSettings):
     # "dit cluster levert de dienst niet"; alleen de sandbox-overlay zet ze.
     SEAWEEDFS_FILER_ADDRESS: str = ""
     SEAWEEDFS_MASTER_ADDRESS: str = ""
+    # Het admin-sleutelpaar van de S3-poort, voor wat `weed shell` niet kan: de
+    # lifecycle-regel op een bucket (RC-380). Uit hetzelfde secret als de JWT-sleutel.
+    SEAWEEDFS_ADMIN_ACCESS_KEY: str = ""
+    SEAWEEDFS_ADMIN_SECRET_KEY: str = ""
 
     # Redis configuration
     REDIS_HOST: str = "rig-redis.rig-system.svc.cluster.local"

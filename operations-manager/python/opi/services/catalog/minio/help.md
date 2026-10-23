@@ -31,6 +31,19 @@ Voor bestanden die bij één pod horen en niet gedeeld hoeven te worden is **Per
 
 Er worden een bucket en toegangssleutels aangemaakt. Je component krijgt **OBJECT_STORE_HOST**, **OBJECT_STORE_PORT**, **OBJECT_STORE_USER**, **OBJECT_STORE_PASSWORD**, **OBJECT_STORE_BUCKET_NAME** en **OBJECT_STORE_REGION**. Bij het verwijderen van de service wordt de bucket gemarkeerd voor uitgestelde verwijdering, zodat je bestanden niet meteen weg zijn.
 
+## Versiebeheer en oude versies
+
+Zet je **Versiebeheer op de bucket** aan, dan bewaart MinIO oudere versies van een object
+als je het overschrijft of verwijdert. Dat kost extra opslag, en daarom heeft elke bucket
+met versiebeheer een grens: standaard bewaart hij **hoogstens 30 oude versies per object**.
+Je kunt dat aantal per project zetten en per deployment overschrijven, en er een
+leeftijdsgrens in dagen bij kiezen. Wat boven de grens valt ruimt MinIO zelf op, en verder
+terug dan de grens kan je applicatie dus niet.
+
+De grens geldt alleen voor een bucket met versiebeheer; zonder versiebeheer zijn er geen
+oude versies. Een backup van de bucket bewaart alleen de huidige versie van elk object, dus
+de versiegeschiedenis zit in de bucket zelf en niet in een backup.
+
 ## Eén bucket per deployment
 
 De bucket en toegangssleutels horen bij een deployment. Heeft je deployment meerdere componenten die deze service gebruiken, dan delen ze allemaal dezelfde bucket en dezelfde toegangssleutels.

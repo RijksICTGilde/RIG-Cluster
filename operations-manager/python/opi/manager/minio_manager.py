@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from opi.manager.project_manager import ProjectManager
     from opi.services.marked_for_deletion_service import MarkedForDeletionService
 
-from opi.connectors.minio_mc import MinioConnector, create_minio_connector
+from opi.connectors.minio_mc import MinioConnector, MinioExecutionError, create_minio_connector
 from opi.core.cluster_config import get_minio_host, get_minio_port
 from opi.core.config import settings
 from opi.manager.clone_validation import (
@@ -18,6 +18,7 @@ from opi.manager.clone_validation import (
     resolve_clone_source_deployment,
 )
 from opi.services import CloneFromType, ServiceType
+from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
 from opi.services.project import Project
 from opi.utils.egress_guard import UNREACHABLE_SOURCE_REASON, clone_source_refusal
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
@@ -153,6 +154,42 @@ class MinioManager:
             error_msg = f"Failed to apply versioning configuration to bucket {bucket_name}: {e}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from e
+
+    async def _apply_noncurrent_version_limit(
+        self,
+        minio_connector: MinioConnector,
+        alias: str,
+        bucket_name: str,
+        project_data: dict[str, Any],
+        deployment_name: str,
+    ) -> None:
+        """Put the limit on noncurrent versions on a bucket that has versioning (RC-380).
+
+        Runs on every bucket with versioning, also one where versioning was turned on
+        outside OPI: without a rule such a bucket keeps every old version forever. A
+        bucket without versioning has no noncurrent versions, so it gets no rule.
+
+        Raises:
+            RuntimeError: if the rule cannot be read or written.
+        """
+        status = await minio_connector.get_bucket_versioning_status(alias, bucket_name)
+        if not status["enabled"]:
+            logger.debug(f"Bucket {bucket_name} has no versioning, so no limit on old versions")
+            return
+
+        rule = deployment_noncurrent_rule(project_data, deployment_name, ServiceType.MINIO_STORAGE)
+        try:
+            result = await minio_connector.ensure_noncurrent_version_rule(
+                alias, bucket_name, max_versions=rule.max_versions, expire_days=rule.expire_days
+            )
+        except MinioExecutionError as e:
+            raise RuntimeError(f"Failed to limit old versions on bucket {bucket_name}: {e}") from e
+
+        logger.info(
+            f"Bucket {bucket_name} keeps at most {rule.max_versions} old versions per object"
+            f"{'' if rule.expire_days is None else f', at most {rule.expire_days} days old'}"
+            f" ({result['status']})"
+        )
 
     async def create_resources_for_deployment(
         self,
@@ -452,6 +489,9 @@ class MinioManager:
             # Apply versioning configuration regardless of setup path (works on create, refresh, and update)
             minio_config = self._get_minio_service_config(project_data, deployment_name)
             await self._apply_bucket_versioning(minio_connector, alias_name, bucket_name, minio_config)
+            await self._apply_noncurrent_version_limit(
+                minio_connector, alias_name, bucket_name, project_data, deployment_name
+            )
 
             cluster = deployment["cluster"]
 
@@ -1111,6 +1151,9 @@ class MinioManager:
         # Apply versioning configuration to cloned bucket (works on create, refresh, and update)
         minio_config = self._get_minio_service_config(project_data, target_deployment_name)
         await self._apply_bucket_versioning(minio_connector, alias_name, target_bucket, minio_config)
+        await self._apply_noncurrent_version_limit(
+            minio_connector, alias_name, target_bucket, project_data, target_deployment_name
+        )
 
         cluster = target_deployment["cluster"]
 
@@ -1969,6 +2012,9 @@ class MinioManager:
                 logger.info(f"Applying versioning configuration to cloned bucket {target_bucket}")
                 minio_config = self._get_minio_service_config(project_data, deployment_name)
                 await self._apply_bucket_versioning(minio_connector, alias_name, target_bucket, minio_config)
+                await self._apply_noncurrent_version_limit(
+                    minio_connector, alias_name, target_bucket, project_data, deployment_name
+                )
                 result["operations"].append({"type": "versioning_applied", "status": "success"})
 
             except Exception as e:

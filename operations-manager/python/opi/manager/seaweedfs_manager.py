@@ -10,10 +10,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from opi.connectors.seaweedfs_shell import SeaweedfsConnector, create_seaweedfs_connector
+from opi.connectors.seaweedfs_shell import (
+    SeaweedfsConfigurationError,
+    SeaweedfsConnector,
+    SeaweedfsExecutionError,
+    create_seaweedfs_connector,
+)
 from opi.core.cluster_config import get_prefixed_namespace, get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
 from opi.services import ServiceType
+from opi.services.catalog.shared.noncurrent_versions import deployment_noncurrent_rule
 from opi.services.services import service_entry_config, service_entry_name
 from opi.utils.naming import generate_bucket_name, generate_minio_policy_name, generate_minio_username
 from opi.utils.passwords import generate_secure_password
@@ -51,6 +57,37 @@ class SeaweedfsManager:
             waarde = config.get("enable-versioning")
             return None if waarde is None else bool(waarde)
         return None
+
+    @staticmethod
+    async def _grens_op_oude_versies(
+        connector: SeaweedfsConnector, bucket: str, project_data: dict[str, Any], deployment_name: str
+    ) -> None:
+        """De grens op oude versies op een bucket die versioning heeft (RC-380).
+
+        Ook op een bucket waar versioning buiten OPI om aanstaat: zonder regel houdt die
+        elke oude versie. Een bucket zonder versioning heeft geen oude versies en krijgt
+        dus geen regel.
+
+        Raises:
+            RuntimeError: als de regel niet te zetten is.
+        """
+        if not await connector.get_versioning(bucket):
+            logger.debug("Bucket %s heeft geen versioning, dus geen grens op oude versies", bucket)
+            return
+
+        regel = deployment_noncurrent_rule(project_data, deployment_name, ServiceType.SEAWEEDFS_STORAGE)
+        try:
+            uitkomst = await connector.ensure_noncurrent_version_rule(bucket, regel.max_versions, regel.expire_days)
+        except (SeaweedfsConfigurationError, SeaweedfsExecutionError) as e:
+            raise RuntimeError(f"de grens op oude versies van bucket {bucket} zetten mislukte: {e}") from e
+
+        logger.info(
+            "Bucket %s houdt hoogstens %s oude versies per object%s (%s)",
+            bucket,
+            regel.max_versions,
+            "" if regel.expire_days is None else f", hoogstens {regel.expire_days} dagen oud",
+            uitkomst["status"],
+        )
 
     async def _bestaande_sleutels(self, deployment: dict[str, Any]) -> SeaweedFSSecret | None:
         """De sleutels uit het k8s-secret, als die er zijn.
@@ -100,6 +137,7 @@ class SeaweedfsManager:
         versioning = self._versioning_instelling(project_data)
         if versioning is not None:
             await connector.set_versioning(bucket, versioning)
+        await self._grens_op_oude_versies(connector, bucket, project_data, deployment_name)
 
         self.project_manager._add_secret_to_create(
             deployment_name,

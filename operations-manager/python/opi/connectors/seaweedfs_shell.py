@@ -20,6 +20,8 @@ import os
 import tempfile
 from typing import Any
 
+from opi.connectors.minio_mc import MinioExecutionError, create_minio_connector
+from opi.core.cluster_config import get_seaweedfs_host, get_seaweedfs_port
 from opi.core.config import settings
 from opi.utils.naming import validate_bucket_name, validate_object_store_username, validate_policy_name
 from opi.utils.s3_policy import ALL_BUCKET_PERMISSIONS, bucket_access_policy
@@ -35,6 +37,10 @@ JWT_SLEUTEL_ENV = "WEED_JWT_FILER_SIGNING_KEY"
 #: in WaitUntilConnected wachten zonder ooit een fout te geven (rij G18), en dan hangt de
 #: aanroeper mee; dit maakt er een fout van.
 SHELL_TIMEOUT_SECONDS = 30.0
+
+#: De alias waaronder `mc` bij de S3-poort van SeaweedFS komt, naast "default-minio" van
+#: MinIO. Alleen voor de lifecycle-regel; al het andere beheer loopt over `weed shell`.
+S3_ALIAS = "default-seaweedfs"
 
 #: De tekst waarin `weed shell` "bestaat al" legt, zodat aanmaken replay-safe is. Letterlijk
 #: nagemeten op 4.48: `bucket <naam> already exists` en `code = AlreadyExists desc = user
@@ -177,6 +183,47 @@ class SeaweedfsConnector:
         bucket = self._bucket(name)
         uitvoer = await self._uitvoeren(f"s3.bucket.versioning -name {bucket}", wat=f"versioning van {bucket} lezen")
         return "enabled" in uitvoer.lower()
+
+    async def ensure_noncurrent_version_rule(
+        self, name: str, max_versions: int, expire_days: int | None = None
+    ) -> dict[str, Any]:
+        """De grens op oude versies als lifecycle-regel op een bucket, idempotent (RC-380).
+
+        Over de S3-poort met de admin-sleutels en niet over `weed shell`: 4.48 heeft geen
+        lifecycle-commando, alleen `s3.bucket.lifecycle.fastpath` en
+        `s3.lifecycle.run-shard`. De S3-client van dit project is `mc` in
+        ``MinioConnector``, en het regel-document en zijn idempotentie staan daar al, dus
+        hier staat geen tweede exemplaar.
+
+        SeaweedFS voert de regel uit in zijn lifecycle-ronde; die ronde draait in deze
+        uitrol niet vanzelf (zie features/seaweedfs-objectopslag.md, rij G20).
+
+        Raises:
+            SeaweedfsConfigurationError: dit cluster heeft geen SeaweedFS of geen admin-sleutels.
+            SeaweedfsExecutionError: de regel is niet te lezen of te schrijven.
+        """
+        bucket = self._bucket(name)
+        host = get_seaweedfs_host(settings.CLUSTER_MANAGER)
+        if host is None or not (settings.SEAWEEDFS_ADMIN_ACCESS_KEY and settings.SEAWEEDFS_ADMIN_SECRET_KEY):
+            raise SeaweedfsConfigurationError(
+                "de S3-admin-sleutels van SeaweedFS staan niet in de omgeving "
+                "(SEAWEEDFS_ADMIN_ACCESS_KEY/SEAWEEDFS_ADMIN_SECRET_KEY); "
+                "zonder die sleutels is er geen weg naar de lifecycle-regel"
+            )
+
+        mc = create_minio_connector()
+        if not mc.is_alias_configured(S3_ALIAS) and not await mc.configure_alias(
+            S3_ALIAS,
+            f"{host}:{get_seaweedfs_port(settings.CLUSTER_MANAGER)}",
+            access_key=settings.SEAWEEDFS_ADMIN_ACCESS_KEY,
+            secret_key=settings.SEAWEEDFS_ADMIN_SECRET_KEY,
+        ):
+            raise SeaweedfsExecutionError(f"de S3-poort van SeaweedFS is niet bereikbaar als alias {S3_ALIAS}")
+
+        try:
+            return await mc.ensure_noncurrent_version_rule(S3_ALIAS, bucket, max_versions, expire_days)
+        except MinioExecutionError as e:
+            raise SeaweedfsExecutionError(f"de grens op oude versies van bucket {bucket} zetten mislukte: {e}") from e
 
     async def set_versioning(self, name: str, enabled: bool) -> None:
         bucket = self._bucket(name)
