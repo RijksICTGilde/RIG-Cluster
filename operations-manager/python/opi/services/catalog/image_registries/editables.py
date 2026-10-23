@@ -35,7 +35,7 @@ REGISTRY_DISPLAY_NAME_EDITABLE = Editable(
 
 # De slug moet meekomen in de inzending, ook al staat hij niet op het scherm: de rijen van
 # een reeks worden op ``name`` aan hun oorspronkelijke rij gekoppeld
-# (``_match_original_item``), en zonder die sleutel schuift bij het weghalen van een rij de
+# (``match_by_identity``), en zonder die sleutel schuift bij het weghalen van een rij de
 # slug van de ene registry onder de andere.
 REGISTRY_NAME_EDITABLE = Editable(
     yaml_path=_project("registries[*]", "name"),

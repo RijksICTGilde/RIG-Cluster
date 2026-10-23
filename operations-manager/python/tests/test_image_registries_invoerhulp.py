@@ -190,7 +190,7 @@ class TestHetScherm:
         assert opties[1] == {"value": "code-overheid", "label": "code-overheid"}
 
     def test_de_slug_komt_mee_in_de_inzending_maar_niet_op_het_scherm(self) -> None:
-        """Zonder die sleutel koppelt ``_match_original_item`` de rijen op INDEX, en schuift
+        """Zonder die sleutel koppelt ``match_by_identity`` de rijen op INDEX, en schuift
         bij het weghalen van een rij de slug van de ene registry onder de andere."""
         per_pad = {kind.editable.yaml_path.rsplit("/", 1)[-1]: kind for kind in REGISTRIES_SEQUENCE.children or []}
         assert per_pad["name"].widget is WidgetType.HIDDEN

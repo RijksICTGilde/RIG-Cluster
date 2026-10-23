@@ -67,6 +67,12 @@ hele catalogus en faalt op elke dienst waar die twee lijsten uit elkaar lopen.
 - `tests/test_service_config_layout_coverage.py` -- de poort op de kloof tussen `editables` en
   `layout`.
 
+## Verwant
+
+Een rij in een reeks stuurt om dezelfde reden haar eigen sleutel mee: zonder die sleutel
+koppelde de verwerker de rijen op index, en schoof alles achter een verwijderde rij een plek
+op. Zie `reeksrij-sleutel-in-de-inzending.md`.
+
 ## Grens
 
 De opslagmontages (`components[*]/services{X}/config`) hangen onder de dienstSELECTIE van het

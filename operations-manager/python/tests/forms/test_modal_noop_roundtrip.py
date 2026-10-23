@@ -25,6 +25,7 @@ from opi.forms.editables.processor import EditableFormProcessor
 from opi.forms.visualizers.flows import FLOW_REGISTRY, flow_context_from_base, get_flow
 from opi.forms.wizard.mutation import apply_component_services_mutation, apply_services_mutation
 from opi.forms.wizard.save import apply_modal_edit
+from opi.forms.wizard.selection import narrow_to_selection
 from opi.forms.wizard.state import WizardState
 from opi.handlers.project_file_handler import extract_attachment_catalog
 from opi.services.schema_migration import normalize_service_entries
@@ -210,11 +211,18 @@ def _allowed(path: str, before: Any, after: Any) -> bool:
     return bool(isinstance(before, str) and isinstance(after, dict) and service_entry_name(after) == before)
 
 
-async def _roundtrip(flow_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    """(verwacht, resultaat) van een no-op save door *flow_id*."""
+async def _roundtrip(flow_id: str, selection: list[str] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(verwacht, resultaat) van een no-op save door *flow_id*.
+
+    Met *selection* loopt dezelfde weg als een modal die op een selectie is geopend: het
+    formulier draagt alleen die items, en de rest moet er na het opslaan nog net zo staan.
+    """
     original = _project()
     project_data = copy.deepcopy(original)
     flow = get_flow(flow_id, **dict(flow_context_from_base(flow_id, project_data)))
+    if selection:
+        assert flow.selectable is not None
+        project_data = narrow_to_selection(project_data, flow.selectable, selection)
 
     processor = EditableFormProcessor()
     for section in flow.sections:
@@ -227,6 +235,7 @@ async def _roundtrip(flow_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
         current_step=flow.sections[0].section_id,
         active_sections=[s.section_id for s in flow.sections],
         step_data=step_data,
+        selection=list(selection or []),
     )
     state.populate_virt_mappings(flow.sections)
     state.locked_services = _extract_services(project_data)
@@ -291,6 +300,15 @@ async def test_noop_save_loses_nothing(flow_id: str) -> None:
     expected, result = await _roundtrip(flow_id)
     losses = [(p, a, b) for p, a, b in _losses(expected, result) if not _allowed(p, a, b)]
     assert losses == [], f"{flow_id} raakt data kwijt bij een save zonder wijzigingen: {losses}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("flow_id", ["modal-edit-components", "modal-edit-deployment-0"])
+async def test_noop_save_met_selectie_loses_nothing(flow_id: str) -> None:
+    """Dezelfde sweep, maar met een modal die op een selectie is geopend (RC-378)."""
+    expected, result = await _roundtrip(flow_id, selection=["web"])
+    losses = [(p, a, b) for p, a, b in _losses(expected, result) if not _allowed(p, a, b)]
+    assert losses == [], f"{flow_id} met selectie raakt data kwijt bij een save zonder wijzigingen: {losses}"
 
 
 @pytest.mark.asyncio
