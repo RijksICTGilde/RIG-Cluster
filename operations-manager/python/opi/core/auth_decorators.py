@@ -117,7 +117,12 @@ def requires_step_up(condition: Callable[..., Any], *, actie: StepUpActie) -> Ca
                 return await func(*args, **kwargs)
 
             project_name = str(argumenten.get("project_name", ""))
-            doelwit = str(argumenten.get("deployment_name") or argumenten.get("component_name") or project_name)
+            doelwit = str(
+                argumenten.get("deployment_name")
+                or argumenten.get("component_name")
+                or argumenten.get("mark_id")
+                or project_name
+            )
 
             if request.url.path.startswith("/api/"):
                 from opi.api.otp_step_up import step_up_problem_response, verify_api_step_up

@@ -6,7 +6,6 @@ import asyncio
 import contextvars
 
 from opi.core.actor import (
-    ACTOR_ADMIN_API_KEY,
     ACTOR_PLATFORM_API_KEY,
     ACTOR_UNKNOWN,
     Actor,
@@ -53,13 +52,12 @@ def test_een_gebruiker_wordt_als_kaal_e_mailadres_geschreven() -> None:
 
 def test_een_sleutel_zonder_identiteit_schrijft_alleen_zijn_soort() -> None:
     assert str(ACTOR_PLATFORM_API_KEY) == "platform-api-key"
-    assert str(ACTOR_ADMIN_API_KEY) == "admin-api-key"
     assert str(ACTOR_UNKNOWN) == "onbekend"
 
 
 def test_vaste_actor_waarden_zijn_onderling_verschillend() -> None:
     """Een trailer is alleen naar de bron te herleiden als elke vaste waarde uniek is."""
-    assert len({ACTOR_UNKNOWN, ACTOR_PLATFORM_API_KEY, ACTOR_ADMIN_API_KEY}) == 3
+    assert len({ACTOR_UNKNOWN, ACTOR_PLATFORM_API_KEY}) == 2
 
 
 def test_opgeslagen_waarden_komen_terug_als_soort_en_identiteit() -> None:

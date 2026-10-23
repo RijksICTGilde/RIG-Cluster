@@ -9,28 +9,25 @@ is the only alternative, which is why this endpoint exists.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import opi.core.config
 import pytest
 from fastapi import HTTPException
 from opi.api import admin_router as admin_module
-from opi.api import endpoint_util
 from opi.api.admin_router import reconcile_projects
 
 
 @pytest.fixture
 def live_settings(monkeypatch):
-    """Point both modules at the live settings object.
+    """Point admin_router at the live settings object.
 
-    ``admin_router`` and ``endpoint_util`` bind ``settings`` by reference at import time, so
-    in a full-suite run they can be left pointing at another test's mock -- which shows up
-    here as a spurious 501. Same guard as test_service_orphan_sweep.
+    It binds ``settings`` by reference at import time, so in a full-suite run it can be
+    left pointing at another test's mock. Same guard as test_service_orphan_sweep.
     """
     real_settings = opi.core.config.settings
     monkeypatch.setattr(admin_module, "settings", real_settings)
-    monkeypatch.setattr(endpoint_util, "settings", real_settings)
-    monkeypatch.setattr(real_settings, "ADMIN_API_KEY", "test-admin-key")
     return real_settings
 
 
@@ -42,9 +39,12 @@ def _store(head_before: str | None, head_after: str | None) -> MagicMock:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_reports_the_new_head_when_the_repo_moved(live_settings) -> None:
+async def test_reconcile_reports_the_new_head_when_the_repo_moved(
+    live_settings, platformbeheerder_token, verse_otp
+) -> None:
     request = AsyncMock()
-    request.headers = {"X-API-Key": "test-admin-key"}
+    request.headers = platformbeheerder_token["headers"] | verse_otp["headers"]
+    request.url = SimpleNamespace(path="/api/v2/admin/projects/:reconcile")
     store = _store("aaaa1111", "bbbb2222")
 
     with patch.object(admin_module, "get_project_store", return_value=store):
@@ -59,9 +59,10 @@ async def test_reconcile_reports_the_new_head_when_the_repo_moved(live_settings)
 
 
 @pytest.mark.asyncio
-async def test_reconcile_is_a_no_op_when_nothing_changed(live_settings) -> None:
+async def test_reconcile_is_a_no_op_when_nothing_changed(live_settings, platformbeheerder_token, verse_otp) -> None:
     request = AsyncMock()
-    request.headers = {"X-API-Key": "test-admin-key"}
+    request.headers = platformbeheerder_token["headers"] | verse_otp["headers"]
+    request.url = SimpleNamespace(path="/api/v2/admin/projects/:reconcile")
     store = _store("aaaa1111", "aaaa1111")
 
     with patch.object(admin_module, "get_project_store", return_value=store):
@@ -72,15 +73,10 @@ async def test_reconcile_is_a_no_op_when_nothing_changed(live_settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_refuses_a_wrong_key(live_settings) -> None:
+async def test_reconcile_refuses_a_shared_key(live_settings, platformbeheerder_token) -> None:
+    """Een gedeelde sleutel is hier geen legitimatie: deze route wil een persoon."""
     request = AsyncMock()
-    request.headers = {"X-API-Key": "not-the-admin-key"}
-    # Een foute sleutel loopt door refuse_after_auth_failure, die het client-id opbouwt:
-    # request.scope.get(...) en request.session.get(...) geven op een kale AsyncMock zelf
-    # weer een AsyncMock terug, en .get() daarop een ongeawaite coroutine in plaats van een
-    # dict. Zie dezelfde reden in test_endpoint_util.py (mock_request.scope).
-    request.scope = {}
-    request.session = {}
+    request.headers = {"X-API-Key": "een-gedeelde-sleutel"}
     store = _store("aaaa1111", "bbbb2222")
 
     with patch.object(admin_module, "get_project_store", return_value=store), pytest.raises(HTTPException) as exc:
@@ -91,7 +87,7 @@ async def test_reconcile_refuses_a_wrong_key(live_settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_refuses_a_missing_key(live_settings) -> None:
+async def test_reconcile_refuses_a_missing_token(live_settings, platformbeheerder_token) -> None:
     request = AsyncMock()
     request.headers = {}
     store = _store("aaaa1111", "bbbb2222")
@@ -104,19 +100,14 @@ async def test_reconcile_refuses_a_missing_key(live_settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_is_disabled_when_no_admin_key_is_configured(monkeypatch) -> None:
-    """The default everywhere today: no ADMIN_API_KEY means the endpoint is off, not open."""
-    real_settings = opi.core.config.settings
-    monkeypatch.setattr(admin_module, "settings", real_settings)
-    monkeypatch.setattr(endpoint_util, "settings", real_settings)
-    monkeypatch.setattr(real_settings, "ADMIN_API_KEY", None)
-
+async def test_reconcile_refuses_a_user_who_is_not_a_platform_admin(live_settings, platformbeheerder_token) -> None:
+    """Een geldig token zegt wie je bent, niet dat je platformonderhoud mag doen."""
     request = AsyncMock()
-    request.headers = {"X-API-Key": "anything"}
+    request.headers = platformbeheerder_token["headers_gewone_gebruiker"]
     store = _store("aaaa1111", "bbbb2222")
 
     with patch.object(admin_module, "get_project_store", return_value=store), pytest.raises(HTTPException) as exc:
         await reconcile_projects(request=request)
 
-    assert exc.value.status_code == 501
+    assert exc.value.status_code == 403
     store.reconcile.assert_not_awaited()

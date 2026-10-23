@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import HTTPException
 from opi.api.rate_limiter import refuse_after_auth_failure, refuse_when_key_failures_exhausted
 from opi.api.user_token_auth import UserTokenError, extract_bearer_token
-from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, project_api_key_actor, set_actor
+from opi.core.actor import ACTOR_PLATFORM_API_KEY, project_api_key_actor, set_actor
 from opi.core.config import settings
 from opi.services.project_store import get_project_store
 from starlette.requests import Request  # noqa: TC002 — FastAPI needs Request at runtime
@@ -19,9 +19,6 @@ if TYPE_CHECKING:
 REQUIRES_PROJECT_NAME = "zad_requires_project_name"
 """Markering op een route die met een projectsleutel wordt afgeschermd."""
 
-
-REQUIRES_ADMIN_API_KEY = "zad_requires_admin_api_key"
-"""Markering op een route die met ADMIN_API_KEY wordt afgeschermd."""
 
 REQUIRES_MASTER_API_KEY = "zad_requires_master_api_key"
 """Markering op een route die met MASTER_API_KEY wordt afgeschermd."""
@@ -147,26 +144,6 @@ def _require_shared_secret(
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     logger.debug(f"{setting_name} validation successful for route {route_name}")
-
-
-def validate_admin_api_key(func: Callable[..., Any]) -> Callable[..., Any]:
-    """Eist ADMIN_API_KEY via X-API-Key header."""
-
-    @wraps(func)
-    async def wrapper(*args: Any, request: Request, **kwargs: Any) -> Any:
-        _require_shared_secret(
-            request,
-            request.headers.get("X-API-Key"),
-            settings.ADMIN_API_KEY,
-            "ADMIN_API_KEY",
-            func.__name__,
-            "Authentication required - provide X-API-Key header",
-        )
-        set_actor(ACTOR_ADMIN_API_KEY)
-        return await func(*args, request=request, **kwargs)
-
-    setattr(wrapper, REQUIRES_ADMIN_API_KEY, True)
-    return wrapper
 
 
 def validate_master_api_key(func: Callable[..., Any]) -> Callable[..., Any]:

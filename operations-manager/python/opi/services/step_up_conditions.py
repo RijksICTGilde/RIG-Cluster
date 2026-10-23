@@ -33,6 +33,15 @@ def _project_data(request: Request, project_name: str) -> dict[str, Any]:
     return (project.data if project is not None else None) or {}
 
 
+def platformbeheer_wijzigt(request: Request, **_: Any) -> bool:
+    """Altijd waar: een wijzigende beheerroute raakt het hele cluster (RC-377).
+
+    Geen omgeving om te wegen, maar wel de conditie van ``requires_step_up``, zodat
+    platformbeheer dezelfde step-up draagt als de rest.
+    """
+    return True
+
+
 def project_in_production(request: Request, *, project_name: str = "", **_: Any) -> bool:
     """Een van de deployments van het project staat effectief op productie."""
     return requires_production_step_up(StepUpKind.PROJECT, _project_data(request, project_name))

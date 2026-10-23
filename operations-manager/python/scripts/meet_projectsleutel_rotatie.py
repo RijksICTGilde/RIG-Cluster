@@ -8,8 +8,12 @@ niets over de uitkomst, het laat zien wat er gebeurde. Waarden komen er als leng
 vingerafdruk uit, nooit als tekst.
 
     eval "$(sandbox-gegevens --env)"
-    export ADMIN_API_KEY=<de ADMIN_API_KEY van het cluster>
+    export ZAD_TOKEN=<een SSO-token van een platformbeheerder>
+    export ZAD_OTP=<een verse code uit de authenticator van die beheerder>
     uv run python scripts/meet_projectsleutel_rotatie.py alles
+
+De fase ``roteer`` vraagt sinds RC-377 een verse code naast het token; een code geldt maar
+een keer, dus draai die fase los met een code die op dat moment in de authenticator staat.
 
 Losse fasen kunnen ook, in deze volgorde, met de toestand in --toestand:
 
@@ -73,7 +77,8 @@ class Meting:
     def __init__(self, args: argparse.Namespace) -> None:
         self.base = args.base_url.rstrip("/")
         self.secret = args.secret_key
-        self.admin_key = args.admin_api_key
+        self.zad_token = args.zad_token
+        self.zad_otp = args.zad_otp
         self.cluster = args.cluster
         self.opi_namespace = args.opi_namespace
         self.context = args.context
@@ -150,11 +155,28 @@ class Meting:
             raise RuntimeError(f"in de OPI-pod mislukt ({r.returncode}): {uit[-800:]}")
         return r.returncode, uit
 
-    def api(self, method: str, pad: str, key: str, **kw: Any) -> httpx.Response:
+    def api(
+        self,
+        method: str,
+        pad: str,
+        key: str | None = None,
+        bearer: str | None = None,
+        otp: str | None = None,
+        **kw: Any,
+    ) -> httpx.Response:
+        """``key`` is een projectsleutel, ``bearer`` het token van een platformbeheerder.
+
+        ``otp`` is de verse code die een wijzigende beheerroute daarnaast vraagt (RC-377).
+        """
+        headers = {"Content-Type": "application/json"}
+        if key:
+            headers["X-API-Key"] = key
+        if bearer:
+            headers["Authorization"] = f"Bearer {bearer}"
+        if otp:
+            headers["X-ZAD-OTP"] = otp
         with httpx.Client(verify=False, timeout=1800.0) as c:  # noqa: S501 - zelfgetekend sandboxcertificaat
-            return c.request(
-                method, f"{self.base}{pad}", headers={"X-API-Key": key, "Content-Type": "application/json"}, **kw
-            )
+            return c.request(method, f"{self.base}{pad}", headers=headers, **kw)
 
     def geheim(self, namespace: str, naam: str) -> dict[str, str]:
         ruw = self.kubectl("get", "secret", naam, "-n", namespace, "-o", "json")
@@ -600,7 +622,7 @@ class Meting:
     def roteer(self) -> None:
         s = self.lees()
         p, ns = s["project"], s["namespace"]
-        r = self.api("POST", f"/api/v2/projects/{p}/:rotate-project-key", self.admin_key)
+        r = self.api("POST", f"/api/v2/projects/{p}/:rotate-project-key", bearer=self.zad_token, otp=self.zad_otp)
         log(f"POST :rotate-project-key -> {r.status_code}")
         if r.status_code not in (200, 202):
             raise RuntimeError(r.text[:1000])
@@ -936,7 +958,12 @@ def main(argv: list[str]) -> int:
         default=os.environ.get("E2E_SECRET_KEY", ""),
         help="SECRET_KEY van het cluster, waarmee de sessiecookie wordt ondertekend",
     )
-    p.add_argument("--admin-api-key", default=os.environ.get("ADMIN_API_KEY", ""))
+    p.add_argument("--zad-token", default=os.environ.get("ZAD_TOKEN", ""))
+    p.add_argument(
+        "--zad-otp",
+        default=os.environ.get("ZAD_OTP", ""),
+        help="verse code van de beheerder, die de rotatieroute naast het token vraagt",
+    )
     p.add_argument("--email", default=os.environ.get("MEET_EMAIL", "admin@sandbox.rijksapp.dev"))
     p.add_argument("--cluster", default=os.environ.get("MEET_CLUSTER", "sandboxed-local"))
     p.add_argument("--context", default=os.environ.get("MEET_CONTEXT", "kind-rig-sandbox"))
@@ -949,8 +976,8 @@ def main(argv: list[str]) -> int:
     p.add_argument("--forgejo-password", default=os.environ.get("FORGEJO_PASSWORD", ""))
     args = p.parse_args(argv)
 
-    if not args.secret_key or not args.admin_api_key:
-        p.error("E2E_SECRET_KEY en ADMIN_API_KEY zijn nodig; zie de docstring van dit script")
+    if not args.secret_key or not args.zad_token:
+        p.error("E2E_SECRET_KEY en ZAD_TOKEN zijn nodig; zie de docstring van dit script")
 
     meting = Meting(args)
     fasen = _fasen(meting)

@@ -14,7 +14,7 @@ from typing import Annotated, Any, NamedTuple, cast
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi import Path as FastAPIPath
 from fastapi.responses import JSONResponse
-from opi.api.endpoint_util import validate_admin_api_key, validate_api_token
+from opi.api.endpoint_util import validate_api_token
 from opi.api.params import ComponentNamePath, DeploymentNamePath, ProjectNamePath
 from opi.api.router import (
     AddComponentRequest,
@@ -48,7 +48,7 @@ from opi.api.task_models import (
     UpdateImageResult,
     UpsertDeploymentResult,
 )
-from opi.api.user_token_auth import validate_user_token
+from opi.api.user_token_auth import validate_platform_admin_token, validate_user_token
 from opi.api.v2.models import (
     ApprovalNoticeResponse,
     AsyncTaskAcceptedResponse,
@@ -162,6 +162,7 @@ from opi.services.step_up_conditions import (
     component_in_production,
     deployment_environment_downgrade,
     deployment_in_production,
+    platformbeheer_wijzigt,
 )
 from opi.utils.age import get_decoded_project_private_key
 from opi.utils.client_ip import client_ip
@@ -1456,18 +1457,20 @@ async def refresh_project_v2(
     responses={
         200: {"model": TaskResponse[RotateProjectKeyResult], "description": "Task completed (when polled)"},
         202: {"model": AsyncTaskAcceptedResponse, "description": "Task accepted"},
-        401: {"description": "Unauthorized - invalid or missing ADMIN_API_KEY"},
-        501: {"description": "ADMIN_API_KEY not configured"},
+        401: {"description": "Unauthorized - no valid Authorization: Bearer token"},
+        403: {"description": "Forbidden - the caller is not a platform admin"},
     },
 )
-@validate_admin_api_key
+@validate_platform_admin_token
+@requires_step_up(platformbeheer_wijzigt, actie=StepUpActie.PROJECTSLEUTEL_VERVANGEN)
 async def rotate_project_key_v2(
     request: Request,
     project_name: str,
 ) -> JSONResponse:
-    """Replace this project's AGE key pair. Async task, requires ADMIN_API_KEY.
+    """Replace this project's AGE key pair. Async task, for a platform admin.
 
-    See ``features/projectsleutel-vervangen.md`` for details.
+    Wants a fresh ``X-ZAD-OTP`` on top of the token; see
+    ``features/projectsleutel-vervangen.md`` for details.
     """
     logger.info("V2 rotate project key: %s", project_name)
 

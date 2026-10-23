@@ -53,7 +53,9 @@ token.
 
 ### Via de API en de CLI
 
-Buiten `productie` verandert er niets: de projectsleutel en de bearer-tokens werken zoals
+Sinds RC-377 vraagt ook elke wijzigende beheerroute een step-up, ongeacht de omgeving: een
+handeling van platformbeheer raakt het hele cluster. Voor de rest geldt: buiten `productie`
+verandert er niets: de projectsleutel en de bearer-tokens werken zoals
 ze werkten. Raakt de handeling `productie`, dan vraagt ze een verse tweede factor van de
 AANROEPER zelf. Eén header, en maar één betekenis:
 
@@ -68,9 +70,10 @@ te hangen; de oude header `X-ZAD-OTP-User` bestaat niet meer.
 
 Met de **projectsleutel** (`X-API-Key`) kan zo'n handeling niet. Die hoort bij geen enkele
 gebruiker, en een machine heeft geen tweede factor: dat is altijd een 403, ook met een
-`X-ZAD-OTP` erbij. Vandaag worden alle step-up-routes van de API met de projectsleutel
-afgeschermd, dus in productie lopen deze handelingen via het portaal tot er een
-persoonlijk token op die routes kan.
+`X-ZAD-OTP` erbij. De verwijderroutes van de API worden met de projectsleutel afgeschermd,
+dus die handelingen lopen via het portaal tot er een persoonlijk token op die routes kan.
+De beheerroutes van RC-377 lopen al wel op een persoonlijk token: zie
+[platformbeheer-via-de-api.md](platformbeheer-via-de-api.md).
 
 Er is hier geen venster: elk verzoek draagt zijn eigen code, en een hergebruikte code faalt.
 

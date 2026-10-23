@@ -31,9 +31,6 @@ PUBLIEKE_ROUTES: dict[tuple[str, str], str] = {
     # Het document. Zonder dit is de API niet te gebruiken, en het beschrijft de beveiliging
     # in plaats van die te omzeilen.
     ("GET", "/openapi.json"): "de API-beschrijving zelf",
-    ("GET", "/docs"): "de Swagger-weergave van het document",
-    ("GET", "/docs/oauth2-redirect"): "de terugkeerpagina van de inlogknop in Swagger",
-    ("GET", "/redoc"): "de Redoc-weergave van het document",
     # De inlogflow. Die moet zonder sessie bereikbaar zijn, want hij maakt de sessie.
     ("GET", "/auth/login"): "begin van de inlogflow, per definitie zonder sessie",
     ("GET", "/auth/callback"): "terugkeer van Keycloak, legitimeert zich met de autorisatiecode",
@@ -145,7 +142,7 @@ def test_de_route_noemt_een_herkenning(route: RouteHerkenning) -> None:
 
     assert not ontbrekende_herkenning([route]), (
         f"{route} noemt geen herkenning. Zet er een decorator op (een van "
-        f"requires_sso, validate_api_token, validate_user_token, validate_admin_api_key, "
+        f"requires_sso, validate_api_token, validate_user_token, validate_platform_admin_token, "
         f"validate_master_api_key, validate_metrics_scrape_token), of zet hem met een reden "
         f"in PUBLIEKE_ROUTES in dit bestand."
     )
@@ -189,7 +186,9 @@ def test_de_controle_wordt_rood_van_een_route_zonder_herkenning() -> None:
     worden opgemerkt. Daarmee staat vast dat een groene uitslag hierboven betekent dat de
     routes in orde zijn, en niet dat de controle niets vond om naar te kijken.
     """
-    eigen_app = FastAPI()
+    # Zonder docs_url en redoc_url, want FastAPI hangt die routes zelf op en ze zijn
+    # hier niet het onderwerp.
+    eigen_app = FastAPI(docs_url=None, redoc_url=None)
 
     @eigen_app.get("/een-nieuwe-route-zonder-decorator")
     async def nieuwe_route() -> dict[str, str]:
@@ -203,7 +202,9 @@ def test_de_controle_wordt_rood_van_een_route_zonder_herkenning() -> None:
 
 def test_de_controle_is_tevreden_met_een_herkenning() -> None:
     """En het omgekeerde, anders zou een controle die altijd klaagt er ook door komen."""
-    eigen_app = FastAPI()
+    # Zonder docs_url en redoc_url, want FastAPI hangt die routes zelf op en ze zijn
+    # hier niet het onderwerp.
+    eigen_app = FastAPI(docs_url=None, redoc_url=None)
 
     @eigen_app.get("/een-nieuwe-route-met-decorator")
     @requires_sso

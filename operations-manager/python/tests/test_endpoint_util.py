@@ -1,7 +1,7 @@
 """
 Tests for opi.api.endpoint_util module.
 
-Tests parse_ports, normalize_project_name, validate_api_token, validate_admin_api_key,
+Tests parse_ports, normalize_project_name, validate_api_token
 and validate_master_api_key.
 """
 
@@ -10,18 +10,16 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from opi.api.endpoint_util import (
-    REQUIRES_ADMIN_API_KEY,
     REQUIRES_MASTER_API_KEY,
     REQUIRES_METRICS_SCRAPE_TOKEN,
     REQUIRES_PROJECT_NAME,
     normalize_project_name,
     parse_ports,
-    validate_admin_api_key,
     validate_api_token,
     validate_master_api_key,
     validate_metrics_scrape_token,
 )
-from opi.core.actor import ACTOR_ADMIN_API_KEY, ACTOR_PLATFORM_API_KEY, get_actor, project_api_key_actor
+from opi.core.actor import ACTOR_PLATFORM_API_KEY, get_actor, project_api_key_actor
 from starlette.requests import Request
 
 
@@ -236,44 +234,6 @@ class TestValidateApiToken:
         assert exc_info.value.status_code == 401
 
 
-class TestValidateAdminApiKey:
-    """Tests for validate_admin_api_key decorator."""
-
-    @pytest.mark.asyncio
-    async def test_valid_admin_key_sets_the_admin_actor(self):
-        """De decorator roept door en zet de vaste admin-actor, geen persoon."""
-
-        @validate_admin_api_key
-        async def dummy_route(request: Request):
-            return {"actor": get_actor()}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.headers = {"X-API-Key": "correct-admin-key"}
-
-        with patch("opi.api.endpoint_util.settings") as mock_settings:
-            mock_settings.ADMIN_API_KEY = "correct-admin-key"
-            result = await dummy_route(request=mock_request)
-
-        assert result == {"actor": ACTOR_ADMIN_API_KEY}
-
-    @pytest.mark.asyncio
-    async def test_invalid_admin_key_is_refused(self):
-        @validate_admin_api_key
-        async def dummy_route(request: Request):  # pragma: no cover - must not be reached
-            return {"ok": True}
-
-        mock_request = MagicMock(spec=Request)
-        mock_request.scope = {}
-        mock_request.headers = {"X-API-Key": "wrong-key"}
-
-        with patch("opi.api.endpoint_util.settings") as mock_settings:
-            mock_settings.ADMIN_API_KEY = "correct-admin-key"
-            with pytest.raises(HTTPException) as exc_info:
-                await dummy_route(request=mock_request)
-
-        assert exc_info.value.status_code == 401
-
-
 class TestValidateMasterApiKey:
     """Tests for validate_master_api_key decorator."""
 
@@ -360,7 +320,6 @@ class TestMarkeringen:
         ("decorator", "markering"),
         [
             (validate_api_token, REQUIRES_PROJECT_NAME),
-            (validate_admin_api_key, REQUIRES_ADMIN_API_KEY),
             (validate_master_api_key, REQUIRES_MASTER_API_KEY),
             (validate_metrics_scrape_token, REQUIRES_METRICS_SCRAPE_TOKEN),
         ],
@@ -375,7 +334,6 @@ class TestMarkeringen:
         """Twee decorators met dezelfde markering zijn in een route niet te onderscheiden."""
         markeringen = [
             REQUIRES_PROJECT_NAME,
-            REQUIRES_ADMIN_API_KEY,
             REQUIRES_MASTER_API_KEY,
             REQUIRES_METRICS_SCRAPE_TOKEN,
         ]
@@ -388,7 +346,7 @@ class TestMarkeringen:
         async def dummy_route(request: Request):
             return {}
 
-        gedecoreerd = validate_admin_api_key(dummy_route)
+        gedecoreerd = validate_api_token(dummy_route)
 
         assert getattr(gedecoreerd, REQUIRES_MASTER_API_KEY, False) is False
-        assert getattr(gedecoreerd, REQUIRES_PROJECT_NAME, False) is False
+        assert getattr(gedecoreerd, REQUIRES_METRICS_SCRAPE_TOKEN, False) is False

@@ -94,14 +94,14 @@ A reconciliation job can be triggered via the admin API:
 
 ### Admin API
 
-The admin router (`/api/v2/admin/`) provides manual control over the cleanup lifecycle. Authenticated via `ADMIN_API_KEY` (separate from `MASTER_API_KEY`).
+The admin router (`/api/v2/admin/`) provides manual control over the cleanup lifecycle. Authenticated with the bearer token of a platform admin, and the three that change something also want a fresh code in `X-ZAD-OTP`; see `features/platformbeheer-via-de-api.md`.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v2/admin/marked-for-deletion` | GET | List marked resources (filterable by `project_name`) |
-| `/api/v2/admin/cleanup/trigger` | POST | Purge expired marks for a specific project |
-| `/api/v2/admin/reconciliation/trigger` | POST | Run full reconciliation cycle |
-| `/api/v2/admin/marked-for-deletion/{mark_id}` | DELETE | Cancel a specific scheduled deletion |
+| Endpoint | Method | Description | OTP |
+|----------|--------|-------------|-----|
+| `/api/v2/admin/marked-for-deletion` | GET | List marked resources (filterable by `project_name`) | no |
+| `/api/v2/admin/cleanup/trigger` | POST | Purge expired marks for a specific project | yes |
+| `/api/v2/admin/reconciliation/trigger` | POST | Run full reconciliation cycle | yes |
+| `/api/v2/admin/marked-for-deletion/{mark_id}` | DELETE | Cancel a specific scheduled deletion | yes |
 
 Both trigger endpoints default to `dry_run=true` for safety. The cleanup endpoint works by `project_name` from the database, so it can clean up resources even after a project has been removed.
 
@@ -110,7 +110,6 @@ Both trigger endpoints default to `dry_run=true` for safety. The cleanup endpoin
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DELETION_GRACE_PERIOD_DAYS` | `7` | Days before marked resources are eligible for purging |
-| `ADMIN_API_KEY` | `None` | API key for admin endpoints (cleanup, reconciliation). If not set, admin endpoints return 501. |
 
 ## Database Schema
 
@@ -176,5 +175,5 @@ If a deployment is accidentally removed from YAML and the user reverts the git c
 | `opi/manager/project_manager.py` | Wired deletion + service removal into `process_project_from_git()` |
 | `opi/jobs/reconciliation.py` | Reconciliation job with backup purge support |
 | `opi/api/admin_router.py` | Admin API endpoints for cleanup and reconciliation |
-| `opi/api/endpoint_util.py` | `validate_admin_api_key` decorator |
-| `opi/core/config.py` | `DELETION_GRACE_PERIOD_DAYS` and `ADMIN_API_KEY` settings |
+| `opi/api/user_token_auth.py` | `validate_platform_admin_token` decorator |
+| `opi/core/config.py` | `DELETION_GRACE_PERIOD_DAYS` setting |
